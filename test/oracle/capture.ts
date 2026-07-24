@@ -1921,6 +1921,74 @@ async function captureVulcanusCracks(): Promise<void> {
   console.log(`wrote ${out} (${positions.length} points)`);
 }
 
+async function captureVulcanusResources(): Promise<void> {
+  const seed = 123456;
+  const planet = "vulcanus";
+  const positions: Position[] = [];
+  for (let gy = 0; gy < 6; gy++) {
+    for (let gx = 0; gx < 6; gx++) {
+      positions.push({ x: gx * 13 - 30 + 0.5, y: gy * 17 - 40 + 0.25 });
+    }
+  }
+  for (const r of [500, 1500, 3300]) {
+    for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4;
+      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+    }
+  }
+  positions.push({ x: 12345.75, y: 6789.125 });
+
+  const sample = async (expression: string): Promise<number[]> => {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      return await sampleExpression(expression, positions, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet,
+      });
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  };
+
+  const named: Record<string, string> = {
+    basaltsFavorability: "vulcanus_basalts_resource_favorability",
+    mountainsFavorability: "vulcanus_mountains_resource_favorability",
+    mountainsSulfurFavorability: "vulcanus_mountains_sulfur_favorability",
+    ashlandsFavorability: "vulcanus_ashlands_resource_favorability",
+    startingTungsten: "vulcanus_starting_tungsten",
+    startingCoal: "vulcanus_starting_coal",
+    startingCalcite: "vulcanus_starting_calcite",
+    startingSulfur: "vulcanus_starting_sulfur",
+    tungstenRegion: "vulcanus_tungsten_ore_region",
+    coalRegion: "vulcanus_coal_region",
+    calciteRegion: "vulcanus_calcite_region",
+    sulfuricAcidRegion: "vulcanus_sulfuric_acid_region",
+    sulfuricAcidPatches: "vulcanus_sulfuric_acid_patches",
+    sulfuricAcidRegionPatchy: "vulcanus_sulfuric_acid_region_patchy",
+    metalTile: "vulcanus_metal_tile",
+  };
+
+  const captured: Record<string, number[]> = {};
+  for (const [key, expression] of Object.entries(named)) {
+    captured[key] = await sample(expression);
+    console.log(`  captured ${expression}`);
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 (Space Age enabled) via the test/oracle harness. Vulcanus V2 resource expressions (favorabilities, starting spots, the four regions, the sulfuric-acid patchy chain and vulcanus_metal_tile), each routed onto elevation over a scattered near+far grid, against a real Vulcanus surface (game.planets['vulcanus'].create_surface()) with default control sliders. Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-resources",
+    seed0: seed,
+    planet,
+    positions,
+    ...captured,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-resources.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${positions.length} points)`);
+}
+
 /**
  * Task 8's biome system + volcano spots: the three clamped biomes
  * (vulcanus_mountains_biome, vulcanus_ashlands_biome, vulcanus_basalts_biome), their
@@ -2268,6 +2336,7 @@ if (want("starting-spot")) await captureStartingSpotAtAngle();
 if (want("vulcanus-helpers")) await captureVulcanusHelpers();
 if (want("vulcanus-spawn")) await captureVulcanusSpawn();
 if (want("vulcanus-cracks")) await captureVulcanusCracks();
+if (want("vulcanus-resources")) await captureVulcanusResources();
 if (want("vulcanus-biomes")) await captureVulcanusBiomes();
 if (want("vulcanus-climate")) await captureVulcanusClimate();
 if (want("vulcanus-elevation")) await captureVulcanusElevation();
