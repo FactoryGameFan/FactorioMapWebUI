@@ -354,6 +354,19 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
         the identical float (byte-exact; verified by a stash-diff of a 4-window
         render hash and the full oracle suite still green at 984 passed). Confined to
         the Vulcanus path; the shared noise primitives and Nauvis are untouched.
+        **`memoXY` does NOT transfer to Nauvis - Nauvis never had the pathology
+        (checked 2026-07-24, don't re-investigate).** Profiled the same way: Nauvis
+        terrain is **164 `basisNoise`/px, ~8 us/px** - already at the noise floor
+        (Vulcanus's post-fix floor is ~200/px). Two reasons, both verified: (1) at the
+        argmax level `tiles/resolve.ts` already evaluates elevation/aux/moisture once
+        per pixel into an `env` scalar bag, so the tile catalog reads scalars, not
+        closures; (2) inside each field, `elevationNauvis`/`aux`/`moisture` are written
+        straight-line - every sub-node is computed once into a local const and then
+        combined, nothing re-read. There is no redundant work for a cache to remove, so
+        wrapping Nauvis in `memoXY` would only add per-call branch overhead (marginally
+        slower). The one remaining Nauvis lever is the hot leaf itself: `basisNoise` is
+        ~65% of both planets' time and is now *necessary* work - only SIMD/WASM on the
+        kernel would move it, and that would help both planets equally.
       - **Resource coupling.** A few tile `*_range` expressions reference V2 resource
         expressions (`vulcanus_calcite_region`, `vulcanus_sulfuric_acid_region_patchy`,
         `vulcanus_metal_tile`); these are approximated at their no-resource default, so
