@@ -54,7 +54,23 @@ around resource regions.
    deferred for exactly this cross-subsystem coupling. At `rp = 1` the
    probability collapses to `(control:<x>:size > 0) * 1000 * region`, so
    `renderResources`' existing `probability >= 0.5` test reduces to
-   `region >= 0.0005`; the penalty only perturbs the razor edge of a patch.
+   `region >= 0.0005`.
+
+   **MEASURED 2026-07-24, after the oracle fixture landed.** The original text
+   here claimed the penalty "only perturbs the razor edge of a patch". That
+   understates it. Over the 1085-point fixture, the implied `p` at the eight
+   points with `tungsten_region > 0` spans **[0.9077, 0.9748]**, and
+   `vulcanus_metal_tile` diverges from `max(0, 1000 * region)` by up to
+   **132.86**. At small regions the penalty flips placement outright: fixture
+   indices 733 and 769 have `region > 0` but `metal_tile == 0`, because
+   `(1 + region) * p < 1`.
+
+   `rp = 1` is therefore an **upper bound**, not an equality: our footprint is
+   the largest the game could produce, never smaller. That is still the right
+   call (a batch op cannot be reproduced per-pixel), but two consequences
+   follow: `metal_tile` is verified against the `p in [0.9, 1]` envelope rather
+   than a tolerance, and `get_tile` parity may be capped below 100% by
+   edge-of-patch tiles where the game rolled a low `p`.
 2. **Richness is not computed** (see Scope/Out).
 
 Both are recorded here so they are not mistaken for bugs later.

@@ -36,7 +36,7 @@ one fresh implementer subagent per task, a task review after each.
 
 | Task | Status |
 | --- | --- |
-| 1. Capture the oracle fixture | **in fix round 1** - see below |
+| 1. Capture the oracle fixture | **complete** (`9369cf6`, review clean) |
 | 2. Resource levers on `EvalCtx` | pending |
 | 3. Favorabilities + starting ore spots | pending |
 | 4. Spot-noise wrapper + the four regions | pending |
@@ -50,38 +50,46 @@ Commits so far:
 - `fe4f690` chore: git-ignore the superpowers SDD scratch directory
 - `8f69c1e` test(vulcanus): capture V2 resource oracle fixture (Task 1, being amended)
 
-## The open issue (Task 1, fix round 1)
+## Task 1 history - two findings worth carrying forward
 
-The captured fixture is real and the capture code is correct, but its **probe
-positions never land in ore**. The 61 positions were inherited from the
-`vulcanus-cracks` capture (a near grid plus rings at r=500/1500/3300 plus one
-deep point); ore patches are ~25-30 tiles in radius and sparse.
+**(a) The first capture could not see ore** (fixed in `9369cf6`). Its 61 probe
+positions were inherited from the `vulcanus-cracks` capture, and ore patches are
+~25-30 tiles in radius and sparse, so no probe landed in one: zero positive
+regions, and `tungstenRegion`'s max was exactly `-1.0` (the `basement_value`).
+Task 4 could have implemented the whole spot-selection machinery as `() => -1`
+and still passed. Fixed by keeping the 61 originals in order and appending a
+1024-point 32x32 scan grid at 137-tile stride (prime, so coprime with the
+400/450/1000 `region_size`s). Final coverage:
 
-Measured over the committed fixture:
-
-| Region | points with `region > 0` | cone-attributable points |
+| Region | `region > 0` | cone-attributable |
 | --- | --- | --- |
-| tungsten | 0 | **0** (max is exactly `-1.0`, the `basement_value`) |
-| coal | 0 | 2 |
-| calcite | 0 | 3 |
-| sulfur | 0 | 2 |
+| tungsten | 8 | 29 |
+| coal | 4 | 29 |
+| calcite | 11 | 63 |
+| sulfur | 5 | 37 |
 
 ("cone-attributable" = `region > -0.999` **and** not equal to that resource's
 `starting_*` term, i.e. the spot cone is genuinely visible.)
 
-So Task 4 could implement the entire spot-selection machinery as `() => -1`, and
-`metalTile` as `() => 0`, and every assertion built on this fixture would still
-pass. That is precisely the half of the port the plan flags as risky.
+**(b) `random_penalty -> 1` is looser than the design spec first claimed.** The
+oracle shows `vulcanus_metal_tile != max(0, 1000 * tungstenRegion)`: worst
+divergence **132.86** (idx 341, region 0.4387, oracle 305.84), and at small
+regions it flips placement outright (idx 733/769 have `region > 0` but
+`metal_tile == 0`). Implied `p` over the eight `region > 0` points spans
+**[0.9077, 0.9748]**; zero of 1085 points violate `p in [0.9, 1]`.
 
-**The fix in flight:** keep all 61 original positions and their order (they carry
-the favorability, starting-spot and far-field f32 coverage), append a 32x32 scan
-grid at 137-tile stride offset `(+0.5, +0.25)` - 1085 positions total - and
-re-capture. Acceptance: every region must show at least one point with
-`region > 0` and roughly 20 cone-attributable points. If two widening attempts
-still leave a region with no positive point, the implementer reports back rather
-than iterating.
+Consequences, both already written into the spec and the plan:
 
-Re-run the coverage check after any re-capture:
+- `rp = 1` is an **upper bound**, not an equality - our footprint is the largest
+  the game could produce, never smaller.
+- Task 4 verifies `metal_tile` against the `p in [0.9, 1]` **envelope** rather
+  than an absolute tolerance (the plan's original tolerance of 4 was ~30x too
+  tight). User ruled on this 2026-07-24.
+- **Task 5's `get_tile` parity may be capped below 100%** by edge-of-patch tiles
+  where the game rolled a low `p`. The plan's stop condition is still "agreement
+  must go UP" - do not chase 100%, and do not relax the bound.
+
+Coverage check to re-run after any re-capture:
 
 ```bash
 node -e "

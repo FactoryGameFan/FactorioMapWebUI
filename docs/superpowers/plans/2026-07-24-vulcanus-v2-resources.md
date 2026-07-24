@@ -622,11 +622,36 @@ Append inside the existing `describe` in `test/vulcanusResources.spec.ts`:
     check(resources.sulfuricAcidRegionPatchy, fixture.sulfuricAcidRegionPatchy, 4e-3);
   });
 
-  it("vulcanus_metal_tile matches the oracle", () => {
-    // metal_tile = max(0, 1000 * tungsten_region), so its residual is 1000x the
-    // region's - hence the wider bound. It is a hard switch inside the tile
-    // ranges (50000x / 100x), so this precision is ample.
-    check(resources.metalTile, fixture.metalTile, 4);
+  // AMENDED 2026-07-24 after Task 1's fixture landed. The original plan asserted
+  // `check(resources.metalTile, fixture.metalTile, 4)` on the premise that
+  // rp -> 1 makes metal_tile exactly `max(0, 1000 * region)`. The captured oracle
+  // disproves that: worst |diff| is 132.86 (idx 341: region 0.4387, approx
+  // 438.70, oracle 305.84), ~30x the proposed tolerance, and at small regions the
+  // penalty flips placement outright (idx 733/769 have region > 0 but
+  // metal_tile == 0). random_penalty is a batch op and cannot be reproduced
+  // per-pixel, so rp -> 1 stays - but it is an UPPER BOUND, not an equality.
+  //
+  // The envelope assertion below is strictly stronger than a tolerance: it pins
+  // our tungstenRegion AND proves rp -> 1 is the documented ceiling. Verified to
+  // hold at all 1085 fixture points with zero violations; the implied p over the
+  // 8 region > 0 points spans [0.9077, 0.9748].
+  it("vulcanus_metal_tile sits inside the random_penalty envelope", () => {
+    let violations = 0;
+    let worstBelow = 0;
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i];
+      const region = resources.tungstenRegion(p.x, p.y);
+      const lo = Math.max(0, 1000 * ((1 + region) * 0.9 - 1));
+      const hi = Math.max(0, 1000 * ((1 + region) * 1.0 - 1));
+      const got = fixture.metalTile[i];
+      if (got < lo - 1e-3 || got > hi + 1e-3) violations++;
+      worstBelow = Math.max(worstBelow, hi - got);
+    }
+    expect(violations).toBe(0);
+    // Guard against a degenerate pass: if our region were 0 everywhere, lo and hi
+    // would both collapse to 0 and every point would trivially satisfy the
+    // envelope. At least one point must have a non-trivial envelope width.
+    expect(worstBelow).toBeGreaterThan(1);
   });
 ```
 
