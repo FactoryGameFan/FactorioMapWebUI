@@ -32,9 +32,19 @@ describe("makeVulcanusResources", () => {
   //   coalRegion                   2.9e-5
   //   calciteRegion                1.7e-4
   //   sulfuricAcidRegion           1.6e-4
-  //   sulfuricAcidPatches          2.9e-3 (a multioctave `abs()` field; the same
-  //     order of magnitude as vulcanusHelpers.spec.ts's existing 4e-3 bound, not
-  //     a regression)
+  //   sulfuricAcidPatches          2.9e-3 over ALL 1085 points, but only 1.7e-4 over
+  //     the 1063 with exactly-representable coordinates (including all 1024 dense-grid
+  //     points) - in family with every other expression above. The outliers are all
+  //     among the 22 ring positions with irrational coordinates (e.g. 354.0533905932738):
+  //     input_scale = 1/3 here is the highest-frequency multioctave anywhere in this
+  //     port (~3-tile features, ~1.7x past the oracle-verified envelope, which tops out
+  //     at input_scale 0.2 - see multioctaveNoise.ts / oracle/capture.ts), so a tiny
+  //     positional mismatch on those irrational coordinates (implied offset 2.3e-3 to
+  //     3.7e-3 tiles - the game evaluated at a marginally different point than we do)
+  //     shows up here and nowhere else. Ruled out as a model bug: f32-rounding the
+  //     composed octave coordinates moves the value only ~1e-4, and the local gradient
+  //     at the outlier points is unremarkable (0.94 vs. a 0.50 median). Bound stays
+  //     3.5e-3 to cover the full fixture, not just the clean-coordinate subset.
   //   sulfuricAcidRegionPatchy     3.9e-4
   const check = (field: (x: number, y: number) => number, want: number[], bound: number): void => {
     let worst = 0;

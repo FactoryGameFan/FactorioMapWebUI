@@ -71,7 +71,13 @@ export const VULCANUS_ORE_SPACING = 128;
 const BASEMENT_VALUE = -1;
 /** `maximum_spot_basement_radius` - the per-query cone cull radius. */
 const MAX_SPOT_BASEMENT_RADIUS = 128;
-/** `skip_span` - all four resources partition one candidate stream three ways. */
+/**
+ * `skip_span` for every `vulcanus_place_*_spots` call. NOT a shared-stream partition -
+ * each resource has its own `seed1` and therefore its own candidate stream; skip_span=3
+ * just thins that stream to 1/3 density. The four skip_offsets (tungsten=2, coal=1,
+ * calcite=1, sulfur=0) are not distinct either - coal and calcite share offset 1 on
+ * their own separate streams, which is harmless precisely because the streams differ.
+ */
 const SKIP_SPAN = 3;
 
 const f32 = Math.fround;
@@ -230,7 +236,11 @@ export function makeVulcanusResources(
     // selectSpots uses it as an integer modulus, so floor it. Only the default
     // (f = 1, an exact integer) is oracle-covered - see vulcanus-resources-NOTES.md.
     const rs = Math.floor(p.regionSize);
-    const half = rs / 2;
+    // Math.floor(rs / 2), matching spotSelection.ts's own `half` exactly. Identical to
+    // plain `rs / 2` at every oracle-covered region size (1000/900/800, all even), but
+    // must not silently diverge from spotSelection.ts at an odd rs that a non-default
+    // frequency slider can reach (e.g. f = 1.5 gives rs = 833).
+    const half = Math.floor(rs / 2);
     const regionIndex = (c: number): number => Math.floor((c + half) / rs);
 
     const cache = new Map<string, SelectedSpot[]>();
@@ -276,6 +286,14 @@ export function makeVulcanusResources(
             if (d2 > MAX_SPOT_BASEMENT_RADIUS * MAX_SPOT_BASEMENT_RADIUS) continue;
             // Same f32 cone arithmetic as the Nauvis regular patches: the game
             // renders the cone in the f32 noise machine (see regularPatches.ts).
+            //
+            // The game's effective radius is min(maximum_spot_basement_radius,
+            // radius_expression) (docs/noise/spot-noise-NOTES.md:319); that cap is
+            // deliberately omitted here because it is unreachable for every Vulcanus
+            // resource: radius = sliderRescale(v, 2) * min(1.2, oreDist) * 25, and
+            // sliderRescale caps at 2, so radius <= 2 * 1.2 * 25 = 60, always well
+            // under MAX_SPOT_BASEMENT_RADIUS (128). Do not add the cap "defensively" -
+            // it is provably a no-op here.
             const radius = f32(p.radius(s.x, s.y) * s.coneScale);
             if (radius <= 0) continue;
             const peak = f32(f32(3 * s.quantity) / f32(f32(Math.PI * radius) * radius));
