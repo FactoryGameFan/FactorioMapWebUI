@@ -34,16 +34,52 @@ Branch **`feat/vulcanus-v2-resources`**, branched from `a0ea049` on `main`.
 Nothing pushed. Execution is via `superpowers:subagent-driven-development`:
 one fresh implementer subagent per task, a task review after each.
 
+**ALL 8 TASKS COMPLETE.** Final whole-branch review: READY TO MERGE, no blockers.
+Residual fix wave applied (`7e72a4e`) and re-reviewed clean. **Not yet merged, not
+pushed.**
+
 | Task | Status |
 | --- | --- |
-| 1. Capture the oracle fixture | **complete** (`9369cf6`, review clean, 1 fix round) |
-| 2. Resource levers on `EvalCtx` | **complete** (`ba50dba`, review clean, 0 findings) |
-| 3. Favorabilities + starting ore spots | **complete** (`614edec`, review clean) |
+| 1. Capture the oracle fixture | **complete** (`9369cf6`, 1 fix round) |
+| 2. Resource levers on `EvalCtx` | **complete** (`ba50dba`, 0 findings) |
+| 3. Favorabilities + starting ore spots | **complete** (`614edec`) |
 | 4. Spot-noise wrapper + the four regions | **complete** (`c06db88`, 1 fix round) |
-| 5. Restore the tile coupling | next |
-| 6. Overlay catalog + renderer | pending |
-| 7. Pipeline + panel wiring | pending |
-| 8. Perf, notes, roadmap | pending |
+| 5. Restore the tile coupling | **complete** (`5d3686d`) |
+| 6. Overlay catalog + renderer | **complete** (`522fba0`) |
+| 7. Pipeline + panel wiring | **complete** (`5347a02`) |
+| 8. Perf, notes, roadmap | **complete** (`30200df`) |
+| final review fix wave | **complete** (`7e72a4e`) |
+
+## Results
+
+| Measure | Result |
+| --- | --- |
+| `get_tile` parity | 369/381 (96.85%) -> **374/381 (98.16%)**, floor raised 0.95 -> 0.978 |
+| Worst oracle residual | 1.79e-5 (tungstenRegion) to 2.92e-3 (sulfuricAcidPatches) |
+| Perf, Nauvis terrain | 7.62 us/px (unchanged) |
+| Perf, Vulcanus terrain-only | 13.55 us/px (~1.14x V1 baseline) |
+| Perf, Vulcanus resources (the default view) | 17.59 us/px (~1.48x), inside the ~2x gate |
+| Tests | 1012 passing |
+| `spotSelection.ts` | **needed no change** |
+
+## Two things a future session should know
+
+**1. The local preview is broken, and V2 did not cause it.** Generating a preview
+fails with "Preview failed." on the dev server *and* on a local production build,
+for **every** planet, and it reproduces at the branch point `a0ea049`. The deployed
+site (`map.factorygamefan.com`) renders correctly in the same browser, so it is not
+a shipped regression - it is a local failure of the render Worker. Diagnosis is
+hampered by two swallow points that should be un-swallowed first:
+`ElevationPreviewPanel.vue`'s bare `catch { error.value = "Preview failed." }` and
+the pool's `w.onerror = () => {}` in `useElevationPreview.ts`, which discard the
+error entirely. This is worth its own investigation and is **not** part of V2.
+
+**2. The renderer itself is confirmed working**, verified by rendering
+`runRenderRequest` straight to an image rather than through the browser: `view:
+"terrain"` produces zero ore-coloured pixels; `view: "resources"` produces tungsten
+697 / calcite 1030 / coal 1495 at 512px / 2 tiles-per-pixel, seed 123456, as
+discrete round patches in distinct biome regions. The Vue wiring is covered by the
+panel tests and a reviewer's static trace, but has never rendered in a real browser.
 
 Commits so far:
 
