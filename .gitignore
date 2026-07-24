@@ -40,3 +40,6 @@ lerna-debug.log*
 *.sw?
 /factorioLuaAPI
 /perf-result.txt
+
+# superpowers SDD scratch (ledgers, briefs, review packages)
+.superpowers/
