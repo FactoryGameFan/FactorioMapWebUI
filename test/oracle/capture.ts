@@ -1938,6 +1938,20 @@ async function captureVulcanusResources(): Promise<void> {
   }
   positions.push({ x: 12345.75, y: 6789.125 });
 
+  // Fix round 1 (2026-07-24): the original 61 scattered points never landed
+  // inside an actual ore/acid region (region > 0 nowhere), so the fixture
+  // couldn't discriminate a real spot-selection port from a stub. Ore patches
+  // are ~25-30 tiles in radius and sparse, so append a dense scan grid - a
+  // 32x32 grid at a 137-tile stride (deliberately incommensurate with the
+  // 400/450/1000-tile region_sizes), centered on the origin, offset like the
+  // others (+0.5 x, +0.25 y) - to actually hit ore. The original 61 positions
+  // are kept, in order, first; the scan grid is appended after them.
+  for (let gy = 0; gy < 32; gy++) {
+    for (let gx = 0; gx < 32; gx++) {
+      positions.push({ x: (gx - 16) * 137 + 0.5, y: (gy - 16) * 137 + 0.25 });
+    }
+  }
+
   const sample = async (expression: string): Promise<number[]> => {
     const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
     try {
@@ -1978,7 +1992,7 @@ async function captureVulcanusResources(): Promise<void> {
 
   const fixture = {
     _comment:
-      "Ground truth from Factorio 2.1.12 (Space Age enabled) via the test/oracle harness. Vulcanus V2 resource expressions (favorabilities, starting spots, the four regions, the sulfuric-acid patchy chain and vulcanus_metal_tile), each routed onto elevation over a scattered near+far grid, against a real Vulcanus surface (game.planets['vulcanus'].create_surface()) with default control sliders. Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-resources",
+      "Ground truth from Factorio 2.1.12 (Space Age enabled) via the test/oracle harness. Vulcanus V2 resource expressions (favorabilities, starting spots, the four regions, the sulfuric-acid patchy chain and vulcanus_metal_tile), each routed onto elevation against a real Vulcanus surface (game.planets['vulcanus'].create_surface()) with default control sliders. positions is two parts, in order: the original 61-point scattered near+far grid (a 6x6 near block plus three 8-point rings at r=500/1500/3300 plus one deep-field point, carrying the favorability/starting-spot coverage and the far-field f32 floor case), then a 1024-point 32x32 dense scan grid at a 137-tile stride centered on the origin (added in a fix round because the original 61 points never landed inside an actual ore/acid region - region > 0 nowhere - so the fixture could not discriminate a real spot-selection port from a stub). Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-resources",
     seed0: seed,
     planet,
     positions,
