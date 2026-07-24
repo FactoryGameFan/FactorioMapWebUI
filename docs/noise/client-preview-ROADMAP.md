@@ -328,14 +328,10 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       ashlands/mountains/basalts biome system, volcano spots, climate aux/moisture/
       temperature, elevation, the ~24 `*_range` tile-probability expressions + the
       19-tile argmax, and planet-dispatched rendering). Every expression is
-      oracle-validated against real Factorio 2.1.12 (Space Age) to the f32 floor;
-      tile selection hits **96.85% `get_tile` agreement** (369/381) - the residual is
-      the deliberate resource-term approximation plus f32 boundary flips, not a
-      transcription error. Spec/plan:
-      `docs/superpowers/specs/2026-07-23-vulcanus-client-preview-design.md`,
+      oracle-validated against real Factorio 2.1.12 (Space Age) to the f32 floor.
+      Spec/plan: `docs/superpowers/specs/2026-07-23-vulcanus-client-preview-design.md`,
       `docs/superpowers/plans/2026-07-23-vulcanus-client-preview-v1.md`; per-expression
       notes in `docs/noise/vulcanus-*-NOTES.md`.
-      **One deliberate gap remaining:**
       - **Perf - FIXED 2026-07-24 (~50x, byte-identical).** Was ~60x heavier per
         pixel than Nauvis (~545 us/px); now **~12 us/px** (~1.4x Nauvis), i.e.
         interactive when tiled across the worker pool (~2s at 1024^2). The prime
@@ -367,12 +363,39 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
         slower). The one remaining Nauvis lever is the hot leaf itself: `basisNoise` is
         ~65% of both planets' time and is now *necessary* work - only SIMD/WASM on the
         kernel would move it, and that would help both planets equally.
-      - **Resource coupling.** A few tile `*_range` expressions reference V2 resource
-        expressions (`vulcanus_calcite_region`, `vulcanus_sulfuric_acid_region_patchy`,
-        `vulcanus_metal_tile`); these are approximated at their no-resource default, so
-        tiles are faithful everywhere EXCEPT inside resource-patch cells.
-      Deferred: V2 Vulcanus resources, V3 cliffs, demolishers (the only `voronoi_cell_id`
-      user - skipping it is why Vulcanus needed no `VoronoiNoise` port). Fulgora/Aquilo
+
+      **Vulcanus V2 (resources) DONE 2026-07-24** - the four resource region
+      fields (tungsten-ore, coal, calcite, sulfuric-acid geyser), their
+      near-spawn starting spots and biome favorabilities, and a resource overlay
+      (`view: "resources"`, three solid ores) all ported and oracle-validated.
+      Also **restored the three resource-coupling terms** V1 had approximated
+      away in the tile catalog (`vulcanus_metal_tile`, `vulcanus_calcite_region`,
+      `vulcanus_sulfuric_acid_region_patchy`), raising `get_tile` agreement from
+      **96.85% (369/381) to 98.16% (374/381)**. Full writeup, including the
+      per-resource parameter table, the two approximations (`random_penalty ->
+      1`, no richness) and their measured consequences, the `sulfuricAcidPatches`
+      residual anomaly and its resolution, and characterization of the 7
+      remaining `get_tile` mismatches (far-field f32 argmax flips, unrelated to
+      the coupling restoration): `docs/noise/vulcanus-resources-NOTES.md`.
+      - **Perf gate (Task 8, 2026-07-24): PASS.** Terrain now evaluates the
+        resource region fields on every pixel even with the overlay off, since
+        the tile catalog reads them. Measured 11.92 us/px (V1, worktree at
+        `a0ea049`) vs. 13.41 us/px (V2, this branch) at 1024x1024/seed
+        123456 - a 1.13x change, well inside the ~2x regression gate. See
+        `docs/noise/vulcanus-resources-NOTES.md`'s Performance section and
+        `.superpowers/sdd/2026-07-24-vulcanus-v2-resources/task-8-report.md`
+        for the full before/after table and methodology.
+
+      **Vulcanus V3 (sulfuric-acid geyser overlay) - now mostly renderer
+      work.** V2 already computes `sulfuricAcidRegion`/`sulfuricAcidRegionPatchy`
+      (the tile catalog needs them), oracle-validated. What is missing is only
+      the placement rule and rendering: the geyser is a fluid placed at
+      `density * 0.025` (scattered points, not a solid patch like the three V2
+      ores), so it needs its own overlay shape rather than reusing
+      `renderVulcanusResources`'s solid-footprint approach.
+
+      Deferred: V3 cliffs, demolishers (the only `voronoi_cell_id` user -
+      skipping it is why Vulcanus needed no `VoronoiNoise` port). Fulgora/Aquilo
       DO build terrain on Voronoi, so they will force that primitive.
 
 ## Milestone 5 - integration

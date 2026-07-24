@@ -1,9 +1,20 @@
 /**
- * The three solid Vulcanus ores rendered by the V2 overlay, in the game's
- * registration order (space-age/prototypes/entity/resources.lua). All three are
- * autoplace `order = "b"`, so ties fall back to registration order - in practice
- * they occupy disjoint biomes (basalts / mountains / ashlands), so overlap is
- * effectively impossible and priority is a formality.
+ * The three solid Vulcanus ores rendered by the V2 overlay, listed here in
+ * `space-age/prototypes/entity/resources.lua` order for tungsten-ore and
+ * calcite (tungsten-ore precedes calcite there). **Coal is not in that file** -
+ * despite appearing on Vulcanus, `coal` is the base-mod prototype
+ * (`base/prototypes/entity/resources.lua`), routed onto Vulcanus via
+ * `property_expression_names["entity:coal:probability"] = "vulcanus_coal_probability"`
+ * in `space-age/prototypes/planet/planet-map-gen.lua:17`. Since `base` loads
+ * before `space-age`, coal's true global registration index actually *precedes*
+ * tungsten-ore and calcite, not follows them as this array's order suggests.
+ *
+ * The order here is functionally inert either way: all three autoplace
+ * `order = "b"`, so ties fall back to registration order, but the three
+ * favorabilities gate on disjoint biomes (basalts / mountains / ashlands), so
+ * two of them are never simultaneously eligible at the same pixel and the
+ * tie-break never fires. Listed in this order for readability, not correctness -
+ * do not reorder this catalog on the strength of the citation fix above.
  *
  * The sulfuric acid geyser is deliberately absent: it is a fluid placed at
  * `density * 0.025` (scattered points, not a solid patch), deferred to V3. Its

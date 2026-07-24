@@ -62,6 +62,14 @@ perfIt(
     time("terrain + enemies", () => runRenderRequest({ ...base, view: "enemies" }));
     time("terrain + cliffs", () => runRenderRequest({ ...base, view: "cliffs" }));
     time("terrain + trees", () => runRenderRequest({ ...base, view: "trees" }));
+    // Vulcanus terrain-only, V2 gate (docs/noise/vulcanus-resources-NOTES.md): V2
+    // restored three resource-coupling terms into the tile catalog
+    // (vulcanusCatalog.ts), so terrain now evaluates the ore region fields even
+    // when the resource overlay itself is off. Compared against the V1 baseline
+    // (~12 us/px, recorded in client-preview-ROADMAP.md) to catch a regression.
+    const vulcanusTerrain = time("vulcanus terrain (V1 tiles + V2 coupling)", () =>
+      runRenderRequest({ ...base, planet: "vulcanus", view: "terrain" }),
+    );
 
     const terrainCtx = {
       seed0: SEED,
@@ -105,10 +113,13 @@ perfIt(
     });
 
     const header = `render cost @ ${N}x${N}, tpp 1, seed ${SEED} (median of 3)`;
+    const pxCount = N * N;
     const summary = [
       "",
       `climate+tiles portion of terrain: ~${(terrain - elev).toFixed(0)} ms (the tiling target)`,
       `all 4 overlays add over terrain:  ~${(all - terrain).toFixed(0)} ms`,
+      `nauvis terrain:   ~${((terrain * 1000) / pxCount).toFixed(2)} us/px`,
+      `vulcanus terrain: ~${((vulcanusTerrain * 1000) / pxCount).toFixed(2)} us/px`,
     ].join("\n");
     writeFileSync(
       "perf-result.txt",

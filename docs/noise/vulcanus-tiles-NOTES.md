@@ -116,35 +116,48 @@ COMBINE SHARED:
 - `volcanic_soil_light_range = max(soil_light_mountains, soil_light_ashlands, 10*(sulfuric_acid_region_patchy + 0.2))`
 - `volcanic_soil_dark_range = max(soil_dark_mountains, soil_dark_ashlands)`
 
-## Resource-term approximations (explicit user/controller decision)
+## Resource-term coupling (restored in V2 - was approximated away in V1)
 
-V2 resource expressions are NOT ported (out of scope for V1). Per an explicit user
-decision they are approximated by their no-resource default. Every approximation:
+V1 shipped without the V2 resource expressions and approximated the three
+coupling sites at their no-resource default (`vulcanus_metal_tile -> 0`,
+`vulcanus_calcite_region`/`vulcanus_sulfuric_acid_region_patchy` dropped from
+their `max(...)` branch). **V2 (`docs/noise/vulcanus-resources-NOTES.md`) ported
+`vulcanus_metal_tile`, `vulcanus_calcite_region`, and
+`vulcanus_sulfuric_acid_region_patchy` for real** (Task 5,
+`src/noise/tiles/vulcanusCatalog.ts`), and all six coupling sites below now read
+the live fields instead of a stub. This passage previously described those three
+as active approximations; it does not anymore - see V2's notes doc for what
+replaced them and for the one approximation that remains.
 
-1. `vulcanus_metal_tile -> 0`. Consequences:
-   - `lava_basalts_range` / `lava_hot_basalts_range`: `100 * (1 - metal) = 100`, so
-     the `min(basalts_term, 100)` cap never binds (basalts_term <= 1). Faithful.
-   - `volcanic_cracks_warm_range` / `volcanic_smooth_stone_warm_range`: the
-     `+ 50000 * metal` term becomes `+ 0` (dropped). There is no dedicated
-     `vulcanus_metal_tile` tile in the tile set, so no tile is lost - the metal
-     term only *boosted* cracks-warm/smooth-warm inside a metal patch, so those two
-     tiles are slightly *under*-selected inside metal patches (a resource-local
-     effect).
+The six coupling sites, now live:
 
-2. `vulcanus_calcite_region -> DROP its max branch`. In
-   `volcanic_jagged_ground_range` the `max(calcite_region + 0.2, elev_term)` becomes
-   just `elev_term`. jagged-ground is thus under-selected only where a calcite patch
-   would have raised it (resource-local).
+1. `lava_basalts_range` / `lava_hot_basalts_range`: `100 * (1 - metal_tile)`
+   inside `min(basalts_term, 100 * (1 - metal_tile))`. In practice this cap still
+   rarely binds (`basalts_term <= 1` almost everywhere), but it is no longer
+   hardcoded to `100`.
+2. `volcanic_cracks_warm_range` / `volcanic_smooth_stone_warm_range`:
+   `+ 50000 * metal_tile`, a large boost that dominates whenever `metal_tile > 0`
+   (i.e. inside a tungsten-ore region), pushing those two tiles to win the argmax
+   there.
+3. `volcanic_jagged_ground_range`: `max(calcite_region + 0.2, elev_term)` - the
+   calcite branch now genuinely competes with the elevation-band branch.
+4. `volcanic_soil_light_range`: `max(mountains, ashlands, 10 * (sulfuric_region_patchy + 0.2))`
+   - the sulfuric-acid branch now genuinely competes with the other two.
 
-3. `vulcanus_sulfuric_acid_region_patchy -> DROP its max branch`. In
-   `volcanic_soil_light_range` the `max(mountains, ashlands, 10*(sulfuric + 0.2))`
-   drops the sulfuric term -> `max(mountains, ashlands)`. soil-light is under-selected
-   only inside a sulfuric-acid patch (resource-local).
+**One approximation remains, inside `vulcanus_metal_tile` itself** (not in the
+tile catalog): the game's `vulcanus_metal_tile` reads
+`random_penalty_between(0.9, 1, 1)`, a batch op a per-pixel renderer cannot
+reproduce, approximated as `1`. This makes our `metal_tile` an **upper bound**
+on the game's value (see `docs/noise/vulcanus-resources-NOTES.md` for the
+measured envelope - worst divergence 132.86, zero envelope violations across
+1085 fixture points). This is the only resource-term approximation left
+anywhere in the tile catalog; the tile-argmax coupling above is otherwise exact.
 
-Net effect: tiles are correct EVERYWHERE except inside resource-patch neighborhoods,
-where a handful of cells that the game paints as cracks-warm / smooth-stone-warm /
-jagged-ground / soil-light may resolve to a neighboring tile instead. These mismatches
-are expected to be sparse and spatially clustered at high-metal/calcite/sulfur spots.
+Restoring the three fields raised `get_tile` agreement from 96.85% (369/381) to
+98.16% (374/381) - see `docs/noise/vulcanus-resources-NOTES.md` for the
+characterization of the 7 mismatches that remain (all far-field f32
+argmax-boundary flips at points where the restored fields sit at their
+no-patch floor, unrelated to the coupling restoration).
 
 ## Validation
 

@@ -13,11 +13,14 @@ export interface RenderVulcanusTerrainOptions {
   /** World tiles per pixel. Default 1. */
   readonly tilesPerPixel?: number;
   /**
-   * Non-seed resolver params. V1 renders the Vulcanus field stack with its
-   * neutral/default control levers (see `EvalCtx`'s Vulcanus fields,
-   * `withCtxDefaults`) - only `startingPositions` (which affects the
-   * `lava_spawn_excluder` distance term) is expected to be threaded through in
-   * practice.
+   * Non-seed resolver params (see `EvalCtx`'s Vulcanus fields,
+   * `withCtxDefaults`). `startingPositions` (which affects the
+   * `lava_spawn_excluder` distance term) is threaded through, and since V2
+   * restored the resource-coupling terms into the tile catalog
+   * (`docs/noise/vulcanus-resources-NOTES.md`), `vulcanusResourceControls` is
+   * now threaded on every terrain-family call too - the tile catalog reads
+   * `metalTile`/`calciteRegion`/`sulfuricAcidRegionPatchy`, all of which depend
+   * on the resource control levers (size/frequency), not just the seed.
    */
   readonly ctx?: Omit<EvalCtxInput, "seed0">;
 }
