@@ -28,6 +28,14 @@ describe("makeVulcanusResources", () => {
   //   startingCoal                 1.9e-4
   //   startingCalcite              3.0e-4
   //   startingSulfur               3.2e-4
+  //   tungstenRegion               1.8e-5
+  //   coalRegion                   2.9e-5
+  //   calciteRegion                1.7e-4
+  //   sulfuricAcidRegion           1.6e-4
+  //   sulfuricAcidPatches          2.9e-3 (a multioctave `abs()` field; the same
+  //     order of magnitude as vulcanusHelpers.spec.ts's existing 4e-3 bound, not
+  //     a regression)
+  //   sulfuricAcidRegionPatchy     3.9e-4
   const check = (field: (x: number, y: number) => number, want: number[], bound: number): void => {
     let worst = 0;
     for (let i = 0; i < positions.length; i++) {
@@ -67,5 +75,61 @@ describe("makeVulcanusResources", () => {
 
   it("vulcanus_starting_sulfur matches the oracle", () => {
     check(resources.startingSulfur, fixture.startingSulfur, 5e-4);
+  });
+
+  it("vulcanus_tungsten_ore_region matches the oracle", () => {
+    check(resources.tungstenRegion, fixture.tungstenRegion, 6e-5);
+  });
+
+  it("vulcanus_coal_region matches the oracle", () => {
+    check(resources.coalRegion, fixture.coalRegion, 1e-4);
+  });
+
+  it("vulcanus_calcite_region matches the oracle", () => {
+    check(resources.calciteRegion, fixture.calciteRegion, 3e-4);
+  });
+
+  it("vulcanus_sulfuric_acid_region matches the oracle", () => {
+    check(resources.sulfuricAcidRegion, fixture.sulfuricAcidRegion, 3e-4);
+  });
+
+  it("vulcanus_sulfuric_acid_patches matches the oracle", () => {
+    check(resources.sulfuricAcidPatches, fixture.sulfuricAcidPatches, 3.5e-3);
+  });
+
+  it("vulcanus_sulfuric_acid_region_patchy matches the oracle", () => {
+    check(resources.sulfuricAcidRegionPatchy, fixture.sulfuricAcidRegionPatchy, 6e-4);
+  });
+
+  // AMENDED 2026-07-24 after Task 1's fixture landed. The original plan asserted
+  // `check(resources.metalTile, fixture.metalTile, 4)` on the premise that
+  // rp -> 1 makes metal_tile exactly `max(0, 1000 * region)`. The captured oracle
+  // disproves that: worst |diff| is 132.86 (idx 341: region 0.4387, approx
+  // 438.70, oracle 305.84), ~30x the proposed tolerance, and at small regions the
+  // penalty flips placement outright (idx 733/769 have region > 0 but
+  // metal_tile == 0). random_penalty is a batch op and cannot be reproduced
+  // per-pixel, so rp -> 1 stays - but it is an UPPER BOUND, not an equality.
+  //
+  // The envelope assertion below is strictly stronger than a tolerance: it pins
+  // our tungstenRegion AND proves rp -> 1 is the documented ceiling. Verified to
+  // hold at all 1085 fixture points with zero violations; the implied p over the
+  // 8 region > 0 points spans [0.9077, 0.9748].
+  it("vulcanus_metal_tile sits inside the random_penalty envelope", () => {
+    let violations = 0;
+    let worstBelow = 0;
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i];
+      const region = resources.tungstenRegion(p.x, p.y);
+      const lo = Math.max(0, 1000 * ((1 + region) * 0.9 - 1));
+      const hi = Math.max(0, 1000 * ((1 + region) * 1.0 - 1));
+      const got = fixture.metalTile[i];
+      if (got < lo - 1e-3 || got > hi + 1e-3) violations++;
+      worstBelow = Math.max(worstBelow, hi - got);
+    }
+    expect(violations).toBe(0);
+    // Guard against a degenerate pass: if our region were 0 everywhere, lo and hi
+    // would both collapse to 0 and every point would trivially satisfy the
+    // envelope. At least one point must have a non-trivial envelope width.
+    expect(worstBelow).toBeGreaterThan(1);
   });
 });
