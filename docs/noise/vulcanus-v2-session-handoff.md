@@ -36,11 +36,11 @@ one fresh implementer subagent per task, a task review after each.
 
 | Task | Status |
 | --- | --- |
-| 1. Capture the oracle fixture | **complete** (`9369cf6`, review clean) |
-| 2. Resource levers on `EvalCtx` | pending |
-| 3. Favorabilities + starting ore spots | pending |
-| 4. Spot-noise wrapper + the four regions | pending |
-| 5. Restore the tile coupling | pending |
+| 1. Capture the oracle fixture | **complete** (`9369cf6`, review clean, 1 fix round) |
+| 2. Resource levers on `EvalCtx` | **complete** (`ba50dba`, review clean, 0 findings) |
+| 3. Favorabilities + starting ore spots | **complete** (`614edec`, review clean) |
+| 4. Spot-noise wrapper + the four regions | **complete** (`c06db88`, 1 fix round) |
+| 5. Restore the tile coupling | next |
 | 6. Overlay catalog + renderer | pending |
 | 7. Pipeline + panel wiring | pending |
 | 8. Perf, notes, roadmap | pending |
@@ -48,7 +48,40 @@ one fresh implementer subagent per task, a task review after each.
 Commits so far:
 
 - `fe4f690` chore: git-ignore the superpowers SDD scratch directory
-- `8f69c1e` test(vulcanus): capture V2 resource oracle fixture (Task 1, being amended)
+- `8f69c1e` + `9369cf6` Task 1, the oracle fixture (second commit widened the grid)
+- `a0178a2` this handoff doc
+- `a197761` docs: the measured `random_penalty` envelope (see below)
+- `ba50dba` Task 2, `EvalCtx` levers
+- `614edec` Task 3, favorabilities + starting spots
+- `201d475` + `c06db88` Task 4, spot-noise wrapper + regions (second commit fixed comments)
+
+## Accuracy of the port, measured
+
+Worst absolute residual against the game, over all 1085 fixture points:
+
+| Expression | worst | note |
+| --- | --- | --- |
+| tungstenRegion | 1.79e-5 | median 2.95e-8 |
+| calciteRegion | 1.66e-4 | median exactly 0 - over half bit-exact |
+| the 8 Task 3 expressions | 3.2e-4 | startingSulfur is the worst |
+| sulfuricAcidPatches | 2.92e-3 | see the coordinate-representability note below |
+
+**`spotSelection.ts` needed no change.** The plan's main open worry was that
+driving Factorio's favorability-sorted trim with a discriminating (0/1)
+favorability for the first time would expose a bug in that shared primitive. It
+did not.
+
+**Why `sulfuricAcidPatches` is 10x everything else, and why that is fine.** Split
+the fixture by whether a position's coordinates are exactly representable: over
+the 1063 representable positions (including all 1024 dense-grid points) the worst
+residual is **1.69e-4**. Every one of the top 10 residuals is among the 22 ring
+positions with irrational coordinates, with a uniform implied positional offset of
+2.3e-3 to 3.7e-3 tiles - the game evaluated at a marginally different coordinate
+than we do. `input_scale = 1/3` makes this the highest-frequency multioctave in
+the port, about 1.7x outside the primitive's oracle-verified envelope (those cases
+top out at 0.2), so the same offset is invisible in every other field. Model error
+was ruled out directly: f32-rounding the composed octave coordinates moves the
+value only ~1e-4.
 
 ## Task 1 history - two findings worth carrying forward
 
@@ -145,6 +178,23 @@ for(const [r,s] of pairs){const R=f[r],S=f[s];
 
 ## Untested / known-thin areas to carry forward
 
-- Non-default frequency sliders produce a fractional `region_size`
-  (`500 + 500/f`), which the port floors. Only `f = 1` is oracle-covered. First
+**Task 8 must write these into `docs/noise/vulcanus-resources-NOTES.md`.**
+`src/noise/expressions/vulcanusResources.ts:231` already forward-references that
+file, and the `region_size` caveat is currently documented *only* in that dangling
+comment.
+
+- **Non-default frequency sliders** produce a fractional `region_size`
+  (`base + base/f`), which the port floors. Only `f = 1` is oracle-covered. First
   thing to check if a non-default-frequency preset renders wrong.
+- **Near-spawn starting ore patches are unverified.** No fixture point has a
+  `starting_*` value above about -0.5, so the "inside the spot" regime is
+  untested. Judged acceptable rather than worth another capture round:
+  `startingSpotAtAngle` is a single branch-free linear-in-distance expression,
+  already pinned by 1085 points spanning -700 to -0.5, so no code path activates
+  only near the centre. Contrast with the Task 1 gap, where the spot machinery
+  genuinely never ran.
+- **The `min(maximum_spot_basement_radius, radius)` cap is omitted** from the cone
+  radius. Unreachable at any legal slider (`sliderRescale(v, 2)` maxes at 2, so
+  radius <= 2 * 1.2 * 25 = 60 < 128). Deliberate - do not "fix" it.
+- `distanceAt` in `vulcanusResources.ts` duplicates the one in
+  `vulcanusBiomes.ts:124`. Correct, just a second single-slot cache.
