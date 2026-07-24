@@ -9,22 +9,27 @@ import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
  * evaluates every tile's `probability_expression` and paints the argmax's
  * `map_color` - this asserts it names the SAME tile the game placed.
  *
- * Agreement is NOT expected to be 100%: a few `*_range` expressions reference V2
- * resource fields (`vulcanus_metal_tile`, `vulcanus_calcite_region`,
- * `vulcanus_sulfuric_acid_region_patchy`) that V1 approximates as their no-resource
- * default (see `docs/noise/vulcanus-tiles-NOTES.md`). Those approximations only move
- * the argmax INSIDE a resource patch, so the handful of mismatches should be sparse
- * and localized. A LOW agreement or WIDESPREAD mismatches would instead mean a
- * genuinely wrong range transcription - so the floor here is deliberately high.
+ * Agreement is NOT expected to be 100%. As of V2 (Task 5) the three resource-coupling
+ * terms (`vulcanus_metal_tile`, `vulcanus_calcite_region`,
+ * `vulcanus_sulfuric_acid_region_patchy`) are fully restored in every `*_range`
+ * expression that references them - V1's no-resource-default stubs are gone. The
+ * remaining gap is the game's `random_penalty_between(0.9, 1, 1)` inside
+ * `vulcanus_metal_tile`, which this port approximates as `1` (an upper bound) because
+ * `random_penalty` is a whole-batch operation a per-pixel renderer cannot reproduce
+ * (see `src/noise/expressions/vulcanusResources.ts`); at a patch edge where the game
+ * rolled a low penalty, that can flip placement outright, so a residual sliver of
+ * disagreement right at ore-patch boundaries is expected, not a bug.
  *
- * Measured 96.85% (369/381). The 12 mismatches are all ADJACENT-tile flips within
- * one biome family (folds-flat/folds, smooth-stone/cracks-warm, jagged/folds,
- * soil-light/soil-dark, ash-soil/pumice, ash-flats/ash-light, cracks-hot/cracks-warm),
- * spread across radii 192-2079 - the signature of the known far-field f32 coordinate
- * floor in elevation/aux/moisture tipping a near-tie argmax across a range boundary,
- * plus a few basalt warm/cold flips consistent with the dropped `50000 * metal` term.
- * No single range expression is systematically wrong (that would cluster many cells of
- * one tile), so this is the resource-approximation + precision floor, not a bug.
+ * Measured 98.16% (374/381), up from V1's 96.85% (369/381) - restoring the coupling
+ * terms fixed 5 of the original 12 mismatches. The 7 that remain are all far from any
+ * resource patch (`metalTile`/`calciteRegion`/`sulfuricAcidRegionPatchy` all read their
+ * no-patch floor there) and are ADJACENT-tile flips within one biome family
+ * (folds-flat/folds, smooth-stone/cracks-warm, ash-soil/pumice, ash-flats/ash-light,
+ * cracks-hot/cracks-warm), spread across radii 230-2079 - the same known far-field f32
+ * coordinate floor in elevation/aux/moisture tipping a near-tie argmax across a range
+ * boundary that was already present in V1, now with the resource terms ruled out as a
+ * cause. No single range expression is systematically wrong (that would cluster many
+ * cells of one tile), so this is precision floor, not a bug.
  */
 describe("makeVulcanusTileResolver vs get_tile oracle", () => {
   const resolve = makeVulcanusTileResolver({ seed0: fixture.seed0 });
@@ -39,8 +44,9 @@ describe("makeVulcanusTileResolver vs get_tile oracle", () => {
       if (got === want[i]) agree++;
     }
     const agreement = agree / positions.length;
-    // Floor 0.95 (measured 0.9685): high enough that a genuinely wrong range
-    // transcription fails it, with modest headroom for the boundary-flip count.
-    expect(agreement).toBeGreaterThan(0.95);
+    // Floor 0.978 (measured 0.9816, up from V1's 0.9685): high enough that a
+    // genuinely wrong range transcription fails it, with modest headroom for the
+    // remaining boundary-flip count.
+    expect(agreement).toBeGreaterThan(0.978);
   });
 });

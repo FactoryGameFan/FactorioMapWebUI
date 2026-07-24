@@ -13,10 +13,12 @@
  *
  * `tile_lightening = 28`: a game `map_color = {r = tile_lightening + N, ...}` stores
  * the byte `28 + N`; literal `{r, g, b}` colors are used verbatim. See
- * `docs/noise/vulcanus-tiles-NOTES.md` for the full tile table, field bindings, and
- * the resource-term approximations (`vulcanus_metal_tile -> 0`, and the
- * `vulcanus_calcite_region` / `vulcanus_sulfuric_acid_region_patchy` `max(...)`
- * branches dropped - V2 resource fields are out of scope for V1).
+ * `docs/noise/vulcanus-tiles-NOTES.md` for the full tile table and field bindings.
+ * V2 restored the three resource-coupling terms (`vulcanus_metal_tile`,
+ * `vulcanus_calcite_region`, `vulcanus_sulfuric_acid_region_patchy`) that V1 had
+ * approximated away; the only remaining approximation is
+ * `random_penalty_between(0.9, 1, 1) -> 1` inside `vulcanus_metal_tile` itself (see
+ * `src/noise/expressions/vulcanusResources.ts`).
  */
 
 import type { EvalCtxInput } from "../eval/ctx";
@@ -29,6 +31,7 @@ import { makeVulcanusClimate, type VulcanusClimate } from "../expressions/vulcan
 import { makeVulcanusCracks } from "../expressions/vulcanusCracks";
 import { makeVulcanusElevation, type VulcanusElevation } from "../expressions/vulcanusElevation";
 import { makeVulcanusHelpers, type VulcanusHelpers } from "../expressions/vulcanusHelpers";
+import { makeVulcanusResources } from "../expressions/vulcanusResources";
 import { makeVulcanusSpawn } from "../expressions/vulcanusSpawn";
 import { rangeSelectBase } from "../rocks/rockCatalog";
 
@@ -55,6 +58,12 @@ export interface VulcanusTileFields {
   mountainLavaSpots(x: number, y: number): number;
   rockNoise(x: number, y: number): number;
   distance(x: number, y: number): number;
+  /** `vulcanus_metal_tile = max(0, vulcanus_tungsten_ore_probability)` (V2). */
+  metalTile(x: number, y: number): number;
+  /** `vulcanus_calcite_region` (V2). */
+  calciteRegion(x: number, y: number): number;
+  /** `vulcanus_sulfuric_acid_region_patchy` (V2). */
+  sulfuricAcidRegionPatchy(x: number, y: number): number;
 }
 
 /**
@@ -101,11 +110,9 @@ export function makeMountainLavaSpots(
 
 /**
  * Build the 19-tile Vulcanus catalog from the field closures. Each tile's
- * `probability` is its `probability_expression` transcribed verbatim, with the
- * resource-term approximations documented in `vulcanus-tiles-NOTES.md`:
- * `vulcanus_metal_tile -> 0` (so `50000 * metal` and `100 * (1 - metal)` collapse),
- * and the `vulcanus_calcite_region` / `vulcanus_sulfuric_acid_region_patchy`
- * `max(...)` branches dropped.
+ * `probability` is its `probability_expression` transcribed verbatim, including the
+ * `vulcanus_metal_tile` / `vulcanus_calcite_region` / `vulcanus_sulfuric_acid_region_patchy`
+ * resource-coupling terms (V2).
  */
 export function makeVulcanusTileCatalog(f: VulcanusTileFields): VulcanusTile[] {
   // --- named *_range building blocks (shared by multiple tiles) --------------
@@ -113,14 +120,13 @@ export function makeVulcanusTileCatalog(f: VulcanusTileFields): VulcanusTile[] {
   // lava_spawn_excluder = distance > 10 (boolean -> 1/0).
   const lavaSpawnExcluder = (x: number, y: number): number => (f.distance(x, y) > 10 ? 1 : 0);
 
-  // lava_basalts_range: min cap is 100 * (1 - metal) = 100 (metal -> 0), never binds.
   const lavaBasaltsRange = (x: number, y: number): number =>
     100 *
     min(
       f.basaltsBiome(x, y) *
         lavaSpawnExcluder(x, y) *
         rangeSelectBase(f.elev(x, y), -5000, 0, 1, -1000, 1),
-      100,
+      100 * (1 - f.metalTile(x, y)),
     );
 
   const lavaMountainsRange = (x: number, y: number): number =>
@@ -132,7 +138,7 @@ export function makeVulcanusTileCatalog(f: VulcanusTileFields): VulcanusTile[] {
       f.basaltsBiome(x, y) *
         lavaSpawnExcluder(x, y) *
         rangeSelectBase(f.elev(x, y), -5000, min(0, 5 * (-2 + 4 * f.rockNoise(x, y))), 1, -1000, 1),
-      100,
+      100 * (1 - f.metalTile(x, y)),
     );
 
   const lavaHotMountainsRange = (x: number, y: number): number =>
@@ -141,17 +147,19 @@ export function makeVulcanusTileCatalog(f: VulcanusTileFields): VulcanusTile[] {
   const volcanicCracksHotRange = (x: number, y: number): number =>
     f.basaltsBiome(x, y) * rangeSelectBase(f.elev(x, y), 0, 8, 1, 0, 20);
 
-  // + 50000 * metal dropped (metal -> 0).
   const volcanicCracksWarmRange = (x: number, y: number): number =>
-    f.basaltsBiome(x, y) * rangeSelectBase(f.elev(x, y), 8, 22, 1, 0, 5) + (f.aux(x, y) - 0.05);
+    f.basaltsBiome(x, y) * rangeSelectBase(f.elev(x, y), 8, 22, 1, 0, 5) +
+    (f.aux(x, y) - 0.05) +
+    50000 * f.metalTile(x, y);
 
   const volcanicCracksColdRange = (x: number, y: number): number =>
     (0.5 - f.ashlandsBiome(x, y)) * rangeSelectBase(f.elev(x, y), 20, 100, 1, 0, 1) +
     (f.aux(x, y) - 0.3);
 
-  // + 50000 * metal dropped (metal -> 0).
   const volcanicSmoothStoneWarmRange = (x: number, y: number): number =>
-    f.basaltsBiome(x, y) * rangeSelectBase(f.elev(x, y), 8, 20, 1, 0, 5) - (f.aux(x, y) - 0.05);
+    f.basaltsBiome(x, y) * rangeSelectBase(f.elev(x, y), 8, 20, 1, 0, 5) -
+    (f.aux(x, y) - 0.05) +
+    50000 * f.metalTile(x, y);
 
   const volcanicSmoothStoneRange = (x: number, y: number): number =>
     (0.5 - f.ashlandsBiome(x, y)) * rangeSelectBase(f.elev(x, y), 20, 100, 1, 0, 1) -
@@ -170,9 +178,15 @@ export function makeVulcanusTileCatalog(f: VulcanusTileFields): VulcanusTile[] {
     3 * (f.mountainVolcanoSpots(x, y) - 0.85) -
     2 * (f.aux(x, y) - 0.5);
 
-  // max(calcite_region + 0.2, ...) branch dropped (calcite -> out of scope).
   const volcanicJaggedGroundRange = (x: number, y: number): number =>
-    5 * min(10, rangeSelectBase(f.elev(x, y), 1010, 2000, 2, -10, 1) + 3 * (f.aux(x, y) - 0.5));
+    5 *
+    min(
+      10,
+      max(
+        f.calciteRegion(x, y) + 0.2,
+        rangeSelectBase(f.elev(x, y), 1010, 2000, 2, -10, 1) + 3 * (f.aux(x, y) - 0.5),
+      ),
+    );
 
   const volcanicSoilLightRangeMountains = (x: number, y: number): number =>
     min(0.8, 4 * (f.mountainsBiome(x, y) - 0.25)) -
@@ -213,9 +227,12 @@ export function makeVulcanusTileCatalog(f: VulcanusTileFields): VulcanusTile[] {
   const volcanicSoilDarkRangeAshlands = (x: number, y: number): number =>
     2 * (f.ashlandsBiome(x, y) - 0.5) - 1.5 * (f.aux(x, y) - 0.25) + 1.5 * (f.moisture(x, y) - 0.8);
 
-  // 10 * (sulfuric_acid_region_patchy + 0.2) branch dropped (sulfuric -> out of scope).
   const volcanicSoilLightRange = (x: number, y: number): number =>
-    max(volcanicSoilLightRangeMountains(x, y), volcanicSoilLightRangeAshlands(x, y));
+    max(
+      volcanicSoilLightRangeMountains(x, y),
+      volcanicSoilLightRangeAshlands(x, y),
+      10 * (f.sulfuricAcidRegionPatchy(x, y) + 0.2),
+    );
 
   const volcanicSoilDarkRange = (x: number, y: number): number =>
     max(volcanicSoilDarkRangeMountains(x, y), volcanicSoilDarkRangeAshlands(x, y));
@@ -351,6 +368,7 @@ export function makeVulcanusTileResolver(
   const biomes: VulcanusBiomes = makeVulcanusBiomes(ctx, helpers, spawn, cracks);
   const climate: VulcanusClimate = makeVulcanusClimate(ctx, helpers, cracks);
   const elevation: VulcanusElevation = makeVulcanusElevation(ctx, helpers, biomes, cracks, climate);
+  const resources = makeVulcanusResources(ctx, helpers, spawn, biomes, cracks);
 
   const mountainLavaSpots = makeMountainLavaSpots(helpers, biomes);
   const rockNoise = makeVulcanusRockNoise(ctx.seed0);
@@ -368,6 +386,9 @@ export function makeVulcanusTileResolver(
     mountainLavaSpots,
     rockNoise,
     distance: (x, y) => distanceFromNearestPoint(x, y, ctx.startingPositions),
+    metalTile: (x, y) => resources.metalTile(x, y),
+    calciteRegion: (x, y) => resources.calciteRegion(x, y),
+    sulfuricAcidRegionPatchy: (x, y) => resources.sulfuricAcidRegionPatchy(x, y),
   };
 
   const catalog = makeVulcanusTileCatalog(fields);
