@@ -4,6 +4,32 @@ import { seedNormalized, seedSmall } from "../expressions/vulcanusSeed";
 export type { Point };
 
 /**
+ * `control:<resource>:frequency|size` for one Vulcanus resource. Richness is
+ * deliberately absent: the client preview renders placement, not yield, so no
+ * Vulcanus richness expression is ported (see the V2 design spec).
+ */
+export interface VulcanusResourceLevers {
+  readonly frequency: number;
+  readonly size: number;
+}
+
+/** The four Vulcanus resource autoplace controls, keyed by their in-code name. */
+export interface VulcanusResourceControls {
+  readonly tungstenOre: VulcanusResourceLevers;
+  readonly vulcanusCoal: VulcanusResourceLevers;
+  readonly calcite: VulcanusResourceLevers;
+  readonly sulfuricAcidGeyser: VulcanusResourceLevers;
+}
+
+/** Neutral/default sliders - the same `1` convention as `vulcanusVolcanismFrequency`. */
+export const DEFAULT_VULCANUS_RESOURCE_CONTROLS: VulcanusResourceControls = {
+  tungstenOre: { frequency: 1, size: 1 },
+  vulcanusCoal: { frequency: 1, size: 1 },
+  calcite: { frequency: 1, size: 1 },
+  sulfuricAcidGeyser: { frequency: 1, size: 1 },
+};
+
+/**
  * The complete free-variable environment the `elevation_lakes` tree needs. Every
  * field maps to a game noise variable: `seed0 = map_seed`,
  * `waterLevel = 10*log2(control:water:size)`, `segmentationMultiplier =
@@ -40,6 +66,11 @@ export interface EvalCtx {
   vulcanusVolcanismSize: number;
   /** `control:temperature:bias` (wire value). Default = `0` (no bias). */
   temperatureBias: number;
+  /**
+   * `control:<resource>:frequency|size` for the four Vulcanus resources (V2).
+   * Consumed only by `makeVulcanusResources`; every other planet ignores it.
+   */
+  vulcanusResourceControls: VulcanusResourceControls;
   /**
    * `map_seed_normalized`, the engine's own free var. Computed default:
    * `seedNormalized(seed0)` (Task 2). Overridable only to cross-check a fixture
@@ -84,6 +115,7 @@ export function withCtxDefaults(input: EvalCtxInput): EvalCtx {
       input.vulcanusVolcanismFrequency ?? DEFAULT_CTX_FIELDS.vulcanusVolcanismFrequency,
     vulcanusVolcanismSize: input.vulcanusVolcanismSize ?? DEFAULT_CTX_FIELDS.vulcanusVolcanismSize,
     temperatureBias: input.temperatureBias ?? DEFAULT_CTX_FIELDS.temperatureBias,
+    vulcanusResourceControls: input.vulcanusResourceControls ?? DEFAULT_VULCANUS_RESOURCE_CONTROLS,
     mapSeedNormalized: input.mapSeedNormalized ?? seedNormalized(input.seed0),
     mapSeedSmall: input.mapSeedSmall ?? seedSmall(input.seed0),
   };
