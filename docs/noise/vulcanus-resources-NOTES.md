@@ -165,7 +165,7 @@ The 7 that remain all sit where `metalTile`/`calciteRegion`/
 `sulfuricAcidRegionPatchy` read their **no-patch floor** - `metalTile ~= 0`,
 `calciteRegion ~= -1`, `sulfuricAcidRegionPatchy ~= -1` - at every one of the 7
 positions. None of the restored coupling terms are active there. The
-mismatches sit at radii 230-2079 from spawn, are adjacent-tile flips within
+mismatches sit at radii 192-2079 from spawn, are adjacent-tile flips within
 one biome family (e.g. at (320, 0): `cracks-warm 4.4029` vs.
 `smooth-stone-warm 4.3087`, a 0.09 margin), and show no clustering by tile or
 region. This is the same pre-existing far-field f32 argmax-boundary floor
@@ -203,10 +203,16 @@ in play there.
    activate near zero.
 3. **The `min(maximum_spot_basement_radius, radius)` cap is deliberately
    omitted.** Every Vulcanus resource's radius is
-   `sliderRescale(v, 2) * min(1.2, oreDist) * 25`, and `sliderRescale` caps at
-   2, so `radius <= 2 * 1.2 * 25 = 60`, always under
-   `MAX_SPOT_BASEMENT_RADIUS` (128). Unreachable by construction - do not "fix"
-   this by adding the cap defensively; it would be dead code.
+   `sliderRescale(v, 2) * min(1.2, oreDist) * 25`. `sliderRescale` itself is
+   NOT bounded (`2^(log2(v)/log2(6)*log2(n))` is unbounded for an arbitrary
+   `v`) - it stays `<= 2` here only because the `size` slider's own range is
+   bounded to `[1/6, 6]`, so `radius <= 2 * 1.2 * 25 = 60`, always under
+   `MAX_SPOT_BASEMENT_RADIUS` (128) for every reachable UI state. This does
+   NOT hold for a `size` value outside the slider's range that only an
+   imported map-exchange string can carry (e.g. `size = 100` gives radius
+   ~178 > 128, where the game's cap would bind and this port's would not) -
+   do not "fix" this by adding the cap defensively for the slider-reachable
+   range; it would be dead code there.
 4. **The sulfuric-acid geyser overlay is deferred to V3** (a scattered-point
    fluid placement, not a solid patch - see `vulcanusResourceCatalog.ts`'s
    module comment). Its region field (`sulfuricAcidRegion` /
@@ -260,3 +266,34 @@ floor per pixel - not a new O(N) or unmemoized hot path. None of the three
 cache, a missing `memoXY` on a `place_*` wrapper, or an oversized 3x3 region
 scan) needed investigating, since the measured regression never approached the
 gate.
+
+**Correction (final-fix pass, 2026-07-24): "vulcanus terrain" above is NOT the
+view non-dev users actually get.** Task 7 made `resources` the default
+Vulcanus view (`ElevationPreviewPanel.vue`'s `effectiveView` returns
+`"resources"` for Vulcanus unless dev mode is on and the user has explicitly
+picked `"terrain"`). `renderVulcanusResources` builds its own, independent
+Vulcanus field stack (helpers/spawn/cracks/biomes/resources) rather than
+reusing the terrain render's - so on the default path the ore DAG and its
+upstream (favorabilities, starting spots, spot-noise search) run **twice** per
+pixel, once for the terrain paint and once for the resource overlay. The
+table above only measured the terrain-only path, understating the cost users
+actually pay.
+
+Re-measured with the same harness, now including `test/render-cost.perf.spec.ts`'s
+"vulcanus resources (default Vulcanus view)" case:
+
+| | V1 terrain baseline | vulcanus terrain (this branch) | vulcanus resources (this branch, the default view) |
+|---|---|---|---|
+| Total, 1024x1024 | 12,497 ms | 14,638 ms | 19,107 ms |
+| Per pixel | 11.92 us/px | 13.96 us/px | 18.22 us/px |
+| Ratio vs. V1 baseline | 1.00x | 1.17x | **1.53x** |
+
+**Gate verdict: still PASS.** 1.53x is well inside the ~2x regression gate, so
+this is a record correction, not a regression - but the number the merge
+decision should look at is 18.22 us/px / 1.53x (the default path), not the
+13.96 us/px / 1.17x terrain-only figure above. The gap between the two
+(13.96 -> 18.22 us/px, +30%) is exactly the double field-stack cost described
+above, not a separate bug. If this ever needs closing, the fix is sharing one
+field stack between the terrain paint and the resource overlay rather than
+building `renderVulcanusResources`'s own - not investigated here since the
+gate still passes.

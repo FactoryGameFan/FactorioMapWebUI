@@ -70,6 +70,17 @@ perfIt(
     const vulcanusTerrain = time("vulcanus terrain (V1 tiles + V2 coupling)", () =>
       runRenderRequest({ ...base, planet: "vulcanus", view: "terrain" }),
     );
+    // Vulcanus resources, V2 gate (docs/noise/vulcanus-resources-NOTES.md): this is
+    // the view non-dev users actually get for Vulcanus (ElevationPreviewPanel.vue's
+    // `effectiveView` defaults Vulcanus to "resources", not "terrain"), and
+    // `renderVulcanusResources` builds a SECOND, independent Vulcanus field stack
+    // (helpers/spawn/cracks/biomes/resources) on top of the terrain render's own -
+    // so this is slower than "vulcanus terrain" above, not a bug. Compared against
+    // the same V1 terrain-only baseline as the terrain row to catch a regression on
+    // the path users default to.
+    const vulcanusResources = time("vulcanus resources (default Vulcanus view)", () =>
+      runRenderRequest({ ...base, planet: "vulcanus", view: "resources" }),
+    );
 
     const terrainCtx = {
       seed0: SEED,
@@ -119,7 +130,8 @@ perfIt(
       `climate+tiles portion of terrain: ~${(terrain - elev).toFixed(0)} ms (the tiling target)`,
       `all 4 overlays add over terrain:  ~${(all - terrain).toFixed(0)} ms`,
       `nauvis terrain:   ~${((terrain * 1000) / pxCount).toFixed(2)} us/px`,
-      `vulcanus terrain: ~${((vulcanusTerrain * 1000) / pxCount).toFixed(2)} us/px`,
+      `vulcanus terrain:   ~${((vulcanusTerrain * 1000) / pxCount).toFixed(2)} us/px (terrain-only, NOT the default Vulcanus view)`,
+      `vulcanus resources: ~${((vulcanusResources * 1000) / pxCount).toFixed(2)} us/px (the default Vulcanus view - double field-stack cost)`,
     ].join("\n");
     writeFileSync(
       "perf-result.txt",

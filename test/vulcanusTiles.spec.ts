@@ -25,7 +25,7 @@ import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
  * resource patch (`metalTile`/`calciteRegion`/`sulfuricAcidRegionPatchy` all read their
  * no-patch floor there) and are ADJACENT-tile flips within one biome family
  * (folds-flat/folds, smooth-stone/cracks-warm, ash-soil/pumice, ash-flats/ash-light,
- * cracks-hot/cracks-warm), spread across radii 230-2079 - the same known far-field f32
+ * cracks-hot/cracks-warm), spread across radii 192-2079 - the same known far-field f32
  * coordinate floor in elevation/aux/moisture tipping a near-tie argmax across a range
  * boundary that was already present in V1, now with the resource terms ruled out as a
  * cause. No single range expression is systematically wrong (that would cluster many

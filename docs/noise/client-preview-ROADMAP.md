@@ -377,11 +377,20 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       residual anomaly and its resolution, and characterization of the 7
       remaining `get_tile` mismatches (far-field f32 argmax flips, unrelated to
       the coupling restoration): `docs/noise/vulcanus-resources-NOTES.md`.
-      - **Perf gate (Task 8, 2026-07-24): PASS.** Terrain now evaluates the
-        resource region fields on every pixel even with the overlay off, since
-        the tile catalog reads them. Measured 11.92 us/px (V1, worktree at
-        `a0ea049`) vs. 13.41 us/px (V2, this branch) at 1024x1024/seed
-        123456 - a 1.13x change, well inside the ~2x regression gate. See
+      - **Perf gate (Task 8, 2026-07-24; corrected in the final-fix pass):
+        PASS.** Terrain now evaluates the resource region fields on every
+        pixel even with the overlay off, since the tile catalog reads them.
+        Measured 11.92 us/px (V1, worktree at `a0ea049`) vs. 13.96 us/px
+        (V2, this branch, `view: "terrain"`) at 1024x1024/seed 123456 - a
+        1.17x change. **But `"terrain"` is not the view non-dev users get for
+        Vulcanus** - Task 7 made `"resources"` the default (`effectiveView` in
+        `ElevationPreviewPanel.vue`), and `renderVulcanusResources` builds its
+        own independent Vulcanus field stack rather than reusing the terrain
+        render's, so the ore DAG runs twice per pixel on that path. Measured
+        18.22 us/px for `view: "resources"` - a **1.53x** change against the
+        11.92 us/px baseline. Both are well inside the ~2x regression gate,
+        so this is a record correction, not a regression - but 1.53x /
+        18.22 us/px is the number that reflects what users actually see. See
         `docs/noise/vulcanus-resources-NOTES.md`'s Performance section and
         `.superpowers/sdd/2026-07-24-vulcanus-v2-resources/task-8-report.md`
         for the full before/after table and methodology.

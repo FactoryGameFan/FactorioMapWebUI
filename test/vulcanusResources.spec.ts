@@ -143,3 +143,52 @@ describe("makeVulcanusResources", () => {
     expect(worstBelow).toBeGreaterThan(1);
   });
 });
+
+describe("makeVulcanusResources at a non-default frequency (smoke test)", () => {
+  // `region_size = base + base/frequency` (vulcanusResources.ts's `placeSpots`) is an
+  // integer only at the default frequency (f = 1); `makeSpotNoise` floors it
+  // (`Math.floor(p.regionSize)`) because `selectSpots` uses it as an integer modulus.
+  // No oracle fixture exists at a non-default frequency (the game oracle was only
+  // captured at f = 1), so this CANNOT check fidelity against the game - it only
+  // guards against the flooring producing garbage (NaN, an exploding value, or a
+  // field that never leaves its basement floor) at a fractional region_size. See
+  // docs/noise/vulcanus-resources-NOTES.md's "Known gaps" #1.
+  it("coal region stays finite and varies at frequency 1.5 (region_size 1066.67 -> 1066)", () => {
+    const ctx = withCtxDefaults({
+      seed0: fixture.seed0,
+      vulcanusResourceControls: {
+        tungstenOre: { frequency: 1, size: 1 },
+        vulcanusCoal: { frequency: 1.5, size: 1 },
+        calcite: { frequency: 1, size: 1 },
+        sulfuricAcidGeyser: { frequency: 1, size: 1 },
+      },
+    });
+    const helpers = makeVulcanusHelpers(ctx);
+    const spawn = makeVulcanusSpawn(ctx, helpers);
+    const cracks = makeVulcanusCracks(ctx, helpers);
+    const biomes = makeVulcanusBiomes(ctx, helpers, spawn, cracks);
+    const resources = makeVulcanusResources(ctx, helpers, spawn, biomes, cracks);
+
+    let sawNonBasement = false;
+    for (let x = -3000; x <= 3000; x += 200) {
+      for (let y = -3000; y <= 3000; y += 200) {
+        const v = resources.coalRegion(x, y);
+        expect(Number.isFinite(v)).toBe(true);
+        // Sane envelope, not a fidelity bound - just enough to catch a flooring bug
+        // that sends the field to NaN or off to some absurd magnitude. -1 is the
+        // spot-noise basement, but `min(1 - startingCircle, placed)` legitimately
+        // dips well under it near spawn (measured -2.27 at (0, 0) even at the
+        // DEFAULT frequency, so this is not a floor-related artifact) - the lower
+        // bound here has generous slack; the point is catching an exploding or NaN
+        // value, not pinning the basement exactly.
+        expect(v).toBeGreaterThanOrEqual(-5);
+        expect(v).toBeLessThan(5);
+        if (v > -0.999) sawNonBasement = true;
+      }
+    }
+    // Guards against a degenerate pass: an all-basement field would trivially
+    // satisfy the finite/envelope checks above without proving the region logic
+    // (spot selection, cone placement) still runs at a fractional region_size.
+    expect(sawNonBasement).toBe(true);
+  });
+});

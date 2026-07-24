@@ -289,11 +289,16 @@ export function makeVulcanusResources(
             //
             // The game's effective radius is min(maximum_spot_basement_radius,
             // radius_expression) (docs/noise/spot-noise-NOTES.md:319); that cap is
-            // deliberately omitted here because it is unreachable for every Vulcanus
-            // resource: radius = sliderRescale(v, 2) * min(1.2, oreDist) * 25, and
-            // sliderRescale caps at 2, so radius <= 2 * 1.2 * 25 = 60, always well
-            // under MAX_SPOT_BASEMENT_RADIUS (128). Do not add the cap "defensively" -
-            // it is provably a no-op here.
+            // deliberately omitted here because it is unreachable from every reachable
+            // UI state: radius = sliderRescale(v, 2) * min(1.2, oreDist) * 25, and the
+            // `size` slider itself is bounded to [1/6, 6] (not sliderRescale, which is
+            // unbounded for an arbitrary v - it is only <= 2 here because the caller's v
+            // is), so radius <= 2 * 1.2 * 25 = 60, always well under
+            // MAX_SPOT_BASEMENT_RADIUS (128). This does NOT hold for a `size` value
+            // outside the slider's range that only an imported map-exchange string can
+            // carry (e.g. size = 100 gives radius ~178 > 128, where the game's cap would
+            // bind and this port's would not) - do not add the cap "defensively" for the
+            // slider-reachable range; it would be dead code there.
             const radius = f32(p.radius(s.x, s.y) * s.coneScale);
             if (radius <= 0) continue;
             const peak = f32(f32(3 * s.quantity) / f32(f32(Math.PI * radius) * radius));
