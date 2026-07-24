@@ -1,6 +1,7 @@
 import type { Point } from "../distanceFromNearestPoint";
 import { CLIFF_MARK_RADIUS_PX } from "../cliffs/cliffCatalog";
 import type { CliffControls, CliffSettingsInput } from "../cliffs/cliffCatalog";
+import type { VulcanusResourceControls } from "../eval/ctx";
 import type { EnemyControls } from "../enemies/enemyCatalog";
 import type { Planet } from "../../model/planets";
 import type { ResourceControlLevers } from "../resources/resolveResource";
@@ -12,6 +13,7 @@ import { renderResources } from "./renderResources";
 import { renderRocks } from "./renderRocks";
 import { renderTerrain } from "./renderTerrain";
 import { renderTrees } from "./renderTrees";
+import { renderVulcanusResources } from "./renderVulcanusResources";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
 
 /** A render job posted to the worker. `id` tags the response for staleness. */
@@ -35,11 +37,11 @@ export interface ElevationRenderRequest {
    * elevation trees).
    *
    * `"vulcanus"` renders through `renderVulcanusTerrain` (Task 10's tile
-   * resolver) instead of `renderTerrain`, and - because none of the five
-   * overlays (resources/enemies/cliffs/trees/rocks) has a Vulcanus port yet
-   * (out of scope for V1) - skips overlay compositing entirely regardless of
-   * which terrain-family `view` was requested, always yielding plain
-   * Vulcanus terrain colors.
+   * resolver) instead of `renderTerrain`. Of the five overlays
+   * (resources/enemies/cliffs/trees/rocks), only `resources` has a Vulcanus
+   * port (V2, `renderVulcanusResources`) - the other four have no Vulcanus
+   * meaning, so a terrain-family view that asks for one still gets plain
+   * Vulcanus terrain colors rather than a Nauvis field composited on top.
    */
   planet?: Planet;
   /** Omitted => the game's real lake positions are computed inside the render. */
@@ -81,6 +83,11 @@ export interface ElevationRenderRequest {
    * to 1/1/1 inside the resolver.
    */
   resourceControls?: Record<string, ResourceControlLevers>;
+  /**
+   * Vulcanus resource control levers - consumed only when `planet: "vulcanus"`
+   * and `view: "resources"`. Defaults to all-neutral.
+   */
+  vulcanusResourceControls?: VulcanusResourceControls;
   /**
    * The enemy-base autoplace control's frequency/size (control:enemy-base:*) -
    * consumed only when `view: "enemies"`. Defaults to `{ frequency: 1, size: 1 }`
@@ -194,11 +201,10 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
     req.view === "all"
   ) {
     if (planet === "vulcanus") {
-      // No Vulcanus port of any of the five overlays yet (out of scope for
-      // V1) - render plain Vulcanus terrain regardless of which
-      // terrain-family `view` was asked for, rather than compositing Nauvis
-      // overlays (ore/enemy-base/cliff/tree/rock fields) that have no
-      // Vulcanus meaning onto it.
+      // V2 ports the resource overlay only. The other four Nauvis overlays
+      // (enemies, cliffs, trees, rocks) have no Vulcanus meaning, so a
+      // terrain-family view that asks for one still gets plain terrain rather
+      // than a Nauvis field composited onto Vulcanus colors.
       image = renderVulcanusTerrain({
         seed0: req.seed0,
         width: req.width,
@@ -206,8 +212,23 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         originX: req.originX,
         originY: req.originY,
         tilesPerPixel: req.tilesPerPixel,
-        ctx: { startingPositions: req.startingPositions },
+        ctx: {
+          startingPositions: req.startingPositions,
+          vulcanusResourceControls: req.vulcanusResourceControls,
+        },
       });
+      if (req.view === "resources" || req.view === "all") {
+        renderVulcanusResources(image, {
+          seed0: req.seed0,
+          originX: req.originX,
+          originY: req.originY,
+          tilesPerPixel: req.tilesPerPixel,
+          ctx: {
+            startingPositions: req.startingPositions,
+            vulcanusResourceControls: req.vulcanusResourceControls,
+          },
+        });
+      }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
     }
     image = renderTerrain({

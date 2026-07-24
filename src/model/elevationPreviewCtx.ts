@@ -1,7 +1,8 @@
 import { readClimateControls } from "./climateReads";
 import type { Point } from "../noise/distanceFromNearestPoint";
+import type { VulcanusResourceControls } from "../noise/eval/ctx";
 import { readMapType } from "./mapType";
-import { readResourceControls } from "./resourceReads";
+import { readResourceControls, readVulcanusResourceControls } from "./resourceReads";
 import type { ResourceControlLevers } from "../noise/resources/resolveResource";
 import type { Preset } from "./types";
 import { ENEMY_CONTROL_NAME, type EnemyControls } from "../noise/enemies/enemyCatalog";
@@ -25,6 +26,14 @@ export interface ElevationPreviewCtx {
    * the terrain view.
    */
   resourceControls: Record<string, ResourceControlLevers>;
+  /**
+   * The four Vulcanus resource autoplace controls (control:tungsten-ore:*,
+   * control:vulcanus-coal:*, control:calcite:*, control:sulfuric-acid-geyser:*) -
+   * consumed only by the Vulcanus `view: "resources"` overlay
+   * (renderVulcanusResources). Absent controls default to `{ frequency: 1,
+   * size: 1 }`.
+   */
+  vulcanusResourceControls: VulcanusResourceControls;
   /**
    * The enemy-base autoplace control's frequency/size (control:enemy-base:*) -
    * consumed only by the `view: "enemies"` overlay (renderEnemies). Absent
@@ -117,6 +126,7 @@ export function elevationCtxFromPreset(preset: Preset): ElevationPreviewCtx {
     mapType,
     mapTypeLabel: mt.label,
     resourceControls: readResourceControls(preset),
+    vulcanusResourceControls: readVulcanusResourceControls(preset),
     enemyControls: eb ? { frequency: eb.frequency, size: eb.size } : { frequency: 1, size: 1 },
     cliffControls: cc
       ? { frequency: cc.frequency, continuity: cc.size }

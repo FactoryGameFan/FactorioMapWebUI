@@ -522,8 +522,8 @@ describe("ElevationPreviewPanel", () => {
     }
   });
 
-  describe("planet: vulcanus (Task 11)", () => {
-    it("passes planet:'vulcanus' and forces view:'terrain' on Generate", async () => {
+  describe("planet: vulcanus (Task 11 + V2 resources, Task 7)", () => {
+    it("passes planet:'vulcanus' and defaults to view:'resources' on Generate", async () => {
       const putImageData = stubCanvas();
       const renderer = okRenderer();
       const w = setup("nauvis", renderer, { planet: "vulcanus" });
@@ -533,8 +533,25 @@ describe("ElevationPreviewPanel", () => {
 
       expect(renderer.render).toHaveBeenCalledOnce();
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(arg).toMatchObject({ planet: "vulcanus", view: "terrain" });
+      expect(arg).toMatchObject({ planet: "vulcanus", view: "resources" });
       expect(putImageData).toHaveBeenCalledTimes(4);
+    });
+
+    it("passes vulcanusResourceControls on Generate for Vulcanus", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "vulcanus" });
+
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg.vulcanusResourceControls).toEqual({
+        tungstenOre: { frequency: 1, size: 1 },
+        vulcanusCoal: { frequency: 1, size: 1 },
+        calcite: { frequency: 1, size: 1 },
+        sulfuricAcidGeyser: { frequency: 1, size: 1 },
+      });
     });
 
     it("enables the Terrain toggle for Vulcanus even on a non-Nauvis map type", async () => {
@@ -542,9 +559,28 @@ describe("ElevationPreviewPanel", () => {
       expect(w.find('[data-test="view-terrain"]').attributes("disabled")).toBeUndefined();
     });
 
-    it("keeps the Nauvis-only overlay toggles (Resources/Enemies/Cliffs/Trees/Rocks/All) disabled for Vulcanus", async () => {
+    it("enables the Resources toggle on Vulcanus", async () => {
       const w = setup("nauvis", okRenderer(), { planet: "vulcanus" });
-      for (const t of ["resources", "enemies", "cliffs", "trees", "rocks", "all"]) {
+      const btn = w.get('[data-test="view-resources"]');
+      expect(btn.attributes("disabled")).toBeUndefined();
+    });
+
+    it("selects view:'terrain' on Vulcanus after clicking the Terrain toggle in dev mode", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "vulcanus" });
+
+      await w.find('[data-test="view-terrain"]').trigger("click");
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({ planet: "vulcanus", view: "terrain" });
+    });
+
+    it("keeps the Nauvis-only overlay toggles (Enemies/Cliffs/Trees/Rocks/All) disabled for Vulcanus", async () => {
+      const w = setup("nauvis", okRenderer(), { planet: "vulcanus" });
+      for (const t of ["enemies", "cliffs", "trees", "rocks", "all"]) {
         expect(
           w.find(`[data-test="view-${t}"]`).attributes("disabled"),
           `view-${t} should be disabled for Vulcanus`,
@@ -557,11 +593,11 @@ describe("ElevationPreviewPanel", () => {
       expect(w.find('[data-test="view-elevation"]').attributes("disabled")).toBeDefined();
     });
 
-    it("still forces view:'terrain' for Vulcanus even after the Elevation toggle was previously clicked", async () => {
+    it("falls back to view:'resources' for Vulcanus even after the Elevation toggle was previously clicked", async () => {
       // Elevation is disabled for Vulcanus (so a real user cannot click it), but
       // `view` is shared component state - prove effectiveView overrides a
-      // stale non-terrain pick regardless, rather than relying only on the
-      // disabled attribute to keep users out.
+      // stale non-terrain/non-resources pick regardless, rather than relying
+      // only on the disabled attribute to keep users out.
       stubCanvas();
       const renderer = okRenderer();
       const w = setup("nauvis", renderer, { planet: "nauvis" });
@@ -577,7 +613,19 @@ describe("ElevationPreviewPanel", () => {
       await flushPromises();
 
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(arg).toMatchObject({ planet: "vulcanus", view: "terrain" });
+      expect(arg).toMatchObject({ planet: "vulcanus", view: "resources" });
+    });
+
+    it("still resolves effectiveView to 'resources' for Vulcanus with dev mode off", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "vulcanus", dev: false });
+
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({ planet: "vulcanus", view: "resources" });
     });
 
     it("defaults planet to 'nauvis' when the prop is omitted (existing behavior unchanged)", async () => {

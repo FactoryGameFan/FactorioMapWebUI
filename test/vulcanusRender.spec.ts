@@ -130,4 +130,48 @@ describe("runRenderRequest planet dispatch", () => {
     const got = new Uint8ClampedArray(runRenderRequest(BASE).buffer);
     expect(Array.from(got)).toEqual(Array.from(direct.data));
   });
+
+  it("renders the Vulcanus resource overlay for view: resources", () => {
+    const common = {
+      id: 1,
+      seed0: 123456,
+      planet: "vulcanus" as const,
+      width: 48,
+      height: 48,
+      originX: -1600,
+      originY: -1600,
+      tilesPerPixel: 8,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      startingPositions: [{ x: 0, y: 0 }],
+    };
+    const terrain = runRenderRequest({ ...common, view: "terrain" });
+    const withOre = runRenderRequest({ ...common, id: 2, view: "resources" });
+    expect(Array.from(new Uint8ClampedArray(withOre.buffer))).not.toEqual(
+      Array.from(new Uint8ClampedArray(terrain.buffer)),
+    );
+  });
+
+  it("leaves Vulcanus terrain alone for the Nauvis-only overlays", () => {
+    const common = {
+      id: 3,
+      seed0: 123456,
+      planet: "vulcanus" as const,
+      width: 32,
+      height: 32,
+      originX: -1600,
+      originY: -1600,
+      tilesPerPixel: 8,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      startingPositions: [{ x: 0, y: 0 }],
+    };
+    const terrain = runRenderRequest({ ...common, view: "terrain" });
+    for (const view of ["enemies", "cliffs", "trees", "rocks"] as const) {
+      const other = runRenderRequest({ ...common, id: 4, view });
+      expect(Array.from(new Uint8ClampedArray(other.buffer))).toEqual(
+        Array.from(new Uint8ClampedArray(terrain.buffer)),
+      );
+    }
+  });
 });

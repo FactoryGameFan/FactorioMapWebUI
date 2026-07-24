@@ -62,16 +62,18 @@ const unsupportedLabel = computed(() =>
 
 // The terrain render (renderTerrain, Task 11) always evaluates the Nauvis
 // climate + tile catalog, regardless of the active preset's actual map type -
-// it is only faithful for mapType "nauvis". Resources, Enemies, Cliffs, Trees
-// and All each layer a Nauvis-only overlay on top of it, so those five toggles
-// gate on `nauvisOverlaysAvailable` specifically - which requires BOTH the
-// preset's own elevation `mapType` to be "nauvis" AND the selected planet to
-// actually be Nauvis (none of the five has a Vulcanus port - runRenderRequest
-// skips all of them for `planet: "vulcanus"` regardless of `view`, so leaving
-// these enabled there would offer a control that silently does nothing).
+// it is only faithful for mapType "nauvis". Enemies, Cliffs, Trees, Rocks and
+// All each layer a Nauvis-only overlay on top of it, so those toggles gate on
+// `nauvisOverlaysAvailable` specifically - which requires BOTH the preset's
+// own elevation `mapType` to be "nauvis" AND the selected planet to actually
+// be Nauvis (none of those four has a Vulcanus port - runRenderRequest skips
+// them for `planet: "vulcanus"` regardless of `view`, so leaving them enabled
+// there would offer a control that silently does nothing).
 // Plain "Terrain" is broader: it also renders on Vulcanus (via
 // renderVulcanusTerrain, Task 11), so it gates on `terrainAvailable`, which
-// Vulcanus satisfies too.
+// Vulcanus satisfies too. Resources is broader still - it has a Vulcanus port
+// (V2, renderVulcanusResources) - so it gates on `resourcesAvailable`, which
+// also admits Vulcanus.
 // The user's desired view. Defaults to the full composite, which is the closest
 // thing to the game's own map preview - and with dev mode off (the default) it
 // is the only view a user ever gets, since the toggles are hidden.
@@ -83,11 +85,18 @@ const nauvisOverlaysAvailable = computed(() => planet.value !== "vulcanus" && na
 const terrainAvailable = computed(
   () => nauvisOverlaysAvailable.value || planet.value === "vulcanus",
 );
+// Resources is the one overlay with a Vulcanus port (V2), so it gates more
+// broadly than the other four: Nauvis-with-Nauvis-map-type, OR Vulcanus.
+const resourcesAvailable = computed(
+  () => nauvisOverlaysAvailable.value || planet.value === "vulcanus",
+);
 // What actually renders, in priority order:
-//   1. Vulcanus, always "terrain" - none of the five Nauvis overlays (or the
-//      Nauvis-family elevation trees) has a Vulcanus port yet (out of scope
-//      for V1), so plain terrain colors are the only faithful Vulcanus render
-//      regardless of the preset's map type or which toggle was last clicked.
+//   1. Vulcanus, dev mode on, "terrain" or "resources" last picked - honor it
+//      (those are the only two views with a Vulcanus port: plain terrain, or
+//      terrain + the V2 resource overlay).
+//   1b. Vulcanus otherwise - "resources", the closest thing Vulcanus has to
+//      the Nauvis composite (none of the other four Nauvis overlays, or the
+//      Nauvis-family elevation trees, has a Vulcanus port).
 //   2. Nauvis planet, off-Nauvis map type (Lakes/Island), always "elevation" -
 //      renderTerrain always evaluates the Nauvis climate + tile catalog
 //      regardless of the preset's map type, so every non-elevation view would
@@ -103,7 +112,12 @@ const terrainAvailable = computed(
 // Deriving this (instead of the old watch that reset `view`) means a round trip
 // through a Lakes preset no longer destroys the chosen view.
 const effectiveView = computed(() => {
-  if (planet.value === "vulcanus") return "terrain";
+  if (planet.value === "vulcanus") {
+    // Only "terrain" and "resources" have a Vulcanus port; anything else the
+    // user last picked on Nauvis falls back to the composite.
+    if (ui.devMode && (view.value === "terrain" || view.value === "resources")) return view.value;
+    return "resources";
+  }
   if (!nauvisMapType.value) return "elevation";
   return ui.devMode ? view.value : "all";
 });
@@ -155,6 +169,7 @@ async function generate() {
         startingAreaMoistureSize: info.ctx.startingAreaMoistureSize,
         startingAreaMoistureFrequency: info.ctx.startingAreaMoistureFrequency,
         resourceControls: info.resourceControls,
+        vulcanusResourceControls: info.vulcanusResourceControls,
         enemyControls: info.enemyControls,
         cliffControls: info.cliffControls,
         cliffSettings: info.cliffSettings,
@@ -227,9 +242,9 @@ async function generate() {
         <FButton
           data-test="view-resources"
           :variant="effectiveView === 'resources' ? 'tool' : 'default'"
-          :disabled="!nauvisOverlaysAvailable"
+          :disabled="!resourcesAvailable"
           :title="
-            nauvisOverlaysAvailable
+            resourcesAvailable
               ? undefined
               : 'Resources view is only available for the Nauvis map type'
           "
