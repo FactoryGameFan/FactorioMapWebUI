@@ -3,6 +3,7 @@
 import { computed, ref } from "vue";
 import { elevationCtxFromPreset } from "../model/elevationPreviewCtx";
 import { PLANET_LABELS, type Planet } from "../model/planets";
+import { surfaceSeedForPlanet } from "../model/planetSurfaceSeed";
 import { usePresetsStore } from "../store/presets";
 import { useUiStore } from "../store/ui";
 import FButton from "../ui/FButton.vue";
@@ -127,8 +128,13 @@ async function generate() {
   const info = preview.value;
   if (!preset || !info || !supported.value || loading.value) return;
 
-  const seed0 = store.previewSeed();
-  seed.value = seed0;
+  // The preset's seed is the MAP seed; a non-Nauvis planet's surface is
+  // generated at `mapSeed + map_seed_offset` (see model/planetSurfaceSeed).
+  // The readout keeps showing the map seed - that is the number the player
+  // typed and the one they would enter in the game.
+  const mapSeed = store.previewSeed();
+  seed.value = mapSeed;
+  const seed0 = surfaceSeedForPlanet(planet.value, mapSeed);
 
   const half = (PREVIEW_PX * TILES_PER_PIXEL) / 2; // 512
 

@@ -7,6 +7,7 @@ import { useUiStore } from "../src/store/ui";
 import { writeMapType } from "../src/model/mapType";
 import type { ElevationRenderer } from "../src/components/useElevationPreview";
 import type { Planet } from "../src/model/planets";
+import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -535,6 +536,34 @@ describe("ElevationPreviewPanel", () => {
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(arg).toMatchObject({ planet: "vulcanus", view: "resources" });
       expect(putImageData).toHaveBeenCalledTimes(4);
+    });
+
+    it("renders Vulcanus at the DERIVED surface seed, not the raw map seed", async () => {
+      // A save at map seed 123456 does not generate Vulcanus at 123456 - the
+      // planet's `map_seed_offset` shifts it to 1249936247. Passing the raw map
+      // seed through renders a world no player will ever land on (measured
+      // against a real save: 9.7% tile agreement at the raw seed, 96.6% at the
+      // derived one). See `src/model/planetSurfaceSeed.ts`.
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "vulcanus" });
+
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg.seed0).toBe(surfaceSeedForPlanet("vulcanus", 123456));
+      expect(arg.seed0).toBe(1249936247);
+    });
+
+    it("still shows the user's MAP seed in the readout, not the shifted surface seed", async () => {
+      stubCanvas();
+      const w = setup("nauvis", okRenderer(), { planet: "vulcanus" });
+
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      expect(w.get('[data-test="preview-seed"]').text()).toContain("123456");
     });
 
     it("passes vulcanusResourceControls on Generate for Vulcanus", async () => {
