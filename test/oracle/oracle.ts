@@ -339,6 +339,15 @@ end)
  * the same pattern {@link buildSpaceAgeControlLua} uses), then requests chunk
  * generation around each point and reads the placed tile. `get_tile` takes int32
  * coords and rounds non-integers down, so positions are floored before embedding.
+ *
+ * **`seed` here is the SURFACE seed, and forcing it makes a surface no save
+ * produces.** The game generates a planet at `mapSeed + planet.map_seed_offset`
+ * (`crc32(name)` by default; 0 only for Nauvis), so passing the map seed through
+ * gives a synthetic world - fine for validating an expression port, useless for
+ * validating seed plumbing. Drop the two `mgs.seed` lines to sample the surface a
+ * real save at this `--map-gen-seed` would have. See
+ * `src/model/planetSurfaceSeed.ts` and the "Planet surface seeds" section of
+ * `docs/noise/vulcanus-resources-NOTES.md`.
  */
 export function buildSpaceAgeTileControlLua(
   positions: readonly Position[],

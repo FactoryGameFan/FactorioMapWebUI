@@ -181,6 +181,108 @@ it is not what causes any of these 7 remaining mismatches - all 7 have
 `region <= 0` (no patch present at all), so the `rp` approximation is not even
 in play there.
 
+## Planet surface seeds: the map seed is NOT the Vulcanus seed
+
+Found 2026-07-25, chasing "the client Vulcanus terrain looks nothing like the
+headless preview". It was not a V2 regression and not a porting error - the
+port was being handed the wrong seed.
+
+**The rule.** A planet's surface is generated at
+`(mapSeed + planet.map_seed_offset) mod 2^32`. Nauvis declares
+`map_seed_offset = 0` (`base/prototypes/planet/planet.lua`), which is the only
+reason "the map seed" and "the surface seed" are the same number there. Every
+other planet leaves the field unset, and the engine defaults it to
+**`crc32(planet.name)`** (zlib/ANSI polynomial - the same CRC the map-exchange
+codec already implements in `src/codec/crc32.ts`).
+
+Measured from Factorio 2.1.12 headless: create a save with Space Age at a known
+`--map-gen-seed`, then read
+`game.planets[name].create_surface().map_gen_settings.seed` back **without**
+overwriting it.
+
+| planet | offset | surface seed at map seed 123456 |
+| --- | --- | --- |
+| nauvis | 0 | 123456 |
+| vulcanus | 1249812791 | 1249936247 |
+| gleba | 3215082971 | 3215206427 |
+| fulgora | 2967579010 | 2967702466 |
+| aquilo | 3111799872 | 3111923328 |
+
+Sampled at map seeds 0, 1, 2, 3, 123456, 123457, 1000000 and 2801636144; the
+last wraps 2^32 for every non-Nauvis planet and pins the modulo.
+
+**How the mechanism and the hash were identified** (measured, not inferred):
+
+- Setting `data.raw.planet.vulcanus.map_seed_offset = 12345` in a probe mod
+  made the surface seed at map seed 0 come back as exactly `12345` - so the
+  prototype field is the mechanism, and the observed values are engine defaults.
+- Registering two planets that were deep copies of Vulcanus differing **only**
+  in name (`aaa`, `aab`) produced unrelated offsets (4027020077, 1762534039),
+  ruling out registration order or an index and pinning the default to a hash
+  of the name.
+- `crc32(name)` then reproduced all seven measured planets exactly - the four
+  Space Age ones plus the three custom clones.
+
+**Durability.** Because the offset is a hash of the name, and planet names are
+public prototype API, the values are pinned by the names rather than by a build
+- `src/model/planetSurfaceSeed.ts` computes them instead of hardcoding, and
+gets modded planets right for free. A future Factorio release changing how the
+default is derived is still possible; the measured rows in
+`test/planetSurfaceSeed.spec.ts` are the tripwire.
+
+### What was actually wrong, and what it cost
+
+`ElevationPreviewPanel.vue` passed `store.previewSeed()` straight through as
+`seed0` for every planet, so the Vulcanus preview rendered a world no player
+could ever land on. Nauvis was never affected (offset 0).
+
+Three-way measurement at map seed 123456, over the 172 of the 381 fixture
+positions that fall inside a 1024 px origin-centred render:
+
+| comparison | agreement |
+| --- | --- |
+| `--generate-map-preview --map-preview-planet vulcanus` vs the **natural** (derived-seed) `get_tile` | 154/172 = 89.5% |
+| the same preview vs the **forced**-seed-123456 fixture | 20/172 = 11.6% |
+| TS tile resolver at seed 1249936247 vs natural `get_tile` (381 pts) | 368/381 = 96.59% |
+| TS tile resolver at seed 123456 vs natural `get_tile` (381 pts) | 37/381 = 9.71% |
+
+So `--generate-map-preview` was right the whole time; the app was the outlier.
+Two things had disguised this:
+
+- The `get_tile` oracle path **forces** the surface seed
+  (`buildSpaceAgeTileControlLua` writes `mgs.seed = <mapSeed>`), so
+  `test/fixtures/oracle-vulcanus-tile-names.seed123456.json` describes a
+  synthetic surface that no save produces. It is still perfectly good as a
+  validation of the expression port - it just cannot see the seed plumbing.
+- The client agreed with the repo's own resolver at 172/172, and the resolver
+  agreed with that fixture at 97.7%, so every internal check passed. Only a
+  comparison against something outside both - a real save - could catch it.
+
+The 10.5% residual in the first row is the same near-tie boundary floor
+documented above plus cliff/rock pixels, which have no Vulcanus port.
+
+**Whole-frame confirmation after the fix.** `runRenderRequest` at
+`planet: "vulcanus"`, `view: "terrain"`, 1024x1024, 1 tile/px, origin-centred,
+seeded through `surfaceSeedForPlanet("vulcanus", 123456)`, diffed pixel-for-
+pixel against `factorio --generate-map-preview --map-preview-planet vulcanus
+--map-gen-seed 123456 --map-preview-size 1024`:
+
+- **87.61%** of all 1,048,576 pixels match exactly.
+- Cliff and rock pixels are 11.34% of the preview and account for **91.52%** of
+  every remaining mismatch.
+- Excluding them: **98.82%** exact match.
+
+Before the fix the same comparison scored about 11.6%. Nothing about the
+expression port changed - only the seed handed to it.
+
+**The guard against a repeat** is
+`test/fixtures/oracle-vulcanus-tile-names.natural-mapseed123456.json` +
+`test/vulcanusNaturalSeed.spec.ts`: a fixture captured from a save at
+`--map-gen-seed 123456` with the surface seed **left alone**, asked for through
+`surfaceSeedForPlanet` rather than a literal. It also asserts the failure mode
+(the raw map seed must score under 20%), so it cannot quietly pass on a fixture
+that turned out to be seed-insensitive.
+
 ## Known gaps and deliberate omissions
 
 1. **Non-default frequency sliders give a fractional `region_size`.** The
@@ -220,6 +322,14 @@ in play there.
    catalog reads `sulfuricAcidRegionPatchy` for `volcanic_soil_light_range`.
    So **V3 is mostly renderer work** - the field math is already done and
    oracle-validated.
+5. **Cliffs and rocks are not rendered on Vulcanus**, and both exist there in
+   the real game. In a headless Vulcanus preview they account for about 16.8%
+   of pixels - the tan speckle, `144,119,87` (`CLIFF_MAP_COLOR`) and
+   `129,105,78` (`ROCK_MAP_COLOR`). Both overlays are Nauvis-only ports and the
+   panel correctly greys their toggles out for Vulcanus, so this shows up as
+   missing detail rather than wrong detail. It is the largest remaining visual
+   difference between the client render and the game's own preview now that the
+   seed is right.
 
 ## `spotSelection.ts` needed no change
 

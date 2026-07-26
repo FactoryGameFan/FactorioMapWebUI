@@ -44,6 +44,12 @@ The mid-level builders (`buildDataLua`, `buildControlLua`, `buildMapGenSettings`
   Choose probe offsets accordingly (see `basis-noise-NOTES.md`).
 - The intentional `error("DUMPED-OK")` makes Factorio exit non-zero; that is
   success, not failure. The harness keys off the dump file existing, not the code.
+- **The Space-Age paths force the planet's surface seed to the map seed, which no
+  real save does.** A planet generates at `mapSeed + crc32(planet.name)` (0 only
+  for Nauvis), so a forced-seed sample validates the expression port but is blind
+  to seed plumbing - and the two disagree completely, not subtly (9.7% tile
+  agreement). It cost a session to spot. See `src/model/planetSurfaceSeed.ts` and
+  the "Planet surface seeds" section of `docs/noise/vulcanus-resources-NOTES.md`.
 
 ## Running
 
