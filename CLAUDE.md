@@ -212,6 +212,12 @@ metadata key would be data pollution.
   nobody wrote it down. Don't promote an inferred entry without re-capturing.
   The spec caps `unknown` at its current count so the gap can only shrink.
 
+Turning "38 fixtures are old" into "these N need re-capturing" is a separate,
+**not-yet-run** audit: `docs/fixture-version-audit.md` holds the procedure, the
+fixture-to-Lua-file map, and the rule for what counts as invalidating. Unlike
+`docs/superpowers/specs/`, that one is a live document - update its Conclusions
+section when it is run.
+
 This exists because version skew is invisible from inside: the Vulcanus
 surface-seed bug passed every internal check for weeks because the fixture and
 the code agreed with each other while both disagreed with the game.
