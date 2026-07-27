@@ -3,9 +3,13 @@
 Point-in-time design record (not a living doc). Written 2026-07-27, after
 Vulcanus V3 shipped and both of its flagged judgement calls were revisited.
 
-Closes the mechanism side of issue #9. The other judgement call from V3 - `all`
-on Vulcanus measuring 2.13x the terrain baseline, past the ~2x gate - is **not**
-addressed here; see "Deliberately out of scope".
+Closes the mechanism side of issue #9, and closes the other V3 judgement call
+too - `all` on Vulcanus measuring 2.13x the terrain baseline, past the ~2x gate -
+by a much smaller change than the one first considered. See "Performance".
+
+Standing priority that shaped both halves (Eric, 2026-07-27): **on both planets
+cliffs matter more than rocks, and rocks may be approximate.** Every trade below
+spends rock fidelity and protects cliff fidelity.
 
 ## The problem
 
@@ -27,7 +31,9 @@ Even at 0.19, a hair under the cap, a third of the ink survives. There is no
 threshold that produces scattered rocks. What the overlay honestly draws is
 "rocky ground". The same shape of problem affects the geyser (probability caps
 around 0.065), Nauvis crude oil (its `random_probability` factor makes it vanish
-under a threshold) and Nauvis enemy bases.
+under a threshold), Nauvis enemy bases, and Nauvis rocks - which get away with a
+threshold today only because the same 0.02 constant happens to paint ~1.6%
+there.
 
 ## What is built
 
@@ -152,6 +158,73 @@ not a number to widen the band around.
 - decorrelation: two salts' placement sets over a window intersect at roughly
   the product of their rates, not the minimum - the artifact the salt exists to
   prevent
+- rock lattice: placed density at the chosen lattice tracks lattice 1 over the
+  same window - the lattice degrades *where* rocks land, not *how many*. The
+  bound comes from the coverage/clumping measurement at 1, 2 and 4, on the same
+  rule as the oracle band: measured first, then pinned.
+
+## Performance
+
+`all` on Vulcanus is 27.01 us/px against a 12.68 terrain baseline - 2.13x, past
+the ~2x gate. The useful framing is not the ratio but the deficit:
+
+| | us/px |
+| --- | --- |
+| terrain | 12.68 |
+| + cliffs (the floor - cliffs must stay exact) | 19.24 = **1.52x** |
+| gate at 2x | 25.36 |
+| current `all` | 27.01 |
+| **deficit** | **1.65** |
+
+Terrain plus cliffs is already 1.52x and is not negotiable, which leaves 6.1
+us/px of budget for resources + rocks + geyser against the 7.1 they spend. The
+whole problem is 1.65 us/px, and it is taken out of rocks.
+
+**Coarse rock field sampling.** Rocks cost 3.69 us/px, essentially all of it
+evaluating the probability field per tile; the roll itself is one array lookup
+and a compare. So the two are decoupled: **evaluate the rock probability field
+on a 2x2 tile lattice, and keep rolling every tile** against the nearest lattice
+value. Every tile still rolls, so density is preserved and the density oracle
+stays valid - only the field's spatial resolution degrades. Expected cost ~0.92
+us/px, saving ~2.77, which clears the gate on its own. Applies to both planets'
+rock renderers.
+
+The risk is aliasing, not correctness. `vulcanus_decorative_knockout` runs at
+`input_scale = 1/3`, so its patchiness lives at roughly a 5-tile wavelength: a
+2-tile lattice should hold it, a 4-tile lattice would start smearing the
+patchiness that makes rocks read as rocks. Implementation measures coverage and
+clumping at lattice 1, 2 and 4 and picks from the measurement rather than
+assuming 2.
+
+Nothing else is touched. Cliffs keep their full per-sample cost, which is the
+point.
+
+## Approach B (fused, arbitrated single pass) - considered and dropped
+
+B was the alternative: one sweep, shared fields evaluated once, every overlay's
+probability computed from them, max-probability arbitration, one roll, paint the
+winner. It is the game's actual rule, and it would remove the salt.
+
+Dropped on the arithmetic:
+
+- Its ceiling is the sum of the three overlay marginals, 13.66 us/px - and the
+  real deficit is 1.65. It is sized four times larger than the problem.
+- **It cannot help cliffs**, the largest marginal at 6.56. Cliff corners sit on
+  a 4-tile lattice, so that pass samples at lattice positions while a fused
+  sweep evaluates at pixel positions - different coordinates share nothing.
+  Cliffs are also a separate generator in Factorio, not an entity autoplacer, so
+  they do not belong in the arbitration either.
+- Its non-perf benefit is arbitration replacing the salt, which improves
+  fidelity of **rock and ore contention** - precisely the fidelity that is
+  allowed to be approximate.
+- It would rewrite how every overlay is invoked and change `all` from the union
+  of the overlays to a strict subset, invalidating the premise of an existing
+  test.
+
+A cheaper variant of the same idea - caching shared per-pixel fields in
+`Float32Array`s for the render's lifetime instead of restructuring loops - was
+also considered. Same ceiling, same inability to help cliffs, and unnecessary
+once rocks are sampled coarsely.
 
 ## Risks
 
@@ -177,17 +250,22 @@ with the same density, which keeps the density oracle valid and changes only
 which tiles are chosen. Flagged for a human eyeball, like the coverage question
 that prompted this work.
 
-**Perf.** One map lookup and one compare per pixel per overlay, with 1024 draws
-amortised across a chunk. Expected to disappear against the existing per-pixel
-field cost, but this touches a path already past the perf gate, so it is
-measured rather than assumed.
+**Perf.** The roll adds one map lookup and one compare per pixel per overlay,
+with 1024 draws amortised across a chunk - expected to disappear against the
+existing per-pixel field cost. The saving comes from the rock lattice above. The
+whole path is re-benchmarked at the end: `all` on Vulcanus must land under 2x
+the terrain baseline, and Nauvis must not regress.
 
 ## Deliberately out of scope
 
-- **The 2.13x perf breach.** The fused, arbitrated single-pass render would fix
-  both the breach and departure 1 above, and is the natural follow-on. It is not
-  bundled here: it rewrites how every overlay is invoked, and landing a risky
-  refactor together with a new mechanism makes both harder to judge.
+- **Vulcanus cliff entity-level validation.** With cliffs ranked above rocks,
+  this is now the largest open correctness item on either planet, and it is not
+  a perf question at all. Nauvis cliffs were checked against a real
+  `find_entities_filtered{type="cliff"}` dump at ~94% tile-for-tile; Vulcanus
+  has no equivalent capture, so what is proven there is that one noise field
+  matches to 5e-6 and that the placement geometry is the same code scoring 94%
+  on Nauvis - not that the composition reproduces the game's actual cliff
+  positions. Should be the next spec.
 - **Trees.** The 2026-07-22 spec wanted them stippled too, and they are a sixth
   consumer of this mechanism. Left out to keep the change reviewable.
 - **Nauvis solid ores and uranium.** Dense in-game; the threshold is right.
@@ -200,6 +278,9 @@ measured rather than assumed.
   it does not look like the game"
 - `docs/noise/placement-roll-NOTES.md` - record what was built versus what the
   spike stopped on
+- `docs/noise/vulcanus-cliffs-NOTES.md` - the "Performance, and a known
+  duplication" section records the 2.13x breach; update it with the resolution
+  and the new measurement, including that fusing was costed and dropped
 - `docs/noise/client-preview-ROADMAP.md` - the per-resource render rule entry
 - `test/fixtures/PROVENANCE.json` - the new fixture
 - issue #9 - closes
