@@ -138,28 +138,46 @@ halo Nauvis uses.
 
 ## Performance, and a known duplication
 
-Measured at 256x256, 1 tile/px, seed 123456, origin-centred:
+Measured at 256x256, 1 tile/px, seed 123456, origin-centred, after both V3
+overlays landed:
 
 | view | us/px |
 | --- | --- |
-| terrain | 12.77 |
-| resources | 16.51 |
-| cliffs | 19.64 |
-| **all** (the default for Vulcanus) | **23.63** |
+| terrain | 12.68 |
+| resources | 16.09 |
+| rocks | 16.37 |
+| cliffs | 19.24 |
+| **all** (the default for Vulcanus) | **27.01** |
 
-`all` is 1.85x the terrain baseline, inside the ~2x gate the Vulcanus work has
-used throughout.
+**`all` is 2.13x the terrain baseline, which is past the ~2x gate the Vulcanus
+work has used throughout.** Recorded rather than waved through. Two things make
+it less alarming than the ratio suggests, but neither makes it zero:
+
+- The gate was a guard against *accidental* regression. This is not accidental -
+  `all` went from compositing two layers to four, and the Vulcanus default view
+  changed from `resources` to `all` at the same time.
+- In wall-clock terms a 1024x1024 preview tiled across ~11 workers lands around
+  2.5s, comparable to Nauvis's `all` at 1.9s. The user-visible cost is fine.
+
+If it does need to come down, note that the obvious fix does **not** work.
+Sharing one Vulcanus field stack across the renderers sounds right, and is what
+the duplication below suggests, but the stacks are built once per render, not
+per pixel - the cost is per-sample evaluation. Each overlay sweeps the whole
+image in its own loop, so by the time the rocks pass reaches pixel `p` the
+single-slot `memoXY` caches hold the terrain pass's last pixel. Sharing the
+objects would buy nothing.
+
+The change that would actually pay is **fusing the passes**: one sweep that
+evaluates the shared fields at a pixel and lets every overlay consult them
+before moving on. That is a real architectural change to four renderers, and it
+was not attempted here.
 
 The cliff pass is more expensive than its sample count suggests. Corners sit on
 a 4-tile lattice, so at 1 tile/px it evaluates one elevation sample per 16
-pixels, yet it adds ~7 us/px. The reason is the same duplication V2 documented
-for resources: `renderVulcanusCliffs` builds its **own** Vulcanus field stack
-(helpers, spawn, cracks, biomes, climate, elevation) rather than reusing the
-terrain render's, so on the `all` path the elevation DAG is built and evaluated
-three times over. Sharing one stack across the three Vulcanus renderers is the
-obvious optimization if this ever needs to get faster - it was not done here
-because it changes all three renderers' signatures and V2 deliberately left the
-same duplication in place.
+pixels, yet it adds ~6.5 us/px. Each Vulcanus renderer builds its **own** field
+stack (helpers, spawn, cracks, biomes, climate, elevation) rather than reusing
+the terrain render's - the same duplication V2 documented for resources - so on
+the `all` path the Vulcanus DAG is evaluated four times per pixel region.
 
 ## Not validated
 
