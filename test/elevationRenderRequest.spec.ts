@@ -393,6 +393,13 @@ describe("runRenderRequest", () => {
     // overlays AND a workable rocks-and-resources intersection, so that
     // assertion moved to its own test below with its own window, rather than
     // being weakened here. See the comment on that test for the probe.
+    //
+    // The same factor thinned the plain presence assertion below: this window
+    // holds 5 rock pixels now, against 172 resource, 217 enemy, 1539 cliff and
+    // 5198 tree (all measured). `rocks.size > 0` therefore has a far narrower
+    // margin than the other four overlays' - if a future change moves rock
+    // placement at all, expect that to be the assertion that goes first, and
+    // re-probe for a window rather than dropping it.
     const req: ElevationRenderRequest = {
       id: 21,
       seed0: 123456,
@@ -484,12 +491,16 @@ describe("runRenderRequest", () => {
     // This window - 128x128 px at 1 tile/px over world [0, 128) x [1024, 1152) -
     // sits on a dense ore patch (2310 resource pixels, 14% of the window) and
     // holds 6 rock pixels, 3 of which land on ore. It was chosen by sweeping
-    // origins on a 32-tile grid over x in [-64, 192], y in [896, 1152] at
-    // 128 px and again at 192/256/320 px and 1-2 tiles/px; 3 was the maximum
-    // any window in that sweep produced, including windows 6x this area. The
-    // 320 px / 2 tiles-per-px window at this origin reaches 6 shared pixels but
-    // costs 7.7s of renders against this one's 1.3s, which is not worth 3 extra
-    // pixels of margin.
+    // origins on a 32-tile grid over x in [-64, 192], y in [896, 1152], at
+    // 128 px / 1 tile-per-px and again at 192 and 256 px: 3 shared pixels was
+    // the maximum ANY window in those two sweeps produced, including ones 4x
+    // this area, so 3 is the ceiling for a window of roughly this cost.
+    //
+    // A separate, coarser sweep (320 px at 2 tiles/px, origins on a 512-tile
+    // grid) did find 6 shared pixels, at this same origin - the larger window
+    // simply covers 640x640 tiles instead of 128x128. It costs 7.7s of renders
+    // against this one's 1.3s, which is not worth 3 extra pixels of margin in a
+    // test that runs in `verify`.
     //
     // Nothing about this window is load-bearing except that the shared count is
     // non-zero, which the final assertion proves rather than assumes.

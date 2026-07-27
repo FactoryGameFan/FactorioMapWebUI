@@ -65,8 +65,10 @@ export interface RockFields {
   readonly density: (x: number, y: number) => number;
   /**
    * The three probabilities separately, for picking the winning prototype's
-   * collision box. Allocates, and is only meant to be called on tiles whose roll
-   * already succeeded (~0.3% of them).
+   * collision box. Allocates, and is only meant to be called on tiles that have
+   * already passed both the roll and the water gate - 252 of 262144 tiles
+   * (0.096%) in oracle region 0 and 60 of 262144 (0.023%) in region 1, measured;
+   * see the table on `makeNauvisRockPlacement`.
    */
   readonly at: (x: number, y: number) => RockProbabilities;
 }

@@ -90,13 +90,20 @@ single knife-edge probe position.
 The spec asserts both the overall bound and a tighter near-field one, since the
 near field is where the preview actually renders.
 
-## The render is a threshold, and it does not look like the game
+## The render WAS a threshold, and it did not look like the game (SUPERSEDED 2026-07-27)
 
-`renderVulcanusRocks` paints `ROCK_MAP_COLOR` where `density >=
-VULCANUS_ROCK_FOOTPRINT_THRESHOLD` (0.02), mirroring the Nauvis overlay. No
-water exclusion (Vulcanus has no water tile) and no levers.
+**Superseded by the placement roll.** `renderVulcanusRocks` no longer thresholds:
+since Tasks 3 and 4.5 it rolls the game's per-tile placement draw against `density`
+and applies the tile-restriction and collision gates (`makePlacementSet`).
+`VULCANUS_ROCK_FOOTPRINT_THRESHOLD` was deleted in Task 3, and the Nauvis overlay it
+mirrored stopped thresholding in Task 5 (`ROCK_FOOTPRINT_THRESHOLD` is gone too). The
+rest of this section is kept as the record of WHY the roll was necessary - the
+plateau argument below is the reason thresholding could not be tuned into looking
+right, and it is still the best short explanation of that. Read it as history, not as
+current behaviour. Vulcanus still has no water exclusion (no water tile) and no
+levers; both remain true.
 
-**This is a threshold on a probability field, not a placement**, and it is worth
+**A threshold on a probability field is not a placement**, and it is worth
 being blunt about the limit. Both expressions cap at 0.2, so `min(cap, ...)`
 makes the field a **plateau** rather than a gradient, and thresholding cannot
 turn it into scattered points. Measured over world `[-512, 512)^2` at seed
@@ -118,18 +125,26 @@ coverage number. Tuning would have bought a magic per-planet constant without
 buying the intended look, since the plateau shape is the actual obstacle. The
 honest description of what this draws is "rocky ground", not "rocks".
 
-The real fix is the per-tile placement roll tracked in **issue #9**, which
-covers the same mechanism for the sulfuric-acid geyser, Nauvis crude oil and
-Nauvis enemy bases.
+The real fix was the per-tile placement roll tracked in **issue #9**, which also
+covers the sulfuric-acid geyser, Nauvis crude oil and Nauvis enemy bases. It
+shipped for Vulcanus rocks in Tasks 3 and 4.5.
 
-**This is the one thing in the V3 work that wants a human eyeball**, since
-"reads as rocky ground" is a judgement a test cannot make.
+**"Reads as rocky ground" was the one thing in the V3 work that wanted a human
+eyeball**, since that is a judgement a test cannot make. The roll replaced the
+plateau with scattered single pixels, so the specific complaint is gone.
 
-## Not validated
+## Validation status
 
-As with Vulcanus cliffs, there is **no entity-level check** against a real
-`find_entities_filtered` dump. What is proven: the three expressions match the
-game to the bounds above, the max-arbitration is the game's own rule, and the
-decorative/entity split is read from the planet definition. What is not proven
-is coverage against the game's own preview - and given the threshold discussion
-above, that comparison is not meaningful until the placement roll exists.
+**Entity-level validation now exists** and did not when this was written.
+`test/entityDensity.spec.ts` compares the placed-tile count against real
+`count_entities_filtered` counts from a 2.1.12 surface
+(`test/fixtures/oracle-entity-counts.seed123456.json`) over three regions, and
+agrees to 0.2% / 0.6% / 7.5%.
+
+What that does and does not prove is worth keeping straight. Proven: the three
+expressions match the game to the bounds above; the decorative/entity split is read
+from the planet definition; and the total rock DENSITY matches. **Not** proven - and
+in fact falsified - is the per-tile prototype identity: max-probability arbitration
+predicts a 0% `huge-volcanic-rock` population where the game has ~28%. See the
+FALSIFIED section of `docs/noise/placement-roll-NOTES.md`. Coverage against the
+game's own map preview is still unchecked.

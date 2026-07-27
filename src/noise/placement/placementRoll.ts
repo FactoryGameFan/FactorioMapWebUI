@@ -24,7 +24,15 @@ import { seededState, taus88Next } from "../taus88";
 const CHUNK = 32;
 const TILES_PER_CHUNK = CHUNK * CHUNK;
 
-/** Placed entities paint a (2*1+1) = 3x3 mark. Uniform across all roll overlays. */
+/**
+ * The (2*1+1) = 3x3 legibility mark for the roll overlays that use one.
+ *
+ * **Neither rock overlay does**, and nothing references this constant today: rocks
+ * paint a single pixel, because they are point-like and a block would merge
+ * scattered rocks into a blob (`renderRocks.ts`, `renderVulcanusRocks.ts:6-9`). It
+ * is for the overlays whose entities are large and rare enough that a 1px dot
+ * disappears - enemy bases, the sulfuric-acid geyser and crude oil, Tasks 6-8.
+ */
 export const PLACEMENT_MARK_RADIUS_PX = 1;
 
 /**

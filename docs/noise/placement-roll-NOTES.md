@@ -207,6 +207,19 @@ So the argmax is wrong specifically about the size ordering WITHIN a shared band
 not about biome selection. That is a sharper constraint on any replacement model
 than "argmax is wrong".
 
+**Do not read that as "the argmax box rule earned its keep on Nauvis" - it did not,
+and the next overlay should not adopt one on this precedent.** All three Nauvis rock
+boxes collapse to the SAME exclusion neighbourhood on the integer tile lattice:
+`big-rock` (2 x 1.9) and `big-sand-rock` (1.5 x 1.5) both reject `|dx| <= 1 &&
+|dy| <= 1`, i.e. the 3x3, and `huge-rock` (3 x 2.2, the only 5x5) can never win. So
+argmax, uniform-big and uniform-sand accept the identical tile set - pointwise, not
+merely in aggregate, since a mixed big/sand pair also tests as 3x3 - and all three
+measure 205 / 54 across the two oracle regions. `renderRocks.ts` ships the argmax
+because it is the rule the game describes, not because it bought any measurable
+accuracy. Whether an argmax box rule matters for a given overlay depends on whether
+its prototypes' boxes actually separate on the lattice; measure that before building
+one.
+
 Nauvis rocks also have no `tile_restriction` at all: their restriction is the
 `simple-entity` default collision mask (`building()` in
 `core/lualib/collision-mask-defaults.lua`), which includes `water_tile`. When

@@ -105,10 +105,18 @@ const BIG_SAND_ROCK_BOX: PlacementCollisionBox = { w: 1.5, h: 1.5 };
  * (1.5 x 1.5) excludes exactly the same 3x3. Only `huge-rock` (3 x 2.2) differs,
  * at 5x5 - and huge can never win. So argmax, uniform-big and uniform-sand all
  * place identically (measured: 205 / 54 for all three), and only uniform-huge is
- * distinguishable (168 / 46, materially worse). The argmax is kept because it is
- * the rule the game describes and it would start to matter the moment a lever, a
- * mod or a different planet separated those two boxes - not because it bought
- * accuracy today.
+ * distinguishable (168 / 46, materially worse). The agreement is pointwise, not
+ * just in aggregate: a mixed big/sand pair also tests as 3x3, so no tile can
+ * differ.
+ *
+ * The argmax is kept because it is the rule the game describes, and it would
+ * start to matter the moment a mod or another planet separated those two boxes -
+ * not because it bought accuracy today. **No lever this app exposes can separate
+ * them.** `control:rocks:size` is the same outer multiplier on all three
+ * probabilities, and the huge-vs-big theorem holds for every value of the shared
+ * term `T` (which is where size's other effect lands), so no size setting lets
+ * huge win. The moisture and aux levers move `T` and the two region boxes, so they
+ * can only shift which of big and sand wins - and those two are lattice-identical.
  */
 function rockCollisionBoxFor(huge: number, big: number, sand: number): PlacementCollisionBox {
   if (sand > big && sand > huge) return BIG_SAND_ROCK_BOX;
