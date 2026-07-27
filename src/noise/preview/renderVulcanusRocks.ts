@@ -87,15 +87,41 @@ const ROCK_FORBIDDEN_TILES = new Set(["lava", "lava-hot"]);
  * first by autoplace order) are written up in `placement-roll-NOTES.md`.
  *
  * **What the measurement does and does not settle about the box.** It is not a
- * derivation - the exclusion radius was CHOSEN by comparing two candidates. What it
- * supports: the big box is provably too permissive (22-27% over in every region),
- * and the game's counts sit at or below the all-huge model in 2 of 3 regions, so
- * the game's effective exclusion is *at least* huge-sized. (Task 4's report said
- * "the truth sits between the two boxes"; that holds only for region 4.) An
- * exclusion at least this strong is unsurprising given the game also arbitrates
- * against ~1500 other entities per region that this overlay does not model. Both
- * candidate boxes are real prototype data; measurement chose between them, and a
- * different mechanism could reproduce the same totals.
+ * derivation - the exclusion radius was CHOSEN by comparing two candidates. What
+ * the counts support is that the game sits BETWEEN the two models, close to the
+ * huge end:
+ *
+ * | region | all-huge (shipped) | game | all-big | game - all-huge |
+ * | --- | --- | --- | --- | --- |
+ * | 2 | 1131 | 1133 | 1399 | +2 (+0.2%) |
+ * | 3 | 1359 | 1367 | 1738 | +8 (+0.6%) |
+ * | 4 | 1341 | 1450 | 1640 | +109 (+7.5%) |
+ *
+ * The all-huge model **under**-counts in all three regions, and the all-big model
+ * overshoots by 13-27%. So the game's effective exclusion is *at most* huge-sized -
+ * slightly weaker than uniform-huge, nowhere near as weak as uniform-big. Task 4's
+ * "the truth sits between the two boxes" reading is the correct one and holds in
+ * every region.
+ *
+ * That residual points the same way as the open anomaly above rather than away from
+ * it: a population that is ~28% huge and ~72% big would place *more* rocks than a
+ * uniform-huge model, because the big rocks' smaller boxes let neighbours in - which
+ * is exactly the direction and rough magnitude of the shortfall. Stated as
+ * consistency, NOT as evidence: this overlay does not model the mixed population,
+ * and several unmodelled things push the same way (the game also arbitrates against
+ * ~1500 other entities per region, and collision is not modelled across chunk
+ * boundaries).
+ *
+ * Region 4's much larger 7.5% residual is worth a caveat rather than a conclusion.
+ * It is the densest of the three (1450 rocks vs 1133 and 1367) and the residual is
+ * monotone in that ordering, which is what a mixed population would predict - but a
+ * 28% density increase against a 40x residual increase is nowhere near proportional,
+ * so density alone does not explain it. Region 4 is also the spawn-centred window
+ * and the only one with geysers (56), so unmodelled cross-overlay arbitration
+ * concentrates there too.
+ *
+ * Both candidate boxes are real prototype data; measurement chose between them, and
+ * a different mechanism could reproduce the same totals.
  */
 const VOLCANIC_ROCK_COLLISION_BOX: PlacementCollisionBox = { w: 3, h: 2.2 };
 

@@ -133,10 +133,37 @@ makes is DENSITY, not identity. `renderVulcanusRocks.ts` gates the roll with a
 uniform `huge-volcanic-rock` collision box (3 x 2.2 tiles) and lands within
 0.2% / 0.6% / 7.5% of the game's total rock count across the three regions
 (`test/entityDensity.spec.ts`). The small `big` box (1.5 x 1.5), which is what an
-argmax rule actually selects given the theorem above, is 22-27% too permissive. So
-the *total* is right while the *per-tile prototype identity* is known wrong, and the
+argmax rule actually selects given the theorem above, overshoots by 13-27%. So the
+*total* is right while the *per-tile prototype identity* is known wrong, and the
 comment in `renderVulcanusRocks.ts` says so. Do not read the density agreement as
 validation of the arbitration model.
+
+**The residual converges with the anomaly - probably the most useful thing here.**
+The game does not sit *on* the all-huge model, it sits just above it, in every
+region:
+
+| region | all-huge | game | all-big |
+| --- | --- | --- | --- |
+| 2 | 1131 | 1133 | 1399 |
+| 3 | 1359 | 1367 | 1738 |
+| 4 | 1341 | 1450 | 1640 |
+
+That is the signature a mixed population would leave. Roughly 28% huge / 72% big
+means most rocks carry the *smaller* box, which lets neighbours in that a uniform
+huge box would reject - so the game should place slightly **more** than an all-huge
+model and far fewer than an all-big one. It does, in all three regions. The
+mixed-population hypothesis below therefore explains two independent observations
+(the 28% split and the sign of the density residual) rather than one, which is the
+main reason it is worth writing down. It is still a hypothesis: the port models
+neither the mixed population nor cross-chunk collision nor the ~1500 other entities
+per region, and all of those push the count the same way.
+
+Caveat on region 4, the one with the 7.5% residual: it is the densest of the three
+(1450 rocks vs 1133 and 1367) and the residual is monotone in that ordering, which is
+what a mixed population predicts - but a 28% density increase against a 40x residual
+increase is nowhere near proportional. Region 4 is also the spawn-centred window and
+the only one containing geysers, so unmodelled cross-overlay arbitration concentrates
+there. Do not treat the region-4 number as a clean measurement of the mixing effect.
 
 **Untested hypothesis for the mechanism - recorded as a handoff, not a finding.**
 The section below already notes that autoplacers are processed in **groups**, sorted
