@@ -142,4 +142,23 @@ describe("tiled render equals untiled render", () => {
       expect(renderTiled(req, 32)).toEqual(renderWhole(req));
     });
   }
+
+  // The five cases above all sit on 32-tile boundaries with 32-pixel tiles, so
+  // every worker tile is exactly one chunk. That is the easy case for the rock
+  // overlay's collision gate, which is resolved a chunk at a time
+  // (`makePlacementSet`): a window-scoped greedy would agree with a chunk-scoped
+  // one there by coincidence. This case is deliberately ragged - origin -50 and
+  // 24-pixel tiles put every seam in the middle of a chunk - so a collision pass
+  // that leaked the render window into its answer differs here.
+  it("matches on Vulcanus with worker tiles that straddle chunk boundaries", () => {
+    const req = baseReq({
+      view: "all",
+      planet: "vulcanus",
+      originX: -50,
+      originY: -50,
+      width: 70,
+      height: 70,
+    });
+    expect(renderTiled(req, 24)).toEqual(renderWhole(req));
+  });
 });

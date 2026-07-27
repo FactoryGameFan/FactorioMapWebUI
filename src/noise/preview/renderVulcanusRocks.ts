@@ -18,23 +18,27 @@
  * - **No levers.** Vulcanus deliberately omits the `rocks` autoplace control
  *   (see `vulcanusRockField.ts`), so there is no frequency or size to thread.
  *
- * This rolls rather than thresholds: it draws `makePlacementRoll`'s per-tile
- * `U` and places where `U < density(x, y)`. Positions are not tile-exact -
- * there is no cross-overlay arbitration against other autoplacers and no
- * jitter draws within the tile (see `placementRoll.ts`) - but density is the
- * property under test, and this is a faithful roll against it rather than a
- * threshold on it.
+ * This rolls rather than thresholds: it draws `makePlacementSet`'s per-tile
+ * `U` and places where `U < density(x, y)` AND the tile-restriction and
+ * collision gates pass. Positions are not tile-exact - there is no
+ * cross-overlay arbitration against other autoplacers and no jitter draws
+ * within the tile (see `placementRoll.ts`) - but density is the property under
+ * test, and this is a faithful roll against it rather than a threshold on it.
  *
  * A 1x1 mark cannot straddle a tile seam, so - unlike cliffs
  * (`renderCliffs.ts`) - this needs no halo-widened sweep box: sweeping exactly
  * this render's own pixel box already reproduces the untiled render tile for
- * tile (see `tiledEquality.spec.ts`'s Vulcanus rocks/all cases).
+ * tile (see `tiledEquality.spec.ts`'s Vulcanus rocks/all cases). The collision
+ * gate does not change that: it is resolved a whole chunk at a time,
+ * independent of the render window (see `makePlacementSet`).
  */
-import type { EvalCtxInput } from "../eval/ctx";
+import type { EvalCtx, EvalCtxInput } from "../eval/ctx";
 import { withCtxDefaults } from "../eval/ctx";
-import { PLACEMENT_SALT, makePlacementRoll } from "../placement/placementRoll";
+import { PLACEMENT_SALT, makePlacementSet } from "../placement/placementRoll";
+import type { PlacementCollisionBox } from "../placement/placementRoll";
 import { ROCK_MAP_COLOR } from "../rocks/rockCatalog";
 import { makeVulcanusRockFields } from "../rocks/vulcanusRockField";
+import { makeVulcanusTileResolver } from "../tiles/vulcanusCatalog";
 
 export interface RenderVulcanusRocksOptions {
   readonly seed0: number;
@@ -47,6 +51,61 @@ export interface RenderVulcanusRocksOptions {
   readonly ctx?: Omit<EvalCtxInput, "seed0">;
 }
 
+/**
+ * The two Vulcanus tiles no rock may sit on. All four rock prototypes restrict
+ * to `vulcanus_tiles_cold` / `vulcanus_tiles_hot`
+ * (`space-age/prototypes/decorative/decoratives-vulcanus.lua:37-60`), and the
+ * union of those two lists is every Vulcanus tile EXCEPT these.
+ */
+const ROCK_FORBIDDEN_TILES = new Set(["lava", "lava-hot"]);
+
+/**
+ * `huge-volcanic-rock`'s collision box, 3 x 2.2 tiles.
+ *
+ * **Why the huge box everywhere, and not the box of whichever prototype wins the
+ * tile.** The obvious rule - `density` is `max(rockHuge, rockBig)`, so use the box
+ * of the argmax - is degenerate: `rockBig >= rockHuge` at *every* placed tile in
+ * all three oracle regions (measured `hugeWinShare = 0.0000`, with 16-19% exact
+ * ties where both caps bind and `vulcanus_ashlands_biome` is 0). So an argmax rule
+ * picks the small 1.5 x 1.5 box everywhere. Measured relative error against the
+ * game (`test/fixtures/oracle-entity-counts.seed123456.json`, regions 2/3/4):
+ *
+ * | box rule | region 2 | region 3 | region 4 |
+ * | --- | --- | --- | --- |
+ * | argmax (`>`), i.e. big everywhere | 23.5% | 27.1% | 13.1% |
+ * | argmax with ties to huge | 18.6% | 22.3% | 10.2% |
+ * | **huge everywhere** | **0.2%** | **0.6%** | **7.5%** |
+ *
+ * The game's own population is ~28% huge (region 2: 320 huge, 813 big), which the
+ * max-probability arbitration this port models cannot produce - so the tile-level
+ * huge/big split is a real open question (the game groups autoplacers before
+ * arbitrating; see `placement-roll-NOTES.md`). What is NOT in question is the
+ * exclusion radius: the game's effective one matches the huge box, which is
+ * unsurprising given the game also arbitrates against ~1500 other entities per
+ * region that this overlay does not model at all. Both candidate boxes are real
+ * prototype data; measurement chose between them.
+ */
+const VOLCANIC_ROCK_COLLISION_BOX: PlacementCollisionBox = { w: 3, h: 2.2 };
+
+/**
+ * The shipped Vulcanus rock placement predicate: the roll against `density`,
+ * gated by tile restriction and collision. Exported so `entityDensity.spec.ts`
+ * measures the exact predicate the renderer paints, not a re-derivation of it.
+ */
+export function makeVulcanusRockPlacement(ctx: EvalCtx): (x: number, y: number) => boolean {
+  const { density } = makeVulcanusRockFields(ctx);
+  // Derived from the ported tile resolver, NOT from rendered pixel colours: the
+  // chunk resolver asks about tiles outside the render window, and reading the
+  // ImageData would make the answer window-dependent.
+  const tileAt = makeVulcanusTileResolver(ctx);
+  return makePlacementSet({
+    salt: PLACEMENT_SALT.vulcanusRocks,
+    probability: density,
+    tileAllowed: (x, y) => !ROCK_FORBIDDEN_TILES.has(tileAt(x, y).name),
+    collisionBox: () => VOLCANIC_ROCK_COLLISION_BOX,
+  });
+}
+
 export function renderVulcanusRocks(base: ImageData, opts: RenderVulcanusRocksOptions): void {
   const { width, height } = base;
   const originX = opts.originX ?? 0;
@@ -54,14 +113,13 @@ export function renderVulcanusRocks(base: ImageData, opts: RenderVulcanusRocksOp
   const tpp = opts.tilesPerPixel ?? 1;
 
   const ctx = withCtxDefaults({ seed0: opts.seed0, ...opts.ctx });
-  const { density } = makeVulcanusRockFields(ctx);
-  const roll = makePlacementRoll(PLACEMENT_SALT.vulcanusRocks);
+  const placed = makeVulcanusRockPlacement(ctx);
 
   for (let py = 0; py < height; py++) {
     const wy = originY + py * tpp;
     for (let px = 0; px < width; px++) {
       const wx = originX + px * tpp;
-      if (roll(wx, wy) >= density(wx, wy)) continue;
+      if (!placed(wx, wy)) continue;
       const o = (py * width + px) * 4;
       base.data[o] = ROCK_MAP_COLOR[0];
       base.data[o + 1] = ROCK_MAP_COLOR[1];

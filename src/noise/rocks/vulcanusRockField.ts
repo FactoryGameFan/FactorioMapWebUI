@@ -36,9 +36,12 @@
  * `control:rocks:frequency` term commented out at its definition site.
  *
  * The overlay (`renderVulcanusRocks.ts`) no longer thresholds `density` - it
- * rolls the field through `makePlacementRoll`
+ * rolls the field through `makePlacementSet`
  * (`src/noise/placement/placementRoll.ts`), placing where the roll's per-tile
- * `U < density(x, y)`.
+ * `U < density(x, y)` AND the game's two arbitration gates pass: the rocks'
+ * `tile_restriction` (no `lava` / `lava-hot`) and collision rejection against
+ * rocks already placed in the same chunk. Rolling `density` alone over-places by
+ * ~2x against the game - see `test/entityDensity.spec.ts`.
  */
 
 import { clamp } from "../eval/math";
