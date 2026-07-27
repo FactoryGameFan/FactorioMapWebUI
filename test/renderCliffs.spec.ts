@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { renderCliffs } from "../src/noise/preview/renderCliffs";
+import { renderCliffs, paintMark } from "../src/noise/preview/renderCliffs";
 import { WATER_TILE_COLORS } from "../src/noise/preview/renderResources";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
 
@@ -97,4 +97,38 @@ describe("renderCliffs", () => {
     expect(adjacentPair).toBe(true);
   });
   it("map color drift guard", () => expect([...CLIFF_MAP_COLOR]).toEqual([144, 119, 87]));
+});
+
+describe("paintMark", () => {
+  const blank = (w: number, h: number): ImageData =>
+    ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }) as ImageData;
+
+  it("paints a (2r+1) square centred on the pixel", () => {
+    const img = blank(7, 7);
+    paintMark(img, 3, 3, [10, 20, 30], 1);
+    let painted = 0;
+    for (let i = 0; i < img.data.length; i += 4) if (img.data[i + 3] === 255) painted++;
+    expect(painted).toBe(9);
+    const o = (3 * 7 + 3) * 4;
+    expect([img.data[o], img.data[o + 1], img.data[o + 2]]).toEqual([10, 20, 30]);
+  });
+
+  it("clips at the image edge instead of wrapping", () => {
+    const img = blank(7, 7);
+    paintMark(img, 0, 0, [10, 20, 30], 1);
+    let painted = 0;
+    for (let i = 0; i < img.data.length; i += 4) if (img.data[i + 3] === 255) painted++;
+    expect(painted).toBe(4); // the in-image quadrant of a 3x3
+    const bottomRightWrapped = (6 + 6 * 7) * 4; // position that would wrap if clipping weren't enforced
+    expect(img.data[bottomRightWrapped + 3]).toBe(0);
+  });
+
+  it("honours skipPixel per painted pixel", () => {
+    const img = blank(3, 3);
+    const o = (1 * 3 + 1) * 4;
+    img.data[o] = 99;
+    paintMark(img, 1, 1, [10, 20, 30], 1, (r) => r === 99);
+    expect(img.data[o]).toBe(99); // skipped
+    expect(img.data[0]).toBe(10); // neighbour painted
+  });
 });

@@ -56,6 +56,36 @@ export interface RenderCliffsOptions {
 }
 
 /**
+ * Paint one square mark centred on a pixel, clipped to the image. Shared by the
+ * cliff painter and the placement-roll overlays; `skipPixel` is re-checked per
+ * painted pixel so a thickened mark still respects an exclusion (e.g. water).
+ */
+export function paintMark(
+  base: ImageData,
+  px: number,
+  py: number,
+  color: readonly [number, number, number],
+  radius: number,
+  skipPixel?: (r: number, g: number, b: number) => boolean,
+): void {
+  const { width, height } = base;
+  for (let dy = -radius; dy <= radius; dy++) {
+    const y = py + dy;
+    if (y < 0 || y >= height) continue;
+    for (let dx = -radius; dx <= radius; dx++) {
+      const x = px + dx;
+      if (x < 0 || x >= width) continue;
+      const o = (y * width + x) * 4;
+      if (skipPixel?.(base.data[o], base.data[o + 1], base.data[o + 2]) === true) continue;
+      base.data[o] = color[0];
+      base.data[o + 1] = color[1];
+      base.data[o + 2] = color[2];
+      base.data[o + 3] = 255;
+    }
+  }
+}
+
+/**
  * Paint one `CLIFF_MAP_COLOR` mark per placed cell center. Shared with the
  * Vulcanus renderer, which passes no `skipPixel` because Vulcanus has no water
  * tile to keep the footprint off.
@@ -70,28 +100,11 @@ export function paintCliffCells(
     readonly skipPixel?: (r: number, g: number, b: number) => boolean;
   },
 ): void {
-  const { width, height } = base;
   const { originX, originY, tilesPerPixel: tpp, skipPixel } = opts;
-  const r = CLIFF_MARK_RADIUS_PX;
   for (const { x: wx, y: wy } of cells) {
     const cx = Math.floor((wx - originX) / tpp);
     const cy = Math.floor((wy - originY) / tpp);
-    // Paint a (2r+1)x(2r+1) block centered on the cell's pixel, re-checking
-    // each painted pixel so the thickened footprint still respects skipPixel.
-    for (let dy = -r; dy <= r; dy++) {
-      const py = cy + dy;
-      if (py < 0 || py >= height) continue;
-      for (let dx = -r; dx <= r; dx++) {
-        const px = cx + dx;
-        if (px < 0 || px >= width) continue;
-        const o = (py * width + px) * 4;
-        if (skipPixel?.(base.data[o], base.data[o + 1], base.data[o + 2]) === true) continue;
-        base.data[o] = CLIFF_MAP_COLOR[0];
-        base.data[o + 1] = CLIFF_MAP_COLOR[1];
-        base.data[o + 2] = CLIFF_MAP_COLOR[2];
-        base.data[o + 3] = 255;
-      }
-    }
+    paintMark(base, cx, cy, CLIFF_MAP_COLOR, CLIFF_MARK_RADIUS_PX, skipPixel);
   }
 }
 
