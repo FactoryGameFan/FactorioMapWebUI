@@ -395,20 +395,23 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
         `.superpowers/sdd/2026-07-24-vulcanus-v2-resources/task-8-report.md`
         for the full before/after table and methodology.
 
-      **Vulcanus V3 (sulfuric-acid geyser) - PARTIAL, shipped 2026-07-26 as a
-      patch blob.** The geyser is now a fourth `VULCANUS_RESOURCE_CATALOG`
-      entry painting `sulfuricAcidRegionPatchy > 0` in `map_color`
-      `[199, 199, 26]`, last in catalog order so calcite wins the
-      mountains-biome overlap the two share.
+      **Vulcanus V3 (sulfuric-acid geyser) - DONE 2026-07-27.** Shipped
+      2026-07-26 as a patch blob (a fourth `VULCANUS_RESOURCE_CATALOG` entry
+      painting `sulfuricAcidRegionPatchy > 0` in `map_color` `[199, 199, 26]`),
+      which drew the region where the game *rolls* rather than the geysers
+      themselves and overstated their area by 4.2x (measured).
+      It now rolls: `placement: "roll"` on the catalog entry, the game's
+      `vulcanus_sulfuric_acid_geyser_probability` read from source (no
+      `random_penalty` - unlike its calcite/coal/tungsten neighbours),
+      `makePlacementSet` with the lava tile gate and the 2.8 x 2.8
+      `collision_box`, and a 3x3 mark per placement.
 
-      **What is still missing is individual geysers, and V2's "mostly renderer
-      work" framing was wrong.** The field math was done, but the placement
-      rule peaks near 0.065, so no threshold yields a footprint - every geyser
-      comes from a per-tile roll against the per-chunk placement stream
-      (`placement-roll-NOTES.md`) shared across all ~14 Vulcanus entity
-      autoplacers. That is the M3.5 stop-and-report work, tracked in issue #9
-      together with Nauvis crude oil and enemy bases, which need the identical
-      mechanism. See `vulcanus-resources-NOTES.md` gap #4.
+      **Validated against the real game.** Oracle region 4 `[-256,-256]` has 56
+      geysers and the model places 56; regions 2 and 3 hold no sulfur at all and
+      both sides are 0. n = 56 is a weak denominator (Poisson sigma ~7.5) and
+      eight alternative salts span 46-63, so read the agreement as unbiased, not
+      precise. Issue #9 remains open for Nauvis crude oil. See
+      `vulcanus-resources-NOTES.md` gap #4 and `placement-roll-NOTES.md`.
 
       **Vulcanus cliffs - DONE 2026-07-26.** `renderVulcanusCliffs` +
       `cliffiness_basic`, oracle-validated to under 5e-6. Far smaller than the

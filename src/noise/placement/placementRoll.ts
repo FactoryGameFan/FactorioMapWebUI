@@ -31,12 +31,15 @@ const TILES_PER_CHUNK = CHUNK * CHUNK;
  * point-like and a block would merge scattered rocks into a blob
  * (`renderRocks.ts`, `renderVulcanusRocks.ts:6-9`).
  *
- * **Enemy bases do** (Task 6). A spawner is 7.4 x 6.4 tiles and placements are rare,
- * so a 1px dot disappears. `renderEnemies.ts` paints the mark and
- * `elevationRenderRequest.ts`'s `enemySweepBox` widens the tiled sweep by this
- * radius so marks are not clipped at worker-tile seams - which is the second thing
- * adopting this constant costs, and the one `test/tiledEquality.spec.ts` enforces.
- * The sulfuric-acid geyser and crude oil (Tasks 7-8) are expected to follow.
+ * **Enemy bases do** (Task 6), and so does the Vulcanus sulfuric-acid geyser
+ * (Task 7). A spawner is 7.4 x 6.4 tiles and a geyser 2.8 x 2.8, and both place
+ * rarely enough that a 1px dot disappears. `renderEnemies.ts` and
+ * `renderVulcanusResources.ts` paint the mark and `elevationRenderRequest.ts`'s
+ * `placementMarkSweepBox` widens the tiled sweep by this radius so marks are not
+ * clipped at worker-tile seams - which is the second thing adopting this constant
+ * costs, and the one `test/tiledEquality.spec.ts` enforces, with a separate case
+ * per overlay because a window dense in one is empty of the other. Crude oil
+ * (Task 8) is expected to follow.
  */
 export const PLACEMENT_MARK_RADIUS_PX = 1;
 

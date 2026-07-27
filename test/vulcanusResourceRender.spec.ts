@@ -36,12 +36,124 @@ describe("renderVulcanusResources", () => {
     expect(VULCANUS_RESOURCE_CATALOG[3].mapColor).toEqual([199, 199, 26]);
   });
 
+  it("geyser probability is the game's expression over sulfuricAcidRegionPatchy", () => {
+    // `vulcanus_sulfuric_acid_geyser_probability`,
+    // `space-age/prototypes/planet/planet-vulcanus-map-gen.lua:849` (2.1.12):
+    //   (control:sulfuric_acid_geyser:size > 0)
+    //     * (0.025 * ((patchy > 0) + 2 * patchy))
+    // The leading size factor is the renderer's `enabled` filter, so the entry's
+    // own `probability` carries only the second half. There is NO random_penalty
+    // wrapper - its calcite/coal/tungsten neighbours in the same file have one,
+    // and this expression does not.
+    const ctx = withCtxDefaults({ seed0: SEED, startingPositions: [{ x: 0, y: 0 }] });
+    const helpers = makeVulcanusHelpers(ctx);
+    const spawn = makeVulcanusSpawn(ctx, helpers);
+    const cracks = makeVulcanusCracks(ctx, helpers);
+    const biomes = makeVulcanusBiomes(ctx, helpers, spawn, cracks);
+    const resources = makeVulcanusResources(ctx, helpers, spawn, biomes, cracks);
+    const entry = VULCANUS_RESOURCE_CATALOG.find((p) => p.name === "sulfuric-acid-geyser");
+    expect(entry?.placement).toBe("roll");
+    expect(VULCANUS_RESOURCE_CATALOG.filter((p) => p.placement === "threshold").length).toBe(3);
+
+    const prob = entry?.probability?.(resources);
+    expect(prob).toBeDefined();
+    let sawPositive = false;
+    let maxSeen = -Infinity;
+    for (let y = -512; y < 512; y += 37) {
+      for (let x = -512; x < 512; x += 37) {
+        const patchy = resources.sulfuricAcidRegionPatchy(x, y);
+        const expected = 0.025 * ((patchy > 0 ? 1 : 0) + 2 * patchy);
+        expect(prob!(x, y)).toBeCloseTo(expected, 12);
+        if (expected > 0) sawPositive = true;
+        maxSeen = Math.max(maxSeen, expected);
+      }
+    }
+    expect(sawPositive).toBe(true);
+
+    // The cap matters because the catalog's ordering argument rests on it
+    // (calcite saturates to ~1 and must win a shared pixel). It is NOT 0.065 -
+    // that figure was a reasoned bound and it is wrong, because
+    // `vulcanus_sulfuric_acid_region` is a `max` against
+    // `vulcanus_starting_sulfur` and is not capped at 1. A +/-3000-tile sweep on
+    // a 7-tile grid, refined around its argmax, measures 0.0883 at
+    // (2481, -1985). This asserts the loose bound the ordering argument needs
+    // rather than the measured maximum, so a re-measure on another seed does not
+    // break it.
+    expect(maxSeen).toBeLessThan(0.2);
+    expect(prob!(2481, -1985)).toBeGreaterThan(0.08);
+  });
+
+  it("rolls the geyser instead of blobbing its whole patch extent", () => {
+    // The regression this task fixed: the geyser used to be thresholded, which
+    // painted the entire region where the game merely ROLLS for one. Compare the
+    // shipped render's geyser pixels against that old rule (`1000 * patchy >=
+    // 0.5`, i.e. `patchy >= 0.0005`) over a window chosen for having both.
+    //
+    // The window is measured, not guessed: sweeping +/-3000 in 200-tile steps
+    // for a 100x100 px window at this scale, origin (-600, 2800) is the ONLY one
+    // whose old footprint clears 500 px (525, with 135 painted). An earlier
+    // draft asserted `> 500` at origin (-320, 100), where the footprint is 260 -
+    // the guard was written before any window was measured.
+    const opts = { seed0: SEED, width: 100, height: 100, originX: -600, originY: 2800 };
+    const tilesPerPixel = 2;
+    const base = renderVulcanusTerrain({ ...opts, tilesPerPixel });
+    renderVulcanusResources(base, { ...opts, tilesPerPixel });
+
+    const ctx = withCtxDefaults({ seed0: SEED, startingPositions: [{ x: 0, y: 0 }] });
+    const helpers = makeVulcanusHelpers(ctx);
+    const spawn = makeVulcanusSpawn(ctx, helpers);
+    const cracks = makeVulcanusCracks(ctx, helpers);
+    const biomes = makeVulcanusBiomes(ctx, helpers, spawn, cracks);
+    const resources = makeVulcanusResources(ctx, helpers, spawn, biomes, cracks);
+    const geyser = VULCANUS_RESOURCE_CATALOG.find((p) => p.name === "sulfuric-acid-geyser");
+
+    let painted = 0;
+    let oldFootprint = 0;
+    for (let py = 0; py < opts.height; py++) {
+      for (let px = 0; px < opts.width; px++) {
+        const x = opts.originX + px * tilesPerPixel;
+        const y = opts.originY + py * tilesPerPixel;
+        if (1000 * resources.sulfuricAcidRegionPatchy(x, y) >= 0.5) oldFootprint++;
+        const o = (py * opts.width + px) * 4;
+        const isGeyser =
+          base.data[o] === geyser?.mapColor[0] &&
+          base.data[o + 1] === geyser.mapColor[1] &&
+          base.data[o + 2] === geyser.mapColor[2];
+        if (isGeyser) painted++;
+      }
+    }
+    // The window must contain a real patch, or "far fewer pixels" is vacuous.
+    // Measured 525.
+    expect(oldFootprint).toBeGreaterThan(400);
+    // ...and the roll must actually place something in it. Measured 135.
+    expect(painted).toBeGreaterThan(0);
+    // Measured ratio 0.257 (135 / 525). Inequalities rather than the counts, so
+    // a re-measure does not break this.
+    //
+    // **Do not read 0.257 as the area the geysers occupy.** These are painted
+    // MARK pixels: `PLACEMENT_MARK_RADIUS_PX` draws 3x3 per placement, so the
+    // 135 px here come from ~15 placements covering ~118 tiles of ground. The
+    // ratio happens to be scale-invariant (halving `tilesPerPixel` quarters the
+    // footprint samples and the roll hits alike), so tpp=1 measures 0.243 in a
+    // 256x256 window at (-568, 2888) - close to this by construction, not by
+    // coincidence.
+    //
+    // The honest entity-vs-blob figure, aggregated over +/-2000 tiles on a
+    // 2-tile grid rather than a footprint-selected window: 371 placements at the
+    // collision box's 2.8 x 2.8 = 7.84 tiles each against 12130 sampled
+    // footprint tiles, i.e. **0.240, a 4.2x overstatement**. Not the "more than
+    // an order of magnitude" this subsystem's notes claimed - that was another
+    // reasoned-not-measured number, corrected 2026-07-27.
+    expect(painted).toBeLessThan(oldFootprint / 2);
+  });
+
   it("keeps the geyser last, so calcite wins the mountains-biome overlap", () => {
     // Calcite and the geyser are the one pair that can be eligible at the same
     // pixel (both gate on the mountains biome - see the catalog's module
     // comment). The game arbitrates by maximum probability, and calcite's
-    // saturates to ~1 where the geyser's peaks at ~0.065, so calcite must win.
-    // The renderer reproduces that purely through catalog order.
+    // saturates to ~1 where the geyser's peaks below 0.09 (measured 0.0883, not
+    // the 0.065 this file used to quote), so calcite must win. The renderer
+    // reproduces that through paint order: geyser marks first, ores over them.
     const names = VULCANUS_RESOURCE_CATALOG.map((r) => r.name);
     expect(names.indexOf("sulfuric-acid-geyser")).toBe(names.length - 1);
     expect(names.indexOf("calcite")).toBeLessThan(names.indexOf("sulfuric-acid-geyser"));

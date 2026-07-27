@@ -127,7 +127,9 @@ honest description of what this draws is "rocky ground", not "rocks".
 
 The real fix was the per-tile placement roll tracked in **issue #9**, which also
 covers the sulfuric-acid geyser, Nauvis crude oil and Nauvis enemy bases. It
-shipped for Vulcanus rocks in Tasks 3 and 4.5.
+shipped for Vulcanus rocks in Tasks 3 and 4.5, for Nauvis rocks in Task 5, for
+Nauvis enemy bases in Task 6 and for the sulfuric-acid geyser in Task 7; only
+Nauvis crude oil is still outstanding.
 
 **"Reads as rocky ground" was the one thing in the V3 work that wanted a human
 eyeball**, since that is a judgement a test cannot make. The roll replaced the

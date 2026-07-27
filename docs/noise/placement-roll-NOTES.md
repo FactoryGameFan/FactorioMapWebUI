@@ -420,3 +420,96 @@ never places an individual tree - inside the enemy chunk resolver, at roughly do
 the cost. Recorded here so the next overlay's residual is read against it: an overlay
 with a large collision box and a low density is dominated by what the game put down
 before it, not by its own field.
+
+## Vulcanus sulfuric-acid geysers: what Task 7 added (2026-07-27)
+
+### The game's own comment is textual evidence for sequential shared space
+
+The geyser prototype's autoplace carries a developer comment
+(`space-age/prototypes/entity/resources.lua:186-187`, 2.1.12):
+
+```lua
+autoplace =
+{
+  --control = "sulfuric-acid-geyser",
+  order = "c", -- Other resources are "b"; oil won't get placed if something else is already there.
+  probability_expression = 0
+}
+```
+
+That is the same sentence the arbitration section at the top of this file quotes from
+the disassembly, but here it is in the game's own source, attached to the mechanism it
+describes: **a later autoplace order means "won't get placed if something else is
+already there"**. It does not say entities are *arbitrated* against each other by
+probability; it says a later group finds the space already taken.
+
+This is the closest thing yet to direct evidence for the "groups processed
+sequentially with shared space" half of the rock hypothesis, which the enemy-base
+work could only clear the competing explanation for. **It is still not a test.** A
+comment states a developer's intent, and the code path is where the truth is - the
+`+848..+964` grouping re-read is still the work. But it is worth more than the
+hypothesis had before, and it comes from a file nobody had read for this purpose.
+
+It also fixes the geyser's place in the queue: `c` sorts after the three solid ores
+(`b`) and after the rocks (`a[landscape]-c[rock]-*`), so **the geyser is last of every
+Vulcanus autoplacer** and is therefore the overlay most exposed to the cross-overlay
+occupancy above. That prediction is not borne out by the one region that can test it
+(see below), which is itself informative.
+
+### The whole gate here is collision; the tile restriction is real but idle
+
+| variant | oracle region 4 `[-256,-256]` (game 56) |
+| --- | --- |
+| bare roll, no gates | 81 (44.6%) |
+| + lava tile restriction only | 81 (44.6%) |
+| + collision only | 56 (0.0%) |
+| **+ both (shipped)** | **56 (0.0%)** |
+
+The restriction rejects nothing in that window, and it would be wrong to conclude it
+is decorative: over a +/-2000-tile sample at the same seed, 426 of 5627 tiles with a
+positive geyser probability are lava and the gate rejects 12 of 195 roll hits (~6%).
+Region 4 simply has no lava where its sulfur is. **A gate measuring 0 in one window is
+not evidence about the gate.**
+
+Two smaller prototype findings, both checked rather than assumed:
+
+- **No `map_generator_bounding_box`** - the 2.1.12 inventory in the table above holds
+  eight declaration sites and not one of them is a `resource`, so the geyser's
+  `collision_box` (2.8 x 2.8) *is* its map-gen box.
+- **The lava gate is a collision MASK, not a `tile_restriction`.** The geyser declares
+  no `tile_restriction`; `type = "resource"` defaults to a `{resource = true}`
+  collision mask (`core/lualib/collision-mask-defaults.lua:187`) and exactly `lava` and
+  `lava-hot` list `resource = true` in their tile masks
+  (`base/prototypes/tile/tile-collision-masks.lua:65`). The forbidden set coincides
+  with the rock overlay's while being reached by an entirely different route - so
+  "same answer" here is a coincidence of the tile data, not a Vulcanus-wide rule.
+- **The argmax-box question does not arise**, for a fourth distinct reason: one
+  prototype, one box. The four overlays so far have answered it by an ordering theorem
+  (Vulcanus rocks), a lattice collapse (Nauvis rocks), identical declarations (the two
+  spawners), and now non-existence.
+
+### A comment's arithmetic is not a measurement, even in this repo
+
+`vulcanusResourceCatalog.ts` had claimed since V3 that the geyser's probability "peaks
+around 0.065", derived by assuming `vulcanus_sulfuric_acid_region <= 1` and
+`vulcanus_sulfuric_acid_patches <= 0.8`. The region is a `max` against
+`vulcanus_starting_sulfur`, which has no such cap. Measured over +/-3000 tiles on a
+7-tile grid and refined around the argmax: **0.0883 at (2481, -1985)**, where `patchy`
+is 1.217 - 36% above the written bound. Nothing depended on the exact figure (the
+ordering argument only needs "far below calcite's saturated ~1"), but it is the third
+number in this subsystem to have been reasoned rather than measured and be wrong.
+
+A fourth turned up in the same file while pinning Task 7's render test, and it is the
+more interesting one because it was the *headline* claim for why the roll was worth
+doing: the old blob was said to overstate the geysers' area "by more than an order of
+magnitude". Aggregating the shipped predicate over +/-2000 tiles on a 2-tile grid
+gives 371 placements at 2.8 x 2.8 = 7.84 tiles each against 12130 sampled footprint
+tiles - **0.240, a 4.2x overstatement**. The paper figure multiplied the *pre-collision*
+roll rate by the entity area, and collision is exactly the gate that removes most of
+those hits (81 -> 56 in oracle region 4). So the error was not arithmetic; it was
+quoting a rate from before the very gate the same task had just added.
+
+The roll is still the right change - 4.2x is a large error, and a blob and a stipple
+misread differently regardless of area. But **the case for a change was overstated by
+the same reasoning style the change was meant to replace**, which is worth more as a
+warning than the number is as a fact.

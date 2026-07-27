@@ -165,7 +165,7 @@ describe("tiled render equals untiled render", () => {
 
   // Enemy bases are the only Nauvis overlay that paints a mark WIDER than one
   // pixel from a swept position (3x3, `PLACEMENT_MARK_RADIUS_PX`), so they are
-  // the only one that needs `enemySweepBox`'s halo: a placement one pixel outside
+  // the only one that needs `placementMarkSweepBox`'s halo: a placement one pixel outside
   // a worker tile still owes that tile the edge of its mark. The `enemies` case
   // in the VIEWS loop above cannot catch a missing halo - it sits at (320, 64)
   // near spawn, where the starting-area exclusion leaves ZERO placements in the
@@ -221,6 +221,34 @@ describe("tiled render equals untiled render", () => {
       planet: "vulcanus",
       originX: -50,
       originY: -50,
+      width: 70,
+      height: 70,
+    });
+    expect(renderTiled(req, 24)).toEqual(renderWhole(req));
+  });
+
+  // The sulfuric-acid geyser is the Vulcanus counterpart of the enemy-base case
+  // above: it rolls per tile and paints a 3x3 mark, so it needs the same
+  // `placementMarkSweepBox` halo, and NONE of the six Vulcanus cases above can
+  // catch a missing one - all of them sit in windows with ZERO geyser
+  // placements (measured: the (-64,-64) 64x64 window and the (-50,-50) 70x70
+  // ragged window both have 0), so they would pass on empty pixels.
+  //
+  // Chosen by the gate's own assertion, the same way the Nauvis enemy case was:
+  // every geyser placement in [-400, 400)^2 was collected (81 of them) and
+  // ragged 70x70 windows swept on a 7-tile grid for the one with the most
+  // placements that ALSO has placements within 1 pixel of an interior seam at
+  // 24-pixel tiles - origin (-267, 146), 30 placements, 6 seam-adjacent. That
+  // origin is also 21 tiles into a chunk in x and 18 in y, so it exercises the
+  // chunk-scoped collision purity too. `view: "resources"` rather than "all" so
+  // a failure here is unambiguously the geyser rather than cliffs or rocks.
+  // Drop the halo and this case fails.
+  it("matches on Vulcanus where geyser marks straddle worker-tile seams", () => {
+    const req = baseReq({
+      view: "resources",
+      planet: "vulcanus",
+      originX: -267,
+      originY: 146,
       width: 70,
       height: 70,
     });

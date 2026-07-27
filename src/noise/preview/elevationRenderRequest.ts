@@ -198,16 +198,18 @@ export function cliffCellQueryBox(req: ElevationRenderRequest): WorldBox {
 }
 
 /**
- * The world box to sweep for the enemy-base placement roll - `haloQueryBox` at
- * `PLACEMENT_MARK_RADIUS_PX`.
+ * The world box to sweep for a placement roll that paints a 3x3 mark -
+ * `haloQueryBox` at `PLACEMENT_MARK_RADIUS_PX`. Shared by Nauvis enemy bases
+ * (`renderEnemies.ts`) and Vulcanus geysers (`renderVulcanusResources.ts`).
  *
- * Both rock overlays paint a 1x1 pixel and need no equivalent; enemy bases keep
- * the 3x3 mark (a spawner is 7.4 x 6.4 tiles and placements are rare, so a dot
- * would vanish), and a 3x3 mark straddles worker-tile seams. `renderEnemies.ts`
- * documents the sweep side; `test/tiledEquality.spec.ts` is what fails without
- * it.
+ * Both rock overlays paint a 1x1 pixel and need no equivalent; these two keep
+ * the 3x3 mark (a spawner is 7.4 x 6.4 tiles, a geyser 2.8 x 2.8, and both are
+ * rare enough that a dot would vanish), and a 3x3 mark straddles worker-tile
+ * seams. Each renderer documents its sweep side; `test/tiledEquality.spec.ts` is
+ * what fails without it, and it carries a separate case per overlay because a
+ * window dense in one is empty of the other.
  */
-export function enemySweepBox(req: ElevationRenderRequest): WorldBox {
+export function placementMarkSweepBox(req: ElevationRenderRequest): WorldBox {
   return haloQueryBox(req, PLACEMENT_MARK_RADIUS_PX);
 }
 
@@ -259,6 +261,9 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
             startingPositions: req.startingPositions,
             vulcanusResourceControls: req.vulcanusResourceControls,
           },
+          // The geyser rolls and paints a 3x3 mark; the three solid ores
+          // threshold and paint 1x1, and ignore this.
+          sweepBox: placementMarkSweepBox(req),
         });
       }
       if (req.view === "rocks" || req.view === "all") {
@@ -367,7 +372,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         auxBias: req.auxBias,
         startingAreaMoistureSize: req.startingAreaMoistureSize,
         startingAreaMoistureFrequency: req.startingAreaMoistureFrequency,
-        sweepBox: enemySweepBox(req),
+        sweepBox: placementMarkSweepBox(req),
       });
     }
     if (req.view === "cliffs" || req.view === "all") {

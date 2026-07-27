@@ -14,7 +14,7 @@
  * overlay places ~1 per 1700-10000 tiles, so a 1px dot would be invisible.
  * A 3x3 mark can spill across a worker-tile seam, so - exactly like cliffs and
  * like Vulcanus rocks before they went to 1x1 - the tiled renderer hands in a
- * halo-widened `sweepBox` (`elevationRenderRequest.ts`'s `enemySweepBox`).
+ * halo-widened `sweepBox` (`elevationRenderRequest.ts`'s `placementMarkSweepBox`).
  * Without it `test/tiledEquality.spec.ts` fails at the seams.
  *
  * The water skip is now TWO separate things, and the distinction matters:
@@ -305,7 +305,7 @@ export function renderEnemies(base: ImageData, opts: RenderEnemiesOptions): void
   // Local pixel range to sweep - the image's own bounds by default, widened by
   // the halo when `sweepBox` is given. The world->local division is exact:
   // `sweepBox` is always originX/originY plus an integer multiple of tpp (see
-  // `enemySweepBox`), the same guarantee `cliffCellQueryBox` relies on.
+  // `placementMarkSweepBox`), the same guarantee `cliffCellQueryBox` relies on.
   const box = opts.sweepBox;
   const pxStart = box ? Math.round((box.x0 - originX) / tpp) : 0;
   const pxEnd = box ? Math.round((box.x1 - originX) / tpp) : width;

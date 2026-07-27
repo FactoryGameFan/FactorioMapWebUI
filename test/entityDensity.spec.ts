@@ -8,6 +8,10 @@ import {
   makeNauvisEnemyProbability,
 } from "../src/noise/preview/renderEnemies";
 import { makeNauvisRockPlacement } from "../src/noise/preview/renderRocks";
+import {
+  makeVulcanusGeyserPlacement,
+  makeVulcanusGeyserProbability,
+} from "../src/noise/preview/renderVulcanusResources";
 import { makeVulcanusRockPlacement } from "../src/noise/preview/renderVulcanusRocks";
 import { makeRockFields } from "../src/noise/rocks/rockField";
 import { makeVulcanusRockFields } from "../src/noise/rocks/vulcanusRockField";
@@ -85,6 +89,23 @@ import { makeVulcanusRockFields } from "../src/noise/rocks/vulcanusRockField";
  * `src/noise/preview/renderEnemies.ts`. Region 0 still asserts the
  * gate-independent `relToField` claim, and its `rel` is logged so a future
  * cross-overlay pass can be measured against it.
+ *
+ * ## Vulcanus sulfuric-acid geysers (added 2026-07-27, Task 7)
+ *
+ * | region | window | ours | game | rel |
+ * | --- | --- | --- | --- | --- |
+ * | 2 | `[0,0]-[512,512]` | 0 | 0 | - (asserted as equality) |
+ * | 3 | `[4096,4096]-[4608,4608]` | 0 | 0 | - (asserted as equality) |
+ * | 4 | `[-256,-256]-[256,256]` | 56 | 56 | 0.0% |
+ *
+ * **Only region 4 has a usable denominator, and 56 is a weak one.** Regions 2
+ * and 3 hold no sulfur at all - the geyser probability is <= 0 at every one of
+ * their 262144 tiles - so the game has zero geysers there and so does this
+ * model; those two are asserted as exact zeros, which is a real check on the
+ * region gate but says nothing about the roll. Region 4's n = 56 carries a
+ * Poisson sigma of ~7.5 (13%), so an exact match is inside the noise by
+ * construction: re-rolling region 4 under eight different salts gives 46-63
+ * (mean 55.3). Read the 0.0% as "unbiased", not as "precise".
  */
 
 interface FixtureRegion {
@@ -193,6 +214,81 @@ describe("placement density vs the game", () => {
 
       expect(rel).toBeLessThan(BAND[index]);
       expect(relToField).toBeLessThan(FIELD_BAND[index]);
+    }, 120000);
+  }
+});
+
+describe("Vulcanus geyser placement density vs the game", () => {
+  /**
+   * The band for the ONE region with geysers. Measured `rel = 0.0000` (56 vs
+   * 56), so "just above the measured value" is a headroom decision rather than
+   * a rounding one; 0.04 is +/-2 geysers on 56, the same ~2-entity headroom the
+   * rock bands carry.
+   *
+   * | region | game | ours | measured rel | band |
+   * | --- | --- | --- | --- | --- |
+   * | 2 | 0 | 0 | - | equality, not a band |
+   * | 3 | 0 | 0 | - | equality, not a band |
+   * | 4 | 56 | 56 | 0.0000 | 0.04 (+/-2 geysers) |
+   *
+   * **What this band does and does not have power over.** It fails on the real
+   * physics: dropping the collision gate gives 81 (rel 0.446), and that is the
+   * whole of the gating here - the lava tile restriction rejects nothing in this
+   * window (see `GEYSER_FORBIDDEN_TILES` in `renderVulcanusResources.ts` for why
+   * that 0 is a property of the window, not of the gate). Unlike the enemy-base
+   * band it DOES discriminate the arbitrary salt: of the eight salts measured
+   * (46-63 placements), only two pass 0.04. That is a consequence of pinning to
+   * a measured 0.0, not a claim that the salt is right - it is arbitrary, and a
+   * deliberate salt change here means re-measuring, not widening.
+   */
+  const BAND = 0.04;
+
+  /**
+   * The ungated roll against the probability's own integral - the claim that
+   * holds independent of both gates. Measured in region 4 only (the other two
+   * integrate to exactly 0): 81 placements against a sum of 73.5, rel 0.1022.
+   *
+   * That is an order of magnitude looser than the rock overlays' 0.002-0.033,
+   * and the reason is the count, not the roll: a Poisson draw with mean 73.5 has
+   * sigma 8.6, i.e. 11.7% of the mean, so 81 is +0.87 sigma. The band adds ~1
+   * further placement over the measured value.
+   */
+  const FIELD_BAND = 0.11;
+
+  const vulcanusRegions = fixture.regions
+    .map((r, i) => ({ region: r as FixtureRegion, index: i }))
+    .filter((e) => e.region.planet === "vulcanus");
+
+  for (const { region, index } of vulcanusRegions) {
+    it(`Vulcanus geysers: placement density vs the game (region ${String(index)})`, () => {
+      const game = gameCount(index, (name) => name === "sulfuric-acid-geyser");
+      const ctx = withCtxDefaults({ seed0: fixture.seed, startingPositions: [{ x: 0, y: 0 }] });
+      const ours = countOver(region, makeVulcanusGeyserPlacement(ctx));
+
+      const probability = makeVulcanusGeyserProbability(ctx);
+      const roll = makePlacementRoll(PLACEMENT_SALT.vulcanusGeyser);
+      const ungated = countOver(region, (x, y) => roll(x, y) < probability(x, y));
+      // The probability is negative wherever the geyser cannot place (the game's
+      // expression is not clamped), and a negative term must not subtract from
+      // the expected count - the roll can never accept there.
+      const expected = expectedCount(region, (x, y) => Math.max(0, probability(x, y)));
+
+      console.log(
+        `vulcanus geysers region ${String(index)} [${String(region.x0)},${String(region.y0)}]: ` +
+          `ours=${String(ours)} game=${String(game)} ungated=${String(ungated)} ` +
+          `sum(probability)=${expected.toFixed(1)}`,
+      );
+
+      if (game === 0) {
+        // No sulfur reaches these two windows at all, so this is an assertion
+        // about the region gate rather than about the roll - but a sign error or
+        // a dropped `(patchy > 0)` term would place thousands here.
+        expect(ours).toBe(0);
+        expect(expected).toBe(0);
+        return;
+      }
+      expect(Math.abs(ours - game) / game).toBeLessThan(BAND);
+      expect(Math.abs(ungated - expected) / expected).toBeLessThan(FIELD_BAND);
     }, 120000);
   }
 });
