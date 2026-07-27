@@ -13,7 +13,9 @@ import { renderResources } from "./renderResources";
 import { renderRocks } from "./renderRocks";
 import { renderTerrain } from "./renderTerrain";
 import { renderTrees } from "./renderTrees";
+import { renderVulcanusCliffs } from "./renderVulcanusCliffs";
 import { renderVulcanusResources } from "./renderVulcanusResources";
+import { renderVulcanusRocks } from "./renderVulcanusRocks";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
 
 /** A render job posted to the worker. `id` tags the response for staleness. */
@@ -201,8 +203,8 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
     req.view === "all"
   ) {
     if (planet === "vulcanus") {
-      // V2 ports the resource overlay only. The other four Nauvis overlays
-      // (enemies, cliffs, trees, rocks) have no Vulcanus meaning, so a
+      // Vulcanus has its own resource and cliff overlays. The remaining three
+      // Nauvis overlays (enemies, trees, rocks) have no Vulcanus port, so a
       // terrain-family view that asks for one still gets plain terrain rather
       // than a Nauvis field composited onto Vulcanus colors.
       image = renderVulcanusTerrain({
@@ -217,6 +219,10 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           vulcanusResourceControls: req.vulcanusResourceControls,
         },
       });
+      // Resources paint first, then the two obstruction overlays on top, so a
+      // cliff or a rock crossing an ore patch still reads as the thing that is
+      // in the way. Cliffs last matches the Nauvis order below, where
+      // renderCliffs is the final pass.
       if (req.view === "resources" || req.view === "all") {
         renderVulcanusResources(image, {
           seed0: req.seed0,
@@ -227,6 +233,25 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
             startingPositions: req.startingPositions,
             vulcanusResourceControls: req.vulcanusResourceControls,
           },
+        });
+      }
+      if (req.view === "rocks" || req.view === "all") {
+        renderVulcanusRocks(image, {
+          seed0: req.seed0,
+          originX: req.originX,
+          originY: req.originY,
+          tilesPerPixel: req.tilesPerPixel,
+          ctx: { startingPositions: req.startingPositions },
+        });
+      }
+      if (req.view === "cliffs" || req.view === "all") {
+        renderVulcanusCliffs(image, {
+          seed0: req.seed0,
+          originX: req.originX,
+          originY: req.originY,
+          tilesPerPixel: req.tilesPerPixel,
+          ctx: { startingPositions: req.startingPositions },
+          cellQueryBox: cliffCellQueryBox(req),
         });
       }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
@@ -267,6 +292,23 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         startingPositions: req.startingPositions,
       });
     }
+    if (req.view === "resources" || req.view === "all") {
+      renderResources(image, {
+        seed0: req.seed0,
+        originX: req.originX,
+        originY: req.originY,
+        tilesPerPixel: req.tilesPerPixel,
+        controls: req.resourceControls ?? {},
+        startingPositions: req.startingPositions,
+        segmentationMultiplier: req.segmentationMultiplier,
+        waterLevel: req.waterLevel,
+        startingLakePositions: req.startingLakePositions,
+      });
+    }
+    // Rocks paint after resources (and cliffs last of all) so an obstruction
+    // crossing an ore patch reads as the obstruction - same order as the
+    // Vulcanus branch above. Trees stay under resources: a forest is cleared,
+    // not an obstacle you route around.
     if (req.view === "rocks" || req.view === "all") {
       renderRocks(image, {
         seed0: req.seed0,
@@ -282,19 +324,6 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         startingAreaMoistureSize: req.startingAreaMoistureSize,
         startingAreaMoistureFrequency: req.startingAreaMoistureFrequency,
         startingPositions: req.startingPositions,
-      });
-    }
-    if (req.view === "resources" || req.view === "all") {
-      renderResources(image, {
-        seed0: req.seed0,
-        originX: req.originX,
-        originY: req.originY,
-        tilesPerPixel: req.tilesPerPixel,
-        controls: req.resourceControls ?? {},
-        startingPositions: req.startingPositions,
-        segmentationMultiplier: req.segmentationMultiplier,
-        waterLevel: req.waterLevel,
-        startingLakePositions: req.startingLakePositions,
       });
     }
     if (req.view === "enemies" || req.view === "all") {

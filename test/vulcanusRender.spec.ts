@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
+import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
+import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
 import {
   runRenderRequest,
   type ElevationRenderRequest,
@@ -167,11 +169,151 @@ describe("runRenderRequest planet dispatch", () => {
       startingPositions: [{ x: 0, y: 0 }],
     };
     const terrain = runRenderRequest({ ...common, view: "terrain" });
-    for (const view of ["enemies", "cliffs", "trees", "rocks"] as const) {
+    // "cliffs" and "rocks" are deliberately absent: V3 gave both a Vulcanus
+    // port, so neither is a no-op here. The two below still are.
+    for (const view of ["enemies", "trees"] as const) {
       const other = runRenderRequest({ ...common, id: 4, view });
       expect(Array.from(new Uint8ClampedArray(other.buffer))).toEqual(
         Array.from(new Uint8ClampedArray(terrain.buffer)),
       );
     }
   });
+
+  it("paints Vulcanus rocks for view:'rocks', in the shared ROCK_MAP_COLOR", () => {
+    const common = {
+      id: 7,
+      seed0: 123456,
+      planet: "vulcanus" as const,
+      width: 96,
+      height: 96,
+      originX: -128,
+      originY: -128,
+      tilesPerPixel: 1,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      startingPositions: [{ x: 0, y: 0 }],
+    };
+    const terrain = runRenderRequest({ ...common, view: "terrain" });
+    const rocks = runRenderRequest({ ...common, id: 8, view: "rocks" });
+
+    // All four Vulcanus rock entities declare map_color {129, 105, 78}, the
+    // same as Nauvis's rocks, so ROCK_MAP_COLOR is shared not duplicated.
+    const before = new Uint8ClampedArray(terrain.buffer);
+    const after = new Uint8ClampedArray(rocks.buffer);
+    let changed = 0;
+    for (let o = 0; o < after.length; o += 4) {
+      if (
+        after[o] === before[o] &&
+        after[o + 1] === before[o + 1] &&
+        after[o + 2] === before[o + 2]
+      )
+        continue;
+      changed++;
+      expect([after[o], after[o + 1], after[o + 2]]).toEqual([...ROCK_MAP_COLOR]);
+    }
+    expect(changed).toBeGreaterThan(0);
+  });
+
+  it("paints Vulcanus cliffs for view:'cliffs', in the shared CLIFF_MAP_COLOR", () => {
+    const common = {
+      id: 5,
+      seed0: 123456,
+      planet: "vulcanus" as const,
+      width: 128,
+      height: 128,
+      originX: -256,
+      originY: -256,
+      tilesPerPixel: 1,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      startingPositions: [{ x: 0, y: 0 }],
+    };
+    const terrain = runRenderRequest({ ...common, view: "terrain" });
+    const cliffs = runRenderRequest({ ...common, id: 6, view: "cliffs" });
+    expect(Array.from(new Uint8ClampedArray(cliffs.buffer))).not.toEqual(
+      Array.from(new Uint8ClampedArray(terrain.buffer)),
+    );
+
+    // Every changed pixel must be the cliff colour - `cliff-vulcanus` declares
+    // the same map_color {144, 119, 87} as Nauvis's `cliff`, so CLIFF_MAP_COLOR
+    // is shared rather than duplicated.
+    const before = new Uint8ClampedArray(terrain.buffer);
+    const after = new Uint8ClampedArray(cliffs.buffer);
+    let changed = 0;
+    for (let o = 0; o < after.length; o += 4) {
+      if (
+        after[o] === before[o] &&
+        after[o + 1] === before[o + 1] &&
+        after[o + 2] === before[o + 2]
+      )
+        continue;
+      changed++;
+      expect([after[o], after[o + 1], after[o + 2]]).toEqual([...CLIFF_MAP_COLOR]);
+    }
+    expect(changed).toBeGreaterThan(0);
+  });
+
+  // Vulcanus composites terrain -> resources -> rocks -> cliffs, so both
+  // obstruction overlays read on top of an ore patch rather than being buried
+  // by it. All three overlays paint opaquely, so the order is fully decided by
+  // who paints last on a contended pixel - which is what this pins.
+  //
+  // Window choice is not arbitrary: resources have to contend with BOTH other
+  // overlays for the two assertions to mean anything, and most windows give
+  // only one. This one (a 256x256-tile world window at 2 tiles/px) was probed
+  // to have 342 resource pixels cliffs also paint and 67 rocks also paint.
+  // Both counts are asserted below, so if placement ever shifts the test fails
+  // loudly rather than passing vacuously. It runs five full Vulcanus renders,
+  // hence the explicit timeout.
+  it("composites Vulcanus rocks and cliffs ON TOP of resource patches in view:'all'", () => {
+    const common = {
+      id: 9,
+      seed0: 123456,
+      planet: "vulcanus" as const,
+      width: 128,
+      height: 128,
+      originX: -192,
+      originY: -192,
+      tilesPerPixel: 2,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      startingPositions: [{ x: 0, y: 0 }],
+    };
+    const terrain = new Uint8ClampedArray(runRenderRequest({ ...common, view: "terrain" }).buffer);
+    const allBuf = new Uint8ClampedArray(runRenderRequest({ ...common, view: "all" }).buffer);
+    const paintedBy = (view: "resources" | "rocks" | "cliffs"): Set<number> => {
+      const buf = new Uint8ClampedArray(runRenderRequest({ ...common, view }).buffer);
+      const s = new Set<number>();
+      for (let o = 0; o < buf.length; o += 4) {
+        if (buf[o] !== terrain[o] || buf[o + 1] !== terrain[o + 1] || buf[o + 2] !== terrain[o + 2])
+          s.add(o);
+      }
+      return s;
+    };
+    const resources = paintedBy("resources");
+    const rocks = paintedBy("rocks");
+    const cliffs = paintedBy("cliffs");
+
+    let overCliffs = 0;
+    let overRocks = 0;
+    for (const o of resources) {
+      if (cliffs.has(o)) {
+        overCliffs++;
+        expect(
+          [allBuf[o], allBuf[o + 1], allBuf[o + 2]],
+          `pixel ${o}: cliffs must composite OVER resources`,
+        ).toEqual([...CLIFF_MAP_COLOR]);
+      } else if (rocks.has(o)) {
+        overRocks++;
+        expect(
+          [allBuf[o], allBuf[o + 1], allBuf[o + 2]],
+          `pixel ${o}: rocks must composite OVER resources`,
+        ).toEqual([...ROCK_MAP_COLOR]);
+      }
+    }
+    expect(overCliffs, "window must have pixels both cliffs and resources paint").toBeGreaterThan(
+      0,
+    );
+    expect(overRocks, "window must have pixels both rocks and resources paint").toBeGreaterThan(0);
+  }, 15000);
 });

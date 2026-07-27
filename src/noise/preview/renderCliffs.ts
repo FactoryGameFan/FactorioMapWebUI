@@ -55,6 +55,46 @@ export interface RenderCliffsOptions {
   };
 }
 
+/**
+ * Paint one `CLIFF_MAP_COLOR` mark per placed cell center. Shared with the
+ * Vulcanus renderer, which passes no `skipPixel` because Vulcanus has no water
+ * tile to keep the footprint off.
+ */
+export function paintCliffCells(
+  base: ImageData,
+  cells: readonly { x: number; y: number }[],
+  opts: {
+    readonly originX: number;
+    readonly originY: number;
+    readonly tilesPerPixel: number;
+    readonly skipPixel?: (r: number, g: number, b: number) => boolean;
+  },
+): void {
+  const { width, height } = base;
+  const { originX, originY, tilesPerPixel: tpp, skipPixel } = opts;
+  const r = CLIFF_MARK_RADIUS_PX;
+  for (const { x: wx, y: wy } of cells) {
+    const cx = Math.floor((wx - originX) / tpp);
+    const cy = Math.floor((wy - originY) / tpp);
+    // Paint a (2r+1)x(2r+1) block centered on the cell's pixel, re-checking
+    // each painted pixel so the thickened footprint still respects skipPixel.
+    for (let dy = -r; dy <= r; dy++) {
+      const py = cy + dy;
+      if (py < 0 || py >= height) continue;
+      for (let dx = -r; dx <= r; dx++) {
+        const px = cx + dx;
+        if (px < 0 || px >= width) continue;
+        const o = (py * width + px) * 4;
+        if (skipPixel?.(base.data[o], base.data[o + 1], base.data[o + 2]) === true) continue;
+        base.data[o] = CLIFF_MAP_COLOR[0];
+        base.data[o + 1] = CLIFF_MAP_COLOR[1];
+        base.data[o + 2] = CLIFF_MAP_COLOR[2];
+        base.data[o + 3] = 255;
+      }
+    }
+  }
+}
+
 export function renderCliffs(base: ImageData, opts: RenderCliffsOptions): void {
   const { width, height } = base;
   const originX = opts.originX ?? 0;
@@ -86,25 +126,10 @@ export function renderCliffs(base: ImageData, opts: RenderCliffsOptions): void {
   };
   const cells = placement.placedCells(box.x0, box.y0, box.x1, box.y1);
 
-  const r = CLIFF_MARK_RADIUS_PX;
-  for (const { x: wx, y: wy } of cells) {
-    const cx = Math.floor((wx - originX) / tpp);
-    const cy = Math.floor((wy - originY) / tpp);
-    // Paint a (2r+1)x(2r+1) block centered on the cell's pixel, water-checking
-    // each painted pixel so the thickened footprint still never bleeds onto water.
-    for (let dy = -r; dy <= r; dy++) {
-      const py = cy + dy;
-      if (py < 0 || py >= height) continue;
-      for (let dx = -r; dx <= r; dx++) {
-        const px = cx + dx;
-        if (px < 0 || px >= width) continue;
-        const o = (py * width + px) * 4;
-        if (isWater(base.data[o], base.data[o + 1], base.data[o + 2])) continue;
-        base.data[o] = CLIFF_MAP_COLOR[0];
-        base.data[o + 1] = CLIFF_MAP_COLOR[1];
-        base.data[o + 2] = CLIFF_MAP_COLOR[2];
-        base.data[o + 3] = 255;
-      }
-    }
-  }
+  paintCliffCells(base, cells, {
+    originX,
+    originY,
+    tilesPerPixel: tpp,
+    skipPixel: isWater,
+  });
 }

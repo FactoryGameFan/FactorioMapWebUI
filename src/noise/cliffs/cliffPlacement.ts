@@ -59,24 +59,61 @@ interface CornerSample {
 }
 
 /**
+ * The two fields the placement pass samples at the corner lattice. Nauvis builds
+ * these from `makeCliffFields`, Vulcanus from `makeVulcanusCliffFields`; the
+ * geometry below does not care which, because `crossesCliff` and the 4-tile
+ * lattice are engine behaviour, not planet behaviour.
+ */
+export interface CliffFields {
+  readonly cliffElevation: (x: number, y: number) => number;
+  readonly cliffiness: (x: number, y: number) => number;
+}
+
+/** Band phase and spacing, after the frequency lever has been applied. */
+export interface CliffBands {
+  /** `cliff_elevation_0`: the elevation of the first cliff band. */
+  readonly elevation0: number;
+  /** `cliff_elevation_interval`, already divided by the frequency lever. */
+  readonly interval: number;
+  /** When true, `placedCells` returns nothing (continuity or richness is 0). */
+  readonly disabled?: boolean;
+}
+
+export interface CliffPlacement {
+  placedCells(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[];
+}
+
+/**
  * Builds the placed-cliff-cell query for a given cliff config: `placedCells`
  * enumerates the 4-tile placement grid over a world box and returns the
  * center `{x,y}` of every cell whose crossing code places a cliff.
  */
-export function makeCliffPlacement(ctx: CliffFieldCtx): {
-  placedCells(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[];
-} {
-  const { cliffElevation, cliffiness } = makeCliffFields(ctx);
-  const interval = getModifiedElevationInterval(
-    ctx.settings.cliffElevationInterval,
-    ctx.controls.frequency,
-  );
-  const e0 = ctx.settings.cliffElevation0;
+export function makeCliffPlacement(ctx: CliffFieldCtx): CliffPlacement {
+  return makeCliffPlacementFromFields(makeCliffFields(ctx), {
+    elevation0: ctx.settings.cliffElevation0,
+    interval: getModifiedElevationInterval(
+      ctx.settings.cliffElevationInterval,
+      ctx.controls.frequency,
+    ),
+    disabled: ctx.controls.continuity === 0 || ctx.settings.richness === 0,
+  });
+}
+
+/**
+ * The planet-agnostic half: the corner lattice, `crossesCliff` on the four cell
+ * edges, and the `toMaybeCliffOrientation` not-none predicate. Everything
+ * planet-specific lives in the two fields and the two band numbers.
+ */
+export function makeCliffPlacementFromFields(
+  fields: CliffFields,
+  bands: CliffBands,
+): CliffPlacement {
+  const { cliffElevation, cliffiness } = fields;
+  const { elevation0: e0, interval } = bands;
 
   return {
     placedCells(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] {
-      const cliffsDisabled = ctx.controls.continuity === 0 || ctx.settings.richness === 0;
-      if (cliffsDisabled) return [];
+      if (bands.disabled === true) return [];
 
       const corners = new Map<string, CornerSample>();
       const corner = (i: number, j: number): CornerSample => {
