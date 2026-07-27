@@ -128,7 +128,7 @@ describe("tiled render equals untiled render", () => {
   // renderVulcanusCliffs relies on the same cliffCellQueryBox halo to supply
   // them. The window is near spawn where Vulcanus cliffs are dense, so a missing
   // halo shows up rather than landing in empty terrain.
-  const VULCANUS_VIEWS = ["terrain", "resources", "cliffs", "all"] as const;
+  const VULCANUS_VIEWS = ["terrain", "resources", "cliffs", "rocks", "all"] as const;
   for (const view of VULCANUS_VIEWS) {
     it(`matches byte for byte on Vulcanus, ${view} view`, () => {
       const req = baseReq({

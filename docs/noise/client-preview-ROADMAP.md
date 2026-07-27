@@ -420,7 +420,17 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       Not yet validated at entity level against a `find_entities` dump - see
       `docs/noise/vulcanus-cliffs-NOTES.md`.
 
-      Deferred: Vulcanus rocks, demolishers (the only `voronoi_cell_id` user -
+      **Vulcanus rocks - DONE 2026-07-26.** `renderVulcanusRocks` +
+      `vulcanus_decorative_knockout`, oracle-validated. Four rock entities share
+      two probability expressions, and everything they read except the knockout
+      was already ported for V1's tile catalog. Vulcanus deliberately omits the
+      `rocks` autoplace control ("can't add the rocks control otherwise nauvis
+      rocks spawn"), so there are no sliders. Rendered as a threshold on the
+      probability field, which caps at 0.2 and forms a plateau - so it reads as
+      rocky ground rather than as individual rocks, and wants an eyeball. See
+      `docs/noise/vulcanus-rocks-NOTES.md`.
+
+      Deferred: demolishers (the only `voronoi_cell_id` user -
       skipping it is why Vulcanus needed no `VoronoiNoise` port). Fulgora/Aquilo
       DO build terrain on Voronoi, so they will force that primitive.
 

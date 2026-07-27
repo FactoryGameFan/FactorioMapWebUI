@@ -2395,6 +2395,75 @@ async function captureVulcanusCliffs(): Promise<void> {
   console.log(`wrote ${out} (${positions.length} points)`);
 }
 
+/**
+ * Vulcanus rocks: the two probability expressions its rock ENTITIES use
+ * (`vulcanus_rock_huge`, `vulcanus_rock_big` - the `-hot` variants reuse them)
+ * and the `vulcanus_decorative_knockout` noise they both read.
+ *
+ * The four decorative-only siblings (`vulcanus_rock_medium/cluster/small/tiny`)
+ * are not captured: the game's map preview charts entities, not decoratives, so
+ * the overlay does not use them.
+ *
+ * Ring coordinates are snapped to 1/256 for the reason documented on
+ * `captureVulcanusCliffs` - unsnapped ring positions can land within ~1e-12 of a
+ * noise lattice boundary and inflate the residual by three orders of magnitude.
+ * Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-rocks
+ */
+async function captureVulcanusRocks(): Promise<void> {
+  const seed = 123456;
+  const planet = "vulcanus";
+  const positions: Position[] = [];
+  for (let gy = -256; gy <= 256; gy += 32) {
+    for (let gx = -256; gx <= 256; gx += 32) {
+      positions.push({ x: gx + 0.5, y: gy + 0.25 });
+    }
+  }
+  for (let gy = -800; gy <= 800; gy += 160) {
+    for (let gx = -800; gx <= 800; gx += 160) {
+      positions.push({ x: gx + 0.125, y: gy + 0.375 });
+    }
+  }
+  const snap = (v: number): number => Math.round(v * 256) / 256;
+  for (const r of [1500, 3000]) {
+    for (let k = 0; k < 12; k++) {
+      const a = (k * Math.PI) / 6;
+      positions.push({ x: snap(r * Math.cos(a) + 0.5), y: snap(r * Math.sin(a) + 0.25) });
+    }
+  }
+
+  const sample = async (expression: string): Promise<number[]> => {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      return await sampleExpression(expression, positions, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet,
+      });
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  };
+
+  const values: Record<string, number[]> = {};
+  for (const name of ["vulcanus_decorative_knockout", "vulcanus_rock_huge", "vulcanus_rock_big"]) {
+    values[name] = await sample(name);
+    console.log(`  captured ${name}`);
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 (Space Age enabled) via the test/oracle harness. The two probability expressions Vulcanus's rock ENTITIES use (vulcanus_rock_huge, vulcanus_rock_big; the -hot variants reuse them) plus the vulcanus_decorative_knockout noise they read, routed onto elevation over a grid spanning spawn (fine -256..256/32 plus a coarser -800..800/160 span) and far rings at r=1500/3000 snapped to 1/256, against a real Vulcanus surface (game.planets['vulcanus'].create_surface()). Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-rocks",
+    seed0: seed,
+    planet,
+    positions,
+    values,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-rocks.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${positions.length} points)`);
+}
+
 if (!oracleAvailable()) {
   console.error("No Factorio binary found (set FACTORIO_BIN). Cannot capture fixtures.");
   process.exit(1);
@@ -2444,3 +2513,4 @@ if (want("vulcanus-elevation")) await captureVulcanusElevation();
 if (want("vulcanus-temperature")) await captureVulcanusTemperature();
 if (want("vulcanus-tile-names")) await captureVulcanusTileNames();
 if (want("vulcanus-cliffs")) await captureVulcanusCliffs();
+if (want("vulcanus-rocks")) await captureVulcanusRocks();

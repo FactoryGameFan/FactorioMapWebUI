@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
+import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
 import {
   runRenderRequest,
   type ElevationRenderRequest,
@@ -168,14 +169,49 @@ describe("runRenderRequest planet dispatch", () => {
       startingPositions: [{ x: 0, y: 0 }],
     };
     const terrain = runRenderRequest({ ...common, view: "terrain" });
-    // "cliffs" is deliberately absent: V3 gave it a Vulcanus port, so it is no
-    // longer a no-op here. The three below still are.
-    for (const view of ["enemies", "trees", "rocks"] as const) {
+    // "cliffs" and "rocks" are deliberately absent: V3 gave both a Vulcanus
+    // port, so neither is a no-op here. The two below still are.
+    for (const view of ["enemies", "trees"] as const) {
       const other = runRenderRequest({ ...common, id: 4, view });
       expect(Array.from(new Uint8ClampedArray(other.buffer))).toEqual(
         Array.from(new Uint8ClampedArray(terrain.buffer)),
       );
     }
+  });
+
+  it("paints Vulcanus rocks for view:'rocks', in the shared ROCK_MAP_COLOR", () => {
+    const common = {
+      id: 7,
+      seed0: 123456,
+      planet: "vulcanus" as const,
+      width: 96,
+      height: 96,
+      originX: -128,
+      originY: -128,
+      tilesPerPixel: 1,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      startingPositions: [{ x: 0, y: 0 }],
+    };
+    const terrain = runRenderRequest({ ...common, view: "terrain" });
+    const rocks = runRenderRequest({ ...common, id: 8, view: "rocks" });
+
+    // All four Vulcanus rock entities declare map_color {129, 105, 78}, the
+    // same as Nauvis's rocks, so ROCK_MAP_COLOR is shared not duplicated.
+    const before = new Uint8ClampedArray(terrain.buffer);
+    const after = new Uint8ClampedArray(rocks.buffer);
+    let changed = 0;
+    for (let o = 0; o < after.length; o += 4) {
+      if (
+        after[o] === before[o] &&
+        after[o + 1] === before[o + 1] &&
+        after[o + 2] === before[o + 2]
+      )
+        continue;
+      changed++;
+      expect([after[o], after[o + 1], after[o + 2]]).toEqual([...ROCK_MAP_COLOR]);
+    }
+    expect(changed).toBeGreaterThan(0);
   });
 
   it("paints Vulcanus cliffs for view:'cliffs', in the shared CLIFF_MAP_COLOR", () => {

@@ -63,19 +63,21 @@ const unsupportedLabel = computed(() =>
 
 // The terrain render (renderTerrain, Task 11) always evaluates the Nauvis
 // climate + tile catalog, regardless of the active preset's actual map type -
-// it is only faithful for mapType "nauvis". Enemies, Trees and Rocks each layer
-// a Nauvis-only overlay on top of it, so those toggles gate on
+// it is only faithful for mapType "nauvis". Enemies and Trees each layer a
+// Nauvis-only overlay on top of it, so those toggles gate on
 // `nauvisOverlaysAvailable` specifically - which requires BOTH the preset's
 // own elevation `mapType` to be "nauvis" AND the selected planet to actually
-// be Nauvis (none of those three has a Vulcanus port - runRenderRequest skips
-// them for `planet: "vulcanus"` regardless of `view`, so leaving them enabled
-// there would offer a control that silently does nothing).
+// be Nauvis (neither has a Vulcanus port - runRenderRequest skips them for
+// `planet: "vulcanus"` regardless of `view`, so leaving them enabled there
+// would offer a control that silently does nothing).
 // Three views gate more broadly, because each has a Vulcanus port:
 //   Terrain   -> renderVulcanusTerrain (V1)
 //   Resources -> renderVulcanusResources (V2)
 //   Cliffs    -> renderVulcanusCliffs (V3)
-// so they gate on `terrainAvailable` / `resourcesAvailable` / `cliffsAvailable`,
-// all of which admit Vulcanus as well as Nauvis-with-Nauvis-map-type.
+//   Rocks     -> renderVulcanusRocks (V3)
+// so they gate on `terrainAvailable` / `resourcesAvailable` / `cliffsAvailable`
+// / `rocksAvailable`, all of which admit Vulcanus as well as
+// Nauvis-with-Nauvis-map-type.
 // The user's desired view. Defaults to the full composite, which is the closest
 // thing to the game's own map preview - and with dev mode off (the default) it
 // is the only view a user ever gets, since the toggles are hidden.
@@ -95,16 +97,16 @@ const resourcesAvailable = computed(
 const cliffsAvailable = computed(
   () => nauvisOverlaysAvailable.value || planet.value === "vulcanus",
 );
+const rocksAvailable = computed(() => nauvisOverlaysAvailable.value || planet.value === "vulcanus");
 // "All" composites whatever the planet has. On Nauvis that is all six overlays;
-// on Vulcanus it is terrain + cliffs + resources, the three that are ported.
+// on Vulcanus it is terrain + cliffs + rocks + resources, the four ported.
 const allAvailable = computed(() => nauvisOverlaysAvailable.value || planet.value === "vulcanus");
 // What actually renders, in priority order:
-//   1. Vulcanus, dev mode on, "terrain"/"resources"/"cliffs"/"all" last picked
-//      - honor it (those are the views with a Vulcanus port: plain terrain, or
-//      terrain plus the V2 resource and/or V3 cliff overlay).
+//   1. Vulcanus, dev mode on, "terrain"/"resources"/"cliffs"/"rocks"/"all"
+//      last picked - honor it (those are the views with a Vulcanus port).
 //   1b. Vulcanus otherwise - "all", which on Vulcanus means terrain + cliffs +
-//      resources. Enemies, trees and rocks have no Vulcanus port, so "all"
-//      composites exactly the three layers that exist.
+//      rocks + resources. Enemies and trees have no Vulcanus port, so "all"
+//      composites exactly the four layers that exist.
 //   2. Nauvis planet, off-Nauvis map type (Lakes/Island), always "elevation" -
 //      renderTerrain always evaluates the Nauvis climate + tile catalog
 //      regardless of the preset's map type, so every non-elevation view would
@@ -122,8 +124,8 @@ const allAvailable = computed(() => nauvisOverlaysAvailable.value || planet.valu
 const effectiveView = computed(() => {
   if (planet.value === "vulcanus") {
     // Only these have a Vulcanus port; anything else the user last picked on
-    // Nauvis (enemies, trees, rocks, elevation) falls back to the composite.
-    const ported = ["terrain", "resources", "cliffs", "all"];
+    // Nauvis (enemies, trees, elevation) falls back to the composite.
+    const ported = ["terrain", "resources", "cliffs", "rocks", "all"];
     if (ui.devMode && ported.includes(view.value)) return view.value;
     return "all";
   }
@@ -306,11 +308,9 @@ async function generate() {
         <FButton
           data-test="view-rocks"
           :variant="effectiveView === 'rocks' ? 'tool' : 'default'"
-          :disabled="!nauvisOverlaysAvailable"
+          :disabled="!rocksAvailable"
           :title="
-            nauvisOverlaysAvailable
-              ? undefined
-              : 'Rocks view is only available for the Nauvis map type'
+            rocksAvailable ? undefined : 'Rocks view is only available for the Nauvis map type'
           "
           @click="view = 'rocks'"
         >

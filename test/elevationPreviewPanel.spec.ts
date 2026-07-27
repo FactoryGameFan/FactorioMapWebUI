@@ -609,9 +609,9 @@ describe("ElevationPreviewPanel", () => {
       expect(arg).toMatchObject({ planet: "vulcanus", view: "terrain" });
     });
 
-    it("keeps the Nauvis-only overlay toggles (Enemies/Trees/Rocks) disabled for Vulcanus", async () => {
+    it("keeps the Nauvis-only overlay toggles (Enemies/Trees) disabled for Vulcanus", async () => {
       const w = setup("nauvis", okRenderer(), { planet: "vulcanus" });
-      for (const t of ["enemies", "trees", "rocks"]) {
+      for (const t of ["enemies", "trees"]) {
         expect(
           w.find(`[data-test="view-${t}"]`).attributes("disabled"),
           `view-${t} should be disabled for Vulcanus`,
@@ -619,12 +619,12 @@ describe("ElevationPreviewPanel", () => {
       }
     });
 
-    it("enables the Cliffs and All toggles for Vulcanus (both have a port)", async () => {
-      // Cliffs gained a Vulcanus port in V3, and "All" is meaningful there now
-      // that the planet has more than one overlay to composite. Leaving either
-      // disabled would hide a control that does real work.
+    it("enables the Cliffs, Rocks and All toggles for Vulcanus (each has a port)", async () => {
+      // Cliffs and rocks gained Vulcanus ports in V3, and "All" is meaningful
+      // there now that the planet has more than one overlay to composite.
+      // Leaving any of them disabled would hide a control that does real work.
       const w = setup("nauvis", okRenderer(), { planet: "vulcanus" });
-      for (const t of ["terrain", "resources", "cliffs", "all"]) {
+      for (const t of ["terrain", "resources", "cliffs", "rocks", "all"]) {
         expect(
           w.find(`[data-test="view-${t}"]`).attributes("disabled"),
           `view-${t} should be enabled for Vulcanus`,

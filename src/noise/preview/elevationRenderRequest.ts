@@ -15,6 +15,7 @@ import { renderTerrain } from "./renderTerrain";
 import { renderTrees } from "./renderTrees";
 import { renderVulcanusCliffs } from "./renderVulcanusCliffs";
 import { renderVulcanusResources } from "./renderVulcanusResources";
+import { renderVulcanusRocks } from "./renderVulcanusRocks";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
 
 /** A render job posted to the worker. `id` tags the response for staleness. */
@@ -229,6 +230,15 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           tilesPerPixel: req.tilesPerPixel,
           ctx: { startingPositions: req.startingPositions },
           cellQueryBox: cliffCellQueryBox(req),
+        });
+      }
+      if (req.view === "rocks" || req.view === "all") {
+        renderVulcanusRocks(image, {
+          seed0: req.seed0,
+          originX: req.originX,
+          originY: req.originY,
+          tilesPerPixel: req.tilesPerPixel,
+          ctx: { startingPositions: req.startingPositions },
         });
       }
       if (req.view === "resources" || req.view === "all") {
