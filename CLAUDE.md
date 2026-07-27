@@ -2,13 +2,37 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Factorio Lua API - check the local mirror FIRST
+## Factorio reference material - run `pnpm refs:sync` first
 
-A full offline copy of the Factorio 2.x Lua API docs lives at `factorioLuaAPI/`
-(git-ignored, ~24 MB, HTML + JSON). **Before answering any Factorio API question
-or WebFetching lua-api.factorio.com / wiki.factorio.com, grep this directory.**
-It is the authoritative source for how the map generator, noise expressions, and
-map-gen settings work.
+Two local references back every Factorio question in this repo, and both are
+git-ignored, so a fresh clone has neither:
+
+|                          |                                        |         |
+| ------------------------ | -------------------------------------- | ------- |
+| `factorioLuaAPI/`        | Lua API **docs**                       | ~286 MB |
+| `~/GitHub/factorio-data` | game **data** Lua (the map-gen source) | ~17 MB  |
+
+**`pnpm refs:sync` creates and pins both** to the version your installed
+Factorio binary reports (~6 s from nothing, ~0.5 s when already in sync).
+`pnpm refs:sync --check` reports drift without changing anything, and
+`pnpm refs:sync 2.1.11` pins to an explicit version instead. If either
+directory is missing or a grep turns up empty, run it before concluding
+anything is absent.
+
+Why pinned to the binary rather than latest: Steam updates the binary without
+asking, so it is the one version you do not control. Fetching "latest" for the
+references races that updater and leaves them describing a different game than
+the one your fixtures were captured against - which is exactly how
+`factorio-data` ended up sitting at 2.1.11 under a 2.1.12 binary.
+
+### The API docs (`factorioLuaAPI/`)
+
+**Before answering any Factorio API question or WebFetching
+lua-api.factorio.com / wiki.factorio.com, grep this directory.** It is the
+authoritative source for how the map generator, noise expressions, and map-gen
+settings work. `pnpm refs:sync` populates it from the official archive at
+`https://lua-api.factorio.com/<version>/static/archive.zip`, flattened so the
+paths below resolve; `factorioLuaAPI/VERSION` records which version it holds.
 
 Useful entry points:
 
@@ -21,21 +45,47 @@ Useful entry points:
 - `factorioLuaAPI/runtime-api.json` and `prototype-api.json` - machine-readable
   dumps; grep these for a signature/field faster than the HTML.
 
-Only fall back to WebFetch if something genuinely is not in this mirror.
+The JSON dumps are not a superset of the HTML - `control:temperature:frequency`
+is in `noise-expressions.html` and nowhere in `runtime-api.json` - so grep the
+whole directory, not just the JSON. Only fall back to WebFetch if something
+genuinely is not in this mirror.
 
-### Game _data_ (prototype Lua) for noise/autoplace RE - use `~/GitHub/factorio-data`
+### Game _data_ (prototype Lua) for noise/autoplace RE - `~/GitHub/factorio-data`
 
-The `factorioLuaAPI/` mirror above is the API _docs_. For the actual base-game
-map-gen **source** (the noise expression trees, autoplace utils, resource
-prototypes) that the client-side preview ports, use **`~/GitHub/factorio-data`** -
-a local clone of the official `wube/factorio-data` repo with per-version git tags.
-Check out the tag matching the oracle binary before reading:
-`git -C ~/GitHub/factorio-data checkout 2.1.11` (verify `base/info.json`'s
-`"version"` matches `factorio --version`; `master` may sit a few commits ahead).
+`factorioLuaAPI/` above is the API _docs_. For the actual base-game map-gen
+**source** (the noise expression trees, autoplace utils, resource prototypes)
+that the client-side preview ports, read `~/GitHub/factorio-data` - a clone of
+the official `wube/factorio-data` repo with per-version git tags. `pnpm
+refs:sync` clones it if absent and checks out the tag matching the binary,
+then verifies `base/info.json` actually reads that version (a checkout is not
+proof; `master` may sit a few commits ahead of the newest tag).
+
 Key files: `core/prototypes/{noise-functions,noise-programs}.lua`,
 `core/lualib/resource-autoplace.lua`, `base/prototypes/entity/resources.lua`.
-**Do NOT use `~/Downloads/factorio 4/data` - it is Factorio 2.0.77 (stale)** and
-`starting_patches` changed materially by 2.1.11. `git pull` fetches newer versions.
+
+**Version skew here is a real, silent hazard, not a formality.** `starting_patches`
+changed materially between 2.0.77 and 2.1.11 (radius 120 -> 150, region_size
+\*2 -> \*3, spacing 32 -> 48, and the `random_penalty` favorability term was
+removed), so reading the wrong version's Lua produces a port that passes its own
+tests and disagrees with the game. `pnpm refs:sync --check` before trusting a
+reading.
+
+### The binary is the oracle, and it is not stripped
+
+The Steam build ships **unstripped** - 1,088,238 symbols, a 27.9 MB string
+table, and 375,101 STAB debug-map entries - so `nm` + `c++filt` resolve map-gen
+internals directly (e.g. `Noise::setSeed(unsigned int, unsigned char)`). That
+makes it the fastest oracle for a short generator function; see
+`docs/noise/basis-noise-NOTES.md`. It lives at:
+
+```
+~/Library/Application Support/Steam/steamapps/common/Factorio/factorio.app/Contents/MacOS/factorio
+```
+
+Steam keeps it updated, which is fine: `factorio.com/download/archive/` carries
+every release from 0.6.4 onward, so reproducing an old measurement means
+recording the version, not hoarding installs. Set `FACTORIO_BIN` to point
+`refs:sync` at a different install.
 
 ### Automate with the Factorio headless CLI
 
@@ -81,6 +131,10 @@ note below for why `pnpm up`'s transitive re-resolution can break `vp check`.
   of `.vue` bodies)
 - `pnpm vp build` - production build
 - `pnpm run verify` - `vp check` + `vp test` + `preview:test` in one gate (~9.5s)
+- `pnpm refs:sync` - pin `factorioLuaAPI/` + `~/GitHub/factorio-data` to the
+  installed binary's version (`--check` reports drift only; `--fixtures` reports
+  which oracle fixtures predate the binary). Deliberately **not** part of
+  `verify`, which must pass on machines with no Factorio installed.
 - `pnpm run deploy` - **verify** + build + `wrangler pages deploy` to Cloudflare Pages
 
 ### Deploys are gated on `verify`
@@ -136,6 +190,31 @@ Consequences that constrain any change here:
   **read-only ground truth**. Codec tests decode→re-encode each and assert the
   bytes are identical. Never edit a fixture or an expected value to make a test
   pass - a mismatch is a real finding.
+
+### Fixture provenance - every fixture states which version it came from
+
+`test/fixtures/PROVENANCE.json` records, per fixture, the Factorio version its
+ground truth was captured from and the **evidence** for that claim. It sits
+beside the fixtures rather than inside them because several are verbatim copies
+of the game's own JSON (`autoplace-can-be-disabled.dump.json` is a flat dict
+keyed by control name, asserted key-for-key in `catalog.spec.ts`), so an added
+metadata key would be data pollution.
+
+- `test/fixtureProvenance.spec.ts` runs always, needs no Factorio, and fails if
+  a fixture has no entry or an entry has no fixture. **Adding a fixture means
+  adding its provenance.**
+- `pnpm refs:sync --fixtures` needs a binary and reports which fixtures predate
+  it. It is a **report, not a gate** - it always exits 0 and is deliberately not
+  in `verify`. A 2.1.11 fixture is not wrong because the binary reached 2.1.12;
+  it means that ground truth has not been re-validated, and whether the gap
+  matters depends on whether the subsystem changed.
+- `evidence` grades confidence: `stated` beats `inferred`, and `unknown` means
+  nobody wrote it down. Don't promote an inferred entry without re-capturing.
+  The spec caps `unknown` at its current count so the gap can only shrink.
+
+This exists because version skew is invisible from inside: the Vulcanus
+surface-seed bug passed every internal check for weeks because the fixture and
+the code agreed with each other while both disagreed with the game.
 
 ### Two representations, bridged by `convert.ts`
 
