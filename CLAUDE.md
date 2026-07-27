@@ -60,15 +60,33 @@ refs:sync` clones it if absent and checks out the tag matching the binary,
 then verifies `base/info.json` actually reads that version (a checkout is not
 proof; `master` may sit a few commits ahead of the newest tag).
 
-Key files: `core/prototypes/{noise-functions,noise-programs}.lua`,
-`core/lualib/resource-autoplace.lua`, `base/prototypes/entity/resources.lua`.
+Key files, in rough order of how often they matter here:
+`core/prototypes/noise-programs.lua` (most named expressions - elevation,
+cliffs, climate, trees), `core/prototypes/noise-functions.lua`
+(`resource_autoplace_all_patches`), `base/prototypes/noise-expressions.lua`
+(enemy bases, rocks), `base/prototypes/tile/tiles.lua` (tile autoplace),
+`base/prototypes/entity/trees.lua`, and
+`space-age/prototypes/planet/planet-vulcanus-map-gen.lua`. To locate anything
+else, grep for its **definition** rather than guessing the file - a bare name
+grep returns every caller too:
 
-**Version skew here is a real, silent hazard, not a formality.** `starting_patches`
-changed materially between 2.0.77 and 2.1.11 (radius 120 -> 150, region_size
-\*2 -> \*3, spacing 32 -> 48, and the `random_penalty` favorability term was
-removed), so reading the wrong version's Lua produces a port that passes its own
-tests and disagrees with the game. `pnpm refs:sync --check` before trusting a
-reading.
+```bash
+grep -rlE 'name *= *"<expression>"' ~/GitHub/factorio-data/{core,base,space-age} --include="*.lua"
+```
+
+**Version skew here is a real, silent hazard, not a formality.**
+`starting_patches` changed materially between **2.0.77 and 2.1.9** - radius
+120 -> 150, `region_size` \*2 -> \*3, spacing 32 -> 48, the `random_penalty`
+favorability term removed, a new 40-tile `origin_excluder`, and the lake mask
+switched from a hardcoded `elevation_lakes` to the planet's own `elevation`.
+Reading the wrong version's Lua produces a port that passes its own tests and
+disagrees with the game. `pnpm refs:sync --check` before trusting a reading.
+
+Note where that change lived: `core/prototypes/noise-functions.lua`. Neither
+`core/lualib/resource-autoplace.lua` nor `base/prototypes/entity/resources.lua`
+moved at all between 2.0.77 and 2.1.12, so guessing by filename would have
+cleared the resource fixtures wrongly. `noise-functions.lua` and
+`noise-programs.lua` are themselves unchanged across 2.1.9 - 2.1.12.
 
 ### The binary is the oracle, and it is not stripped
 
