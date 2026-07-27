@@ -141,3 +141,32 @@ Design and the task-by-task plan:
 See `docs/superpowers/specs/2026-07-01-factorio-map-webui-design.md`. The
 codec is fixture-driven: `test/fixtures/builtin-presets.json` holds all 9
 built-in presets captured from Factorio 2.1.9 and is read-only ground truth.
+
+## License
+
+AGPL-3.0-or-later. See [`LICENSE`](LICENSE).
+
+Copyright (C) 2026 Eric J
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. It is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+more details.
+
+The Affero clause is the point, not an accident. Most of this repo is a static
+SPA whose code is delivered to every visitor's browser, so plain GPL copyleft
+would already reach anyone who forks and hosts the frontend. What it would
+_not_ reach is a server-side derivative that renders on the backend and returns
+only images - and that is the concrete case this project has met. Section 13
+covers it: if you run a modified version and let users interact with it over a
+network, those users are owed the source.
+
+Note on scope: the license covers this repository's code. The reverse-engineered
+findings it documents - how Factorio's `basis_noise` seeds itself, the
+`spot_noise` RNG structure, the planet surface-seed derivation - are facts about
+how third-party software behaves, and facts are not copyrightable. Reimplementing
+them from these notes is not a derivative work of this code. Factorio itself is
+the property of Wube Software; this project is unaffiliated.
