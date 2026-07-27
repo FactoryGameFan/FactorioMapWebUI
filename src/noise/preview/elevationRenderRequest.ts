@@ -219,17 +219,20 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           vulcanusResourceControls: req.vulcanusResourceControls,
         },
       });
-      // Cliffs paint first so an ore patch still reads on top of them, matching
-      // the Nauvis order (resources before cliffs is a repaint of the same
-      // pixel; the game's own preview draws the resource over the cliff).
-      if (req.view === "cliffs" || req.view === "all") {
-        renderVulcanusCliffs(image, {
+      // Resources paint first, then the two obstruction overlays on top, so a
+      // cliff or a rock crossing an ore patch still reads as the thing that is
+      // in the way. Cliffs last matches the Nauvis order below, where
+      // renderCliffs is the final pass.
+      if (req.view === "resources" || req.view === "all") {
+        renderVulcanusResources(image, {
           seed0: req.seed0,
           originX: req.originX,
           originY: req.originY,
           tilesPerPixel: req.tilesPerPixel,
-          ctx: { startingPositions: req.startingPositions },
-          cellQueryBox: cliffCellQueryBox(req),
+          ctx: {
+            startingPositions: req.startingPositions,
+            vulcanusResourceControls: req.vulcanusResourceControls,
+          },
         });
       }
       if (req.view === "rocks" || req.view === "all") {
@@ -241,16 +244,14 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           ctx: { startingPositions: req.startingPositions },
         });
       }
-      if (req.view === "resources" || req.view === "all") {
-        renderVulcanusResources(image, {
+      if (req.view === "cliffs" || req.view === "all") {
+        renderVulcanusCliffs(image, {
           seed0: req.seed0,
           originX: req.originX,
           originY: req.originY,
           tilesPerPixel: req.tilesPerPixel,
-          ctx: {
-            startingPositions: req.startingPositions,
-            vulcanusResourceControls: req.vulcanusResourceControls,
-          },
+          ctx: { startingPositions: req.startingPositions },
+          cellQueryBox: cliffCellQueryBox(req),
         });
       }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
@@ -291,6 +292,23 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         startingPositions: req.startingPositions,
       });
     }
+    if (req.view === "resources" || req.view === "all") {
+      renderResources(image, {
+        seed0: req.seed0,
+        originX: req.originX,
+        originY: req.originY,
+        tilesPerPixel: req.tilesPerPixel,
+        controls: req.resourceControls ?? {},
+        startingPositions: req.startingPositions,
+        segmentationMultiplier: req.segmentationMultiplier,
+        waterLevel: req.waterLevel,
+        startingLakePositions: req.startingLakePositions,
+      });
+    }
+    // Rocks paint after resources (and cliffs last of all) so an obstruction
+    // crossing an ore patch reads as the obstruction - same order as the
+    // Vulcanus branch above. Trees stay under resources: a forest is cleared,
+    // not an obstacle you route around.
     if (req.view === "rocks" || req.view === "all") {
       renderRocks(image, {
         seed0: req.seed0,
@@ -306,19 +324,6 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         startingAreaMoistureSize: req.startingAreaMoistureSize,
         startingAreaMoistureFrequency: req.startingAreaMoistureFrequency,
         startingPositions: req.startingPositions,
-      });
-    }
-    if (req.view === "resources" || req.view === "all") {
-      renderResources(image, {
-        seed0: req.seed0,
-        originX: req.originX,
-        originY: req.originY,
-        tilesPerPixel: req.tilesPerPixel,
-        controls: req.resourceControls ?? {},
-        startingPositions: req.startingPositions,
-        segmentationMultiplier: req.segmentationMultiplier,
-        waterLevel: req.waterLevel,
-        startingLakePositions: req.startingLakePositions,
       });
     }
     if (req.view === "enemies" || req.view === "all") {

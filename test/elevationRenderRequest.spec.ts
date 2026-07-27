@@ -9,6 +9,7 @@ import { renderTerrain } from "../src/noise/preview/renderTerrain";
 import { RESOURCE_CATALOG } from "../src/noise/resources/resourceCatalog";
 import { ENEMY_MAP_COLOR } from "../src/noise/enemies/enemyCatalog";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
+import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
 import { makeTreeDensity } from "../src/noise/trees/treeField";
 
 const REQ: ElevationRenderRequest = {
@@ -378,16 +379,21 @@ describe("runRenderRequest", () => {
   });
 
   it("view 'all' composites all five overlays onto terrain (exactly the union of the single-overlay diffs)", () => {
-    // 32x32 px at 16 tiles/px over world [512, 1024) - a region with resources,
-    // enemy bases, cliffs, trees, and rocks all present.
+    // 128x128 px at 4 tiles/px over world [512, 1024) - a region with resources,
+    // enemy bases, cliffs, trees, and rocks all present. The finer 4 tiles/px
+    // (rather than the 16 this test used before rocks moved above resources) is
+    // what makes any resource pixel also a rock pixel at all: rocks cover ~0.9%
+    // of the window and ore ~1%, so their intersection is only ever a handful
+    // of pixels, and at 16 tiles/px it was empty - which would have left the
+    // rocks-over-resources assertion below passing vacuously.
     const req: ElevationRenderRequest = {
       id: 21,
       seed0: 123456,
-      width: 32,
-      height: 32,
+      width: 128,
+      height: 128,
       originX: 512,
       originY: 512,
-      tilesPerPixel: 16,
+      tilesPerPixel: 4,
       waterLevel: 0,
       segmentationMultiplier: 1,
       startingPositions: [{ x: 0, y: 0 }],
@@ -439,25 +445,37 @@ describe("runRenderRequest", () => {
     // overlapping pixels stay in the diff set either way, they are just the
     // wrong color. So pin the order too.
     //
-    // Compositing runs terrain -> trees -> rocks -> resources -> enemies ->
-    // cliffs, and resources paint opaquely. On a pixel resources paint, where
-    // the two later overlays do not, "all" must therefore equal the resources
-    // render exactly - trees underneath must not show through.
-    let overlapping = 0;
+    // Compositing runs terrain -> trees -> resources -> rocks -> enemies ->
+    // cliffs, and every overlay paints opaquely, so on any contended pixel the
+    // last one to run wins. Two cases are checked below:
+    //   1. a pixel resources paint that no LATER overlay paints must equal the
+    //      resources render exactly - trees underneath must not show through;
+    //   2. a pixel both rocks and resources paint (and neither of the two after
+    //      rocks) must be rock-coloured - a rock in the way of an ore patch
+    //      reads as the obstruction, not as ore.
+    let treesUnder = 0;
+    let rocksOver = 0;
     for (const i of resources) {
       if (enemies.has(i) || cliffs.has(i)) continue;
-      if (trees.has(i)) overlapping++;
+      if (rocks.has(i)) {
+        rocksOver++;
+        expect(
+          [allBuf[i], allBuf[i + 1], allBuf[i + 2]],
+          `pixel ${i}: rocks must composite OVER resources`,
+        ).toEqual([...ROCK_MAP_COLOR]);
+        continue;
+      }
+      if (trees.has(i)) treesUnder++;
       expect(
         [allBuf[i], allBuf[i + 1], allBuf[i + 2], allBuf[i + 3]],
         `pixel ${i}: trees must composite UNDER resources`,
       ).toEqual([resourcesBuf[i], resourcesBuf[i + 1], resourcesBuf[i + 2], resourcesBuf[i + 3]]);
     }
-    // ...and the assertion is only meaningful where trees actually contend for
-    // the same pixel, so prove this window has such pixels rather than passing
-    // because trees and resources never meet.
-    expect(overlapping, "window must have pixels both trees and resources paint").toBeGreaterThan(
-      0,
-    );
+    // ...and each assertion is only meaningful where the two overlays actually
+    // contend for the same pixel, so prove this window has such pixels rather
+    // than passing because they never meet.
+    expect(treesUnder, "window must have pixels both trees and resources paint").toBeGreaterThan(0);
+    expect(rocksOver, "window must have pixels both rocks and resources paint").toBeGreaterThan(0);
   });
 });
 
