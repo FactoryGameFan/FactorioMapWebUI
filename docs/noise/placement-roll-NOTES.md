@@ -281,14 +281,27 @@ report rather than pushing into the render build"), we stop here.
   without the un-RE'd stream. This was flagged in the ROADMAP as the "per-resource
   render rule" option.
 
-## The oil `random_probability` follow-up (still folded in)
+## The oil `random_probability` follow-up - DONE 2026-07-27 (Task 8)
 
-Unchanged from the ROADMAP decision: for `random_probability < 1` (only crude-oil,
-1/48) the game multiplies `probability` by `random_penalty{source=1,
-amplitude=1/random_probability}` (`resource-autoplace.lua:103-105`). Applying it with
-the current hard `>= 0.5` footprint makes oil vanish, so it only pays off together
-with a placement roll (exact) OR a density-matched cosmetic dither (approximate,
-above). No standalone change.
+For `random_probability < 1` (only crude-oil, 1/48) the game multiplies `probability`
+by `random_penalty{source=1, amplitude=1/random_probability}`
+(`resource-autoplace.lua:103-105`). This section used to say the factor "only pays off
+together with a placement roll", and that was right: applying it under the hard
+`>= 0.5` footprint would have made oil vanish, because the penalised probability is
+below 0.5 on all but ~1 tile in 48.
+
+Both landed together in Task 8. Oil is now the catalog's one `placement: "roll"`
+entry, rolling against `clamp(all_patches,0,1) * (1 - 48U)` with the water tile gate
+and the 2.8 x 2.8 collision box, painting a 3x3 mark. Region 0 places 7 against the
+game's 8; region 1 places 0 against 0.
+
+**The `random_penalty` batch extent turned out not to be on the critical path**,
+which is the part of this worth remembering - the work was budgeted for that RE and
+did not need it. `source = 1` is constant and positive, so every tile consumes
+exactly one draw and each tile's `U` is marginally uniform however the batch is cut;
+density is a sum of marginals and is therefore batch-invariant, and positions were
+never claimed. Full argument, the size-1 caveat that would break it, and the measured
+table: `docs/noise/random-penalty-NOTES.md`.
 
 ## Enemy bases: what Task 6 added to the arbitration picture (2026-07-27)
 

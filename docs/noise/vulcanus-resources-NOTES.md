@@ -339,7 +339,8 @@ that turned out to be seed-insensitive.
    in `test/entityDensity.spec.ts` (oracle region 4: 56 against the game's 56;
    the other two Vulcanus regions have no sulfur and both sides are 0). See
    `docs/noise/placement-roll-NOTES.md` for the prototype data and the gate-by-
-   gate measurement. Issue #9 remains open for Nauvis crude oil.
+   gate measurement. Nauvis crude oil, the last overlay issue #9 named, followed
+   in Task 8.
 
    Two things about the OLD blob that were easy to misread, kept because the
    second is exactly what the roll fixed:

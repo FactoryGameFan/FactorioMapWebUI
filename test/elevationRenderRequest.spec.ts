@@ -508,19 +508,22 @@ describe("runRenderRequest", () => {
     // cover ~0.07% of tiles instead of ~0.9%, so the two overlays almost never
     // contend, and the union test's window lost its last shared pixel.
     //
-    // This window - 128x128 px at 1 tile/px over world [0, 128) x [1024, 1152) -
-    // sits on a dense ore patch (2310 resource pixels, 14% of the window) and
-    // holds 6 rock pixels, 3 of which land on ore. It was chosen by sweeping
-    // origins on a 32-tile grid over x in [-64, 192], y in [896, 1152], at
-    // 128 px / 1 tile-per-px and again at 192 and 256 px: 3 shared pixels was
-    // the maximum ANY window in those two sweeps produced, including ones 4x
-    // this area, so 3 is the ceiling for a window of roughly this cost.
+    // **Re-chosen in Task 8, when crude oil stopped being a threshold.** The
+    // previous window (origin (0, 1024)) rested on 3-4 shared pixels, and it
+    // turned out they were OIL pixels: once oil moved to a per-tile roll its
+    // 1234-tile blob in that neighbourhood collapsed to a handful of wells, the
+    // shared count went to exactly 0, and this test failed. That is the guard
+    // working - `progress.md` had flagged the 4-pixel margin as "thin but
+    // deterministic" one task earlier - but it also means the old window was
+    // never really testing rocks against *ore*.
     //
-    // A separate, coarser sweep (320 px at 2 tiles/px, origins on a 512-tile
-    // grid) did find 6 shared pixels, at this same origin - the larger window
-    // simply covers 640x640 tiles instead of 128x128. It costs 7.7s of renders
-    // against this one's 1.3s, which is not worth 3 extra pixels of margin in a
-    // test that runs in `verify`.
+    // The replacement is picked against the post-oil predicates directly rather
+    // than by rendering: every tile in [-1600, 1600)^2 where
+    // `makeResourceResolver` (now oil-free) returns non-null AND
+    // `makeNauvisRockPlacement` places was collected - 86 of them across the
+    // whole 3200x3200 area, which is how scarce this contention now is - then
+    // 128x128 windows scored by how many they contain. Origin (71, 1302) holds
+    // **11**, the best available, against the old window's 0.
     //
     // Nothing about this window is load-bearing except that the shared count is
     // non-zero, which the final assertion proves rather than assumes.
@@ -529,8 +532,8 @@ describe("runRenderRequest", () => {
       seed0: 123456,
       width: 128,
       height: 128,
-      originX: 0,
-      originY: 1024,
+      originX: 71,
+      originY: 1302,
       tilesPerPixel: 1,
       waterLevel: 0,
       segmentationMultiplier: 1,

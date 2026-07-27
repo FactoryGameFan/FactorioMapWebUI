@@ -200,7 +200,8 @@ export function cliffCellQueryBox(req: ElevationRenderRequest): WorldBox {
 /**
  * The world box to sweep for a placement roll that paints a 3x3 mark -
  * `haloQueryBox` at `PLACEMENT_MARK_RADIUS_PX`. Shared by Nauvis enemy bases
- * (`renderEnemies.ts`) and Vulcanus geysers (`renderVulcanusResources.ts`).
+ * (`renderEnemies.ts`), Vulcanus geysers (`renderVulcanusResources.ts`) and
+ * Nauvis crude oil (`renderResources.ts`).
  *
  * Both rock overlays paint a 1x1 pixel and need no equivalent; these two keep
  * the 3x3 mark (a spawner is 7.4 x 6.4 tiles, a geyser 2.8 x 2.8, and both are
@@ -334,6 +335,13 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         segmentationMultiplier: req.segmentationMultiplier,
         waterLevel: req.waterLevel,
         startingLakePositions: req.startingLakePositions,
+        moistureFrequency: req.moistureFrequency,
+        moistureBias: req.moistureBias,
+        auxFrequency: req.auxFrequency,
+        auxBias: req.auxBias,
+        startingAreaMoistureSize: req.startingAreaMoistureSize,
+        startingAreaMoistureFrequency: req.startingAreaMoistureFrequency,
+        sweepBox: placementMarkSweepBox(req),
       });
     }
     // Rocks paint after resources (and cliffs last of all) so an obstruction

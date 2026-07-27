@@ -135,3 +135,88 @@ through it in f32. Result across the pure-regular oracle (iron + uranium, 2 seed
 patch interiors, up to ~9e-3 only at cone-edge / basement zero-crossings (the same f32
 floor M1 elevation_lakes = 7.4e-3 and Island = 6.66e-3 documented). `test/regularPatches.spec.ts`
 is now **un-skipped**, asserting `worstAbs < 1.0 && worstRel < 1e-2`.
+
+## The noise-evaluation path (crude oil) - the batch extent DOES NOT MATTER for density (2026-07-27, Task 8)
+
+The section above pins the batch for the **spot-selection** path. Crude oil needs the
+other one: `resource-autoplace.lua:103-105` multiplies oil's probability by a
+`random_penalty` evaluated in the **noise-evaluation** path, over map-gen query tiles
+rather than over a spot list.
+
+```lua
+local probability_expression = "clamp(var('" .. all_patches_name .. "'), 0, 1)"
+if (params.random_probability or 1) < 1 then
+  probability_expression = probability_expression
+    .. "* random_penalty{x = x, y = y, source = 1, amplitude = 1 /" .. params.random_probability .. "}"
+end
+```
+
+Oil's `random_probability = 1/48` (`base/prototypes/entity/resources.lua:271`) is the
+only sub-1 value in the base resource catalog, so oil is the only resource this
+touches.
+
+**Task 8 was briefed to settle the batch extent, timeboxed, and to fall back to
+dropping the factor if it could not. Neither branch was needed, because the question
+turns out not to bear on what the port claims.** The argument is short:
+
+- `source = 1` is a **constant and strictly positive**. The `source <= 0`
+  pass-through - the one thing that makes stream consumption depend on the data -
+  can never fire here. So *every* tile in the batch consumes exactly one taus88 draw.
+- taus88's output is uniform on [0, 1). With one draw per tile unconditionally, each
+  tile's `U` is marginally uniform **no matter where the batch starts or how long it
+  is**.
+- A density is a sum of per-tile marginals. It is therefore invariant to the batch
+  decomposition. What the batch changes is *which* tile receives *which* draw - i.e.
+  positions - and the placement port explicitly does not claim positions
+  (`test/entityDensity.spec.ts`).
+
+So oil uses the same batch-op stand-in the two spawner penalties use (a dedicated
+`PLACEMENT_SALT.crudeOilPenalty` stream, Task 6): a deterministic, position-pure
+uniform per tile. This is fallback **(b)-equivalent** - oil joins the density oracle -
+without the RE the brief thought it required.
+
+**The one case where this reasoning would fail is a batch of size 1**, where every
+tile's `U` would be the *first* taus88 output from a word linear in `(x, y)`
+(`0x3FBE2C + 7919x + 7907y`), and adjacent tiles could be strongly correlated rather
+than independent. That is a real hazard for the argument, not a hypothetical: it is
+precisely why "each tile draws once" is not by itself sufficient, and why the
+singleton measurements in the section above were worth taking.
+
+### Measured, against the game (seed 123456, Factorio 2.1.12)
+
+| variant | region 0 `[0,0]-[512,512]` (game 8) | region 1 `[4096,...]` (game 0) |
+| --- | --- | --- |
+| old threshold footprint | 1234 | 248 |
+| roll, no penalty factor | 118 | 0 |
+| **roll + penalty (shipped)** | **7** | **0** |
+
+### The factor is 96, not 48
+
+The brief predicted the no-factor fallback would sit "~48x too high", from the
+`1/48` in the prototype. That is wrong, and in two different ways at once:
+
+- **Analytically the factor is 96.** `1 - 48U` is positive only for `U < 1/48`, and
+  its mean *over that range* is 1/2, so `E[max(0, clamp * (1 - 48U))] = clamp / 96`.
+  The `1/48` sets how *often* the penalty leaves anything, and a second factor of 2
+  comes from how *much* it leaves. Confirmed against the field sums rather than left
+  as algebra: over region 0, `sum(clamp)` is 1234.0 and `sum(penalised)` is 13.1
+  against the predicted 1234/96 = 12.85.
+- **But the ratio you would actually observe is neither 48 nor 96**, because the
+  collision gate is not linear in density: gated, the no-factor roll places 118 and
+  the penalised one 7, a ratio of ~17. Collision rejects a far larger share of the
+  dense variant's hits than of the sparse one's.
+
+So "48x" named a prototype constant and then attached it to three different
+quantities that are not equal to each other. The lesson is the one this subsystem
+keeps relearning - see `docs/noise/vulcanus-resources-NOTES.md` gap 4, where four
+reasoned-not-measured numbers are collected.
+
+### What is NOT settled
+
+The batch extent itself. This section argues it is *irrelevant to density*, which is
+all the port claims; it does not determine what the extent is. Anyone reaching for
+tile-exact oil positions still has to do that RE, and the size-1 case above is where
+they should start, because it is the one extent that would also invalidate the density
+argument. `n = 8` in the only region with any oil is far too weak a denominator to
+detect the difference from the outside - Poisson sigma on 8 is 2.83, so the measured
+7-vs-8 would look identical under a mildly wrong model.

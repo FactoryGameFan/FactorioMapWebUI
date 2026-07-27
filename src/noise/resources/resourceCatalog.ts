@@ -38,7 +38,26 @@ export interface ResourceParams {
   readonly hasStartingAreaPlacement: boolean;
   /** map_color, scaled to 0..255 (rounded). */
   readonly mapColor: readonly [number, number, number];
+  /** How the renderer turns this entry into pixels - see {@link ResourcePlacement}. */
+  readonly placement: ResourcePlacement;
 }
+
+/**
+ * How a resource decides where it is drawn.
+ *
+ * - `"threshold"` - draw wherever `probability >= 0.5`, i.e. paint the patch as a
+ *   solid footprint. Right for the five resources whose `random_probability` is
+ *   1: their probability is `clamp(all_patches, 0, 1)`, which saturates to 1
+ *   inside a patch and is 0 outside, so the threshold *is* the patch boundary.
+ * - `"roll"` - draw where the game's per-tile placement draw beats the
+ *   probability, subject to the tile and collision gates. Right for crude oil
+ *   alone, whose probability carries a `random_penalty{source = 1,
+ *   amplitude = 48}` factor that is positive on only ~1 tile in 48. Thresholding
+ *   it paints the whole patch extent as solid ore, where the game puts down a
+ *   handful of individual wells (measured: 1234 tiles against the game's 8
+ *   entities in `[0,0]-[512,512]`).
+ */
+export type ResourcePlacement = "threshold" | "roll";
 
 /** map_color (0..1) -> 0..255, rounded, matching the game's preview tint. */
 function color255(r: number, g: number, b: number): readonly [number, number, number] {
@@ -74,6 +93,7 @@ function solidOre(
     richnessPostMultiplier: 1,
     hasStartingAreaPlacement: true,
     mapColor,
+    placement: "threshold",
   };
 }
 
@@ -101,6 +121,11 @@ export const RESOURCE_CATALOG: readonly ResourceParams[] = [
     richnessPostMultiplier: 1,
     hasStartingAreaPlacement: false,
     mapColor: color255(0.78, 0.2, 0.77),
+    // The one roll resource. `randomProbability = 1/48` puts a
+    // `random_penalty{source = 1, amplitude = 48}` factor on oil's probability
+    // and nothing else in this catalog carries one - see `ResourcePlacement` and
+    // `makeNauvisOilPlacement` in `src/noise/preview/renderResources.ts`.
+    placement: "roll",
   },
   {
     name: "uranium-ore",
@@ -121,5 +146,9 @@ export const RESOURCE_CATALOG: readonly ResourceParams[] = [
     richnessPostMultiplier: 1,
     hasStartingAreaPlacement: false,
     mapColor: color255(0, 0.7, 0),
+    // Uranium shares oil's autoplace order "c" but NOT its penalty:
+    // `random_probability` is 1 here, so its probability saturates inside a patch
+    // like the four solids' and a threshold is the right rule.
+    placement: "threshold",
   },
 ];

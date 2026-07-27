@@ -254,4 +254,29 @@ describe("tiled render equals untiled render", () => {
     });
     expect(renderTiled(req, 24)).toEqual(renderWhole(req));
   });
+
+  // Crude oil is the third 3x3-mark overlay and needs the same halo, and it is
+  // the hardest of the three to catch: the game places single digits of wells per
+  // 512x512 region, so almost any window has zero and would pass on empty pixels.
+  // The Nauvis `resources` case in the VIEWS loop is exactly that - it sits near
+  // spawn where the fade-in radius leaves no regular patches at all.
+  //
+  // Chosen the same way as the other two: every oil placement in [-1200, 1200)^2
+  // was collected (102 of them - oil clusters inside its patches, so they are far
+  // from uniform) and ragged 70x70 windows swept on a 7-tile grid for the one
+  // with the most placements within 1 pixel of an interior seam at 24-pixel
+  // tiles. Origin (1055, 1121): 12 placements, 7 seam-adjacent. The origin is 31
+  // tiles into a chunk in x and 1 in y, so it exercises chunk-scoped collision
+  // purity as well. `view: "resources"` so a failure is unambiguously oil rather
+  // than rocks or enemies. Drop the halo and this case fails.
+  it("matches on Nauvis where crude-oil marks straddle worker-tile seams", () => {
+    const req = baseReq({
+      view: "resources",
+      originX: 1055,
+      originY: 1121,
+      width: 70,
+      height: 70,
+    });
+    expect(renderTiled(req, 24)).toEqual(renderWhole(req));
+  });
 });

@@ -63,6 +63,21 @@ export const PLACEMENT_SALT = {
    */
   enemyBiterPenalty: 0x2c81d3,
   enemySpitterPenalty: 0x4e0937,
+  /**
+   * Crude oil's `random_penalty{source = 1, amplitude = 48}` draw
+   * (`renderResources.ts`), the same batch-op stand-in as the two above.
+   *
+   * **Density does not depend on getting the game's batch right**, which is why a
+   * stand-in is legitimate here rather than merely convenient. `source = 1` is a
+   * constant and strictly positive, so *every* tile in the batch consumes exactly
+   * one taus88 draw - the `source <= 0` pass-through can never fire. Each tile's
+   * `U` is therefore marginally uniform on [0, 1) no matter where the batch
+   * starts or how long it is, and a density is a sum of per-tile marginals. Batch
+   * extent moves *which* tile gets which draw - positions - and the placement
+   * port already declines to reproduce positions
+   * (`test/entityDensity.spec.ts`). See `docs/noise/random-penalty-NOTES.md`.
+   */
+  crudeOilPenalty: 0x91c40d,
 } as const;
 
 /** `max(341, 0x3FBE2C + 7919*chunkX + 7907*chunkY + salt)` in u32 arithmetic. */
