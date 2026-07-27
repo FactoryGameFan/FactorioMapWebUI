@@ -383,6 +383,14 @@ async function generate() {
 }
 .view-toggle {
   display: flex;
+  /* The toolbar above already wraps, but that does not help these eight buttons:
+     the group is a single flex ITEM of the toolbar, so without its own wrap the
+     buttons form one unbreakable line and run off the right edge on a phone.
+     `min-width: 0` is the other half - a flex item defaults to `min-width: auto`
+     and refuses to shrink below its content's intrinsic width, which is what
+     pushed the group past the panel in the first place. */
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 4px;
 }
 .seed {

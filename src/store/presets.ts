@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { decodeExchangeString, encodeExchangeString } from "../codec/mapExchangeString";
 import { getBuiltinPreset } from "../model/builtins";
 import { presetFromDecoded, presetToEncodable } from "../model/convert";
+import { builtinDefaultsFor, presetDiffersFromSource } from "../model/presetDiff";
 import type { Preset } from "../model/types";
 import { randomU32 } from "../util/seed";
 
@@ -29,6 +30,7 @@ function seedState(): { userPresets: Preset[]; activeName: string | null } {
   const first = getBuiltinPreset("Default");
   first.name = "My preset";
   first.builtin = false;
+  first.sourceBuiltin = "Default";
   // A new preset from a builtin defaults to a random seed; the baked fixture
   // seed is a capture artifact, not a meaningful choice.
   first.seed = null;
@@ -55,6 +57,16 @@ export const usePresetsStore = defineStore("presets", {
     activeExchangeString(): string | null {
       const active = this.activePreset;
       return active ? encodeExchangeString(presetToEncodable(active)) : null;
+    },
+
+    /**
+     * Whether the active preset has been edited away from the built-in it came
+     * from - i.e. whether Reset would change anything. Drives the Reset
+     * button's disabled state. Always false when the origin is unknown (an
+     * imported preset, or one saved before `sourceBuiltin` existed).
+     */
+    activeIsDirty(): boolean {
+      return presetDiffersFromSource(this.activePreset);
     },
   },
 
@@ -90,6 +102,7 @@ export const usePresetsStore = defineStore("presets", {
       const preset = getBuiltinPreset(builtinName);
       preset.name = this.uniqueName(newName);
       preset.builtin = false;
+      preset.sourceBuiltin = builtinName;
       // New presets from a builtin default to a random seed (see seedState).
       preset.seed = null;
       this.userPresets.push(preset);
@@ -110,8 +123,39 @@ export const usePresetsStore = defineStore("presets", {
       const source = getBuiltinPreset(builtinName);
       source.name = active.name;
       source.builtin = false;
+      source.sourceBuiltin = builtinName;
       source.seed = null;
       Object.assign(active, source);
+      this.saveToStorage();
+    },
+
+    /**
+     * Restore the active preset's map-gen values to the built-in it came from,
+     * leaving the fields that are the user's rather than the built-in's:
+     *
+     * - `name`, because Reset restores settings, not identity.
+     * - `seed`, which is the deviation from `applyBuiltinToActive` (that one
+     *   nulls it). Resetting the sliders must not silently discard the seed the
+     *   previews are rendering, and a seed is not part of a built-in's defaults
+     *   anyway - `createFromBuiltin` randomizes it precisely because the
+     *   fixture's baked seed is a capture artifact.
+     * - `builtin` / `sourceBuiltin`, so the preset stays user-owned and keeps
+     *   its origin - Reset has to survive the next round of edits.
+     *
+     * A no-op when nothing is active, or when the origin is unknown or names a
+     * built-in this build no longer ships.
+     */
+    resetActiveToBuiltin() {
+      const active = this.activePreset;
+      // A deep clone, so the active preset never shares references with the
+      // built-in cache and a later edit cannot corrupt the defaults.
+      const defaults = builtinDefaultsFor(active);
+      if (!active || !defaults) return;
+      defaults.name = active.name;
+      defaults.seed = active.seed;
+      defaults.builtin = false;
+      defaults.sourceBuiltin = active.sourceBuiltin;
+      Object.assign(active, defaults);
       this.saveToStorage();
     },
 

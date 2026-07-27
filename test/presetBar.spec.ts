@@ -1,8 +1,17 @@
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import PresetBar from "../src/components/PresetBar.vue";
 import { usePresetsStore } from "../src/store/presets";
+import fixtures from "./fixtures/builtin-presets.json";
+
+const presets = fixtures.presets as Record<string, string>;
+
+// A fresh pinia is not a fresh store: several actions here (createFromBuiltin,
+// applyBuiltinToActive, resetActiveToBuiltin) call saveToStorage, and the store
+// rehydrates from localStorage on construction. Without this, one test's
+// created preset becomes the next test's "first launch" state.
+beforeEach(() => localStorage.clear());
 
 describe("PresetBar seed reroll", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -68,6 +77,61 @@ describe("PresetBar seed reroll", () => {
     expect(Number.isInteger(seed)).toBe(true);
     expect(seed).toBeGreaterThanOrEqual(1);
     expect(seed).toBeLessThanOrEqual(0xffffffff);
+  });
+});
+
+describe("PresetBar Reset button", () => {
+  it("is disabled on an untouched preset and enabled once one is edited", async () => {
+    setActivePinia(createPinia());
+    const store = usePresetsStore();
+    const wrapper = mount(PresetBar);
+    const reset = () => wrapper.find('[data-test="reset-preset"]').element as HTMLButtonElement;
+
+    expect(reset().disabled).toBe(true);
+
+    store.activePreset!.autoplaceControls["coal"]!.frequency = 3;
+    await wrapper.vm.$nextTick();
+
+    expect(reset().disabled).toBe(false);
+  });
+
+  it("restores the builtin defaults on click and disables itself again", async () => {
+    setActivePinia(createPinia());
+    const store = usePresetsStore();
+    const wrapper = mount(PresetBar);
+    store.activePreset!.autoplaceControls["coal"]!.frequency = 3;
+    await wrapper.vm.$nextTick();
+
+    await wrapper.find('[data-test="reset-preset"]').trigger("click");
+
+    expect(store.activePreset?.autoplaceControls["coal"]?.frequency).toBe(1);
+    const reset = wrapper.find('[data-test="reset-preset"]').element as HTMLButtonElement;
+    expect(reset.disabled).toBe(true);
+  });
+
+  it("stays disabled for an imported preset, which has no defaults to restore", async () => {
+    setActivePinia(createPinia());
+    const store = usePresetsStore();
+    store.importExchangeString("imported", presets["Marathon"] as string);
+    const wrapper = mount(PresetBar);
+    store.activePreset!.autoplaceControls["coal"]!.frequency = 3;
+    await wrapper.vm.$nextTick();
+
+    const reset = wrapper.find('[data-test="reset-preset"]').element as HTMLButtonElement;
+    expect(reset.disabled).toBe(true);
+    expect(reset.title).toContain("imported");
+  });
+
+  it("names the builtin it would restore in its tooltip", async () => {
+    setActivePinia(createPinia());
+    const store = usePresetsStore();
+    store.createFromBuiltin("Death world", "dw");
+    const wrapper = mount(PresetBar);
+    store.activePreset!.autoplaceControls["coal"]!.frequency = 3;
+    await wrapper.vm.$nextTick();
+
+    const reset = wrapper.find('[data-test="reset-preset"]').element as HTMLButtonElement;
+    expect(reset.title).toContain("Death world");
   });
 });
 

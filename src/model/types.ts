@@ -13,6 +13,21 @@ export interface Preset {
   name: string;
   builtin: boolean;
   /**
+   * Which built-in this preset's values came from, if any - the target of the
+   * Reset button. Set by the store's `createFromBuiltin` / `applyBuiltinToActive`
+   * / first-launch seeding.
+   *
+   * Optional on purpose, and `PersistedState` stays at version 1 because of it:
+   * "origin unknown" is a legal state, so presets already in localStorage from
+   * before this field existed need no migration. It is also absent for presets
+   * imported from an exchange string - a pasted string has no built-in origin,
+   * and guessing one would be wrong. Reset is simply disabled in both cases.
+   *
+   * Model-only: `presetToEncodable` never reads it, so the exchange string and
+   * its byte-exactness are unaffected.
+   */
+  sourceBuiltin?: string;
+  /**
    * Map generation seed (u32 LE at mid offset 2). `null` is the single source
    * of truth for "random each new map" and encodes to wire 0; a wire 0 decodes
    * back to `null`. The "Random each new map" UI checkbox is a pure computed
