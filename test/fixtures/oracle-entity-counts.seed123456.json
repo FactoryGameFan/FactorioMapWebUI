@@ -1,0 +1,205 @@
+{
+  "_comment": "Ground truth from Factorio 2.1.12 via test/oracle. Per-region entity counts (count_entities_filtered by name) after chunk-forced generation, at the DEFAULT preset. Vulcanus regions are sampled on a create_surface() surface whose seed is FORCED to `seed` (like every other Vulcanus oracle fixture), not the derived mapSeed + crc32('vulcanus'). `region` indexes `regions`. Compared against the placement roll's placed-tile count in test/entityDensity.spec.ts - density only; individual positions are NOT expected to match (see docs/superpowers/specs/2026-07-27-placement-roll-stipple-design.md). Regenerate: node --experimental-strip-types test/oracle/entityCounts.ts",
+  "seed": 123456,
+  "regions": [
+    {
+      "planet": "nauvis",
+      "x0": 0,
+      "y0": 0,
+      "x1": 512,
+      "y1": 512
+    },
+    {
+      "planet": "nauvis",
+      "x0": 4096,
+      "y0": 4096,
+      "x1": 4608,
+      "y1": 4608
+    },
+    {
+      "planet": "vulcanus",
+      "x0": 0,
+      "y0": 0,
+      "x1": 512,
+      "y1": 512
+    },
+    {
+      "planet": "vulcanus",
+      "x0": 4096,
+      "y0": 4096,
+      "x1": 4608,
+      "y1": 4608
+    },
+    {
+      "planet": "vulcanus",
+      "x0": -256,
+      "y0": -256,
+      "x1": 256,
+      "y1": 256
+    }
+  ],
+  "counts": [
+    {
+      "planet": "nauvis",
+      "region": 0,
+      "name": "huge-rock",
+      "count": 42
+    },
+    {
+      "planet": "nauvis",
+      "region": 0,
+      "name": "big-rock",
+      "count": 149
+    },
+    {
+      "planet": "nauvis",
+      "region": 0,
+      "name": "big-sand-rock",
+      "count": 1
+    },
+    {
+      "planet": "nauvis",
+      "region": 0,
+      "name": "crude-oil",
+      "count": 8
+    },
+    {
+      "planet": "nauvis",
+      "region": 0,
+      "name": "biter-spawner",
+      "count": 9
+    },
+    {
+      "planet": "nauvis",
+      "region": 0,
+      "name": "spitter-spawner",
+      "count": 10
+    },
+    {
+      "planet": "nauvis",
+      "region": 1,
+      "name": "huge-rock",
+      "count": 0
+    },
+    {
+      "planet": "nauvis",
+      "region": 1,
+      "name": "big-rock",
+      "count": 0
+    },
+    {
+      "planet": "nauvis",
+      "region": 1,
+      "name": "big-sand-rock",
+      "count": 64
+    },
+    {
+      "planet": "nauvis",
+      "region": 1,
+      "name": "crude-oil",
+      "count": 0
+    },
+    {
+      "planet": "nauvis",
+      "region": 1,
+      "name": "biter-spawner",
+      "count": 86
+    },
+    {
+      "planet": "nauvis",
+      "region": 1,
+      "name": "spitter-spawner",
+      "count": 56
+    },
+    {
+      "planet": "vulcanus",
+      "region": 2,
+      "name": "huge-volcanic-rock",
+      "count": 231
+    },
+    {
+      "planet": "vulcanus",
+      "region": 2,
+      "name": "big-volcanic-rock",
+      "count": 598
+    },
+    {
+      "planet": "vulcanus",
+      "region": 2,
+      "name": "huge-volcanic-rock-hot",
+      "count": 89
+    },
+    {
+      "planet": "vulcanus",
+      "region": 2,
+      "name": "big-volcanic-rock-hot",
+      "count": 215
+    },
+    {
+      "planet": "vulcanus",
+      "region": 2,
+      "name": "sulfuric-acid-geyser",
+      "count": 0
+    },
+    {
+      "planet": "vulcanus",
+      "region": 3,
+      "name": "huge-volcanic-rock",
+      "count": 304
+    },
+    {
+      "planet": "vulcanus",
+      "region": 3,
+      "name": "big-volcanic-rock",
+      "count": 769
+    },
+    {
+      "planet": "vulcanus",
+      "region": 3,
+      "name": "huge-volcanic-rock-hot",
+      "count": 85
+    },
+    {
+      "planet": "vulcanus",
+      "region": 3,
+      "name": "big-volcanic-rock-hot",
+      "count": 209
+    },
+    {
+      "planet": "vulcanus",
+      "region": 3,
+      "name": "sulfuric-acid-geyser",
+      "count": 0
+    },
+    {
+      "planet": "vulcanus",
+      "region": 4,
+      "name": "huge-volcanic-rock",
+      "count": 358
+    },
+    {
+      "planet": "vulcanus",
+      "region": 4,
+      "name": "big-volcanic-rock",
+      "count": 971
+    },
+    {
+      "planet": "vulcanus",
+      "region": 4,
+      "name": "huge-volcanic-rock-hot",
+      "count": 22
+    },
+    {
+      "planet": "vulcanus",
+      "region": 4,
+      "name": "big-volcanic-rock-hot",
+      "count": 99
+    },
+    {
+      "planet": "vulcanus",
+      "region": 4,
+      "name": "sulfuric-acid-geyser",
+      "count": 56
+    }
+  ]
+}
