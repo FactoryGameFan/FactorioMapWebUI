@@ -395,13 +395,20 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
         `.superpowers/sdd/2026-07-24-vulcanus-v2-resources/task-8-report.md`
         for the full before/after table and methodology.
 
-      **Vulcanus V3 (sulfuric-acid geyser overlay) - now mostly renderer
-      work.** V2 already computes `sulfuricAcidRegion`/`sulfuricAcidRegionPatchy`
-      (the tile catalog needs them), oracle-validated. What is missing is only
-      the placement rule and rendering: the geyser is a fluid placed at
-      `density * 0.025` (scattered points, not a solid patch like the three V2
-      ores), so it needs its own overlay shape rather than reusing
-      `renderVulcanusResources`'s solid-footprint approach.
+      **Vulcanus V3 (sulfuric-acid geyser) - PARTIAL, shipped 2026-07-26 as a
+      patch blob.** The geyser is now a fourth `VULCANUS_RESOURCE_CATALOG`
+      entry painting `sulfuricAcidRegionPatchy > 0` in `map_color`
+      `[199, 199, 26]`, last in catalog order so calcite wins the
+      mountains-biome overlap the two share.
+
+      **What is still missing is individual geysers, and V2's "mostly renderer
+      work" framing was wrong.** The field math was done, but the placement
+      rule peaks near 0.065, so no threshold yields a footprint - every geyser
+      comes from a per-tile roll against the per-chunk placement stream
+      (`placement-roll-NOTES.md`) shared across all ~14 Vulcanus entity
+      autoplacers. That is the M3.5 stop-and-report work, tracked in issue #9
+      together with Nauvis crude oil and enemy bases, which need the identical
+      mechanism. See `vulcanus-resources-NOTES.md` gap #4.
 
       Deferred: V3 cliffs, demolishers (the only `voronoi_cell_id` user -
       skipping it is why Vulcanus needed no `VoronoiNoise` port). Fulgora/Aquilo
