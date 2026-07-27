@@ -245,15 +245,16 @@ describe("runRenderRequest planet dispatch", () => {
     // Directly measured for this exact window/seed before this change (the old
     // VULCANUS_ROCK_FOOTPRINT_THRESHOLD = 0.02 sweep, no mark): 7.56% - close to
     // the 7.03% docs/noise/vulcanus-rocks-NOTES.md reports for the larger
-    // [-512, 512)^2 world window. After the roll (with the mandatory 3x3 mark,
-    // PLACEMENT_MARK_RADIUS_PX = 1), this window measures 5.56% - real
-    // improvement, but the 3x3 mark thickens single-pixel hits (~0.78% of
-    // tiles) by roughly 7x in the dense, spatially-correlated patches near the
-    // ashlands biome edge, so it does not reach an arbitrary "<5%" bound. 0.065
-    // is set from that measurement with headroom, not backed into a passing
-    // number: the roll is fully deterministic here (no jitter draws), so the
-    // bound is exact rather than a flakiness margin.
-    expect(coverage).toBeLessThan(0.065);
+    // [-512, 512)^2 world window. Vulcanus rocks paint a 1x1 pixel per roll
+    // hit (matching renderRocks.ts's Nauvis choice: "rocks are point-like, and
+    // a block would merge scattered rocks into a blob" - no
+    // PLACEMENT_MARK_RADIUS_PX mark here, unlike the 3x3-mark overlays in
+    // Tasks 6-8). Measured at 0.78% for this window - a ~10x drop from the old
+    // threshold, which is what "stops reading as rocky ground" actually
+    // requires. 0.01 is pinned just above that measurement: the roll is fully
+    // deterministic here (no jitter draws), so the bound is exact rather than
+    // a flakiness margin.
+    expect(coverage).toBeLessThan(0.01);
     expect(coverage).toBeGreaterThan(0); // and it must still paint SOMETHING
   }, 15000);
 
@@ -305,10 +306,12 @@ describe("runRenderRequest planet dispatch", () => {
   // overlays for the two assertions to mean anything, and most windows give
   // only one. This one (a 256x256-tile world window at 2 tiles/px) was probed
   // to have 342 resource pixels cliffs also paint, and 67 rocks also paint
-  // under the old threshold render. T3 switched rocks to a placement roll
-  // (src/noise/placement/placementRoll.ts), which lowers the rock count -
-  // re-measured at 28 here. The window still clears the ">0" bar below, so it
-  // was kept rather than re-probed; only this comment's count changed.
+  // under the old threshold render. T3 switched rocks to a per-tile placement
+  // roll (src/noise/placement/placementRoll.ts) painting a single pixel
+  // (matching Nauvis's renderRocks.ts, not the 3x3 mark other roll overlays
+  // use), which lowers the rock count sharply - re-measured at 4 here. The
+  // window still clears the ">0" bar below, so it was kept rather than
+  // re-probed; only this comment's count changed.
   // Both counts are asserted below, so if placement ever shifts the test fails
   // loudly rather than passing vacuously. It runs five full Vulcanus renders,
   // hence the explicit timeout.

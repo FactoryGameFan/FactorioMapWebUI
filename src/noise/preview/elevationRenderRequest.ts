@@ -4,7 +4,6 @@ import type { CliffControls, CliffSettingsInput } from "../cliffs/cliffCatalog";
 import type { VulcanusResourceControls } from "../eval/ctx";
 import type { EnemyControls } from "../enemies/enemyCatalog";
 import type { Planet } from "../../model/planets";
-import { PLACEMENT_MARK_RADIUS_PX } from "../placement/placementRoll";
 import type { ResourceControlLevers } from "../resources/resolveResource";
 import type { RockControls } from "../rocks/rockCatalog";
 import { renderCliffs } from "./renderCliffs";
@@ -146,47 +145,29 @@ export interface ElevationRenderResult {
 }
 
 /**
- * The world box to sweep/enumerate for `req`: its own pixel box, widened by
- * `radiusPx` tiles so a mark centered just outside this tile still owes it
- * pixels, then intersected with the full image so the outer border keeps the
- * untiled behavior.
+ * The world box to enumerate cliff cells over for `req`: its own pixel box,
+ * widened by the cliff mark radius so marks are not clipped at tile seams, then
+ * intersected with the full image so the outer border keeps the untiled
+ * behavior.
  *
- * The halo is exact rather than conservative. A mark at world `wx` maps to
- * pixel `cx = floor((wx - originX) / tpp)` and paints `cx - r .. cx + r`, so it
- * touches the tile on the low side exactly when `wx - originX >= -r * tpp`
- * (because `floor(v) >= -r` iff `v >= -r` for integer `r`), and on the high
- * side exactly when `wx < x1 + r * tpp`. Those pair with an inclusive-lower,
- * exclusive-upper enumeration/sweep, so widening by `r * tpp` adds every
- * position that can paint here and none that cannot.
- */
-function haloQueryBox(
-  req: ElevationRenderRequest,
-  radiusPx: number,
-): { x0: number; y0: number; x1: number; y1: number } {
-  const tpp = req.tilesPerPixel;
-  const x0 = req.originX;
-  const y0 = req.originY;
-  const x1 = req.originX + req.width * tpp;
-  const y1 = req.originY + req.height * tpp;
-  const full = req.fullImage;
-  if (!full) return { x0, y0, x1, y1 };
-  const halo = radiusPx * tpp;
-  return {
-    x0: Math.max(x0 - halo, full.originX),
-    y0: Math.max(y0 - halo, full.originY),
-    x1: Math.min(x1 + halo, full.originX + full.width * tpp),
-    y1: Math.min(y1 + halo, full.originY + full.height * tpp),
-  };
-}
-
-/**
- * The world box to enumerate cliff cells over for `req` - `haloQueryBox` at
- * `CLIFF_MARK_RADIUS_PX`.
+ * The halo is exact rather than conservative. A cell at world `wx` maps to pixel
+ * `cx = floor((wx - originX) / tpp)` and paints `cx - r .. cx + r`, so it touches
+ * the tile on the low side exactly when `wx - originX >= -r * tpp` (because
+ * `floor(v) >= -r` iff `v >= -r` for integer `r`), and on the high side exactly
+ * when `wx < x1 + r * tpp`. Those pair with `placedCells`' inclusive-lower,
+ * exclusive-upper filter, so widening by `r * tpp` adds every cell that can
+ * paint here and none that cannot.
  *
  * Exported for direct unit testing: the tiled-equals-untiled gate pins the
  * widening (drop it and the gate fails) but cannot pin the clamp, which only
  * changes pixels when a cliff cell happens to sit just outside the image border
  * next to non-water terrain.
+ *
+ * Vulcanus rocks (Task 3) do NOT need an equivalent: they paint a 1x1 pixel,
+ * which cannot straddle a tile seam. A future overlay that keeps the 3x3
+ * `PLACEMENT_MARK_RADIUS_PX` mark (enemy bases, geysers, crude oil - Tasks
+ * 6-8) will need this same halo treatment if it sweeps pixels the way rocks
+ * do rather than enumerating placed cells the way cliffs do.
  */
 export function cliffCellQueryBox(req: ElevationRenderRequest): {
   x0: number;
@@ -194,22 +175,20 @@ export function cliffCellQueryBox(req: ElevationRenderRequest): {
   x1: number;
   y1: number;
 } {
-  return haloQueryBox(req, CLIFF_MARK_RADIUS_PX);
-}
-
-/**
- * The world box to sweep for the Vulcanus rock placement roll for `req` -
- * `haloQueryBox` at `PLACEMENT_MARK_RADIUS_PX`. See `renderVulcanusRocks.ts`'s
- * `sweepBox` doc for why the roll (unlike a plain per-pixel threshold) needs
- * this at all: its mark can spill across a tile seam.
- */
-export function rockSweepBox(req: ElevationRenderRequest): {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-} {
-  return haloQueryBox(req, PLACEMENT_MARK_RADIUS_PX);
+  const tpp = req.tilesPerPixel;
+  const x0 = req.originX;
+  const y0 = req.originY;
+  const x1 = req.originX + req.width * tpp;
+  const y1 = req.originY + req.height * tpp;
+  const full = req.fullImage;
+  if (!full) return { x0, y0, x1, y1 };
+  const halo = CLIFF_MARK_RADIUS_PX * tpp;
+  return {
+    x0: Math.max(x0 - halo, full.originX),
+    y0: Math.max(y0 - halo, full.originY),
+    x1: Math.min(x1 + halo, full.originX + full.width * tpp),
+    y1: Math.min(y1 + halo, full.originY + full.height * tpp),
+  };
 }
 
 /**
@@ -269,7 +248,6 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           originY: req.originY,
           tilesPerPixel: req.tilesPerPixel,
           ctx: { startingPositions: req.startingPositions },
-          sweepBox: rockSweepBox(req),
         });
       }
       if (req.view === "cliffs" || req.view === "all") {
