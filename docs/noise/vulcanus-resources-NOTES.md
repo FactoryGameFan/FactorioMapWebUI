@@ -350,14 +350,15 @@ that turned out to be seed-insensitive.
      geysers on at most ~6.5% of tiles, and each occupies ~3x3. Reading the
      blob as "this much ground is geyser" overstates it by more than an order
      of magnitude.
-5. **Cliffs and rocks are not rendered on Vulcanus**, and both exist there in
-   the real game. In a headless Vulcanus preview they account for about 16.8%
-   of pixels - the tan speckle, `144,119,87` (`CLIFF_MAP_COLOR`) and
-   `129,105,78` (`ROCK_MAP_COLOR`). Both overlays are Nauvis-only ports and the
-   panel correctly greys their toggles out for Vulcanus, so this shows up as
-   missing detail rather than wrong detail. It is the largest remaining visual
-   difference between the client render and the game's own preview now that the
-   seed is right.
+5. **Rocks are not rendered on Vulcanus** and exist there in the real game.
+   Cliffs were in this gap too until 2026-07-26; they now render - see
+   `docs/noise/vulcanus-cliffs-NOTES.md`. Rocks remain a Nauvis-only overlay
+   whose toggle the panel correctly greys out for Vulcanus, so this shows up as
+   missing detail rather than wrong detail. Together the two were about 16.8% of
+   a headless Vulcanus preview's pixels - the tan speckle, `144,119,87`
+   (`CLIFF_MAP_COLOR`) and `129,105,78` (`ROCK_MAP_COLOR`) - and cliffs were the
+   larger share, so rocks are now the largest remaining visual difference
+   between the client render and the game's own preview.
 
 ## `spotSelection.ts` needed no change
 

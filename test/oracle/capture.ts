@@ -2308,6 +2308,93 @@ async function captureVulcanusTileNames(): Promise<void> {
   }
 }
 
+/**
+ * Vulcanus cliffs: `cliffiness_basic` (the planet's `cliffiness` property, per
+ * `planet-map-gen.lua:13`) plus `cliff_richness`, which that expression reads.
+ *
+ * `cliff_richness` is captured deliberately rather than assumed. Vulcanus has no
+ * cliff autoplace control - `space-age/prototypes/autoplace-controls.lua` defines
+ * `gleba_cliff` and `fulgora_cliff` but no Vulcanus equivalent - so the port pins
+ * it at 1, and this fixture is what makes that a measurement instead of a
+ * reading of the Lua.
+ *
+ * The planet's other cliff property, `cliff_elevation`, is
+ * `cliff_elevation_from_elevation`, whose expression is literally `elevation`.
+ * It is NOT sampled here: the harness routes the probe *at* the `elevation`
+ * property, so probing it would be circular. It is covered instead by
+ * `oracle-vulcanus-elevation.seed123456.json`, since the two are the same field.
+ *
+ * Grid spans spawn finely and adds far rings, matching the biome capture, since
+ * `cliffiness_basic` is a plain 2-octave noise with no distance term and the far
+ * points mainly guard against a seeding mistake that only shows up off-origin.
+ * Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-cliffs
+ */
+async function captureVulcanusCliffs(): Promise<void> {
+  const seed = 123456;
+  const planet = "vulcanus";
+  const positions: Position[] = [];
+  for (let gy = -256; gy <= 256; gy += 32) {
+    for (let gx = -256; gx <= 256; gx += 32) {
+      positions.push({ x: gx + 0.5, y: gy + 0.25 });
+    }
+  }
+  for (let gy = -800; gy <= 800; gy += 160) {
+    for (let gx = -800; gx <= 800; gx += 160) {
+      positions.push({ x: gx + 0.125, y: gy + 0.375 });
+    }
+  }
+  // Ring coordinates are SNAPPED to 1/256, unlike the biome/resource captures
+  // which push raw `r * cos(a)` values. MapPosition is 1/256 fixed point, so the
+  // game stores the snapped value either way - but the fixture then records the
+  // unsnapped one, and the port evaluates there. Usually that costs ~1e-4 (the
+  // offset the V2 notes describe for sulfuricAcidPatches). It can cost far more:
+  // captured unsnapped, this fixture's k=9 r=3000 point came out at
+  // x = 0.4999999999994489, which sits within 5.5e-13 of a noise lattice
+  // boundary. The game's f32 and our f64 land on opposite sides of the floor()
+  // there, and the residual jumps from 2.75e-7 (at an exact 0.5) to 3.74e-4 -
+  // a knife-edge artifact of the probe position, not of the port. Snapping
+  // removes it and lets this spec assert a tight bound everywhere.
+  const snap = (v: number): number => Math.round(v * 256) / 256;
+  for (const r of [1500, 3000]) {
+    for (let k = 0; k < 12; k++) {
+      const a = (k * Math.PI) / 6;
+      positions.push({ x: snap(r * Math.cos(a) + 0.5), y: snap(r * Math.sin(a) + 0.25) });
+    }
+  }
+
+  const sample = async (expression: string): Promise<number[]> => {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      return await sampleExpression(expression, positions, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet,
+      });
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  };
+
+  const values: Record<string, number[]> = {};
+  for (const name of ["cliffiness_basic", "cliff_richness"]) {
+    values[name] = await sample(name);
+    console.log(`  captured ${name}`);
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 (Space Age enabled) via the test/oracle harness. Vulcanus's cliffiness property (cliffiness_basic) and the cliff_richness it reads, routed onto elevation over a grid spanning spawn (fine -256..256/32 plus a coarser -800..800/160 span) and far rings at r=1500/3000, against a real Vulcanus surface (game.planets['vulcanus'].create_surface()). cliff_elevation is deliberately absent: it resolves to `elevation`, which the probe itself occupies, and is covered by oracle-vulcanus-elevation. Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-cliffs",
+    seed0: seed,
+    planet,
+    positions,
+    values,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliffs.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${positions.length} points)`);
+}
+
 if (!oracleAvailable()) {
   console.error("No Factorio binary found (set FACTORIO_BIN). Cannot capture fixtures.");
   process.exit(1);
@@ -2356,3 +2443,4 @@ if (want("vulcanus-climate")) await captureVulcanusClimate();
 if (want("vulcanus-elevation")) await captureVulcanusElevation();
 if (want("vulcanus-temperature")) await captureVulcanusTemperature();
 if (want("vulcanus-tile-names")) await captureVulcanusTileNames();
+if (want("vulcanus-cliffs")) await captureVulcanusCliffs();

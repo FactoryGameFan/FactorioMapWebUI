@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
 import {
   runRenderRequest,
   type ElevationRenderRequest,
@@ -167,11 +168,52 @@ describe("runRenderRequest planet dispatch", () => {
       startingPositions: [{ x: 0, y: 0 }],
     };
     const terrain = runRenderRequest({ ...common, view: "terrain" });
-    for (const view of ["enemies", "cliffs", "trees", "rocks"] as const) {
+    // "cliffs" is deliberately absent: V3 gave it a Vulcanus port, so it is no
+    // longer a no-op here. The three below still are.
+    for (const view of ["enemies", "trees", "rocks"] as const) {
       const other = runRenderRequest({ ...common, id: 4, view });
       expect(Array.from(new Uint8ClampedArray(other.buffer))).toEqual(
         Array.from(new Uint8ClampedArray(terrain.buffer)),
       );
     }
+  });
+
+  it("paints Vulcanus cliffs for view:'cliffs', in the shared CLIFF_MAP_COLOR", () => {
+    const common = {
+      id: 5,
+      seed0: 123456,
+      planet: "vulcanus" as const,
+      width: 128,
+      height: 128,
+      originX: -256,
+      originY: -256,
+      tilesPerPixel: 1,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      startingPositions: [{ x: 0, y: 0 }],
+    };
+    const terrain = runRenderRequest({ ...common, view: "terrain" });
+    const cliffs = runRenderRequest({ ...common, id: 6, view: "cliffs" });
+    expect(Array.from(new Uint8ClampedArray(cliffs.buffer))).not.toEqual(
+      Array.from(new Uint8ClampedArray(terrain.buffer)),
+    );
+
+    // Every changed pixel must be the cliff colour - `cliff-vulcanus` declares
+    // the same map_color {144, 119, 87} as Nauvis's `cliff`, so CLIFF_MAP_COLOR
+    // is shared rather than duplicated.
+    const before = new Uint8ClampedArray(terrain.buffer);
+    const after = new Uint8ClampedArray(cliffs.buffer);
+    let changed = 0;
+    for (let o = 0; o < after.length; o += 4) {
+      if (
+        after[o] === before[o] &&
+        after[o + 1] === before[o + 1] &&
+        after[o + 2] === before[o + 2]
+      )
+        continue;
+      changed++;
+      expect([after[o], after[o + 1], after[o + 2]]).toEqual([...CLIFF_MAP_COLOR]);
+    }
+    expect(changed).toBeGreaterThan(0);
   });
 });

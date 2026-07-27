@@ -410,7 +410,17 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       together with Nauvis crude oil and enemy bases, which need the identical
       mechanism. See `vulcanus-resources-NOTES.md` gap #4.
 
-      Deferred: V3 cliffs, demolishers (the only `voronoi_cell_id` user -
+      **Vulcanus cliffs - DONE 2026-07-26.** `renderVulcanusCliffs` +
+      `cliffiness_basic`, oracle-validated to under 5e-6. Far smaller than the
+      Nauvis cliff port: the planet overrides `cliffiness` to `cliffiness_basic`
+      and `cliff_elevation` to its own `elevation`, so none of the Nauvis
+      hills/ringbreak/billows chain is involved, and the placement geometry is
+      shared. Vulcanus has **no** cliff autoplace control, so the bands are
+      planet constants (elevation_0 70, interval 120) rather than preset fields.
+      Not yet validated at entity level against a `find_entities` dump - see
+      `docs/noise/vulcanus-cliffs-NOTES.md`.
+
+      Deferred: Vulcanus rocks, demolishers (the only `voronoi_cell_id` user -
       skipping it is why Vulcanus needed no `VoronoiNoise` port). Fulgora/Aquilo
       DO build terrain on Voronoi, so they will force that primitive.
 

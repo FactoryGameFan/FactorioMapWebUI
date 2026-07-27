@@ -524,7 +524,7 @@ describe("ElevationPreviewPanel", () => {
   });
 
   describe("planet: vulcanus (Task 11 + V2 resources, Task 7)", () => {
-    it("passes planet:'vulcanus' and defaults to view:'resources' on Generate", async () => {
+    it("passes planet:'vulcanus' and defaults to view:'all' on Generate", async () => {
       const putImageData = stubCanvas();
       const renderer = okRenderer();
       const w = setup("nauvis", renderer, { planet: "vulcanus" });
@@ -534,7 +534,9 @@ describe("ElevationPreviewPanel", () => {
 
       expect(renderer.render).toHaveBeenCalledOnce();
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(arg).toMatchObject({ planet: "vulcanus", view: "resources" });
+      // "all" on Vulcanus composites the three ported layers: terrain, cliffs
+      // (V3) and resources (V2). It was "resources" until cliffs got a port.
+      expect(arg).toMatchObject({ planet: "vulcanus", view: "all" });
       expect(putImageData).toHaveBeenCalledTimes(4);
     });
 
@@ -607,13 +609,26 @@ describe("ElevationPreviewPanel", () => {
       expect(arg).toMatchObject({ planet: "vulcanus", view: "terrain" });
     });
 
-    it("keeps the Nauvis-only overlay toggles (Enemies/Cliffs/Trees/Rocks/All) disabled for Vulcanus", async () => {
+    it("keeps the Nauvis-only overlay toggles (Enemies/Trees/Rocks) disabled for Vulcanus", async () => {
       const w = setup("nauvis", okRenderer(), { planet: "vulcanus" });
-      for (const t of ["enemies", "cliffs", "trees", "rocks", "all"]) {
+      for (const t of ["enemies", "trees", "rocks"]) {
         expect(
           w.find(`[data-test="view-${t}"]`).attributes("disabled"),
           `view-${t} should be disabled for Vulcanus`,
         ).toBeDefined();
+      }
+    });
+
+    it("enables the Cliffs and All toggles for Vulcanus (both have a port)", async () => {
+      // Cliffs gained a Vulcanus port in V3, and "All" is meaningful there now
+      // that the planet has more than one overlay to composite. Leaving either
+      // disabled would hide a control that does real work.
+      const w = setup("nauvis", okRenderer(), { planet: "vulcanus" });
+      for (const t of ["terrain", "resources", "cliffs", "all"]) {
+        expect(
+          w.find(`[data-test="view-${t}"]`).attributes("disabled"),
+          `view-${t} should be enabled for Vulcanus`,
+        ).toBeUndefined();
       }
     });
 
@@ -622,11 +637,11 @@ describe("ElevationPreviewPanel", () => {
       expect(w.find('[data-test="view-elevation"]').attributes("disabled")).toBeDefined();
     });
 
-    it("falls back to view:'resources' for Vulcanus even after the Elevation toggle was previously clicked", async () => {
+    it("falls back to view:'all' for Vulcanus even after the Elevation toggle was previously clicked", async () => {
       // Elevation is disabled for Vulcanus (so a real user cannot click it), but
       // `view` is shared component state - prove effectiveView overrides a
-      // stale non-terrain/non-resources pick regardless, rather than relying
-      // only on the disabled attribute to keep users out.
+      // stale unported pick regardless, rather than relying only on the
+      // disabled attribute to keep users out.
       stubCanvas();
       const renderer = okRenderer();
       const w = setup("nauvis", renderer, { planet: "nauvis" });
@@ -642,10 +657,10 @@ describe("ElevationPreviewPanel", () => {
       await flushPromises();
 
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(arg).toMatchObject({ planet: "vulcanus", view: "resources" });
+      expect(arg).toMatchObject({ planet: "vulcanus", view: "all" });
     });
 
-    it("still resolves effectiveView to 'resources' for Vulcanus with dev mode off", async () => {
+    it("still resolves effectiveView to 'all' for Vulcanus with dev mode off", async () => {
       stubCanvas();
       const renderer = okRenderer();
       const w = setup("nauvis", renderer, { planet: "vulcanus", dev: false });
@@ -654,7 +669,7 @@ describe("ElevationPreviewPanel", () => {
       await flushPromises();
 
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(arg).toMatchObject({ planet: "vulcanus", view: "resources" });
+      expect(arg).toMatchObject({ planet: "vulcanus", view: "all" });
     });
 
     it("defaults planet to 'nauvis' when the prop is omitted (existing behavior unchanged)", async () => {

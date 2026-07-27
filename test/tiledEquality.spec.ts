@@ -120,4 +120,26 @@ describe("tiled render equals untiled render", () => {
     const req = baseReq({ view: "all", width: 32, height: 32, tilesPerPixel: 4 });
     expect(renderTiled(req, 8)).toEqual(renderWhole(req));
   });
+
+  // Vulcanus goes through a separate dispatch branch in runRenderRequest with
+  // its own renderers, so the Nauvis cases above prove nothing about it. Cliffs
+  // are the one Vulcanus overlay that can seam - it paints a 5x5 mark around a
+  // cell center, so a cell just outside a tile still owes that tile pixels, and
+  // renderVulcanusCliffs relies on the same cliffCellQueryBox halo to supply
+  // them. The window is near spawn where Vulcanus cliffs are dense, so a missing
+  // halo shows up rather than landing in empty terrain.
+  const VULCANUS_VIEWS = ["terrain", "resources", "cliffs", "all"] as const;
+  for (const view of VULCANUS_VIEWS) {
+    it(`matches byte for byte on Vulcanus, ${view} view`, () => {
+      const req = baseReq({
+        view,
+        planet: "vulcanus",
+        originX: -64,
+        originY: -64,
+        width: 64,
+        height: 64,
+      });
+      expect(renderTiled(req, 32)).toEqual(renderWhole(req));
+    });
+  }
 });

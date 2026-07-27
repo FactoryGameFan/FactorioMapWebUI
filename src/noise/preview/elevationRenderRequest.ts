@@ -13,6 +13,7 @@ import { renderResources } from "./renderResources";
 import { renderRocks } from "./renderRocks";
 import { renderTerrain } from "./renderTerrain";
 import { renderTrees } from "./renderTrees";
+import { renderVulcanusCliffs } from "./renderVulcanusCliffs";
 import { renderVulcanusResources } from "./renderVulcanusResources";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
 
@@ -201,8 +202,8 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
     req.view === "all"
   ) {
     if (planet === "vulcanus") {
-      // V2 ports the resource overlay only. The other four Nauvis overlays
-      // (enemies, cliffs, trees, rocks) have no Vulcanus meaning, so a
+      // Vulcanus has its own resource and cliff overlays. The remaining three
+      // Nauvis overlays (enemies, trees, rocks) have no Vulcanus port, so a
       // terrain-family view that asks for one still gets plain terrain rather
       // than a Nauvis field composited onto Vulcanus colors.
       image = renderVulcanusTerrain({
@@ -217,6 +218,19 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           vulcanusResourceControls: req.vulcanusResourceControls,
         },
       });
+      // Cliffs paint first so an ore patch still reads on top of them, matching
+      // the Nauvis order (resources before cliffs is a repaint of the same
+      // pixel; the game's own preview draws the resource over the cliff).
+      if (req.view === "cliffs" || req.view === "all") {
+        renderVulcanusCliffs(image, {
+          seed0: req.seed0,
+          originX: req.originX,
+          originY: req.originY,
+          tilesPerPixel: req.tilesPerPixel,
+          ctx: { startingPositions: req.startingPositions },
+          cellQueryBox: cliffCellQueryBox(req),
+        });
+      }
       if (req.view === "resources" || req.view === "all") {
         renderVulcanusResources(image, {
           seed0: req.seed0,
