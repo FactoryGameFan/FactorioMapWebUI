@@ -662,6 +662,132 @@ git commit -m "test(placement): density oracle for the placement roll, Vulcanus 
 
 ---
 
+### Task 4.5: The two arbitration gates - tile restriction and collision rejection
+
+**Added 2026-07-27, after Task 4's oracle measured a ~2x over-placement.** The
+roll itself is sound: placed count matches the density field's own integral to
+0.2-3.3%. What is missing is the rest of the game's arbitration.
+`docs/noise/placement-roll-NOTES.md` says the winner is picked "subject to
+collision-mask and tile-restriction checks" - and the port models neither.
+
+Measured on Vulcanus rocks, seed 123456, three chunk-aligned regions:
+
+| | region 2 | region 3 | region 4 |
+| --- | --- | --- | --- |
+| game | 1133 | 1367 | 1450 |
+| ours | 2467 | 2820 | 2448 |
+| ours, lava excluded | 1873 | 2332 | 2166 |
+| + collision filter | **1144** | **1397** | **1370** |
+| relative error | 1.0% | 2.2% | 5.5% |
+
+Both gates land here, before the four remaining overlays inherit the error.
+Vulcanus rocks is the only live consumer today, which is why this is cheap now
+and expensive later.
+
+**Files:**
+- Modify: `src/noise/placement/placementRoll.ts`
+- Modify: `src/noise/preview/renderVulcanusRocks.ts`
+- Modify: `test/entityDensity.spec.ts`, `test/placementRoll.spec.ts`
+- Test: `test/placementGates.spec.ts` (create)
+
+**Interfaces:**
+- Produces:
+  ```ts
+  export interface PlacementSetOptions {
+    readonly salt: number;
+    readonly probability: (x: number, y: number) => number;
+    /** Tile-restriction gate. MUST be a pure function of world position. */
+    readonly tileAllowed?: (x: number, y: number) => boolean;
+    /** Collision box in tiles for the prototype that wins this tile. */
+    readonly collisionBox?: (x: number, y: number) => { readonly w: number; readonly h: number };
+  }
+  export function makePlacementSet(opts: PlacementSetOptions): (x: number, y: number) => boolean;
+  ```
+- `makePlacementRoll` and `PLACEMENT_SALT` stay exported unchanged - the raw U is
+  still the primitive, and `test/placementRoll.spec.ts` still pins it.
+
+**The purity constraint is the whole design.** Collision rejection makes a tile's
+acceptance depend on its neighbours, which would break the per-position purity
+the tiled renderer depends on - `test/tiledEquality.spec.ts` would fail at worker
+tile seams. Contain it the same way the roll is contained: **resolve the entire
+chunk at once, deterministically, independent of the render window**, and cache
+the resulting accepted-tile set per chunk. Entities colliding across a chunk
+boundary are then not modelled; that is an accepted approximation and must be
+documented, not silently absorbed.
+
+Consequence: `tileAllowed` may NOT read rendered pixel colours the way the
+existing water skip does, because the chunk precompute covers tiles outside the
+render window. It has to be a function of world position.
+
+- [ ] **Step 1: Write the failing tests**
+
+`test/placementGates.spec.ts` must cover, with hand-checkable fixtures rather than
+real noise fields:
+
+1. **Tile restriction removes exactly the disallowed tiles.** With
+   `probability = () => 1` and `tileAllowed = (x) => x % 2 === 0`, every even
+   column places and no odd column does.
+2. **Collision rejection is order-dependent and follows the game's order.** With
+   `probability = () => 1`, no tile restriction, and a 3x3 collision box, the
+   accepted set over one chunk must be the greedy result of walking tiles in
+   DECREASING tile index (tile 1023 first) - assert the specific first-accepted
+   tile is 1023 and that its blocked neighbours are absent.
+3. **Purity across windows.** The accepted set for a given chunk is identical
+   whether queried tile-by-tile in row-major order, in reverse, or sparsely.
+4. **No gates supplied = old behaviour.** With neither `tileAllowed` nor
+   `collisionBox`, `makePlacementSet` accepts exactly the tiles where
+   `makePlacementRoll(salt)(x, y) < probability(x, y)`.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `pnpm vp test test/placementGates.spec.ts`
+Expected: FAIL - `makePlacementSet` does not exist.
+
+- [ ] **Step 3: Implement**
+
+In `placementRoll.ts`, add the chunk resolver: for a chunk, walk `k = 0..1023`
+taking `tile = 1023 - k` (this is both the draw order and the game's processing
+order), and accept a tile when `U < probability`, `tileAllowed` passes, and the
+candidate's box overlaps no already-accepted box in this chunk. Cache the accepted
+set per chunk behind the same single-slot-then-Map pattern the roll already uses.
+
+- [ ] **Step 4: Wire Vulcanus rocks and re-measure against the oracle**
+
+`renderVulcanusRocks` switches from `roll(x, y) < density(x, y)` to
+`placed(x, y)`, supplying:
+
+- `tileAllowed`: not `lava` and not `lava-hot`. All four rock prototypes'
+  `tile_restriction` lists (`space-age/prototypes/decorative/decoratives-vulcanus.lua:37-60`)
+  are every Vulcanus tile except those two. Derive it from the ported tile
+  resolver (`makeVulcanusTileResolver`, `src/noise/tiles/vulcanusCatalog.ts`) -
+  **not** from rendered pixel colours, per the purity constraint. If this proves
+  too slow, report it as a finding for Task 9's perf work; do not fix it by
+  breaking purity.
+- `collisionBox`: `huge-volcanic-rock` is 3 x 2.2 tiles, `big-volcanic-rock` is
+  1.5 x 1.5. `makeVulcanusRockFields` exposes `rockHuge` and `rockBig`
+  separately; the box is the one belonging to whichever is larger at that tile,
+  since `density` is their max.
+
+Then update `test/entityDensity.spec.ts`: it currently *pins the known 2x error*
+with tests named "the roll over-places vs the game by a pinned ratio". Rewrite
+those to assert agreement, with the band measured first and pinned just above
+what you measure - the same measure-then-pin rule as Task 4. Task 4's simulation
+predicts 1.0-5.5%.
+
+- [ ] **Step 5: Full gate, tiled equality, and commit**
+
+`test/tiledEquality.spec.ts` is the critical guard here - it proves the chunk-level
+containment actually preserved per-position purity.
+
+```bash
+pnpm vp test test/tiledEquality.spec.ts test/entityDensity.spec.ts test/placementGates.spec.ts
+pnpm vp check --fix && pnpm run verify
+git add -A src/noise/placement src/noise/preview/renderVulcanusRocks.ts test
+git commit -m "fix(placement): apply the game's tile-restriction and collision gates"
+```
+
+---
+
 ### Task 5: Nauvis rocks roll instead of threshold
 
 **Files:**
