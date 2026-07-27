@@ -7,5 +7,21 @@
 # - connect-src must include the preview Worker origin (the app's only outbound
 #   call). Replace the placeholder with the deployed Worker origin.
 # - style-src 'unsafe-inline' covers runtime-injected component styles.
+# - script-src allows static.cloudflareinsights.com: Cloudflare AUTO-INJECTS its
+#   Web Analytics beacon into proxied Pages responses, and the old policy blocked
+#   it, so analytics silently recorded nothing and every page load logged two CSP
+#   console errors (Lighthouse Best Practices 92 in production, 100 locally,
+#   because nothing is injected on localhost).
+#
+#   The origin is listed WITHOUT a path on purpose. Cloudflare's docs suggest
+#   `https://static.cloudflareinsights.com/beacon.min.js`, but the injected URL
+#   carries a version segment (.../beacon.min.js/v4513226cd...), and a CSP source
+#   with a path that does not end in `/` must match the path EXACTLY - so the
+#   documented value would not match the thing actually being loaded, and would
+#   break again on every beacon version bump.
+#
+#   No connect-src entry is needed. Under automatic injection the beacon reports
+#   to this site's own /cdn-cgi/rum, which 'self' already covers; the separate
+#   cloudflareinsights.com endpoint applies only to manual embedding.
 /*
-  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://fmw-preview.wormeyman.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'
+  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://fmw-preview.wormeyman.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://static.cloudflareinsights.com
