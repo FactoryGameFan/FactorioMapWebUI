@@ -27,11 +27,16 @@ const TILES_PER_CHUNK = CHUNK * CHUNK;
 /**
  * The (2*1+1) = 3x3 legibility mark for the roll overlays that use one.
  *
- * **Neither rock overlay does**, and nothing references this constant today: rocks
- * paint a single pixel, because they are point-like and a block would merge
- * scattered rocks into a blob (`renderRocks.ts`, `renderVulcanusRocks.ts:6-9`). It
- * is for the overlays whose entities are large and rare enough that a 1px dot
- * disappears - enemy bases, the sulfuric-acid geyser and crude oil, Tasks 6-8.
+ * **Neither rock overlay does**: rocks paint a single pixel, because they are
+ * point-like and a block would merge scattered rocks into a blob
+ * (`renderRocks.ts`, `renderVulcanusRocks.ts:6-9`).
+ *
+ * **Enemy bases do** (Task 6). A spawner is 7.4 x 6.4 tiles and placements are rare,
+ * so a 1px dot disappears. `renderEnemies.ts` paints the mark and
+ * `elevationRenderRequest.ts`'s `enemySweepBox` widens the tiled sweep by this
+ * radius so marks are not clipped at worker-tile seams - which is the second thing
+ * adopting this constant costs, and the one `test/tiledEquality.spec.ts` enforces.
+ * The sulfuric-acid geyser and crude oil (Tasks 7-8) are expected to follow.
  */
 export const PLACEMENT_MARK_RADIUS_PX = 1;
 

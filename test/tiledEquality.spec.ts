@@ -187,6 +187,27 @@ describe("tiled render equals untiled render", () => {
     expect(renderTiled(req, 24)).toEqual(renderWhole(req));
   });
 
+  // ...and the same thing again at tilesPerPixel != 1, which is what pins the
+  // halo's `* tpp` SCALING rather than merely its existence. The `tilesPerPixel is
+  // not 1` case above has zero enemy placements anywhere in its box, so it cannot
+  // tell a halo of `r` world tiles from one of `r * tpp`; only cliffs constrain it
+  // there. Found the same way as the case above - sweeping 50x50-pixel windows at
+  // 2 tiles/px on a 3-tile grid over the same dense neighbourhood, scoring
+  // placements that the pixel grid actually SAMPLES (at tpp 2 only every other
+  // tile is looked at) and requiring some within 1 pixel of a 16-pixel tile seam:
+  // origin (975, 1287), 24 sampled placements, 7 seam-adjacent. ~0.7s of renders.
+  it("matches on Nauvis enemy marks at tilesPerPixel > 1", () => {
+    const req = baseReq({
+      view: "all",
+      originX: 975,
+      originY: 1287,
+      width: 50,
+      height: 50,
+      tilesPerPixel: 2,
+    });
+    expect(renderTiled(req, 16)).toEqual(renderWhole(req));
+  });
+
   // The five Vulcanus cases above all sit on 32-tile boundaries with 32-pixel
   // tiles, so every worker tile is exactly one chunk. That is the easy case for
   // the rock overlay's collision gate, which is resolved a chunk at a time

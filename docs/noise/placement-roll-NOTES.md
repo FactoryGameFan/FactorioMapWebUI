@@ -95,6 +95,12 @@ game's "oil is order c, won't place if another resource is already there"). It
 writes winner-proto + winning-probability + richness into per-tile buffers. Then the
 roll phase rolls **once per tile for that one winner**.
 
+> **The "among all competing autoplacers" scope in the paragraph above is FALSIFIED.**
+> See "Enemy bases: what Task 6 added to the arbitration picture" at the end of this
+> file: one global max-probability arbitration would leave zero spawners in oracle
+> region 1, against the game's 142. Arbitration is scoped to autoplace-order groups.
+> The rest of the paragraph - one winner per tile, then one roll - still stands.
+
 So resources do NOT each roll independently against a shared stream - there is a
 per-tile max-probability arbitration first, then one roll. This app's
 `resolveResource.ts` already does an analogous order-priority pick (though by
@@ -176,6 +182,14 @@ population falls out naturally, and the effective exclusion is set by the huge b
 even though big rocks outnumber huge ones. That is consistent with both the observed
 ~28% split and the measured density, but **nothing here tests it**; it would need a
 re-read of the `+848..+964` grouping loop. Nobody should treat it as established.
+
+> **Partially promoted 2026-07-27.** The *global* alternative to this hypothesis is
+> now falsified outright by the enemy prototypes - see "Enemy bases: what Task 6
+> added to the arbitration picture" at the end of this file. That removes the
+> competing explanation; it does NOT establish this one, which additionally needs
+> groups processed **sequentially with shared space** (huge rocks claiming tiles, big
+> rocks filling gaps). Separate arbitration alone would not produce the mixed
+> population. The `+848..+964` re-read is still the work.
 
 ### Independently replicated on Nauvis rocks (2026-07-27)
 
@@ -284,14 +298,26 @@ The "Untested hypothesis for the mechanism" above (arbitration runs per autoplac
 group, not globally) can be promoted one step: **a single global max-probability
 arbitration is ruled out by the enemy fixture**, independently of any rock reasoning.
 
-`behemoth-worm-turret` is `enemy_autoplace_base(8, 5)`, so its cap is
-`0.25 + 8*0.05 = 0.65` and its multiplier is `max(0, 1 + 0.016*(distance - 2646))`.
-At oracle region 1's distance (~5800 tiles) that multiplier is ~51, so a behemoth
-worm's probability saturates at 0.65 wherever `enemy_base_probability` exceeds ~0.013 -
-against a spawner's hard 0.25 cap. Under one global max-probability arbitration a worm
-would therefore win essentially every enemy tile out there and the region would hold
-**~0 spawners**. `test/fixtures/oracle-entity-counts.seed123456.json` region 1 holds
+`behemoth-worm-turret` is `enemy_autoplace_base(8, 5)` (`turrets.lua:1334`), so its
+source is `min(m * ebp, 0.65)` with `m = max(0, 1 + 0.016*(distance - 2646))`, against
+a spawner's `min(ebp, 0.25)`.
+
+**Wherever `m >= 1` this is a theorem, not a saturation argument.** Both terms of the
+worm's `min` dominate the spawner's termwise (`m*ebp >= ebp` and `0.65 > 0.25`), and a
+`min` of two termwise-`>=` pairs is `>=`; the inequality is strict for every
+`ebp > 0`. So no distance-specific or threshold reasoning is needed - the worm wins
+outright. `m >= 1` from `distance >= 2646` tiles, and oracle region 1 spans
+`distance` 5792-6516, where `m ~ 51`. (The same holds one step earlier:
+`medium-worm-turret` is `(2, 3)`, `m >= 1` from `distance >= 774`, cap 0.35.)
+
+Under one global max-probability arbitration region 1 would therefore hold **0
+spawners**. `test/fixtures/oracle-entity-counts.seed123456.json` region 1 holds
 **142** (86 biter + 56 spitter).
+
+Note the argument does NOT reach the near-spawn region, and that is worth stating so
+nobody over-extends it: at region 0's distances every `distance_factor > 0` multiplier
+is clamped to 0, so only `small-worm-turret` (`(0, 2)`) competes there, and its source
+is *identical* to a spawner's. Region 1 is what falsifies the global model.
 
 So arbitration is scoped narrower than "all entity autoplacers". Both spawners share
 the autoplace order `b[enemy]-a[spawner]` while all four worms share
@@ -318,9 +344,35 @@ the entities will be placed farther apart." Both spawners declare it
 | `map_generator_bounding_box` 7.4 x 6.4 | 36 (89.5%) | 167 (17.6%) |
 
 (Both rows without `random_penalty`; see below.) Neither Nauvis nor Vulcanus rocks
-declare the field, so those overlays' use of `collision_box` was correct - but by luck
-of the prototypes, not by rule. In 2.1.12 the field appears on the two spawners, the
-four worms, `tree-plant`, and one Space Age enemy.
+declare the field (`grep -c` on `decoratives.lua` and `decoratives-vulcanus.lua`
+returns 0 for both), so those overlays' use of `collision_box` was correct - but by
+luck of the prototypes, not by rule.
+
+**Where the field actually is in 2.1.12, and why the count of grep hits misleads.**
+`grep -rn 'map_generator_bounding_box' base/ core/ space-age/` returns **8 textual
+hits, which are far more than 8 prototypes**:
+
+| site | prototypes | map-gen box | `collision_box` |
+| --- | --- | --- | --- |
+| `base/prototypes/entity/enemies.lua:169`, `:830` | biter-spawner, spitter-spawner | 7.4 x 6.4 | 4.4 x 4.4 |
+| `base/prototypes/entity/turrets.lua:348` | small-worm-turret | 3.8 x 3.6 | 1.8 x 1.6 |
+| `turrets.lua:974` | medium-worm-turret | 4.2 x 4.0 | 2.2 x 2.0 |
+| `turrets.lua:1118`, `:1260` | big-worm-turret, behemoth-worm-turret | 4.8 x 4.4 | 2.8 x 2.4 |
+| **`base/prototypes/entity/trees.lua:4904`** | **every base Nauvis tree** | **1.6 x 1.6** | **0.8 x 0.8** |
+| `space-age/prototypes/entity/enemies.lua:6189` | gleba-spawner-small | 4.7 x 4.7 | 2.7 x 2.7 |
+
+The tree row is the one that matters and the one a hit count hides. `trees.lua:4904`
+sits **inside the `for i, tree_data in ipairs(tree_data) do if tree_data.enabled then`
+factory at `:4742`**, whose driving table (`:4364`) holds 15 entries, all
+`enabled = true`. So a single textual hit sets the map-gen box for the whole base
+Nauvis tree family, at **double** their collision box on each axis.
+
+That is directly load-bearing for the cross-overlay finding below, which hands the
+next porter a tree-occupancy problem: the exclusion a tree imposes on a spawner is
+computed from 1.6 x 1.6, not 0.8 x 0.8, and this repo's measurement of it already
+used the map-gen box. `tree-plant` is a **Gleba** plant
+(`space-age/prototypes/entity/plants.lua`) and does **not** declare the field; it is
+not one of these hits.
 
 ### The rolled probability is the FULL autoplace expression, penalty included
 

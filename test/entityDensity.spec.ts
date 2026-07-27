@@ -218,13 +218,24 @@ describe("Nauvis enemy-base placement density vs the game", () => {
    * | region | measured rel | count | band | headroom |
    * | --- | --- | --- | --- | --- |
    * | 0 | 0.4737 | 28 vs 19 | (none) | - |
-   * | 1 | 0.1056 | 157 vs 142 | 0.11 | ~1 spawner |
+   * | 1 | 0.1056 | 157 vs 142 | 0.11 | zero further spawners |
    *
-   * Region 1's headroom is deliberately thin because the quantity is
-   * deterministic. Note that the count DOES move with the arbitrary penalty salts
-   * (`renderEnemies.ts` measures 149-157 over six salt pairs, i.e. rel
-   * 0.049-0.106) - so this band pins the shipped constants, and changing a salt
-   * is expected to require re-measuring it rather than being absorbed.
+   * Region 1's headroom is exactly none, and that is deliberate rather than
+   * accidental: `0.11 * 142 = 15.62` against a measured deviation of 15, so 158
+   * spawners (deviation 16, rel 0.1127) already fails. The band exists to hold a
+   * deterministic quantity against cross-engine float drift, not to leave room for
+   * the model to move.
+   *
+   * **What this band does and does not have power over.** It catches real
+   * regressions in the physics: dropping `random_penalty` was run as a
+   * falsification and fails at 0.176, and every other degraded variant in
+   * `renderEnemies.ts`'s gate-by-gate table (which is measured pre-penalty) sits at
+   * 167 spawners or worse - `collision_box` instead of the map-gen box at 290,
+   * collision-only at 730, restriction-only at 1704 - so all of them fail 0.11 too.
+   * It does NOT discriminate the
+   * arbitrary penalty salts: all six pairs `renderEnemies.ts` measures (149-157,
+   * rel 0.049-0.106) pass 0.11, so a salt change is absorbed silently. Read 0.1056
+   * as one draw from that range, not as a property of the model.
    */
   const BAND: Record<number, number | undefined> = { 1: 0.11 };
 

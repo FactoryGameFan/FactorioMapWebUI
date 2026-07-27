@@ -147,7 +147,9 @@ Three things this task established that the section above did not know:
    inner source collapses to exactly `min(enemy_base_probability, 0.25)`, so the
    penalty is the whole difference: `source - 0.1*U` per prototype, and
    `source - 0.1*min(U_biter, U_spitter)` for the arbitrated group of two.
-   Dropping it over-places by 22% (region 0) and 60% (region 1) of the residual.
+   Dropping it leaves 47% more overshoot in region 0 (9 spawners above the game's
+   19 with the penalty, 17 without) and 40% more in region 1 (15 above 142, against
+   25). In raw counts that is 28 vs 36 and 157 vs 167.
 
 2. **The collision box is `map_generator_bounding_box`, not `collision_box`.**
    Both spawners declare `{{-3.7,-3.2},{3.7,3.2}}` (7.4 x 6.4) beside a

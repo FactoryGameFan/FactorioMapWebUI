@@ -211,16 +211,20 @@ export function makeNauvisEnemyProbability(
  *
  * Two things that table settles. The map-gen box beats the collision box in both
  * regions by a wide margin, confirming the API doc rather than assuming it. And
- * `random_penalty` is worth 22% of region 0's overshoot and 60% of region 1's -
- * it is not a rounding detail.
+ * `random_penalty` removes 47% of region 0's overshoot (17 -> 9 spawners above the
+ * game's 19) and 40% of region 1's (25 -> 15 above 142) - it is not a rounding
+ * detail. Stated against the overshoot, in the same units as the "points" above,
+ * because the count reduction (8/36 and 10/167, i.e. 22% and 6%) says nothing
+ * about agreement.
  *
  * **The last row is salt-dependent and the spread is worth knowing before anyone
  * reads it as precise.** Re-running it over six different penalty salt pairs
  * gives 27-28 in region 0 (rel 0.42-0.47) and 149-157 in region 1 (rel
  * 0.049-0.106); the shipped pair happens to sit at the top of both ranges. The
  * band in `test/entityDensity.spec.ts` is pinned to the shipped constants, which
- * are fixed, so the test is deterministic - but a salt change is a real ~5-point
- * move, not noise to be ignored.
+ * are fixed, so the test is deterministic - but every one of those six pairs
+ * passes that band, so **a salt change is absorbed silently** even though it is a
+ * real ~5-point move. The band has power over the physics, not over this choice.
  *
  * ## Region 0 is a STOP-AND-REPORT, not a passing region
  *
