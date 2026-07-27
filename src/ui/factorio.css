@@ -9,8 +9,17 @@
   --f-text-dim: #b0aca7;
   --f-orange: #e39827;
   --f-orange-bright: #f9b44b;
-  --f-green: #47a447;
-  --f-red: #d6413b;
+  /* Sampled from the game's own "Play" button in
+     docs/screenshots/Screenshot 2026-07-13 at 10.27.52 AM.png, which is
+     #5eb763 with near-black text rather than the white this file used to pair
+     it with. The old #47a447 + white was 3.15:1 and failed WCAG AA; the game's
+     actual combination is 6.99:1, so matching Factorio more closely and fixing
+     the contrast turned out to be the same edit. See FButton.vue. */
+  --f-green: #5eb763;
+  /* #d6413b landed at 4.49:1 against white, missing AA by 0.01. This is the
+     smallest darkening that clears 4.5:1 (4.54:1) and is not a visible
+     difference. */
+  --f-red: #d63f39;
   --f-value-box: #8e8e8e;
   --f-preview-media-max: 512px;
 }

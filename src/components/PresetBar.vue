@@ -66,8 +66,12 @@ function rerollSeed() {
 <template>
   <div class="preset-bar f-bevel-out">
     <span class="field-label">Edit preset</span>
+    <!-- The visible "Edit preset" / "New preset" text beside these is a styled
+         span, not a <label for>, so each select needs its own accessible name.
+         FDropdown's root element IS the <select>, so aria-label falls through. -->
     <FDropdown
       data-test="edit-preset-select"
+      aria-label="Edit preset"
       :model-value="store.activeName ?? ''"
       :options="editOptions"
       @update:model-value="store.selectPreset($event)"
@@ -84,6 +88,7 @@ function rerollSeed() {
     <FDropdown
       :model-value="builtinChoice"
       data-test="builtin-select"
+      aria-label="Base new preset on built-in"
       :options="builtinOptions"
       @update:model-value="onBuiltinChange"
     />

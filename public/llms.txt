@@ -1,0 +1,20 @@
+# Factorio Map Generator
+
+A static, backend-free web editor for Factorio map-generation presets. It decodes
+and re-encodes the game's map exchange strings byte-for-byte, so a preset edited
+here can be pasted straight back into Factorio. It also renders a client-side
+preview of the generated map by porting the game's own noise expressions to
+TypeScript.
+
+Everything runs in the browser. The only outbound call is an optional server-side
+preview render, and the editor is fully functional without it.
+
+## Docs
+
+- [Source and README](https://github.com/wormeyman/FactorioMapWebUI): setup, commands, and the preview-service stack.
+- [Issue tracker](https://github.com/wormeyman/FactorioMapWebUI/issues): known gaps and planned work.
+
+## Reference
+
+- [Factorio map exchange string format](https://wiki.factorio.com/Map_exchange_string_format): the wire format this app reads and writes.
+- [Factorio Lua API: noise expressions](https://lua-api.factorio.com/latest/auxiliary/noise-expressions.html): the named expressions the preview reimplements.

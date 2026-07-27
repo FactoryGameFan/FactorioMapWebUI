@@ -41,7 +41,7 @@ const showImport = ref(false);
     <PresetBar />
     <ImportPanel v-if="showImport" @close="showImport = false" />
     <div class="body">
-      <div class="editor f-bevel-out">
+      <main class="editor f-bevel-out">
         <FTabs v-model="activeTab" :tabs="TABS" />
         <div class="tab-content">
           <ResourcesTab v-if="activeTab === 'Resources'" />
@@ -50,7 +50,7 @@ const showImport = ref(false);
           <ElevationPreviewPanel v-else-if="activeTab === 'Preview'" :planet="selectedPlanet" />
           <AdvancedTab v-else />
         </div>
-      </div>
+      </main>
       <aside class="preview f-bevel-out">
         <PreviewPanel v-model:planet="selectedPlanet" />
       </aside>
