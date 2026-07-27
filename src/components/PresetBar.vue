@@ -25,6 +25,16 @@ const randomEachMap = computed({
   },
 });
 
+// The tooltip names what Reset would restore, since the button itself cannot.
+// Mirrors the disabled state's three reasons: nothing edited, no origin to
+// reset to, or no preset at all.
+const resetTitle = computed(() => {
+  const origin = store.activePreset?.sourceBuiltin;
+  if (!origin) return "This preset was imported, so it has no built-in defaults to restore";
+  if (!store.activeIsDirty) return `Unchanged from the "${origin}" defaults`;
+  return `Restore the "${origin}" defaults (keeps this preset's name and seed)`;
+});
+
 function create() {
   if (!newName.value.trim()) return;
   store.createFromBuiltin(builtinChoice.value, newName.value);
@@ -78,6 +88,15 @@ function rerollSeed() {
       @update:model-value="onBuiltinChange"
     />
     <FButton data-test="create-preset" variant="tool" @click="create">Create</FButton>
+    <FButton
+      data-test="reset-preset"
+      variant="danger"
+      :disabled="!store.activeIsDirty"
+      :title="resetTitle"
+      @click="store.resetActiveToBuiltin()"
+    >
+      Reset
+    </FButton>
 
     <span class="spacer" />
 
