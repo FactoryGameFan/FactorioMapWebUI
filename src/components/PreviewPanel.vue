@@ -47,6 +47,7 @@ async function generate(reroll = false) {
     <div class="preview-toolbar">
       <FDropdown
         data-test="planet-select"
+        aria-label="Planet to preview"
         :model-value="planet"
         :options="planetOptions"
         @update:model-value="emit('update:planet', $event as Planet)"

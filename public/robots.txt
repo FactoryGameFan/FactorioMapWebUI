@@ -1,0 +1,8 @@
+# Single-page app, nothing crawl-sensitive. This file exists mainly so the path
+# stops falling through to the SPA rewrite and serving index.html, which made
+# Lighthouse report every line as "Syntax not understood" (issue #11).
+#
+# No Sitemap: line on purpose - there is one route, and pointing at a
+# sitemap.xml that does not exist would recreate the same fallthrough.
+User-agent: *
+Allow: /

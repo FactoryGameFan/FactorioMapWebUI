@@ -36,9 +36,10 @@ const emit = defineEmits<{ click: [] }>();
   background: var(--f-orange);
 }
 
+/* No color override: the base #1a1a1a is what the game puts on its green
+   buttons, and white here was the WCAG AA failure (3.15:1). See --f-green. */
 .f-button.confirm {
   background: var(--f-green);
-  color: #fff;
 }
 
 .f-button.danger {
