@@ -177,6 +177,42 @@ even though big rocks outnumber huge ones. That is consistent with both the obse
 ~28% split and the measured density, but **nothing here tests it**; it would need a
 re-read of the `+848..+964` grouping loop. Nobody should treat it as established.
 
+### Independently replicated on Nauvis rocks (2026-07-27)
+
+The same falsification holds on a different planet with different expressions, which
+is worth more than a second Vulcanus region. `base/prototypes/decorative/decoratives.lua`
+(2.1.12) gives `huge-rock` and `big-rock` the SAME `region_box`
+(`range_select_base(moisture, 0.35, 1, 0.2, -10, 0)`) and differ only in multiplier
+and penalty:
+
+```
+huge = 0.07 * control * (region_box + rock_density - 1.7)
+big  = 0.17 * control * (region_box + rock_density - 1.6)
+```
+
+With `T = region_box + rock_density`, `big > huge` exactly when `T > 1.53` - and
+`big` is positive only for `T > 1.6`, `huge` only for `T > 1.7`. So wherever either
+can place at all, `big` is strictly ahead: `huge` is the argmax at 0 of the placed
+tiles in both Nauvis oracle regions, measured. Max-probability arbitration again
+predicts a 0% huge population; the game's region 0 is **42 huge, 149 big, 1 sand -
+22% huge**. Two planets, two prototype families, same 20-30% huge population the
+model cannot produce.
+
+One thing Nauvis adds that Vulcanus could not: **the argmax is not degenerate in
+general.** `big-sand-rock` reads a disjoint climate band (moisture in [0, 0.3] and
+aux in [0.3, 1] against `big-rock`'s moisture in [0.35, 1]), so it wins outright in
+the desert region - 54 of 54 placed tiles at `[4096,4096]`, against 0 of 205 at the
+origin. The game agrees in direction (region 1 is 64 sand rocks and nothing else).
+So the argmax is wrong specifically about the size ordering WITHIN a shared band,
+not about biome selection. That is a sharper constraint on any replacement model
+than "argmax is wrong".
+
+Nauvis rocks also have no `tile_restriction` at all: their restriction is the
+`simple-entity` default collision mask (`building()` in
+`core/lualib/collision-mask-defaults.lua`), which includes `water_tile`. When
+looking for an overlay's tile gate, check the collision mask before concluding
+there is none.
+
 ## Why this is STOP-AND-REPORT (the coupling that kills a cheap port)
 
 The roll stream is shared across **all entity autoplacers in the chunk**, processed

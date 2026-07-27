@@ -150,6 +150,26 @@ describe("tiled render equals untiled render", () => {
   // one there by coincidence. This case is deliberately ragged - origin -50 and
   // 24-pixel tiles put every seam in the middle of a chunk - so a collision pass
   // that leaked the render window into its answer differs here.
+  // The Nauvis cases at the top of this file all sit at origin (320, 64) with
+  // 32-pixel tiles, so every worker tile is exactly one 32-tile chunk - the easy
+  // case for the rocks overlay's collision gate, which is resolved a chunk at a
+  // time (`makePlacementSet`). This origin was found by sweeping every ragged
+  // 70x70 window of the [0, 512) region for the one with the most rocks that
+  // ALSO has collision rejections: 22 rocks placed and 11 rejected by the
+  // collision gate, at an origin 12 tiles into a chunk in x and 9 in y, with
+  // 24-pixel tiles so no seam lands on a chunk boundary either. A collision pass
+  // that leaked the render window into its answer differs here.
+  it("matches on Nauvis with worker tiles that straddle chunk boundaries", () => {
+    const req = baseReq({
+      view: "all",
+      originX: 204,
+      originY: 105,
+      width: 70,
+      height: 70,
+    });
+    expect(renderTiled(req, 24)).toEqual(renderWhole(req));
+  });
+
   it("matches on Vulcanus with worker tiles that straddle chunk boundaries", () => {
     const req = baseReq({
       view: "all",

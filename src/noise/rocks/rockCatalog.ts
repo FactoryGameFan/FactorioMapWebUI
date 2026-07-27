@@ -13,17 +13,6 @@ export { sliderRescale };
 export const ROCK_SEED1 = 137;
 export const ROCK_MAP_COLOR: readonly [number, number, number] = [129, 105, 78];
 
-// Interim footprint threshold. Rock placement probabilities are small (peak
-// ~0.25 at seed 123456, most tiles well under that), so this is NOT 0.5. At 0.02
-// the overlay paints ~1.6% of the 1024-tile origin region as scattered 1px specks
-// (measured), which reads as sparse rocks rather than a blob. This is deliberately
-// NOT matched pixel-for-pixel against the game's own preview: the game charts each
-// placed rock by its large collision-box footprint (huge-rock ~3x2 tiles), so a
-// faithful coverage match needs the per-rock footprint/placement the session-2
-// dither project handles - which replaces this render entirely. Tune only enough
-// to read as scattered rocks; do not chase the game's exact ink here.
-export const ROCK_FOOTPRINT_THRESHOLD = 0.02;
-
 export type RockControls = {
   frequency: number;
   size: number;

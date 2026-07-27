@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/oracle-entity-counts.seed123456.json";
 import { withCtxDefaults } from "../src/noise/eval/ctx";
 import { makePlacementRoll, PLACEMENT_SALT } from "../src/noise/placement/placementRoll";
+import { makeNauvisRockPlacement } from "../src/noise/preview/renderRocks";
 import { makeVulcanusRockPlacement } from "../src/noise/preview/renderVulcanusRocks";
+import { makeRockFields } from "../src/noise/rocks/rockField";
 import { makeVulcanusRockFields } from "../src/noise/rocks/vulcanusRockField";
 
 /**
@@ -47,6 +49,19 @@ import { makeVulcanusRockFields } from "../src/noise/rocks/vulcanusRockField";
  * other entities per region, and no collision across chunk boundaries. It is an
  * order of magnitude looser than the other two, which is exactly why each region
  * gets its own band rather than sharing region 4's.
+ *
+ * ## Nauvis rocks (added 2026-07-27, Task 5)
+ *
+ * | region | window | ours | game | rel |
+ * | --- | --- | --- | --- | --- |
+ * | 0 | `[0,0]-[512,512]` | 205 | 192 | 6.8% |
+ * | 1 | `[4096,4096]-[4608,4608]` | 54 | 64 | 15.6% |
+ *
+ * Both are looser than the Vulcanus regions, and the reason is arithmetic
+ * rather than modelling: Nauvis rocks are ~6x sparser, so these windows hold
+ * 192 and 64 rocks against Vulcanus's ~1200, and a single rock is already 0.5%
+ * and 1.6%. The gate-by-gate breakdown and the collision-box measurement live
+ * on `makeNauvisRockPlacement` in `src/noise/preview/renderRocks.ts`.
  */
 
 interface FixtureRegion {
@@ -148,6 +163,79 @@ describe("placement density vs the game", () => {
 
       console.log(
         `vulcanus rocks region ${String(index)} [${String(region.x0)},${String(region.y0)}]: ` +
+          `ours=${String(ours)} game=${String(game)} rel=${rel.toFixed(4)} ` +
+          `ungated=${String(ungated)} sum(density)=${expected.toFixed(1)} ` +
+          `relToField=${relToField.toFixed(4)}`,
+      );
+
+      expect(rel).toBeLessThan(BAND[index]);
+      expect(relToField).toBeLessThan(FIELD_BAND[index]);
+    }, 120000);
+  }
+});
+
+describe("Nauvis rock placement density vs the game", () => {
+  /**
+   * Exactly three Nauvis prototypes are entities, and `makeRockFields`'
+   * `density` is the max of their three probabilities, so the comparable game
+   * number is the sum of all three counts. The five other `control = "rocks"`
+   * prototypes in `decoratives.lua` (medium/small/tiny rock, medium/small sand
+   * rock) are `type = "optimized-decorative"` - a different generation pass, not
+   * entities - so they neither appear in the fixture nor belong in this sum.
+   */
+  const isNauvisRock = (name: string): boolean =>
+    name === "huge-rock" || name === "big-rock" || name === "big-sand-rock";
+
+  /**
+   * Per-region bands, each pinned just above its OWN measured value, with about
+   * two rocks of headroom against cross-engine float drift. The regions are far
+   * smaller than the Vulcanus ones (192 and 64 rocks against ~1200), so one rock
+   * is 0.5% and 1.6% respectively - the percentages here are inherently coarser,
+   * which is another reason not to share one band.
+   *
+   * | region | measured rel | count | band | headroom |
+   * | --- | --- | --- | --- | --- |
+   * | 0 | 0.0677 | 205 vs 192 | 0.08 | ~2 rocks |
+   * | 1 | 0.1563 | 54 vs 64 | 0.19 | ~2 rocks |
+   *
+   * Region 1 `[4096,4096]` is 60% water (measured with the ported tile
+   * resolver), so the water restriction does most of the gating there: the bare
+   * roll places 182, the restriction alone cuts that to 60, and collision takes
+   * it to 54 against the game's 64. Restriction-only is numerically closer, and
+   * it is deliberately NOT what ships - the game applies both gates, and
+   * dropping one to improve a 6-rock difference on a 64-rock region would be
+   * fitting the oracle rather than modelling it.
+   */
+  const BAND: Record<number, number> = { 0: 0.08, 1: 0.19 };
+
+  /**
+   * Same shape for the ungated roll-vs-field-integral check, which is the claim
+   * that holds independent of the gates. Measured 0.0156 (312 vs sum 317.0) and
+   * 0.0222 (182 vs 186.1); bands add ~2 rocks each.
+   */
+  const FIELD_BAND: Record<number, number> = { 0: 0.022, 1: 0.033 };
+
+  const nauvisRegions = fixture.regions
+    .map((r, i) => ({ region: r as FixtureRegion, index: i }))
+    .filter((e) => e.region.planet === "nauvis");
+
+  for (const { region, index } of nauvisRegions) {
+    it(`Nauvis rocks: placement density agrees with the game (region ${String(index)})`, () => {
+      const game = gameCount(index, isNauvisRock);
+      const params = { seed0: fixture.seed, startingPositions: [{ x: 0, y: 0 }] };
+      const ours = countOver(region, makeNauvisRockPlacement(params));
+      const rel = Math.abs(ours - game) / game;
+
+      // The bare roll, ungated, against the field's own integral - the same
+      // unbiased-draw check the Vulcanus cases make, on the Nauvis field.
+      const { density } = makeRockFields(params);
+      const roll = makePlacementRoll(PLACEMENT_SALT.nauvisRocks);
+      const ungated = countOver(region, (x, y) => roll(x, y) < density(x, y));
+      const expected = expectedCount(region, density);
+      const relToField = Math.abs(ungated - expected) / expected;
+
+      console.log(
+        `nauvis rocks region ${String(index)} [${String(region.x0)},${String(region.y0)}]: ` +
           `ours=${String(ours)} game=${String(game)} rel=${rel.toFixed(4)} ` +
           `ungated=${String(ungated)} sum(density)=${expected.toFixed(1)} ` +
           `relToField=${relToField.toFixed(4)}`,
