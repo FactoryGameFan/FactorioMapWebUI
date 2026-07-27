@@ -275,3 +275,96 @@ amplitude=1/random_probability}` (`resource-autoplace.lua:103-105`). Applying it
 the current hard `>= 0.5` footprint makes oil vanish, so it only pays off together
 with a placement roll (exact) OR a density-matched cosmetic dither (approximate,
 above). No standalone change.
+
+## Enemy bases: what Task 6 added to the arbitration picture (2026-07-27)
+
+### Per-group arbitration is no longer a hypothesis - global max-probability is falsified
+
+The "Untested hypothesis for the mechanism" above (arbitration runs per autoplace-order
+group, not globally) can be promoted one step: **a single global max-probability
+arbitration is ruled out by the enemy fixture**, independently of any rock reasoning.
+
+`behemoth-worm-turret` is `enemy_autoplace_base(8, 5)`, so its cap is
+`0.25 + 8*0.05 = 0.65` and its multiplier is `max(0, 1 + 0.016*(distance - 2646))`.
+At oracle region 1's distance (~5800 tiles) that multiplier is ~51, so a behemoth
+worm's probability saturates at 0.65 wherever `enemy_base_probability` exceeds ~0.013 -
+against a spawner's hard 0.25 cap. Under one global max-probability arbitration a worm
+would therefore win essentially every enemy tile out there and the region would hold
+**~0 spawners**. `test/fixtures/oracle-entity-counts.seed123456.json` region 1 holds
+**142** (86 biter + 56 spitter).
+
+So arbitration is scoped narrower than "all entity autoplacers". Both spawners share
+the autoplace order `b[enemy]-a[spawner]` while all four worms share
+`b[enemy]-b[worm]` (`base/prototypes/entity/enemy-autoplace-utils.lua`), which is
+exactly the split the `+848..+964` name-`memcmp` grouping would produce.
+`renderEnemies.ts` models the spawner group and ignores worms entirely.
+
+This does NOT establish the rock hypothesis, which needs groups to be processed
+*sequentially with shared space* rather than merely arbitrated separately. It removes
+the competing explanation, nothing more.
+
+### `map_generator_bounding_box` beats `collision_box` - check for it first
+
+`EntityPrototype.map_generator_bounding_box` is documented in the prototype API as
+"Used instead of the collision box during map generation. ... if the box is bigger,
+the entities will be placed farther apart." Both spawners declare it
+(`{{-3.7,-3.2},{3.7,3.2}}` = 7.4 x 6.4) alongside a much smaller `collision_box`
+(4.4 x 4.4), and using the wrong one is a 132-point error in oracle region 0 and an
+87-point error in region 1:
+
+| box used | region 0 (game 19) | region 1 (game 142) |
+| --- | --- | --- |
+| `collision_box` 4.4 x 4.4 | 61 (221.1%) | 290 (104.2%) |
+| `map_generator_bounding_box` 7.4 x 6.4 | 36 (89.5%) | 167 (17.6%) |
+
+(Both rows without `random_penalty`; see below.) Neither Nauvis nor Vulcanus rocks
+declare the field, so those overlays' use of `collision_box` was correct - but by luck
+of the prototypes, not by rule. In 2.1.12 the field appears on the two spawners, the
+four worms, `tree-plant`, and one Space Age enemy.
+
+### The rolled probability is the FULL autoplace expression, penalty included
+
+The spawners' `probability_expression` is `enemy_autoplace_base(0, seed)`, i.e.
+`random_penalty{x = x + seed, y = y, amplitude = 0.1, source = min(ebp, 0.25)}` once
+`distance_factor = 0` collapses the multiplier and the cap. Rolling against the bare
+`min(ebp, 0.25)` over-places: 36 -> 28 in region 0 and 167 -> 157 in region 1.
+
+`random_penalty` is a batch op whose stream depends on batch order, so
+`renderEnemies.ts` draws its two `U`s from the placement-roll taus88 machinery under
+their own salts: the distribution is exact, the positional identity is not. **That
+choice is worth ~5 points of the answer**, measured - six different salt pairs give
+149-157 in region 1 (rel 0.049-0.106) and 27-28 in region 0. Anyone tightening this
+model should reproduce the real batch stream rather than treating the current number
+as a property of the physics.
+
+### Cross-overlay OCCUPANCY, not just arbitration, is the dominant remaining error
+
+Every previous report listed "no cross-overlay arbitration" as an unmodelled
+approximation without sizing it. On enemy bases it is measurable and it is the whole
+residual in the near-spawn region.
+
+Spawners sort at `b[enemy]-a[spawner]`; trees sort at `a[tree]-...` and rocks at
+`a[landscape]-c[rock]-...`, i.e. BEFORE them. Under sequential per-group processing
+trees and rocks take their tiles first, and a 7.4 x 6.4 spawner box cannot fit beside
+them. Rolling this app's own tree density and rock placement and excluding the tiles
+they occupy:
+
+| | region 0 `[0,0]` | region 1 `[4096,4096]` |
+| --- | --- | --- |
+| area excluded by trees | 34.3% | 10.9% |
+| area excluded by rocks | 3.8% | 1.3% |
+| game | 19 | 142 |
+| model without blockers (shipped) | 28 (47.4%) | 157 (10.6%) |
+| model with blockers | 19 (0.0%) | 155 (9.2%) |
+
+Region 0 is the near-spawn, heavily forested window and region 1 is desert, so the
+~3x asymmetry in tree cover matches the ~4x asymmetry in residual. Region 0 landing
+exactly on the game's 19 is a coincidence at that precision (the salt spread above is
+wider), but the direction and the asymmetry are the finding.
+
+**This is not shipped.** It would mean running a tree placement roll that has never
+been validated against anything - the trees overlay renders *expected coverage* and
+never places an individual tree - inside the enemy chunk resolver, at roughly double
+the cost. Recorded here so the next overlay's residual is read against it: an overlay
+with a large collision box and a low density is dominated by what the game put down
+before it, not by its own field.

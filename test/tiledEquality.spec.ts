@@ -163,6 +163,30 @@ describe("tiled render equals untiled render", () => {
     expect(renderTiled(req, 24)).toEqual(renderWhole(req));
   });
 
+  // Enemy bases are the only Nauvis overlay that paints a mark WIDER than one
+  // pixel from a swept position (3x3, `PLACEMENT_MARK_RADIUS_PX`), so they are
+  // the only one that needs `enemySweepBox`'s halo: a placement one pixel outside
+  // a worker tile still owes that tile the edge of its mark. The `enemies` case
+  // in the VIEWS loop above cannot catch a missing halo - it sits at (320, 64)
+  // near spawn, where the starting-area exclusion leaves ZERO placements in the
+  // window, so it passes on empty pixels.
+  //
+  // This window was chosen by collecting every placement in [512, 1536)^2 (311 of
+  // them) and sweeping ragged 70x70 windows on a 7-tile grid for the one with the
+  // most placements that ALSO has placements within 1 pixel of an interior seam
+  // at 24-pixel tiles: origin (974, 1331), 50 placements, 9 of them seam-adjacent.
+  // Drop the halo and this case fails.
+  it("matches on Nauvis where enemy-base marks straddle worker-tile seams", () => {
+    const req = baseReq({
+      view: "all",
+      originX: 974,
+      originY: 1331,
+      width: 70,
+      height: 70,
+    });
+    expect(renderTiled(req, 24)).toEqual(renderWhole(req));
+  });
+
   // The five Vulcanus cases above all sit on 32-tile boundaries with 32-pixel
   // tiles, so every worker tile is exactly one chunk. That is the easy case for
   // the rock overlay's collision gate, which is resolved a chunk at a time

@@ -277,16 +277,19 @@ describe("runRenderRequest", () => {
     expect(countIron(noIron)).toBe(0);
   });
 
-  it("view 'enemies' overlays the enemy-base footprint on the terrain", () => {
-    // World point (1000, 1040), seed 123456: renderEnemies.spec.ts's own fixture
-    // ("paints a pixel inside a base spot") proves ebp clears the footprint
-    // threshold there; the terrain color at that point is [141, 104, 60, 255]
-    // (land, not water), so the overlay is free to paint.
+  it("view 'enemies' overlays enemy-base placements on the terrain", () => {
+    // 32x32 px at 1 tile/px over world [1000,1032) x [1040,1072) - inside a base
+    // spot (5 placements, 45 painted pixels at seed 123456). This used to be a
+    // 1x1 image at the same origin, which worked while the overlay thresholded
+    // `enemy_base_probability`; a roll places ~1 spawner per few hundred tiles, so
+    // a single pixel is no longer a reliable hit. Widened rather than moved, and
+    // the assertion is "some pixels changed and every changed pixel is exactly
+    // ENEMY_MAP_COLOR" rather than a pixel count.
     const req: ElevationRenderRequest = {
       id: 14,
       seed0: 123456,
-      width: 1,
-      height: 1,
+      width: 32,
+      height: 32,
       originX: 1000,
       originY: 1040,
       tilesPerPixel: 1,
@@ -299,7 +302,21 @@ describe("runRenderRequest", () => {
     const terrain = new Uint8ClampedArray(runRenderRequest({ ...req, view: "terrain" }).buffer);
     const withEnemies = new Uint8ClampedArray(runRenderRequest(req).buffer);
     expect(Array.from(withEnemies)).not.toEqual(Array.from(terrain));
-    expect(Array.from(withEnemies)).toEqual([...ENEMY_MAP_COLOR, 255]);
+    let changed = 0;
+    for (let i = 0; i < terrain.length; i += 4) {
+      if (
+        withEnemies[i] === terrain[i] &&
+        withEnemies[i + 1] === terrain[i + 1] &&
+        withEnemies[i + 2] === terrain[i + 2]
+      )
+        continue;
+      changed++;
+      expect([withEnemies[i], withEnemies[i + 1], withEnemies[i + 2], withEnemies[i + 3]]).toEqual([
+        ...ENEMY_MAP_COLOR,
+        255,
+      ]);
+    }
+    expect(changed).toBeGreaterThan(0);
   });
 
   it("view 'cliffs' overlays the cliff footprint on the terrain", () => {
@@ -394,12 +411,15 @@ describe("runRenderRequest", () => {
     // assertion moved to its own test below with its own window, rather than
     // being weakened here. See the comment on that test for the probe.
     //
-    // The same factor thinned the plain presence assertion below: this window
-    // holds 5 rock pixels now, against 172 resource, 217 enemy, 1539 cliff and
-    // 5198 tree (all measured). `rocks.size > 0` therefore has a far narrower
-    // margin than the other four overlays' - if a future change moves rock
-    // placement at all, expect that to be the assertion that goes first, and
-    // re-probe for a window rather than dropping it.
+    // The same factor thinned the plain presence assertion below, twice. Rocks
+    // moved to the roll in Task 5, and enemy bases followed in Task 6: this
+    // window now holds 5 rock pixels and 5 enemy pixels, against 172 resource,
+    // 1539 cliff and 5198 tree (all measured; enemies were 217 while the overlay
+    // thresholded `enemy_base_probability`). `rocks.size > 0` and
+    // `enemies.size > 0` therefore have far narrower margins than the other
+    // three - if a future change moves either placement at all, expect those to
+    // be the assertions that go first, and re-probe for a window rather than
+    // dropping them.
     const req: ElevationRenderRequest = {
       id: 21,
       seed0: 123456,

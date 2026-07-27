@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/oracle-enemy-base.seed123456.json";
 import { makeEnemyBaseField } from "../src/noise/enemies/enemyBaseField";
-import { ENEMY_FOOTPRINT_THRESHOLD, ENEMY_PLACEMENT_CAP } from "../src/noise/enemies/enemyCatalog";
+import { ENEMY_PLACEMENT_CAP } from "../src/noise/enemies/enemyCatalog";
 
 const ABS_TOL = 1.0;
 const REL_TOL = 1e-2;
 const relErr = (p: number, g: number) => Math.abs(p - g) / Math.max(1, Math.abs(g));
-const inFootprint = (v: number) => Math.min(v, ENEMY_PLACEMENT_CAP) >= ENEMY_FOOTPRINT_THRESHOLD;
+/**
+ * A decision-boundary agreement probe, NOT a render threshold. This was
+ * `ENEMY_FOOTPRINT_THRESHOLD`, deleted when the overlay moved from thresholding
+ * the probability field to rolling against it. The assertion it powers is still
+ * worth keeping - `worstAbs`/`worstRel` are aggregate, and this one says port and
+ * game never fall on opposite sides of a cut through the live part of the range -
+ * so the value moves here as a test-local constant rather than surviving as dead
+ * production code.
+ */
+const PROBE_CUT = 0.05;
+const inFootprint = (v: number) => Math.min(v, ENEMY_PLACEMENT_CAP) >= PROBE_CUT;
 
 describe("makeEnemyBaseField vs oracle", () => {
   for (const c of fixture.cases) {

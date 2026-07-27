@@ -46,6 +46,15 @@ export const PLACEMENT_SALT = {
   enemyBases: 0xa3c07b,
   vulcanusGeyser: 0x1d94e5,
   crudeOil: 0x76b3af,
+  /**
+   * The two spawners' `random_penalty` draws (`renderEnemies.ts`). These are NOT
+   * placement rolls - they stand in for a batch noise op, not for
+   * `generateEntities`' per-tile draw - but the need is identical (a
+   * deterministic, position-pure uniform per tile) so they reuse this machinery
+   * rather than introducing a second one.
+   */
+  enemyBiterPenalty: 0x2c81d3,
+  enemySpitterPenalty: 0x4e0937,
 } as const;
 
 /** `max(341, 0x3FBE2C + 7919*chunkX + 7907*chunkY + salt)` in u32 arithmetic. */

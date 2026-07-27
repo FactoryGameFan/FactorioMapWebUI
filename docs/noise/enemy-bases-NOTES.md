@@ -117,7 +117,7 @@ Cone geometry note: with `q = pi/90 r^3`, `peak = 3q/(pi r^2) = r/30` and slope
 `~0.5-1.0` (r ~ 15-30), which is why in-spot `ebp` tops out under 1 and the placement
 source caps at 0.25. No `min(32, ...)` radius cap (that is resource-only).
 
-## Shipped (2026-07-20)
+## Shipped (2026-07-20) - the threshold render, SUPERSEDED 2026-07-27
 
 Task 6 headless eyeball render (seed 123456, 2048-tile span centered on spawn,
 tilesPerPixel 4): base regions render as scattered red blobs, spawn stays clear
@@ -130,3 +130,40 @@ of terrain between blobs, so no retune was needed. `test/enemyBaseField.spec.ts`
 and `test/renderEnemies.spec.ts` re-run green with the threshold unchanged.
 M4 enemy bases done: footprint overlay, spawners only (worms + per-nest
 placement out of scope, see above). Cliffs remain the one open M4 item.
+
+## The render now ROLLS, not thresholds (2026-07-27, Task 6)
+
+`ENEMY_FOOTPRINT_THRESHOLD` is deleted. `renderEnemies.ts` places spawners through
+`makePlacementSet` - the game's per-tile roll plus its two arbitration gates - and
+paints a 3x3 mark per placement. The section above is kept as the record of the
+threshold era; everything in it about the FIELD still holds, and only the render
+rule changed.
+
+Three things this task established that the section above did not know:
+
+1. **The probability the game rolls is not `enemy_base_probability`.** Both
+   spawners are `enemy_autoplace_base(0, seed)`, whose outermost operation is
+   `random_penalty{x = x + seed, amplitude = 0.1}`. At `distance_factor = 0` the
+   inner source collapses to exactly `min(enemy_base_probability, 0.25)`, so the
+   penalty is the whole difference: `source - 0.1*U` per prototype, and
+   `source - 0.1*min(U_biter, U_spitter)` for the arbitrated group of two.
+   Dropping it over-places by 22% (region 0) and 60% (region 1) of the residual.
+
+2. **The collision box is `map_generator_bounding_box`, not `collision_box`.**
+   Both spawners declare `{{-3.7,-3.2},{3.7,3.2}}` (7.4 x 6.4) beside a
+   `collision_box` of 4.4 x 4.4, and `EntityPrototype.map_generator_bounding_box`
+   is documented as "Used instead of the collision box during map generation".
+   Measured, the map-gen box beats the collision box by 132 points in region 0 and
+   87 in region 1. Neither rock overlay declares the field, so their use of
+   `collision_box` was right - but check for it FIRST on any new overlay.
+
+3. **The two spawners declare the SAME box**, so the argmax-box question is
+   degenerate here in the strongest possible way: no box rule can differ. That is
+   a third distinct kind of degeneracy after Vulcanus's ordering theorem and
+   Nauvis rocks' lattice collapse.
+
+Density against `test/fixtures/oracle-entity-counts.seed123456.json` (2.1.12, seed
+123456), `biter-spawner + spitter-spawner`: region 1 `[4096,4096]` is 157 against
+the game's 142 (**10.6%**), pinned in `test/entityDensity.spec.ts`. Region 0
+`[0,0]` is 28 against 19 (**47.4%**) and is deliberately NOT pinned - see the
+cross-overlay occupancy finding in `placement-roll-NOTES.md`.

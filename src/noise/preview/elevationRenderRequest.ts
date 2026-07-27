@@ -4,6 +4,7 @@ import type { CliffControls, CliffSettingsInput } from "../cliffs/cliffCatalog";
 import type { VulcanusResourceControls } from "../eval/ctx";
 import type { EnemyControls } from "../enemies/enemyCatalog";
 import type { Planet } from "../../model/planets";
+import { PLACEMENT_MARK_RADIUS_PX } from "../placement/placementRoll";
 import type { ResourceControlLevers } from "../resources/resolveResource";
 import type { RockControls } from "../rocks/rockCatalog";
 import { renderCliffs } from "./renderCliffs";
@@ -144,37 +145,29 @@ export interface ElevationRenderResult {
   height: number;
 }
 
-/**
- * The world box to enumerate cliff cells over for `req`: its own pixel box,
- * widened by the cliff mark radius so marks are not clipped at tile seams, then
- * intersected with the full image so the outer border keeps the untiled
- * behavior.
- *
- * The halo is exact rather than conservative. A cell at world `wx` maps to pixel
- * `cx = floor((wx - originX) / tpp)` and paints `cx - r .. cx + r`, so it touches
- * the tile on the low side exactly when `wx - originX >= -r * tpp` (because
- * `floor(v) >= -r` iff `v >= -r` for integer `r`), and on the high side exactly
- * when `wx < x1 + r * tpp`. Those pair with `placedCells`' inclusive-lower,
- * exclusive-upper filter, so widening by `r * tpp` adds every cell that can
- * paint here and none that cannot.
- *
- * Exported for direct unit testing: the tiled-equals-untiled gate pins the
- * widening (drop it and the gate fails) but cannot pin the clamp, which only
- * changes pixels when a cliff cell happens to sit just outside the image border
- * next to non-water terrain.
- *
- * Vulcanus rocks (Task 3) do NOT need an equivalent: they paint a 1x1 pixel,
- * which cannot straddle a tile seam. A future overlay that keeps the 3x3
- * `PLACEMENT_MARK_RADIUS_PX` mark (enemy bases, geysers, crude oil - Tasks
- * 6-8) will need this same halo treatment if it sweeps pixels the way rocks
- * do rather than enumerating placed cells the way cliffs do.
- */
-export function cliffCellQueryBox(req: ElevationRenderRequest): {
+/** A world-tile box, inclusive lower / exclusive upper on both axes. */
+export interface WorldBox {
   x0: number;
   y0: number;
   x1: number;
   y1: number;
-} {
+}
+
+/**
+ * The world box to sweep/enumerate for `req`: its own pixel box, widened by
+ * `radiusPx` pixels' worth of world tiles so a mark centered just outside this
+ * tile still owes it pixels, then intersected with the full image so the outer
+ * border keeps the untiled behavior.
+ *
+ * The halo is exact rather than conservative. A mark at world `wx` maps to pixel
+ * `cx = floor((wx - originX) / tpp)` and paints `cx - r .. cx + r`, so it touches
+ * the tile on the low side exactly when `wx - originX >= -r * tpp` (because
+ * `floor(v) >= -r` iff `v >= -r` for integer `r`), and on the high side exactly
+ * when `wx < x1 + r * tpp`. Those pair with an inclusive-lower, exclusive-upper
+ * enumeration or sweep, so widening by `r * tpp` adds every position that can
+ * paint here and none that cannot.
+ */
+function haloQueryBox(req: ElevationRenderRequest, radiusPx: number): WorldBox {
   const tpp = req.tilesPerPixel;
   const x0 = req.originX;
   const y0 = req.originY;
@@ -182,13 +175,40 @@ export function cliffCellQueryBox(req: ElevationRenderRequest): {
   const y1 = req.originY + req.height * tpp;
   const full = req.fullImage;
   if (!full) return { x0, y0, x1, y1 };
-  const halo = CLIFF_MARK_RADIUS_PX * tpp;
+  const halo = radiusPx * tpp;
   return {
     x0: Math.max(x0 - halo, full.originX),
     y0: Math.max(y0 - halo, full.originY),
     x1: Math.min(x1 + halo, full.originX + full.width * tpp),
     y1: Math.min(y1 + halo, full.originY + full.height * tpp),
   };
+}
+
+/**
+ * The world box to enumerate cliff cells over for `req` - `haloQueryBox` at
+ * `CLIFF_MARK_RADIUS_PX`.
+ *
+ * Exported for direct unit testing: the tiled-equals-untiled gate pins the
+ * widening (drop it and the gate fails) but cannot pin the clamp, which only
+ * changes pixels when a cliff cell happens to sit just outside the image border
+ * next to non-water terrain.
+ */
+export function cliffCellQueryBox(req: ElevationRenderRequest): WorldBox {
+  return haloQueryBox(req, CLIFF_MARK_RADIUS_PX);
+}
+
+/**
+ * The world box to sweep for the enemy-base placement roll - `haloQueryBox` at
+ * `PLACEMENT_MARK_RADIUS_PX`.
+ *
+ * Both rock overlays paint a 1x1 pixel and need no equivalent; enemy bases keep
+ * the 3x3 mark (a spawner is 7.4 x 6.4 tiles and placements are rare, so a dot
+ * would vanish), and a 3x3 mark straddles worker-tile seams. `renderEnemies.ts`
+ * documents the sweep side; `test/tiledEquality.spec.ts` is what fails without
+ * it.
+ */
+export function enemySweepBox(req: ElevationRenderRequest): WorldBox {
+  return haloQueryBox(req, PLACEMENT_MARK_RADIUS_PX);
 }
 
 /**
@@ -340,6 +360,14 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         tilesPerPixel: req.tilesPerPixel,
         controls: req.enemyControls ?? { frequency: 1, size: 1 },
         startingPositions: req.startingPositions,
+        segmentationMultiplier: req.segmentationMultiplier,
+        moistureFrequency: req.moistureFrequency,
+        moistureBias: req.moistureBias,
+        auxFrequency: req.auxFrequency,
+        auxBias: req.auxBias,
+        startingAreaMoistureSize: req.startingAreaMoistureSize,
+        startingAreaMoistureFrequency: req.startingAreaMoistureFrequency,
+        sweepBox: enemySweepBox(req),
       });
     }
     if (req.view === "cliffs" || req.view === "all") {
