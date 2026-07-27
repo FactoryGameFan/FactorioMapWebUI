@@ -31,7 +31,8 @@ import { makeVulcanusRockFields } from "../src/noise/rocks/vulcanusRockField";
  *
  * Task 4.5 added both (`makePlacementSet`), and the assertions below were
  * re-measured and rewritten as the agreement test they were always meant to be.
- * They were NOT widened: the band is the worst measured value plus headroom.
+ * They were NOT widened: each region carries its OWN band, pinned just above that
+ * region's own measured value.
  *
  * ## The measurement, after both gates (2026-07-27, Factorio 2.1.12, seed 123456)
  *
@@ -43,8 +44,9 @@ import { makeVulcanusRockFields } from "../src/noise/rocks/vulcanusRockField";
  *
  * Region 4 is the spawn-centred window, where the port's remaining
  * approximations concentrate: no cross-overlay arbitration against the ~1500
- * other entities per region, and no collision across chunk boundaries. It is the
- * band-setter.
+ * other entities per region, and no collision across chunk boundaries. It is an
+ * order of magnitude looser than the other two, which is exactly why each region
+ * gets its own band rather than sharing region 4's.
  */
 
 interface FixtureRegion {
@@ -98,11 +100,26 @@ describe("placement density vs the game", () => {
     name.endsWith("volcanic-rock") || name.endsWith("volcanic-rock-hot");
 
   /**
-   * Measured 0.0018 / 0.0059 / 0.0752 (see the file header). Pinned just above
-   * the worst. This is a ceiling on a quantity that is deterministic, so a
-   * regression moves it, not noise.
+   * Per-region bands, each pinned just above its OWN measured value - NOT one
+   * shared ceiling. A single `0.08` (the worst region's band) would let regions 2
+   * and 3, which measure 0.0018 and 0.0059, absorb a 40x regression while staying
+   * green. These quantities are deterministic, so the only headroom allowed is a
+   * few tiles' worth against cross-engine float drift.
+   *
+   * | region | measured rel | tiles | band |
+   * | --- | --- | --- | --- |
+   * | 2 | 0.0018 | 1131 vs 1133 | 0.005 (~5 tiles) |
+   * | 3 | 0.0059 | 1359 vs 1367 | 0.010 (~13 tiles) |
+   * | 4 | 0.0752 | 1341 vs 1450 | 0.080 |
    */
-  const BAND = 0.08;
+  const BAND: Record<number, number> = { 2: 0.005, 3: 0.01, 4: 0.08 };
+
+  /**
+   * Same shape for the ungated roll-vs-field-integral check. Measured 0.0022 /
+   * 0.0326 / 0.0049 - region 3's is an order of magnitude larger than the other
+   * two, so a shared band would have hidden that asymmetry as well.
+   */
+  const FIELD_BAND: Record<number, number> = { 2: 0.005, 3: 0.04, 4: 0.008 };
 
   const vulcanusRegions = fixture.regions
     .map((r, i) => ({ region: r as FixtureRegion, index: i }))
@@ -122,8 +139,7 @@ describe("placement density vs the game", () => {
       // draw, so the tiles it accepts must match the field's integral. It is what
       // says the RE'd taus88 stream, the chunk seeding and the caching are sound -
       // and it is what localised the original 2x error to the missing gates rather
-      // than to the roll. Measured 0.0022 / 0.0326 / 0.0049; pinned just above the
-      // worst.
+      // than to the roll. Banded per region, see FIELD_BAND.
       const { density } = makeVulcanusRockFields(ctx);
       const roll = makePlacementRoll(PLACEMENT_SALT.vulcanusRocks);
       const ungated = countOver(region, (x, y) => roll(x, y) < density(x, y));
@@ -137,8 +153,8 @@ describe("placement density vs the game", () => {
           `relToField=${relToField.toFixed(4)}`,
       );
 
-      expect(rel).toBeLessThan(BAND);
-      expect(relToField).toBeLessThan(0.05);
+      expect(rel).toBeLessThan(BAND[index]);
+      expect(relToField).toBeLessThan(FIELD_BAND[index]);
     }, 120000);
   }
 });

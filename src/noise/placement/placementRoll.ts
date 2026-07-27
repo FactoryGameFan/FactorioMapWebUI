@@ -112,8 +112,22 @@ export interface PlacementSetOptions {
  * order, which is what makes the greedy collision pass reproducible.
  *
  * The roll is tested first because a tile whose roll fails places nothing, and
- * therefore occupies no space - so testing it first is equivalent to the game's
- * arbitrate-then-roll order while keeping the expensive gates off ~99% of tiles.
+ * therefore occupies no space - which keeps the expensive gates off ~99% of tiles.
+ *
+ * **That reordering is NOT free in general**, and the two conditions it rests on
+ * are worth checking before reusing this helper:
+ *
+ * 1. **The roll must not be data-dependent.** `chunkRolls` precomputes all 1024
+ *    draws from the chunk seed alone, because this port drops the game's 2 jitter
+ *    draws per placement (see the file header). In the game those draws make the
+ *    stream depend on what placed earlier, so there gate-first and roll-first would
+ *    consume different values.
+ * 2. **All prototypes sharing the overlay must share one `tileAllowed`.** Here they
+ *    do - all four Vulcanus rock prototypes' `tile_restriction` lists union to "not
+ *    lava", so no other rock can win a tile this one is barred from. With
+ *    heterogeneous restrictions the game would arbitrate to a *different* winner on
+ *    a restricted tile and roll that one's probability, which a single
+ *    probability-then-restriction test cannot express.
  */
 function resolveChunk(cx: number, cy: number, opts: PlacementSetOptions): Uint8Array {
   const { probability, tileAllowed, collisionBox } = opts;

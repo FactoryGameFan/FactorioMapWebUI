@@ -64,11 +64,14 @@ const ROCK_FORBIDDEN_TILES = new Set(["lava", "lava-hot"]);
  *
  * **Why the huge box everywhere, and not the box of whichever prototype wins the
  * tile.** The obvious rule - `density` is `max(rockHuge, rockBig)`, so use the box
- * of the argmax - is degenerate: `rockBig >= rockHuge` at *every* placed tile in
- * all three oracle regions (measured `hugeWinShare = 0.0000`, with 16-19% exact
- * ties where both caps bind and `vulcanus_ashlands_biome` is 0). So an argmax rule
- * picks the small 1.5 x 1.5 box everywhere. Measured relative error against the
- * game (`test/fixtures/oracle-entity-counts.seed123456.json`, regions 2/3/4):
+ * of the argmax - is degenerate. `rockBig >= rockHuge` is a theorem, not a seed
+ * accident: the caps satisfy `0.2*(1 - 0.5a) >= 0.2*(1 - 0.75a)` for all
+ * `a = vulcanus_ashlands_biome` in `[0, 1]`, and the sloped branches satisfy
+ * `-1.0 + T > -1.2 + T` unconditionally, so the `min` of each pair is `>=` too.
+ * Measured `hugeWinShare = 0.0000` over all three oracle regions, with 16-19% exact
+ * ties where both caps bind at `a = 0`. So an argmax rule picks the small 1.5 x 1.5
+ * box everywhere. Measured relative error against the game
+ * (`test/fixtures/oracle-entity-counts.seed123456.json`, regions 2/3/4):
  *
  * | box rule | region 2 | region 3 | region 4 |
  * | --- | --- | --- | --- |
@@ -77,13 +80,22 @@ const ROCK_FORBIDDEN_TILES = new Set(["lava", "lava-hot"]);
  * | **huge everywhere** | **0.2%** | **0.6%** | **7.5%** |
  *
  * The game's own population is ~28% huge (region 2: 320 huge, 813 big), which the
- * max-probability arbitration this port models cannot produce - so the tile-level
- * huge/big split is a real open question (the game groups autoplacers before
- * arbitrating; see `placement-roll-NOTES.md`). What is NOT in question is the
- * exclusion radius: the game's effective one matches the huge box, which is
- * unsurprising given the game also arbitrates against ~1500 other entities per
- * region that this overlay does not model at all. Both candidate boxes are real
- * prototype data; measurement chose between them.
+ * max-probability arbitration this port models cannot produce at all - it predicts
+ * 0% huge. So the tile-level huge/big identity is known WRONG here, not merely
+ * unvalidated; the claim this overlay makes is density, not identity. The
+ * falsification and a candidate mechanism (per-group arbitration, huge sorting
+ * first by autoplace order) are written up in `placement-roll-NOTES.md`.
+ *
+ * **What the measurement does and does not settle about the box.** It is not a
+ * derivation - the exclusion radius was CHOSEN by comparing two candidates. What it
+ * supports: the big box is provably too permissive (22-27% over in every region),
+ * and the game's counts sit at or below the all-huge model in 2 of 3 regions, so
+ * the game's effective exclusion is *at least* huge-sized. (Task 4's report said
+ * "the truth sits between the two boxes"; that holds only for region 4.) An
+ * exclusion at least this strong is unsurprising given the game also arbitrates
+ * against ~1500 other entities per region that this overlay does not model. Both
+ * candidate boxes are real prototype data; measurement chose between them, and a
+ * different mechanism could reproduce the same totals.
  */
 const VOLCANIC_ROCK_COLLISION_BOX: PlacementCollisionBox = { w: 3, h: 2.2 };
 

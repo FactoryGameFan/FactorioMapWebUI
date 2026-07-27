@@ -101,6 +101,55 @@ per-tile max-probability arbitration first, then one roll. This app's
 autoplace order, not max-probability - a discrepancy to revisit if this is ever
 built).
 
+### FALSIFIED for Vulcanus rocks: max-probability arbitration cannot produce the game's population (2026-07-27)
+
+**Read this before porting another roll-based overlay on the strength of the
+paragraph above.** The "single winner by max probability" model, applied to the two
+Vulcanus rock probability expressions, is provably wrong about *which* prototype
+wins - at every tile, at every seed.
+
+The two expressions (`decoratives-vulcanus.lua:308-318`, with
+`a = vulcanus_ashlands_biome` and `T` the three shared terms) are:
+
+```
+vulcanus_rock_huge = min(0.2 * (1 - 0.75*a), -1.2 + T)
+vulcanus_rock_big  = min(0.2 * (1 - 0.50*a), -1.0 + T)
+```
+
+`rockBig >= rockHuge` is a theorem, not a seed accident: the caps satisfy
+`0.2*(1-0.5a) >= 0.2*(1-0.75a)` for all `a` in `[0, 1]`, and the sloped branches
+satisfy `-1.0 + T > -1.2 + T` unconditionally. A `min` of two termwise-`>=` pairs is
+`>=`. Measured over three oracle regions (262144 tiles each): `huge` is the argmax at
+**0.0000** of placed tiles, with 16-19% exact ties where both caps bind at `a = 0`.
+
+So max-probability arbitration predicts a **0% huge** rock population. The game's
+actual population, from `count_entities_filtered` on a real 2.1.12 surface
+(`test/fixtures/oracle-entity-counts.seed123456.json`, region 2): **320 huge, 813
+big - ~28% huge.** The model does not merely mispredict the split; it excludes huge
+rocks entirely.
+
+**What was shipped anyway, and why that is not a contradiction.** The claim the port
+makes is DENSITY, not identity. `renderVulcanusRocks.ts` gates the roll with a
+uniform `huge-volcanic-rock` collision box (3 x 2.2 tiles) and lands within
+0.2% / 0.6% / 7.5% of the game's total rock count across the three regions
+(`test/entityDensity.spec.ts`). The small `big` box (1.5 x 1.5), which is what an
+argmax rule actually selects given the theorem above, is 22-27% too permissive. So
+the *total* is right while the *per-tile prototype identity* is known wrong, and the
+comment in `renderVulcanusRocks.ts` says so. Do not read the density agreement as
+validation of the arbitration model.
+
+**Untested hypothesis for the mechanism - recorded as a handoff, not a finding.**
+The section below already notes that autoplacers are processed in **groups**, sorted
+by a name `memcmp`. The two rock prototypes' autoplace orders are
+`a[landscape]-c[rock]-a[huge]` and `a[landscape]-c[rock]-b[big]`
+(`decoratives-vulcanus.lua:40` and `:1817`), so `huge` sorts first. If arbitration
+runs *per group* rather than globally - a sequential pass placing huge rocks with
+their large box, then a later pass letting big rocks fill the gaps - a mixed
+population falls out naturally, and the effective exclusion is set by the huge box
+even though big rocks outnumber huge ones. That is consistent with both the observed
+~28% split and the measured density, but **nothing here tests it**; it would need a
+re-read of the `+848..+964` grouping loop. Nobody should treat it as established.
+
 ## Why this is STOP-AND-REPORT (the coupling that kills a cheap port)
 
 The roll stream is shared across **all entity autoplacers in the chunk**, processed
