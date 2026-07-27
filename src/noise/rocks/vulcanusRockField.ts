@@ -34,6 +34,11 @@
  * (`planet-map-gen.lua:43`). So unlike Nauvis's `makeRockDensity`, nothing here
  * takes a frequency or size lever - `vulcanus_rock_noise` even has its
  * `control:rocks:frequency` term commented out at its definition site.
+ *
+ * The overlay (`renderVulcanusRocks.ts`) no longer thresholds `density` - it
+ * rolls the field through `makePlacementRoll`
+ * (`src/noise/placement/placementRoll.ts`), placing where the roll's per-tile
+ * `U < density(x, y)`.
  */
 
 import { clamp } from "../eval/math";
@@ -48,35 +53,6 @@ import { makeVulcanusRockNoise } from "../tiles/vulcanusCatalog";
 
 /** `seed1` of `vulcanus_decorative_knockout`'s multioctave call. */
 export const DECORATIVE_KNOCKOUT_SEED1 = 1300000;
-
-/**
- * Interim footprint threshold, the Vulcanus counterpart of Nauvis's
- * `ROCK_FOOTPRINT_THRESHOLD`. Both rock probabilities cap at 0.2, so this is
- * NOT 0.5 - there is no threshold that yields a faithful footprint, because
- * every rock in-game comes from a per-tile roll against that probability.
- *
- * Deliberately the SAME value as Nauvis's, rather than a per-planet number
- * tuned to hit a coverage target. It does not produce the same look, and that
- * is worth knowing: over world [-512, 512)^2 at seed 123456 it paints **7.0%**
- * of the area, where the Nauvis constant was chosen because it painted ~1.6%
- * and read as scattered specks.
- *
- * Raising it barely helps, because `min(cap, ...)` makes the field a plateau
- * rather than a gradient - measured coverage against threshold:
- *
- *   0.02 -> 7.03%   0.08 -> 5.50%   0.12 -> 3.81%   0.19 -> 2.37%
- *
- * i.e. even at 0.19, a hair under the 0.2 cap, a third of the ink survives.
- * There is no threshold that turns this field into scattered points, so tuning
- * one would buy a magic number and not the intended look. The real fix is the
- * per-tile placement roll tracked in issue #9; until then this reads as rocky
- * ground rather than as individual rocks.
- *
- * As with Nauvis, do not chase pixel parity with the game's own preview here:
- * the game charts each placed rock by its collision box (huge-volcanic-rock is
- * 3x2.2 tiles), which is a different quantity again.
- */
-export const VULCANUS_ROCK_FOOTPRINT_THRESHOLD = 0.02;
 
 /**
  * `vulcanus_decorative_knockout` (`planet-vulcanus-map-gen.lua:867`), commented
@@ -105,7 +81,7 @@ export interface VulcanusRockFields {
   readonly rockHuge: (x: number, y: number) => number;
   /** `vulcanus_rock_big`. */
   readonly rockBig: (x: number, y: number) => number;
-  /** `clamp(max(huge, big), 0, 1)` - what the overlay thresholds. */
+  /** `clamp(max(huge, big), 0, 1)` - what the overlay's placement roll rolls against. */
   readonly density: (x: number, y: number) => number;
 }
 

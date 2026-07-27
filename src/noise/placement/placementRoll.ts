@@ -24,6 +24,9 @@ import { seededState, taus88Next } from "../taus88";
 const CHUNK = 32;
 const TILES_PER_CHUNK = CHUNK * CHUNK;
 
+/** Placed entities paint a (2*1+1) = 3x3 mark. Uniform across all roll overlays. */
+export const PLACEMENT_MARK_RADIUS_PX = 1;
+
 /**
  * Per-overlay stream salts. Values are arbitrary and carry no meaning beyond being
  * distinct - EXCEPT `vulcanusRocks`, which is 0 so that one overlay reproduces the
