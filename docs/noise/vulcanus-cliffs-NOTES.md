@@ -247,6 +247,103 @@ So the honest position is that the remaining cost is concentrated in the one
 overlay the two obvious optimisations do not reach, and no cheap fix is
 outstanding.
 
+### The 2x gate, and the geometry the gate was always measured on
+
+**Read this before quoting any ratio below.** Every `all/terrain` figure in this
+file - including the historical 2.13x and 2.49x - is a **whole-image** render.
+The app does not render whole images: the preview is tiled across a 64-worker
+pool at 128x128 (`render-tiling-shipped`). Measured 2026-07-28, same total area,
+same seed, min-of-5 interleaved:
+
+| | whole 512x512 | tiled 16 x 128x128 |
+| --- | --- | --- |
+| terrain | 3684 ms | 3553 ms |
+| all, shipped | 8584 ms | **10042 ms** |
+| all, fused + cache | 6906 ms | 8380 ms |
+| **ratio, shipped** | 2.330 | **2.827** |
+| **ratio, fused + cache** | **1.875** | **2.359** |
+
+So the prototypes clear 2x **on the basis the gate has always been quoted on**,
+and do **not** clear it at the geometry the app actually runs. Both statements
+are true and neither alone is honest.
+
+Note where the tiling penalty falls: tiled *terrain* is slightly **cheaper**
+(3553 vs 3684 - smaller working set), while tiled `all` is **17% dearer**. It
+lands entirely on the overlays, because each 128px tile re-resolves every 32x32
+chunk it overlaps and neighbouring tiles redo the same chunks. That is a THIRD
+source of duplication, distinct from the two below, and nothing here touches it.
+
+### SHIPPED: one shared cached stack (2026-07-28)
+
+The Vulcanus composite now builds **one** `makeVulcanusStack(..., { cacheShared:
+true })` and hands the same instance to terrain, resources and rocks. Fusion was
+prototyped, measured and **dropped**; only the cache ships.
+
+Two runs each, min-of-5 interleaved, same area and seed:
+
+| | whole 512x512 | tiled 16 x 128x128 |
+| --- | --- | --- |
+| ratio, per-renderer stacks | 2.160 / 2.227 | 2.702 / 2.805 |
+| ratio, shared cached stack | **2.028 / 2.049** | **2.525 / 2.564** |
+| speedup | 6.1% / 8.0% | 6.6% / 8.6% |
+
+Byte-identical to per-renderer stacks (`test/vulcanusStackCache.spec.ts`, which
+renders both ways via `unsharedStacks`).
+
+**What dropping fusion cost, stated plainly.** Before shipping, I predicted the
+cache would subsume most of fusion's benefit, because a cross-traversal cache
+also serves the resource pass's separate loop. **That was wrong and the numbers
+say so.** The two are roughly ADDITIVE, tiled: fusion alone 6.2%, cache alone
+6.6-8.6%, both together 16.6%. So shipping the cache without fusion takes a
+little over half of what was available. Fusion's cost was a second render path,
+a deferred-paint step to preserve the 3x3 geyser mark ordering, and a
+`skipThreshold` flag; whether ~7 points is worth that is a live question, not a
+settled one.
+
+**Neither reaches the 2x gate at the geometry the app renders** (2.53 tiled).
+See the geometry section above before quoting any of these.
+
+### What the two mechanisms buy - measured 2026-07-28 (fusion since dropped)
+
+The paragraph above ("no cheap fix is outstanding") is **superseded**. Two
+prototypes, both byte-identical to the shipped path
+(`test/vulcanusFusedEquality.spec.ts`), min-of-7 interleaved @ 512x512 origin
+(0,0), two independent runs:
+
+| path | `all` | ratio all/terrain |
+| --- | --- | --- |
+| sequential (shipped) | 8304 / 8119 ms | 2.421 / 2.367 |
+| + fused terrain+ore | 7441 / 7266 ms | 2.170 / 2.118 |
+| + cross-traversal cache | **6749 / 6728 ms** | **1.968 / 1.961** |
+
+**Fusion alone does not reach the gate; fusion + the cache does** - on whole-image
+geometry, in both runs. Tiled, neither does (2.651 and 2.359); see above.
+
+The two mechanisms also trade places when tiled: fusion's contribution falls
+(13.6% -> 6.2%) while the cache's **rises** (6.9% -> 11.0%). Fusion's win comes
+from within-pixel adjacency, which a smaller tile does not help; the cache's
+comes from cross-traversal reuse, which a smaller working set makes denser. If
+only one ships, the tiled numbers argue for the cache, not fusion - the opposite
+of what the whole-image numbers suggest.
+Note the ratio drifts ~4% run to run (see `render-cost.perf.spec.ts`), which is
+why this is quoted from two runs and not one - but 1.96 twice is not a
+borderline call.
+
+Why two mechanisms and not one: `memoXY` is a **single-entry** cache, so sharing
+field objects between passes saves nothing on its own - measured, terrain + the
+three overlay marginals summed to EXACTLY the `all` cost, 96,310,857 basisNoise
+calls either way. Fusing terrain with the ore pass makes them ask for the same
+`(x, y)` back to back, which cuts the resources marginal by ~52% (1803 -> 886,
+1828 -> 853). But the rock overlay's cost sits inside `resolveChunk`, which
+sweeps a chunk's 1024 tiles in reverse index order - chunk-major, so **no pixel
+loop can line up with it**. That half needs a cache that survives across
+traversals, which is what `memoRegion` is.
+
+Both are prototypes behind `fusedPrototype` / `cacheSharedPrototype`, default
+off and not wired to any UI. Not shipped: `memoRegion` retains every value it
+computes, which is cheap at the app's real geometry (128x128 worker tiles,
+~16k entries) but unbounded at the benchmark's 512x512 and 1024x1024.
+
 **The benchmark that could not settle this is now fixed** (issue #19, 2026-07-28).
 `pnpm perf` reports minima over 7 interleaved iterations with the spread printed,
 and has a Vulcanus block at exactly this geometry - so the hand-run loop these

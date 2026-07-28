@@ -15,6 +15,7 @@ import { renderRocks } from "./renderRocks";
 import { renderTerrain } from "./renderTerrain";
 import { renderTrees } from "./renderTrees";
 import { renderVulcanusCliffs } from "./renderVulcanusCliffs";
+import { makeVulcanusStack } from "../tiles/vulcanusCatalog";
 import { renderVulcanusResources } from "./renderVulcanusResources";
 import { renderVulcanusRocks } from "./renderVulcanusRocks";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
@@ -91,6 +92,13 @@ export interface ElevationRenderRequest {
    * and `view: "resources"`. Defaults to all-neutral.
    */
   vulcanusResourceControls?: VulcanusResourceControls;
+  /**
+   * Escape hatch for `test/vulcanusStackCache.spec.ts`, which has to render the
+   * same request BOTH ways to prove the shared cached stack is byte-identical
+   * to per-renderer stacks. Defaults to the shared stack; there is no reason to
+   * set this outside that test.
+   */
+  unsharedStacks?: boolean;
   /**
    * The enemy-base autoplace control's frequency/size (control:enemy-base:*) -
    * consumed only when `view: "enemies"`. Defaults to `{ frequency: 1, size: 1 }`
@@ -237,6 +245,25 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
       // Nauvis overlays (enemies, trees, rocks) have no Vulcanus port, so a
       // terrain-family view that asks for one still gets plain terrain rather
       // than a Nauvis field composited onto Vulcanus colors.
+      const wantsResources = req.view === "resources" || req.view === "all";
+      // ONE stack for the whole composite. Two things make this pay, and both
+      // are needed: the overlays reuse the field objects terrain built, and
+      // those objects carry a cross-traversal cache (`memoRegion`), so a pass
+      // that walks the image in a different order from terrain - the rock
+      // overlay resolves whole 32x32 chunks - still hits values terrain
+      // computed. Sharing without the cache buys almost nothing, because
+      // `memoXY` holds only the last coordinate.
+      const stack =
+        req.unsharedStacks === true
+          ? undefined
+          : makeVulcanusStack(
+              {
+                seed0: req.seed0,
+                startingPositions: req.startingPositions,
+                vulcanusResourceControls: req.vulcanusResourceControls,
+              },
+              { cacheShared: true },
+            );
       image = renderVulcanusTerrain({
         seed0: req.seed0,
         width: req.width,
@@ -248,12 +275,13 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           startingPositions: req.startingPositions,
           vulcanusResourceControls: req.vulcanusResourceControls,
         },
+        stack,
       });
       // Resources paint first, then the two obstruction overlays on top, so a
       // cliff or a rock crossing an ore patch still reads as the thing that is
       // in the way. Cliffs last matches the Nauvis order below, where
       // renderCliffs is the final pass.
-      if (req.view === "resources" || req.view === "all") {
+      if (wantsResources) {
         renderVulcanusResources(image, {
           seed0: req.seed0,
           originX: req.originX,
@@ -266,6 +294,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           // The geyser rolls and paints a 3x3 mark; the three solid ores
           // threshold and paint 1x1, and ignore this.
           sweepBox: placementMarkSweepBox(req),
+          stack,
         });
       }
       if (req.view === "rocks" || req.view === "all") {
@@ -276,6 +305,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           tilesPerPixel: req.tilesPerPixel,
           ctx: { startingPositions: req.startingPositions },
           sweepBox: placementMarkSweepBox(req),
+          sharedStack: stack,
         });
       }
       if (req.view === "cliffs" || req.view === "all") {

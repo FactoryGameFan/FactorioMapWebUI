@@ -53,7 +53,11 @@ import {
   VULCANUS_RESOURCE_CATALOG,
   sulfuricAcidGeyserProbability,
 } from "../resources/vulcanusResourceCatalog";
-import { makeVulcanusTileResolver } from "../tiles/vulcanusCatalog";
+import {
+  type VulcanusStack,
+  makeVulcanusTileResolver,
+  makeVulcanusTileResolverFrom,
+} from "../tiles/vulcanusCatalog";
 import { paintMark } from "./renderCliffs";
 
 /** The overlay's placement threshold: probability >= 0.5 (see the module comment). */
@@ -118,11 +122,13 @@ function buildResources(ctx: EvalCtx): VulcanusResources {
 function geyserPlacementFrom(
   ctx: EvalCtx,
   resources: VulcanusResources,
+  stack?: VulcanusStack,
 ): (x: number, y: number) => boolean {
   // Derived from the ported tile resolver, NOT from rendered pixel colours: the
   // chunk resolver asks about tiles outside the render window, and reading the
   // ImageData would make the answer window-dependent.
-  const tileAt = makeVulcanusTileResolver(ctx);
+  const tileAt =
+    stack === undefined ? makeVulcanusTileResolver(ctx) : makeVulcanusTileResolverFrom(stack);
   return makePlacementSet({
     salt: PLACEMENT_SALT.vulcanusGeyser,
     probability: sulfuricAcidGeyserProbability(resources),
@@ -200,6 +206,8 @@ export function makeVulcanusGeyserProbability(ctx: EvalCtx): (x: number, y: numb
 }
 
 export interface RenderVulcanusResourcesOptions {
+  /** Shared Vulcanus field stack - see `RenderVulcanusTerrainOptions.stack`. */
+  stack?: VulcanusStack;
   readonly seed0: number;
   /** World tile at the top-left pixel. Default (0, 0). */
   readonly originX?: number;
@@ -234,8 +242,8 @@ export function renderVulcanusResources(
   const originY = opts.originY ?? 0;
   const tpp = opts.tilesPerPixel ?? 1;
 
-  const ctx = withCtxDefaults({ seed0: opts.seed0, ...opts.ctx });
-  const resources = buildResources(ctx);
+  const ctx = opts.stack?.ctx ?? withCtxDefaults({ seed0: opts.seed0, ...opts.ctx });
+  const resources = opts.stack?.resources ?? buildResources(ctx);
 
   const controls = ctx.vulcanusResourceControls;
   const active = VULCANUS_RESOURCE_CATALOG.filter((p) => p.levers(controls).size > 0);
@@ -247,7 +255,7 @@ export function renderVulcanusResources(
   // the same reasoning enemy bases use for the same mark.
   for (const params of active) {
     if (params.placement !== "roll") continue;
-    const placed = geyserPlacementFrom(ctx, resources);
+    const placed = geyserPlacementFrom(ctx, resources, opts.stack);
     const box = opts.sweepBox;
     const pxStart = box ? Math.round((box.x0 - originX) / tpp) : 0;
     const pxEnd = box ? Math.round((box.x1 - originX) / tpp) : width;

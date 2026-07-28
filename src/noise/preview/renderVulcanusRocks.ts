@@ -42,10 +42,20 @@ import {
   latticeSnapped,
 } from "../rocks/rockCatalog";
 import { makeVulcanusRockFields } from "../rocks/vulcanusRockField";
-import { makeVulcanusTileResolver } from "../tiles/vulcanusCatalog";
+import {
+  type VulcanusStack,
+  makeVulcanusTileResolver,
+  makeVulcanusTileResolverFrom,
+} from "../tiles/vulcanusCatalog";
 import { paintMark } from "./renderCliffs";
 
 export interface RenderVulcanusRocksOptions {
+  /**
+   * PROTOTYPE (issue #19 follow-up): reuse the caller's Vulcanus stack instead
+   * of building a fifth private copy. Only pays when that stack was built with
+   * `cacheShared`, because this overlay traverses chunk-major.
+   */
+  sharedStack?: VulcanusStack;
   readonly seed0: number;
   /** World tile at the top-left pixel. Default (0, 0). */
   readonly originX?: number;
@@ -152,12 +162,16 @@ const VOLCANIC_ROCK_COLLISION_BOX: PlacementCollisionBox = { w: 3, h: 2.2 };
  * gated by tile restriction and collision. Exported so `entityDensity.spec.ts`
  * measures the exact predicate the renderer paints, not a re-derivation of it.
  */
-export function makeVulcanusRockPlacement(ctx: EvalCtx): (x: number, y: number) => boolean {
-  const { density } = makeVulcanusRockFields(ctx);
+export function makeVulcanusRockPlacement(
+  ctx: EvalCtx,
+  shared?: VulcanusStack,
+): (x: number, y: number) => boolean {
+  const { density } = makeVulcanusRockFields(ctx, shared);
   // Derived from the ported tile resolver, NOT from rendered pixel colours: the
   // chunk resolver asks about tiles outside the render window, and reading the
   // ImageData would make the answer window-dependent.
-  const tileAt = makeVulcanusTileResolver(ctx);
+  const tileAt =
+    shared === undefined ? makeVulcanusTileResolver(ctx) : makeVulcanusTileResolverFrom(shared);
   return makePlacementSet({
     salt: PLACEMENT_SALT.vulcanusRocks,
     // Snapped to `ROCK_FIELD_LATTICE`, which ships at 1 (a no-op that returns
@@ -176,7 +190,7 @@ export function renderVulcanusRocks(base: ImageData, opts: RenderVulcanusRocksOp
   const tpp = opts.tilesPerPixel ?? 1;
 
   const ctx = withCtxDefaults({ seed0: opts.seed0, ...opts.ctx });
-  const placed = makeVulcanusRockPlacement(ctx);
+  const placed = makeVulcanusRockPlacement(ctx, opts.sharedStack);
 
   const box = opts.sweepBox;
   const pxStart = box ? Math.round((box.x0 - originX) / tpp) : 0;

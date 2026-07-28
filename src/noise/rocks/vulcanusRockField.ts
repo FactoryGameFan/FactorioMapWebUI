@@ -46,8 +46,8 @@
 
 import { clamp } from "../eval/math";
 import type { EvalCtx } from "../eval/ctx";
-import { makeVulcanusBiomes } from "../expressions/vulcanusBiomes";
-import { makeVulcanusClimate } from "../expressions/vulcanusClimate";
+import { makeVulcanusBiomes, type VulcanusBiomes } from "../expressions/vulcanusBiomes";
+import { makeVulcanusClimate, type VulcanusClimate } from "../expressions/vulcanusClimate";
 import { makeVulcanusCracks } from "../expressions/vulcanusCracks";
 import { makeVulcanusHelpers } from "../expressions/vulcanusHelpers";
 import { makeVulcanusSpawn } from "../expressions/vulcanusSpawn";
@@ -89,12 +89,20 @@ export interface VulcanusRockFields {
 }
 
 /** Build the Vulcanus rock probability fields for one seed/ctx. */
-export function makeVulcanusRockFields(ctx: EvalCtx): VulcanusRockFields {
+export function makeVulcanusRockFields(
+  ctx: EvalCtx,
+  sharedStack?: { biomes: VulcanusBiomes; climate: VulcanusClimate },
+): VulcanusRockFields {
+  // PROTOTYPE (issue #19 follow-up): when a shared stack is passed, `biomes`
+  // and `climate` are the SAME objects the terrain resolver uses. That is what
+  // lets `memoRegion` serve this overlay work that terrain already did - the
+  // two traverse in different orders (chunk-major here, row-major there), so
+  // sharing the objects is necessary but only pays with a multi-entry cache.
   const helpers = makeVulcanusHelpers(ctx);
   const spawn = makeVulcanusSpawn(ctx, helpers);
   const cracks = makeVulcanusCracks(ctx, helpers);
-  const biomes = makeVulcanusBiomes(ctx, helpers, spawn, cracks);
-  const climate = makeVulcanusClimate(ctx, helpers, cracks);
+  const biomes = sharedStack?.biomes ?? makeVulcanusBiomes(ctx, helpers, spawn, cracks);
+  const climate = sharedStack?.climate ?? makeVulcanusClimate(ctx, helpers, cracks);
   const rockNoise = makeVulcanusRockNoise(ctx.seed0);
   const knockout = makeVulcanusDecorativeKnockout(ctx.seed0);
 
