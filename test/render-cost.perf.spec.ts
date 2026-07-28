@@ -1,11 +1,64 @@
 // Manual render-cost benchmark - NOT a pass/fail gate (timing is machine-
 // dependent). Skipped by default so `vp test` stays fast; run it with:
 //
-//     pnpm perf
+//     pnpm perf                                   # everything, min of 7 (~19 min)
+//     FMW_PERF_BLOCK=vulcanus pnpm perf           # one block only  (~3.7 min)
+//     FMW_PERF_N=3 FMW_PERF_BLOCK=vulcanus pnpm perf   # a quick look (~1.6 min)
 //
 // which sets FMW_PERF=1, runs this file, and prints the table it writes to
-// perf-result.txt (gitignored). This is the baseline to measure region-tiling
-// (or any render optimization) against - see the render-tiling design doc.
+// perf-result.txt (gitignored).
+//
+// ## How this measures, and why (issue #19)
+//
+// It used to report a MEDIAN OF 3 taken with every iteration of one view run
+// back-to-back before the next view started. That could not resolve the size of
+// change it was being used to gate, which is worse than having no benchmark: it
+// produced confident numbers that were noise. Measured 2026-07-27: 22.7% spread
+// inside a single 5-iteration run, ~10% movement between processes on views the
+// change under test could not touch, and one lattice change reported as a
+// regression that was actually a small improvement.
+//
+// Four things fix that, and all four matter:
+//
+//  1. **Minimum of N, not median.** Timing noise is additive and positive - a
+//     sample is the true cost plus whatever else the machine was doing - so the
+//     minimum is the least-biased estimator of the underlying cost. The median
+//     sits in the middle of the noise distribution and moves with machine load.
+//  2. **Interleaved.** Every arm is timed once per round, round-robin, so a
+//     drift in machine load hits every arm alike instead of landing entirely on
+//     whichever view happened to be running. Arm-at-a-time is what let unrelated
+//     views move 10%.
+//  3. **Spread printed** (max/min) beside every figure, so a reader can see when
+//     a measurement is too noisy to support the conclusion drawn from it.
+//  4. **Within-process comparisons, not absolutes.** Absolute ms from different
+//     processes should not be diffed, and the old output invited exactly that -
+//     so the derived figures are printed explicitly and the file says so in a
+//     header.
+//
+// ## Which derived figure to trust (measured 2026-07-28, two back-to-back runs)
+//
+// Issue #19 proposed `all / terrain` as the stable statistic. Measuring it says
+// that is only half right, so read this before quoting a ratio:
+//
+// | figure             | run 1 | run 2 | drift |
+// | ------------------ | ----- | ----- | ----- |
+// | terrain (absolute) |  3402 |  3566 | +4.8% |
+// | all (absolute)     |  8163 |  8225 | +0.8% |
+// | ratio all/terrain  | 2.399 | 2.307 | -3.8% |
+// | resources marginal |  1753 |  1710 | -2.5% |
+// | rocks marginal     |  1079 |  1079 |  0.0% |
+// | cliffs marginal    |  1894 |  1854 | -2.1% |
+//
+// **The MARGINALS are the most repeatable figure here, not the ratio.** The
+// ratio divides two absolutes that drift independently - terrain moved +4.8%
+// while `all` moved +0.8% - so it amplifies their disagreement rather than
+// cancelling it. It is still worth printing, because it is the form the
+// "under 2x terrain" gate is written in, but a ~4% move in it across runs is
+// noise and not a regression. The marginals hold to ~2.5%.
+//
+// Corollary for anyone comparing against a figure recorded in the notes: the
+// per-run baseline moves several percent, so a few percent of difference in an
+// ABSOLUTE is not evidence of anything. A double-digit move in a MARGINAL is.
 import { appendFileSync, writeFileSync } from "node:fs";
 import { it } from "vite-plus/test";
 import { runRenderRequest } from "../src/noise/preview/elevationRenderRequest";
@@ -15,12 +68,29 @@ import { renderEnemies } from "../src/noise/preview/renderEnemies";
 import { renderCliffs } from "../src/noise/preview/renderCliffs";
 import { renderTrees } from "../src/noise/preview/renderTrees";
 
-// In the default suite FMW_PERF is unset -> this becomes it.skip (instant).
-const perfIt = process.env.FMW_PERF ? it : it.skip;
+const OUT = "perf-result.txt";
+const SEED = 123456;
+
+/** Iterations per arm for the two render blocks. Minimum of this many. */
+const ITERS = Number(process.env.FMW_PERF_N ?? 7);
+/**
+ * Iterations for the tile-overhead block, which defaults to 1 because each of
+ * its passes is already 64 renders. Its meaningful output is the whole/tiled
+ * RATIO, measured back-to-back in one process, which is exactly the kind of
+ * within-process comparison that survives run-to-run drift.
+ */
+const TILE_ITERS = Number(process.env.FMW_PERF_TILE_N ?? 1);
+/** Which blocks to run. Default: all of them. */
+const BLOCKS = (process.env.FMW_PERF_BLOCK ?? "nauvis,vulcanus,tiles")
+  .split(",")
+  .map((s) => s.trim());
+
+// In the default suite FMW_PERF is unset -> every block becomes it.skip (instant).
+const blockIt = (name: string): typeof it | typeof it.skip =>
+  process.env.FMW_PERF && BLOCKS.includes(name) ? it : it.skip;
 
 const N = 1024;
 const HALF = N / 2;
-const SEED = 123456;
 const base = {
   id: 0,
   seed0: SEED,
@@ -35,50 +105,97 @@ const base = {
   mapType: "nauvis" as const,
 };
 
-const median = (xs: number[]): number =>
-  xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
-const rows: string[] = [];
-const time = (label: string, fn: () => void, iters = 3): number => {
-  fn(); // warm-up (JIT)
-  const ts: number[] = [];
-  for (let i = 0; i < iters; i++) {
-    const t0 = performance.now();
-    fn();
-    ts.push(performance.now() - t0);
+interface Arm {
+  label: string;
+  fn: () => void;
+  samples: number[];
+}
+
+/**
+ * Register arms, then run them INTERLEAVED. Registration is separate from
+ * execution precisely so that no arm can be run to completion before another
+ * starts - that ordering is the whole point (see note 2 above).
+ */
+function bench(): {
+  add: (label: string, fn: () => void) => Arm;
+  run: (iters: number) => void;
+} {
+  const arms: Arm[] = [];
+  return {
+    add(label, fn) {
+      const a: Arm = { label, fn, samples: [] };
+      arms.push(a);
+      return a;
+    },
+    run(iters) {
+      for (const a of arms) a.fn(); // warm-up every arm once (JIT), untimed
+      for (let i = 0; i < iters; i++)
+        for (const a of arms) {
+          const t0 = performance.now();
+          a.fn();
+          a.samples.push(performance.now() - t0);
+        }
+    },
+  };
+}
+
+const minOf = (a: Arm): number => Math.min(...a.samples);
+/** max/min - 1.00x is a perfectly stable measurement, 1.23x is the old noise. */
+const spreadOf = (a: Arm): number => Math.max(...a.samples) / Math.min(...a.samples);
+const row = (a: Arm): string =>
+  `${a.label.padEnd(42)} ${minOf(a).toFixed(0).padStart(6)} ms  (spread ${spreadOf(a).toFixed(2)}x)`;
+
+let started = false;
+const emit = (text: string): void => {
+  if (started) appendFileSync(OUT, text);
+  else {
+    writeFileSync(
+      OUT,
+      "Figures are MINIMA over N interleaved iterations, with (spread) = max/min.\n" +
+        "Do NOT diff absolute ms across runs - the per-run baseline moves several\n" +
+        "percent (terrain moved 4.8% between two runs on 2026-07-28). Compare the\n" +
+        "MARGINALS, which held to ~2.5%; the ratio divides two independently\n" +
+        "drifting absolutes and moved 3.8% over the same pair, so a few percent in\n" +
+        "it is noise. See the header comment in test/render-cost.perf.spec.ts and\n" +
+        "issue #19. Knobs: FMW_PERF_N, FMW_PERF_TILE_N,\n" +
+        "FMW_PERF_BLOCK=nauvis,vulcanus,tiles\n" +
+        text,
+    );
+    started = true;
   }
-  const m = median(ts);
-  rows.push(`${label.padEnd(30)} ${m.toFixed(0).padStart(6)} ms`);
-  return m;
 };
 
-perfIt(
+blockIt("nauvis")(
   "render cost by layer @ 1024x1024 / 1 tile-per-pixel",
   () => {
-    const elev = time("elevation only", () => runRenderRequest({ ...base, view: "elevation" }));
-    const terrain = time("terrain (elev+climate+tiles)", () =>
+    const b = bench();
+    const elev = b.add("elevation only", () => runRenderRequest({ ...base, view: "elevation" }));
+    const terrain = b.add("terrain (elev+climate+tiles)", () =>
       runRenderRequest({ ...base, view: "terrain" }),
     );
-    time("terrain + resources", () => runRenderRequest({ ...base, view: "resources" }));
-    time("terrain + enemies", () => runRenderRequest({ ...base, view: "enemies" }));
-    time("terrain + cliffs", () => runRenderRequest({ ...base, view: "cliffs" }));
-    time("terrain + trees", () => runRenderRequest({ ...base, view: "trees" }));
+    const resources = b.add("terrain + resources", () =>
+      runRenderRequest({ ...base, view: "resources" }),
+    );
+    const enemies = b.add("terrain + enemies", () =>
+      runRenderRequest({ ...base, view: "enemies" }),
+    );
+    const cliffs = b.add("terrain + cliffs", () => runRenderRequest({ ...base, view: "cliffs" }));
+    const trees = b.add("terrain + trees", () => runRenderRequest({ ...base, view: "trees" }));
     // Vulcanus terrain-only, V2 gate (docs/noise/vulcanus-resources-NOTES.md): V2
     // restored three resource-coupling terms into the tile catalog
     // (vulcanusCatalog.ts), so terrain now evaluates the ore region fields even
     // when the resource overlay itself is off. Compared against the V1 baseline
     // (~12 us/px, recorded in client-preview-ROADMAP.md) to catch a regression.
-    const vulcanusTerrain = time("vulcanus terrain (V1 tiles + V2 coupling)", () =>
+    // Stays at 1024x1024 because that is the size the recorded baseline used.
+    const vulcanusTerrain = b.add("vulcanus terrain (V1 tiles + V2 coupling)", () =>
       runRenderRequest({ ...base, planet: "vulcanus", view: "terrain" }),
     );
-    // Vulcanus resources, V2 gate (docs/noise/vulcanus-resources-NOTES.md): this is
-    // the view non-dev users actually get for Vulcanus (ElevationPreviewPanel.vue's
-    // `effectiveView` defaults Vulcanus to "resources", not "terrain"), and
-    // `renderVulcanusResources` builds a SECOND, independent Vulcanus field stack
-    // (helpers/spawn/cracks/biomes/resources) on top of the terrain render's own -
-    // so this is slower than "vulcanus terrain" above, not a bug. Compared against
-    // the same V1 terrain-only baseline as the terrain row to catch a regression on
-    // the path users default to.
-    const vulcanusResources = time("vulcanus resources (default Vulcanus view)", () =>
+    // Vulcanus resources, V2 gate: the view non-dev users actually get for
+    // Vulcanus (ElevationPreviewPanel.vue's `effectiveView` defaults Vulcanus to
+    // "resources"), and `renderVulcanusResources` builds a SECOND, independent
+    // Vulcanus field stack on top of the terrain render's own - so this is
+    // slower than "vulcanus terrain" above, not a bug.
+    const vulcanusResources = b.add("vulcanus resources (default Vulcanus view)", () =>
       runRenderRequest({ ...base, planet: "vulcanus", view: "resources" }),
     );
 
@@ -104,7 +221,7 @@ perfIt(
     // It must therefore mirror runRenderRequest's composite ORDER and membership -
     // trees first, then resources/enemies/cliffs. Omitting an overlay here makes
     // the headline row silently measure a composite the app no longer renders.
-    const all = time("ALL (terrain + 4 overlays)", () => {
+    const all = b.add("ALL (terrain + 4 overlays)", () => {
       const img = renderTerrain(terrainCtx);
       renderTrees(img, { ...oc, treesFrequency: 1, treesSize: 1 });
       renderResources(img, { ...oc, controls: {} });
@@ -123,64 +240,135 @@ perfIt(
       });
     });
 
-    const header = `render cost @ ${N}x${N}, tpp 1, seed ${SEED} (median of 3)`;
+    b.run(ITERS);
+
+    const header = `nauvis @ ${N}x${N}, tpp 1, seed ${SEED}, origin (${base.originX},${base.originY}), min of ${ITERS}`;
     const pxCount = N * N;
-    const summary = [
-      "",
-      `climate+tiles portion of terrain: ~${(terrain - elev).toFixed(0)} ms (the tiling target)`,
-      `all 4 overlays add over terrain:  ~${(all - terrain).toFixed(0)} ms`,
-      `nauvis terrain:   ~${((terrain * 1000) / pxCount).toFixed(2)} us/px`,
-      `vulcanus terrain:   ~${((vulcanusTerrain * 1000) / pxCount).toFixed(2)} us/px (terrain-only, NOT the default Vulcanus view)`,
-      `vulcanus resources: ~${((vulcanusResources * 1000) / pxCount).toFixed(2)} us/px (the default Vulcanus view - double field-stack cost)`,
-    ].join("\n");
-    writeFileSync(
-      "perf-result.txt",
-      `${header}\n${"-".repeat(header.length)}\n${rows.join("\n")}\n${summary}\n`,
+    const usPx = (a: Arm): string => ((minOf(a) * 1000) / pxCount).toFixed(2);
+    emit(
+      [
+        "",
+        header,
+        "-".repeat(header.length),
+        ...[
+          elev,
+          terrain,
+          resources,
+          enemies,
+          cliffs,
+          trees,
+          vulcanusTerrain,
+          vulcanusResources,
+          all,
+        ].map(row),
+        "",
+        `ratio ALL/terrain                        ${(minOf(all) / minOf(terrain)).toFixed(3).padStart(6)}   (see header: marginals are steadier than this)`,
+        `climate+tiles portion of terrain: ~${(minOf(terrain) - minOf(elev)).toFixed(0)} ms (the tiling target)`,
+        `all 4 overlays add over terrain:  ~${(minOf(all) - minOf(terrain)).toFixed(0)} ms`,
+        `nauvis terrain:     ~${usPx(terrain)} us/px`,
+        `vulcanus terrain:   ~${usPx(vulcanusTerrain)} us/px (terrain-only, NOT the default Vulcanus view)`,
+        `vulcanus resources: ~${usPx(vulcanusResources)} us/px (the default Vulcanus view - double field-stack cost)`,
+        "",
+      ].join("\n"),
     );
   },
-  600000,
+  3_600_000,
+);
+
+// The block that actually gates Vulcanus decisions. Deliberately 512x512 at
+// origin (0,0) rather than the 1024x1024 origin-centred window above, because
+// that is the geometry the recorded hand-measured figures use
+// (vulcanus-cliffs-NOTES.md, "Re-measured after the placement roll"): terrain
+// 3394 / resources 5406 / rocks 4756 / cliffs 5526 / all 8458, ratio 2.492.
+// Those were min-of-7 interleaved runs done BY HAND precisely because
+// `pnpm perf` could not settle them - so reproducing them here is what retires
+// the hand-rolled loop.
+const V = 512;
+const vBase = { ...base, width: V, height: V, originX: 0, originY: 0, planet: "vulcanus" as const };
+
+blockIt("vulcanus")(
+  "vulcanus render cost by overlay @ 512x512 / 1 tile-per-pixel",
+  () => {
+    const b = bench();
+    const terrain = b.add("terrain", () => runRenderRequest({ ...vBase, view: "terrain" }));
+    const resources = b.add("resources", () => runRenderRequest({ ...vBase, view: "resources" }));
+    const rocks = b.add("rocks", () => runRenderRequest({ ...vBase, view: "rocks" }));
+    const cliffs = b.add("cliffs", () => runRenderRequest({ ...vBase, view: "cliffs" }));
+    const all = b.add("all", () => runRenderRequest({ ...vBase, view: "all" }));
+
+    b.run(ITERS);
+
+    const header = `vulcanus @ ${V}x${V}, tpp 1, seed ${SEED}, origin (0,0), min of ${ITERS}`;
+    // Marginal cost of one overlay over terrain. These do NOT sum to the `all`
+    // marginal: measured one at a time they each pay for their own field-cache
+    // warm-up, while on the `all` path they share one - so the whole is cheaper
+    // than the sum of its parts. Read them as proportions, not a decomposition.
+    const marginal = (a: Arm): string =>
+      `${(minOf(a) - minOf(terrain)).toFixed(0).padStart(6)} ms over terrain`;
+    emit(
+      [
+        "",
+        header,
+        "-".repeat(header.length),
+        ...[terrain, resources, rocks, cliffs, all].map(row),
+        "",
+        `resources marginal                  ${marginal(resources)}`,
+        `rocks     marginal                  ${marginal(rocks)}`,
+        `cliffs    marginal                  ${marginal(cliffs)}`,
+        `ratio all/terrain                        ${(minOf(all) / minOf(terrain)).toFixed(3).padStart(6)}   <- the "under 2x terrain" gate`,
+        "",
+      ].join("\n"),
+    );
+  },
+  3_600_000,
 );
 
 // Phase-A gate for the region-tiling plan: how much does rebuilding every
 // resolver per tile cost? Renders the same 1024x1024 area as 64 128x128 tiles
 // and compares against the single whole-image render. A ratio near 1.0 means
 // per-tile setup is noise; a high ratio means the resolver stack has to be
-// hoisted out of the per-tile path. iters=1 because each pass is already 64
-// renders. "elevation" is included because it is the view every non-Nauvis
-// preset uses, and its per-render setup (compiled octave closures, starting-lake
-// computation) is the most likely to dominate a small total.
-perfIt(
+// hoisted out of the per-tile path. "elevation" is included because it is the
+// view every non-Nauvis preset uses, and its per-render setup (compiled octave
+// closures, starting-lake computation) is the most likely to dominate a small
+// total.
+blockIt("tiles")(
   "tile overhead: 64 x 128x128 vs one 1024x1024",
   () => {
     const TILE = 128;
-    const out: string[] = ["", "tile overhead (64 x 128 tiles vs one whole render)"];
-    for (const view of ["elevation", "terrain", "all"] as const) {
-      const whole = time(`whole ${view}`, () => runRenderRequest({ ...base, view }), 1);
-      const tiled = time(
-        `tiled ${view} (64 x ${TILE})`,
-        () => {
-          for (let dy = 0; dy < N; dy += TILE) {
-            for (let dx = 0; dx < N; dx += TILE) {
-              runRenderRequest({
-                ...base,
-                view,
-                width: TILE,
-                height: TILE,
-                originX: -HALF + dx,
-                originY: -HALF + dy,
-              });
-            }
-          }
-        },
-        1,
-      );
-      out.push(`${`whole ${view}`.padEnd(30)} ${whole.toFixed(0).padStart(6)} ms`);
-      out.push(`${`tiled ${view}`.padEnd(30)} ${tiled.toFixed(0).padStart(6)} ms`);
-      out.push(`${`ratio ${view}`.padEnd(30)} ${(tiled / whole).toFixed(3).padStart(6)}`);
-    }
-    // Append: the first block already wrote the header and summary, and
-    // overwriting here would drop them from the file `pnpm perf` cats.
-    appendFileSync("perf-result.txt", out.join("\n") + "\n");
+    const b = bench();
+    const pairs = (["elevation", "terrain", "all"] as const).map((view) => ({
+      view,
+      whole: b.add(`whole ${view}`, () => runRenderRequest({ ...base, view })),
+      tiled: b.add(`tiled ${view} (64 x ${TILE})`, () => {
+        for (let dy = 0; dy < N; dy += TILE)
+          for (let dx = 0; dx < N; dx += TILE)
+            runRenderRequest({
+              ...base,
+              view,
+              width: TILE,
+              height: TILE,
+              originX: -HALF + dx,
+              originY: -HALF + dy,
+            });
+      }),
+    }));
+
+    b.run(TILE_ITERS);
+
+    const header = `tile overhead (64 x ${TILE} tiles vs one whole render), min of ${TILE_ITERS}`;
+    emit(
+      [
+        "",
+        header,
+        "-".repeat(header.length),
+        ...pairs.flatMap(({ view, whole, tiled }) => [
+          row(whole),
+          row(tiled),
+          `${`ratio ${view}`.padEnd(42)} ${(minOf(tiled) / minOf(whole)).toFixed(3).padStart(6)}`,
+        ]),
+        "",
+      ].join("\n"),
+    );
   },
-  900000,
+  3_600_000,
 );
