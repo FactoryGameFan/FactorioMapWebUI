@@ -44,7 +44,7 @@ place the entity if U < probability
   0, 1)` field this app already computes in `regularPatches.ts` / `resourcePatches.ts`.
 - Disasm: `generateEntities` `+1104..+1188`. `fcmp d0(U), d13(prob); b.pl <retry>`
   (`b.pl` = U >= prob -> skip), else fall through to `generateEntityOnTile`.
-- **Retry count:** the roll sits in a `for attempt in 0..proto->mapGenData[0x28]`
+- **Retry count** (issue #22, item 5)**:** the roll sits in a `for attempt in 0..proto->mapGenData[0x28]`
   loop (`+1032`, `+1088`). Each iteration draws one `U` and places when `U < prob`,
   so a tile can consume a *variable* number of draws and (in principle) place more
   than once. For single-tile resources this count is expected to be 1 (pin it
@@ -108,6 +108,8 @@ autoplace order, not max-probability - a discrepancy to revisit if this is ever
 built).
 
 ### FALSIFIED for Vulcanus rocks: max-probability arbitration cannot produce the game's population (2026-07-27)
+
+**Tracked as issue #22, item 1** (the register of known approximations).
 
 **Read this before porting another roll-based overlay on the strength of the
 paragraph above.** The "single winner by max probability" model, applied to the two

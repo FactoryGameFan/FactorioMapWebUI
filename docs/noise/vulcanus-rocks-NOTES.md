@@ -188,4 +188,4 @@ from the planet definition; and the total rock DENSITY matches. **Not** proven -
 in fact falsified - is the per-tile prototype identity: max-probability arbitration
 predicts a 0% `huge-volcanic-rock` population where the game has ~28%. See the
 FALSIFIED section of `docs/noise/placement-roll-NOTES.md`. Coverage against the
-game's own map preview is still unchecked.
+game's own map preview is still unchecked (issue #22, item 6).

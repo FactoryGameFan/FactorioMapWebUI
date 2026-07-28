@@ -213,6 +213,8 @@ reasoned-not-measured numbers are collected.
 
 ### What is NOT settled
 
+**Tracked as issue #22, item 4.**
+
 The batch extent itself. This section argues it is *irrelevant to density*, which is
 all the port claims; it does not determine what the extent is. Anyone reaching for
 tile-exact oil positions still has to do that RE, and the size-1 case above is where
