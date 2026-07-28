@@ -55,9 +55,27 @@ describe("Vulcanus: the game separates cliffs from ore", () => {
   // | 1 `[1500,1500]` | calcite + geyser | 8 / 3933 | 21.6% | 0.009 |
   // | 2 `[-1200,800]` | coal | 0 / 1047 | 9.8% | 0.000 |
   //
-  // **It is uniform across all four resource names.** That is what rules out the
-  // "it is just a per-resource biome dependency" reading: a biome effect would
-  // vary by resource and be partial, not sit at ~0 for every one of them.
+  // It is uniform across all four resource names, which rules out a *per-resource*
+  // biome dependency - but NOT terrain generally. **Do not read the uniformity as
+  // ruling out terrain**; a dependence the resources SHARE would look exactly like
+  // this, and measurement says one partly does. Sampling Vulcanus elevation at the
+  // game's own ore and cliff positions (2026-07-28):
+  //
+  // | region | ore elevation p5/p50/p95 | ore below 70 | cliff elevation p5/p50/p95 |
+  // | --- | --- | --- | --- |
+  // | 0 `[0,0]` | -25 / 39 / 86 | **81.3%** | 25 / 94 / 300 |
+  // | 1 `[1500,1500]` | 738 / 894 / 1169 | 0.0% | 94 / 653 / 949 |
+  // | 2 `[-1200,800]` | 300 / 300 / 300 | 0.0% | 27 / 155 / 263 |
+  //
+  // `cliff_elevation_0 = 70`, so no cliff can exist below 70 at all. In region 0
+  // that alone accounts for most of the separation - 81% of the game's ore is
+  // under the threshold. In region 2 the ore sits at a flat 300 while every cliff
+  // is below 263, so they are disjoint by elevation there too. **Region 1 is not
+  // explained**: the ranges genuinely overlap (ore 738-1169, cliffs 94-949) and
+  // the separation is still near-total.
+  //
+  // So there is no single mechanism here yet. At least two things are acting, and
+  // whatever separates them in region 1 is still unidentified.
   const expected: [number, number, number][] = [
     // index, max on-cliff entities, max ratio-to-chance
     [0, 0, 0.001],
@@ -90,12 +108,31 @@ describe("Vulcanus: the game separates cliffs from ore", () => {
     // No ore anywhere within 6 tiles (chebyshev) of ANY of the 283 cliff cell
     // centres. A footprint-scale rejection - the cliff's own 4x4 box - would
     // leave ore free to sit 3 tiles away, so whatever separates them at [0,0]
-    // acts over a much larger distance than collision can.
+    // acts over a much larger distance than collision can. The elevation table
+    // above is the likely reason here: most of region 0's ore is below the
+    // elevation cliffs need to exist at all, so the gap is terrain, not a test.
     //
     // Region 1 behaves differently: calcite comes within 1 tile of a cliff
     // centre and 8 entities land inside footprints. So the mechanism is NOT one
     // uniform distance test, and any fix that models it as a fixed exclusion
     // radius will be wrong on one region or the other.
+    //
+    // Collision is ruled out on BOTH paths, which is worth recording because the
+    // map-gen path is not the one #24 checked. `EntityMapGenerationTask` keeps
+    // its own per-tile collision-mask grid over a 96x96 working area (`this+0x90`,
+    // one u16 mask-table index per tile); `tryToAddCliff` writes into it and
+    // `tryToAddEntity` tests against it via
+    // `EntityMapGenerationTask::wouldCollide` (`0x101625468`). So cliffs really do
+    // get a chance to block entities at generation time - but the masks still do
+    // not intersect (cliff: item/meltable/object/player/water_tile/is_lower_object/
+    // is_object/cliff; resource: resource), so this path cannot be what separates
+    // them either.
+    //
+    // Generation ORDER is settled though, and it only goes one way:
+    // `computeInternal` calls `generateCliffs()` then `generateEntities()`, and
+    // `apply` calls `applyCliffs()` then `applyEntities()`. Cliffs are committed
+    // before ore in both phases, so "ore suppressed by cliffs" is possible and
+    // "cliffs suppressed by ore" is not.
     const ore = oreTiles(0);
     let closest = Infinity;
     for (const c of gameCliffs(0)) {
