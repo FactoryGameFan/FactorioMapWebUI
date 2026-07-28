@@ -22,7 +22,7 @@
     "deploy": "pnpm run deploy:app"
   },
   "dependencies": {
-    "@vue/devtools-api": "^8.1.5",
+    "@vue/devtools-api": "^8.2.1",
     "jszip": "^3.10.1",
     "pinia": "^4.0.2",
     "vue": "^3.5.40",
@@ -31,15 +31,15 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.4.11",
-    "concurrently": "^10.0.3",
-    "happy-dom": "^20.11.0",
+    "concurrently": "^10.0.4",
+    "happy-dom": "^20.11.1",
     "typescript": "^6.0.3",
     "vite-plus": "^0.2.6"
   },
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "11.9.0",
+      "version": "11.17.0",
       "onFail": "download"
     }
   },
