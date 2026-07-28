@@ -172,6 +172,38 @@ evaluates the shared fields at a pixel and lets every overlay consult them
 before moving on. That is a real architectural change to four renderers, and it
 was not attempted here.
 
+### The cell block is 4x4, and Vulcanus gains more from that than Nauvis does
+
+The shared painter (`paintCliffCells`) went from a 5x5 block centred on the cell
+to a 4x4 block anchored on the cell's own footprint (2026-07-27, on Eric's review
+of the deployed preview: "the cliffs are maybe 1px too thick"). Cell centres are
+`CLIFF_GRID_SIZE` = 4 world tiles apart, so at 1 tile/px 4px blocks tile with
+neither gap nor overlap; the old 5x5 overlapped each neighbour by a pixel.
+
+**Vulcanus uses the same placement module, grid and colour**
+(`makeCliffPlacementFromFields`, `CLIFF_MAP_COLOR` = 144,119,87, which
+`cliff-vulcanus` declares identically to Nauvis's `cliff`), so it inherited the
+change automatically - and it benefits more, because its cliffs are far denser
+than Nauvis's ridgelines. Cliff pixels in a 256x256 window at 1 tile/px, isolated
+by diffing the cliffs view against terrain:
+
+| window | 5x5 (old) | 4x4 (shipped) | change |
+| --- | --- | --- | --- |
+| `[0,0]` | 8365 (12.8%) | 6752 (10.3%) | -19.3% |
+| `[1500,1500]` | 26464 (40.4%) | 22384 (34.2%) | -15.4% |
+| `[-1200,800]` | 8887 (13.6%) | 7280 (11.1%) | -18.1% |
+
+The reduction is smaller than the naive 25 -> 16 pixels per cell (-36%) precisely
+because Vulcanus cells overlap so heavily: where blocks already merge, removing
+the overlap costs less than the per-cell arithmetic suggests. Continuity is
+unaffected - checked by eye on both a 34%-coverage window and a sparse near-spawn
+one, where the lines stay joined and isolated cells read as single blocks.
+
+Worth noting for anyone reading the 34% row as a bug: that window is genuinely
+cliff-dense, and dense cliff fields are a real Vulcanus feature rather than a
+painting artefact. It is the same order as the ~16.8% of a headless Vulcanus
+preview that cliffs and rocks together account for.
+
 ### Re-measured after the placement roll (2026-07-27, Task 9)
 
 The four overlays now roll per tile rather than threshold, so the table above is
