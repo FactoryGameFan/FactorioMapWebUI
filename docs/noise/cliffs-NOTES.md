@@ -158,8 +158,55 @@ the table.
   Continuity = the `size` slot (no richness column); `cliffSettings.richness` /
   `cliffElevationInterval` are the base values `getModified*` scale.
 
-`cliff_smoothing = 0` on Nauvis (`planet-map-gen.lua`) and is a no-op in this path
-(the only post-pass is `fixImpossibleCells`, smoothing-independent).
+### `cliff_smoothing` - a no-op on Nauvis ONLY, and the trap that cost issue #18
+
+`cliff_smoothing = 0` on Nauvis (`planet-map-gen.lua:18`), so it is a no-op *here*.
+This section used to stop at that sentence, and that omission is what hid the
+Vulcanus cliff bug for two months: the **prototype default is 1, not 0**
+(`CliffPlacementSettings.cliff_smoothing`), Vulcanus's `cliff_settings` does not
+override it, and the port applied Nauvis's 0 to both planets. Nauvis kept scoring a
+1.000 count ratio the whole time, so nothing pointed at it.
+
+It is not a post-pass. `crossingsForChunk` @ `0x10160cdec` rewrites the cliff
+**elevation** register (`[settings+0x1e0]`) *before* any `crossesCliff` call, and
+leaves cliffiness (`[+0x1e4]`) alone:
+
+```
+smoothed(i,j) = (1 - s) * E(i,j) + s * bilerp(E at the four surrounding knots)
+```
+
+Per axis, over each chunk's own `9x9` corner block:
+
+```
+lo = i & ~3                      // i = IN-CHUNK corner index, 0..8
+hi = min(lo + 4, CHUNK_CORNERS - 1)   // CHUNK_CORNERS = 32/4 = 8
+t  = (i & 3) / (hi - lo)
+```
+
+Knots therefore land at in-chunk indices **0, 4 and 7** - the second span is three
+corners wide, not four, because `hi` clamps to 7 rather than to the block edge at 8.
+Index 8 falls out with `t = 0` on itself and is the same world point as the next
+chunk's index 0 (also a knot), so the two chunks agree and the whole thing reduces
+to a function of the global corner index with no chunk loop. The lattice is
+chunk-anchored, so the smoothed field is deliberately discontinuous every 32 tiles -
+this is what the prototype docs mean by smoothing making "placement inaccurate".
+
+Ported in `smoothingKnots` / `smoothedElevation` (`cliffPlacement.ts`), pinned by
+`test/cliffSmoothing.spec.ts`. `CliffBands.smoothing` defaults to **0**, i.e.
+Nauvis's value rather than the prototype's, because Nauvis is the planet that
+currently measures 1.000 and must not move.
+
+Settings-struct offsets used above, for anyone re-reading the disasm:
+`+0xc8` = `cliff_elevation_0`, `+0xcc` = `cliff_elevation_interval`,
+`+0xd0` = `cliff_smoothing`.
+
+**Open, not chased (2026-07-28):** the codec's `cliff.cliffSmoothing` u8 label is
+unproven. The game's Lua sets `cliff_smoothing = 1` for the Lakes and Island
+presets, but all 9 strings in `builtin-presets.json` decode to `u8 = 0` and
+`unknownFloat = 1.0` - nothing in the tail distinguishes them. The Default preset
+*is* confirmed 0 by the game's own parse dump, so Nauvis rendering is correct
+either way; what is unknown is whether the wire carries smoothing at all. Worth an
+issue if the Nauvis render is ever driven by a Lakes/Island preset.
 
 ## Validation result and the deferred residual
 

@@ -2,11 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-vulcanus-cliffs.seed123456.json";
 import { withCtxDefaults } from "../src/noise/eval/ctx";
-import { makeCliffPlacementFromFields } from "../src/noise/cliffs/cliffPlacement";
+import { makeCliffPlacementFromFields, smoothingKnots } from "../src/noise/cliffs/cliffPlacement";
 import {
   CLIFFINESS_BASIC_SEED1,
   VULCANUS_CLIFF_ELEVATION_0,
   VULCANUS_CLIFF_ELEVATION_INTERVAL,
+  VULCANUS_CLIFF_SMOOTHING,
   VULCANUS_CLIFF_RICHNESS,
   makeCliffinessBasic,
   makeVulcanusCliffFields,
@@ -70,6 +71,7 @@ describe("Vulcanus cliffs", () => {
     const placement = makeCliffPlacementFromFields(makeVulcanusCliffFields(ctx), {
       elevation0: VULCANUS_CLIFF_ELEVATION_0,
       interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+      smoothing: VULCANUS_CLIFF_SMOOTHING,
     });
     const cells = placement.placedCells(-256, -256, 256, 256);
     // Vulcanus is cliff-heavy, so an empty result means the port broke, not that
@@ -83,17 +85,43 @@ describe("Vulcanus cliffs", () => {
     }
   });
 
-  it("puts no cliff below cliff_elevation_0", () => {
+  it("puts no cliff below cliff_elevation_0 - on the SMOOTHED field", () => {
     // crossesCliff needs max(a, b) >= elevation_0 for a band to exist, so every
     // placed cell must have a corner at or above 70. Vulcanus elevation runs
     // from about -82 to 1556, so this genuinely excludes a large low-lying part
     // of the map rather than being trivially satisfied.
+    //
+    // **The elevation this holds for is the smoothed one, not the raw field.**
+    // Vulcanus runs `cliff_smoothing = 1`, which replaces each corner with a
+    // bilinear blend of its chunk knots before the gate is applied, so a cliff
+    // can legitimately land where the TRUE elevation is below 70 - measured, a
+    // real cell at raw 49.07. That is the game's behaviour, not a port defect:
+    // it is what the prototype docs mean by smoothing making "placement
+    // inaccurate". Asserting on the raw field here would be asserting something
+    // the game does not do.
     const ctx = withCtxDefaults({ seed0: fixture.seed0 });
     const fields = makeVulcanusCliffFields(ctx);
     const placement = makeCliffPlacementFromFields(fields, {
       elevation0: VULCANUS_CLIFF_ELEVATION_0,
       interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+      smoothing: VULCANUS_CLIFF_SMOOTHING,
     });
+
+    // The blend the placement pass applies, recomputed independently here from
+    // the exported knot rule.
+    const smoothed = (cx: number, cy: number): number => {
+      const kx = smoothingKnots(cx / 4);
+      const ky = smoothingKnots((cy - 0.5) / 4);
+      const at = (i: number, j: number): number => fields.cliffElevation(i * 4, j * 4 + 0.5);
+      return (
+        (1 - kx.t) * (1 - ky.t) * at(kx.lo, ky.lo) +
+        kx.t * (1 - ky.t) * at(kx.hi, ky.lo) +
+        (1 - kx.t) * ky.t * at(kx.lo, ky.hi) +
+        kx.t * ky.t * at(kx.hi, ky.hi)
+      );
+    };
+
+    let sawBelowRaw = false;
     for (const { x, y } of placement.placedCells(-256, -256, 256, 256)) {
       // The cell's four corners. A corner is at (i*4, j*4 + 0.5) and the center
       // at (i*4 + 2, j*4 + 2.5), so the corners sit at (x +/- 2, y +/- 2).
@@ -103,8 +131,14 @@ describe("Vulcanus cliffs", () => {
         [x - 2, y + 2],
         [x + 2, y + 2],
       ];
-      const highest = Math.max(...corners.map(([cx, cy]) => fields.cliffElevation(cx, cy)));
+      const highest = Math.max(...corners.map(([cx, cy]) => smoothed(cx, cy)));
       expect(highest).toBeGreaterThanOrEqual(VULCANUS_CLIFF_ELEVATION_0);
+      if (Math.max(...corners.map(([cx, cy]) => fields.cliffElevation(cx, cy))) < 70) {
+        sawBelowRaw = true;
+      }
     }
+    // Pin the consequence too, so a future change that quietly reverts to raw
+    // elevation fails here rather than only in the entity-count spec.
+    expect(sawBelowRaw).toBe(true);
   });
 });

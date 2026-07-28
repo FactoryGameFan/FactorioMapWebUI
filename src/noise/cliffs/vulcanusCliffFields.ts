@@ -45,6 +45,24 @@ export const VULCANUS_CLIFF_ELEVATION_0 = 70;
 export const VULCANUS_CLIFF_ELEVATION_INTERVAL = 120;
 
 /**
+ * `cliff_smoothing` on Vulcanus - **1, and it is load-bearing.**
+ *
+ * Vulcanus's `cliff_settings` block sets only `name`, `cliff_elevation_interval`
+ * and `cliff_elevation_0`, so smoothing takes the CliffPlacementSettings
+ * prototype default, which is `1` (full smoothing), not 0. Vulcanus is the odd
+ * planet out: Nauvis (`base/prototypes/planet/planet-map-gen.lua:18`), Fulgora
+ * and Gleba all set `cliff_smoothing = 0` explicitly, Fulgora with the comment
+ * "This is critical for correct cliff placement."
+ *
+ * The prototype docs say smoothing "makes cliffs straighter on rough elevation
+ * but makes placement inaccurate", and that is exactly what it did here: with
+ * this left at Nauvis's 0, Vulcanus reproduced 57-69% of real cliffs while
+ * placing 1.1-1.6x too many (issue #18). See `smoothingKnots` in
+ * `cliffPlacement.ts` for the rule this feeds.
+ */
+export const VULCANUS_CLIFF_SMOOTHING = 1;
+
+/**
  * `cliff_richness` on Vulcanus. `getModifiedRichness(richness, size)` with no
  * cliff autoplace control to move either lever, so it is pinned at 1 and the
  * `0.5 * log2(cliff_richness)` term of `cliffiness_basic` vanishes. Kept as a
