@@ -247,7 +247,33 @@ So the honest position is that the remaining cost is concentrated in the one
 overlay the two obvious optimisations do not reach, and no cheap fix is
 outstanding.
 
-### The 2x gate IS reachable - measured 2026-07-28
+### The 2x gate, and the geometry the gate was always measured on
+
+**Read this before quoting any ratio below.** Every `all/terrain` figure in this
+file - including the historical 2.13x and 2.49x - is a **whole-image** render.
+The app does not render whole images: the preview is tiled across a 64-worker
+pool at 128x128 (`render-tiling-shipped`). Measured 2026-07-28, same total area,
+same seed, min-of-5 interleaved:
+
+| | whole 512x512 | tiled 16 x 128x128 |
+| --- | --- | --- |
+| terrain | 3684 ms | 3553 ms |
+| all, shipped | 8584 ms | **10042 ms** |
+| all, fused + cache | 6906 ms | 8380 ms |
+| **ratio, shipped** | 2.330 | **2.827** |
+| **ratio, fused + cache** | **1.875** | **2.359** |
+
+So the prototypes clear 2x **on the basis the gate has always been quoted on**,
+and do **not** clear it at the geometry the app actually runs. Both statements
+are true and neither alone is honest.
+
+Note where the tiling penalty falls: tiled *terrain* is slightly **cheaper**
+(3553 vs 3684 - smaller working set), while tiled `all` is **17% dearer**. It
+lands entirely on the overlays, because each 128px tile re-resolves every 32x32
+chunk it overlaps and neighbouring tiles redo the same chunks. That is a THIRD
+source of duplication, distinct from the two below, and nothing here touches it.
+
+### What the two mechanisms buy - measured 2026-07-28
 
 The paragraph above ("no cheap fix is outstanding") is **superseded**. Two
 prototypes, both byte-identical to the shipped path
@@ -260,7 +286,15 @@ prototypes, both byte-identical to the shipped path
 | + fused terrain+ore | 7441 / 7266 ms | 2.170 / 2.118 |
 | + cross-traversal cache | **6749 / 6728 ms** | **1.968 / 1.961** |
 
-**Fusion alone does not reach the gate; fusion + the cache does**, in both runs.
+**Fusion alone does not reach the gate; fusion + the cache does** - on whole-image
+geometry, in both runs. Tiled, neither does (2.651 and 2.359); see above.
+
+The two mechanisms also trade places when tiled: fusion's contribution falls
+(13.6% -> 6.2%) while the cache's **rises** (6.9% -> 11.0%). Fusion's win comes
+from within-pixel adjacency, which a smaller tile does not help; the cache's
+comes from cross-traversal reuse, which a smaller working set makes denser. If
+only one ships, the tiled numbers argue for the cache, not fusion - the opposite
+of what the whole-image numbers suggest.
 Note the ratio drifts ~4% run to run (see `render-cost.perf.spec.ts`), which is
 why this is quoted from two runs and not one - but 1.96 twice is not a
 borderline call.
