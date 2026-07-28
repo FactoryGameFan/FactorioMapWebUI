@@ -101,6 +101,13 @@ export interface ElevationRenderRequest {
    */
   fusedPrototype?: boolean;
   /**
+   * PROTOTYPE (issue #19 follow-up), default off: additionally give the shared
+   * Vulcanus stack a cross-traversal cache and hand it to the rock overlay, so
+   * `resolveChunk`'s chunk-major sweep reuses biome/climate values terrain
+   * already computed. Requires `fusedPrototype`.
+   */
+  cacheSharedPrototype?: boolean;
+  /**
    * The enemy-base autoplace control's frequency/size (control:enemy-base:*) -
    * consumed only when `view: "enemies"`. Defaults to `{ frequency: 1, size: 1 }`
    * when omitted.
@@ -260,6 +267,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
                 startingPositions: req.startingPositions,
                 vulcanusResourceControls: req.vulcanusResourceControls,
               },
+              cacheShared: req.cacheSharedPrototype === true,
             })
           : undefined;
       image =
@@ -308,6 +316,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           tilesPerPixel: req.tilesPerPixel,
           ctx: { startingPositions: req.startingPositions },
           sweepBox: placementMarkSweepBox(req),
+          sharedStack: req.cacheSharedPrototype === true ? fused?.stack : undefined,
         });
       }
       if (req.view === "cliffs" || req.view === "all") {

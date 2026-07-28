@@ -247,6 +247,39 @@ So the honest position is that the remaining cost is concentrated in the one
 overlay the two obvious optimisations do not reach, and no cheap fix is
 outstanding.
 
+### The 2x gate IS reachable - measured 2026-07-28
+
+The paragraph above ("no cheap fix is outstanding") is **superseded**. Two
+prototypes, both byte-identical to the shipped path
+(`test/vulcanusFusedEquality.spec.ts`), min-of-7 interleaved @ 512x512 origin
+(0,0), two independent runs:
+
+| path | `all` | ratio all/terrain |
+| --- | --- | --- |
+| sequential (shipped) | 8304 / 8119 ms | 2.421 / 2.367 |
+| + fused terrain+ore | 7441 / 7266 ms | 2.170 / 2.118 |
+| + cross-traversal cache | **6749 / 6728 ms** | **1.968 / 1.961** |
+
+**Fusion alone does not reach the gate; fusion + the cache does**, in both runs.
+Note the ratio drifts ~4% run to run (see `render-cost.perf.spec.ts`), which is
+why this is quoted from two runs and not one - but 1.96 twice is not a
+borderline call.
+
+Why two mechanisms and not one: `memoXY` is a **single-entry** cache, so sharing
+field objects between passes saves nothing on its own - measured, terrain + the
+three overlay marginals summed to EXACTLY the `all` cost, 96,310,857 basisNoise
+calls either way. Fusing terrain with the ore pass makes them ask for the same
+`(x, y)` back to back, which cuts the resources marginal by ~52% (1803 -> 886,
+1828 -> 853). But the rock overlay's cost sits inside `resolveChunk`, which
+sweeps a chunk's 1024 tiles in reverse index order - chunk-major, so **no pixel
+loop can line up with it**. That half needs a cache that survives across
+traversals, which is what `memoRegion` is.
+
+Both are prototypes behind `fusedPrototype` / `cacheSharedPrototype`, default
+off and not wired to any UI. Not shipped: `memoRegion` retains every value it
+computes, which is cheap at the app's real geometry (128x128 worker tiles,
+~16k entries) but unbounded at the benchmark's 512x512 and 1024x1024.
+
 **The benchmark that could not settle this is now fixed** (issue #19, 2026-07-28).
 `pnpm perf` reports minima over 7 interleaved iterations with the spread printed,
 and has a Vulcanus block at exactly this geometry - so the hand-run loop these

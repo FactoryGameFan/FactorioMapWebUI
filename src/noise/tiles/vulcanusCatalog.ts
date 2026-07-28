@@ -25,6 +25,7 @@ import type { EvalCtx, EvalCtxInput } from "../eval/ctx";
 import { withCtxDefaults } from "../eval/ctx";
 import { distanceFromNearestPoint } from "../distanceFromNearestPoint";
 import { clamp, max, min } from "../eval/math";
+import { memoRegion } from "../eval/memoRegion";
 import { makeMultioctaveNoise } from "../multioctaveNoise";
 import { makeVulcanusBiomes, type VulcanusBiomes } from "../expressions/vulcanusBiomes";
 import { makeVulcanusClimate, type VulcanusClimate } from "../expressions/vulcanusClimate";
@@ -379,13 +380,34 @@ export interface VulcanusStack {
  * any of that work being reused; it is not sufficient on its own, because two
  * consumers also have to ask for the same (x, y) while it is still cached.
  */
-export function makeVulcanusStack(input: EvalCtxInput): VulcanusStack {
+export function makeVulcanusStack(
+  input: EvalCtxInput,
+  opts: { cacheShared?: boolean } = {},
+): VulcanusStack {
   const ctx = withCtxDefaults(input);
   const helpers: VulcanusHelpers = makeVulcanusHelpers(ctx);
   const spawn = makeVulcanusSpawn(ctx, helpers);
   const cracks = makeVulcanusCracks(ctx, helpers);
-  const biomes: VulcanusBiomes = makeVulcanusBiomes(ctx, helpers, spawn, cracks);
-  const climate: VulcanusClimate = makeVulcanusClimate(ctx, helpers, cracks);
+  const rawBiomes: VulcanusBiomes = makeVulcanusBiomes(ctx, helpers, spawn, cracks);
+  const rawClimate: VulcanusClimate = makeVulcanusClimate(ctx, helpers, cracks);
+
+  // PROTOTYPE (issue #19 follow-up): the three nodes the rock overlay shares
+  // with terrain. They must be wrapped BEFORE `elevation` and `resources` are
+  // built, or those close over the unwrapped originals and the cache is dead
+  // weight on the path that needed it most.
+  const biomes: VulcanusBiomes =
+    opts.cacheShared === true
+      ? { ...rawBiomes, ashlandsBiome: memoRegion((x, y) => rawBiomes.ashlandsBiome(x, y)) }
+      : rawBiomes;
+  const climate: VulcanusClimate =
+    opts.cacheShared === true
+      ? {
+          ...rawClimate,
+          aux: memoRegion((x, y) => rawClimate.aux(x, y)),
+          moisture: memoRegion((x, y) => rawClimate.moisture(x, y)),
+        }
+      : rawClimate;
+
   const elevation: VulcanusElevation = makeVulcanusElevation(ctx, helpers, biomes, cracks, climate);
   const resources = makeVulcanusResources(ctx, helpers, spawn, biomes, cracks);
   return { ctx, helpers, spawn, cracks, biomes, climate, elevation, resources };

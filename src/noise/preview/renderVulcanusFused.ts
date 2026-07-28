@@ -66,13 +66,15 @@ export function renderVulcanusTerrainOreFused(opts: {
   originY?: number;
   tilesPerPixel?: number;
   ctx?: Omit<EvalCtxInput, "seed0">;
+  /** Wrap the nodes the rock overlay shares with terrain in a cross-traversal cache. */
+  cacheShared?: boolean;
 }): FusedTerrainOreResult {
   const { width, height, seed0 } = opts;
   const originX = opts.originX ?? 0;
   const originY = opts.originY ?? 0;
   const tpp = opts.tilesPerPixel ?? 1;
 
-  const stack = makeVulcanusStack({ seed0, ...opts.ctx });
+  const stack = makeVulcanusStack({ seed0, ...opts.ctx }, { cacheShared: opts.cacheShared });
   const resolve = makeVulcanusTileResolverFrom(stack);
 
   const controls = stack.ctx.vulcanusResourceControls;

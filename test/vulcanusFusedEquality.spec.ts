@@ -29,45 +29,54 @@ const REGIONS = [
 ];
 
 describe("Vulcanus fused prototype is byte-identical to the sequential path", () => {
-  for (const view of ["resources", "all"] as const) {
-    for (const r of REGIONS) {
-      it(`view=${view} @ ${r.label}`, () => {
-        const base = {
-          id: 0,
-          seed0: 123456,
-          width: SIZE,
-          height: SIZE,
-          originX: r.originX,
-          originY: r.originY,
-          tilesPerPixel: 1,
-          waterLevel: 0,
-          segmentationMultiplier: 1,
-          startingPositions: [{ x: 0, y: 0 }],
-          mapType: "nauvis" as const,
-          planet: "vulcanus" as const,
-          view,
-        };
-        const sequential = new Uint8Array(runRenderRequest({ ...base }).buffer);
-        const fused = new Uint8Array(runRenderRequest({ ...base, fusedPrototype: true }).buffer);
+  const VARIANTS = [
+    { label: "fused", flags: { fusedPrototype: true } },
+    {
+      label: "fused+cache",
+      flags: { fusedPrototype: true, cacheSharedPrototype: true },
+    },
+  ];
 
-        expect(fused.length).toBe(sequential.length);
-        let firstDiff = -1;
-        let diffs = 0;
-        for (let i = 0; i < sequential.length; i++)
-          if (sequential[i] !== fused[i]) {
-            diffs++;
-            if (firstDiff < 0) firstDiff = i;
+  for (const variant of VARIANTS)
+    for (const view of ["resources", "all"] as const) {
+      for (const r of REGIONS) {
+        it(`${variant.label} view=${view} @ ${r.label}`, () => {
+          const base = {
+            id: 0,
+            seed0: 123456,
+            width: SIZE,
+            height: SIZE,
+            originX: r.originX,
+            originY: r.originY,
+            tilesPerPixel: 1,
+            waterLevel: 0,
+            segmentationMultiplier: 1,
+            startingPositions: [{ x: 0, y: 0 }],
+            mapType: "nauvis" as const,
+            planet: "vulcanus" as const,
+            view,
+          };
+          const sequential = new Uint8Array(runRenderRequest({ ...base }).buffer);
+          const fused = new Uint8Array(runRenderRequest({ ...base, ...variant.flags }).buffer);
+
+          expect(fused.length).toBe(sequential.length);
+          let firstDiff = -1;
+          let diffs = 0;
+          for (let i = 0; i < sequential.length; i++)
+            if (sequential[i] !== fused[i]) {
+              diffs++;
+              if (firstDiff < 0) firstDiff = i;
+            }
+          if (diffs > 0) {
+            const px = Math.floor(firstDiff / 4);
+            throw new Error(
+              `${String(diffs)} differing bytes; first at pixel (${String(px % SIZE)},${String(Math.floor(px / SIZE))})`,
+            );
           }
-        if (diffs > 0) {
-          const px = Math.floor(firstDiff / 4);
-          throw new Error(
-            `${String(diffs)} differing bytes; first at pixel (${String(px % SIZE)},${String(Math.floor(px / SIZE))})`,
-          );
-        }
-        expect(diffs).toBe(0);
-      }, 120000);
+          expect(diffs).toBe(0);
+        }, 120000);
+      }
     }
-  }
 
   for (const r of REGIONS) {
     it(`is not vacuous @ ${r.label} - the overlay really paints there`, () => {
