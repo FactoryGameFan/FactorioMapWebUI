@@ -25,7 +25,12 @@ import type { Point } from "../distanceFromNearestPoint";
 import { PLACEMENT_SALT, makePlacementSet } from "../placement/placementRoll";
 import type { PlacementCollisionBox } from "../placement/placementRoll";
 import { makeRockFields, type RockFieldParams } from "../rocks/rockField";
-import { ROCK_MAP_COLOR, type RockControls } from "../rocks/rockCatalog";
+import {
+  ROCK_FIELD_LATTICE,
+  ROCK_MAP_COLOR,
+  latticeSnapped,
+  type RockControls,
+} from "../rocks/rockCatalog";
 import { makeTileResolver } from "../tiles/resolve";
 import { WATER_TILE_COLORS } from "./renderResources";
 
@@ -176,7 +181,9 @@ export function makeNauvisRockPlacement(
 
   return makePlacementSet({
     salt: PLACEMENT_SALT.nauvisRocks,
-    probability: fields.density,
+    // Snapped to `ROCK_FIELD_LATTICE`, which ships at 1 (a no-op that returns
+    // `fields.density` itself) - see `rockCatalog.ts`.
+    probability: latticeSnapped(fields.density, ROCK_FIELD_LATTICE),
     tileAllowed: (x, y) => !WATER_TILE_NAMES.has(tileAt(x, y).name),
     collisionBox: (x, y) => {
       const p = fields.at(x, y);

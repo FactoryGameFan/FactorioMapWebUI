@@ -36,7 +36,7 @@ import type { EvalCtx, EvalCtxInput } from "../eval/ctx";
 import { withCtxDefaults } from "../eval/ctx";
 import { PLACEMENT_SALT, makePlacementSet } from "../placement/placementRoll";
 import type { PlacementCollisionBox } from "../placement/placementRoll";
-import { ROCK_MAP_COLOR } from "../rocks/rockCatalog";
+import { ROCK_FIELD_LATTICE, ROCK_MAP_COLOR, latticeSnapped } from "../rocks/rockCatalog";
 import { makeVulcanusRockFields } from "../rocks/vulcanusRockField";
 import { makeVulcanusTileResolver } from "../tiles/vulcanusCatalog";
 
@@ -138,7 +138,10 @@ export function makeVulcanusRockPlacement(ctx: EvalCtx): (x: number, y: number) 
   const tileAt = makeVulcanusTileResolver(ctx);
   return makePlacementSet({
     salt: PLACEMENT_SALT.vulcanusRocks,
-    probability: density,
+    // Snapped to `ROCK_FIELD_LATTICE`, which ships at 1 (a no-op that returns
+    // `density` itself). The wrapper stays so the lattice is a one-constant
+    // experiment rather than a rewrite - see `rockCatalog.ts`.
+    probability: latticeSnapped(density, ROCK_FIELD_LATTICE),
     tileAllowed: (x, y) => !ROCK_FORBIDDEN_TILES.has(tileAt(x, y).name),
     collisionBox: () => VOLCANIC_ROCK_COLLISION_BOX,
   });

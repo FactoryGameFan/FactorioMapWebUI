@@ -526,3 +526,74 @@ The roll is still the right change - 4.2x is a large error, and a blob and a sti
 misread differently regardless of area. But **the case for a change was overstated by
 the same reasoning style the change was meant to replace**, which is worth more as a
 warning than the number is as a fact.
+
+## Coarse rock field sampling: measured, and NOT adopted (2026-07-27, Task 9)
+
+Task 9 was to cut render cost by evaluating the rock probability field on a coarse
+lattice while still rolling every tile - degrading *where* rocks land, never *how
+many*, so the density oracle stays valid. The mechanism is built and tested
+(`ROCK_FIELD_LATTICE` + `latticeSnapped` in `src/noise/rocks/rockCatalog.ts`,
+`test/rockLattice.spec.ts`) but **ships at 1, i.e. disabled.**
+
+### Fidelity: density survives, clumping is the cost
+
+Ungated roll over `[-256, 256)^2`, seed 123456:
+
+| planet | L=1 | L=2 | L=4 | clumping L=1 / L=2 / L=4 |
+| --- | --- | --- | --- | --- |
+| vulcanus | 2448 | 2426 (-0.90%) | 2419 (-1.18%) | 0.349 / 0.372 / 0.390 |
+| nauvis | 313 | 310 (-0.96%) | 316 (+0.96%) | 0.259 / 0.229 / 0.199 |
+
+Density holds to ~1% at both strides, as the design predicted. Vulcanus clumping
+rises 6.7% at L=2 and 11.8% at L=4 - the smearing the brief anticipated from
+`vulcanus_decorative_knockout` running at `input_scale = 1/3` (~5-tile
+wavelength), now confirmed rather than assumed. Nauvis's clumping proxy moves the
+other way, but that window holds ~313 placements against Vulcanus's ~2448, so it
+is noise rather than a counter-example.
+
+### Perf: the gate is unreachable by this route, and not by a small margin
+
+The plan's gate was "Vulcanus `all` under 2x the terrain baseline". Min-of-7
+interleaved renders at 512x512 (min, not median - see the noise note below):
+
+| L | terrain | rocks | all | rock marginal | all/terrain |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 3298 | 4710 | 8261 | 1412 | **2.505** |
+| 4 | 3144 | 4021 | 7610 | 877 | **2.421** |
+
+Stride 4 cuts the rock overlay's marginal cost by 38% and the whole render by
+7.9%. It does not come close to the gate, and **no lattice can**, because the
+arithmetic bounds it: subtracting the rock overlay *entirely* from the L=1 row
+leaves 6849 ms against a 3298 ms terrain baseline - **2.077x, still over**. Both
+terms there come from the same run, so that bound is robust to the cross-run noise
+below.
+
+The premise was wrong about where the money is. Marginal costs over terrain, same
+window: cliffs 2027 ms (41%), resources 1855 ms (37%), rocks 1164 ms (23%). Task 9
+targeted the smallest of the three.
+
+### The benchmark cannot resolve the effect it was asked to gate on
+
+Worth recording independently of rocks. Run-to-run variance on this machine is
+5-23%: within one 5-iteration run the Vulcanus terrain render spread 22.7%
+between its fastest and slowest iteration, and views the lattice cannot touch
+(cliffs, resources) moved ~10% between processes. A median-of-3 - what `pnpm perf`
+uses - is not a stable enough estimator to accept or reject a 3-8% change. Every
+number above is a **minimum** of 7, which is the right estimator for timing under
+additive positive noise, and even then the L=1 vs L=4 terrain baselines differ by
+4.7%. The `all/terrain` **ratio** is the only figure here worth quoting across
+runs, because both terms share a process.
+
+This is why the L=2 arm looked like it made things *worse* on a first
+median-of-3 pass (`all` 8683 -> 8693 ms, ratio 2.354 -> 2.388): the measurement
+was noise. Do not tune this constant against `pnpm perf` as it stands.
+
+### Why disabled rather than shipped at 2
+
+Stride 2 buys a saving that this harness cannot distinguish from zero, and stride
+4 buys 7.9% for an 11.8% rise in Vulcanus clumping - i.e. it degrades exactly the
+placement realism Tasks 3-8 were spent establishing, for a render that is already
+tiled across a 64-worker pool (`render-tiling-shipped`), where the user-visible
+wall clock is a fraction of these figures. If render cost is attacked again, the
+targets are cliffs and resources, and the first requirement is a benchmark that
+can measure them.
