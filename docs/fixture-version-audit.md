@@ -170,4 +170,81 @@ caps `unknown` at 1 so re-capturing
 
 ## Conclusions
 
-_Not yet run._
+**Run 2026-07-28, against binary/data/docs all in sync at 2.1.12.**
+
+### The 33 fixtures captured at 2.1.11: NONE need re-capturing
+
+All seven data-governing files are byte-identical from 2.1.11 to 2.1.12
+(`noise-programs.lua`, `noise-functions.lua`, `base/.../noise-expressions.lua`,
+`tiles.lua`, `trees.lua`, `planet-vulcanus-map-gen.lua`, `tiles-vulcanus.lua`).
+
+That was checked the weak way and the strong way. The weak way is diffing the
+files you expect to matter, which only confirms a prediction. The strong way is
+diffing **everything** and reading what moved:
+
+| changed 2.1.11 -> 2.1.12 | map-gen relevant? |
+| --- | --- |
+| 5 x `info.json`, `changelog.txt` | no |
+| graphics: `assemblerpipes`, `pump-connector`, `recycler-pictures`, `remnants`, `explosions`, `base-frozen-graphics` | no |
+| `quality/` recycling + entity | no |
+| `biter-ai-settings.lua`, `gleba-ai-settings.lua` (both deleted) | no - runtime unit AI (`destroy_when_commands_fail`), not autoplace; no fixture covers them |
+| `space-age/prototypes/planet/planet.lua` (+2) | no - a `starmap_icon` on the `solar-system-edge` **space-location** |
+
+Nothing in the map-gen data moved at all. The 2.1.11 fixtures are stale in date
+only.
+
+### The 5 codec fixtures at 2.1.9: the format tag DID change, and it was a live bug
+
+This is what the audit was for, and it was not a stale-fixture problem.
+
+The doc said to check the exchange **format tag** rather than the game version.
+The tag moved: **Factorio 2.1.12 emits `2.1.12.2` where 2.1.9 emitted
+`2.1.9.3`**, and `mapExchangeString.ts` accepted only the latter - so the app
+**rejected every map-exchange string copied out of the current game**, with
+`unsupported exchange format`. Shipped and live at the time it was found.
+
+Scope, pinned in both directions rather than assumed:
+
+| direction | status |
+| --- | --- |
+| export (app -> game) | **fine.** 2.1.12's own `helpers.parse_map_exchange_string` accepts a `2.1.9.3` string, verified through the game |
+| import (game -> app) | **broken.** Fixed 2026-07-28 |
+
+**The payload layout did not change; only the tag did.** Five 2.1.12 captures
+varying seeds, autoplace controls, water/terrain_segmentation/cliff_settings/
+starting_area, and the peaceful/no_enemies mid-block flags all decode and
+re-encode **byte-for-byte** (`test/mapExchangeVersions.spec.ts`,
+`map-exchange-2.1.12.strings.json`). So the five 2.1.9 fixtures are still valid
+ground truth for the format they pin - they did not need re-capturing either.
+
+`SUPPORTED_VERSIONS` is now a known-good **list**, not a range: the schemas here
+are empirical, so accepting an unseen format risks decoding a changed layout into
+plausible wrong values, which is worse than a clean rejection. A version joins the
+list only with a fixture proving byte-exact round-trip.
+
+### The 7 noise-primitive fixtures: still unauditable, still unaudited
+
+`oracle-basis`, `oracle-multioctave*`, `oracle-quick-multioctave`,
+`oracle-variable-persistence-*`, `oracle-multisample`, `oracle-expression-in-range`,
+`oracle-seed-vars` are governed by native C++ ops. The clean data diff above says
+**nothing** about them. Only re-sampling against the binary can, and that was not
+done here - it remains the one genuinely open part of this audit.
+
+### What changed as a result
+
+- `SUPPORTED_VERSIONS` accepts `2.1.12.2`; new fixture + spec.
+- The UI now shows the targeted Factorio version, because the reason this bug
+  survived three patch releases is that **nothing in the app said which format it
+  spoke**. Both values are derived (target from `PROVENANCE.json`, formats from
+  the decoder) and pinned by `test/factorioTarget.spec.ts`, so they cannot rot the
+  way the hardcoded `2.1.9.3` did.
+- No fixture was re-captured, because none needed to be.
+
+### The lesson, which is not the one the issue expected
+
+The issue framed this as "turn 38 stale fixtures into N that need re-capturing".
+The answer to that question is **zero**. The value was entirely in the check the
+procedure told you to do *first* and almost as an aside - verify the format tag -
+which found a shipped, user-facing bug that no fixture staleness would ever have
+revealed. Version-skew audits are worth running even when the fixtures turn out
+fine.

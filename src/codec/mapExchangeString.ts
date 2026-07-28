@@ -212,8 +212,36 @@ function writeStartingPoints(writer: BinaryWriter, points: MapPosition[]): void 
   }
 }
 
-// The only format this decoder understands; the mid-block schemas are empirical for it.
-const SUPPORTED_VERSION: FormatVersion = [2, 1, 9, 3];
+/**
+ * The exchange formats this decoder understands, newest last.
+ *
+ * **This is a known-good list, not a range, and that is deliberate.** The
+ * mid-block and tail schemas here are EMPIRICAL - derived by reading bytes, not
+ * from a published spec - so accepting an unseen format would risk decoding a
+ * changed layout into plausible-looking wrong values, which is far worse than a
+ * clean rejection. A version earns its place here only once a fixture proves a
+ * real string of that format decodes AND re-encodes byte-for-byte
+ * (`test/mapExchangeVersions.spec.ts`).
+ *
+ * - `2.1.9.3` - the format the nine builtin presets were captured in.
+ * - `2.1.12.2` - what Factorio 2.1.12 emits. Added 2026-07-28, when the fixture
+ *   audit (#7) found the app rejected strings copied from the current game
+ *   outright. The payload layout is unchanged: all five varied captures
+ *   (seeds, autoplace controls, water/cliffs/starting_area, peaceful/no_enemies)
+ *   round-trip byte-exact. Only the tag moved.
+ *
+ * Note the two directions are not symmetric, and only one was broken: 2.1.12
+ * accepts a `2.1.9.3` string fine (verified through the game's own
+ * `helpers.parse_map_exchange_string`), so EXPORT was never affected - the app's
+ * output stayed loadable throughout. Import was the broken half.
+ */
+export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
+  [2, 1, 9, 3],
+  [2, 1, 12, 2],
+];
+
+/** Human-readable list for UI and error messages, e.g. "2.1.9.3, 2.1.12.2". */
+export const SUPPORTED_VERSIONS_LABEL = SUPPORTED_VERSIONS.map((v) => v.join(".")).join(", ");
 
 export interface TailBlock {
   [key: string]: string | number | boolean | Uint8Array | null | (string | number | boolean)[];
@@ -436,9 +464,9 @@ export function decodeExchangeString(input: string): DecodedExchange {
       reader.readUint16(),
       reader.readUint16(),
     ];
-    if (!version.every((v, i) => v === SUPPORTED_VERSION[i])) {
+    if (!SUPPORTED_VERSIONS.some((sv) => version.every((v, i) => v === sv[i]))) {
       throw new ExchangeStringError(
-        `unsupported exchange format ${version.join(".")} (supported: ${SUPPORTED_VERSION.join(".")})`,
+        `unsupported exchange format ${version.join(".")} (supported: ${SUPPORTED_VERSIONS_LABEL})`,
       );
     }
     const flagByte = reader.readUint8();
