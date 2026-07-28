@@ -157,7 +157,11 @@ const INFO = {
             Starting area size<FInfo :text="INFO.startingArea" />
           </td>
           <td class="sa-cell">
-            <FPercentSlider v-model="preset.startingArea" data-test="starting-area" />
+            <FPercentSlider
+              v-model="preset.startingArea"
+              label="Starting area size"
+              data-test="starting-area"
+            />
           </td>
         </tr>
       </template>

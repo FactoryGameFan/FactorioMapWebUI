@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, useId } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -8,15 +8,20 @@ const props = withDefaults(
     max?: number;
     step?: number;
     disabled?: boolean;
+    /** What this slider adjusts, e.g. "Minimum expansion distance". */
+    label?: string;
   }>(),
   {
     min: 0,
     max: 6,
     step: 0.05,
     disabled: false,
+    label: undefined,
   },
 );
 const emit = defineEmits<{ "update:modelValue": [value: number] }>();
+
+const inputId = useId();
 
 // Fraction (0..1) of the thumb along the track, driving the orange value fill -
 // the same yellow bar the game's map-gen sliders (and FPercentSlider) show.
@@ -38,6 +43,7 @@ function onInput(event: Event) {
       <span class="f-slider-fill" />
     </span>
     <input
+      :id="inputId"
       class="f-slider-input"
       type="range"
       :min="min"
@@ -45,6 +51,7 @@ function onInput(event: Event) {
       :step="step"
       :value="modelValue"
       :disabled="disabled"
+      :aria-label="label"
       @input="onInput"
     />
   </span>

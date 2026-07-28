@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useId } from "vue";
+
 withDefaults(
   defineProps<{
     modelValue: string;
@@ -9,13 +11,21 @@ withDefaults(
 );
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 
+const selectId = useId();
+
 function onChange(event: Event) {
   emit("update:modelValue", (event.target as HTMLSelectElement).value);
 }
 </script>
 
 <template>
-  <select class="f-dropdown" :value="modelValue" :disabled="disabled" @change="onChange">
+  <select
+    :id="selectId"
+    class="f-dropdown"
+    :value="modelValue"
+    :disabled="disabled"
+    @change="onChange"
+  >
     <option v-for="option in options" :key="option.value" :value="option.value">
       {{ option.label }}
     </option>

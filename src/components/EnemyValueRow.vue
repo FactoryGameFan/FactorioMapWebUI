@@ -22,15 +22,24 @@ function set(value: number) {
 <template>
   <div class="enemy-value-row">
     <span class="label">{{ label }}<FInfo v-if="info" :text="info" /></span>
+    <!-- The visible label is a styled span shared by both controls, so each
+         takes its own name from it. The role (slider vs spin button) is what
+         tells a screen reader user which of the two they are on. -->
     <FSlider
       :model-value="modelValue"
+      :label="label"
       :min="min"
       :max="max"
       :step="step"
       :disabled="disabled"
       @update:model-value="set"
     />
-    <FNumberInput :model-value="modelValue" :disabled="disabled" @update:model-value="set" />
+    <FNumberInput
+      :model-value="modelValue"
+      :label="label"
+      :disabled="disabled"
+      @update:model-value="set"
+    />
   </div>
 </template>
 

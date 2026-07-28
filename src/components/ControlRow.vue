@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { CONTROL_CATALOG, type ControlColumn } from "../model/controlCatalog";
+import { computed, useId } from "vue";
+import { CONTROL_CATALOG, controlRowLabel, type ControlColumn } from "../model/controlCatalog";
 import { isEnabled, setEnabled } from "../model/autoplaceEnabled";
 import { PLANET_ICONS, PLANET_LABELS } from "../model/planets";
 import { RESOURCE_ICONS } from "../model/resourceIcons";
@@ -14,6 +14,13 @@ const store = usePresetsStore();
 const entry = computed(() => CONTROL_CATALOG[props.name]);
 const control = computed(() => store.activePreset?.autoplaceControls[props.name]);
 const icon = computed(() => RESOURCE_ICONS[props.name]);
+const enableId = useId();
+
+// Each control in this row gets a name of its own, since the visible row label
+// and column header a sighted user reads them from are not part of any of the
+// widgets. The row label carries its planet where two planets share one.
+const rowLabel = computed(() => controlRowLabel(props.name));
+const sliderLabel = (col: ControlColumn) => `${rowLabel.value} ${col.label.toLowerCase()}`;
 
 // Only a disable-able control consults its enabled state; always-on controls
 // are always treated as enabled (and never gray) regardless of a stray size.
@@ -32,10 +39,11 @@ function onToggle(event: Event) {
       <span class="control-enable">
         <input
           v-if="entry.canBeDisabled"
+          :id="enableId"
           type="checkbox"
           data-test="control-enable"
           :checked="enabled"
-          :aria-label="`Enable ${entry.label}`"
+          :aria-label="`Enable ${rowLabel}`"
           @change="onToggle"
         />
       </span>
@@ -63,7 +71,11 @@ function onToggle(event: Event) {
       />
     </td>
     <td v-for="col in columns" :key="col.key" class="cell">
-      <FPercentSlider v-model="control[col.key]" :disabled="entry.canBeDisabled && !enabled" />
+      <FPercentSlider
+        v-model="control[col.key]"
+        :label="sliderLabel(col)"
+        :disabled="entry.canBeDisabled && !enabled"
+      />
     </td>
   </tr>
 </template>

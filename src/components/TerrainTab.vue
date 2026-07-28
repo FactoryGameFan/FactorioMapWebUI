@@ -92,8 +92,17 @@ const auxBias = biasModel(TERRAIN_TYPE);
 
 <template>
   <div class="map-type">
-    <label class="map-type-label">Map type</label>
-    <FDropdown data-test="map-type" v-model="mapType" :options="mapTypeOptions" />
+    <!-- A <label> with no `for` and no wrapped control names nothing, so this
+         is a styled span plus an aria-label on the select - the same shape as
+         the preset bar's fields. The app-wide "every select is named" check
+         missed this one because App mounts the Resources tab by default. -->
+    <span class="map-type-label">Map type</span>
+    <FDropdown
+      data-test="map-type"
+      v-model="mapType"
+      aria-label="Map type"
+      :options="mapTypeOptions"
+    />
   </div>
 
   <section data-test="terrain-coverage-table">
@@ -140,8 +149,10 @@ const auxBias = biasModel(TERRAIN_TYPE);
               height="24"
             />
           </td>
-          <td class="cell"><FPercentSlider v-model="moistureScale" /></td>
-          <td class="cell"><FPercentSlider v-model="moistureBias" :scale="BIAS_SCALE" /></td>
+          <td class="cell"><FPercentSlider v-model="moistureScale" label="Moisture scale" /></td>
+          <td class="cell">
+            <FPercentSlider v-model="moistureBias" label="Moisture bias" :scale="BIAS_SCALE" />
+          </td>
         </tr>
         <tr data-test="terrain-noise-terrain-type">
           <td class="label">
@@ -160,8 +171,10 @@ const auxBias = biasModel(TERRAIN_TYPE);
               height="24"
             />
           </td>
-          <td class="cell"><FPercentSlider v-model="auxScale" /></td>
-          <td class="cell"><FPercentSlider v-model="auxBias" :scale="BIAS_SCALE" /></td>
+          <td class="cell"><FPercentSlider v-model="auxScale" label="Terrain type scale" /></td>
+          <td class="cell">
+            <FPercentSlider v-model="auxBias" label="Terrain type bias" :scale="BIAS_SCALE" />
+          </td>
         </tr>
       </tbody>
     </table>

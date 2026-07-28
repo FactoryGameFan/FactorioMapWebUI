@@ -1,6 +1,18 @@
 <script setup lang="ts">
-defineProps<{ modelValue: number; disabled?: boolean }>();
+import { useId } from "vue";
+
+defineProps<{
+  modelValue: number;
+  disabled?: boolean;
+  /**
+   * What this box edits. Only needed where the box is not already inside a
+   * <label> (the Advanced tab's Width/Height/Price multiplier boxes are).
+   */
+  label?: string;
+}>();
 const emit = defineEmits<{ "update:modelValue": [value: number] }>();
+
+const inputId = useId();
 
 function onChange(event: Event) {
   const raw = (event.target as HTMLInputElement).value;
@@ -13,10 +25,12 @@ function onChange(event: Event) {
 
 <template>
   <input
+    :id="inputId"
     class="f-number"
     type="number"
     :value="modelValue"
     :disabled="disabled"
+    :aria-label="label"
     @change="onChange"
   />
 </template>

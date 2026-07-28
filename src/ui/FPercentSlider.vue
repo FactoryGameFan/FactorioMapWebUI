@@ -1,12 +1,24 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, useId } from "vue";
 import { PERCENT_SCALE, type StepScale } from "../model/controlScale";
 
 const props = withDefaults(
-  defineProps<{ modelValue: number; disabled?: boolean; scale?: StepScale }>(),
-  { disabled: false, scale: () => PERCENT_SCALE },
+  defineProps<{
+    modelValue: number;
+    disabled?: boolean;
+    scale?: StepScale;
+    /**
+     * What this particular slider adjusts, e.g. "Iron ore frequency". Without
+     * it every slider falls back to the scale's generic name ("Percentage"),
+     * which names the widget rather than the setting - see issue #15.
+     */
+    label?: string;
+  }>(),
+  { disabled: false, scale: () => PERCENT_SCALE, label: undefined },
 );
 const emit = defineEmits<{ "update:modelValue": [value: number] }>();
+
+const inputId = useId();
 
 const index = computed(() => props.scale.nearestIndex(props.modelValue));
 const label = computed(() => props.scale.format(props.modelValue));
@@ -46,6 +58,7 @@ function onInput(event: Event) {
       <span class="f-percent-fill" />
     </span>
     <input
+      :id="inputId"
       class="f-percent-slider"
       type="range"
       min="0"
@@ -54,7 +67,7 @@ function onInput(event: Event) {
       :value="index"
       :disabled="disabled"
       :aria-valuetext="label"
-      :aria-label="props.scale.ariaLabel"
+      :aria-label="props.label ?? props.scale.ariaLabel"
       @input="onInput"
     />
     <span class="f-percent-bubble" aria-hidden="true">{{ label }}</span>
