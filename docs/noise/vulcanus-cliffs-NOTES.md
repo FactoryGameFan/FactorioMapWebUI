@@ -245,10 +245,26 @@ V3 row, so the two ratios are not strictly comparable.
 
 So the honest position is that the remaining cost is concentrated in the one
 overlay the two obvious optimisations do not reach, and no cheap fix is
-outstanding. **Before any of this is re-attacked, the benchmark needs fixing:**
-run-to-run variance is 5-23% and a single 5-iteration run spread the Vulcanus
-terrain render 22.7%, so `pnpm perf`'s median-of-3 cannot resolve a change of the
-size any of these fixes would produce.
+outstanding.
+
+**The benchmark that could not settle this is now fixed** (issue #19, 2026-07-28).
+`pnpm perf` reports minima over 7 interleaved iterations with the spread printed,
+and has a Vulcanus block at exactly this geometry - so the hand-run loop these
+figures came from is no longer needed. `FMW_PERF_BLOCK=vulcanus pnpm perf` runs
+just this block in ~3.7 min.
+
+Two things to know before comparing against the table above. First, **the
+marginals are the figure to compare, not the absolutes and not the ratio**:
+measured over two back-to-back runs the terrain baseline moved 4.8% and the
+`all/terrain` ratio 3.8%, while the marginals held to ~2.5% (rocks was identical
+to the millisecond). Second, **the table above is now stale**, and the current
+tool says so cleanly: terrain still reproduces (3394 -> 3402/3566, inside the
+baseline's own drift), but every overlay marginal has dropped well outside that
+drift - resources 2013 -> ~1730, rocks 1362 -> 1079, cliffs 2133 -> ~1875. Three
+PRs landed on those paths after this was measured (#25 rocks rendering, #28
+`cliff_smoothing` -> 1 which the notes measure as ~10% *cheaper* on the cliff
+pass, #32 `fixImpossibleCells` at ~10% dearer). The gate conclusion is unchanged:
+`all` measures 2.31-2.40x terrain, still past 2x.
 
 The cliff pass is more expensive than its sample count suggests. Corners sit on
 a 4-tile lattice, so at 1 tile/px it evaluates one elevation sample per 16

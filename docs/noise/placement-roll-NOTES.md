@@ -665,7 +665,25 @@ a single min-of-7 run over all five views: cliffs 2133 ms (42%), resources 2013 
 the three, and the largest is the one no proposed fix reaches (see
 `vulcanus-cliffs-NOTES.md`).
 
-### The benchmark cannot resolve the effect it was asked to gate on
+### The benchmark could not resolve the effect it was asked to gate on - FIXED
+
+**Fixed 2026-07-28 (issue #19).** `pnpm perf` now reports minima over 7
+interleaved iterations with the spread printed beside each figure, plus a
+Vulcanus block at 512x512 / origin (0,0) - the geometry the hand-run figures
+below use - so the measurement below can be reproduced by the tool rather than by
+a hand-rolled loop. `FMW_PERF_BLOCK=vulcanus pnpm perf` runs it in ~3.7 min;
+`FMW_PERF_N` and `FMW_PERF_TILE_N` tune the iteration counts.
+
+One correction to the paragraph below, from measuring the fixed tool over two
+back-to-back runs: **the `all/terrain` ratio is NOT the figure to quote across
+runs.** It divides two absolutes that drift independently (terrain moved +4.8%,
+`all` +0.8%), so it amplifies their disagreement and moved 3.8%. The **marginals**
+were the steadiest figure at ~2.5%, with rocks identical to the millisecond. The
+"do not tune against `pnpm perf`" warning below no longer applies to the tool as
+it stands, but the underlying caution does: a few percent in an absolute is still
+noise, and only a double-digit move in a marginal is evidence.
+
+The original finding, kept because the reasoning is what justified the rebuild:
 
 Worth recording independently of rocks. Run-to-run variance on this machine is
 5-23%: within one 5-iteration run the Vulcanus terrain render spread 22.7%
@@ -675,11 +693,12 @@ uses - is not a stable enough estimator to accept or reject a 3-8% change. Every
 number above is a **minimum** of 7, which is the right estimator for timing under
 additive positive noise, and even then the L=1 vs L=4 terrain baselines differ by
 4.7%. The `all/terrain` **ratio** is the only figure here worth quoting across
-runs, because both terms share a process.
+runs, because both terms share a process. (Superseded - see the correction
+above: the marginals proved steadier than the ratio.)
 
 This is why the L=2 arm looked like it made things *worse* on a first
 median-of-3 pass (`all` 8683 -> 8693 ms, ratio 2.354 -> 2.388): the measurement
-was noise. Do not tune this constant against `pnpm perf` as it stands.
+was noise.
 
 ### Why disabled rather than shipped at 2
 
