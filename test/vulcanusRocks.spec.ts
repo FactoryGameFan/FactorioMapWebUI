@@ -80,10 +80,11 @@ describe("Vulcanus rocks", () => {
 
   it("probabilities stay well under 1, so no threshold yields a solid footprint", () => {
     // Both expressions are capped at 0.2 * (1 - k * ashlands_biome), so the
-    // overlay cannot use the ores' `>= 0.5` rule. This is the same shape of
-    // problem as the sulfuric-acid geyser and Nauvis rocks, and is why
-    // VULCANUS_ROCK_FOOTPRINT_THRESHOLD exists. If a future version raises the
-    // cap, this fails and that threshold should be revisited.
+    // overlay cannot use the ores' `>= 0.5` rule - it rolls per tile against
+    // this capped density instead (renderVulcanusRocks.ts). This is the same
+    // shape of problem as the sulfuric-acid geyser and Nauvis rocks. If a
+    // future version raises the cap, this fails and the roll's behavior
+    // (heavier clustering from a higher-density field) should be revisited.
     // The cap is exactly 0.2, but the game evaluates it in f32, so the observed
     // peak is 0.20000000298023224 - f32(0.2) rounded up. Compare with a tick of
     // slack rather than pretending the constant comes back exact.

@@ -231,7 +231,20 @@ resource stipple would require simulating whole-chunk entity generation across
 subsystems this app never ported. Multi-session + cross-subsystem; **deferred**
 (Eric, 2026-07-20). Full RE + a cheaper cosmetic-dither alternative:
 `docs/noise/placement-roll-NOTES.md`. Solid-footprint (opaque where `prob >= 0.5`)
-ships in M3a/b and stands as the M3 end state.
+shipped in M3a/b.
+
+**SHIPPED 2026-07-27, as a third option neither the spike nor this entry named.**
+Not the whole-chunk simulator, and not the cosmetic dither: a real roll against
+the real probability, with the two coupling sources deliberately dropped. Dropping
+the 2 jitter draws is the load-bearing move - with no data-dependent consumption a
+chunk's 1024 draws are a pure function of `(chunkX, chunkY, salt)`, which restores
+per-position purity and keeps the tiled render byte-identical to the untiled one.
+Cross-overlay arbitration is then simply absent, so **positions are not the
+game's; density is the claim**, and it is validated per overlay against real
+`count_entities_filtered` counts. All five overlays converted (Vulcanus rocks,
+Nauvis rocks, Nauvis enemy bases, Vulcanus geysers, Nauvis crude oil - the four
+issue #9 named, plus Vulcanus rocks). See "WHAT WAS ACTUALLY BUILT" in
+`placement-roll-NOTES.md`.
 
 M3a follow-ups (known, deferred by priority - 2026-07-20):
 
@@ -241,13 +254,16 @@ M3a follow-ups (known, deferred by priority - 2026-07-20):
       `WATER_TILE_COLORS`-style pixel-exclusion mechanism, gated on the M4 cliff
       placement (which is itself only ~94% exact pending the deferred
       `fixImpossibleCells`, see the M4 section below).
-- [ ] **Oil renders as tiny dots, not patches** (low priority, partly by-design):
-      crude-oil is genuinely sparse in-game (`random_probability = 1/48`,
-      `spot_size 1..1`), so it is individual wells, not a contiguous field - the
-      `>= 0.5` solid footprint just makes each spot ~1 tile. Two sub-items if we
-      ever want it to read as a patch: (a) our `regularPatches.probability()` does
-      NOT yet apply oil's probability factor from the spec; (b) a faithful oil look
-      needs the M3.5 per-tile placement stipple.
+- [x] **Oil renders as tiny dots, not patches** - DONE 2026-07-27 (Task 8). Both
+      sub-items landed together, which is what the note predicted: (a)
+      `renderResources.ts` now applies oil's `random_penalty{source=1,
+      amplitude=48}` probability factor, and (b) oil places through the per-tile
+      placement roll rather than the `>= 0.5` footprint. It was never really
+      "tiny dots" - the threshold drew oil's whole patch EXTENT, 1234 tiles in
+      `[0,0]-[512,512]` where the game has **8** wells. Now 7 vs 8 there, and
+      0 vs 0 in `[4096,4096]`. The `random_penalty` batch extent, which this was
+      expected to require, turned out to be irrelevant to density - see
+      `docs/noise/random-penalty-NOTES.md`.
       - **2026-07-20 finding (from `~/GitHub/factorio-data` @ 2.1.11,
         `resource-autoplace.lua:103-105`):** for `random_probability < 1` the game
         appends `* random_penalty{x=x, y=y, source=1, amplitude=1/random_probability}`
@@ -266,6 +282,15 @@ M3a follow-ups (known, deferred by priority - 2026-07-20):
         placement roll (place if roll < probability), validated tile-for-tile
         against `find_entities`. Oil stays as-is (tiny dots) until M3.5; no
         standalone change.
+      - **DONE 2026-07-27 (Task 8), and the fold was the right call** - the factor
+        and the roll landed together exactly as decided. Two corrections to the
+        analysis above, both from measurement. The factor costs a **96x** density
+        reduction, not `rp` = 48x: `1 - 48U` is positive only for `U < 1/48` and
+        averages 1/2 there. And validation is by **density, not tile-for-tile**
+        against `find_entities` - this port does not reproduce positions for any
+        overlay. The `random_penalty` batch extent that made this look expensive
+        turned out to be irrelevant to density (`random-penalty-NOTES.md`), so the
+        per-resource render rule was never needed.
 
 Done = ore patches overlaid on land, responding to the frequency/size/richness sliders.
 
@@ -395,20 +420,24 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
         `.superpowers/sdd/2026-07-24-vulcanus-v2-resources/task-8-report.md`
         for the full before/after table and methodology.
 
-      **Vulcanus V3 (sulfuric-acid geyser) - PARTIAL, shipped 2026-07-26 as a
-      patch blob.** The geyser is now a fourth `VULCANUS_RESOURCE_CATALOG`
-      entry painting `sulfuricAcidRegionPatchy > 0` in `map_color`
-      `[199, 199, 26]`, last in catalog order so calcite wins the
-      mountains-biome overlap the two share.
+      **Vulcanus V3 (sulfuric-acid geyser) - DONE 2026-07-27.** Shipped
+      2026-07-26 as a patch blob (a fourth `VULCANUS_RESOURCE_CATALOG` entry
+      painting `sulfuricAcidRegionPatchy > 0` in `map_color` `[199, 199, 26]`),
+      which drew the region where the game *rolls* rather than the geysers
+      themselves and overstated their area by 4.2x (measured).
+      It now rolls: `placement: "roll"` on the catalog entry, the game's
+      `vulcanus_sulfuric_acid_geyser_probability` read from source (no
+      `random_penalty` - unlike its calcite/coal/tungsten neighbours),
+      `makePlacementSet` with the lava tile gate and the 2.8 x 2.8
+      `collision_box`, and a 3x3 mark per placement.
 
-      **What is still missing is individual geysers, and V2's "mostly renderer
-      work" framing was wrong.** The field math was done, but the placement
-      rule peaks near 0.065, so no threshold yields a footprint - every geyser
-      comes from a per-tile roll against the per-chunk placement stream
-      (`placement-roll-NOTES.md`) shared across all ~14 Vulcanus entity
-      autoplacers. That is the M3.5 stop-and-report work, tracked in issue #9
-      together with Nauvis crude oil and enemy bases, which need the identical
-      mechanism. See `vulcanus-resources-NOTES.md` gap #4.
+      **Validated against the real game.** Oracle region 4 `[-256,-256]` has 56
+      geysers and the model places 56; regions 2 and 3 hold no sulfur at all and
+      both sides are 0. n = 56 is a weak denominator (Poisson sigma ~7.5) and
+      eight alternative salts span 46-63, so read the agreement as unbiased, not
+      precise. See `vulcanus-resources-NOTES.md` gap #4 and
+      `placement-roll-NOTES.md`. Nauvis crude oil followed in Task 8, which
+      closes the last overlay issue #9 tracked.
 
       **Vulcanus cliffs - DONE 2026-07-26.** `renderVulcanusCliffs` +
       `cliffiness_basic`, oracle-validated to under 5e-6. Far smaller than the

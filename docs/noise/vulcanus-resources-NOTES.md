@@ -315,11 +315,11 @@ that turned out to be seed-insensitive.
    ~178 > 128, where the game's cap would bind and this port's would not) -
    do not "fix" this by adding the cap defensively for the slider-reachable
    range; it would be dead code there.
-4. **The sulfuric-acid geyser renders as a patch blob, not as geysers.**
-   Shipped 2026-07-26 as a fourth `VULCANUS_RESOURCE_CATALOG` entry drawing
-   `sulfuricAcidRegionPatchy > 0` in the geyser's `map_color` `[199, 199, 26]`.
-   That is the region where the game would *roll* for a geyser, not where
-   geysers are.
+4. **CLOSED 2026-07-27 (Task 7): the sulfuric-acid geyser rolls.** ~~It renders
+   as a patch blob, not as geysers.~~ V3 shipped it (2026-07-26) as a fourth
+   `VULCANUS_RESOURCE_CATALOG` entry drawing `sulfuricAcidRegionPatchy > 0` in
+   the geyser's `map_color` `[199, 199, 26]` - the region where the game would
+   *roll* for a geyser, not where geysers are.
 
    V2's note that "V3 is mostly renderer work" was wrong, and the correction is
    worth keeping. The field math was indeed done, but the placement rule
@@ -330,26 +330,51 @@ that turned out to be seed-insensitive.
                * 0.025 * ((patchy > 0) + 2 * patchy)
    ```
 
-   which peaks near **0.065**. There is no threshold that produces a footprint
-   the way `1000 * region` does for the three solid ores - every geyser in-game
-   comes from a per-tile RNG roll against that probability. Reproducing those
-   rolls means the per-chunk placement stream of
-   `docs/noise/placement-roll-NOTES.md`, shared across all ~14 Vulcanus entity
-   autoplacers, which is the multi-session, cross-subsystem work the M3.5 spike
-   stopped on. Deferred to issue #9, which covers the same mechanism for Nauvis
-   crude oil and enemy bases.
+   There is no threshold that produces a footprint the way `1000 * region` does
+   for the three solid ores - every geyser in-game comes from a per-tile RNG
+   roll against that probability. The entry now carries
+   `placement: "roll"` and `renderVulcanusResources` draws it through
+   `makePlacementSet` with the lava tile gate and a 2.8 x 2.8 collision box,
+   painting a 3x3 mark per placement. Density is validated against the real game
+   in `test/entityDensity.spec.ts` (oracle region 4: 56 against the game's 56;
+   the other two Vulcanus regions have no sulfur and both sides are 0). See
+   `docs/noise/placement-roll-NOTES.md` for the prototype data and the gate-by-
+   gate measurement. Nauvis crude oil, the last overlay issue #9 named, followed
+   in Task 8.
 
-   Two consequences of the blob that are easy to misread:
+   Two things about the OLD blob that were easy to misread, kept because the
+   second is exactly what the roll fixed:
 
-   - **It is much smaller than the sulfur spot.** `patchy > 0` requires
-     `(1 + region) * (0.5 + 0.5 * patches) > 1`, and `patches` tops out around
-     0.8, so it needs `region > ~0.11` at best - only the core of a spot, not
-     its full cone. A window holding 500+ geyser pixels can hold zero of the
-     three ores.
-   - **The blob's area is not the geysers' area.** Inside it the game places
-     geysers on at most ~6.5% of tiles, and each occupies ~3x3. Reading the
-     blob as "this much ground is geyser" overstates it by more than an order
-     of magnitude.
+   - **It was much smaller than the sulfur spot.** `patchy > 0` requires
+     `(1 + region) * (0.5 + 0.5 * patches) > 1`, so it needs `region` well
+     above 0 - only the core of a spot, not its full cone. A window holding
+     500+ geyser pixels can hold zero of the three ores.
+   - **The blob's area was not the geysers' area.** Inside it the game places
+     geysers on a few percent of tiles, and each occupies ~3x3. Reading the blob
+     as "this much ground is geyser" overstated it by **4.2x**.
+
+   **Two numbers this file carried, both reasoned rather than measured, both
+   wrong:**
+
+   - The probability does not "peak near 0.065". That bound assumed
+     `region <= 1`, and `vulcanus_sulfuric_acid_region` is a `max` against
+     `vulcanus_starting_sulfur`, which is uncapped. Measured over +/-3000 tiles
+     at seed 123456: **0.0883** at (2481, -1985).
+   - The blob did not overstate the geysers' area "by more than an order of
+     magnitude" - that came from multiplying the *pre-collision* roll rate by
+     ~9 tiles, and collision rejects most of those hits. Aggregating the shipped
+     predicate over +/-2000 tiles on a 2-tile grid: 371 placements at the
+     collision box's 2.8 x 2.8 = 7.84 tiles each, against 12130 sampled
+     footprint tiles - **0.240, i.e. 4.2x**. The same ratio measured on rendered
+     pixels reads 0.24-0.27, because the 3x3 mark inflates the placements by
+     about the factor the tile sampling deflates them by; that agreement is
+     arithmetic, not corroboration.
+
+   That makes four numbers in this subsystem (with the two the placement-roll
+   notes record) that were derived on paper and did not survive measurement.
+   **The pattern is the finding**, not any one of them: a bound assembled from
+   other bounds inherits every unstated assumption in them, and this file has
+   yet to produce one that held.
 5. **Cliffs and rocks now both render** (2026-07-26) - this gap is closed as a
    missing-layer gap, though neither is entity-exact. Together they were about
    16.8% of a headless Vulcanus preview's pixels: the tan speckle, `144,119,87`

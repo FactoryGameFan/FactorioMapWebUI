@@ -90,13 +90,20 @@ single knife-edge probe position.
 The spec asserts both the overall bound and a tighter near-field one, since the
 near field is where the preview actually renders.
 
-## The render is a threshold, and it does not look like the game
+## The render WAS a threshold, and it did not look like the game (SUPERSEDED 2026-07-27)
 
-`renderVulcanusRocks` paints `ROCK_MAP_COLOR` where `density >=
-VULCANUS_ROCK_FOOTPRINT_THRESHOLD` (0.02), mirroring the Nauvis overlay. No
-water exclusion (Vulcanus has no water tile) and no levers.
+**Superseded by the placement roll.** `renderVulcanusRocks` no longer thresholds:
+since Tasks 3 and 4.5 it rolls the game's per-tile placement draw against `density`
+and applies the tile-restriction and collision gates (`makePlacementSet`).
+`VULCANUS_ROCK_FOOTPRINT_THRESHOLD` was deleted in Task 3, and the Nauvis overlay it
+mirrored stopped thresholding in Task 5 (`ROCK_FOOTPRINT_THRESHOLD` is gone too). The
+rest of this section is kept as the record of WHY the roll was necessary - the
+plateau argument below is the reason thresholding could not be tuned into looking
+right, and it is still the best short explanation of that. Read it as history, not as
+current behaviour. Vulcanus still has no water exclusion (no water tile) and no
+levers; both remain true.
 
-**This is a threshold on a probability field, not a placement**, and it is worth
+**A threshold on a probability field is not a placement**, and it is worth
 being blunt about the limit. Both expressions cap at 0.2, so `min(cap, ...)`
 makes the field a **plateau** rather than a gradient, and thresholding cannot
 turn it into scattered points. Measured over world `[-512, 512)^2` at seed
@@ -118,18 +125,67 @@ coverage number. Tuning would have bought a magic per-planet constant without
 buying the intended look, since the plateau shape is the actual obstacle. The
 honest description of what this draws is "rocky ground", not "rocks".
 
-The real fix is the per-tile placement roll tracked in **issue #9**, which
-covers the same mechanism for the sulfuric-acid geyser, Nauvis crude oil and
-Nauvis enemy bases.
+The real fix was the per-tile placement roll tracked in **issue #9**, which also
+covers the sulfuric-acid geyser, Nauvis crude oil and Nauvis enemy bases. It
+shipped for Vulcanus rocks in Tasks 3 and 4.5, for Nauvis rocks in Task 5, for
+Nauvis enemy bases in Task 6, for the sulfuric-acid geyser in Task 7 and for
+Nauvis crude oil in Task 8 - all four overlays issue #9 named.
 
-**This is the one thing in the V3 work that wants a human eyeball**, since
-"reads as rocky ground" is a judgement a test cannot make.
+### What the roll actually paints, on the same window
 
-## Not validated
+Measured with the shipped gated predicates over the identical `[-512, 512)^2`
+window the plateau table above uses, so the two are directly comparable:
 
-As with Vulcanus cliffs, there is **no entity-level check** against a real
-`find_entities_filtered` dump. What is proven: the three expressions match the
-game to the bounds above, the max-arbitration is the game's own rule, and the
-decorative/entity split is read from the planet definition. What is not proven
-is coverage against the game's own preview - and given the threshold discussion
-above, that comparison is not meaningful until the placement roll exists.
+| overlay | placed | coverage | was |
+| --- | --- | --- | --- |
+| Vulcanus rocks | 5288 | **0.504%** | 7.03% (threshold at 0.02) |
+| Nauvis rocks | 841 | **0.080%** | ~1.6% |
+
+So the roll paints about **14x less ink** on Vulcanus than the threshold did, and
+the remaining ink is scattered rather than a plateau. That is the whole visual
+complaint this section was written about.
+
+**The Nauvis figure turned out to be too little ink, and the mark sizes now
+differ per planet** (2026-07-27, on Eric's review of the deployed preview: "can't
+see the rocks anymore"). Sparseness was only half the cause - the other half is
+contrast. `ROCK_MAP_COLOR` (129, 105, 78) sits within a few units of the Nauvis
+dirt tiles it usually lands on, so 0.080% at one pixel each is invisible in
+practice; the same colour on Vulcanus is tan on dark basalt, at 6x the density,
+and reads as a fine stipple at 1x1. Nauvis rocks therefore paint a 3x3 mark
+(~0.72% coverage) and **Vulcanus rocks keep the single pixel** - thickening them
+would push coverage to ~4.5%, back within sight of the 7.03% plateau this whole
+section exists to explain. See `NAUVIS_ROCK_MARK_RADIUS_PX` in `rockCatalog.ts`.
+
+That is also why Task 5's owner ruling ("Nauvis rocks stay 1x1, judge visibility
+on the deployed preview") resolved the way it did: the judgement was deferred to
+an eyeball, the eyeball said no, and the fix was thickening rather than
+brightening - the same call cliffs made.
+
+**Coarse field sampling was built for this overlay and is switched off.** Task 9
+added `ROCK_FIELD_LATTICE` (evaluate the field on a stride, still roll every
+tile), measured it, and shipped it at 1 - i.e. disabled. Density survives a
+stride of 2 or 4 to within ~1%, but Vulcanus clumping rises 6.7% and 11.8%, and
+the perf case does not hold: removing the rock overlay *entirely* still leaves a
+Vulcanus `all` render at 2.091x its terrain baseline, so no lattice reaches the
+"under 2x" gate. Cliffs (42%) and resources (40%) are where the cost is, not
+rocks (27%). Full tables in `placement-roll-NOTES.md`.
+
+**"Reads as rocky ground" was the one thing in the V3 work that wanted a human
+eyeball**, since that is a judgement a test cannot make. The roll replaced the
+plateau with scattered single pixels, so the specific complaint is gone.
+
+## Validation status
+
+**Entity-level validation now exists** and did not when this was written.
+`test/entityDensity.spec.ts` compares the placed-tile count against real
+`count_entities_filtered` counts from a 2.1.12 surface
+(`test/fixtures/oracle-entity-counts.seed123456.json`) over three regions, and
+agrees to 0.2% / 0.6% / 7.5%.
+
+What that does and does not prove is worth keeping straight. Proven: the three
+expressions match the game to the bounds above; the decorative/entity split is read
+from the planet definition; and the total rock DENSITY matches. **Not** proven - and
+in fact falsified - is the per-tile prototype identity: max-probability arbitration
+predicts a 0% `huge-volcanic-rock` population where the game has ~28%. See the
+FALSIFIED section of `docs/noise/placement-roll-NOTES.md`. Coverage against the
+game's own map preview is still unchecked.

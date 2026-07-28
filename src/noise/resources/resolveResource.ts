@@ -72,14 +72,27 @@ export function pickWinner(present: readonly ResourceParams[]): ResourceParams |
 }
 
 /**
- * Build a resolver `(x, y) => ResourceParams | null` over all catalog resources whose
- * `size` control is > 0, returning the order-priority winner where `probability >= 0.5`.
+ * Build a resolver `(x, y) => ResourceParams | null` over the THRESHOLD catalog
+ * resources whose `size` control is > 0, returning the order-priority winner where
+ * `probability >= 0.5`.
+ *
+ * **Crude oil is deliberately absent from the result**, because it is the one
+ * `placement: "roll"` resource; `renderResources` paints it separately. A caller
+ * that wants "which resource is at this tile, oil included" must consult
+ * `makeNauvisOilPlacement` as well. `pickWinner` still ranks oil correctly - it is
+ * a pure priority function over whatever it is handed.
  */
 export function makeResourceResolver(
   ctx: ResourceResolverCtx,
 ): (x: number, y: number) => ResourceParams | null {
   const fields: { params: ResourceParams; patches: ResourcePatches }[] = [];
   for (const params of RESOURCE_CATALOG) {
+    // Roll resources (crude oil alone) are not thresholded and are not resolved
+    // here - `renderResources` paints them from `makeNauvisOilPlacement` in its
+    // own pass, because a roll needs the chunk stream and the collision gate that
+    // a per-tile pure resolver cannot express. Leaving oil in this loop is what
+    // used to paint its whole patch extent as solid ore.
+    if (params.placement === "roll") continue;
     const levers = ctx.controls[params.controlName] ?? DEFAULT_LEVERS;
     if (levers.size <= 0) continue; // a disabled resource never appears
     fields.push({

@@ -277,16 +277,19 @@ describe("runRenderRequest", () => {
     expect(countIron(noIron)).toBe(0);
   });
 
-  it("view 'enemies' overlays the enemy-base footprint on the terrain", () => {
-    // World point (1000, 1040), seed 123456: renderEnemies.spec.ts's own fixture
-    // ("paints a pixel inside a base spot") proves ebp clears the footprint
-    // threshold there; the terrain color at that point is [141, 104, 60, 255]
-    // (land, not water), so the overlay is free to paint.
+  it("view 'enemies' overlays enemy-base placements on the terrain", () => {
+    // 32x32 px at 1 tile/px over world [1000,1032) x [1040,1072) - inside a base
+    // spot (5 placements, 45 painted pixels at seed 123456). This used to be a
+    // 1x1 image at the same origin, which worked while the overlay thresholded
+    // `enemy_base_probability`; a roll places ~1 spawner per few hundred tiles, so
+    // a single pixel is no longer a reliable hit. Widened rather than moved, and
+    // the assertion is "some pixels changed and every changed pixel is exactly
+    // ENEMY_MAP_COLOR" rather than a pixel count.
     const req: ElevationRenderRequest = {
       id: 14,
       seed0: 123456,
-      width: 1,
-      height: 1,
+      width: 32,
+      height: 32,
       originX: 1000,
       originY: 1040,
       tilesPerPixel: 1,
@@ -299,7 +302,21 @@ describe("runRenderRequest", () => {
     const terrain = new Uint8ClampedArray(runRenderRequest({ ...req, view: "terrain" }).buffer);
     const withEnemies = new Uint8ClampedArray(runRenderRequest(req).buffer);
     expect(Array.from(withEnemies)).not.toEqual(Array.from(terrain));
-    expect(Array.from(withEnemies)).toEqual([...ENEMY_MAP_COLOR, 255]);
+    let changed = 0;
+    for (let i = 0; i < terrain.length; i += 4) {
+      if (
+        withEnemies[i] === terrain[i] &&
+        withEnemies[i + 1] === terrain[i + 1] &&
+        withEnemies[i + 2] === terrain[i + 2]
+      )
+        continue;
+      changed++;
+      expect([withEnemies[i], withEnemies[i + 1], withEnemies[i + 2], withEnemies[i + 3]]).toEqual([
+        ...ENEMY_MAP_COLOR,
+        255,
+      ]);
+    }
+    expect(changed).toBeGreaterThan(0);
   });
 
   it("view 'cliffs' overlays the cliff footprint on the terrain", () => {
@@ -380,12 +397,29 @@ describe("runRenderRequest", () => {
 
   it("view 'all' composites all five overlays onto terrain (exactly the union of the single-overlay diffs)", () => {
     // 128x128 px at 4 tiles/px over world [512, 1024) - a region with resources,
-    // enemy bases, cliffs, trees, and rocks all present. The finer 4 tiles/px
-    // (rather than the 16 this test used before rocks moved above resources) is
-    // what makes any resource pixel also a rock pixel at all: rocks cover ~0.9%
-    // of the window and ore ~1%, so their intersection is only ever a handful
-    // of pixels, and at 16 tiles/px it was empty - which would have left the
-    // rocks-over-resources assertion below passing vacuously.
+    // enemy bases, cliffs, trees, and rocks all present, which is all this test
+    // needs from a window.
+    //
+    // The rocks-over-resources ordering used to be checked here too, and the
+    // 4 tiles/px was chosen (over the 16 this test used before rocks moved above
+    // resources) to make a resource pixel ever be a rock pixel at all. That no
+    // longer works: when rocks thresholded a probability field they covered
+    // ~0.9% of the window, but rolling the game's per-tile placement draw puts
+    // them at ~0.07% of tiles, and the intersection with ore in this window is
+    // now exactly zero. Re-probing found no window that carries all five
+    // overlays AND a workable rocks-and-resources intersection, so that
+    // assertion moved to its own test below with its own window, rather than
+    // being weakened here. See the comment on that test for the probe.
+    //
+    // The same factor thinned the plain presence assertion below, twice. Rocks
+    // moved to the roll in Task 5, and enemy bases followed in Task 6: this
+    // window now holds 5 rock pixels and 5 enemy pixels, against 172 resource,
+    // 1539 cliff and 5198 tree (all measured; enemies were 217 while the overlay
+    // thresholded `enemy_base_probability`). `rocks.size > 0` and
+    // `enemies.size > 0` therefore have far narrower margins than the other
+    // three - if a future change moves either placement at all, expect those to
+    // be the assertions that go first, and re-probe for a window rather than
+    // dropping them.
     const req: ElevationRenderRequest = {
       id: 21,
       seed0: 123456,
@@ -447,34 +481,98 @@ describe("runRenderRequest", () => {
     //
     // Compositing runs terrain -> trees -> resources -> rocks -> enemies ->
     // cliffs, and every overlay paints opaquely, so on any contended pixel the
-    // last one to run wins. Two cases are checked below:
-    //   1. a pixel resources paint that no LATER overlay paints must equal the
-    //      resources render exactly - trees underneath must not show through;
-    //   2. a pixel both rocks and resources paint (and neither of the two after
-    //      rocks) must be rock-coloured - a rock in the way of an ore patch
-    //      reads as the obstruction, not as ore.
+    // last one to run wins. Checked here: a pixel resources paint that no LATER
+    // overlay paints must equal the resources render exactly - trees underneath
+    // must not show through. (Rocks-over-resources is the test below.)
     let treesUnder = 0;
-    let rocksOver = 0;
     for (const i of resources) {
-      if (enemies.has(i) || cliffs.has(i)) continue;
-      if (rocks.has(i)) {
-        rocksOver++;
-        expect(
-          [allBuf[i], allBuf[i + 1], allBuf[i + 2]],
-          `pixel ${i}: rocks must composite OVER resources`,
-        ).toEqual([...ROCK_MAP_COLOR]);
-        continue;
-      }
+      // Skip anything a later overlay also paints - rocks included, even though
+      // this window has no such pixel today, so the loop stays correct if one
+      // ever appears.
+      if (enemies.has(i) || cliffs.has(i) || rocks.has(i)) continue;
       if (trees.has(i)) treesUnder++;
       expect(
         [allBuf[i], allBuf[i + 1], allBuf[i + 2], allBuf[i + 3]],
         `pixel ${i}: trees must composite UNDER resources`,
       ).toEqual([resourcesBuf[i], resourcesBuf[i + 1], resourcesBuf[i + 2], resourcesBuf[i + 3]]);
     }
-    // ...and each assertion is only meaningful where the two overlays actually
+    // ...and that assertion is only meaningful where the two overlays actually
     // contend for the same pixel, so prove this window has such pixels rather
     // than passing because they never meet.
     expect(treesUnder, "window must have pixels both trees and resources paint").toBeGreaterThan(0);
+  });
+
+  it("view 'all' composites rocks OVER resources", () => {
+    // Split out of the union test above when Nauvis rocks moved from a
+    // probability threshold to the game's per-tile placement roll: rocks now
+    // cover ~0.07% of tiles instead of ~0.9%, so the two overlays almost never
+    // contend, and the union test's window lost its last shared pixel.
+    //
+    // **Re-chosen in Task 8, when crude oil stopped being a threshold.** The
+    // previous window (origin (0, 1024)) rested on 3-4 shared pixels, and it
+    // turned out they were OIL pixels: once oil moved to a per-tile roll its
+    // 1234-tile blob in that neighbourhood collapsed to a handful of wells, the
+    // shared count went to exactly 0, and this test failed. That is the guard
+    // working - `progress.md` had flagged the 4-pixel margin as "thin but
+    // deterministic" one task earlier - but it also means the old window was
+    // never really testing rocks against *ore*.
+    //
+    // The replacement is picked against the post-oil predicates directly rather
+    // than by rendering: every tile in [-1600, 1600)^2 where
+    // `makeResourceResolver` (now oil-free) returns non-null AND
+    // `makeNauvisRockPlacement` places was collected - 86 of them across the
+    // whole 3200x3200 area, which is how scarce this contention now is - then
+    // 128x128 windows scored by how many they contain. Origin (71, 1302) holds
+    // **11**, the best available, against the old window's 0.
+    //
+    // Nothing about this window is load-bearing except that the shared count is
+    // non-zero, which the final assertion proves rather than assumes.
+    const req: ElevationRenderRequest = {
+      id: 22,
+      seed0: 123456,
+      width: 128,
+      height: 128,
+      originX: 71,
+      originY: 1302,
+      tilesPerPixel: 1,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      startingPositions: [{ x: 0, y: 0 }],
+      view: "terrain",
+    };
+    const terrain = new Uint8ClampedArray(runRenderRequest(req).buffer);
+    const bufFor = (view: ElevationRenderRequest["view"]) =>
+      new Uint8ClampedArray(runRenderRequest({ ...req, view }).buffer);
+    const diffPixels = (buf: Uint8ClampedArray): Set<number> => {
+      const s = new Set<number>();
+      for (let i = 0; i < terrain.length; i += 4)
+        if (
+          buf[i] !== terrain[i] ||
+          buf[i + 1] !== terrain[i + 1] ||
+          buf[i + 2] !== terrain[i + 2] ||
+          buf[i + 3] !== terrain[i + 3]
+        )
+          s.add(i);
+      return s;
+    };
+    const allBuf = bufFor("all");
+    const resources = diffPixels(bufFor("resources"));
+    const rocks = diffPixels(bufFor("rocks"));
+    // The two overlays that composite AFTER rocks; a pixel either of them paints
+    // says nothing about rock-vs-resource order. Empty in this window today, but
+    // rendered rather than assumed so the exclusion stays honest.
+    const enemies = diffPixels(bufFor("enemies"));
+    const cliffs = diffPixels(bufFor("cliffs"));
+
+    let rocksOver = 0;
+    for (const i of resources) {
+      if (enemies.has(i) || cliffs.has(i) || !rocks.has(i)) continue;
+      rocksOver++;
+      expect(
+        [allBuf[i], allBuf[i + 1], allBuf[i + 2]],
+        `pixel ${i}: rocks must composite OVER resources`,
+      ).toEqual([...ROCK_MAP_COLOR]);
+    }
     expect(rocksOver, "window must have pixels both rocks and resources paint").toBeGreaterThan(0);
   });
 });
@@ -629,6 +727,6 @@ describe("cliffCellQueryBox", () => {
     const box = cliffCellQueryBox(
       req({ originX: -32, originY: -32, tilesPerPixel: 4, fullImage: full }),
     );
-    expect(box.x0).toBe(-32 - 8); // CLIFF_MARK_RADIUS_PX * 4
+    expect(box.x0).toBe(-32 - 8); // CLIFF_MARK_BACK_PX * 4
   });
 });

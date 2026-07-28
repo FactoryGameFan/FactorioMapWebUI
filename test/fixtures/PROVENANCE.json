@@ -88,6 +88,10 @@
       "factorioVersion": "2.1.11",
       "evidence": "stated in the fixture's own _comment"
     },
+    "oracle-entity-counts.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "stated in the fixture's own _comment; captured 2026-07-27 against the installed binary, with `pnpm refs:sync --check` reporting binary/factorio-data/lua-api all in sync at 2.1.12"
+    },
     "oracle-expression-in-range.seed123456.json": {
       "factorioVersion": "2.1.11",
       "evidence": "stated in the fixture's own _comment"

@@ -214,6 +214,50 @@ describe("runRenderRequest planet dispatch", () => {
     expect(changed).toBeGreaterThan(0);
   });
 
+  it("rolls Vulcanus rocks rather than thresholding - coverage drops well below the 7% plateau", () => {
+    const common = {
+      id: 21,
+      seed0: 123456,
+      planet: "vulcanus" as const,
+      width: 256,
+      height: 256,
+      originX: -128,
+      originY: -128,
+      tilesPerPixel: 1,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      startingPositions: [{ x: 0, y: 0 }],
+    };
+    const terrain = new Uint8ClampedArray(runRenderRequest({ ...common, view: "terrain" }).buffer);
+    const rocks = new Uint8ClampedArray(
+      runRenderRequest({ ...common, id: 22, view: "rocks" }).buffer,
+    );
+    let changed = 0;
+    for (let o = 0; o < rocks.length; o += 4) {
+      if (
+        rocks[o] !== terrain[o] ||
+        rocks[o + 1] !== terrain[o + 1] ||
+        rocks[o + 2] !== terrain[o + 2]
+      )
+        changed++;
+    }
+    const coverage = changed / (common.width * common.height);
+    // Directly measured for this exact window/seed before this change (the old
+    // VULCANUS_ROCK_FOOTPRINT_THRESHOLD = 0.02 sweep, no mark): 7.56% - close to
+    // the 7.03% docs/noise/vulcanus-rocks-NOTES.md reports for the larger
+    // [-512, 512)^2 world window. Vulcanus rocks paint a 1x1 pixel per roll
+    // hit (matching renderRocks.ts's Nauvis choice: "rocks are point-like, and
+    // a block would merge scattered rocks into a blob" - no
+    // PLACEMENT_MARK_RADIUS_PX mark here, unlike the 3x3-mark overlays in
+    // Tasks 6-8). Measured at 0.78% for this window - a ~10x drop from the old
+    // threshold, which is what "stops reading as rocky ground" actually
+    // requires. 0.01 is pinned just above that measurement: the roll is fully
+    // deterministic here (no jitter draws), so the bound is exact rather than
+    // a flakiness margin.
+    expect(coverage).toBeLessThan(0.01);
+    expect(coverage).toBeGreaterThan(0); // and it must still paint SOMETHING
+  }, 15000);
+
   it("paints Vulcanus cliffs for view:'cliffs', in the shared CLIFF_MAP_COLOR", () => {
     const common = {
       id: 5,
@@ -261,7 +305,13 @@ describe("runRenderRequest planet dispatch", () => {
   // Window choice is not arbitrary: resources have to contend with BOTH other
   // overlays for the two assertions to mean anything, and most windows give
   // only one. This one (a 256x256-tile world window at 2 tiles/px) was probed
-  // to have 342 resource pixels cliffs also paint and 67 rocks also paint.
+  // to have 342 resource pixels cliffs also paint, and 67 rocks also paint
+  // under the old threshold render. T3 switched rocks to a per-tile placement
+  // roll (src/noise/placement/placementRoll.ts) painting a single pixel
+  // (matching Nauvis's renderRocks.ts, not the 3x3 mark other roll overlays
+  // use), which lowers the rock count sharply - re-measured at 4 here. The
+  // window still clears the ">0" bar below, so it was kept rather than
+  // re-probed; only this comment's count changed.
   // Both counts are asserted below, so if placement ever shifts the test fails
   // loudly rather than passing vacuously. It runs five full Vulcanus renders,
   // hence the explicit timeout.
