@@ -16,6 +16,7 @@ import { renderTerrain } from "./renderTerrain";
 import { renderTrees } from "./renderTrees";
 import { renderVulcanusCliffs } from "./renderVulcanusCliffs";
 import { renderVulcanusResources } from "./renderVulcanusResources";
+import { renderVulcanusTerrainOreFused } from "./renderVulcanusFused";
 import { renderVulcanusRocks } from "./renderVulcanusRocks";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
 
@@ -91,6 +92,14 @@ export interface ElevationRenderRequest {
    * and `view: "resources"`. Defaults to all-neutral.
    */
   vulcanusResourceControls?: VulcanusResourceControls;
+  /**
+   * PROTOTYPE (issue #19 follow-up), default off: render the Vulcanus composite
+   * through `renderVulcanusTerrainOreFused`, which fuses terrain and the
+   * thresholded-ore pass into one pixel loop over one shared field stack.
+   * Output must be byte-identical to the sequential path - asserted in
+   * `test/vulcanusFusedEquality.spec.ts`. Not wired to any UI.
+   */
+  fusedPrototype?: boolean;
   /**
    * The enemy-base autoplace control's frequency/size (control:enemy-base:*) -
    * consumed only when `view: "enemies"`. Defaults to `{ frequency: 1, size: 1 }`
@@ -237,23 +246,41 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
       // Nauvis overlays (enemies, trees, rocks) have no Vulcanus port, so a
       // terrain-family view that asks for one still gets plain terrain rather
       // than a Nauvis field composited onto Vulcanus colors.
-      image = renderVulcanusTerrain({
-        seed0: req.seed0,
-        width: req.width,
-        height: req.height,
-        originX: req.originX,
-        originY: req.originY,
-        tilesPerPixel: req.tilesPerPixel,
-        ctx: {
-          startingPositions: req.startingPositions,
-          vulcanusResourceControls: req.vulcanusResourceControls,
-        },
-      });
+      const wantsResources = req.view === "resources" || req.view === "all";
+      const fused =
+        req.fusedPrototype === true && wantsResources
+          ? renderVulcanusTerrainOreFused({
+              seed0: req.seed0,
+              width: req.width,
+              height: req.height,
+              originX: req.originX,
+              originY: req.originY,
+              tilesPerPixel: req.tilesPerPixel,
+              ctx: {
+                startingPositions: req.startingPositions,
+                vulcanusResourceControls: req.vulcanusResourceControls,
+              },
+            })
+          : undefined;
+      image =
+        fused?.image ??
+        renderVulcanusTerrain({
+          seed0: req.seed0,
+          width: req.width,
+          height: req.height,
+          originX: req.originX,
+          originY: req.originY,
+          tilesPerPixel: req.tilesPerPixel,
+          ctx: {
+            startingPositions: req.startingPositions,
+            vulcanusResourceControls: req.vulcanusResourceControls,
+          },
+        });
       // Resources paint first, then the two obstruction overlays on top, so a
       // cliff or a rock crossing an ore patch still reads as the thing that is
       // in the way. Cliffs last matches the Nauvis order below, where
       // renderCliffs is the final pass.
-      if (req.view === "resources" || req.view === "all") {
+      if (wantsResources) {
         renderVulcanusResources(image, {
           seed0: req.seed0,
           originX: req.originX,
@@ -266,7 +293,12 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           // The geyser rolls and paints a 3x3 mark; the three solid ores
           // threshold and paint 1x1, and ignore this.
           sweepBox: placementMarkSweepBox(req),
+          // When fused, the ore pass was already DECIDED in the fused loop; it
+          // still has to be PAINTED after the geyser marks, which is what
+          // `paintOre` below does. Order is observable because the marks are 3x3.
+          skipThreshold: fused !== undefined,
         });
+        fused?.paintOre();
       }
       if (req.view === "rocks" || req.view === "all") {
         renderVulcanusRocks(image, {

@@ -200,6 +200,14 @@ export function makeVulcanusGeyserProbability(ctx: EvalCtx): (x: number, y: numb
 }
 
 export interface RenderVulcanusResourcesOptions {
+  /**
+   * PROTOTYPE (issue #19 follow-up): run only the rolled (geyser) pass and skip
+   * the thresholded ores. Used by `renderVulcanusFused`, which decides the ore
+   * pass inside its own fused loop but must still let the geyser marks paint in
+   * their original slot BEFORE the ore goes down. Default false = shipped
+   * behaviour.
+   */
+  skipThreshold?: boolean;
   readonly seed0: number;
   /** World tile at the top-left pixel. Default (0, 0). */
   readonly originX?: number;
@@ -265,6 +273,7 @@ export function renderVulcanusResources(
 
   // Pass 2: the thresholded ores, over the top - see the module comment on paint
   // order. First in catalog order wins a pixel.
+  if (opts.skipThreshold === true) return;
   const thresholded = active
     .filter((p) => p.placement === "threshold")
     .map((params) => ({ params, region: params.region(resources) }));

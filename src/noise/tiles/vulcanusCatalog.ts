@@ -21,7 +21,7 @@
  * `src/noise/expressions/vulcanusResources.ts`).
  */
 
-import type { EvalCtxInput } from "../eval/ctx";
+import type { EvalCtx, EvalCtxInput } from "../eval/ctx";
 import { withCtxDefaults } from "../eval/ctx";
 import { distanceFromNearestPoint } from "../distanceFromNearestPoint";
 import { clamp, max, min } from "../eval/math";
@@ -358,9 +358,28 @@ export function resolveVulcanusTile(x: number, y: number, catalog: VulcanusTile[
  * task-local fields (`mountain_lava_spots`, `vulcanus_rock_noise`) and the 19-tile
  * catalog once, then returns an `(x, y) => VulcanusTile` argmax resolver.
  */
-export function makeVulcanusTileResolver(
-  input: EvalCtxInput,
-): (x: number, y: number) => VulcanusTile {
+export interface VulcanusStack {
+  readonly ctx: EvalCtx;
+  readonly helpers: VulcanusHelpers;
+  readonly spawn: ReturnType<typeof makeVulcanusSpawn>;
+  readonly cracks: ReturnType<typeof makeVulcanusCracks>;
+  readonly biomes: VulcanusBiomes;
+  readonly climate: VulcanusClimate;
+  readonly elevation: VulcanusElevation;
+  readonly resources: ReturnType<typeof makeVulcanusResources>;
+}
+
+/**
+ * The Vulcanus field DAG, built once. Five call sites used to build their own
+ * copy of some or all of this (the tile resolver, the resource overlay, the
+ * geyser placement, the rock fields, the cliff fields) - and because `memoXY`
+ * is a SINGLE-ENTRY cache, separate copies share nothing at all: measured on
+ * the `all` path, terrain + the three overlay marginals summed to exactly the
+ * combined cost, to the evaluation. Sharing one stack is the precondition for
+ * any of that work being reused; it is not sufficient on its own, because two
+ * consumers also have to ask for the same (x, y) while it is still cached.
+ */
+export function makeVulcanusStack(input: EvalCtxInput): VulcanusStack {
   const ctx = withCtxDefaults(input);
   const helpers: VulcanusHelpers = makeVulcanusHelpers(ctx);
   const spawn = makeVulcanusSpawn(ctx, helpers);
@@ -369,6 +388,20 @@ export function makeVulcanusTileResolver(
   const climate: VulcanusClimate = makeVulcanusClimate(ctx, helpers, cracks);
   const elevation: VulcanusElevation = makeVulcanusElevation(ctx, helpers, biomes, cracks, climate);
   const resources = makeVulcanusResources(ctx, helpers, spawn, biomes, cracks);
+  return { ctx, helpers, spawn, cracks, biomes, climate, elevation, resources };
+}
+
+export function makeVulcanusTileResolver(
+  input: EvalCtxInput,
+): (x: number, y: number) => VulcanusTile {
+  return makeVulcanusTileResolverFrom(makeVulcanusStack(input));
+}
+
+/** As {@link makeVulcanusTileResolver}, but over a stack the caller already built. */
+export function makeVulcanusTileResolverFrom(
+  stack: VulcanusStack,
+): (x: number, y: number) => VulcanusTile {
+  const { ctx, helpers, biomes, climate, elevation, resources } = stack;
 
   const mountainLavaSpots = makeMountainLavaSpots(helpers, biomes);
   const rockNoise = makeVulcanusRockNoise(ctx.seed0);
