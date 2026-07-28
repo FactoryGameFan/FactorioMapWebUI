@@ -449,7 +449,7 @@ export function buildCliffModList(): object {
  */
 export function buildCliffControlLua(
   region: Region,
-  opts: { dumpFile?: string; planet?: string; seed?: number } = {},
+  opts: { dumpFile?: string; planet?: string; seed?: number; entityType?: string } = {},
 ): string {
   const dumpFile = opts.dumpFile ?? CLIFF_DUMP_FILE;
   // With `planet` set, run on that planet's own surface with the seed FORCED,
@@ -477,7 +477,7 @@ ${surfaceLua}
     end
   end
   surface.force_generate_chunk_requests()
-  local ents = surface.find_entities_filtered{ type = "cliff", area = {{x0, y0}, {x1, y1}} }
+  local ents = surface.find_entities_filtered{ type = "${opts.entityType ?? "cliff"}", area = {{x0, y0}, {x1, y1}} }
   local cliffs = {}
   for i, e in ipairs(ents) do
     cliffs[i] = {x = e.position.x, y = e.position.y, name = e.name}
@@ -557,6 +557,8 @@ export interface OracleOptions {
   spaceAge?: boolean;
   /** Which planet's surface to route onto when {@link spaceAge} is set. Default "vulcanus". */
   planet?: string;
+  /** Entity `type` for {@link sampleCliffEntities}'s dump. Default "cliff". */
+  entityType?: string;
 }
 
 /**
@@ -729,6 +731,7 @@ export async function sampleCliffEntities(
     buildCliffControlLua(region, {
       planet: opts.spaceAge === true ? (opts.planet ?? "vulcanus") : undefined,
       seed,
+      entityType: opts.entityType,
     }),
   );
   await writeFile(

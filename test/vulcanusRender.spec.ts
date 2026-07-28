@@ -242,19 +242,26 @@ describe("runRenderRequest planet dispatch", () => {
         changed++;
     }
     const coverage = changed / (common.width * common.height);
-    // Directly measured for this exact window/seed before this change (the old
-    // VULCANUS_ROCK_FOOTPRINT_THRESHOLD = 0.02 sweep, no mark): 7.56% - close to
-    // the 7.03% docs/noise/vulcanus-rocks-NOTES.md reports for the larger
-    // [-512, 512)^2 world window. Vulcanus rocks paint a 1x1 pixel per roll
-    // hit (matching renderRocks.ts's Nauvis choice: "rocks are point-like, and
-    // a block would merge scattered rocks into a blob" - no
-    // PLACEMENT_MARK_RADIUS_PX mark here, unlike the 3x3-mark overlays in
-    // Tasks 6-8). Measured at 0.78% for this window - a ~10x drop from the old
-    // threshold, which is what "stops reading as rocky ground" actually
-    // requires. 0.01 is pinned just above that measurement: the roll is fully
-    // deterministic here (no jitter draws), so the bound is exact rather than
-    // a flakiness margin.
-    expect(coverage).toBeLessThan(0.01);
+    // Directly measured for this exact window/seed under the old
+    // VULCANUS_ROCK_FOOTPRINT_THRESHOLD = 0.02 sweep: 7.56%, close to the 7.03%
+    // `docs/noise/vulcanus-rocks-NOTES.md` reports for `[-512, 512)^2`.
+    //
+    // **The bound used to be `< 0.01`, and that was wrong** - it was pinned just
+    // above the 0.78% a 1x1 mark produced, on the assumption that "well below the
+    // 7% plateau" was the goal. Comparing against the game's own
+    // `--generate-map-preview` output shows the game covers **5.17%** of an
+    // origin-centred 1024-tile window in rock colour, so 0.78% was 14x too
+    // little, not comfortably conservative (issue #22 item 6). Rocks now paint a
+    // 3x3 mark on both planets and this window measures ~4.5%.
+    //
+    // What this test can still honestly assert is that the render is a scattered
+    // roll and not the old plateau, so the bound sits between the two: above the
+    // game's own coverage with margin, and clearly under the 7.56% threshold
+    // sweep. It is NOT a fidelity check - `docs/noise/vulcanus-rocks-NOTES.md`
+    // holds the coverage-vs-game comparison, which is the thing that actually
+    // measures accuracy here.
+    expect(coverage).toBeLessThan(0.065);
+    expect(coverage).toBeGreaterThan(0.02);
     expect(coverage).toBeGreaterThan(0); // and it must still paint SOMETHING
   }, 15000);
 

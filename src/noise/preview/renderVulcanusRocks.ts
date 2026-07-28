@@ -3,10 +3,10 @@
  * pixel grid as renderVulcanusTerrain, roll the game's per-tile placement draw
  * against the rock probability field, and paint a single `ROCK_MAP_COLOR`
  * pixel wherever it wins. Mutates `base` in place. Mirrors renderRocks
- * (Nauvis), including its choice of a 1x1 mark: "rocks are point-like, and a
- * block would merge scattered rocks into a blob" (renderRocks.ts) - unlike
- * enemy bases/geysers/oil (Tasks 6-8), which keep the 3x3
- * `PLACEMENT_MARK_RADIUS_PX` mark for legibility.
+ * (Nauvis), including its 3x3 mark - see `VULCANUS_ROCK_MARK_RADIUS_PX`, which
+ * records why the earlier 1x1 choice was wrong: the game's own preview covers
+ * 5.17% of an origin-centred 1024-tile window in rock colour, and a 1x1 mark
+ * drew 0.37%.
  *
  * All four Vulcanus rock entities declare `map_color = {129, 105, 78}`
  * (`space-age/prototypes/decorative/decoratives-vulcanus.lua`), identical to
@@ -25,12 +25,11 @@
  * within the tile (see `placementRoll.ts`) - but density is the property under
  * test, and this is a faithful roll against it rather than a threshold on it.
  *
- * A 1x1 mark cannot straddle a tile seam, so - unlike cliffs
- * (`renderCliffs.ts`) - this needs no halo-widened sweep box: sweeping exactly
- * this render's own pixel box already reproduces the untiled render tile for
- * tile (see `tiledEquality.spec.ts`'s Vulcanus rocks/all cases). The collision
- * gate does not change that: it is resolved a whole chunk at a time,
- * independent of the render window (see `makePlacementSet`).
+ * The 3x3 mark CAN straddle a tile seam, so this takes a halo-widened
+ * `sweepBox` like the other mark-painting overlays; `tiledEquality.spec.ts`'s
+ * Vulcanus rocks/all/ragged cases fail without it. The collision gate is
+ * unaffected either way: it is resolved a whole chunk at a time, independent of
+ * the render window (see `makePlacementSet`).
  */
 import type { EvalCtx, EvalCtxInput } from "../eval/ctx";
 import { withCtxDefaults } from "../eval/ctx";
@@ -55,6 +54,23 @@ export interface RenderVulcanusRocksOptions {
   readonly tilesPerPixel?: number;
   /** Non-seed resolver params (notably `startingPositions`). */
   readonly ctx?: Omit<EvalCtxInput, "seed0">;
+  /**
+   * World box to sweep for rock placements. Defaults to this render's own pixel
+   * box; the tiled renderer widens it by `VULCANUS_ROCK_MARK_RADIUS_PX` pixels'
+   * worth of tiles so a rock centred just outside this tile still paints the part
+   * of its mark that falls inside. `paintMark` clips to the pixel grid, so a
+   * wider sweep never paints outside this tile's bounds.
+   *
+   * Needed only because the mark is 3x3. It was absent while Vulcanus rocks
+   * painted 1x1, and `test/tiledEquality.spec.ts` failed on three cases the
+   * moment the mark grew.
+   */
+  readonly sweepBox?: {
+    readonly x0: number;
+    readonly y0: number;
+    readonly x1: number;
+    readonly y1: number;
+  };
 }
 
 /**
@@ -162,9 +178,15 @@ export function renderVulcanusRocks(base: ImageData, opts: RenderVulcanusRocksOp
   const ctx = withCtxDefaults({ seed0: opts.seed0, ...opts.ctx });
   const placed = makeVulcanusRockPlacement(ctx);
 
-  for (let py = 0; py < height; py++) {
+  const box = opts.sweepBox;
+  const pxStart = box ? Math.round((box.x0 - originX) / tpp) : 0;
+  const pxEnd = box ? Math.round((box.x1 - originX) / tpp) : width;
+  const pyStart = box ? Math.round((box.y0 - originY) / tpp) : 0;
+  const pyEnd = box ? Math.round((box.y1 - originY) / tpp) : height;
+
+  for (let py = pyStart; py < pyEnd; py++) {
     const wy = originY + py * tpp;
-    for (let px = 0; px < width; px++) {
+    for (let px = pxStart; px < pxEnd; px++) {
       const wx = originX + px * tpp;
       if (!placed(wx, wy)) continue;
       paintMark(base, px, py, ROCK_MAP_COLOR, VULCANUS_ROCK_MARK_RADIUS_PX);
