@@ -74,8 +74,29 @@ describe("Vulcanus: the game separates cliffs from ore", () => {
   // explained**: the ranges genuinely overlap (ore 738-1169, cliffs 94-949) and
   // the separation is still near-total.
   //
-  // So there is no single mechanism here yet. At least two things are acting, and
-  // whatever separates them in region 1 is still unidentified.
+  // Region 2 has a sharper version of the same thing: its ore sits on a
+  // perfectly FLAT plateau. Local elevation gradient at the game's own ore
+  // positions there is 0.00 at p10, p50 and p90, against 5.46/13.59/22.82 at its
+  // cliffs. A cliff needs a band crossing between adjacent corners, and a flat
+  // field has none, so no cliff can exist there at all.
+  //
+  // So there is no single mechanism. **Region 1 remains unexplained**, and four
+  // candidates have now been measured and FALSIFIED for it - recorded here so
+  // they do not get re-tested:
+  //
+  // 1. **Elevation range.** Only 56% of region 1's cliffs fall outside the band
+  //    holding 98% of its ore ([712, 1204]). The other **387 cliffs share the
+  //    ore's own elevation band** and still almost no ore sits on them.
+  // 2. **Flatness / local gradient.** Region 1's ore and cliffs have effectively
+  //    IDENTICAL gradient distributions (p10/p50/p90 = 3.78/10.94/23.06 for ore
+  //    vs 4.22/10.98/23.56 for cliffs). Whatever separates them, it is not that
+  //    ore sits on flat ground - unlike region 2, where this is the whole story.
+  // 3. **The volcano-spot exclusion.** `vulcanus_mountains_resource_favorability`
+  //    is `clamp(main_region - (mountain_volcano_spots > 0.78), 0, 1)`, so ore is
+  //    genuinely barred from volcano spots - and the game's ore respects it (0.2%
+  //    above the cutoff). But only **4.0%** of region 1's cliffs are on volcano
+  //    spots, so it cannot account for a ~100x separation.
+  // 4. **Collision, on both paths** - see the map-gen mask grid note below.
   const expected: [number, number, number][] = [
     // index, max on-cliff entities, max ratio-to-chance
     [0, 0, 0.001],
