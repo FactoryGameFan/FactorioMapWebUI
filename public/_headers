@@ -1,8 +1,13 @@
 # Content-Security-Policy for the static deploy (Cloudflare Pages _headers).
 #
-# - script-src needs 'unsafe-eval': the map-exchange codec uses zlib-asm, an
-#   asm.js module whose loader calls direct eval() at runtime. A bare
-#   script-src 'self' would break encode/decode.
+# - script-src does NOT need 'unsafe-eval', and must not regain it. zlib-asm
+#   shipped three eval sites - two direct, one `eval.call` - all of them 2016
+#   Emscripten runtime glue (a `Module` global probe, a JS-shell `gc` tweak, and
+#   the unused `Module.load` helper), none of them compression.
+#   `patches/zlib-asm.patch` removes all three. Verified in Chrome against this
+#   exact policy: the app decodes all 9 builtin fixtures and re-encodes on
+#   "Copy string" with zero securitypolicyviolation events, while a deliberately
+#   injected inline <script> IS blocked - confirming the policy was live.
 # - img-src needs blob:: the preview PNG is shown via URL.createObjectURL(blob).
 # - connect-src must include the preview Worker origin (the app's only outbound
 #   call). Replace the placeholder with the deployed Worker origin.
@@ -24,4 +29,4 @@
 #   to this site's own /cdn-cgi/rum, which 'self' already covers; the separate
 #   cloudflareinsights.com endpoint applies only to manual embedding.
 /*
-  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://fmw-preview.wormeyman.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://static.cloudflareinsights.com
+  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://fmw-preview.wormeyman.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' https://static.cloudflareinsights.com

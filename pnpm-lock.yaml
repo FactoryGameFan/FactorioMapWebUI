@@ -206,6 +206,9 @@ settings:
 overrides:
   shell-quote: 1.9.0
 
+patchedDependencies:
+  zlib-asm: 575b92082fb1611bdeda249989166de65e5c30917ad90a3d6467231b6331e01d
+
 importers:
 
   .:
@@ -224,7 +227,7 @@ importers:
         version: 3.5.40(typescript@6.0.3)
       zlib-asm:
         specifier: ^1.0.7
-        version: 1.0.7
+        version: 1.0.7(patch_hash=575b92082fb1611bdeda249989166de65e5c30917ad90a3d6467231b6331e01d)
     devDependencies:
       '@vitejs/plugin-vue':
         specifier: ^6.0.8
@@ -3865,7 +3868,7 @@ snapshots:
       '@yuku-parser/binding-win32-arm64': 0.5.48
       '@yuku-parser/binding-win32-x64': 0.5.48
 
-  zlib-asm@1.0.7:
+  zlib-asm@1.0.7(patch_hash=575b92082fb1611bdeda249989166de65e5c30917ad90a3d6467231b6331e01d):
     dependencies:
       '@types/node': 6.14.13
 

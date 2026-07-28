@@ -16,15 +16,15 @@ export default defineConfig({
   plugins: [vue() as Plugin],
   build: {
     rollupOptions: {
-      // `zlib-asm` uses direct `eval`, which is load-bearing: it is the only
-      // deflate implementation that reproduces the game's zlib@9 stream
-      // byte-for-byte, so the codec's byte-exactness invariant depends on it.
-      // Drop that one module's EVAL warning rather than setting
-      // `checks.eval = false`, so a direct `eval` introduced anywhere else
-      // still surfaces.
       onLog(level, log, handler) {
-        if (log.code === "EVAL" && log.id?.includes("/zlib-asm/")) return;
-        // Same module, second symptom: zlib-asm's Node fallback path imports
+        // NOTE: there is deliberately no EVAL suppression here. `zlib-asm`
+        // shipped three `eval` sites, all 2016 Emscripten runtime glue rather
+        // than anything to do with compression, and `patches/zlib-asm.patch`
+        // removes all three. That is what lets `public/_headers` drop
+        // `unsafe-eval`. A direct `eval` introduced anywhere - including a
+        // regression in that patch - must surface, so do not add one back.
+        //
+        // zlib-asm's Node fallback path imports
         // `fs`/`path`, which the browser build externalizes and warns about.
         // Those imports are never reached in the browser (the asm.js module is
         // self-contained), so the warning is noise. Matched on the importer
