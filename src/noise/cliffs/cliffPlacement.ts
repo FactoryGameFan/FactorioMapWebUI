@@ -287,10 +287,30 @@ export function makeCliffPlacementFromFields(
       const cross = (p: CornerSample, q: CornerSample): -1 | 0 | 1 =>
         crossesCliff(p.elev, q.elev, (p.cliff + q.cliff) / 2, e0, interval);
 
-      const cxMin = Math.floor((x0 - CLIFF_CELL_CENTER_X) / CLIFF_GRID_SIZE);
-      const cxMax = Math.ceil((x1 - CLIFF_CELL_CENTER_X) / CLIFF_GRID_SIZE);
-      const cyMin = Math.floor((y0 - CLIFF_CELL_CENTER_Y) / CLIFF_GRID_SIZE);
-      const cyMax = Math.ceil((y1 - CLIFF_CELL_CENTER_Y) / CLIFF_GRID_SIZE);
+      /**
+       * The INCLUSIVE cell-index range whose centres land in the query box.
+       * Cell `cx` sits at `cx * G + CX`, and the emit filter below keeps it when
+       * that is in `[x0, x1)`, so the exact range is
+       *
+       *     cx >= (x0 - CX) / G          ->  ceil((x0 - CX) / G)
+       *     cx <  (x1 - CX) / G          ->  ceil((x1 - CX) / G) - 1
+       *
+       * (`ceil(v) - 1` is right at an integer `v` too: `cx < k` means `k - 1`.)
+       *
+       * These used to be `floor` / `ceil`, which overshot by one cell at each
+       * end. Every extra cell was discarded by the emit filter, so the OUTPUT
+       * was correct - but the chunk loop below rounds this range out to whole
+       * chunks, and one extra cell is enough to pull in a whole extra 8-cell
+       * chunk on each side. That is a FIXED +2 chunks per axis per call, which
+       * is minor on a whole-image render and severe when tiled: measured at
+       * 512x512 vs 16 x 128x128, the cliff pass evaluated 21,025 cliffiness
+       * samples whole against 38,416 tiled - 1.83x the noise for identical
+       * output. See `test/cliffCellBounds.spec.ts`, which pins the ratio.
+       */
+      const cxMin = Math.ceil((x0 - CLIFF_CELL_CENTER_X) / CLIFF_GRID_SIZE);
+      const cxMax = Math.ceil((x1 - CLIFF_CELL_CENTER_X) / CLIFF_GRID_SIZE) - 1;
+      const cyMin = Math.ceil((y0 - CLIFF_CELL_CENTER_Y) / CLIFF_GRID_SIZE);
+      const cyMax = Math.ceil((y1 - CLIFF_CELL_CENTER_Y) / CLIFF_GRID_SIZE) - 1;
 
       if (bands.fixImpossibleCells !== false) {
         // Chunk-structured path. Each chunk builds its own edge arrays and runs

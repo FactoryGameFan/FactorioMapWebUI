@@ -1,5 +1,5 @@
 import type { Point } from "../distanceFromNearestPoint";
-import { CLIFF_MARK_BACK_PX } from "../cliffs/cliffCatalog";
+import { CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX } from "../cliffs/cliffCatalog";
 import type { CliffControls, CliffSettingsInput } from "../cliffs/cliffCatalog";
 import type { VulcanusResourceControls } from "../eval/ctx";
 import type { EnemyControls } from "../enemies/enemyCatalog";
@@ -167,15 +167,25 @@ export interface WorldBox {
  * tile still owes it pixels, then intersected with the full image so the outer
  * border keeps the untiled behavior.
  *
- * The halo is exact rather than conservative. A mark at world `wx` maps to pixel
- * `cx = floor((wx - originX) / tpp)` and paints `cx - r .. cx + r`, so it touches
- * the tile on the low side exactly when `wx - originX >= -r * tpp` (because
- * `floor(v) >= -r` iff `v >= -r` for integer `r`), and on the high side exactly
- * when `wx < x1 + r * tpp`. Those pair with an inclusive-lower, exclusive-upper
- * enumeration or sweep, so widening by `r * tpp` adds every position that can
- * paint here and none that cannot.
+ * The halo is exact rather than conservative, and it is **asymmetric whenever
+ * the mark is**. A mark at world `wx` maps to pixel `px = floor((wx - originX) /
+ * tpp)` and paints `px - back .. px + fwd`, so it touches this tile
+ *
+ *     on the low side  iff `px + fwd >= 0`      -> widen x0 by `fwd * tpp`
+ *     on the high side iff `px - back <= w - 1` -> widen x1 by `back * tpp`
+ *
+ * (using `floor(v) >= -k` iff `v >= -k` for integer `k`, and pairing with an
+ * inclusive-lower / exclusive-upper enumeration). Note the directions CROSS: a
+ * mark that reaches far *backwards* has to be caught from *ahead* of the tile.
+ *
+ * A symmetric `max(back, fwd)` on both sides is correct but not free. The cliff
+ * pass quantizes its enumeration to 32-tile chunks, so one surplus tile of halo
+ * can pull in a whole extra chunk per axis - measured at 512x512 tiled 16 ways,
+ * a symmetric 2/2 halo cost 24,336 cliffiness evaluations against 17,424 for the
+ * exact 1/2 one, a **1.40x** overhead for zero pixels of difference. See
+ * `docs/noise/vulcanus-cliffs-NOTES.md`.
  */
-function haloQueryBox(req: ElevationRenderRequest, radiusPx: number): WorldBox {
+function haloQueryBox(req: ElevationRenderRequest, backPx: number, fwdPx: number): WorldBox {
   const tpp = req.tilesPerPixel;
   const x0 = req.originX;
   const y0 = req.originY;
@@ -183,19 +193,27 @@ function haloQueryBox(req: ElevationRenderRequest, radiusPx: number): WorldBox {
   const y1 = req.originY + req.height * tpp;
   const full = req.fullImage;
   if (!full) return { x0, y0, x1, y1 };
-  const halo = radiusPx * tpp;
+  // Crossed on purpose - see the doc above.
+  const lo = fwdPx * tpp;
+  const hi = backPx * tpp;
   return {
-    x0: Math.max(x0 - halo, full.originX),
-    y0: Math.max(y0 - halo, full.originY),
-    x1: Math.min(x1 + halo, full.originX + full.width * tpp),
-    y1: Math.min(y1 + halo, full.originY + full.height * tpp),
+    x0: Math.max(x0 - lo, full.originX),
+    y0: Math.max(y0 - lo, full.originY),
+    x1: Math.min(x1 + hi, full.originX + full.width * tpp),
+    y1: Math.min(y1 + hi, full.originY + full.height * tpp),
   };
 }
 
 /**
- * The world box to enumerate cliff cells over for `req` - `haloQueryBox` at
- * `CLIFF_MARK_BACK_PX` - the larger of the block's two directions, so a cell
- * whose block reaches into this tile is always enumerated.
+ * The world box to enumerate cliff cells over for `req`, so a cell whose block
+ * reaches into this tile is always enumerated.
+ *
+ * The cliff block is **not** symmetric: it spans `px - CLIFF_MARK_BACK_PX ..
+ * px + CLIFF_MARK_SIZE_PX - CLIFF_MARK_BACK_PX - 1`, i.e. 2 back and 1 forward,
+ * which is what anchors it on the cell's own 4-tile footprint. This used to
+ * widen by `CLIFF_MARK_BACK_PX` in both directions ("the larger of the block's
+ * two directions"), a description that fit the 5x5 centred mark it was written
+ * for and outlived it. Correct, and one tile too wide on the low side.
  *
  * Exported for direct unit testing: the tiled-equals-untiled gate pins the
  * widening (drop it and the gate fails) but cannot pin the clamp, which only
@@ -203,7 +221,7 @@ function haloQueryBox(req: ElevationRenderRequest, radiusPx: number): WorldBox {
  * next to non-water terrain.
  */
 export function cliffCellQueryBox(req: ElevationRenderRequest): WorldBox {
-  return haloQueryBox(req, CLIFF_MARK_BACK_PX);
+  return haloQueryBox(req, CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX - CLIFF_MARK_BACK_PX - 1);
 }
 
 /**
@@ -212,15 +230,29 @@ export function cliffCellQueryBox(req: ElevationRenderRequest): WorldBox {
  * (`renderEnemies.ts`), Vulcanus geysers (`renderVulcanusResources.ts`) and
  * Nauvis crude oil (`renderResources.ts`).
  *
- * Both rock overlays paint a 1x1 pixel and need no equivalent; these two keep
- * the 3x3 mark (a spawner is 7.4 x 6.4 tiles, a geyser 2.8 x 2.8, and both are
- * rare enough that a dot would vanish), and a 3x3 mark straddles worker-tile
- * seams. Each renderer documents its sweep side; `test/tiledEquality.spec.ts` is
- * what fails without it, and it carries a separate case per overlay because a
+ * A 3x3 mark straddles worker-tile seams, hence the halo (a spawner is
+ * 7.4 x 6.4 tiles, a geyser 2.8 x 2.8, and both are rare enough that a dot would
+ * vanish). Each renderer documents its sweep side; `test/tiledEquality.spec.ts`
+ * is what fails without it, and it carries a separate case per overlay because a
  * window dense in one is empty of the other.
+ *
+ * The **Vulcanus rock overlay also uses this** and also paints a 3x3 mark
+ * (`VULCANUS_ROCK_MARK_RADIUS_PX`). An older version of this comment said "both
+ * rock overlays paint a 1x1 pixel and need no equivalent", which stopped being
+ * true when the Vulcanus rock mark grew; only the Nauvis rock overlay is 1x1.
+ *
+ * This halo is exact and cannot be tightened - unlike the cliff one it faces
+ * (`cliffCellQueryBox`), the mark really is symmetric. It is, however, where the
+ * remaining tiled-vs-whole cost lives: one pixel of widening crosses a 32-tile
+ * chunk boundary, so an interior tile resolves 6 chunks per axis instead of 4
+ * and every seam chunk is resolved by both neighbours (1.89x `resolveChunk`
+ * calls, measured). That is structural rather than a defect - a rock one pixel
+ * outside genuinely owes this tile pixels, and knowing whether it exists means
+ * resolving its chunk. See `docs/noise/vulcanus-cliffs-NOTES.md`.
  */
 export function placementMarkSweepBox(req: ElevationRenderRequest): WorldBox {
-  return haloQueryBox(req, PLACEMENT_MARK_RADIUS_PX);
+  // Genuinely symmetric: a 3x3 mark centred on its pixel.
+  return haloQueryBox(req, PLACEMENT_MARK_RADIUS_PX, PLACEMENT_MARK_RADIUS_PX);
 }
 
 /**
