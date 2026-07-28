@@ -172,6 +172,52 @@ evaluates the shared fields at a pixel and lets every overlay consult them
 before moving on. That is a real architectural change to four renderers, and it
 was not attempted here.
 
+### Re-measured after the placement roll (2026-07-27, Task 9)
+
+The four overlays now roll per tile rather than threshold, so the table above is
+superseded. Min-of-7 interleaved renders at 512x512, seed 123456, origin (0,0):
+
+| view | min ms | marginal over terrain | share of overlay budget |
+| --- | --- | --- | --- |
+| terrain | 3394 | - | - |
+| resources | 5406 | 2013 | 40% |
+| rocks | 4756 | 1362 | 27% |
+| cliffs | 5526 | 2133 | 42% |
+| **all** | **8458** | 5064 | - |
+
+The shares sum to 109%, not 100%: the marginals are measured one overlay at a
+time, and on the `all` path they share a warmed field cache, so the whole is
+slightly cheaper than the sum of its parts. Read them as proportions, not as an
+additive decomposition.
+
+`all` is now **2.492x** terrain, further past the gate than V3's 2.13x - and this
+is the section that has to say so rather than the one that gets to round it down.
+Part of that is real added work (collision gating resolves a whole chunk at a
+time), and part is that these are minima at a different window and size than the
+V3 row, so the two ratios are not strictly comparable.
+
+**Two things were costed and dropped, and cliffs is why both fail:**
+
+- **The rock field lattice** (Task 9) cuts the rock overlay 38% at stride 4, but
+  cannot reach the gate: subtract the rock overlay *entirely* and `all` still sits
+  at **2.091x** (7096 against a 3394 terrain baseline). It ships disabled. Details
+  in `placement-roll-NOTES.md`.
+- **Fusing the passes** - the change suggested above as the one that would pay -
+  **cannot help cliffs at all**, which is the single largest line in the table.
+  Fusion shares per-pixel field evaluations between passes, but the cliff pass
+  does not sample per pixel: its corners sit on a 4-tile lattice, so at 1 tile/px
+  it takes one elevation sample per 16 pixels and its cost is in the cell
+  enumeration and footprint painting, not in shared field lookups. Fusing would
+  redistribute the resources and rocks passes' sampling and leave 41% of the
+  overlay budget untouched.
+
+So the honest position is that the remaining cost is concentrated in the one
+overlay the two obvious optimisations do not reach, and no cheap fix is
+outstanding. **Before any of this is re-attacked, the benchmark needs fixing:**
+run-to-run variance is 5-23% and a single 5-iteration run spread the Vulcanus
+terrain render 22.7%, so `pnpm perf`'s median-of-3 cannot resolve a change of the
+size any of these fixes would produce.
+
 The cliff pass is more expensive than its sample count suggests. Corners sit on
 a 4-tile lattice, so at 1 tile/px it evaluates one elevation sample per 16
 pixels, yet it adds ~6.5 us/px. Each Vulcanus renderer builds its **own** field

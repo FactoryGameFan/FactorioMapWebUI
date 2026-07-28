@@ -103,9 +103,9 @@ describe("rock field lattice", () => {
     // today: min-of-7 interleaved renders at 512x512 measure the rock overlay's
     // marginal cost at 1412 ms of an 8261 ms Vulcanus `all`, and stride 4 cuts
     // that to 877 ms - 7.9% off the whole render. Even a FREE rock overlay would
-    // leave `all` at 2.077x terrain, so the plan's "under 2x" gate is not
+    // leave `all` at ~2.09x terrain, so the plan's "under 2x" gate is not
     // reachable by sampling this field at all: the cost is in cliffs and
-    // resources, which are 41% and 37% of the overlay budget against rocks' 23%.
+    // resources, which are 42% and 40% of the overlay budget against rocks' 27%.
     expect(ROCK_FIELD_LATTICE).toBe(1);
   });
 });

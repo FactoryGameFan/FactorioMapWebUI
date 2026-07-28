@@ -131,6 +131,31 @@ shipped for Vulcanus rocks in Tasks 3 and 4.5, for Nauvis rocks in Task 5, for
 Nauvis enemy bases in Task 6, for the sulfuric-acid geyser in Task 7 and for
 Nauvis crude oil in Task 8 - all four overlays issue #9 named.
 
+### What the roll actually paints, on the same window
+
+Measured with the shipped gated predicates over the identical `[-512, 512)^2`
+window the plateau table above uses, so the two are directly comparable:
+
+| overlay | placed | coverage | was |
+| --- | --- | --- | --- |
+| Vulcanus rocks | 5288 | **0.504%** | 7.03% (threshold at 0.02) |
+| Nauvis rocks | 841 | **0.080%** | ~1.6% |
+
+So the roll paints about **14x less ink** on Vulcanus than the threshold did, and
+the remaining ink is scattered single pixels rather than a plateau. That is the
+whole visual complaint this section was written about. Note the Nauvis figure is
+the one an owner ruling deliberately accepted at 1x1 (Task 5) despite being under
+a tenth of a percent - see `placement-roll-NOTES.md`.
+
+**Coarse field sampling was built for this overlay and is switched off.** Task 9
+added `ROCK_FIELD_LATTICE` (evaluate the field on a stride, still roll every
+tile), measured it, and shipped it at 1 - i.e. disabled. Density survives a
+stride of 2 or 4 to within ~1%, but Vulcanus clumping rises 6.7% and 11.8%, and
+the perf case does not hold: removing the rock overlay *entirely* still leaves a
+Vulcanus `all` render at 2.091x its terrain baseline, so no lattice reaches the
+"under 2x" gate. Cliffs (42%) and resources (40%) are where the cost is, not
+rocks (27%). Full tables in `placement-roll-NOTES.md`.
+
 **"Reads as rocky ground" was the one thing in the V3 work that wanted a human
 eyeball**, since that is a judgement a test cannot make. The roll replaced the
 plateau with scattered single pixels, so the specific complaint is gone.

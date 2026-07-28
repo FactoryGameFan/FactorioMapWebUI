@@ -231,7 +231,20 @@ resource stipple would require simulating whole-chunk entity generation across
 subsystems this app never ported. Multi-session + cross-subsystem; **deferred**
 (Eric, 2026-07-20). Full RE + a cheaper cosmetic-dither alternative:
 `docs/noise/placement-roll-NOTES.md`. Solid-footprint (opaque where `prob >= 0.5`)
-ships in M3a/b and stands as the M3 end state.
+shipped in M3a/b.
+
+**SHIPPED 2026-07-27, as a third option neither the spike nor this entry named.**
+Not the whole-chunk simulator, and not the cosmetic dither: a real roll against
+the real probability, with the two coupling sources deliberately dropped. Dropping
+the 2 jitter draws is the load-bearing move - with no data-dependent consumption a
+chunk's 1024 draws are a pure function of `(chunkX, chunkY, salt)`, which restores
+per-position purity and keeps the tiled render byte-identical to the untiled one.
+Cross-overlay arbitration is then simply absent, so **positions are not the
+game's; density is the claim**, and it is validated per overlay against real
+`count_entities_filtered` counts. All five overlays converted (Vulcanus rocks,
+Nauvis rocks, Nauvis enemy bases, Vulcanus geysers, Nauvis crude oil - the four
+issue #9 named, plus Vulcanus rocks). See "WHAT WAS ACTUALLY BUILT" in
+`placement-roll-NOTES.md`.
 
 M3a follow-ups (known, deferred by priority - 2026-07-20):
 
@@ -269,6 +282,15 @@ M3a follow-ups (known, deferred by priority - 2026-07-20):
         placement roll (place if roll < probability), validated tile-for-tile
         against `find_entities`. Oil stays as-is (tiny dots) until M3.5; no
         standalone change.
+      - **DONE 2026-07-27 (Task 8), and the fold was the right call** - the factor
+        and the roll landed together exactly as decided. Two corrections to the
+        analysis above, both from measurement. The factor costs a **96x** density
+        reduction, not `rp` = 48x: `1 - 48U` is positive only for `U < 1/48` and
+        averages 1/2 there. And validation is by **density, not tile-for-tile**
+        against `find_entities` - this port does not reproduce positions for any
+        overlay. The `random_penalty` batch extent that made this look expensive
+        turned out to be irrelevant to density (`random-penalty-NOTES.md`), so the
+        per-resource render rule was never needed.
 
 Done = ore patches overlaid on land, responding to the frequency/size/richness sliders.
 

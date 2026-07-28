@@ -281,6 +281,92 @@ report rather than pushing into the render build"), we stop here.
   without the un-RE'd stream. This was flagged in the ROADMAP as the "per-resource
   render rule" option.
 
+## WHAT WAS ACTUALLY BUILT (2026-07-27) - the third option
+
+The two sections above are the correct account of the **tile-exact** version, and
+they still stand: nothing here reproduces the game's stream. What shipped is
+neither the multi-session simulator nor the "cosmetic dither" fallback, but a
+third thing the spike did not name - a **real roll against the real probability,
+with the two coupling sources deliberately dropped**.
+
+### The two departures, and why they are not fatal
+
+1. **No cross-overlay arbitration.** Each overlay rolls its own probability with
+   its own stream instead of arbitrating against every other autoplacer in the
+   chunk. This is the departure the spike identified as fatal to *tile-exactness*,
+   and it is - positions are not the game's. It is not fatal to *density*, which
+   is what the port claims.
+2. **No jitter draws.** The game consumes 2 extra draws per placement to jitter
+   the entity inside its tile, which is exactly what makes the stream
+   data-dependent (tile N's `U` depends on how many earlier tiles placed).
+
+**Dropping (2) is what buys back per-position purity, and that is the load-bearing
+trick.** With no data-dependent consumption, a chunk's 1024 draws are a pure
+function of `(chunkX, chunkY, salt)`, so `chunkRolls` precomputes all of them and
+`roll(x, y)` becomes a pure function of world position. That is what makes the
+render window-independent - `test/tiledEquality.spec.ts` compares a tiled render
+against a whole one byte-for-byte, and it would fail immediately if `U` depended
+on traversal order. It is also why `resolveChunk` may gate *after* rolling
+(`placementRoll.ts` documents the two preconditions).
+
+So the departures are not two separate approximations; (2) is the enabling
+simplification and (1) is its consequence.
+
+### One stream per overlay, via a salt
+
+`PLACEMENT_SALT` adds a per-overlay constant to the seed word
+(`max(341, 0x3FBE2C + 7919*chunkX + 7907*chunkY + salt)`), so overlays that would
+otherwise share the game's single per-chunk stream get decorrelated ones instead.
+`vulcanusRocks` is **0**, which reproduces the game's own word exactly and lets a
+unit test pin the RE'd constants; every other value is arbitrary and means
+nothing beyond being distinct. Two salts are not placement rolls at all - the
+spawner penalties, and later oil's - but stand in for `random_penalty` batch ops
+that need the same thing: a deterministic, position-pure uniform per tile.
+
+**A salt change is a real move, not a formality.** Re-running the geyser over
+eight salts spans 46-63 placements against the game's 56 (see Task 7 below), so
+the exact agreements below are one draw from a spread, not precision.
+
+### Density-oracle result per overlay
+
+Against `test/fixtures/oracle-entity-counts.seed123456.json` (Factorio 2.1.12,
+seed 123456), measured by `test/entityDensity.spec.ts` on the exact predicates
+the renderers paint:
+
+| overlay | region | ours | game | rel |
+| --- | --- | --- | --- | --- |
+| Vulcanus rocks | 2 `[0,0]` | 1131 | 1133 | 0.2% |
+| Vulcanus rocks | 3 `[4096,4096]` | 1359 | 1367 | 0.6% |
+| Vulcanus rocks | 4 `[-256,-256]` | 1341 | 1450 | 7.5% |
+| Nauvis rocks | 0 `[0,0]` | 205 | 192 | 6.8% |
+| Nauvis rocks | 1 `[4096,4096]` | 54 | 64 | 15.6% |
+| Nauvis enemy bases | 0 `[0,0]` | 28 | 19 | 47.4% (unbanded - see below) |
+| Nauvis enemy bases | 1 `[4096,4096]` | 157 | 142 | 10.6% |
+| Vulcanus geysers | 4 `[-256,-256]` | 56 | 56 | 0.0% |
+| Nauvis crude oil | 0 `[0,0]` | 7 | 8 | 12.5% |
+| Nauvis crude oil | 1 `[4096,4096]` | 0 | 0 | exact |
+
+Read these with the denominators in mind rather than as a ranking. Vulcanus rocks
+carry ~1200 per region and are the only rows where a sub-percent figure means
+anything; oil's `n = 8` has a 35% Poisson sigma, and the geyser's exact 56 is one
+draw from a 46-63 salt spread. The two 0-vs-0 rows rule out gross over-placement
+in windows that have field but no entities, which is worth having and is not a
+ratio.
+
+**The enemy-base region 0 row is the one known-unmodelled residual**, and it is
+diagnosed rather than mysterious: trees occupy 34.3% of that region and rocks
+3.8%, both sort before spawners, and feeding this app's own tree and rock
+placements in as blockers gives 19 against the game's 19. That is cross-overlay
+OCCUPANCY - see the section below - and it is tracked as **issue #16**, the
+successor to issue #9 (which closed when the five overlays landed).
+
+### What this does NOT claim
+
+Tile-exact positions, per-tile prototype identity (falsified for Vulcanus rocks -
+the game's population is ~28% huge where max-probability arbitration predicts 0%),
+and richness. The retry-count semantics (`proto->mapGenData[0x28]`) are still
+unpinned; every overlay here assumes one roll per tile.
+
 ## The oil `random_probability` follow-up - DONE 2026-07-27 (Task 8)
 
 For `random_probability < 1` (only crude-oil, 1/48) the game multiplies `probability`
@@ -403,6 +489,8 @@ model should reproduce the real batch stream rather than treating the current nu
 as a property of the physics.
 
 ### Cross-overlay OCCUPANCY, not just arbitration, is the dominant remaining error
+
+**Tracked as issue #16** (opened 2026-07-27 when issue #9 closed).
 
 Every previous report listed "no cross-overlay arbitration" as an unmodelled
 approximation without sizing it. On enemy bases it is measurable and it is the whole
@@ -568,9 +656,12 @@ leaves 6849 ms against a 3298 ms terrain baseline - **2.077x, still over**. Both
 terms there come from the same run, so that bound is robust to the cross-run noise
 below.
 
-The premise was wrong about where the money is. Marginal costs over terrain, same
-window: cliffs 2027 ms (41%), resources 1855 ms (37%), rocks 1164 ms (23%). Task 9
-targeted the smallest of the three.
+The premise was wrong about where the money is. Marginal costs over terrain, from
+a single min-of-7 run over all five views: cliffs 2133 ms (42%), resources 2013 ms
+(40%), rocks 1362 ms (27%) - shares of a 5064 ms overlay budget, summing to over
+100% because the `all` path shares a warmed cache. Task 9 targeted the smallest of
+the three, and the largest is the one no proposed fix reaches (see
+`vulcanus-cliffs-NOTES.md`).
 
 ### The benchmark cannot resolve the effect it was asked to gate on
 
