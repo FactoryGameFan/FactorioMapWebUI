@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, useId } from "vue";
 import { BUILTIN_NAMES } from "../model/builtins";
 import { usePresetsStore } from "../store/presets";
 import FButton from "../ui/FButton.vue";
@@ -9,6 +9,8 @@ import FDropdown from "../ui/FDropdown.vue";
 const store = usePresetsStore();
 const newName = ref("");
 const builtinChoice = ref("Default");
+const newNameId = useId();
+const seedId = useId();
 
 const builtinOptions = BUILTIN_NAMES.map((name) => ({ value: name, label: name }));
 const editOptions = computed(() =>
@@ -78,10 +80,16 @@ function rerollSeed() {
     />
 
     <span class="field-label">New preset</span>
+    <!-- A placeholder is the last-resort source for an accessible name, and it
+         disappears the moment the field has content, so name these two
+         explicitly (issue #15). The seed's placeholder is worse still: "Random"
+         names a state, not the field. -->
     <input
+      :id="newNameId"
       v-model="newName"
       data-test="new-preset-name"
       class="name-input"
+      aria-label="New preset name"
       placeholder="New preset name"
       @keyup.enter="create"
     />
@@ -107,9 +115,11 @@ function rerollSeed() {
 
     <span class="field-label">Seed</span>
     <input
+      :id="seedId"
       data-test="seed-input"
       class="name-input seed"
       type="number"
+      aria-label="Seed"
       placeholder="Random"
       :disabled="randomEachMap"
       :value="store.activePreset?.seed ?? ''"

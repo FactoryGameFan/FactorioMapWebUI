@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, useId } from "vue";
 import { ExchangeStringError } from "../codec/mapExchangeString";
 import { usePresetsStore } from "../store/presets";
 import FButton from "../ui/FButton.vue";
@@ -11,6 +11,8 @@ const emit = defineEmits<{ close: [] }>();
 const name = ref("");
 const exchangeString = ref("");
 const error = ref("");
+const nameId = useId();
+const stringId = useId();
 
 function doImport() {
   error.value = "";
@@ -32,12 +34,23 @@ function doImport() {
 <template>
   <FPanel title="Import map exchange string">
     <div class="import-form">
-      <input v-model="name" data-test="import-name" class="name-input" placeholder="Preset name" />
+      <!-- Named explicitly rather than by placeholder, for the same reason as
+           the preset bar's two inputs (issue #15). -->
+      <input
+        :id="nameId"
+        v-model="name"
+        data-test="import-name"
+        class="name-input"
+        aria-label="Preset name"
+        placeholder="Preset name"
+      />
       <textarea
+        :id="stringId"
         v-model="exchangeString"
         data-test="import-string"
         class="string-input"
         rows="5"
+        aria-label="Map exchange string"
         placeholder=">>> ... <<<"
       ></textarea>
       <p v-if="error" data-test="import-error" class="error">{{ error }}</p>

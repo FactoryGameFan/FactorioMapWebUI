@@ -1,4 +1,4 @@
-import { PLANETS, type Planet } from "./planets";
+import { PLANET_LABELS, PLANETS, type Planet } from "./planets";
 
 export type ControlCategory = "resource" | "terrain" | "enemy";
 
@@ -90,6 +90,28 @@ export const CONTROL_CATALOG: Record<string, ControlEntry> = {
   lithium_brine: resource("aquilo", "Lithium brine"),
   fluorine_vent: resource("aquilo", "Fluorine vent"),
 };
+
+/** Labels two planets both use, so the label alone cannot identify a row. */
+const AMBIGUOUS_LABELS: ReadonlySet<string> = new Set(
+  Object.values(CONTROL_CATALOG)
+    .map((entry) => entry.label)
+    .filter((label, i, all) => all.indexOf(label) !== i),
+);
+
+/**
+ * The row's label, made unique across the catalog. Three labels (Coal, Stone,
+ * Crude oil) appear on two planets each, and the tables list every planet in
+ * one table - so those rows are told apart visually by the "Appears on" icon
+ * alone. A control's accessible name has no such column to lean on, so it
+ * carries the planet inline.
+ */
+export function controlRowLabel(name: string): string {
+  const entry = CONTROL_CATALOG[name];
+  if (!entry) return name;
+  return AMBIGUOUS_LABELS.has(entry.label)
+    ? `${entry.label} (${PLANET_LABELS[entry.planet]})`
+    : entry.label;
+}
 
 export function controlsFor(planet: Planet, category: ControlCategory): string[] {
   return Object.entries(CONTROL_CATALOG)

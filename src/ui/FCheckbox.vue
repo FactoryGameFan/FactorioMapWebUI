@@ -1,6 +1,10 @@
 <script setup lang="ts">
+import { useId } from "vue";
+
 defineProps<{ modelValue: boolean; label?: string }>();
 const emit = defineEmits<{ "update:modelValue": [value: boolean] }>();
+
+const inputId = useId();
 
 function onChange(event: Event) {
   emit("update:modelValue", (event.target as HTMLInputElement).checked);
@@ -9,7 +13,7 @@ function onChange(event: Event) {
 
 <template>
   <label class="f-checkbox">
-    <input type="checkbox" :checked="modelValue" @change="onChange" />
+    <input :id="inputId" type="checkbox" :checked="modelValue" @change="onChange" />
     <span v-if="label" class="f-checkbox-label">{{ label }}</span>
   </label>
 </template>
