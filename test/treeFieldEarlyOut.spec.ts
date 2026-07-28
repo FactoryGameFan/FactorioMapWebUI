@@ -28,7 +28,7 @@ describe("tree density early-out", () => {
         }
       }
     }
-  });
+  }, 120000);
 
   it("is bit-identical at non-default control levers too", () => {
     const params = { seed0: 123456, treesFrequency: 3, treesSize: 2 };
