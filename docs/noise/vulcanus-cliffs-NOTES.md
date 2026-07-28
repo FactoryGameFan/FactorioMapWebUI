@@ -270,11 +270,49 @@ over three regions by `test/oracle/capture.ts vulcanus-cliff-entities`
 | `[1500,1500]` | 885 | 1399 | 614 | 0.694 | 0.439 | 1.58x |
 | `[-1200,800]` | 401 | 455 | 259 | 0.646 | 0.569 | 1.14x |
 
-**Vulcanus reproduces 57-69% of real cliffs, against Nauvis's ~90%, and places
+**Vulcanus reproduces 57-69% of real cliffs, against Nauvis's ~94%, and places
 1.1-1.6x too many.** The "same placement geometry as Nauvis, so it should be
 comparable" reasoning that stood in for validation here was wrong - the shared
 code is shared, but the fields feeding it are not, and the composition does not
 carry Nauvis's accuracy across. Tracked as issue #18.
+
+### The shared machinery is CLEARED - this is Vulcanus's own fault
+
+Measuring Nauvis the same way (2026-07-28) answers the obvious next question,
+which is whether the cliff port is broadly bad and Nauvis's number was just
+flattering it:
+
+| | game | ours | recall | precision | over-placement |
+| --- | --- | --- | --- | --- | --- |
+| Nauvis seed 123456 | 282 | 282 | 0.943 | 0.943 | **1.000** |
+| Nauvis seed 777771 | 52 | 52 | 0.942 | 0.942 | **1.000** |
+| Vulcanus `[0,0]` | 283 | 422 | 0.569 | 0.382 | 1.49x |
+| Vulcanus `[1500,1500]` | 885 | 1399 | 0.694 | 0.439 | 1.58x |
+| Vulcanus `[-1200,800]` | 401 | 455 | 0.646 | 0.569 | 1.14x |
+
+**Nauvis places exactly the game's count at both seeds.** So `crossesCliff`, the
+4-tile lattice, the orientation table and the cell enumeration - everything the two
+planets share - demonstrably produce the right number of cliffs. The fault is in
+what Vulcanus feeds them:
+
+- `makeVulcanusCliffFields` (`cliffElevation` or `cliffiness`), or
+- the band constants `VULCANUS_CLIFF_ELEVATION_0 = 70` and
+  `VULCANUS_CLIFF_ELEVATION_INTERVAL = 120`.
+
+The *shape* of the error points the same way. Over-placing while also missing a
+third of the real cliffs means cells are landing in the wrong places, not merely
+too freely - a uniformly over-permissive gate would keep recall high and only
+depress precision. A wrong elevation interval or offset does exactly this: it
+shifts which elevation crossings exist, adding cells the game has not got and
+removing ones it has.
+
+Note also that Nauvis's own figure was **stale in the other direction**: the spec
+comment claimed "~89-90%" from the original spike and it now measures 94.3%. The
+port improved and nobody re-measured.
+
+`test/cliffPlacement.spec.ts` now asserts precision and an over-placement ratio
+alongside recall, so this class of failure cannot hide behind a recall number on
+either planet again.
 
 Two things this immediately settles:
 
@@ -283,11 +321,11 @@ Two things this immediately settles:
   "believed to be a genuinely cliff-dense region". It is dense - but we place 1399
   cells where the game places 885, so roughly a third of that ink is ours, not the
   game's.
-- **Precision is the metric that was missing.** `test/cliffPlacement.spec.ts`
-  guards Nauvis at >= 85% *recall* only, which a model that placed a cliff on
-  every lattice cell would pass at 100%. The Vulcanus spec measures both, and it
-  is precision (0.38-0.57) that exposes the real problem. Nauvis's precision has
-  still never been measured.
+- **Precision was the metric that was missing.** The Nauvis spec guarded >= 85%
+  *recall* only, which a model that placed a cliff on every lattice cell would
+  pass at 100%. It is precision (0.38-0.57) that exposes the real problem on
+  Vulcanus - and measuring Nauvis's, which had never been done, is what cleared
+  the shared code. Both specs now assert it.
 
 ### `find_entities_filtered{type = "cliff"}` is not a clean proxy on Vulcanus
 
