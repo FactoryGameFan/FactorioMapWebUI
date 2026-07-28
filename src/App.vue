@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { SUPPORTED_VERSIONS_LABEL } from "./codec/mapExchangeString";
+import { FACTORIO_TARGET_VERSION } from "./model/factorioTarget";
 import ActionBar from "./components/ActionBar.vue";
 import AdvancedTab from "./components/AdvancedTab.vue";
 import ElevationPreviewPanel from "./components/ElevationPreviewPanel.vue";
@@ -22,6 +24,18 @@ const showImport = ref(false);
   <div class="app">
     <header class="titlebar">
       <span>Map generator</span>
+      <!-- Always visible rather than behind Debug on purpose: the user who most
+           needs it is the one whose import just failed with "unsupported exchange
+           format", and they are not in debug mode. Both values are derived - the
+           target from fixture provenance, the formats from the decoder itself -
+           so neither can drift from what the app actually supports (#7). -->
+      <span
+        class="target-version"
+        data-test="factorio-target"
+        :title="`This build's ground truth is captured from Factorio ${FACTORIO_TARGET_VERSION}. Map-exchange formats it can import: ${SUPPORTED_VERSIONS_LABEL}.`"
+      >
+        Factorio {{ FACTORIO_TARGET_VERSION }}
+      </span>
       <a
         class="repo-link"
         href="https://github.com/wormeyman/FactorioMapWebUI"
@@ -66,6 +80,15 @@ const showImport = ref(false);
   gap: 8px;
   min-height: 100vh;
   padding: 8px;
+}
+
+.target-version {
+  /* Pushed to the right so it reads as build metadata, not a heading. Dimmed and
+     small: informative when looked for, quiet otherwise. */
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.65;
+  white-space: nowrap;
 }
 
 .titlebar {

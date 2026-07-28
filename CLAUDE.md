@@ -188,7 +188,7 @@ only - never add `--host`. See README for the full list.
 ## Architecture
 
 A static, backend-free SPA (Vue 3 `<script setup>` + Pinia) for authoring
-Factorio 2.1.9 map-generation presets, plus an optional Cloudflare preview
+Factorio map-generation presets, plus an optional Cloudflare preview
 service in a separate workspace.
 
 ### The codec is the core, and byte-exactness is a hard invariant
@@ -201,6 +201,13 @@ Consequences that constrain any change here:
 - Deflate goes through `zlib-asm` specifically; `pako`/`fflate` diverge from the
   game's stream. `zlib-asm` uses direct `eval`, so the app's CSP must allow
   `unsafe-eval` (and the production build logs an `[EVAL]` warning - expected).
+- **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
+  known-good list (`2.1.9.3`, `2.1.12.2`), never a range - the schemas here are
+  empirical, so accepting an unseen format would decode a changed layout into
+  plausible wrong values. A version joins the list only with a fixture proving a
+  real string of it round-trips byte-exact (`test/mapExchangeVersions.spec.ts`).
+  This was a live bug: the app rejected every string from Factorio 2.1.12 until
+  2026-07-28. The UI now advertises the target so the next drift is visible.
 - `src/codec/fieldSchema.ts` (`readFields`/`writeFields`) drives the typed
   binary layout; `binaryReader`/`binaryWriter`/`crc32`/`base64` are the
   primitives.

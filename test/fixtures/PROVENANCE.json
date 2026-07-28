@@ -28,6 +28,10 @@
       "factorioVersion": "2.1.9",
       "evidence": "the fixture's own _factorioVersion field (\"2.1.9 (experimental)\")"
     },
+    "map-exchange-2.1.12.strings.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "stated in the fixture's own _factorioVersion/_exchangeFormatTag fields; captured 2026-07-28 via game.get_map_exchange_string() on a headless 2.1.12 run"
+    },
     "map-exchange-parsed.default-seed123456.dump.json": {
       "factorioVersion": "2.1.9",
       "evidence": "stated in decode.spec.ts, its only consumer"
