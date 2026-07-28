@@ -20,6 +20,7 @@ import { makeCliffPlacementFromFields } from "../cliffs/cliffPlacement";
 import {
   VULCANUS_CLIFF_ELEVATION_0,
   VULCANUS_CLIFF_ELEVATION_INTERVAL,
+  VULCANUS_CLIFF_SMOOTHING,
   makeVulcanusCliffFields,
 } from "../cliffs/vulcanusCliffFields";
 import { paintCliffCells } from "./renderCliffs";
@@ -57,6 +58,7 @@ export function renderVulcanusCliffs(base: ImageData, opts: RenderVulcanusCliffs
   const placement = makeCliffPlacementFromFields(makeVulcanusCliffFields(ctx), {
     elevation0: VULCANUS_CLIFF_ELEVATION_0,
     interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+    smoothing: VULCANUS_CLIFF_SMOOTHING,
   });
 
   const box = opts.cellQueryBox ?? {

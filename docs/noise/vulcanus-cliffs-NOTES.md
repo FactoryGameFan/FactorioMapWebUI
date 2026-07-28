@@ -259,6 +259,12 @@ the `all` path the Vulcanus DAG is evaluated four times per pixel region.
 
 ## Entity-level validation - DONE 2026-07-28, and the result is not good
 
+> **Read to the end of this section before quoting a number.** The three
+> sub-sections below are a diagnosis in order: the failure, what it cleared, and
+> the root cause. The tables in the first two are the **pre-fix** state, kept
+> because the reasoning that got from one to the other is the useful part. The
+> current figures are in "ROOT CAUSE: `cliff_smoothing`".
+
 **Superseded the "Not validated" section below.** `test/vulcanusCliffEntities.spec.ts`
 now compares the port against every real `cliff-vulcanus` the game places, captured
 over three regions by `test/oracle/capture.ts vulcanus-cliff-entities`
@@ -326,6 +332,57 @@ Two things this immediately settles:
   pass at 100%. It is precision (0.38-0.57) that exposes the real problem on
   Vulcanus - and measuring Nauvis's, which had never been done, is what cleared
   the shared code. Both specs now assert it.
+
+### ROOT CAUSE: `cliff_smoothing` (found + fixed 2026-07-28)
+
+**Neither remaining suspect above was right.** The band constants are correct
+(`70` / `120`, straight out of `planet-map-gen.lua:27-28`) and the fields were
+fine. The missing piece was a third thing the diagnosis had not listed at all:
+**`cliff_smoothing`, which is `1` on Vulcanus and `0` on Nauvis.**
+
+Vulcanus's `cliff_settings` sets only `name`, `cliff_elevation_interval` and
+`cliff_elevation_0`, so smoothing takes the **prototype default of 1**. Nauvis,
+Fulgora and Gleba all set `cliff_smoothing = 0` explicitly - Fulgora with the
+comment "This is critical for correct cliff placement." Vulcanus is the one planet
+that doesn't, and it was the one planet that was wrong. The port had no smoothing
+support at all, so both planets ran at 0.
+
+The engine applies it to the cliff **elevation** samples before any crossing test.
+Full rule, offsets and the disasm reading are in `cliffs-NOTES.md`
+("`cliff_smoothing` - a no-op on Nauvis ONLY"); ported as `smoothingKnots` /
+`smoothedElevation` in `cliffPlacement.ts`.
+
+Re-measured against the same three regions and the same fixture:
+
+| region | game | ours | recall | precision | ratio | was |
+| --- | --- | --- | --- | --- | --- | --- |
+| `[0,0]` | 283 | 326 | **0.788** | **0.684** | **1.152** | 0.569 / 0.382 / 1.49x |
+| `[1500,1500]` | 885 | 1055 | **0.855** | **0.718** | **1.192** | 0.694 / 0.439 / 1.58x |
+| `[-1200,800]` | 401 | 371 | **0.801** | **0.865** | **0.925** | 0.646 / 0.569 / 1.14x |
+
+Recall +15 to +22 points, precision +28 to +30 points, and the count error drops
+from 1.1-1.6x over to within 8-19% either way. A sweep at `s = 0 / 0.5 / 1` is
+monotone with `s = 1` best on all three regions in all three metrics - so the value
+is corroborated by measurement as well as being the documented default. It was not
+fitted: there is no other value it could have been.
+
+Two things worth carrying forward from how this was found and missed:
+
+- **The error's shape pointed at the right kind of cause and the wrong instance.**
+  "Over-placing while also missing a third of real cliffs means cells land in the
+  wrong places" was correct reasoning, and it named the interval as the suspect
+  because the interval was the only wrong-places mechanism on the list. Smoothing
+  is another one, and it was invisible because `cliffs-NOTES.md` had recorded it as
+  "a no-op in this path" - true of Nauvis, silently generalised to the engine.
+- **A defaulted field is more dangerous than a wrong one.** Nothing in the Vulcanus
+  Lua mentions smoothing; it had to be found by reading what the prototype does
+  when the field is *absent*. When porting a settings block, enumerate the
+  prototype's full property list and its defaults, not just the keys the planet
+  bothers to set.
+
+Residual after the fix is no longer one-directional - region 2 now slightly
+under-places - which argues against a remaining uniform bias. `fixImpossibleCells`
+(still deferred, issue #22) is the leading candidate for what is left.
 
 ### `find_entities_filtered{type = "cliff"}` is not a clean proxy on Vulcanus
 

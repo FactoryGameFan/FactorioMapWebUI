@@ -75,8 +75,48 @@ export interface CliffBands {
   readonly elevation0: number;
   /** `cliff_elevation_interval`, already divided by the frequency lever. */
   readonly interval: number;
+  /**
+   * `cliff_smoothing`, 0..1. Defaults to **0** here, which is Nauvis's value -
+   * NOT the prototype default of 1. See `smoothedElevation` below: this is a
+   * planet-level constant, and getting it wrong is invisible on Nauvis and
+   * catastrophic on Vulcanus.
+   */
+  readonly smoothing?: number;
   /** When true, `placedCells` returns nothing (continuity or richness is 0). */
   readonly disabled?: boolean;
+}
+
+/** Corners per chunk axis: a 32-tile chunk over the 4-tile grid. */
+const CHUNK_CORNERS = 32 / CLIFF_GRID_SIZE;
+
+/**
+ * The knot pair and blend fraction that `cliff_smoothing` interpolates a corner
+ * between, for one axis. `crossingsForChunk` (`0x10160cdec`) walks each chunk's
+ * own `9x9` corner block and, per axis, takes
+ *
+ * ```
+ * lo = i & ~3                     // i is the IN-CHUNK corner index, 0..8
+ * hi = min(lo + 4, CHUNK_CORNERS - 1)
+ * t  = (i & 3) / (hi - lo)
+ * ```
+ *
+ * so the knots land at in-chunk indices **0, 4 and 7** - the second span is
+ * three corners wide, not four, because `hi` is clamped to `CHUNK_CORNERS - 1`
+ * (7) rather than to the block edge (8). Index 8 falls out with `t = 0` on
+ * itself, which is the same world point as the next chunk's index 0, also a
+ * knot - so the two chunks agree there and this reduces cleanly to a function
+ * of the GLOBAL corner index, with no chunk loop needed.
+ *
+ * That asymmetry is not a misreading: it is what makes smoothing "inaccurate"
+ * in the prototype docs' own words, and it is anchored to the chunk grid, so
+ * the smoothed field is deliberately discontinuous every 32 tiles.
+ */
+export function smoothingKnots(index: number): { lo: number; hi: number; t: number } {
+  const i = ((index % CHUNK_CORNERS) + CHUNK_CORNERS) % CHUNK_CORNERS;
+  const base = index - i;
+  const lo = i & ~3;
+  const hi = Math.min(lo + 4, CHUNK_CORNERS - 1);
+  return { lo: base + lo, hi: base + hi, t: (i & 3) / (hi - lo) };
 }
 
 export interface CliffPlacement {
@@ -110,10 +150,51 @@ export function makeCliffPlacementFromFields(
 ): CliffPlacement {
   const { cliffElevation, cliffiness } = fields;
   const { elevation0: e0, interval } = bands;
+  const smoothing = bands.smoothing ?? 0;
 
   return {
     placedCells(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] {
       if (bands.disabled === true) return [];
+
+      const raw = new Map<string, number>();
+      const rawElevation = (i: number, j: number): number => {
+        const key = `${i},${j}`;
+        let value = raw.get(key);
+        if (value === undefined) {
+          value = cliffElevation(i * CLIFF_GRID_SIZE, j * CLIFF_GRID_SIZE + CLIFF_CORNER_OFFSET_Y);
+          raw.set(key, value);
+        }
+        return value;
+      };
+
+      /**
+       * `cliff_smoothing` applied to the cliff ELEVATION register only -
+       * cliffiness is read unsmoothed (`crossingsForChunk` smooths the register
+       * at `[settings+0x1e0]`, then reads `[+0x1e4]` raw). The blend is
+       *
+       *     (1 - s) * E(i,j) + s * bilerp(E at the four surrounding knots)
+       *
+       * At `s = 1` the `E(i,j)` term vanishes exactly, so the raw elevation
+       * sample is skipped and only the knot corners are ever evaluated. That
+       * makes smoothing slightly cheaper than no smoothing rather than dearer,
+       * but only slightly: measured over `placedCells(0,0,1024,1024)` on
+       * Vulcanus, 6.95s at `s = 0` vs 6.26s at `s = 1` (~10%, three paired runs,
+       * 2026-07-28). Cliffiness is still sampled at every corner and dominates,
+       * so do not expect the knot ratio to show up as a speedup.
+       */
+      const smoothedElevation = (i: number, j: number): number => {
+        const kx = smoothingKnots(i);
+        const ky = smoothingKnots(j);
+        const bilinear =
+          (1 - kx.t) * (1 - ky.t) * rawElevation(kx.lo, ky.lo) +
+          kx.t * (1 - ky.t) * rawElevation(kx.hi, ky.lo) +
+          (1 - kx.t) * ky.t * rawElevation(kx.lo, ky.hi) +
+          kx.t * ky.t * rawElevation(kx.hi, ky.hi);
+        if (smoothing === 1) return bilinear;
+        return (1 - smoothing) * rawElevation(i, j) + smoothing * bilinear;
+      };
+
+      const elevationAt = smoothing === 0 ? rawElevation : smoothedElevation;
 
       const corners = new Map<string, CornerSample>();
       const corner = (i: number, j: number): CornerSample => {
@@ -122,7 +203,7 @@ export function makeCliffPlacementFromFields(
         if (sample === undefined) {
           const wx = i * CLIFF_GRID_SIZE;
           const wy = j * CLIFF_GRID_SIZE + CLIFF_CORNER_OFFSET_Y;
-          sample = { elev: cliffElevation(wx, wy), cliff: cliffiness(wx, wy) };
+          sample = { elev: elevationAt(i, j), cliff: cliffiness(wx, wy) };
           corners.set(key, sample);
         }
         return sample;

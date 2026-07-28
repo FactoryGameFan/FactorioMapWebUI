@@ -4,6 +4,7 @@ import fixture from "./fixtures/oracle-vulcanus-cliff-entities.seed123456.json";
 import {
   VULCANUS_CLIFF_ELEVATION_0,
   VULCANUS_CLIFF_ELEVATION_INTERVAL,
+  VULCANUS_CLIFF_SMOOTHING,
   makeVulcanusCliffFields,
 } from "../src/noise/cliffs/vulcanusCliffFields";
 import { makeCliffPlacementFromFields } from "../src/noise/cliffs/cliffPlacement";
@@ -33,6 +34,7 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       const placement = makeCliffPlacementFromFields(makeVulcanusCliffFields(ctx), {
         elevation0: VULCANUS_CLIFF_ELEVATION_0,
         interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
       });
       const r = c.region;
       const placed = placement.placedCells(r.x0, r.y0, r.x1, r.y1);
@@ -73,25 +75,31 @@ describe("Vulcanus cliff placement vs find_entities", () => {
           `ratio=${(predicted.size / actual.size).toFixed(3)}`,
       );
 
-      // Drift guards, pinned BELOW the measured values so a regression fails and
-      // noise does not. Cliff placement is deterministic given the seed - there
-      // is no roll here - so these numbers are exactly reproducible; the slack is
-      // to leave room for the port to IMPROVE without editing the test.
+      // Drift guards, pinned just OUTSIDE the measured values so a regression
+      // fails and noise does not. Cliff placement is deterministic given the
+      // seed - there is no roll here - so these numbers are exactly
+      // reproducible; the slack is to leave room for the port to IMPROVE
+      // without editing the test.
       //
-      // | region | game | ours | recall | precision | over-placement |
-      // | --- | --- | --- | --- | --- | --- |
-      // | 0 `[0,0]` | 283 | 422 | 0.569 | 0.382 | 1.49x |
-      // | 1 `[1500,1500]` | 885 | 1399 | 0.694 | 0.439 | 1.58x |
-      // | 2 `[-1200,800]` | 401 | 455 | 0.646 | 0.569 | 1.14x |
+      // Measured 2026-07-28, after `cliff_smoothing = 1` was ported (issue #18);
+      // the "was" column is the same code with smoothing left at Nauvis's 0.
       //
-      // **Do not read these as Nauvis-grade.** `test/cliffPlacement.spec.ts`
-      // guards Nauvis at >= 85% recall; Vulcanus reproduces 57-69% of real cliffs
-      // and, more importantly, places 1.1-1.6x too MANY. Issue #18 tracks the
-      // diagnosis. The bands exist to catch a regression from here, not to
-      // certify the current state as good.
-      expect(recall).toBeGreaterThan(0.5);
-      expect(precision).toBeGreaterThan(0.3);
-      expect(predicted.size / actual.size).toBeLessThan(2);
+      // | region | game | ours | recall | precision | ratio | was (ratio) |
+      // | --- | --- | --- | --- | --- | --- | --- |
+      // | 0 `[0,0]` | 283 | 326 | 0.788 | 0.684 | 1.152 | 0.569 / 0.382 / 1.49x |
+      // | 1 `[1500,1500]` | 885 | 1055 | 0.855 | 0.718 | 1.192 | 0.694 / 0.439 / 1.58x |
+      // | 2 `[-1200,800]` | 401 | 371 | 0.801 | 0.865 | 0.925 | 0.646 / 0.569 / 1.14x |
+      //
+      // **Still not Nauvis-grade.** `test/cliffPlacement.spec.ts` measures Nauvis
+      // at 0.943 recall AND precision with a ratio of exactly 1.000. Vulcanus now
+      // reproduces 79-86% and its count is within 8-19%. The residual is no
+      // longer one-directional - region 2 now UNDER-places - which is why the
+      // ratio is guarded on both sides below; a uniform bias would show up as a
+      // consistent direction. Issue #18 tracks what is left.
+      expect(recall).toBeGreaterThan(0.75);
+      expect(precision).toBeGreaterThan(0.65);
+      expect(predicted.size / actual.size).toBeLessThan(1.25);
+      expect(predicted.size / actual.size).toBeGreaterThan(0.85);
     }, 120000);
   }
 });
