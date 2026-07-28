@@ -701,10 +701,18 @@ describe("cliffCellQueryBox", () => {
     expect(cliffCellQueryBox(req({}))).toEqual({ x0: -64, y0: -64, x1: -32, y1: -32 });
   });
 
-  it("widens an interior tile by the mark radius on every side", () => {
+  it("widens an interior tile ASYMMETRICALLY, matching the 4x4 mark", () => {
     // Interior tile at pixel offset (32, 32) of the 128x128 image.
+    //
+    // The cliff block spans `px - 2 .. px + 1`, so the two sides need different
+    // halos and the directions CROSS: a cell reaches in from the low side only
+    // when it is within its FORWARD extent (1), and from the high side within
+    // its BACKWARD extent (2). A symmetric 2/2 halo is correct but enumerates a
+    // surplus tile at the low edge, which the cliff pass's 32-tile chunk
+    // quantization turns into a whole extra chunk per axis - 1.40x the field
+    // evaluations for zero pixels of difference (test/cliffCellBounds.spec.ts).
     const box = cliffCellQueryBox(req({ originX: -32, originY: -32, fullImage: full }));
-    expect(box).toEqual({ x0: -34, y0: -34, x1: 2, y1: 2 });
+    expect(box).toEqual({ x0: -33, y0: -33, x1: 2, y1: 2 });
   });
 
   it("clamps to the image edge instead of widening past it", () => {
@@ -727,6 +735,9 @@ describe("cliffCellQueryBox", () => {
     const box = cliffCellQueryBox(
       req({ originX: -32, originY: -32, tilesPerPixel: 4, fullImage: full }),
     );
-    expect(box.x0).toBe(-32 - 8); // CLIFF_MARK_BACK_PX * 4
+    // Low side takes the mark's FORWARD extent (1 px), scaled: 1 * 4.
+    expect(box.x0).toBe(-32 - 4);
+    // High side takes its BACKWARD extent (CLIFF_MARK_BACK_PX = 2): 2 * 4.
+    expect(box.x1).toBe(-32 + 32 * 4 + 8);
   });
 });

@@ -296,6 +296,34 @@ blockIt("vulcanus")(
     const cliffs = b.add("cliffs", () => runRenderRequest({ ...vBase, view: "cliffs" }));
     const all = b.add("all", () => runRenderRequest({ ...vBase, view: "all" }));
 
+    // The SAME area as 16 x 128x128 tiles, which is the geometry the app
+    // actually renders (a 64-worker pool at 128x128, `render-tiling-shipped`).
+    // The gate has always been quoted on the whole-image arm, and for a long
+    // time those two disagreed badly - the tiled `all` ran 17% dearer, which
+    // traced to the cliff cell bounds rounding out to a spare chunk per axis
+    // per call (vulcanus-cliffs-NOTES.md, "ROOT CAUSE of the tiling penalty").
+    // With that fixed they agree to ~1%, but the tiled arm stays because it is
+    // the one the user experiences and nothing else would have caught this.
+    const VT = 128;
+    const vFull = { originX: 0, originY: 0, width: V, height: V };
+    const tiled = (view: "terrain" | "all"): (() => void) => {
+      return () => {
+        for (let dy = 0; dy < V; dy += VT)
+          for (let dx = 0; dx < V; dx += VT)
+            runRenderRequest({
+              ...vBase,
+              view,
+              width: VT,
+              height: VT,
+              originX: dx,
+              originY: dy,
+              fullImage: vFull,
+            });
+      };
+    };
+    const terrainTiled = b.add(`terrain tiled (16 x ${VT})`, tiled("terrain"));
+    const allTiled = b.add(`all tiled (16 x ${VT})`, tiled("all"));
+
     b.run(ITERS);
 
     const header = `vulcanus @ ${V}x${V}, tpp 1, seed ${SEED}, origin (0,0), min of ${ITERS}`;
@@ -310,12 +338,14 @@ blockIt("vulcanus")(
         "",
         header,
         "-".repeat(header.length),
-        ...[terrain, resources, rocks, cliffs, all].map(row),
+        ...[terrain, resources, rocks, cliffs, all, terrainTiled, allTiled].map(row),
         "",
         `resources marginal                  ${marginal(resources)}`,
         `rocks     marginal                  ${marginal(rocks)}`,
         `cliffs    marginal                  ${marginal(cliffs)}`,
-        `ratio all/terrain                        ${(minOf(all) / minOf(terrain)).toFixed(3).padStart(6)}   <- the "under 2x terrain" gate`,
+        `ratio all/terrain, whole                 ${(minOf(all) / minOf(terrain)).toFixed(3).padStart(6)}   <- the "under 2x terrain" gate`,
+        `ratio all/terrain, TILED                 ${(minOf(allTiled) / minOf(terrainTiled)).toFixed(3).padStart(6)}   <- the same gate at the geometry the app renders`,
+        `tiling penalty on all                    ${(minOf(allTiled) / minOf(all)).toFixed(3).padStart(6)}   <- was 1.17 before the cliff-bounds fix`,
         "",
       ].join("\n"),
     );
@@ -331,11 +361,21 @@ blockIt("vulcanus")(
 // view every non-Nauvis preset uses, and its per-render setup (compiled octave
 // closures, starting-lake computation) is the most likely to dominate a small
 // total.
+//
+// The tiled arm passes `fullImage`, because `renderPool.ts` always does. Without
+// it `haloQueryBox` returns the bare tile box and every seam halo silently
+// vanishes, so the arm measures a tiling the app never performs. This was
+// missing until 2026-07-28 and every tiled figure recorded before that date was
+// taken without it. It turned out not to move the Vulcanus conclusion - the
+// cliff halo costs exactly zero extra field evaluations, see
+// vulcanus-cliffs-NOTES.md - but "the tiled number is the real one" is the whole
+// reason this block exists, so it should actually be the real one.
 blockIt("tiles")(
   "tile overhead: 64 x 128x128 vs one 1024x1024",
   () => {
     const TILE = 128;
     const b = bench();
+    const fullImage = { originX: base.originX, originY: base.originY, width: N, height: N };
     const pairs = (["elevation", "terrain", "all"] as const).map((view) => ({
       view,
       whole: b.add(`whole ${view}`, () => runRenderRequest({ ...base, view })),
@@ -349,6 +389,7 @@ blockIt("tiles")(
               height: TILE,
               originX: -HALF + dx,
               originY: -HALF + dy,
+              fullImage,
             });
       }),
     }));

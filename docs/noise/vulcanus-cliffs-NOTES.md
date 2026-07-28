@@ -268,10 +268,152 @@ and do **not** clear it at the geometry the app actually runs. Both statements
 are true and neither alone is honest.
 
 Note where the tiling penalty falls: tiled *terrain* is slightly **cheaper**
-(3553 vs 3684 - smaller working set), while tiled `all` is **17% dearer**. It
-lands entirely on the overlays, because each 128px tile re-resolves every 32x32
-chunk it overlaps and neighbouring tiles redo the same chunks. That is a THIRD
-source of duplication, distinct from the two below, and nothing here touches it.
+(3553 vs 3684 - smaller working set), while tiled `all` is dearer. It lands
+entirely on the overlays.
+
+**The 17% in the table above is itself understated, and the reason is worth
+more than the number.** Every tiled figure recorded before 2026-07-28 was taken
+**without `fullImage`**, and `haloQueryBox` returns the bare tile box when that
+field is absent - so the benchmark's tiled arm silently skipped every seam halo
+and measured a tiling the app never performs. `renderPool.ts` always sets it.
+Re-measured with it, the same pre-fix penalty on `all` is **43%**, not 17%. The
+benchmark's tiled arms now pass `fullImage`.
+
+**The stated CAUSE was also wrong, and the correction has a correction.** This
+paragraph used to assert the penalty was chunk re-resolution - "each 128px tile
+re-resolves every 32x32 chunk it overlaps" - written with no measurement behind
+it. Instrumenting `resolveChunk` with a call counter says:
+
+| view | whole 512x512 | tiled, no `fullImage` | tiled, `fullImage` (the app) |
+| --- | --- | --- | --- |
+| rocks | 256 | 256 (**1.00x**) | 484 (**1.89x**) |
+| resources | 256 | 256 (**1.00x**) | 484 (**1.89x**) |
+| all | 512 | 512 (**1.00x**) | 968 (**1.89x**) |
+
+Read the two tiled columns together, because the first one on its own is how
+this was briefly "falsified" outright. Without the halo, 128 is a multiple of 32,
+tiles are chunk-**aligned**, and each chunk belongs to exactly one tile - exactly
+1.00x. Add the one-pixel mark halo the app actually uses and the box crosses a
+chunk boundary at both ends, so an interior tile resolves **6 chunks per axis
+instead of 4** and every seam chunk is resolved by both neighbours.
+
+So chunk re-resolution is real at the geometry the app renders, and it is **not
+a bug** - the Vulcanus rock overlay paints a 3x3 mark, so a rock centred one
+pixel outside the tile genuinely owes it pixels, and knowing whether that rock
+exists requires resolving its chunk. It is the structural cost of combining
+independent worker tiles with chunk-granular collision resolution, and it is
+what remains after the two fixes below. It is concentrated in the rock overlay,
+whose marginal goes from 200 ms whole to 1441 ms tiled (**7.2x**) - super-linear
+because the extra chunks fall outside the tile, where terrain has not already
+warmed the shared field cache.
+
+**The lesson, since this file has now recorded it twice: a measurement on the
+wrong geometry falsifies nothing.** The 1.00x column is a true statement about a
+configuration that does not exist in production.
+
+### ROOT CAUSE of the tiling penalty: TWO conservative cliff bounds (fixed 2026-07-28)
+
+Both are the same shape - a bound that is correct but one tile too wide, sitting
+in front of something that quantizes to chunks, so the surplus tile costs a whole
+chunk. Neither changed a single pixel; `test/tiledEquality.spec.ts` passed before
+and after both.
+
+Measured at the app's real geometry (512x512 vs 16 x 128x128, `fullImage` set,
+min-of-5 interleaved, two runs one after the other):
+
+| | pre-fix | post-fix |
+| --- | --- | --- |
+| tiling penalty on `all` | **43.0%** | **24.5%** |
+| cliffs marginal, tiled | 3413 ms | **1645 ms** (-52%) |
+| cliffs marginal, whole | 1853 ms | **1472 ms** (-21%) |
+| ratio all/terrain, tiled | 3.00 | **2.48** |
+
+The cliff pass's own tiled penalty goes from **26.7% to 0.3%**. What is left of
+the 24.5% is the chunk re-resolution above, which is structural, and it now sits
+in the rock and resource overlays rather than in cliffs.
+
+**This does NOT clear the 2x gate at the geometry the app renders** (2.48x). It
+does clear it on the whole-image basis the gate has historically been quoted on
+(7444 / 3893 = 1.91x), which is exactly the ambiguity the geometry section above
+exists to prevent - so the honest headline is 2.48x, not 1.91x.
+
+#### 1. The cell-index bounds overshot by a cell
+
+**An off-by-one.** `placedCells` derived its
+cell-index range with `floor` at the low end and `ceil` at the high end:
+
+```ts
+const cxMin = Math.floor((x0 - CLIFF_CELL_CENTER_X) / CLIFF_GRID_SIZE);
+const cxMax = Math.ceil((x1 - CLIFF_CELL_CENTER_X) / CLIFF_GRID_SIZE);
+```
+
+Cell centres sit at `cx * 4 + 2`, so both ends overshoot by one cell whose centre
+is outside the box. The **output** was always right - the emit filter
+(`x >= x0 && x < x1`) discarded them. But the chunk loop underneath rounds that
+range out to whole 8-cell chunks, and one stray cell is enough to pull in an
+entire extra chunk on each side. That is a **fixed +2 chunks per axis per call**,
+and a fixed per-call cost is exactly what tiling multiplies by 16.
+
+Counted rather than timed, so these are exact (`test/cliffCellBounds.spec.ts`):
+
+| | chunks/axis | cliffiness evals, whole 512 | tiled 16 x 128 | ratio |
+| --- | --- | --- | --- | --- |
+| old `floor`/`ceil` | needs 16, does 18 | 21,025 (145²) | 38,416 (49² x 16) | **1.83x** |
+| tightened | 16 | **16,641** (129²) | **17,424** (33² x 16) | **1.047x** |
+
+The tightened bounds are the exact inclusive range - `ceil((x0 - CX) / G)` and
+`ceil((x1 - CX) / G) - 1` - and the residual 1.047x is the genuine seam cost of
+16 independent tiles sharing corner lattices, which is irreducible without
+cross-tile state.
+
+Note the whole-image render gets **21% cheaper** too (145² -> 129²); the fix is
+not tiling-specific, tiling just made a constant expensive.
+
+#### 2. The seam halo was symmetric while the mark is not
+
+`cliffCellQueryBox` widened by `CLIFF_MARK_BACK_PX` (2) on **both** sides. The
+cliff block spans `px - 2 .. px + 1` - 2 back, 1 forward, which is what anchors
+it on the cell's 4-tile footprint - so the two sides need different halos, and
+**the directions cross**: a cell reaches in from the LOW side only within its
+FORWARD extent (1), and from the HIGH side within its BACKWARD extent (2).
+
+The old comment called 2 "the larger of the block's two directions", which was a
+faithful description of the 5x5 centred mark it was written for and was never
+revisited when the mark became 4x4 anchored (2026-07-27). Correct, and one tile
+too wide on the low side - which again rounds out to a whole chunk:
+
+| tiled halo (low/high) | cliffiness evals, 16 x 128 | vs whole |
+| --- | --- | --- |
+| symmetric 2/2 (old) | 24,336 | 1.462x |
+| exact 1/2 (now) | **17,424** | **1.047x** |
+
+The exact halo costs **precisely what no halo at all costs** - the seam
+correctness is free once the bound stops crossing a chunk boundary.
+
+This one is a knife-edge, and that is the proof it is exact: narrowing the low
+side by one further pixel makes `test/tiledEquality.spec.ts` fail (checked by
+planting it). `haloQueryBox` now takes `(backPx, fwdPx)`; the placement-mark
+sweep passes the same value twice, because a 3x3 mark genuinely is symmetric.
+
+#### Four things worth carrying forward
+
+- **A conservative bound with a correct filter is invisible to every
+  correctness test.** `tiledEquality` passed throughout, before and after both
+  fixes, because the pixels never changed. Only a *cost* measurement sees it.
+- **Look for a quantizer behind the bound.** Neither surplus tile would have
+  mattered on its own. Both were expensive because something downstream rounds
+  to 32-tile chunks, which turns "one tile too wide" into "one chunk too many".
+  That pattern is worth grepping for wherever a query box meets a chunk loop.
+- **The suspect list was wrong in an instructive way.** The three going in were
+  stack construction, memo locality, and the seam halo. Construction is 26.5 ms
+  per 16 tiles against a ~7300 ms render - **0.4%**, falsified outright. Memo
+  locality was never tested because it stopped being plausible once the counts
+  were exact. The halo *was* a cause, but not for the reason it was suspected:
+  it does not cost extra cells, it costs an extra chunk.
+- **Count, don't time, when the mechanism is arithmetic.** The counts matched a
+  hand-derived prediction (145², 49² x 16) to the unit. Timing at ~4% run-to-run
+  drift could not have established that, and a timing run on the wrong geometry
+  actively misled - see the `fullImage` note above.
 
 ### SHIPPED: one shared cached stack (2026-07-28)
 
@@ -300,7 +442,10 @@ a deferred-paint step to preserve the 3x3 geyser mark ordering, and a
 `skipThreshold` flag; whether ~7 points is worth that is a live question, not a
 settled one.
 
-**Neither reaches the 2x gate at the geometry the app renders** (2.53 tiled).
+**Neither reaches the 2x gate at the geometry the app renders** (2.53 tiled -
+and that figure is itself optimistic, being one of the pre-2026-07-28 tiled
+measurements taken without `fullImage`; the comparable number with the halo is
+3.00, and 2.48 after the two cliff-bounds fixes).
 See the geometry section above before quoting any of these.
 
 ### What the two mechanisms buy - measured 2026-07-28 (fusion since dropped)
