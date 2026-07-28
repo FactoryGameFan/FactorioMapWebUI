@@ -447,10 +447,25 @@ export function buildCliffModList(): object {
  * then `error(DUMPED-OK)` to exit. Chunk generation over the whole region (not a
  * per-point neighborhood like the tile path) is what makes real cliffs appear.
  */
-export function buildCliffControlLua(region: Region, opts: { dumpFile?: string } = {}): string {
+export function buildCliffControlLua(
+  region: Region,
+  opts: { dumpFile?: string; planet?: string; seed?: number } = {},
+): string {
   const dumpFile = opts.dumpFile ?? CLIFF_DUMP_FILE;
+  // With `planet` set, run on that planet's own surface with the seed FORCED,
+  // exactly as `buildEntityCountControlLua` does - so a Vulcanus capture describes
+  // the surface `withCtxDefaults({ seed0: seed })` describes, not the
+  // `seed + crc32(planet)` one a real save would generate. Every committed
+  // Vulcanus fixture is captured this way; see `entityCounts.ts`'s header.
+  const surfaceLua =
+    opts.planet === undefined
+      ? `  local surface = game.surfaces[1]`
+      : `  local surface = game.planets["${opts.planet}"].create_surface()
+  local mgs = surface.map_gen_settings
+  mgs.seed = ${String(opts.seed ?? 123456)}
+  surface.map_gen_settings = mgs`;
   return `script.on_init(function()
-  local surface = game.surfaces[1]
+${surfaceLua}
   local x0, y0, x1, y1 = ${region.x0}, ${region.y0}, ${region.x1}, ${region.y1}
   local cx0 = math.floor(x0 / 32)
   local cy0 = math.floor(y0 / 32)
@@ -465,7 +480,7 @@ export function buildCliffControlLua(region: Region, opts: { dumpFile?: string }
   local ents = surface.find_entities_filtered{ type = "cliff", area = {{x0, y0}, {x1, y1}} }
   local cliffs = {}
   for i, e in ipairs(ents) do
-    cliffs[i] = {x = e.position.x, y = e.position.y}
+    cliffs[i] = {x = e.position.x, y = e.position.y, name = e.name}
   end
   helpers.write_file("${dumpFile}", helpers.table_to_json({ cliffs = cliffs }), false)
   error("DUMPED-OK")
@@ -709,8 +724,21 @@ export async function sampleCliffEntities(
   await mkdir(modFilesDir, { recursive: true });
   await mkdir(writeDataDir, { recursive: true });
   await writeFile(join(modFilesDir, "info.json"), JSON.stringify(buildCliffInfoJson(), null, 2));
-  await writeFile(join(modFilesDir, "control.lua"), buildCliffControlLua(region));
-  await writeFile(join(modDir, "mod-list.json"), JSON.stringify(buildCliffModList(), null, 2));
+  await writeFile(
+    join(modFilesDir, "control.lua"),
+    buildCliffControlLua(region, {
+      planet: opts.spaceAge === true ? (opts.planet ?? "vulcanus") : undefined,
+      seed,
+    }),
+  );
+  await writeFile(
+    join(modDir, "mod-list.json"),
+    JSON.stringify(
+      opts.spaceAge === true ? buildSpaceAgeModList(CLIFF_PROBE_NAME) : buildCliffModList(),
+      null,
+      2,
+    ),
+  );
   await writeFile(mapGenPath, JSON.stringify(buildTileMapGenSettings(seed)));
   await writeFile(configPath, buildConfigIni(writeDataDir, dataDir));
 

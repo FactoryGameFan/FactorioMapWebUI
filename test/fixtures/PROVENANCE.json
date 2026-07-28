@@ -172,6 +172,10 @@
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment"
     },
+    "oracle-vulcanus-cliff-entities.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-07-28 by test/oracle/capture.ts vulcanus-cliff-entities against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time"
+    },
     "oracle-vulcanus-cliffs.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment"

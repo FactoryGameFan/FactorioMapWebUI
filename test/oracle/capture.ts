@@ -2497,8 +2497,77 @@ if (want("trees-controls")) await captureTreesControls();
 if (want("cliff-elevation")) await captureCliffElevation();
 if (want("cliffiness")) await captureCliffiness();
 if (want("cliff-offset-raw")) await captureCliffOffsetRaw();
+/**
+ * Every ACTUAL Vulcanus cliff entity in three regions - the entity-level ground
+ * truth Vulcanus cliffs have never had (issue #18). Nauvis's equivalent
+ * (`captureCliffEntities`) validates that port at ~94% tile-for-tile; Vulcanus
+ * had only "the noise field matches to 5e-6 and the geometry is the same code",
+ * which is an argument rather than a measurement.
+ *
+ * Regions are the three windows the mark-size work already measured coverage
+ * over, so the fixture can settle whether that 34% window is a real cliff field
+ * or a painting artefact:
+ *
+ * | region | measured cliff-pixel coverage at 1 tile/px |
+ * | --- | --- |
+ * | `[0,0]` | 10.3% |
+ * | `[1500,1500]` | 34.2% |
+ * | `[-1200,800]` | 11.1% |
+ *
+ * They are 256x256 rather than the Nauvis capture's 512x512 because the dense
+ * one holds several thousand cliffs and chunk generation cost scales with area.
+ *
+ * Runs on Vulcanus's own surface with the seed FORCED (`spaceAge: true`), which
+ * is what every committed Vulcanus fixture does - see `entityCounts.ts`'s header
+ * for why that matters and what it commits the comparing spec to.
+ */
+async function captureVulcanusCliffEntities(): Promise<void> {
+  const regions: Region[] = [
+    { x0: 0, y0: 0, x1: 256, y1: 256 },
+    { x0: 1500, y0: 1500, x1: 1756, y1: 1756 },
+    { x0: -1200, y0: 800, x1: -944, y1: 1056 },
+  ];
+  const seed = 123456;
+  const cases: { region: Region; cliffs: Position[] }[] = [];
+  for (const region of regions) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const cliffs = await sampleCliffEntities(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+      });
+      cases.push({ region, cliffs });
+      console.log(
+        `  captured vulcanus cliffs [${String(region.x0)},${String(region.y0)}] (${String(cliffs.length)} cliffs)`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Every cliff entity " +
+      "(find_entities_filtered{type='cliff'}) the game placed in each region on VULCANUS at the " +
+      "DEFAULT preset, after chunk-forced generation. Positions are cliff cell centers on the " +
+      "4-tile grid. Sampled on a create_surface() surface whose seed is FORCED to `seed` (like " +
+      "every other Vulcanus oracle fixture), not the derived mapSeed + crc32('vulcanus') - so a " +
+      "comparing spec builds its ctx from `seed` directly. Compared against " +
+      "makeVulcanusCliffFields + makeCliffPlacementFromFields in " +
+      "test/vulcanusCliffEntities.spec.ts. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts vulcanus-cliff-entities",
+    seed,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-entities.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} regions)`);
+}
+
 if (want("cliff-entities")) await captureCliffEntities();
 if (want("rocks")) await captureRocks();
+if (want("vulcanus-cliff-entities")) await captureVulcanusCliffEntities();
 if (want("multisample")) await captureMultisample();
 if (want("vulcanus-smoke")) await captureVulcanusSmoke();
 if (want("seed-vars")) await captureSeedVars();

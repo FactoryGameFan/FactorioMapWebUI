@@ -257,7 +257,50 @@ stack (helpers, spawn, cracks, biomes, climate, elevation) rather than reusing
 the terrain render's - the same duplication V2 documented for resources - so on
 the `all` path the Vulcanus DAG is evaluated four times per pixel region.
 
-## Not validated
+## Entity-level validation - DONE 2026-07-28, and the result is not good
+
+**Superseded the "Not validated" section below.** `test/vulcanusCliffEntities.spec.ts`
+now compares the port against every real `cliff-vulcanus` the game places, captured
+over three regions by `test/oracle/capture.ts vulcanus-cliff-entities`
+(`oracle-vulcanus-cliff-entities.seed123456.json`, 2.1.12, seed 123456).
+
+| region | game | ours | matched | recall | precision | over-placement |
+| --- | --- | --- | --- | --- | --- | --- |
+| `[0,0]` | 283 | 422 | 161 | 0.569 | 0.382 | 1.49x |
+| `[1500,1500]` | 885 | 1399 | 614 | 0.694 | 0.439 | 1.58x |
+| `[-1200,800]` | 401 | 455 | 259 | 0.646 | 0.569 | 1.14x |
+
+**Vulcanus reproduces 57-69% of real cliffs, against Nauvis's ~90%, and places
+1.1-1.6x too many.** The "same placement geometry as Nauvis, so it should be
+comparable" reasoning that stood in for validation here was wrong - the shared
+code is shared, but the fields feeding it are not, and the composition does not
+carry Nauvis's accuracy across. Tracked as issue #18.
+
+Two things this immediately settles:
+
+- **The 34% coverage window is partly our own over-placement.** The mark-size work
+  measured 34.2% cliff-pixel coverage at `[1500,1500]` and recorded it as
+  "believed to be a genuinely cliff-dense region". It is dense - but we place 1399
+  cells where the game places 885, so roughly a third of that ink is ours, not the
+  game's.
+- **Precision is the metric that was missing.** `test/cliffPlacement.spec.ts`
+  guards Nauvis at >= 85% *recall* only, which a model that placed a cliff on
+  every lattice cell would pass at 100%. The Vulcanus spec measures both, and it
+  is precision (0.38-0.57) that exposes the real problem. Nauvis's precision has
+  still never been measured.
+
+### `find_entities_filtered{type = "cliff"}` is not a clean proxy on Vulcanus
+
+The dump also catches **`crater-cliff`**, which the planet definition lists under
+its *entity* autoplace settings
+(`space-age/prototypes/planet/planet-map-gen.lua:122`, beside the rocks and the
+geyser) rather than on the cliff grid. It goes through the entity generator, jitter
+draws and all, so its positions are fractional: 8 of region 2's 409 sit at
+coordinates like `(-1184.375, 814.988)`, which fail the 4-tile lattice check
+outright. They are filtered out by name rather than absorbed into the rates, and
+the cliff probe now dumps entity names so this is visible rather than latent.
+
+## Not validated (superseded above for cliffs; still true of the wider claim)
 
 **There is no entity-level check.** Nauvis's cliff port was validated against a
 real `find_entities_filtered{type="cliff"}` dump at ~94% tile-for-tile
