@@ -31,8 +31,13 @@ const manifest = JSON.parse(readFileSync(MANIFEST, "utf8")) as {
   fixtures: Record<string, Entry>;
 };
 
+// `.png` as well as `.json` since 2026-07-28: the preview oracle commits the
+// game's own `--generate-map-preview` output as ground truth
+// (`test/previewAgreement.spec.ts`), and a binary fixture needs its provenance
+// recorded exactly as much as a JSON one - arguably more, since nothing about a
+// PNG hints at which game version produced it.
 const onDisk = readdirSync(DIR)
-  .filter((f) => f.endsWith(".json") && f !== "PROVENANCE.json")
+  .filter((f) => (f.endsWith(".json") || f.endsWith(".png")) && f !== "PROVENANCE.json")
   .sort();
 
 describe("fixture provenance manifest", () => {
