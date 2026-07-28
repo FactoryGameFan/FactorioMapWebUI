@@ -273,7 +273,37 @@ lands entirely on the overlays, because each 128px tile re-resolves every 32x32
 chunk it overlaps and neighbouring tiles redo the same chunks. That is a THIRD
 source of duplication, distinct from the two below, and nothing here touches it.
 
-### What the two mechanisms buy - measured 2026-07-28
+### SHIPPED: one shared cached stack (2026-07-28)
+
+The Vulcanus composite now builds **one** `makeVulcanusStack(..., { cacheShared:
+true })` and hands the same instance to terrain, resources and rocks. Fusion was
+prototyped, measured and **dropped**; only the cache ships.
+
+Two runs each, min-of-5 interleaved, same area and seed:
+
+| | whole 512x512 | tiled 16 x 128x128 |
+| --- | --- | --- |
+| ratio, per-renderer stacks | 2.160 / 2.227 | 2.702 / 2.805 |
+| ratio, shared cached stack | **2.028 / 2.049** | **2.525 / 2.564** |
+| speedup | 6.1% / 8.0% | 6.6% / 8.6% |
+
+Byte-identical to per-renderer stacks (`test/vulcanusStackCache.spec.ts`, which
+renders both ways via `unsharedStacks`).
+
+**What dropping fusion cost, stated plainly.** Before shipping, I predicted the
+cache would subsume most of fusion's benefit, because a cross-traversal cache
+also serves the resource pass's separate loop. **That was wrong and the numbers
+say so.** The two are roughly ADDITIVE, tiled: fusion alone 6.2%, cache alone
+6.6-8.6%, both together 16.6%. So shipping the cache without fusion takes a
+little over half of what was available. Fusion's cost was a second render path,
+a deferred-paint step to preserve the 3x3 geyser mark ordering, and a
+`skipThreshold` flag; whether ~7 points is worth that is a live question, not a
+settled one.
+
+**Neither reaches the 2x gate at the geometry the app renders** (2.53 tiled).
+See the geometry section above before quoting any of these.
+
+### What the two mechanisms buy - measured 2026-07-28 (fusion since dropped)
 
 The paragraph above ("no cheap fix is outstanding") is **superseded**. Two
 prototypes, both byte-identical to the shipped path

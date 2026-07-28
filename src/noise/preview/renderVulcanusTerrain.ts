@@ -1,7 +1,17 @@
 import type { EvalCtxInput } from "../eval/ctx";
-import { makeVulcanusTileResolver } from "../tiles/vulcanusCatalog";
+import {
+  type VulcanusStack,
+  makeVulcanusTileResolver,
+  makeVulcanusTileResolverFrom,
+} from "../tiles/vulcanusCatalog";
 
 export interface RenderVulcanusTerrainOptions {
+  /**
+   * Vulcanus field stack to render through. The composite path builds ONE
+   * cached stack and hands the same instance to every overlay, so each pass
+   * reuses the field values the others already computed.
+   */
+  stack?: VulcanusStack;
   /** Map seed (= map_seed / seed0). Callers resolve a null "random" seed first. */
   readonly seed0: number;
   /** Output pixel dimensions. */
@@ -42,7 +52,10 @@ export function renderVulcanusTerrain(opts: RenderVulcanusTerrainOptions): Image
   const originY = opts.originY ?? 0;
   const tpp = opts.tilesPerPixel ?? 1;
 
-  const resolve = makeVulcanusTileResolver({ seed0, ...opts.ctx });
+  const resolve =
+    opts.stack === undefined
+      ? makeVulcanusTileResolver({ seed0, ...opts.ctx })
+      : makeVulcanusTileResolverFrom(opts.stack);
 
   const data = new Uint8ClampedArray(width * height * 4);
 

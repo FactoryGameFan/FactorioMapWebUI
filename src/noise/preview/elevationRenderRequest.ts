@@ -15,8 +15,8 @@ import { renderRocks } from "./renderRocks";
 import { renderTerrain } from "./renderTerrain";
 import { renderTrees } from "./renderTrees";
 import { renderVulcanusCliffs } from "./renderVulcanusCliffs";
+import { makeVulcanusStack } from "../tiles/vulcanusCatalog";
 import { renderVulcanusResources } from "./renderVulcanusResources";
-import { renderVulcanusTerrainOreFused } from "./renderVulcanusFused";
 import { renderVulcanusRocks } from "./renderVulcanusRocks";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
 
@@ -93,20 +93,12 @@ export interface ElevationRenderRequest {
    */
   vulcanusResourceControls?: VulcanusResourceControls;
   /**
-   * PROTOTYPE (issue #19 follow-up), default off: render the Vulcanus composite
-   * through `renderVulcanusTerrainOreFused`, which fuses terrain and the
-   * thresholded-ore pass into one pixel loop over one shared field stack.
-   * Output must be byte-identical to the sequential path - asserted in
-   * `test/vulcanusFusedEquality.spec.ts`. Not wired to any UI.
+   * Escape hatch for `test/vulcanusStackCache.spec.ts`, which has to render the
+   * same request BOTH ways to prove the shared cached stack is byte-identical
+   * to per-renderer stacks. Defaults to the shared stack; there is no reason to
+   * set this outside that test.
    */
-  fusedPrototype?: boolean;
-  /**
-   * PROTOTYPE (issue #19 follow-up), default off: additionally give the shared
-   * Vulcanus stack a cross-traversal cache and hand it to the rock overlay, so
-   * `resolveChunk`'s chunk-major sweep reuses biome/climate values terrain
-   * already computed. Requires `fusedPrototype`.
-   */
-  cacheSharedPrototype?: boolean;
+  unsharedStacks?: boolean;
   /**
    * The enemy-base autoplace control's frequency/size (control:enemy-base:*) -
    * consumed only when `view: "enemies"`. Defaults to `{ frequency: 1, size: 1 }`
@@ -254,36 +246,37 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
       // terrain-family view that asks for one still gets plain terrain rather
       // than a Nauvis field composited onto Vulcanus colors.
       const wantsResources = req.view === "resources" || req.view === "all";
-      const fused =
-        req.fusedPrototype === true && wantsResources
-          ? renderVulcanusTerrainOreFused({
-              seed0: req.seed0,
-              width: req.width,
-              height: req.height,
-              originX: req.originX,
-              originY: req.originY,
-              tilesPerPixel: req.tilesPerPixel,
-              ctx: {
+      // ONE stack for the whole composite. Two things make this pay, and both
+      // are needed: the overlays reuse the field objects terrain built, and
+      // those objects carry a cross-traversal cache (`memoRegion`), so a pass
+      // that walks the image in a different order from terrain - the rock
+      // overlay resolves whole 32x32 chunks - still hits values terrain
+      // computed. Sharing without the cache buys almost nothing, because
+      // `memoXY` holds only the last coordinate.
+      const stack =
+        req.unsharedStacks === true
+          ? undefined
+          : makeVulcanusStack(
+              {
+                seed0: req.seed0,
                 startingPositions: req.startingPositions,
                 vulcanusResourceControls: req.vulcanusResourceControls,
               },
-              cacheShared: req.cacheSharedPrototype === true,
-            })
-          : undefined;
-      image =
-        fused?.image ??
-        renderVulcanusTerrain({
-          seed0: req.seed0,
-          width: req.width,
-          height: req.height,
-          originX: req.originX,
-          originY: req.originY,
-          tilesPerPixel: req.tilesPerPixel,
-          ctx: {
-            startingPositions: req.startingPositions,
-            vulcanusResourceControls: req.vulcanusResourceControls,
-          },
-        });
+              { cacheShared: true },
+            );
+      image = renderVulcanusTerrain({
+        seed0: req.seed0,
+        width: req.width,
+        height: req.height,
+        originX: req.originX,
+        originY: req.originY,
+        tilesPerPixel: req.tilesPerPixel,
+        ctx: {
+          startingPositions: req.startingPositions,
+          vulcanusResourceControls: req.vulcanusResourceControls,
+        },
+        stack,
+      });
       // Resources paint first, then the two obstruction overlays on top, so a
       // cliff or a rock crossing an ore patch still reads as the thing that is
       // in the way. Cliffs last matches the Nauvis order below, where
@@ -301,12 +294,8 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           // The geyser rolls and paints a 3x3 mark; the three solid ores
           // threshold and paint 1x1, and ignore this.
           sweepBox: placementMarkSweepBox(req),
-          // When fused, the ore pass was already DECIDED in the fused loop; it
-          // still has to be PAINTED after the geyser marks, which is what
-          // `paintOre` below does. Order is observable because the marks are 3x3.
-          skipThreshold: fused !== undefined,
+          stack,
         });
-        fused?.paintOre();
       }
       if (req.view === "rocks" || req.view === "all") {
         renderVulcanusRocks(image, {
@@ -316,7 +305,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           tilesPerPixel: req.tilesPerPixel,
           ctx: { startingPositions: req.startingPositions },
           sweepBox: placementMarkSweepBox(req),
-          sharedStack: req.cacheSharedPrototype === true ? fused?.stack : undefined,
+          sharedStack: stack,
         });
       }
       if (req.view === "cliffs" || req.view === "all") {
