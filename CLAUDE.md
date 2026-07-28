@@ -199,8 +199,18 @@ stream **byte-for-byte** - re-emitting a string must equal the original.
 Consequences that constrain any change here:
 
 - Deflate goes through `zlib-asm` specifically; `pako`/`fflate` diverge from the
-  game's stream. `zlib-asm` uses direct `eval`, so the app's CSP must allow
-  `unsafe-eval` (and the production build logs an `[EVAL]` warning - expected).
+  game's stream. The requirement is **actual madler zlib at level 9**, not this
+  package: `node:zlib` (1.2.12) reproduces all 9 fixtures byte-for-byte just as
+  `zlib-asm` (1.2.8) does, while pako/fflate - independent reimplementations -
+  do not. So "configure pako to match" is a dead end, and a WASM build of zlib
+  is the live replacement path. Inflate is not the constraint at all:
+  `DecompressionStream('deflate')` matches on all 9 fixtures. See issue #40.
+- **The CSP does NOT need `unsafe-eval`, and must not regain it.** zlib-asm
+  shipped three `eval` sites, all 2016 Emscripten runtime glue rather than
+  compression; `patches/zlib-asm.patch` removes all three, and there is
+  deliberately no `[EVAL]` suppression in `vite.config.ts` any more. That patch
+  is pinned to the exact bytes of `zlib-asm@1.0.7`, so a bump would need it
+  regenerated.
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
   known-good list (`2.1.9.3`, `2.1.12.2`), never a range - the schemas here are
   empirical, so accepting an unseen format would decode a changed layout into
@@ -447,20 +457,18 @@ vite-node during tests. Two workarounds were tried and rejected:
   re-export `createLogger`) purely to mute a cosmetic upstream warning. Not worth
   a dependency. Revisit if `@cloudflare/containers` fixes its packaging.
 
-Three deliberate suppressions live in `vite.config.ts`, all narrow on purpose:
+Two deliberate suppressions live in `vite.config.ts`, both narrow on purpose:
 
 - `typescript/unbound-method` is off for `test/**/*.spec.ts` -
   `expect(mock.fn).toHaveBeenCalled()` passes an unbound reference by design.
-- The `[EVAL]` build warning is filtered in `build.rollupOptions.onLog` **by
-  module id** for `zlib-asm` only, rather than via `checks.eval = false`, so a
-  direct `eval` introduced anywhere else still warns. `zlib-asm`'s `eval` is
-  load-bearing (it is the only deflate that matches the game's stream
-  byte-for-byte), which is also why the app's CSP needs `unsafe-eval`.
 - The `Module "fs"/"path" has been externalized for browser compatibility`
-  warnings are filtered in the same `onLog`, matched on the
+  warnings are filtered in `build.rollupOptions.onLog`, matched on the
   `rolldown:vite-resolve` plugin **plus `/zlib-asm/` in the importer path** -
   those are zlib-asm's Node fallback imports, never reached in the browser.
   Verified narrow: an `fs` import added to `src/` still warns.
 
-With all three in place `pnpm vp build` prints no warnings at all, so anything
+There used to be a third, an `[EVAL]` filter for `zlib-asm`. It is gone because
+the patch removed the `eval`s themselves; do not add it back.
+
+With both in place `pnpm vp build` prints no warnings at all, so anything
 that does appear is new and worth reading.
