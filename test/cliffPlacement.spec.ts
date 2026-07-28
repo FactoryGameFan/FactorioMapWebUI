@@ -47,13 +47,26 @@ describe("makeCliffPlacement lattice", () => {
 // crossesCliff + the orientation-code table) against the game's REAL cliff
 // entities, dumped over a 16x16-chunk region at the default preset via
 // find_entities_filtered{type="cliff"} (oracle-cliff-entities.seed123456.json).
-// The spike measured ~89-90% agreement; the residual is the DEFERRED
-// fixImpossibleCells + water rejection (docs/noise/cliffs-NOTES.md). The >=0.85
-// bound is a drift guard, NOT a threshold to tune down - a large drop means the
-// field port or the crossing rule regressed.
-describe("cliff placement vs find_entities (~90% drift guard)", () => {
+// The residual is the DEFERRED fixImpossibleCells + water rejection
+// (docs/noise/cliffs-NOTES.md). The bounds are drift guards, NOT thresholds to
+// tune down - a large drop means the field port or the crossing rule regressed.
+//
+// **Measured 2026-07-28, and better than the "~89-90%" this comment used to
+// claim: 94.33% (seed 123456) and 94.23% (777771).** The old figure came from the
+// original spike and was never re-measured after the port improved.
+//
+// **PRECISION is asserted as well as recall, added after the Vulcanus port was
+// measured (issue #18).** Recall alone cannot see over-placement - a model that
+// placed a cliff on every lattice cell would score 100% on it - and that is
+// exactly how Vulcanus fails (recall 57-69% but 1.1-1.6x too many cliffs). Nauvis
+// does not have that problem at all: it places EXACTLY the game's count at both
+// seeds (282 vs 282, 52 vs 52, ratio 1.000), which is what cleared the shared
+// placement machinery and localised #18 to Vulcanus's own fields and band
+// constants. Neither planet's dump has duplicate positions, so set and array
+// counting agree.
+describe("cliff placement vs find_entities (~94% drift guard)", () => {
   for (const c of entFixture.cases) {
-    it(`reproduces >=85% of real cliffs seed=${c.seed}`, () => {
+    it(`reproduces >=85% of real cliffs, without over-placing, seed=${c.seed}`, () => {
       const r = entFixture.region;
       const pl = makeCliffPlacement({
         seed0: c.seed,
@@ -74,6 +87,14 @@ describe("cliff placement vs find_entities (~90% drift guard)", () => {
       const matched = actual.filter((k) => predicted.has(k)).length;
       const frac = matched / actual.length;
       expect(frac).toBeGreaterThanOrEqual(0.85);
+
+      // Over-placement guard. Measured ratio is exactly 1.000 at both seeds, so
+      // this is tight on purpose: cliff placement is deterministic, and anything
+      // that starts inventing cliffs should fail here rather than hide behind a
+      // recall figure.
+      const precision = matched / predicted.size;
+      expect(precision).toBeGreaterThanOrEqual(0.85);
+      expect(predicted.size / actual.length).toBeLessThan(1.1);
     });
   }
 });
