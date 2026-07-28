@@ -2565,9 +2565,86 @@ async function captureVulcanusCliffEntities(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} regions)`);
 }
 
+/**
+ * Every ACTUAL Vulcanus RESOURCE entity in the same three regions
+ * `captureVulcanusCliffEntities` covers, so the two dumps can be compared
+ * directly (issue #24).
+ *
+ * The question this exists to answer: **the game essentially never puts a cliff
+ * on ore** - 8 of 3933 resource entities in `[1500,1500]`, 0.20%, against a
+ * ~21.6% independence baseline from the game's own cliff coverage, i.e. about
+ * 100x below chance. Something separates them, and it is NOT a collision mask
+ * (the cliff mask and the `resource` layer share nothing). Without the game's
+ * resource POSITIONS there was no way to tell a terrain anti-correlation from
+ * an explicit removal pass, because our own ore placement sits between the two
+ * and could be producing the effect by itself.
+ *
+ * With this fixture the discriminating measurement is one join: for each
+ * resource name, what fraction of the GAME's entities of that name fall inside
+ * the GAME's cliff cells, versus the same fraction computed from OUR fields. If
+ * the game's own rate is ~0 for every resource while ours is not, we are
+ * missing an exclusion. If the game's rate varies by resource the way a biome
+ * dependency would, it is terrain and #24 belongs to #18.
+ *
+ * Reuses the cliff probe unchanged - it already takes an `entityType` and dumps
+ * `{x, y, name}` per entity - so `type = "resource"` needs no oracle change.
+ * Same forced-seed Vulcanus surface as every other Vulcanus fixture.
+ */
+async function captureVulcanusResourceEntities(): Promise<void> {
+  const regions: Region[] = [
+    { x0: 0, y0: 0, x1: 256, y1: 256 },
+    { x0: 1500, y0: 1500, x1: 1756, y1: 1756 },
+    { x0: -1200, y0: 800, x1: -944, y1: 1056 },
+  ];
+  const seed = 123456;
+  const cases: { region: Region; resources: Position[] }[] = [];
+  for (const region of regions) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const resources = await sampleCliffEntities(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        entityType: "resource",
+      });
+      cases.push({ region, resources });
+      const names = new Map<string, number>();
+      for (const r of resources) {
+        const n = (r as { name?: string }).name ?? "?";
+        names.set(n, (names.get(n) ?? 0) + 1);
+      }
+      console.log(
+        `  captured vulcanus resources [${String(region.x0)},${String(region.y0)}] ` +
+          `(${String(resources.length)}: ${[...names].map(([n, c]) => `${n}=${String(c)}`).join(", ")})`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Every resource entity " +
+      "(find_entities_filtered{type='resource'}) the game placed in each region on VULCANUS at the " +
+      "DEFAULT preset, after chunk-forced generation. Regions match " +
+      "oracle-vulcanus-cliff-entities.seed123456.json exactly so the two can be joined. Sampled on " +
+      "a create_surface() surface whose seed is FORCED to `seed` (like every other Vulcanus oracle " +
+      "fixture), not the derived mapSeed + crc32('vulcanus'). Exists to settle issue #24: whether " +
+      "the game's ~100x-below-chance cliff/ore separation is a terrain anti-correlation or an " +
+      "explicit exclusion. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts vulcanus-resource-entities",
+    seed,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-resource-entities.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} regions)`);
+}
+
 if (want("cliff-entities")) await captureCliffEntities();
 if (want("rocks")) await captureRocks();
 if (want("vulcanus-cliff-entities")) await captureVulcanusCliffEntities();
+if (want("vulcanus-resource-entities")) await captureVulcanusResourceEntities();
 if (want("multisample")) await captureMultisample();
 if (want("vulcanus-smoke")) await captureVulcanusSmoke();
 if (want("seed-vars")) await captureSeedVars();
