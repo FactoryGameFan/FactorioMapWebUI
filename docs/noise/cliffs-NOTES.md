@@ -235,10 +235,45 @@ identical with the pass on and off. It never fires on Nauvis, which makes sense 
 `cliffiness_nauvis` is a hard 0-or-10 gate, so the crossing configurations it
 produces are already legal.
 
-So the remaining Nauvis suspect is the other half of the original sentence:
-`tryToAddCliff` (`0x101625038`) drops cliffs whose collision box `wouldCollide`
-(`0x101625468`) - the water/existing-entity rejection. That is now the leading
-candidate for the ~6%, and it has never been tested.
+**The other half of the original sentence is falsified too.** `tryToAddCliff`
+(`0x101625038`) drops cliffs whose orientation-specific bounding box
+`wouldCollide` (`0x101625468`) - "the water/existing-entity rejection". It cannot
+be the residual either:
+
+- **Existing entities are not there yet.** `computeInternal` runs
+  `generateCliffs()` *before* `generateEntities()`, so the per-tile mask grid the
+  check consults holds only the tiles' masks. There is nothing else to hit.
+- **The only tile layer the cliff mask intersects is `water_tile`** - so the whole
+  rejection reduces to "no cliffs on water" here.
+- **And that can never fire.** Measured over `[512,1024)^2` at both oracle seeds:
+  **not one cliff cell touches water** - not ours, not the game's, not the matched
+  ones and not the mismatched ones. `cliff_elevation_nauvis` is `10 + 30 * (...)`
+  and `crossesCliff` requires both corners non-negative with `max >= elevation_0`,
+  so the geometry already excludes everywhere water can be. The regions are 21.1%
+  and 71.9% water, so this is a real exclusion and not a dry test window.
+
+### So what IS the residual? Threshold sensitivity in the field
+
+Distance from the nearest band boundary (`10 + 40k`), minimised over each cell's
+four corners:
+
+| seed | matched p10/p50/p90 | mismatched p10/p50/p90 |
+| --- | --- | --- |
+| 123456 | 0.04 / 0.24 / 0.60 (n=266) | 0.02 / **0.07** / 0.25 (n=16) |
+| 777771 | 0.06 / 0.26 / 0.53 (n=49) | 0.04 / **0.06** / 0.06 (n=3) |
+
+**The cells we get wrong sit 3-4x closer to a band edge than the ones we get
+right.** That is what a small field difference looks like: our cliff elevation and
+the game's disagree by enough to flip a corner across a boundary, but only where
+the corner was already sitting on one. A structural rule we had failed to port
+would not select for boundary proximity like that.
+
+So the follow-up is **field precision** (f32 vs f64, the fastapprox floor
+compounding through the hills chain), not a missing pass - a materially different
+piece of work from the two that were assumed for eight days. Asserted in
+`test/cliffResidual.spec.ts`, including a non-vacuity check on the water test,
+because "no cliff touches water" would pass just as happily against a tile
+resolver that never returned water at all.
 
 **The 2026-07-20 decision to defer the pass was still the right call on the
 evidence available**, and deferring it cost nothing on Nauvis. What was wrong was

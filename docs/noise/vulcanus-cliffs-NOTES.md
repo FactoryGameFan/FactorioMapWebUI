@@ -390,9 +390,16 @@ precision a shade up, and the count a shade worse (1.152/1.192/0.925 ->
 ported rule; the same port leaves Nauvis bit-for-bit unchanged, which falsified
 the older claim that Nauvis's ~6% residual was this pass.
 
-So what is left on Vulcanus is still unattributed. The remaining named candidate
-from the original disasm is `tryToAddCliff`'s `wouldCollide` rejection, which has
-never been tested on either planet.
+`tryToAddCliff`'s `wouldCollide` rejection is falsified as well - see
+`cliffs-NOTES.md`. It reduces to "no cliffs on water", cliffs are generated before
+any entity exists, and on Nauvis not one cliff cell of either side touches water.
+Vulcanus has no water tile at all, so it cannot apply here even in principle.
+
+Both named candidates are therefore gone on both planets, and on Nauvis the
+residual measures as **threshold sensitivity in the field** rather than a missing
+rule. Vulcanus's own residual is much larger than Nauvis's and has not been
+characterised the same way; doing so is the obvious next step, and the Nauvis
+result says to look at field accuracy first rather than hunt for another pass.
 
 ### `find_entities_filtered{type = "cliff"}` is not a clean proxy on Vulcanus
 
