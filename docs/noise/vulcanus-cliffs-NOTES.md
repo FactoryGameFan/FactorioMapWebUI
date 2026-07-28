@@ -397,9 +397,29 @@ Vulcanus has no water tile at all, so it cannot apply here even in principle.
 
 Both named candidates are therefore gone on both planets, and on Nauvis the
 residual measures as **threshold sensitivity in the field** rather than a missing
-rule. Vulcanus's own residual is much larger than Nauvis's and has not been
-characterised the same way; doing so is the obvious next step, and the Nauvis
-result says to look at field accuracy first rather than hunt for another pass.
+rule.
+
+**That conclusion does NOT carry to Vulcanus** - measured, not assumed. Running
+the same boundary-proximity test here (against the smoothed field the gate
+actually sees, normalised by each planet's own interval so 40-vs-120 does not do
+the talking):
+
+| | matched, median / interval | mismatched | separation |
+| --- | --- | --- | --- |
+| Nauvis 123456 | 0.60% | **0.18%** | 3.4x |
+| Vulcanus `[0,0]` | 3.7% | **1.5%** | 2.4x |
+| Vulcanus `[1500,1500]` | 5.4% | **3.9%** | 1.4x |
+| Vulcanus `[-1200,800]` | 5.3% | **2.2%** | 2.4x |
+
+The effect is present here - our wrong cells are consistently nearer a boundary
+than our right ones - but it is far weaker, and they are **not knife-edge**:
+1.5-3.9% of an interval against Nauvis's 0.18%, an order of magnitude out. A
+field-precision fix would not close Vulcanus's residual. Whatever is left is
+structural and still unidentified.
+
+Pinned in `test/cliffResidual.spec.ts`, deliberately, because generalising a
+Nauvis result to both planets is the exact mistake that made `cliff_smoothing`
+cost two months.
 
 ### `find_entities_filtered{type = "cliff"}` is not a clean proxy on Vulcanus
 
