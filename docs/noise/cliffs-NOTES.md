@@ -186,7 +186,7 @@ game's own comment). Plus `tryToAddCliff` (`0x10161f42c`) drops cliffs whose
 collision box `wouldCollide` (`0x10161f85c`) - the water/existing-entity rejection.
 
 **Decision (Eric, 2026-07-20): ship the exact geometric rule and DEFER
-`fixImpossibleCells`.** Positions are lattice-exact and ~94% of cliffs match; the
+`fixImpossibleCells`** (issue #22, item 2)**.** Positions are lattice-exact and ~94% of cliffs match; the
 residual is a continuity tweak that is visually negligible at downsampled preview
 scale. Water rejection is approximated by the existing `WATER_TILE_COLORS`
 pixel-exclusion (cliffs are not painted on water pixels). Porting `fixImpossibleCells`

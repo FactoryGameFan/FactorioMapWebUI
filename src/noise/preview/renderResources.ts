@@ -25,7 +25,8 @@
  * where the game would show the well. Measured rather than waved away: over
  * `[-2048,-2048]-[2048,2048]` at seed 123456 the two footprints cover 39869 and
  * 10733 tiles and share **0** of them, so the inversion is unreachable there. It
- * is a latent ordering bug, not a visible one. Recorded rather than guarded
+ * is a latent ordering bug, not a visible one - tracked as issue #22, item 3.
+ * Recorded rather than guarded
  * against, because a per-pixel guard would cost every pixel to fix a case that
  * does not occur - but this is a seed-specific zero, not a theorem, so a guard
  * becomes the right call the moment a counterexample turns up.
