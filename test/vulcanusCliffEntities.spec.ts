@@ -84,11 +84,16 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       // Measured 2026-07-28, after `cliff_smoothing = 1` was ported (issue #18);
       // the "was" column is the same code with smoothing left at Nauvis's 0.
       //
-      // | region | game | ours | recall | precision | ratio | was (ratio) |
+      // Updated 2026-07-28 again, after `fixImpossibleCells` was ported. That
+      // pass moves these only slightly - recall +0.25 to +1.5 points, precision
+      // a shade up, count a shade WORSE - so the columns below are close to the
+      // smoothing-only numbers in the previous revision.
+      //
+      // | region | game | ours | recall | precision | ratio | pre-smoothing |
       // | --- | --- | --- | --- | --- | --- | --- |
-      // | 0 `[0,0]` | 283 | 326 | 0.788 | 0.684 | 1.152 | 0.569 / 0.382 / 1.49x |
-      // | 1 `[1500,1500]` | 885 | 1055 | 0.855 | 0.718 | 1.192 | 0.694 / 0.439 / 1.58x |
-      // | 2 `[-1200,800]` | 401 | 371 | 0.801 | 0.865 | 0.925 | 0.646 / 0.569 / 1.14x |
+      // | 0 `[0,0]` | 283 | 327 | 0.792 | 0.685 | 1.155 | 0.569 / 0.382 / 1.49x |
+      // | 1 `[1500,1500]` | 885 | 1071 | 0.870 | 0.719 | 1.210 | 0.694 / 0.439 / 1.58x |
+      // | 2 `[-1200,800]` | 401 | 372 | 0.803 | 0.866 | 0.928 | 0.646 / 0.569 / 1.14x |
       //
       // **Still not Nauvis-grade.** `test/cliffPlacement.spec.ts` measures Nauvis
       // at 0.943 recall AND precision with a ratio of exactly 1.000. Vulcanus now

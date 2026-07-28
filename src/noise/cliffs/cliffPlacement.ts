@@ -82,8 +82,83 @@ export interface CliffBands {
    * catastrophic on Vulcanus.
    */
   readonly smoothing?: number;
+  /**
+   * Run `CellEdgeCliffCrossingArray::fixImpossibleCells`, the game's per-chunk
+   * repair sweep. Defaults to **true**, because the game always runs it -
+   * `crossingsForChunk` calls it unconditionally at its tail. Pass `false` only
+   * to measure what it changes.
+   */
+  readonly fixImpossibleCells?: boolean;
   /** When true, `placedCells` returns nothing (continuity or richness is 0). */
   readonly disabled?: boolean;
+}
+
+/** Cells per chunk axis: a 32-tile chunk over the 4-tile placement grid. */
+const CHUNK_CELLS = 32 / CLIFF_GRID_SIZE;
+
+/** Packs the four edge crossings into the cell code the orientation table keys on. */
+function cellCode(l: number, r: number, t: number, b: number): number {
+  return ((l & 3) << 6) | ((r & 3) << 4) | ((t & 3) << 2) | (b & 3);
+}
+
+/**
+ * `CellEdgeCliffCrossingArray::fixImpossibleCells` (`0x10160c550`), the pass
+ * that runs at the tail of `crossingsForChunk` and is the named cause of the
+ * ~6% residual Nauvis's port has carried since M4.
+ *
+ * It is a **single forward sweep** over one chunk's `8x8` cells (row-major, `cy`
+ * outer), not a fixpoint over the whole array: clearing an edge changes the two
+ * cells that share it, and cells already visited are never revisited. Porting it
+ * as a relax-until-stable loop would be a different algorithm.
+ *
+ * Per cell it clears edges until the cell's code is one the orientation table
+ * accepts, choosing the first **clearable** edge in the order `L, T, R, B`. An
+ * edge is clearable only if it is not on the chunk's outer boundary, so the
+ * chunk cannot disturb its neighbours - which is what keeps the pass chunk-local
+ * and lets this run without a chunk-ordering dependency.
+ *
+ * The legality predicate needs no new table. The disassembly splits on
+ * `code <= 0x50` (a 0x51-byte jump table at `0x102d00115` / `0x102d00166`, one
+ * per branch, both encoding the same accept/reject split) and `code >= 0xC0` (a
+ * bitmask `0x0001000000001003`, whose set bits are offsets 0, 1, 12 and 48 ->
+ * codes `0xC0`, `0xC1`, `0xCC`, `0xF0`). Extracting both and comparing against
+ * `CLIFF_PLACED_TABLE`: the accepted set is exactly `isCliffPlaced(code)` plus
+ * code `0`. Codes in `0x51..0xBF` are all rejected.
+ *
+ * Note the binary is a **universal** Mach-O; raw byte reads of those tables need
+ * the arm64 slice offset added, or they silently return x86_64 bytes.
+ *
+ * The `bool` parameter gates an extra step that zeroes the outer edges of the
+ * chunk's four CORNER cells (8 edges). `crossingsForChunk` passes `false`
+ * (`mov w1, #0x0` at `0x10160d0c8`), so it never runs in this path and is not
+ * ported. An earlier note in cliffs-NOTES.md described this pass as zeroing the
+ * whole chunk border; it does not, and it does not run at all here.
+ */
+function fixImpossibleCellsSweep(v: Int8Array, h: Int8Array, w: number, hh: number): void {
+  const vIndex = (cx: number, cy: number): number => cy * (w + 1) + cx;
+  const hIndex = (cx: number, cy: number): number => cy * w + cx;
+
+  for (let cy = 0; cy < hh; cy++) {
+    for (let cx = 0; cx < w; cx++) {
+      const li = vIndex(cx, cy);
+      const ri = vIndex(cx + 1, cy);
+      const ti = hIndex(cx, cy);
+      const bi = hIndex(cx, cy + 1);
+
+      for (;;) {
+        const code = cellCode(v[li], v[ri], h[ti], h[bi]);
+        if (code === 0 || isCliffPlaced(code)) break;
+        if (v[li] !== 0 && cx !== 0) v[li] = 0;
+        else if (h[ti] !== 0 && cy !== 0) h[ti] = 0;
+        else if (v[ri] !== 0 && cx < w - 1) v[ri] = 0;
+        else if (h[bi] !== 0 && cy < hh - 1) h[bi] = 0;
+        // The game logs "Unable to remove excess cliff cell edge crossings" and
+        // gives up here; every remaining crossing is on the chunk boundary and
+        // is not ours to clear.
+        else break;
+      }
+    }
+  }
 }
 
 /** Corners per chunk axis: a 32-tile chunk over the 4-tile grid. */
@@ -216,6 +291,64 @@ export function makeCliffPlacementFromFields(
       const cxMax = Math.ceil((x1 - CLIFF_CELL_CENTER_X) / CLIFF_GRID_SIZE);
       const cyMin = Math.floor((y0 - CLIFF_CELL_CENTER_Y) / CLIFF_GRID_SIZE);
       const cyMax = Math.ceil((y1 - CLIFF_CELL_CENTER_Y) / CLIFF_GRID_SIZE);
+
+      if (bands.fixImpossibleCells !== false) {
+        // Chunk-structured path. Each chunk builds its own edge arrays and runs
+        // the repair sweep in isolation, exactly as the game does - including
+        // recomputing the edges it shares with its neighbours, which both
+        // chunks own a private copy of. That is what makes the result
+        // independent of the query box, so worker tiling stays byte-identical.
+        const result: { x: number; y: number }[] = [];
+        const chunkX0 = Math.floor(cxMin / CHUNK_CELLS);
+        const chunkX1 = Math.floor(cxMax / CHUNK_CELLS);
+        const chunkY0 = Math.floor(cyMin / CHUNK_CELLS);
+        const chunkY1 = Math.floor(cyMax / CHUNK_CELLS);
+        const n = CHUNK_CELLS;
+        const v = new Int8Array((n + 1) * n);
+        const hEdges = new Int8Array(n * (n + 1));
+
+        for (let chY = chunkY0; chY <= chunkY1; chY++) {
+          for (let chX = chunkX0; chX <= chunkX1; chX++) {
+            const baseX = chX * n;
+            const baseY = chY * n;
+
+            for (let cy = 0; cy < n; cy++) {
+              for (let cx = 0; cx <= n; cx++) {
+                v[cy * (n + 1) + cx] = cross(
+                  corner(baseX + cx, baseY + cy),
+                  corner(baseX + cx, baseY + cy + 1),
+                );
+              }
+            }
+            for (let cy = 0; cy <= n; cy++) {
+              for (let cx = 0; cx < n; cx++) {
+                hEdges[cy * n + cx] = cross(
+                  corner(baseX + cx, baseY + cy),
+                  corner(baseX + cx + 1, baseY + cy),
+                );
+              }
+            }
+
+            fixImpossibleCellsSweep(v, hEdges, n, n);
+
+            for (let cy = 0; cy < n; cy++) {
+              for (let cx = 0; cx < n; cx++) {
+                const code = cellCode(
+                  v[cy * (n + 1) + cx],
+                  v[cy * (n + 1) + cx + 1],
+                  hEdges[cy * n + cx],
+                  hEdges[(cy + 1) * n + cx],
+                );
+                if (!isCliffPlaced(code)) continue;
+                const x = (baseX + cx) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_X;
+                const y = (baseY + cy) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_Y;
+                if (x >= x0 && x < x1 && y >= y0 && y < y1) result.push({ x, y });
+              }
+            }
+          }
+        }
+        return result;
+      }
 
       const result: { x: number; y: number }[] = [];
       for (let cy = cyMin; cy <= cyMax; cy++) {
