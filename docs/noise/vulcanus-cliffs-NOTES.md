@@ -381,8 +381,18 @@ Two things worth carrying forward from how this was found and missed:
   bothers to set.
 
 Residual after the fix is no longer one-directional - region 2 now slightly
-under-places - which argues against a remaining uniform bias. `fixImpossibleCells`
-(still deferred, issue #22) is the leading candidate for what is left.
+under-places - which argues against a remaining uniform bias.
+
+**`fixImpossibleCells` was ported on 2026-07-28 and is NOT the answer either.**
+It moves recall +0.25 to +1.5 points (0.788/0.855/0.801 -> 0.792/0.870/0.803),
+precision a shade up, and the count a shade worse (1.152/1.192/0.925 ->
+1.155/1.210/0.928). Real, faithful, and small. See `cliffs-NOTES.md` for the
+ported rule; the same port leaves Nauvis bit-for-bit unchanged, which falsified
+the older claim that Nauvis's ~6% residual was this pass.
+
+So what is left on Vulcanus is still unattributed. The remaining named candidate
+from the original disasm is `tryToAddCliff`'s `wouldCollide` rejection, which has
+never been tested on either planet.
 
 ### `find_entities_filtered{type = "cliff"}` is not a clean proxy on Vulcanus
 

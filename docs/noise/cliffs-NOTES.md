@@ -225,19 +225,71 @@ region `[512,1024)^2`):
 numbers above, re-measured 2026-07-20 for Task 11, are the ones the test asserts
 against with a `>= 0.85` drift guard.)
 
-Lattice was 100% exact; the ~6% residual is **not** a phase error or f32 noise - it
-is `fixImpossibleCells` (`0x101606944`, called at the tail of `crossingsForChunk`):
-(a) zeroes crossings on each chunk's outer-border edges, then (b) rewrites
-"impossible" cell configurations to keep cliff faces continuous / punch passages (the
-game's own comment). Plus `tryToAddCliff` (`0x10161f42c`) drops cliffs whose
-collision box `wouldCollide` (`0x10161f85c`) - the water/existing-entity rejection.
+Lattice was 100% exact. The ~6% residual is **not** a phase error or f32 noise.
 
-**Decision (Eric, 2026-07-20): ship the exact geometric rule and DEFER
-`fixImpossibleCells`** (issue #22, item 2)**.** Positions are lattice-exact and ~94% of cliffs match; the
-residual is a continuity tweak that is visually negligible at downsampled preview
-scale. Water rejection is approximated by the existing `WATER_TILE_COLORS`
-pixel-exclusion (cliffs are not painted on water pixels). Porting `fixImpossibleCells`
-+ the exact `wouldCollide` to reach true tile-for-tile 100% is a separate follow-up.
+**It is also NOT `fixImpossibleCells` - that attribution stood from 2026-07-20 to
+2026-07-28 and is now falsified by measurement.** The pass was ported (see below)
+and Nauvis's numbers do not move by a single cell: 0.9433 recall / 0.9433
+precision / 1.000 ratio at seed 123456 and 0.9423 / 0.9423 / 1.000 at 777771,
+identical with the pass on and off. It never fires on Nauvis, which makes sense -
+`cliffiness_nauvis` is a hard 0-or-10 gate, so the crossing configurations it
+produces are already legal.
+
+So the remaining Nauvis suspect is the other half of the original sentence:
+`tryToAddCliff` (`0x101625038`) drops cliffs whose collision box `wouldCollide`
+(`0x101625468`) - the water/existing-entity rejection. That is now the leading
+candidate for the ~6%, and it has never been tested.
+
+**The 2026-07-20 decision to defer the pass was still the right call on the
+evidence available**, and deferring it cost nothing on Nauvis. What was wrong was
+the confident attribution of the residual to it - a guess recorded as a finding.
+
+### `fixImpossibleCells`, ported 2026-07-28
+
+`CellEdgeCliffCrossingArray::fixImpossibleCells` (`0x10160c550`). A **single
+forward sweep** over one chunk's `8x8` cells (row-major, `cy` outer), not a
+fixpoint: clearing an edge changes the two cells sharing it, and visited cells are
+never revisited. Per cell it clears edges until the code is legal, taking the
+first **clearable** edge in order `L, T, R, B`, where clearable means not on the
+chunk's outer boundary. That boundary rule is what keeps the pass chunk-local, so
+the ported version needs no chunk ordering and worker tiling stays byte-identical.
+
+Legality needs no new table. The disasm splits on `code <= 0x50` (a 0x51-byte
+jump table at `0x102d00115` / `0x102d00166` - two branches, both encoding the
+same accept/reject split) and `code >= 0xC0` (bitmask `0x0001000000001003`, set
+bits at offsets 0, 1, 12, 48 -> codes `0xC0`, `0xC1`, `0xCC`, `0xF0`). Extracted
+and compared against `CLIFF_PLACED_TABLE`: **the accepted set is exactly
+`isCliffPlaced(code)` plus code `0`.** Codes `0x51..0xBF` are all rejected.
+
+Two corrections to the paragraph this replaced:
+
+- It does **not** zero the whole chunk border. The `bool` parameter gates zeroing
+  the outer edges of the four CORNER cells only (8 edges) - and
+  `crossingsForChunk` passes **`false`** (`mov w1, #0x0` at `0x10160d0c8`), so
+  that step never runs in this path at all.
+- The binary is a **universal** Mach-O. Raw byte reads of those jump tables need
+  the arm64 slice offset (115654656 here) added, or they silently return x86_64
+  bytes - which is exactly what happened on the first extraction attempt and
+  produced 47 plausible-looking distinct targets instead of 2.
+
+Measured effect (`fixImpossibleCells: false` vs `true`, same fields, same
+fixtures):
+
+| | recall | precision | ratio |
+| --- | --- | --- | --- |
+| Nauvis, both seeds | unchanged | unchanged | unchanged |
+| Vulcanus `[0,0]` | 0.788 -> 0.792 | 0.684 -> 0.685 | 1.152 -> 1.155 |
+| Vulcanus `[1500,1500]` | 0.855 -> **0.870** | 0.718 -> 0.719 | 1.192 -> 1.210 |
+| Vulcanus `[-1200,800]` | 0.801 -> 0.803 | 0.865 -> 0.866 | 0.925 -> 0.928 |
+
+Small and one-sided: recall up everywhere (+1.5 points at its best), precision a
+shade up, count a shade **worse**. Costs ~10% on the cliff pass (6.15s -> 6.77s
+over `placedCells(0,0,1024,1024)` on Vulcanus, paired runs), because the chunk
+path evaluates every edge of every chunk overlapping the query box rather than
+only the cells asked for.
+
+Water rejection is still approximated by the existing `WATER_TILE_COLORS`
+pixel-exclusion (cliffs are not painted on water pixels).
 
 **Task 11 cross-check (2026-07-20):** a real headless
 `factorio --generate-map-preview` render of seed 123456 for the matching world
