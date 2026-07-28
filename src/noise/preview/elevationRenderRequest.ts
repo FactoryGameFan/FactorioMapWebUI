@@ -275,6 +275,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           originY: req.originY,
           tilesPerPixel: req.tilesPerPixel,
           ctx: { startingPositions: req.startingPositions },
+          sweepBox: placementMarkSweepBox(req),
         });
       }
       if (req.view === "cliffs" || req.view === "all") {

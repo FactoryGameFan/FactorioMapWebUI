@@ -131,6 +131,38 @@ shipped for Vulcanus rocks in Tasks 3 and 4.5, for Nauvis rocks in Task 5, for
 Nauvis enemy bases in Task 6, for the sulfuric-acid geyser in Task 7 and for
 Nauvis crude oil in Task 8 - all four overlays issue #9 named.
 
+### Against the game's OWN preview (2026-07-28) - the coverage was 14x too low
+
+`--generate-map-preview` at seed 123456, 1024px origin-centred, with every
+disableable control off, compared pixel-for-pixel against our render at the same
+alignment (`test/oracle/previewCompare.ts`, issue #22 item 6):
+
+| overlay | game | ours at 1x1 | ours at 3x3 (shipped) |
+| --- | --- | --- | --- |
+| Vulcanus rocks | **5.17%** | 0.37% (0.07x) | 3.33% (0.65x) |
+| Vulcanus cliffs | 6.17% | - | 14.09% (2.28x) |
+
+**The game covers a twentieth of Vulcanus in rock colour**, because it paints each
+rock's real footprint (~3 x 2.2 tiles) rather than a dot. Both rock overlays now
+paint a 3x3 mark; 5x5 would overshoot to ~1.8x.
+
+This overturned a decision made a day earlier, and the flaw is worth keeping. The
+argument for leaving Vulcanus at 1x1 was that 3x3 would take coverage to ~4.5%,
+"back within sight of the 7.03% plateau the roll existed to escape". But **the
+plateau was wrong in its contiguity, not its area** - it painted rocky *ground*,
+and the game really does put that much rock down, just scattered. Judging a
+coverage number against a figure whose problem was its shape produced exactly the
+wrong conclusion.
+
+**No amount of entity validation could have caught this.** Placement density was
+already right to 0.2-7.5% against `count_entities_filtered`, and stayed right
+throughout - what was wrong was how many pixels each placement painted, which only
+the rendered image shows. That is the whole argument for the preview oracle.
+
+The cliff row corroborates issue #18 by a completely independent route: the
+entity comparison found 1.1-1.6x over-placement by count, and the painted area is
+2.28x, so the cliff overlay over-draws on both measures.
+
 ### What the roll actually paints, on the same window
 
 Measured with the shipped gated predicates over the identical `[-512, 512)^2`

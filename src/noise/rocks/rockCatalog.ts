@@ -15,30 +15,39 @@ export const ROCK_MAP_COLOR: readonly [number, number, number] = [129, 105, 78];
 
 /**
  * Radius, in pixels, of the mark painted per placed rock - `(2r+1)^2`, so `0` is
- * a single pixel. **The two planets differ, and the reason is measured.**
+ * a single pixel. **Both planets use 1 (a 3x3 mark).**
  *
- * The placement roll made rocks genuinely sparse: 0.080% of Nauvis ground and
- * 0.504% of Vulcanus over `[-512, 512)^2`, against the old thresholded ~1.6% and
- * 7.03%. Sparse alone is not the problem - contrast is:
+ * The placement roll made rocks sparse - 0.080% of Nauvis ground and 0.504% of
+ * Vulcanus over `[-512, 512)^2` - and a 1x1 mark on top of that is far too little
+ * ink on both. Nauvis was fixed first, on sight: `ROCK_MAP_COLOR` (129, 105, 78)
+ * is within a few units of the dirt it usually sits on, so the overlay was simply
+ * invisible (Eric, 2026-07-27: "can't see the rocks anymore").
  *
- * - **Nauvis (`1`, a 3x3 mark).** `ROCK_MAP_COLOR` (129, 105, 78) is within a few
- *   units of the dirt tiles it usually sits on, so at 1x1 and 0.080% the overlay
- *   is invisible in practice (Eric, 2026-07-27, on the deployed preview: "can't
- *   see the rocks anymore"). Thickening to 3x3 takes it to ~0.72% and it reads as
- *   scattered specks.
- * - **Vulcanus (`0`, a single pixel).** Tan on dark basalt is high contrast and
- *   the overlay is already 6x denser, so 1x1 reads as a fine stipple - checked by
- *   eye on the rocks view before changing anything. Thickening it would push
- *   coverage to ~4.5%, back within sight of the 7.03% plateau the roll existed to
- *   escape, and Task 3 moved this overlay to 1x1 for exactly that reason ("a
- *   block would merge scattered rocks into a blob").
+ * **Vulcanus was left at 1x1 in that same pass, and that was wrong.** The
+ * argument was that 3x3 would take coverage to ~4.5%, "back within sight of the
+ * 7.03% plateau the roll existed to escape". Comparing against the game's OWN
+ * `--generate-map-preview` output settles it (2026-07-28, issue #22 item 6):
  *
- * So the asymmetry is not an oversight: the same 1x1 mark is invisible on one
- * palette and correct on the other.
+ * | overlay | game | ours at 1x1 | ours at 3x3 |
+ * | --- | --- | --- | --- |
+ * | Vulcanus rocks | **5.17%** | 0.37% (0.07x) | 3.33% (0.65x) |
+ *
+ * The game covers a *twentieth of Vulcanus* in rock colour, because it paints
+ * each rock's real footprint (~3 x 2.2 tiles) rather than a dot. A 1x1 mark was
+ * **14x too little**; 3x3 is 0.65x and the closest an odd-sided mark gets (5x5
+ * would overshoot to ~1.8x).
+ *
+ * The flaw in the old reasoning is worth keeping: the 7.03% threshold plateau was
+ * wrong in its **contiguity**, not its area. It painted rocky *ground*; the game
+ * really does put that much rock down, just scattered. Judging a coverage number
+ * against a figure whose problem was its shape is how the wrong conclusion got
+ * drawn - and no amount of entity-count validation could have caught it, because
+ * placement density was already correct to 0.2-7.5%. Only the rendered image
+ * shows it.
  */
 export const NAUVIS_ROCK_MARK_RADIUS_PX = 1;
-/** See {@link NAUVIS_ROCK_MARK_RADIUS_PX} - Vulcanus keeps the single pixel. */
-export const VULCANUS_ROCK_MARK_RADIUS_PX = 0;
+/** See {@link NAUVIS_ROCK_MARK_RADIUS_PX} - the planets agree. */
+export const VULCANUS_ROCK_MARK_RADIUS_PX = 1;
 
 /**
  * The tile stride at which the rock probability field is evaluated. **Every tile
