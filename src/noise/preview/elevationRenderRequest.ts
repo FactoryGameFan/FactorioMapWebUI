@@ -1,5 +1,5 @@
 import type { Point } from "../distanceFromNearestPoint";
-import { CLIFF_MARK_RADIUS_PX } from "../cliffs/cliffCatalog";
+import { CLIFF_MARK_BACK_PX } from "../cliffs/cliffCatalog";
 import type { CliffControls, CliffSettingsInput } from "../cliffs/cliffCatalog";
 import type { VulcanusResourceControls } from "../eval/ctx";
 import type { EnemyControls } from "../enemies/enemyCatalog";
@@ -186,7 +186,8 @@ function haloQueryBox(req: ElevationRenderRequest, radiusPx: number): WorldBox {
 
 /**
  * The world box to enumerate cliff cells over for `req` - `haloQueryBox` at
- * `CLIFF_MARK_RADIUS_PX`.
+ * `CLIFF_MARK_BACK_PX` - the larger of the block's two directions, so a cell
+ * whose block reaches into this tile is always enumerated.
  *
  * Exported for direct unit testing: the tiled-equals-untiled gate pins the
  * widening (drop it and the gate fails) but cannot pin the clamp, which only
@@ -194,7 +195,7 @@ function haloQueryBox(req: ElevationRenderRequest, radiusPx: number): WorldBox {
  * next to non-water terrain.
  */
 export function cliffCellQueryBox(req: ElevationRenderRequest): WorldBox {
-  return haloQueryBox(req, CLIFF_MARK_RADIUS_PX);
+  return haloQueryBox(req, CLIFF_MARK_BACK_PX);
 }
 
 /**
@@ -363,6 +364,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         startingAreaMoistureSize: req.startingAreaMoistureSize,
         startingAreaMoistureFrequency: req.startingAreaMoistureFrequency,
         startingPositions: req.startingPositions,
+        sweepBox: placementMarkSweepBox(req),
       });
     }
     if (req.view === "enemies" || req.view === "all") {

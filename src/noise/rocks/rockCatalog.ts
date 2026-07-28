@@ -14,6 +14,33 @@ export const ROCK_SEED1 = 137;
 export const ROCK_MAP_COLOR: readonly [number, number, number] = [129, 105, 78];
 
 /**
+ * Radius, in pixels, of the mark painted per placed rock - `(2r+1)^2`, so `0` is
+ * a single pixel. **The two planets differ, and the reason is measured.**
+ *
+ * The placement roll made rocks genuinely sparse: 0.080% of Nauvis ground and
+ * 0.504% of Vulcanus over `[-512, 512)^2`, against the old thresholded ~1.6% and
+ * 7.03%. Sparse alone is not the problem - contrast is:
+ *
+ * - **Nauvis (`1`, a 3x3 mark).** `ROCK_MAP_COLOR` (129, 105, 78) is within a few
+ *   units of the dirt tiles it usually sits on, so at 1x1 and 0.080% the overlay
+ *   is invisible in practice (Eric, 2026-07-27, on the deployed preview: "can't
+ *   see the rocks anymore"). Thickening to 3x3 takes it to ~0.72% and it reads as
+ *   scattered specks.
+ * - **Vulcanus (`0`, a single pixel).** Tan on dark basalt is high contrast and
+ *   the overlay is already 6x denser, so 1x1 reads as a fine stipple - checked by
+ *   eye on the rocks view before changing anything. Thickening it would push
+ *   coverage to ~4.5%, back within sight of the 7.03% plateau the roll existed to
+ *   escape, and Task 3 moved this overlay to 1x1 for exactly that reason ("a
+ *   block would merge scattered rocks into a blob").
+ *
+ * So the asymmetry is not an oversight: the same 1x1 mark is invisible on one
+ * palette and correct on the other.
+ */
+export const NAUVIS_ROCK_MARK_RADIUS_PX = 1;
+/** See {@link NAUVIS_ROCK_MARK_RADIUS_PX} - Vulcanus keeps the single pixel. */
+export const VULCANUS_ROCK_MARK_RADIUS_PX = 0;
+
+/**
  * The tile stride at which the rock probability field is evaluated. **Every tile
  * still rolls** - only the field lookup is snapped, so this degrades *where*
  * rocks land, never *how many*, and the Task 4 density oracle stays valid.

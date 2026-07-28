@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { makeNauvisRockPlacement, renderRocks } from "../src/noise/preview/renderRocks";
-import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
+import { NAUVIS_ROCK_MARK_RADIUS_PX, ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
 import { WATER_TILE_COLORS } from "../src/noise/preview/renderResources";
 
 function solidImage(w: number, h: number, rgb: readonly [number, number, number]): ImageData {
@@ -25,25 +25,55 @@ describe("renderRocks", () => {
   const originX = 288;
   const originY = -216;
 
-  it("paints ROCK_MAP_COLOR exactly where the placement roll and both gates accept", () => {
+  it("paints ROCK_MAP_COLOR over the placement roll's accepted tiles, and only there", () => {
+    // Nauvis rocks paint a 3x3 mark (`NAUVIS_ROCK_MARK_RADIUS_PX`), so this is
+    // NOT a 1:1 pixel-to-placement correspondence - it used to be, while the mark
+    // was a single pixel. Two directions instead, which together pin the mark
+    // exactly: every placement paints its own pixel, and every painted pixel is
+    // within the mark radius of some placement.
     const placed = makeNauvisRockPlacement({ seed0, startingPositions: [{ x: 0, y: 0 }] });
     const img = solidImage(W, H, [100, 100, 100]); // non-water land
     renderRocks(img, { seed0, originX, originY, startingPositions: [{ x: 0, y: 0 }] });
+    const isRockAt = (px: number, py: number): boolean => {
+      const o = (py * W + px) * 4;
+      return (
+        img.data[o] === ROCK_MAP_COLOR[0] &&
+        img.data[o + 1] === ROCK_MAP_COLOR[1] &&
+        img.data[o + 2] === ROCK_MAP_COLOR[2]
+      );
+    };
+    const r = NAUVIS_ROCK_MARK_RADIUS_PX;
     let painted = 0;
+    let placements = 0;
     for (let py = 0; py < H; py++) {
       for (let px = 0; px < W; px++) {
-        const o = (py * W + px) * 4;
-        const isRock =
-          img.data[o] === ROCK_MAP_COLOR[0] &&
-          img.data[o + 1] === ROCK_MAP_COLOR[1] &&
-          img.data[o + 2] === ROCK_MAP_COLOR[2];
-        expect(isRock).toBe(placed(originX + px, originY + py));
-        if (isRock) painted++;
+        if (placed(originX + px, originY + py)) {
+          placements++;
+          // Every placement paints at least its own centre pixel.
+          expect(isRockAt(px, py)).toBe(true);
+        }
+        if (!isRockAt(px, py)) continue;
+        painted++;
+        // ...and nothing is painted that no placement can reach.
+        let near = false;
+        for (let dy = -r; dy <= r && !near; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (placed(originX + px + dx, originY + py + dy)) {
+              near = true;
+              break;
+            }
+          }
+        }
+        expect(near).toBe(true);
       }
     }
     // Sparse but present in this region (guards against "painted nothing"/"painted all").
+    expect(placements).toBeGreaterThan(0);
     expect(painted).toBeGreaterThan(0);
     expect(painted).toBeLessThan(W * H);
+    // The mark really is thickening: a 3x3 over sparse, mostly non-adjacent
+    // placements paints several pixels each.
+    expect(painted).toBeGreaterThan(placements * 2);
   });
 
   it("never paints over water pixels", () => {

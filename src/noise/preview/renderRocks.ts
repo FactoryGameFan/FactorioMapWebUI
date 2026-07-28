@@ -28,10 +28,12 @@ import { makeRockFields, type RockFieldParams } from "../rocks/rockField";
 import {
   ROCK_FIELD_LATTICE,
   ROCK_MAP_COLOR,
+  NAUVIS_ROCK_MARK_RADIUS_PX,
   latticeSnapped,
   type RockControls,
 } from "../rocks/rockCatalog";
 import { makeTileResolver } from "../tiles/resolve";
+import { paintMark } from "./renderCliffs";
 import { WATER_TILE_COLORS } from "./renderResources";
 
 export interface RenderRocksOptions {
@@ -52,6 +54,23 @@ export interface RenderRocksOptions {
   readonly startingAreaMoistureFrequency?: number;
   /** Spawn points for `distance`. Default single origin spawn. */
   readonly startingPositions?: readonly Point[];
+  /**
+   * World box to sweep for rock placements. Defaults to this render's own pixel
+   * box. The tiled renderer widens it by `NAUVIS_ROCK_MARK_RADIUS_PX` pixels' worth of
+   * tiles (clamped to the full image) so a rock centred just outside this tile
+   * still paints the part of its mark that falls inside. `paintMark` clips to the
+   * pixel grid, so a wider sweep can never paint outside this tile's own bounds.
+   *
+   * Rocks did NOT need this while they painted 1x1 - a single pixel cannot
+   * straddle a seam. It became load-bearing the moment the mark grew to 3x3, and
+   * `test/tiledEquality.spec.ts` failed on four cases until it was added.
+   */
+  readonly sweepBox?: {
+    readonly x0: number;
+    readonly y0: number;
+    readonly x1: number;
+    readonly y1: number;
+  };
 }
 
 /**
@@ -219,18 +238,23 @@ export function renderRocks(base: ImageData, opts: RenderRocksOptions): void {
     return false;
   };
 
-  for (let py = 0; py < height; py++) {
+  const box = opts.sweepBox;
+  const pxStart = box ? Math.round((box.x0 - originX) / tpp) : 0;
+  const pxEnd = box ? Math.round((box.x1 - originX) / tpp) : width;
+  const pyStart = box ? Math.round((box.y0 - originY) / tpp) : 0;
+  const pyEnd = box ? Math.round((box.y1 - originY) / tpp) : height;
+
+  for (let py = pyStart; py < pyEnd; py++) {
     const wy = originY + py * tpp;
-    for (let px = 0; px < width; px++) {
+    for (let px = pxStart; px < pxEnd; px++) {
       const o = (py * width + px) * 4;
       // Rocks never sit on water - skip water tiles (and the field call for them).
       if (isWater(base.data[o], base.data[o + 1], base.data[o + 2])) continue;
       const wx = originX + px * tpp;
       if (!placed(wx, wy)) continue;
-      base.data[o] = ROCK_MAP_COLOR[0];
-      base.data[o + 1] = ROCK_MAP_COLOR[1];
-      base.data[o + 2] = ROCK_MAP_COLOR[2];
-      base.data[o + 3] = 255;
+      // `isWater` is re-checked per painted pixel, so a thickened mark still
+      // stops at the coastline rather than spilling onto water.
+      paintMark(base, px, py, ROCK_MAP_COLOR, NAUVIS_ROCK_MARK_RADIUS_PX, isWater);
     }
   }
 }

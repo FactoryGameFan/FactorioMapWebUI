@@ -2,7 +2,7 @@
  * Composite the cliff footprint overlay onto a terrain ImageData: enumerate
  * placed cliff cells over the pixel grid's world box (via `makeCliffPlacement`,
  * T7), map each cell center to a pixel, and paint a small `CLIFF_MAP_COLOR`
- * block (`CLIFF_MARK_RADIUS_PX`) so the sparse 4-tile-grid footprint reads at
+ * block (`CLIFF_MARK_SIZE_PX`) so the sparse 4-tile-grid footprint reads at
  * preview scale; leave the terrain pixel untouched elsewhere. Mutates `base` in
  * place. See M4 cliffs plan T9.
  *
@@ -20,7 +20,8 @@ import type { Point } from "../distanceFromNearestPoint";
 import { makeCliffPlacement } from "../cliffs/cliffPlacement";
 import {
   CLIFF_MAP_COLOR,
-  CLIFF_MARK_RADIUS_PX,
+  CLIFF_MARK_BACK_PX,
+  CLIFF_MARK_SIZE_PX,
   type CliffControls,
   type CliffSettingsInput,
 } from "../cliffs/cliffCatalog";
@@ -41,7 +42,7 @@ export interface RenderCliffsOptions {
   readonly startingLakePositions?: readonly Point[];
   /**
    * World box to enumerate placed cliff cells over. Defaults to the pixel grid's
-   * own world box. The tiled renderer widens this by CLIFF_MARK_RADIUS_PX tiles
+   * own world box. The tiled renderer widens this by CLIFF_MARK_BACK_PX tiles
    * (clamped to the full image) so a cell centered just outside this tile still
    * paints the part of its mark that falls inside - without it, cliff marks are
    * clipped at tile seams. The paint loop already clips to the pixel grid, so a
@@ -86,6 +87,44 @@ export function paintMark(
 }
 
 /**
+ * Paint the block for one cliff cell, anchored on the cell's own footprint
+ * rather than centred on its pixel: `px - CLIFF_MARK_BACK_PX` through
+ * `px + CLIFF_MARK_SIZE_PX - CLIFF_MARK_BACK_PX - 1`, inclusive.
+ *
+ * **Why not `paintMark`.** That paints a `(2r+1)x(2r+1)` block, which is always
+ * odd-sided, and the size that makes cliff cells tile exactly at 1 tile/px is the
+ * EVEN 4 - cell centres are 4px apart there. The old 5x5 overlapped each
+ * neighbour by a pixel and read a pixel too thick; 3x3 falls a pixel short and
+ * dashes the ridgelines. Neither is expressible as a radius, so cliffs get their
+ * own painter and `paintMark` stays the odd-sided one the placement overlays use.
+ */
+function paintCellBlock(
+  base: ImageData,
+  px: number,
+  py: number,
+  color: readonly [number, number, number],
+  skipPixel?: (r: number, g: number, b: number) => boolean,
+): void {
+  const { width, height } = base;
+  const lo = CLIFF_MARK_BACK_PX;
+  const hi = CLIFF_MARK_SIZE_PX - CLIFF_MARK_BACK_PX - 1;
+  for (let dy = -lo; dy <= hi; dy++) {
+    const y = py + dy;
+    if (y < 0 || y >= height) continue;
+    for (let dx = -lo; dx <= hi; dx++) {
+      const x = px + dx;
+      if (x < 0 || x >= width) continue;
+      const o = (y * width + x) * 4;
+      if (skipPixel?.(base.data[o], base.data[o + 1], base.data[o + 2]) === true) continue;
+      base.data[o] = color[0];
+      base.data[o + 1] = color[1];
+      base.data[o + 2] = color[2];
+      base.data[o + 3] = 255;
+    }
+  }
+}
+
+/**
  * Paint one `CLIFF_MAP_COLOR` mark per placed cell center. Shared with the
  * Vulcanus renderer, which passes no `skipPixel` because Vulcanus has no water
  * tile to keep the footprint off.
@@ -104,7 +143,7 @@ export function paintCliffCells(
   for (const { x: wx, y: wy } of cells) {
     const cx = Math.floor((wx - originX) / tpp);
     const cy = Math.floor((wy - originY) / tpp);
-    paintMark(base, cx, cy, CLIFF_MAP_COLOR, CLIFF_MARK_RADIUS_PX, skipPixel);
+    paintCellBlock(base, cx, cy, CLIFF_MAP_COLOR, skipPixel);
   }
 }
 

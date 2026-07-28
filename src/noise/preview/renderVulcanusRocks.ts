@@ -36,9 +36,15 @@ import type { EvalCtx, EvalCtxInput } from "../eval/ctx";
 import { withCtxDefaults } from "../eval/ctx";
 import { PLACEMENT_SALT, makePlacementSet } from "../placement/placementRoll";
 import type { PlacementCollisionBox } from "../placement/placementRoll";
-import { ROCK_FIELD_LATTICE, ROCK_MAP_COLOR, latticeSnapped } from "../rocks/rockCatalog";
+import {
+  ROCK_FIELD_LATTICE,
+  ROCK_MAP_COLOR,
+  VULCANUS_ROCK_MARK_RADIUS_PX,
+  latticeSnapped,
+} from "../rocks/rockCatalog";
 import { makeVulcanusRockFields } from "../rocks/vulcanusRockField";
 import { makeVulcanusTileResolver } from "../tiles/vulcanusCatalog";
+import { paintMark } from "./renderCliffs";
 
 export interface RenderVulcanusRocksOptions {
   readonly seed0: number;
@@ -161,11 +167,7 @@ export function renderVulcanusRocks(base: ImageData, opts: RenderVulcanusRocksOp
     for (let px = 0; px < width; px++) {
       const wx = originX + px * tpp;
       if (!placed(wx, wy)) continue;
-      const o = (py * width + px) * 4;
-      base.data[o] = ROCK_MAP_COLOR[0];
-      base.data[o + 1] = ROCK_MAP_COLOR[1];
-      base.data[o + 2] = ROCK_MAP_COLOR[2];
-      base.data[o + 3] = 255;
+      paintMark(base, px, py, ROCK_MAP_COLOR, VULCANUS_ROCK_MARK_RADIUS_PX);
     }
   }
 }

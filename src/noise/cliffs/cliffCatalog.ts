@@ -18,16 +18,44 @@ export const CLIFF_MAP_COLOR: readonly [number, number, number] = [144, 119, 87]
 export const CLIFF_GRID_SIZE = 4;
 
 /**
- * Radius, in pixels, of the square block painted per placed cliff cell. Cliffs
- * sit on a sparse 4-tile grid, so at preview scale a single pixel per cell reads
- * as a faint stipple that blends into the terrain; painting a `(2r+1)x(2r+1)`
- * block thickens the footprint so the cliff lines are legible while keeping the
- * faithful `CLIFF_MAP_COLOR`. `0` = one pixel per cell (the pre-thickening look).
- * `2` (a 5x5 block) is the notch where the sparse per-cell stipple joins into
- * continuous cliff ridgelines at the app's 1024px / 1-tile-per-pixel preview
- * without over-thickening; verified by eyeball across the full Nauvis view.
+ * Side, in pixels, of the block painted per placed cliff cell, anchored so it
+ * covers the cell's OWN footprint: pixels `px - SIDE/2 .. px + SIDE/2 - 1` from
+ * the cell centre, which at 1 tile/px is exactly the `CLIFF_GRID_SIZE` world
+ * tiles the cell spans.
+ *
+ * Cliffs sit on a sparse 4-tile grid, so one pixel per cell reads as a faint
+ * stipple that blends into the terrain, and the block exists to make the
+ * ridgelines legible while keeping the faithful `CLIFF_MAP_COLOR`.
+ *
+ * **4 is the size at which cells abut exactly** at the app's 1024px /
+ * 1-tile-per-pixel preview: centres are 4px apart, so 4px blocks tile with
+ * neither gap nor overlap. This replaced a 5x5 centred block (radius 2), which
+ * overlapped its neighbour by a pixel and read a pixel too thick - Eric,
+ * 2026-07-27, on the deployed preview. The overlap was not doing any work: it is
+ * the *tiling*, not the excess, that joins the stipple into a line.
+ *
+ * **Do not drop this to 3.** Measured, not assumed: at 3px the blocks fall a
+ * pixel short of their neighbour and the ridgelines break into visible dashes.
+ * 4 is the floor, not a preference.
+ *
+ * This is deliberately in PIXEL space rather than world space. A world-space
+ * footprint would be more faithful at 1 tile/px and would vanish when zoomed out,
+ * where a cell is a fraction of a pixel; the whole point of the block is
+ * legibility at preview scale.
  */
-export const CLIFF_MARK_RADIUS_PX = 2;
+export const CLIFF_MARK_SIZE_PX = 4;
+
+/**
+ * How far the block extends BELOW/LEFT of the cell centre pixel. The block spans
+ * `px - CLIFF_MARK_BACK_PX .. px + CLIFF_MARK_SIZE_PX - CLIFF_MARK_BACK_PX - 1`,
+ * and this offset is what aligns it with the cell's footprint rather than
+ * hanging off one corner: a cell centred at world `cx*4 + 2` spans `[cx*4,
+ * cx*4+4)`, i.e. 2 tiles back and 1 forward from its centre pixel.
+ *
+ * Also the halo the tiled renderer must widen its cell enumeration by
+ * (`cliffCellQueryBox`), since it is the larger of the two directions.
+ */
+export const CLIFF_MARK_BACK_PX = 2;
 
 /** X coordinate of a cliff cell's center, in cell-local tiles. */
 export const CLIFF_CELL_CENTER_X = 2;

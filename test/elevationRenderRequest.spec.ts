@@ -727,6 +727,6 @@ describe("cliffCellQueryBox", () => {
     const box = cliffCellQueryBox(
       req({ originX: -32, originY: -32, tilesPerPixel: 4, fullImage: full }),
     );
-    expect(box.x0).toBe(-32 - 8); // CLIFF_MARK_RADIUS_PX * 4
+    expect(box.x0).toBe(-32 - 8); // CLIFF_MARK_BACK_PX * 4
   });
 });

@@ -142,10 +142,24 @@ window the plateau table above uses, so the two are directly comparable:
 | Nauvis rocks | 841 | **0.080%** | ~1.6% |
 
 So the roll paints about **14x less ink** on Vulcanus than the threshold did, and
-the remaining ink is scattered single pixels rather than a plateau. That is the
-whole visual complaint this section was written about. Note the Nauvis figure is
-the one an owner ruling deliberately accepted at 1x1 (Task 5) despite being under
-a tenth of a percent - see `placement-roll-NOTES.md`.
+the remaining ink is scattered rather than a plateau. That is the whole visual
+complaint this section was written about.
+
+**The Nauvis figure turned out to be too little ink, and the mark sizes now
+differ per planet** (2026-07-27, on Eric's review of the deployed preview: "can't
+see the rocks anymore"). Sparseness was only half the cause - the other half is
+contrast. `ROCK_MAP_COLOR` (129, 105, 78) sits within a few units of the Nauvis
+dirt tiles it usually lands on, so 0.080% at one pixel each is invisible in
+practice; the same colour on Vulcanus is tan on dark basalt, at 6x the density,
+and reads as a fine stipple at 1x1. Nauvis rocks therefore paint a 3x3 mark
+(~0.72% coverage) and **Vulcanus rocks keep the single pixel** - thickening them
+would push coverage to ~4.5%, back within sight of the 7.03% plateau this whole
+section exists to explain. See `NAUVIS_ROCK_MARK_RADIUS_PX` in `rockCatalog.ts`.
+
+That is also why Task 5's owner ruling ("Nauvis rocks stay 1x1, judge visibility
+on the deployed preview") resolved the way it did: the judgement was deferred to
+an eyeball, the eyeball said no, and the fix was thickening rather than
+brightening - the same call cliffs made.
 
 **Coarse field sampling was built for this overlay and is switched off.** Task 9
 added `ROCK_FIELD_LATTICE` (evaluate the field on a stride, still roll every

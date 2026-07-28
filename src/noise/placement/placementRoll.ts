@@ -27,19 +27,22 @@ const TILES_PER_CHUNK = CHUNK * CHUNK;
 /**
  * The (2*1+1) = 3x3 legibility mark for the roll overlays that use one.
  *
- * **Neither rock overlay does**: rocks paint a single pixel, because they are
- * point-like and a block would merge scattered rocks into a blob
- * (`renderRocks.ts`, `renderVulcanusRocks.ts:6-9`).
+ * **Enemy bases, the Vulcanus sulfuric-acid geyser and crude oil use it** (Tasks
+ * 6-8). A spawner is 7.4 x 6.4 tiles, a geyser and an oil well 2.8 x 2.8, and all
+ * three place rarely enough that a 1px dot disappears. Their renderers paint the
+ * mark and `elevationRenderRequest.ts`'s `placementMarkSweepBox` widens the tiled
+ * sweep by this radius so marks are not clipped at worker-tile seams - which is
+ * the second thing adopting this constant costs, and the one
+ * `test/tiledEquality.spec.ts` enforces, with a separate case per overlay because
+ * a window dense in one is empty of the other.
  *
- * **Enemy bases do** (Task 6), and so does the Vulcanus sulfuric-acid geyser
- * (Task 7). A spawner is 7.4 x 6.4 tiles and a geyser 2.8 x 2.8, and both place
- * rarely enough that a 1px dot disappears. `renderEnemies.ts` and
- * `renderVulcanusResources.ts` paint the mark and `elevationRenderRequest.ts`'s
- * `placementMarkSweepBox` widens the tiled sweep by this radius so marks are not
- * clipped at worker-tile seams - which is the second thing adopting this constant
- * costs, and the one `test/tiledEquality.spec.ts` enforces, with a separate case
- * per overlay because a window dense in one is empty of the other. Crude oil
- * (Task 8) is expected to follow.
+ * **The two rock overlays keep their own constants** rather than this one, and
+ * they disagree with each other: Nauvis paints 3x3 and Vulcanus a single pixel.
+ * The reason is contrast against each planet's palette, not entity size - see
+ * `NAUVIS_ROCK_MARK_RADIUS_PX` in `rocks/rockCatalog.ts`. Nauvis rocks acquired
+ * their mark late (2026-07-27, on review of the deployed preview) and the sweep
+ * halo had to come with it: `test/tiledEquality.spec.ts` failed on four cases the
+ * moment the mark grew, which is exactly the cost this comment warns about.
  */
 export const PLACEMENT_MARK_RADIUS_PX = 1;
 
