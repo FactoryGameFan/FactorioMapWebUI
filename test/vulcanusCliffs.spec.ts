@@ -83,7 +83,7 @@ describe("Vulcanus cliffs", () => {
       expect(((x % 4) + 4) % 4).toBe(2);
       expect(((y % 4) + 4) % 4).toBe(2.5);
     }
-  });
+  }, 120000);
 
   it("puts no cliff below cliff_elevation_0 - on the SMOOTHED field", () => {
     // crossesCliff needs max(a, b) >= elevation_0 for a band to exist, so every
@@ -140,5 +140,5 @@ describe("Vulcanus cliffs", () => {
     // Pin the consequence too, so a future change that quietly reverts to raw
     // elevation fails here rather than only in the entity-count spec.
     expect(sawBelowRaw).toBe(true);
-  });
+  }, 120000);
 });

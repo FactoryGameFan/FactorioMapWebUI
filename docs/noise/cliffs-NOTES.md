@@ -252,7 +252,7 @@ be the residual either:
   so the geometry already excludes everywhere water can be. The regions are 21.1%
   and 71.9% water, so this is a real exclusion and not a dry test window.
 
-### So what IS the residual? Threshold sensitivity in the field
+### Threshold sensitivity: a real effect, but not a cause
 
 Distance from the nearest band boundary (`10 + 40k`), minimised over each cell's
 four corners:
@@ -268,12 +268,84 @@ the game's disagree by enough to flip a corner across a boundary, but only where
 the corner was already sitting on one. A structural rule we had failed to port
 would not select for boundary proximity like that.
 
-So the follow-up is **field precision** (f32 vs f64, the fastapprox floor
-compounding through the hills chain), not a missing pass - a materially different
-piece of work from the two that were assumed for eight days. Asserted in
-`test/cliffResidual.spec.ts`, including a non-vacuity check on the water test,
-because "no cliff touches water" would pass just as happily against a tile
-resolver that never returned water at all.
+The reading taken from that on 2026-07-28 was **field precision** (f32 vs f64,
+the fastapprox floor compounding through the hills chain). **That is falsified
+too, later the same day - the third cause named for this residual and the third
+to fail.** The table above is real; the inference from it was not. Boundary
+proximity is the generic signature of a *marginal decision* - it says the
+decision was close, not what tipped it. Every cause that acts through the field
+produces it, so it never discriminated between them.
+
+### The residual is NOT field precision (falsified 2026-07-28)
+
+The one number nobody had put next to the 0.07 is how big our field error
+actually is. Three measurements, two of which need no Factorio install and are
+asserted in `test/cliffResidual.spec.ts`:
+
+1. **Our `cliff_elevation_nauvis` agrees with the game to ~1e-4.** Over the
+   committed 1024-point oracle grid: p50 1.03e-4, max **3.55e-4** at seed 123456
+   (1.48e-4 / 4.85e-4 at 777771). The game's values come back as exact f32
+   (`23.576189041137695`), so this is our port's real numerical distance, not a
+   capture artefact. Note `cliffFields.spec.ts` guards this field at a **1%
+   relative** tolerance - +-0.4 on a 40-wide band, five times the matched /
+   mismatched separation - so that guard could never have settled this either
+   way.
+2. **A field error that size flips nothing.** Jittering every corner by +-eps and
+   counting changed cells: `3.5e-4 -> 0`, `1e-3 -> 0`, `1e-2 -> 0.3`,
+   `5e-2 -> 4.3`, `1e-1 -> 9`, `3e-1 -> 39`. Nauvis misses **16**. Reaching 16
+   needs eps of order 0.1 - roughly **300x** the error we actually carry. A
+   1e-4 difference cannot move a decision sitting 0.07 from a boundary.
+3. **Direct capture at the failing corners agrees.** `cliff_elevation_nauvis` and
+   `cliffiness_nauvis` sampled at the exact four corners of all 38 failing cells
+   across both seeds (302 + 57 positions): elevation error there is 1.3e-4
+   median / 3.2e-4 max - **statistically the same as at matched cells**
+   (1.0e-4 / 2.9e-4), so there is no local blow-up hiding at the misses - and the
+   cliffiness gate is **exact**, 0/102 and 0/19 mismatches.
+
+The clincher: re-running `crossesCliff` + the orientation table on the **game's
+own corner values** reproduces our verdict at every one of the 38 failing cells -
+**0 differ**, identical codes. Re-running the whole placement pass over a
+full 129x129 game-captured corner lattice likewise returns the same 282 cells and
+the same 266 matches. Given the game's exact field we still place where it did
+not, and skip where it did.
+
+So the fields are not the residual. It is downstream of them.
+
+### What that leaves - the open lead
+
+Feeding the game's own field into the rule, **all 16 false negatives compute to
+cell code `0x00`** - zero crossings on all four edges (16/16 at seed 123456, 3/3
+at 777771). A cell with no crossings cannot generate a cliff, yet the game has an
+entity recorded at that position. Meanwhile our 16 false positives compute to
+ordinary placed codes (`0x11`, `0x40`, `0x33`, `0xc0`, ...).
+
+Supporting geometry, captured the same day (`cliff_orientation` + `bounding_box`
+for all 282 entities):
+
+- Every entity position is **on** the cell lattice (`x mod 4 == 2`,
+  `y mod 4 == 2.5`) - 0 of 282 off it - and no two entities share a position.
+- The bounding-box offset from `position` is **constant per orientation** across
+  all 19 orientations present, so `position` is a consistent anchor, not
+  something that drifts per entity.
+- 12 of 16 false positives pair with a false negative one cell away at a
+  **uniform `dy = +4`** (`dx` in `{-4, 0, +4}`); never `dy = -4`. One-sided like
+  that is not what random re-routing of a contour looks like.
+
+Two candidate readings, not yet separated - **do not record either as the cause
+until it is measured**:
+
+- **The cell -> entity position convention is off** for a subset, so the entity we
+  score as a miss is really our own cell recorded 4 tiles down. Against this: the
+  offset is not constant per orientation (`north-to-west` appears in both the
+  matched and the missed sets), and 266 entities land exactly on our cell.
+- **An engine step after the crossing rule** adds and removes cliffs using state
+  the four corners do not carry. `fixImpossibleCells` only ever *clears* edges,
+  so it cannot create a cliff at a `0x00` cell, and it is a measured no-op on
+  Nauvis - so if this is it, it is a step not yet identified.
+
+Note what this does to the effort estimate: chasing f32/fastapprox precision
+through the hills chain would have been substantial work against a cause now
+excluded by 300x.
 
 **The 2026-07-20 decision to defer the pass was still the right call on the
 evidence available**, and deferring it cost nothing on Nauvis. What was wrong was

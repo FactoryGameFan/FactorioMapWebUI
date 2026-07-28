@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeCliffFields } from "../src/noise/cliffs/cliffFields";
+import { makeCliffElevation, makeCliffFields } from "../src/noise/cliffs/cliffFields";
 import { makeCliffPlacementFromFields, smoothingKnots } from "../src/noise/cliffs/cliffPlacement";
 import {
   VULCANUS_CLIFF_ELEVATION_0,
@@ -10,6 +10,7 @@ import {
 } from "../src/noise/cliffs/vulcanusCliffFields";
 import { withCtxDefaults } from "../src/noise/eval/ctx";
 import { makeTileResolver } from "../src/noise/tiles/resolve";
+import elevFixture from "./fixtures/oracle-cliff-elevation.seed123456.json";
 import fx from "./fixtures/oracle-cliff-entities.seed123456.json";
 import vFix from "./fixtures/oracle-vulcanus-cliff-entities.seed123456.json";
 
@@ -24,11 +25,29 @@ import vFix from "./fixtures/oracle-vulcanus-cliff-entities.seed123456.json";
  * 2. `tryToAddCliff`'s `wouldCollide` water rejection - it can never fire,
  *    asserted below.
  *
- * What is left is threshold sensitivity, also asserted below: the cells we get
- * wrong sit far closer to a cliff band boundary than the cells we get right, so
- * a small difference between our cliff-elevation field and the game's flips
- * them. That points the residual at FIELD PRECISION, not at a missing rule -
- * which is a different kind of follow-up from the two that were assumed before.
+ * A third, added 2026-07-28 and **falsified the same day**, was FIELD PRECISION.
+ * The threshold-sensitivity measurement below is real - our wrong cells do sit
+ * 3-4x closer to a band boundary than our right ones - but the inference drawn
+ * from it was wrong, and wrong by two and a half orders of magnitude. Boundary
+ * proximity is the generic signature of a MARGINAL DECISION; it does not name
+ * what tips the decision. Nobody had checked the one number that decides it:
+ * how big our field error actually is against how big it would have to be.
+ *
+ * `describe("...is far too small to be the cause")` below closes that, using
+ * only committed fixtures:
+ *
+ * - our `cliff_elevation_nauvis` agrees with the game to ~1e-4 (max 3.5e-4
+ *   over the 1024-point oracle grid), and
+ * - perturbing the field by that much flips **zero** cells; flipping the 16
+ *   Nauvis misses needs ~0.1, roughly 300x more error than we have.
+ *
+ * Corroborated off-fixture the same day by a direct capture of
+ * `cliff_elevation_nauvis` + `cliffiness_nauvis` at the exact corners of all 38
+ * failing cells (both seeds): error there is 1.3e-4 median, statistically the
+ * same as at matched cells, the cliffiness gate is exact (0/102 and 0/19
+ * mismatches), and re-running the crossing rule on the GAME'S OWN corner values
+ * reproduces our verdict at every one of the 38 - 0 differ. See
+ * `docs/noise/cliffs-NOTES.md` for what that leaves.
  */
 const key = (p: { x: number; y: number }): string => `${String(p.x)},${String(p.y)}`;
 
@@ -164,6 +183,115 @@ describe("Nauvis cliff residual: the wrong cells sit on band boundaries", () => 
       expect(median(mismatched) / 40).toBeLessThan(0.005);
     }, 120000);
   }
+});
+
+describe("Nauvis cliff residual: the field error is far too small to be the cause", () => {
+  // The two halves of the falsification. Neither needs a Factorio install: the
+  // first reads the committed `cliff_elevation_nauvis` oracle grid, the second
+  // is pure arithmetic on the placement rule.
+
+  it("our cliff elevation agrees with the game to ~1e-4", () => {
+    // `cliffFields.spec.ts` guards this field at a 1% RELATIVE tolerance, which
+    // on a 40-wide band is +-0.4 - five times the distance that separates a
+    // matched cell from a mismatched one, so it can neither confirm nor exclude
+    // the precision story. This records the ACTUAL agreement instead.
+    //
+    // Measured 2026-07-28 over the fixture's 1024 corner-lattice points:
+    //
+    // | seed   | p50 abs | p90 abs | max abs |
+    // | ------ | ------- | ------- | ------- |
+    // | 123456 | 1.03e-4 | 2.13e-4 | 3.55e-4 |
+    // | 777771 | 1.48e-4 | 3.11e-4 | 4.85e-4 |
+    //
+    // Note the game's own values come back as exact f32 (the worst point reads
+    // 23.576189041137695), so this ~1e-4 is our port's numerical distance from
+    // the game - the fastapprox floor compounding through the hills chain - not
+    // a quantisation artefact of the capture.
+    for (const c of elevFixture.cases) {
+      const f = makeCliffElevation({
+        seed0: c.seed,
+        controls: { frequency: 1, continuity: 1 },
+        settings: { cliffElevation0: 10, cliffElevationInterval: 40, richness: 1 },
+      });
+      let worst = 0;
+      for (let i = 0; i < elevFixture.positions.length; i++) {
+        const p = elevFixture.positions[i];
+        worst = Math.max(worst, Math.abs(f(p.x, p.y) - c.values[i]));
+      }
+      // Pinned just outside the measured 4.85e-4. If a future change to the
+      // hills chain closes the fastapprox gap this fails and wants re-measuring
+      // DOWNWARD - which would be good news, and would also make the sweep
+      // below even more conclusive.
+      expect(worst).toBeLessThan(1e-3);
+    }
+  });
+
+  it("...and perturbing the field by that much flips no cells at all", () => {
+    // The decisive comparison. Jitter the cliff elevation field by +-eps at
+    // every corner and count how many placed cells change. Measured 2026-07-28
+    // at seed 123456 (mean of 3 independent deterministic draws):
+    //
+    // | eps    | cells changed |
+    // | ------ | ------------- |
+    // | 3.5e-4 | 0.0           |  <- our ACTUAL worst-case field error
+    // | 1e-3   | 0.0           |
+    // | 1e-2   | 0.3           |
+    // | 5e-2   | 4.3           |
+    // | 1e-1   | 9.0           |
+    // | 3e-1   | 39.0          |
+    //
+    // Nauvis misses 16 cells. Reaching 16 takes eps of order 0.1 - about 300x
+    // the error we actually carry, and ~200x the max. A field difference of
+    // 1e-4 cannot move a decision that sits 0.07 from a boundary, which is
+    // exactly where the mismatched cells sit (measured above). So the residual
+    // is NOT f32 rounding and NOT the fastapprox floor.
+    const seed = 123456;
+    const base = makeCliffFields({
+      seed0: seed,
+      controls: { frequency: 1, continuity: 1 },
+      settings: { cliffElevation0: 10, cliffElevationInterval: 40, richness: 1 },
+    });
+    const bands = { elevation0: 10, interval: 40 };
+    const baseline = new Set(
+      makeCliffPlacementFromFields(base, bands).placedCells(512, 512, 1024, 1024).map(key),
+    );
+
+    /** Deterministic hash jitter in [-eps, eps], stable per corner. */
+    const jitter = (x: number, y: number, eps: number, salt: number): number => {
+      let h =
+        Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1) ^ Math.imul(salt, 0x9e3779b1);
+      h ^= h >>> 15;
+      h = Math.imul(h, 0x85ebca6b);
+      h ^= h >>> 13;
+      return (((h >>> 0) / 0xffffffff) * 2 - 1) * eps;
+    };
+    const changedAt = (eps: number, salt: number): number => {
+      const placed = makeCliffPlacementFromFields(
+        {
+          cliffElevation: (x, y) => base.cliffElevation(x, y) + jitter(x, y, eps, salt),
+          cliffiness: base.cliffiness,
+        },
+        bands,
+      ).placedCells(512, 512, 1024, 1024);
+      const set = new Set(placed.map(key));
+      let changed = 0;
+      for (const k of set) if (!baseline.has(k)) changed++;
+      for (const k of baseline) if (!set.has(k)) changed++;
+      return changed;
+    };
+
+    // At our real worst-case error, nothing moves - across independent draws.
+    for (const salt of [1, 2, 3]) expect(changedAt(3.5e-4, salt)).toBe(0);
+
+    // Non-vacuity: the jitter IS reaching the placement rule. Without this the
+    // assertion above would pass just as happily against a no-op perturbation,
+    // which is precisely the shape of a test that confirms nothing.
+    expect(changedAt(1, 1)).toBeGreaterThan(50);
+
+    // And the residual-sized effect needs a residual-sized error: an order of
+    // magnitude more than 1e-2, i.e. ~1e-1, not ~1e-4.
+    expect(changedAt(1e-2, 1)).toBeLessThan(4);
+  }, 120000);
 });
 
 describe("Vulcanus's residual is NOT the same threshold effect", () => {
