@@ -1,13 +1,19 @@
 # Content-Security-Policy for the static deploy (Cloudflare Pages _headers).
 #
-# - script-src does NOT need 'unsafe-eval', and must not regain it. zlib-asm
-#   shipped three eval sites - two direct, one `eval.call` - all of them 2016
-#   Emscripten runtime glue (a `Module` global probe, a JS-shell `gc` tweak, and
-#   the unused `Module.load` helper), none of them compression.
-#   `patches/zlib-asm.patch` removes all three. Verified in Chrome against this
-#   exact policy: the app decodes all 9 builtin fixtures and re-encodes on
-#   "Copy string" with zero securitypolicyviolation events, while a deliberately
-#   injected inline <script> IS blocked - confirming the policy was live.
+# - script-src does NOT need 'unsafe-eval', and must not regain it. Nothing the
+#   app bundles uses eval at all: the codec's deflate/inflate is `pako`, plain
+#   ESM with no eval and no asm.js. Verified per build - `grep 'eval(' dist/`
+#   over the emitted bundle finds nothing.
+#
+#   This line used to carry a much longer caveat, because the codec was backed
+#   by `zlib-asm`, an asm.js port that shipped three eval sites (2016 Emscripten
+#   runtime glue, none of them compression) and needed a local patch to strip
+#   them so this policy could drop 'unsafe-eval'. That dependency and its patch
+#   are gone; the constraint they were working around no longer exists. The
+#   policy itself was verified live in Chrome under the zlib-asm build - the app
+#   decoded and re-encoded all 9 builtin fixtures with zero
+#   securitypolicyviolation events, while a deliberately injected inline
+#   <script> WAS blocked - and pako is strictly less demanding than what passed.
 # - img-src needs blob:: the preview PNG is shown via URL.createObjectURL(blob).
 # - connect-src must include the preview Worker origin (the app's only outbound
 #   call). Replace the placeholder with the deployed Worker origin.

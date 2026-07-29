@@ -20,33 +20,16 @@ export default defineConfig({
   // emitted `/version.json` that `pnpm run verify:deploy` fetches. Keep it a
   // single plugin instance for exactly that reason - see scripts/buildStamp.ts.
   plugins: [vue() as Plugin, buildStampPlugin()],
-  build: {
-    rollupOptions: {
-      onLog(level, log, handler) {
-        // NOTE: there is deliberately no EVAL suppression here. `zlib-asm`
-        // shipped three `eval` sites, all 2016 Emscripten runtime glue rather
-        // than anything to do with compression, and `patches/zlib-asm.patch`
-        // removes all three. That is what lets `public/_headers` drop
-        // `unsafe-eval`. A direct `eval` introduced anywhere - including a
-        // regression in that patch - must surface, so do not add one back.
-        //
-        // zlib-asm's Node fallback path imports
-        // `fs`/`path`, which the browser build externalizes and warns about.
-        // Those imports are never reached in the browser (the asm.js module is
-        // self-contained), so the warning is noise. Matched on the importer
-        // path as well as the message, so an externalized builtin imported by
-        // any *other* module still warns.
-        if (
-          log.plugin === "rolldown:vite-resolve" &&
-          log.message?.includes("has been externalized for browser compatibility") &&
-          log.message.includes("/zlib-asm/")
-        ) {
-          return;
-        }
-        handler(level, log);
-      },
-    },
-  },
+  // NOTE: there are deliberately NO build log suppressions here, and a clean
+  // `vp build` is the baseline - anything it prints is new and worth reading.
+  // Two used to live in `build.rollupOptions.onLog`, both for `zlib-asm`: an
+  // `[EVAL]` filter (dropped when `patches/zlib-asm.patch` removed the three
+  // Emscripten `eval` sites) and an `fs`/`path` browser-externalization filter
+  // for its Node fallback imports. `zlib-asm` was replaced by `pako`, which is
+  // plain ESM with no `eval` and no Node builtins, so neither warning can fire
+  // any more. Verified by removing the filter: the build still prints nothing.
+  // A direct `eval` or an externalized builtin appearing anywhere must surface;
+  // do not add a suppression back.
   lint: {
     options: {
       typeAware: true,
