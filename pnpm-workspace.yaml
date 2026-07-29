@@ -6,28 +6,25 @@ allowBuilds:
   sharp: true
   workerd: true
 overrides:
-  # concurrently@10.0.3 (latest) pins shell-quote at exactly 1.8.4, which has a
-  # quadratic-complexity DoS in parse() (GHSA-395f-4hp3-45gv, CWE-407). The only
-  # reachable caller here is concurrently parsing this repo's own command
-  # strings, so real risk is nil - but the audit line is clean to close by
-  # forcing the patched release. The advisory says ">=1.8.5", but no 1.8.5 was
-  # ever published - 1.9.0 is the first release carrying the fix (minimal jump).
-  # Dev tooling only; not in any deployed artifact.
-  shell-quote: "1.9.0"
-# Freshness-guard waiver, added deliberately (2026-07-23) to adopt vite-plus
-# 0.2.6 the day it shipped, before it clears the repo's minimum-release-age
-# policy. 0.2.6 is wanted for its tsgolint-7 type-check engine; see CLAUDE.md
-# "vite.config.ts sits near TypeScript's comparison-depth limit" for the
-# `vue() as Plugin` cast that engine required. Prune these entries once 0.2.6
-# ages past the policy threshold (they become no-ops then).
-minimumReleaseAgeExclude:
-  - "@voidzero-dev/vite-plus-core@0.2.6"
-  - "@voidzero-dev/vite-plus-darwin-arm64@0.2.6"
-  - "@voidzero-dev/vite-plus-darwin-x64@0.2.6"
-  - "@voidzero-dev/vite-plus-linux-arm64-gnu@0.2.6"
-  - "@voidzero-dev/vite-plus-linux-arm64-musl@0.2.6"
-  - "@voidzero-dev/vite-plus-linux-x64-gnu@0.2.6"
-  - "@voidzero-dev/vite-plus-linux-x64-musl@0.2.6"
-  - "@voidzero-dev/vite-plus-win32-arm64-msvc@0.2.6"
-  - "@voidzero-dev/vite-plus-win32-x64-msvc@0.2.6"
-  - vite-plus@0.2.6
+  # brace-expansion 2.1.2 has a DoS via unbounded expansion length: input like
+  # `'{a,b}'.repeat(1500)` stays under the existing 100k result cap while making
+  # every result ~1500 chars, so the accumulator exhausts memory and the process
+  # crashes (CVE-2026-14257, GHSA-mh99-v99m-4gvg, CVSS 7.5). Reached dev/test
+  # only, via @vue/test-utils > js-beautify > {editorconfig,glob} > minimatch,
+  # so it never enters a deployed artifact and no attacker controls the input -
+  # the patterns expanded are js-beautify's own. 2.1.3 is the maintenance
+  # backport that adds a bounded accumulator; it is a drop-in (same CJS shape,
+  # `main: index.js`, `balanced-match` its only dep). Deliberately NOT 5.0.8:
+  # that is a three-major jump into a dual-ESM/CJS package being consumed by a
+  # CJS minimatch@9.0.9, which is a spike, not a patch.
+  #
+  # This override does NOT clear the `pnpm audit` line, and that is expected.
+  # The advisory declares one flat vulnerable range, `<=5.0.7`, with no
+  # per-branch patched version, so 2.1.3 still matches it even though the code
+  # carries the fix. Read the audit output, not the exit status.
+  #
+  # Nothing in this repo exercises js-beautify (`grep -rn "\.html(" test/`
+  # returns nothing), so `pnpm run verify` passing is NOT evidence this bump is
+  # safe. It was validated by hand instead: mounting a component through
+  # @vue/test-utils and asserting `wrapper.html()` still returns sane markup.
+  brace-expansion: "2.1.3"
