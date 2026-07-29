@@ -310,11 +310,22 @@ metadata key would be data pollution.
   nobody wrote it down. Don't promote an inferred entry without re-capturing.
   The spec caps `unknown` at its current count so the gap can only shrink.
 
-Turning "38 fixtures are old" into "these N need re-capturing" is a separate,
-**not-yet-run** audit: `docs/fixture-version-audit.md` holds the procedure, the
-fixture-to-Lua-file map, and the rule for what counts as invalidating. Unlike
-`docs/superpowers/specs/`, that one is a live document - update its Conclusions
-section when it is run.
+Turning "38 fixtures are old" into "these N need re-capturing" is a separate
+audit, **run 2026-07-28 and completed 2026-07-29**:
+`docs/fixture-version-audit.md` holds the procedure, the fixture-to-Lua-file
+map, the rule for what counts as invalidating, and now its Conclusions. Unlike
+`docs/superpowers/specs/`, that one is a live document - update it when it is
+re-run.
+
+The answer to "how many need re-capturing" was **zero**, twice over. All the
+data-governed fixtures sit on map-gen Lua that is byte-identical 2.1.11 ->
+2.1.12, and the ten noise-primitive fixtures - which no data diff can ever
+clear, because they are native C++ ops that `factorio-data` only calls - were
+re-sampled against the 2.1.12 binary and came back bit-identical on all 2648
+values. Two things came out of it that staleness never would have: the live
+`2.1.12.2` format-tag bug (the app rejected every string from the current
+game), and the fact that only `oracle-basis` had a standing re-sample guard
+while the other primitives had none.
 
 This exists because version skew is invisible from inside: the Vulcanus
 surface-seed bug passed every internal check for weeks because the fixture and
