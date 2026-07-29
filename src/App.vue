@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { SUPPORTED_VERSIONS_LABEL } from "./codec/mapExchangeString";
 import { FACTORIO_TARGET_VERSION } from "./model/factorioTarget";
+import { BUILD_INFO, BUILD_STAMP } from "./model/buildStamp";
 import ActionBar from "./components/ActionBar.vue";
 import AdvancedTab from "./components/AdvancedTab.vue";
 import ElevationPreviewPanel from "./components/ElevationPreviewPanel.vue";
@@ -35,6 +36,19 @@ const showImport = ref(false);
         :title="`This build's ground truth is captured from Factorio ${FACTORIO_TARGET_VERSION}. Map-exchange formats it can import: ${SUPPORTED_VERSIONS_LABEL}.`"
       >
         Factorio {{ FACTORIO_TARGET_VERSION }}
+      </span>
+      <!-- The build stamp. Same reason it is derived rather than typed: a
+           hardcoded build id would rot into a confident lie about what is
+           running. The machine-readable twin of this exact value is
+           /version.json, emitted from the same object - see
+           scripts/buildStamp.ts - and `pnpm run verify:deploy` compares it
+           against local HEAD. -->
+      <span
+        class="build-stamp"
+        data-test="build-stamp"
+        :title="`Build ${BUILD_INFO.stamp}${BUILD_INFO.builtAt ? `, built ${BUILD_INFO.builtAt}` : ''}${BUILD_INFO.dirty ? ' - built from a tree with uncommitted changes, so the commit does not fully describe it' : ''}. The same value is served at /version.json.`"
+      >
+        build {{ BUILD_STAMP }}
       </span>
       <a
         class="repo-link"
@@ -82,13 +96,23 @@ const showImport = ref(false);
   padding: 8px;
 }
 
-.target-version {
+.target-version,
+.build-stamp {
   /* Pushed to the right so it reads as build metadata, not a heading. Dimmed and
      small: informative when looked for, quiet otherwise. */
-  margin-left: auto;
   font-size: 11px;
   opacity: 0.65;
   white-space: nowrap;
+}
+
+.target-version {
+  /* Only the first of the pair takes the auto margin; the build stamp then sits
+     directly beside it as one metadata cluster rather than a second group. */
+  margin-left: auto;
+}
+
+.build-stamp {
+  font-family: var(--f-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
 .titlebar {

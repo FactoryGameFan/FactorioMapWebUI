@@ -1,6 +1,8 @@
 import vue from "@vitejs/plugin-vue";
 import { defineConfig, type Plugin } from "vite-plus";
 
+import { buildStampPlugin } from "./scripts/buildStamp.ts";
+
 export default defineConfig({
   staged: {
     "*": "vp check --fix",
@@ -13,7 +15,11 @@ export default defineConfig({
   // to the `Plugin` type vite-plus already expects collapses that comparison
   // without suppressing type-checking of the rest of the config. See
   // https://github.com/voidzero-dev/vite-plus/issues/2010 (comment thread).
-  plugins: [vue() as Plugin],
+  // `buildStampPlugin` computes the git-derived build stamp ONCE and feeds both
+  // consumers from it: the `__BUILD_INFO__` define the titlebar reads, and the
+  // emitted `/version.json` that `pnpm run verify:deploy` fetches. Keep it a
+  // single plugin instance for exactly that reason - see scripts/buildStamp.ts.
+  plugins: [vue() as Plugin, buildStampPlugin()],
   build: {
     rollupOptions: {
       onLog(level, log, handler) {

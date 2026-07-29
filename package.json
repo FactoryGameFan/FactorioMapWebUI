@@ -11,6 +11,7 @@
     "perf": "FMW_PERF=1 vp test test/render-cost.perf.spec.ts && cat perf-result.txt",
     "check": "vp check --fix",
     "refs:sync": "bash scripts/sync-factorio-refs.sh",
+    "verify:deploy": "node scripts/verify-deploy.ts",
     "verify": "vp check && vp test && pnpm run preview:test",
     "localpreview": "pnpm run preview:dev",
     "preview:dev": "concurrently -k -n worker,app -c blue,green \"pnpm run preview:worker\" \"pnpm run preview:app\"",

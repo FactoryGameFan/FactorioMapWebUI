@@ -132,6 +132,23 @@ pnpm preview:deploy
 pnpm vp build
 ```
 
+### Confirm a deploy actually landed
+
+```
+pnpm run verify:deploy
+```
+
+Fetches `https://map.factorygamefan.com/version.json` with caching bypassed and
+compares its commit against your local `HEAD`. Exit 0 means the live site is
+running that commit; exit 1 means it is not, and the output says which commit it
+IS running; exit 2 means the check could not be made, which is not a pass. Pass a
+different origin to check somewhere else - `pnpm run verify:deploy
+http://localhost:5199` works against `vp dev`.
+
+The same stamp is in the titlebar (`build <sha>`, with `-dirty` when the build
+came from a tree with uncommitted changes) and in `/version.json`, both emitted
+from one git read at build time.
+
 Design and the task-by-task plan:
 `docs/superpowers/specs/2026-07-10-map-preview-service-design.md` and
 `docs/superpowers/plans/2026-07-10-map-preview-service.md`.

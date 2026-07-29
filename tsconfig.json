@@ -15,5 +15,12 @@
     "noEmit": true,
     "types": ["vite-plus/client"]
   },
-  "include": ["src/**/*", "src/**/*.vue", "test/**/*", "env.d.ts", "vite.config.ts"]
+  "include": [
+    "src/**/*",
+    "src/**/*.vue",
+    "test/**/*",
+    "scripts/**/*.ts",
+    "env.d.ts",
+    "vite.config.ts"
+  ]
 }
