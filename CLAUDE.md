@@ -154,6 +154,8 @@ note below for why `pnpm up`'s transitive re-resolution can break `vp check`.
   which oracle fixtures predate the binary). Deliberately **not** part of
   `verify`, which must pass on machines with no Factorio installed.
 - `pnpm run deploy` - **verify** + build + `wrangler pages deploy` to Cloudflare Pages
+- `pnpm run verify:deploy` - after deploying, confirm the live site is running
+  local `HEAD` (see below). Takes an optional origin argument.
 
 ### Deploys are gated on `verify`
 
@@ -179,6 +181,38 @@ pnpm build && pnpm --filter @fmw/preview-worker exec wrangler pages deploy dist 
 The app is live at **`map.factorygamefan.com`**. The apex `factorygamefan.com`
 is a separate landing page, not this app; the worker's `ALLOWED_ORIGIN` is the
 `map.` subdomain.
+
+### Confirming a deploy landed - `pnpm run verify:deploy`, not grep
+
+**Never confirm a deploy by grepping the live bundle.** That is what was done
+before, and it produced a false negative: a grep for a version string returned
+zero because the minifier had turned the string into a numeric array, so a
+shipped fix looked missing. Matching the hashed `index-<hash>.js` filename by eye
+against the build log is the same class of fragile.
+
+Instead the build emits a git-derived stamp to two places from **one** read:
+
+- the titlebar shows `build <short sha>` (`-dirty` when the tree had uncommitted
+  changes - a deploy from a dirty tree is exactly when the SHA alone lies), and
+- `/version.json` carries the same object, machine-readably.
+
+`scripts/buildStamp.ts` computes it and `buildStampPlugin` feeds both the
+`__BUILD_INFO__` define and the emitted asset from the same `BuildInfo`.
+`src/model/buildStamp.ts` is a **reader** over that define - do not compute
+anything there. Two independently computed stamps that could disagree would be
+worse than none, and `test/buildStamp.spec.ts` pins that they don't.
+
+`pnpm run verify:deploy [origin]` fetches that JSON with caching bypassed and
+compares the commit against local `HEAD`: 0 = live is your HEAD, 1 = it is not
+(and names the commit that IS live), 2 = the check could not be made, which is
+**not** a pass. It works against `vp dev` too, because the plugin serves
+`/version.json` from a dev middleware as well.
+
+`public/_headers` gives that one path `Cache-Control: no-store`. Its URL is
+constant across deploys, unlike the hashed bundles, so without that the edge
+would happily answer with the previous deploy's stamp - an authoritative-looking
+wrong answer. The rule sets no CSP, so the `/*` policy still applies unchanged;
+`script-src` must never regain `'unsafe-eval'` and the spec asserts it hasn't.
 
 Preview-service stack (optional feature, needs Docker): **`pnpm localpreview`**
 (memorable alias for `pnpm preview:dev`) runs the Worker (`:8787`) + app

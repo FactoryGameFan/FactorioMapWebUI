@@ -30,3 +30,19 @@
 #   cloudflareinsights.com endpoint applies only to manual embedding.
 /*
   Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://fmw-preview.wormeyman.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' https://static.cloudflareinsights.com
+
+# /version.json carries the git build stamp and exists to answer "did my deploy
+# land?" (`pnpm run verify:deploy`). A cached copy would answer that question
+# about the PREVIOUS deploy while looking authoritative, which is worse than no
+# answer at all - so it is the one path here that must never be served stale.
+#
+# Unlike the hashed bundles, its URL is CONSTANT across deploys, so the edge has
+# no cache key change to notice; `no-store` is what stops it being reused. The
+# checker also sends a unique query string and `cache: no-store`, but belt and
+# braces is deliberate: the browser tab a human opens to eyeball the file sends
+# neither.
+#
+# This rule sets no Content-Security-Policy, so the `/*` policy above still
+# applies to this path unchanged. Nothing here weakens it.
+/version.json
+  Cache-Control: no-store
