@@ -21,7 +21,7 @@ export default defineConfig({
         },
         r2Buckets: ["PREVIEW_CACHE"],
         bindings: {
-          FACTORIO_VERSION: "2.1.9",
+          FACTORIO_VERSION: "2.1.12",
           MONTHLY_RENDER_BUDGET: "5000",
           ALLOWED_ORIGIN: "https://app.example",
         },
