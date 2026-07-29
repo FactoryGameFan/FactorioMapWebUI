@@ -17,12 +17,12 @@
       "evidence": "UNDOCUMENTED - committed 2026-07-12, between the 2.1.9 and 2.1.11 eras; re-capture to establish"
     },
     "basis-noise-seeding.game.json": {
-      "factorioVersion": "2.1.11",
-      "evidence": "stated in basisNoiseSeeding.spec.ts, its only consumer"
+      "factorioVersion": "2.1.12",
+      "evidence": "RE-CAPTURED 2026-07-29 against Factorio 2.1.12 (build 87038) via test/oracle: all 9 (seed0, seed1) cases x 48 points = 432 values re-sampled with the same basis_noise expression and matched the committed values bit-for-bit (432/432, max |diff| 0). Originally captured on 2.1.11, as basisNoiseSeeding.spec.ts still states"
     },
     "basis-noise.seed123456.json": {
-      "factorioVersion": "2.1.11",
-      "evidence": "stated in basisNoise.spec.ts, its only consumer"
+      "factorioVersion": "2.1.12",
+      "evidence": "RE-CAPTURED 2026-07-29 against Factorio 2.1.12 (build 87038) via test/oracle: all 512 sampled points re-sampled (basis_noise, seed 123456, seed1=0, input_scale 0.125) and matched bit-for-bit (512/512, max |diff| 0). The sigma/a/b tables in this fixture are binary-RE artefacts, not oracle-samplable; they stay pinned only indirectly, by those 512 values. Originally captured on 2.1.11, as basisNoise.spec.ts still states"
     },
     "builtin-presets.json": {
       "factorioVersion": "2.1.9",
@@ -53,8 +53,8 @@
       "evidence": "stated in the fixture's own _comment"
     },
     "oracle-basis.seed123456.json": {
-      "factorioVersion": "2.1.11",
-      "evidence": "stated in the fixture's own _comment"
+      "factorioVersion": "2.1.12",
+      "evidence": "RE-CAPTURED 2026-07-29 against Factorio 2.1.12 (build 87038) via test/oracle: all 38 points re-sampled with the fixture's own expression and matched bit-for-bit (38/38, max |diff| 0). Originally captured on 2.1.11, as the fixture's own _comment still states"
     },
     "oracle-cliff-elevation.seed123456.json": {
       "factorioVersion": "2.1.11",
@@ -97,24 +97,24 @@
       "evidence": "stated in the fixture's own _comment; captured 2026-07-27 against the installed binary, with `pnpm refs:sync --check` reporting binary/factorio-data/lua-api all in sync at 2.1.12"
     },
     "oracle-expression-in-range.seed123456.json": {
-      "factorioVersion": "2.1.11",
-      "evidence": "stated in the fixture's own _comment"
+      "factorioVersion": "2.1.12",
+      "evidence": "RE-CAPTURED 2026-07-29 against Factorio 2.1.12 (build 87038) via test/oracle: all 3 sweeps (oneD_20_1, oneD_5_inf, twoD) = 404 values re-sampled and matched bit-for-bit (404/404, max |diff| 0). Originally captured on 2.1.11, as the fixture's own _comment still states"
     },
     "oracle-moisture.seed123456.json": {
       "factorioVersion": "2.1.11",
       "evidence": "stated in the fixture's own _comment"
     },
     "oracle-multioctave-wrappers.seed123456.json": {
-      "factorioVersion": "2.1.11",
-      "evidence": "stated in the fixture's own _comment"
+      "factorioVersion": "2.1.12",
+      "evidence": "RE-CAPTURED 2026-07-29 against Factorio 2.1.12 (build 87038) via test/oracle: all 8 wrapper configs (4 quick_multioctave_noise_persistence + 4 amplitude_corrected_multioctave_noise) x 38 points = 304 values re-sampled and matched bit-for-bit (304/304, max |diff| 0). Originally captured on 2.1.11, as the fixture's own _comment still states"
     },
     "oracle-multioctave.seed123456.json": {
-      "factorioVersion": "2.1.11",
-      "evidence": "stated in the fixture's own _comment"
+      "factorioVersion": "2.1.12",
+      "evidence": "RE-CAPTURED 2026-07-29 against Factorio 2.1.12 (build 87038) via test/oracle: all 7 configs x 38 points = 266 values re-sampled and matched bit-for-bit (266/266, max |diff| 0). Originally captured on 2.1.11, as the fixture's own _comment still states"
     },
     "oracle-multisample.seed123456.json": {
       "factorioVersion": "2.1.12",
-      "evidence": "stated in the fixture's own _comment"
+      "evidence": "stated in the fixture's own _comment; re-sampled 2026-07-29 as a CONTROL for the noise-primitive re-capture (15 offsets x 2 axes x 5 points = 150 values, all bit-for-bit identical), which is what proves that run's harness invocation was sampling the right thing"
     },
     "oracle-preview-nauvis-terrain.seed123456.png": {
       "factorioVersion": "2.1.12",
@@ -125,8 +125,8 @@
       "evidence": "captured 2026-07-28 by test/oracle/previewCompare.ts against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time; every disableable autoplace control forced to size 0"
     },
     "oracle-quick-multioctave.seed123456.json": {
-      "factorioVersion": "2.1.11",
-      "evidence": "stated in the fixture's own _comment"
+      "factorioVersion": "2.1.12",
+      "evidence": "RE-CAPTURED 2026-07-29 against Factorio 2.1.12 (build 87038) via test/oracle: all 5 configs x 38 points = 190 values re-sampled and matched bit-for-bit (190/190, max |diff| 0). Originally captured on 2.1.11, as the fixture's own _comment still states"
     },
     "oracle-random-penalty.seed123456.json": {
       "factorioVersion": "2.1.11",
@@ -146,7 +146,7 @@
     },
     "oracle-seed-vars.multi.json": {
       "factorioVersion": "2.1.12",
-      "evidence": "stated in the fixture's own _comment"
+      "evidence": "stated in the fixture's own _comment; re-sampled 2026-07-29 as a CONTROL for the noise-primitive re-capture (12 seeds x 4 vars = 48 values through the Space-Age Vulcanus path, all bit-for-bit identical), which is what proves that run's harness invocation was sampling the right thing"
     },
     "oracle-starting-spot.seed123456.json": {
       "factorioVersion": "2.1.12",
@@ -177,8 +177,8 @@
       "evidence": "stated in the fixture's own _comment"
     },
     "oracle-variable-persistence-multioctave.seed123456.json": {
-      "factorioVersion": "2.1.11",
-      "evidence": "stated in the fixture's own _comment"
+      "factorioVersion": "2.1.12",
+      "evidence": "RE-CAPTURED 2026-07-29 against Factorio 2.1.12 (build 87038) via test/oracle: the persistenceField plus all 7 configs, x 38 points = 304 values re-sampled and matched bit-for-bit (304/304, max |diff| 0). Originally captured on 2.1.11, as the fixture's own _comment still states"
     },
     "oracle-vulcanus-biomes.seed123456.json": {
       "factorioVersion": "2.1.12",

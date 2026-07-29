@@ -1,8 +1,8 @@
 # Fixture version audit - which stale fixtures actually matter
 
-**Status: open, not yet run.** Written 2026-07-26 so the question survives the
-session it came from. Nothing here has been executed; the conclusions section is
-empty on purpose.
+**Status: run.** Written 2026-07-26 so the question survives the session it came
+from; the data-governed half was run 2026-07-28 and the noise primitives on
+2026-07-29. See Conclusions.
 
 ## The question
 
@@ -84,7 +84,7 @@ Derived that way at **tag 2.1.12**:
 Lua - `factorio-data` only *calls* them. A data diff will always come back
 clean for those fixtures no matter what changed, so a clean diff is **not**
 evidence they are current. The only check is re-sampling against the binary
-through `test/oracle/`.
+through `test/oracle/` - done on 2026-07-29, see Conclusions.
 
 ## The commands
 
@@ -222,13 +222,71 @@ are empirical, so accepting an unseen format risks decoding a changed layout int
 plausible wrong values, which is worse than a clean rejection. A version joins the
 list only with a fixture proving byte-exact round-trip.
 
-### The 7 noise-primitive fixtures: still unauditable, still unaudited
+### The noise-primitive fixtures: RE-SAMPLED 2026-07-29, all bit-identical
 
-`oracle-basis`, `oracle-multioctave*`, `oracle-quick-multioctave`,
-`oracle-variable-persistence-*`, `oracle-multisample`, `oracle-expression-in-range`,
-`oracle-seed-vars` are governed by native C++ ops. The clean data diff above says
-**nothing** about them. Only re-sampling against the binary can, and that was not
-done here - it remains the one genuinely open part of this audit.
+Closed. These are governed by native C++ ops, so the clean data diff above says
+**nothing** about them - the only check is running the binary. Every one was
+re-sampled through `test/oracle/sampleExpression` against **Factorio 2.1.12
+(build 87038)**, with the same expressions, positions and seeds each fixture
+records, and compared **exactly** (`Object.is`, not a tolerance). 120 headless
+runs, ~2.5 minutes of game time.
+
+| fixture | captured on | series | values compared | mismatched | max abs diff |
+| --- | --- | --- | --- | --- | --- |
+| `basis-noise-seeding.game.json` | 2.1.11 | 9 | 432 | 0 | 0 |
+| `basis-noise.seed123456.json` | 2.1.11 | 1 | 512 | 0 | 0 |
+| `oracle-basis.seed123456.json` | 2.1.11 | 1 | 38 | 0 | 0 |
+| `oracle-expression-in-range.seed123456.json` | 2.1.11 | 3 | 404 | 0 | 0 |
+| `oracle-multioctave.seed123456.json` | 2.1.11 | 7 | 266 | 0 | 0 |
+| `oracle-multioctave-wrappers.seed123456.json` | 2.1.11 | 8 | 304 | 0 | 0 |
+| `oracle-quick-multioctave.seed123456.json` | 2.1.11 | 5 | 190 | 0 | 0 |
+| `oracle-variable-persistence-multioctave.seed123456.json` | 2.1.11 | 8 | 304 | 0 | 0 |
+| `oracle-multisample.seed123456.json` (**control**) | 2.1.12 | 30 | 150 | 0 | 0 |
+| `oracle-seed-vars.multi.json` (**control**) | 2.1.12 | 48 | 48 | 0 | 0 |
+| **total** | | **120** | **2648** | **0** | **0** |
+
+So `basis_noise` (including its seed combine, salt and clamp),
+`multioctave_noise`, `quick_multioctave_noise`,
+`variable_persistence_multioctave_noise`, their two Lua wrappers,
+`expression_in_range`, `multisample` and the four seed vars are all
+**unchanged 2.1.11 -> 2.1.12**, to the last bit of every float.
+
+**Two guards, because "everything matched" is exactly what a broken harness
+also reports.**
+
+1. **Controls.** The two fixtures already captured at 2.1.12
+   (`oracle-multisample`, `oracle-seed-vars`) were re-sampled in the same run
+   and had to reproduce. They did, 198/198. `oracle-seed-vars` also exercises
+   the Space-Age path (`create_surface` on Vulcanus with the seed forced), so
+   both harness modes are covered, not just the plain Nauvis one.
+2. **The comparison discriminates.** Perturbing ONE stored value per fixture by
+   one part in 1e12 and re-running the comparator flags **10 mismatches, one in
+   each of the 10 fixtures** - so the 0/2648 above is a real result and not a
+   comparison that silently compared nothing. Both numbers matter: 2648 values
+   compared, 10/10 fixtures fail on a 1e-12 nudge.
+
+Two things this does **not** cover, stated so nobody reads more into it:
+
+- The `sigma`/`a`/`b` tables inside `basis-noise.seed123456.json` are binary-RE
+  artefacts, not oracle-samplable. What was re-captured is that fixture's 512
+  sampled values; the tables stay pinned only indirectly, through them.
+- One expression per fixture group at one seed is not the whole op. The
+  parameter sweeps the original captures chose (octave counts, non-power-of-2
+  persistence, large `offset_x`, odd seeds, seed1 >= 256) are wide, but they are
+  still a sample.
+
+Eight fixtures therefore move to `factorioVersion: 2.1.12` in `PROVENANCE.json`
+with evidence describing the fresh capture, per "Recording the outcome" below.
+This is a real re-capture, not a re-dating on the strength of a clean diff: the
+game was run and the bytes were compared. The fixture files themselves are
+untouched - the re-sampled values were identical, so there was nothing to
+rewrite, and their `_comment` fields still record the original 2.1.11 capture.
+
+Worth noting for anyone repeating this: `oracle-basis` was already being
+re-sampled live on every `pnpm vp test` run on a machine with Factorio (the
+gated `it.skipIf(!oracleAvailable())` case in `test/oracle/oracle.spec.ts`
+asserts exact equality). That one fixture had a standing guard; the other seven
+had none, which is why they needed this.
 
 ### What changed as a result
 
@@ -238,7 +296,10 @@ done here - it remains the one genuinely open part of this audit.
   spoke**. Both values are derived (target from `PROVENANCE.json`, formats from
   the decoder) and pinned by `test/factorioTarget.spec.ts`, so they cannot rot the
   way the hardcoded `2.1.9.3` did.
-- No fixture was re-captured, because none needed to be.
+- No fixture was re-captured **on 2026-07-28**, because none needed to be. The
+  2026-07-29 follow-up did re-capture the eight 2.1.11 noise-primitive fixtures
+  against the binary (see the section above) - they were bit-identical, so only
+  their `PROVENANCE.json` entries changed, not the fixtures.
 
 ### The lesson, which is not the one the issue expected
 
