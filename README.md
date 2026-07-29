@@ -91,7 +91,7 @@ project pins pnpm via `devEngines`, so run `vp` through pnpm (a bare `vp` or
   serves a cached PNG from R2 on a hit, and on a miss enforces a monthly render
   budget (Durable Object) before calling the container. Returns the PNG through
   the Worker so it stays same-origin with the app.
-- `container/` - a digest-pinned `factoriotools/factorio:2.1.9` image plus a thin
+- `container/` - a digest-pinned `factoriotools/factorio:2.1.12` image plus a thin
   Node HTTP server that shells out to `factorio --generate-map-preview` and
   returns the PNG bytes.
 
