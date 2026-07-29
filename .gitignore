@@ -21,6 +21,12 @@ vite.config.ts.timestamp-*
 coverage/
 test-results/
 
+# Lighthouse CLI report output (--output html|json|csv) - a stray report left
+# in the repo root once failed `vp check`'s format step and blocked a deploy
+*.report.html
+*.report.json
+*.report.csv
+
 # Editor / OS
 .DS_Store
 *.log
