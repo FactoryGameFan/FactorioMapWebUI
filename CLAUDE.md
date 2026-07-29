@@ -232,19 +232,48 @@ service in a separate workspace.
 stream **byte-for-byte** - re-emitting a string must equal the original.
 Consequences that constrain any change here:
 
-- Deflate goes through `zlib-asm` specifically; `pako`/`fflate` diverge from the
-  game's stream. The requirement is **actual madler zlib at level 9**, not this
-  package: `node:zlib` (1.2.12) reproduces all 9 fixtures byte-for-byte just as
-  `zlib-asm` (1.2.8) does, while pako/fflate - independent reimplementations -
-  do not. So "configure pako to match" is a dead end, and a WASM build of zlib
-  is the live replacement path. Inflate is not the constraint at all:
-  `DecompressionStream('deflate')` matches on all 9 fixtures. See issue #40.
-- **The CSP does NOT need `unsafe-eval`, and must not regain it.** zlib-asm
-  shipped three `eval` sites, all 2016 Emscripten runtime glue rather than
-  compression; `patches/zlib-asm.patch` removes all three, and there is
-  deliberately no `[EVAL]` suppression in `vite.config.ts` any more. That patch
-  is pinned to the exact bytes of `zlib-asm@1.0.7`, so a bump would need it
-  regenerated.
+- Deflate goes through **`pako` at `{ level: 9, legacyHash: true }`**, and that
+  option is load-bearing - see `src/codec/deflate.ts`. The requirement is
+  **madler-zlib-compatible output at level 9**, not any particular package.
+  Measured against the 9 fixtures (Node v26.5.0, `process.versions.zlib`
+  1.2.12; decode base64 -> inflate -> re-deflate -> compare):
+
+  | candidate                                           | byte-exact |
+  | --------------------------------------------------- | ---------- |
+  | `node:zlib` `deflateSync({level:9})`                | 9/9        |
+  | `pako@3.0.1` `deflate(b,{level:9})` (defaults)      | 0/9        |
+  | `pako@3.0.1` `deflate(b,{level:9,legacyHash:true})` | **9/9**    |
+  | `pako@2.1.0` `deflate(b,{level:9})`                 | 9/9        |
+  | `fflate@0.8.3` `zlibSync(b,{level:9})`              | 0/9        |
+
+  A level-1 deflate matches 0/9, confirming the comparison discriminates.
+  fflate genuinely does diverge - it is an independent reimplementation and no
+  option fixes it. Inflate is not a constraint at all: pako's `inflate`,
+  `node:zlib`, and `DecompressionStream('deflate')` all agree on all 9.
+
+  **Why the old belief ("pako diverges, so a WASM build of zlib is the live
+  replacement path") was held, and why it was wrong.** It was a true
+  measurement of a false generalisation. pako **2.2.0** (2026-06-22) added an
+  alternate, faster deflate hash behind a new `legacyHash` option defaulting to
+  `true`; pako **3.0.0** (2026-06-26) flipped that default to `false`. This repo
+  adopted `^3.0.0` on 2026-07-01, five days later, and measured pako at its
+  defaults - the one configuration that cannot match canonical zlib. The
+  divergence was real; "no configuration of pako can match" was never tested.
+  Issue #40's premise (zlib-asm is load-bearing) is refuted, and no WASM build
+  is needed.
+
+  The new risk is different and worth naming: **`legacyHash` is a pako
+  extension, not part of the zlib API**, from a library that has already flipped
+  its default once in a major version. `test/deflate.spec.ts` has a dedicated
+  block that fails with a message naming the option if it is ever dropped,
+  renamed, or re-defaulted. Do not silence it by editing a fixture.
+
+- **The CSP does NOT need `unsafe-eval`, and must not regain it.** Nothing the
+  app bundles uses `eval` at all - `pako` is plain ESM. This used to need a
+  caveat: the codec was backed by `zlib-asm`, an abandoned (2016) asm.js port
+  that shipped three `eval` sites and needed a local `patches/zlib-asm.patch`
+  to strip them. That dependency, its patch, and both of its `vite.config.ts`
+  build-warning suppressions are gone.
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
   known-good list (`2.1.9.3`, `2.1.12.2`), never a range - the schemas here are
   empirical, so accepting an unseen format would decode a changed layout into
@@ -491,18 +520,23 @@ vite-node during tests. Two workarounds were tried and rejected:
   re-export `createLogger`) purely to mute a cosmetic upstream warning. Not worth
   a dependency. Revisit if `@cloudflare/containers` fixes its packaging.
 
-Two deliberate suppressions live in `vite.config.ts`, both narrow on purpose:
+Exactly **one** deliberate suppression now lives in `vite.config.ts`:
+`typescript/unbound-method` is off for `test/**/*.spec.ts`, because
+`expect(mock.fn).toHaveBeenCalled()` passes an unbound reference by design.
 
-- `typescript/unbound-method` is off for `test/**/*.spec.ts` -
-  `expect(mock.fn).toHaveBeenCalled()` passes an unbound reference by design.
-- The `Module "fs"/"path" has been externalized for browser compatibility`
-  warnings are filtered in `build.rollupOptions.onLog`, matched on the
-  `rolldown:vite-resolve` plugin **plus `/zlib-asm/` in the importer path** -
-  those are zlib-asm's Node fallback imports, never reached in the browser.
-  Verified narrow: an `fs` import added to `src/` still warns.
+There is **no** `build.rollupOptions.onLog` hook at all any more. It once held
+two filters, both existing solely for `zlib-asm`:
 
-There used to be a third, an `[EVAL]` filter for `zlib-asm`. It is gone because
-the patch removed the `eval`s themselves; do not add it back.
+- an `[EVAL]` filter, dropped when `patches/zlib-asm.patch` removed the three
+  Emscripten `eval` sites; and
+- an `fs`/`path` browser-externalization filter for zlib-asm's Node fallback
+  imports, matched on the `rolldown:vite-resolve` plugin plus `/zlib-asm/` in
+  the importer path.
 
-With both in place `pnpm vp build` prints no warnings at all, so anything
-that does appear is new and worth reading.
+Replacing `zlib-asm` with `pako` (plain ESM, no `eval`, no Node builtins) made
+the second one dead too. Verified by removing it rather than assuming: the
+build still prints nothing.
+
+`pnpm vp build` prints no warnings at all, so anything that does appear is new
+and worth reading. Do not add a suppression back - a direct `eval` or an
+externalized builtin appearing anywhere in the bundle needs to surface.

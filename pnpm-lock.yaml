@@ -206,9 +206,6 @@ settings:
 overrides:
   shell-quote: 1.9.0
 
-patchedDependencies:
-  zlib-asm: 575b92082fb1611bdeda249989166de65e5c30917ad90a3d6467231b6331e01d
-
 importers:
 
   .:
@@ -219,15 +216,15 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      pako:
+        specifier: ^3.0.1
+        version: 3.0.1
       pinia:
         specifier: ^4.0.2
         version: 4.0.2(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))
       vue:
         specifier: ^3.5.40
         version: 3.5.40(typescript@6.0.3)
-      zlib-asm:
-        specifier: ^1.0.7
-        version: 1.0.7(patch_hash=575b92082fb1611bdeda249989166de65e5c30917ad90a3d6467231b6331e01d)
     devDependencies:
       '@vitejs/plugin-vue':
         specifier: ^6.0.8
@@ -1143,9 +1140,6 @@ packages:
   '@types/node@26.1.1':
     resolution: {integrity: sha512-nxAkRSVkN1Y0JC1W8ky/fTfkGsMmcrRsbx+3XoZE+rMOX71kLYTV7fLXpqud1GpbpP5TuffXFqfX7fH2GgZREw==}
 
-  '@types/node@6.14.13':
-    resolution: {integrity: sha512-J1F0XJ/9zxlZel5ZlbeSuHW2OpabrUAqpFuC2sm2I3by8sERQ8+KCjNKUcq8QHuzpGMWiJpo9ZxeHrqrP2KzQw==}
-
   '@types/whatwg-mimetype@3.0.2':
     resolution: {integrity: sha512-c2AKvDT8ToxLIOUlN51gTiHXflsfIFisS4pO7pDPoKouJCESkhZnEy623gwP9laCy5lnLDAw1vAzu2vM2YLOrA==}
 
@@ -1868,6 +1862,9 @@ packages:
   pako@1.0.11:
     resolution: {integrity: sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==}
 
+  pako@3.0.1:
+    resolution: {integrity: sha512-GupotUUI0mlhugKjUs4bjOwLt3nrehy9Ys2dxC0GtgVef5cnKggkDMmf2bq2poCCuVXopWPmqsc9VDT2iJUy+w==}
+
   path-key@3.1.1:
     resolution: {integrity: sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==}
     engines: {node: '>=8'}
@@ -2241,9 +2238,6 @@ packages:
 
   yuku-parser@0.5.48:
     resolution: {integrity: sha512-OWBfhrpgK9+/4+IXG9oT8Bao4AhViQA7vdyNNH7EUg8dQYgwa70XtIBWTpCEme1P1ECyoDNYkn0wT63f8XRcVA==}
-
-  zlib-asm@1.0.7:
-    resolution: {integrity: sha512-uxYdG+xa7yxQEa3GbXlubbonNpgCNS9kA293/YuHP3N/DG83N+Ll7qAbP4uws59stHuEFlfGkteMf6txOhhw6A==}
 
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
@@ -2792,8 +2786,6 @@ snapshots:
   '@types/node@26.1.1':
     dependencies:
       undici-types: 8.3.0
-
-  '@types/node@6.14.13': {}
 
   '@types/whatwg-mimetype@3.0.2': {}
 
@@ -3439,6 +3431,8 @@ snapshots:
 
   pako@1.0.11: {}
 
+  pako@3.0.1: {}
+
   path-key@3.1.1: {}
 
   path-scurry@1.11.1:
@@ -3867,9 +3861,5 @@ snapshots:
       '@yuku-parser/binding-linux-x64-musl': 0.5.48
       '@yuku-parser/binding-win32-arm64': 0.5.48
       '@yuku-parser/binding-win32-x64': 0.5.48
-
-  zlib-asm@1.0.7(patch_hash=575b92082fb1611bdeda249989166de65e5c30917ad90a3d6467231b6331e01d):
-    dependencies:
-      '@types/node': 6.14.13
 
   zod@3.25.76: {}

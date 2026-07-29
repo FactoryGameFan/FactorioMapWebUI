@@ -10,8 +10,9 @@ offline without it. See [Map preview service](#map-preview-service).
 
 Phases 0-1c complete and merged. The codec (format 2.1.9.3) does a
 **byte-exact** decode/encode round-trip on all 9 built-in presets and the
-reference fixtures - the encoder reproduces the game's zlib@9 stream via
-`zlib-asm`, so re-emitted strings are byte-identical to the originals.
+reference fixtures - the encoder reproduces the game's zlib@9 stream via `pako`
+at `{ level: 9, legacyHash: true }`, so re-emitted strings are byte-identical to
+the originals.
 
 Decoded and typed on the model:
 
