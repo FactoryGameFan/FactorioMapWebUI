@@ -213,9 +213,9 @@ importers:
       '@vue/devtools-api':
         specifier: ^8.2.1
         version: 8.2.1
-      jszip:
-        specifier: ^3.10.1
-        version: 3.10.1
+      client-zip:
+        specifier: ^2.5.0
+        version: 2.5.0
       pako:
         specifier: ^3.0.1
         version: 3.0.1
@@ -238,6 +238,9 @@ importers:
       happy-dom:
         specifier: ^20.11.1
         version: 20.11.1
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -1547,6 +1550,9 @@ packages:
 
   cjs-module-lexer@1.2.3:
     resolution: {integrity: sha512-0TNiGstbQmCFwt4akjjBg5pLRTSyj/PkWQ1ZoO2zntmg9yLqSRxwEa4iCfQLGjqhiqBfOJa7W/E8wfGrTDmlZQ==}
+
+  client-zip@2.5.0:
+    resolution: {integrity: sha512-ydG4nDZesbFurnNq0VVCp/yyomIBh+X/1fZPI/P24zbnG4dtC4tQAfI5uQsomigsUMeiRO2wiTPizLWQh+IAyQ==}
 
   cliui@9.0.1:
     resolution: {integrity: sha512-k7ndgKhwoQveBL+/1tqGJYNz097I7WOvwbmmU2AR5+magtbjPWQTS1C5vzGkBC8Ym8UWRzfKUzUUqFLypY4Q+w==}
@@ -3147,6 +3153,8 @@ snapshots:
   chalk@5.6.2: {}
 
   cjs-module-lexer@1.2.3: {}
+
+  client-zip@2.5.0: {}
 
   cliui@9.0.1:
     dependencies:
