@@ -128,7 +128,13 @@ export function getModifiedRichness(baseRichness: number, continuity: number): n
  * Cell codes that place a cliff, i.e. codes for which the game's
  * `CellCliffCrossing::toMaybeCliffOrientation` returns a real `CliffOrientation`
  * (not "none"). Ground truth extracted from the Factorio arm64 binary
- * (`CellCliffCrossing::toMaybeCliffOrientation` @ VA `0x1016067a0`).
+ * (`CellCliffCrossing::toMaybeCliffOrientation`).
+ *
+ * **The VA moved.** This block cited `0x1016067a0` from the build it was
+ * extracted against; under 2.1.12 the symbol is at `0x10160c3ac`, which is where
+ * `CLIFF_CODE_TO_ORIENTATION` below was read. Re-derive the address from `nm`
+ * rather than trusting either number - the dispatch structure described here is
+ * unchanged, only its address moved.
  *
  * A cell `code` is the 8-bit `(enc(L)<<6)|(enc(R)<<4)|(enc(T)<<2)|enc(B)` where
  * each 2-bit field encodes an edge crossing (0 -> 0, +1 -> 1, -1 -> 3).
@@ -171,4 +177,166 @@ const CLIFF_PLACED_TABLE: readonly boolean[] = (() => {
 export function isCliffPlaced(code: number): boolean {
   if (!Number.isInteger(code) || code < 0 || code > 255) return false;
   return CLIFF_PLACED_TABLE[code];
+}
+
+/**
+ * The 20 `CliffOrientation` enum values, in enum order - so the index into this
+ * array **is** the id the engine uses.
+ *
+ * Read out of the arm64 slice: `CliffOrientationName::buildMapping`
+ * (`0x1007aaec0`) registers name/value pairs in ascending value order, and its
+ * name string table is contiguous at `0x102f615f4`. The per-entry string lengths
+ * the function loads (12, 14, 12, 14, 13, ...) match these names, which is the
+ * check that the table was read in the right order rather than assumed.
+ */
+export const CLIFF_ORIENTATION_NAMES: readonly string[] = [
+  "west-to-east",
+  "north-to-south",
+  "east-to-west",
+  "south-to-north",
+  "west-to-north",
+  "north-to-east",
+  "east-to-south",
+  "south-to-west",
+  "west-to-south",
+  "north-to-west",
+  "east-to-north",
+  "south-to-east",
+  "west-to-none",
+  "none-to-east",
+  "east-to-none",
+  "none-to-west",
+  "north-to-none",
+  "none-to-south",
+  "south-to-none",
+  "none-to-north",
+];
+
+/**
+ * Cell code -> `CliffOrientation` id, the FULL result of
+ * `CellCliffCrossing::toMaybeCliffOrientation` rather than the boolean
+ * `isCliffPlaced` keeps.
+ *
+ * The function returns one 64-bit word: the **low** 32 bits are a tri-state
+ * (2 = a real orientation, 1 = "none", 0 = the empty cell), and the **high** 32
+ * bits are the orientation id. `CLIFF_PLACING_CODES` was extracted from the low
+ * word alone, which is why the id was never recorded until 2026-07-30.
+ *
+ * Extraction, 2.1.12 arm64 slice, body at `0x10160c3ac`:
+ *   - `code <= 0x50` dispatches through an 81-byte index table at `0x102d000c4`
+ *     (branch target = `0x10160c3dc + index*4`); each landing block is
+ *     `mov x8, <id << 32>` / `mov w9, #2` / `orr x0, x9, x8` / `ret`.
+ *   - `0x51..0xbf` all fall into the "none" block.
+ *   - `0xc0`, `0xc1`, `0xcc`, `0xf0` are explicit compares.
+ *
+ * The result is a **bijection**: the 20 placing codes map onto the 20
+ * orientations one-for-one, with no id used twice and none unused.
+ * `test/cliffOrientation.spec.ts` asserts that rather than trusting it.
+ *
+ * Not yet consumed by the placement pass - see
+ * `CLIFF_ORIENTATION_COLLISION_BOX` for what it is for.
+ */
+export const CLIFF_CODE_TO_ORIENTATION: Readonly<Record<number, number>> = {
+  1: 17,
+  3: 18,
+  4: 16,
+  5: 1,
+  12: 19,
+  15: 3,
+  16: 14,
+  17: 6,
+  28: 10,
+  48: 13,
+  51: 11,
+  52: 5,
+  64: 15,
+  67: 7,
+  68: 9,
+  80: 2,
+  192: 12,
+  193: 8,
+  204: 4,
+  240: 0,
+};
+
+/** An axis-aligned box in cell-centre-relative tiles: `[left, top, right, bottom]`. */
+export type CliffCollisionBox = readonly [number, number, number, number];
+
+/**
+ * `rotbb(x, y, size, intersect)`'s axis-aligned bounding box
+ * (`base/prototypes/entity/entity-util.lua:9`).
+ *
+ * `rotbb` builds a rectangle centred at `(x + size/2, y + size/2)` with
+ * half-extents `((1 - intersect/size) * d, (intersect/size) * d)` where
+ * `d = size/2 * sqrt(2)`, and tags it with an orientation of **1/8** - a 45
+ * degree rotation. Rotating those half-extents by 45 gives an AABB half-extent
+ * of `(hx + hy) * cos(45) = (d) * cos(45) = size/2` on BOTH axes, whatever
+ * `intersect` was. So the AABB is exactly the square `[x, x+size] x [y, y+size]`
+ * and `intersect` only decides how the diagonal is split inside it.
+ *
+ * That is why this helper does not take `intersect`. `test/cliffOrientation.spec.ts`
+ * re-derives it from the full rotated rectangle instead of restating it here.
+ */
+function rotbbBox(x: number, y: number, size: number): CliffCollisionBox {
+  return [x, y, x + size, y + size];
+}
+
+/**
+ * `CliffOrientation` id -> the orientation's `collision_bounding_box`, at
+ * `scale = 1.0` (both `cliff` and `cliff-vulcanus`), relative to the cliff's
+ * centre. Transcribed from `create_cliff_data_specification`
+ * (`base/prototypes/entity/entity-util.lua:85`), which is the table the engine
+ * loads into `proto + 0x5c0 + id * 0x48`.
+ *
+ * **What this is for.** `EntityMapGenerationTask::tryToAddCliff`
+ * (`0x101625038`) switches on the orientation, reads that entry's box, and
+ * calls `EntityMapGenerationTask::wouldCollide(BoundingBox const&,
+ * CollisionMask const&, MapPosition, Direction)` (`0x101625468`) with the
+ * prototype's collision mask (`proto + 0x2b0`). On a hit it returns false and
+ * **the cliff is never recorded** - a rejection this port does not yet run.
+ *
+ * `wouldCollide` turns the box into tiles with `(box + position) >> 8`
+ * (`MapPosition` is 8-bit fixed point, so an arithmetic floor) and scans the
+ * INCLUSIVE tile rectangle `[left..right] x [top..bottom]` against a 96x96
+ * per-tile mask grid, ANDing each tile's `CollisionMask` with the entity's. It
+ * reads tiles only - `tryToAddCliff` never writes that grid - so the rejection
+ * has no placement-order dependence.
+ *
+ * On Vulcanus the only tiles carrying a layer the cliff mask holds
+ * (`water_tile`) are `lava` and `lava-hot`. Measured 2026-07-30 against
+ * `oracle-vulcanus-cliff-entities.seed123456` with these boxes, region
+ * `[1500,1500]` goes from 1065 predicted / 885 real (ratio 1.203, precision
+ * 0.779) to 888 predicted (ratio **1.003**, precision **0.930**), rejecting 173
+ * false positives and only 4 true ones. See issue #18.
+ */
+export const CLIFF_ORIENTATION_COLLISION_BOX: readonly CliffCollisionBox[] = [
+  [-2.0, -1.5, 2.0, 1.5], //  0 west-to-east
+  [-1.0, -2.0, 1.0, 2.0], //  1 north-to-south
+  [-2.0, -0.5, 2.0, 0.5], //  2 east-to-west
+  [-1.0, -2.0, 1.0, 2.0], //  3 south-to-north
+  rotbbBox(-3.5, -3, 4.5), //  4 west-to-north
+  rotbbBox(-1, -3, 4.5), //  5 north-to-east
+  rotbbBox(-1, -0.5, 3.5), //  6 east-to-south
+  rotbbBox(-2.5, -0.5, 3.5), //  7 south-to-west
+  rotbbBox(-3.5, -1.5, 4.5), //  8 west-to-south
+  rotbbBox(-2.5, -3, 3.5), //  9 north-to-west
+  rotbbBox(-1, -3, 3.5), // 10 east-to-north
+  rotbbBox(-1, -1.5, 4.5), // 11 south-to-east
+  rotbbBox(-3, -1.5, 3), // 12 west-to-none
+  rotbbBox(0, -1.5, 3), // 13 none-to-east
+  rotbbBox(0, -0.5, 2.5), // 14 east-to-none
+  rotbbBox(-2.5, -0.5, 2.51), // 15 none-to-west
+  rotbbBox(-1, -2.5, 3), // 16 north-to-none
+  rotbbBox(-1, -0.5, 3), // 17 none-to-south
+  rotbbBox(-2, -0.5, 3), // 18 south-to-none
+  rotbbBox(-2, -2.5, 3), // 19 none-to-north
+];
+
+/**
+ * The `CliffOrientation` id a cell code places, or `undefined` when the code
+ * places nothing. Agrees with {@link isCliffPlaced} by construction.
+ */
+export function cliffOrientationForCode(code: number): number | undefined {
+  if (!Number.isInteger(code) || code < 0 || code > 255) return undefined;
+  return CLIFF_CODE_TO_ORIENTATION[code];
 }

@@ -117,16 +117,23 @@ signed (+1/-1/0); encode -1 as 3 for the orientation code.
 The inlined copy inside `crossingsForChunk` (`0x101606dc0`, `0x101607460`+,
 `0x1016075c0`+) forms `s3 = (cliffiness[A] + cliffiness[B]) * 0.5` before the call.
 
-### The lattice (confirmed 100% exact)
+### The lattice (the placement half is exact; the SAMPLE half was wrong until #70)
 
 `grid_size = {4,4}`, `grid_offset = {0, 0.5}` (from `scaled_cliff`). A 32-tile chunk
 = `8x8` cells of `4x4` tiles; fields sampled at the `9x9` cell corners; the entity is
 placed at the cell **center**:
 
 ```
-corner(i,j)  world tile = ( chunkX*32 + i*4 + 0,  chunkY*32 + j*4 + 0.5 )
+corner(i,j)  world tile = ( chunkX*32 + i*4 + 0,  chunkY*32 + j*4 + 0 )
 cliff center world tile = ( chunkX*32 + cx*4 + 2, chunkY*32 + cy*4 + 2.5 )   -> x≡2, y≡2.5 (mod 4)
 ```
+
+**The corner line above read `j*4 + 0.5` until 2026-07-30, and that was the bug
+fixed in #70** - `grid_offset` is a CENTRE offset and `crossingsForChunk` never
+reads it. See "Validation result: EXACT since 2026-07-30" below for the evidence
+and for why the mod-4 check in the next paragraph stayed green throughout: the
+error moves no placed cliff. The heading used to claim "confirmed 100% exact",
+which was true of the centres and silent on the sample sites.
 
 Every dumped cliff across both test seeds matched `x mod 4 == 2` and `y mod 4 == 2.5`
 exactly. (`generateCliffs` @ `0x10161cda8`, constants `32.0`, `grid_size/2=2.0`,
@@ -139,11 +146,88 @@ For cell `(cx,cy)` the four edges are the crossings on its shared corner pairs:
 `T=cross(corner(cx,cy),corner(cx+1,cy))`, `B=cross(corner(cx,cy+1),corner(cx+1,cy+1))`.
 `generateCliffs +292..+308` packs `code = (enc(L)<<6)|(enc(R)<<4)|(enc(T)<<2)|enc(B)`
 (2 bits each, -1 encoded as 3). `CellCliffCrossing::toMaybeCliffOrientation`
-(`0x1016067a0`) maps the 256 codes -> a `CliffOrientation` (16 of them: N-S, W-E,
-inner/outer/entrance corners) or "none". A cell whose code maps to non-none gets a
-cliff. **For the preview render we need only the boolean not-none** (which cells get a
-cliff), not the sprite orientation; extract the `code -> none/not-none` predicate from
-the table.
+maps the 256 codes -> a `CliffOrientation` or "none". A cell whose code maps to
+non-none gets a cliff.
+
+**Corrected 2026-07-30, twice.** There are **20** orientations, not 16, and the
+render needs more than the boolean: the game rejects a cliff whose orientation's
+collision box hits the wrong tile (see "The collision rejection" below), and that
+box is per-orientation. The full `code -> CliffOrientation` map and the 20
+collision boxes now live in `cliffCatalog.ts` as `CLIFF_CODE_TO_ORIENTATION` /
+`CLIFF_ORIENTATION_COLLISION_BOX`, pinned by `test/cliffOrientation.spec.ts`.
+
+The id was recoverable all along and was simply not read: the function returns one
+64-bit word whose **low** 32 bits are the tri-state (2 = real, 1 = none, 0 = empty
+cell) and whose **high** 32 bits are the orientation id. `CLIFF_PLACING_CODES` was
+extracted from the low word only.
+
+Also note the address above (`0x1016067a0`) is from the build this file was first
+written against; under 2.1.12 the symbol is at `0x10160c3ac`. Re-derive from `nm`.
+
+### The collision rejection - NOT ported, and it is issue #18's residual
+
+`EntityMapGenerationTask::tryToAddCliff` (`0x101625038` in 2.1.12) does not just
+record the cell. It switches on the `CliffOrientation` (a 20-entry jump table),
+loads that orientation's `collision_bounding_box` from `proto + 0x5c0 + id*0x48`,
+and calls
+
+```
+EntityMapGenerationTask::wouldCollide(BoundingBox const&, CollisionMask const&,
+                                      MapPosition, Direction)      // 0x101625468
+```
+
+with the prototype's own collision mask at `proto + 0x2b0` and `Direction = 0`. On
+a hit it returns false and **the cliff is never added.**
+
+`wouldCollide` converts the box to tile indices with `(box + position) >> 8`
+(`MapPosition` is 8-bit fixed point, so an arithmetic floor) and scans the
+**inclusive** rectangle `[left..right] x [top..bottom]` over a 96x96 per-tile mask
+grid (`this + 0x90`, origin at `[+0x4890]`/`[+0x4894]`, one u16 index into a
+0x20-byte `CollisionMask` table at `0x103711118`), ANDing each tile's mask with the
+entity's. It reads tiles only - `tryToAddCliff` never writes that grid - so the
+rejection is **order-independent**, which is what makes it portable to a
+per-cell renderer at all.
+
+Which tiles collide follows from the masks. The cliff mask holds `water_tile`;
+`tile_collision_masks.lava()` sets `water_tile = true`, and on Vulcanus `lava` and
+`lava-hot` are the only tiles that do. So on Vulcanus this rule reads "no cliff
+whose collision box touches lava", and on Nauvis "…touches water" - which is why
+it was invisible there: `test/cliffResidual.spec.ts` already found that no Nauvis
+cliff touches water at all.
+
+Measured 2026-07-30 against `oracle-vulcanus-cliff-entities.seed123456`, applying
+the rule with the real per-orientation boxes and our own tile resolver:
+
+| region | ratio | precision | recall | rejects TP / FP |
+| --- | --- | --- | --- | --- |
+| `[0,0]` | 1.184 -> 1.120 | 0.681 -> 0.700 | 0.806 -> 0.784 | 6 / 12 |
+| `[1500,1500]` | **1.203 -> 1.003** | **0.779 -> 0.930** | 0.938 -> 0.933 | 4 / **173** |
+| `[-1200,800]` | 0.935 -> 0.925 | 0.912 -> 0.922 | 0.853 -> 0.853 | 0 / 4 |
+
+**The control arm is what makes that non-vacuous:** sampling the same lava field
+10,000 tiles away rejects 111 TP / 40 FP and 361 TP / 82 FP - indiscriminate, ratio
+collapsing to 0.65 / 0.70. The real arm rejects almost only false positives.
+
+So it explains region `[1500,1500]`'s over-placement essentially in full and
+**does not** explain regions `[0,0]` or `[-1200,800]`, which barely move. It also
+costs 6 true positives at `[0,0]`; the tile resolver is ~98% accurate overall and
+plausibly worse at a lava boundary, but that is a hypothesis, not a measurement.
+
+The rejection itself is **not implemented** - only the tables it needs are. Wiring
+it in gives the cliff overlay a dependency on the Vulcanus tile resolver, which is
+a render-cost decision, so it is deliberately a separate change.
+
+#### `rotbb` boxes
+
+16 of the 20 orientations use `rotbb(x, y, size, intersect)`
+(`base/prototypes/entity/entity-util.lua:9`), which builds a rectangle centred at
+`(x + size/2, y + size/2)` and tags it with orientation **1/8** - a 45 degree
+rotation. Rotating its half-extents by 45 gives `(hx + hy) * cos(45) = size/2` on
+both axes whatever `intersect` was, so **the AABB is exactly the square
+`[x, x+size] x [y, y+size]`** and `intersect` only splits the diagonal inside it.
+`test/cliffOrientation.spec.ts` re-derives that from the full rotated rectangle
+rather than restating it, and asserts the unrotated rectangle differs (so the
+check is not trivially true).
 
 ### Slider mapping (disasm-confirmed)
 
@@ -438,15 +522,26 @@ this resolution.
 
 ## Binary symbols (cliff placement)
 
-`CliffGenerator::crossesCliff(float,float,float,float,float)` @ `0x101606d08`;
-`::crossingsForChunk(CompiledMapGenSettings const&, ChunkPosition const&)` @
-`0x101606dc0`; `EntityMapGenerationTask::generateCliffs()` @ `0x10161cda8`,
-`::tryToAddCliff(...)` @ `0x10161f42c`, `::wouldCollide` @ `0x10161f85c`;
-`CellCliffCrossing::toMaybeCliffOrientation` @ `0x1016067a0`;
-`CliffGenerator::fixImpossibleCells` @ `0x101606944`;
-`MapGenSettingsHelpers::CliffPlacementSettings::getModifiedElevationInterval` @
-`0x101607684`, `::getModifiedRichness` @ `0x10160a2e0`. (Also present but unused by
-Nauvis cliffs: `NoiseOperations::VoronoiNoise::*`.)
+**Every address in this file is build-specific and several have already moved.**
+The list below is as first written; the 2.1.12 addresses re-derived on 2026-07-30
+are in the right-hand column. Always take them from `nm` for the binary in front of
+you rather than from either column.
+
+| symbol | as written | 2.1.12 |
+| --- | --- | --- |
+| `CellCliffCrossing::toMaybeCliffOrientation` | `0x1016067a0` | `0x10160c3ac` |
+| `EntityMapGenerationTask::tryToAddCliff` | `0x10161f42c` | `0x101625038` |
+| `EntityMapGenerationTask::wouldCollide` | `0x10161f85c` | `0x101625468` |
+| `EntityMapGenerationTask::generateCliffs` | `0x10161cda8` | `0x1016229b4` |
+| `CliffGenerator::crossingsForChunk` | `0x101606dc0` | `0x10160c9cc` |
+| `CliffGenerator::crossesCliff` | `0x101606d08` | `0x10160c914` |
+| `CellEdgeCliffCrossingArray::fixImpossibleCells(bool)` | `0x101606944` | `0x10160c550` |
+| `CliffPlacementSettings::getModifiedElevationInterval` | `0x101607684` | `0x10160d290` |
+| `CliffPlacementSettings::getModifiedRichness` | `0x10160a2e0` | `0x10160feec` |
+
+Note the class name in the left column was wrong as well as the address: the repair
+sweep is `CellEdgeCliffCrossingArray::fixImpossibleCells`, not `CliffGenerator::`.
+(Also present but unused by Nauvis cliffs: `NoiseOperations::VoronoiNoise::*`.)
 
 Disassemble with (as in the other notes):
 
@@ -461,3 +556,38 @@ nm "$BIN" | c++filt | grep -i cliff        # find mangled names
 output/an empty disassembly) even though `nm | c++filt` clearly listed it. Use
 `disassemble --start-address <VA> --end-address <VA>` against the `nm`-reported
 virtual address instead - that always worked when the by-name form did not.
+
+**Extract-then-decompile, the recipe used for the collision work (2026-07-30).**
+Faster than lldb and gives C rather than asm. Two traps first:
+
+- The Mach-O is **universal**. `llvm-objdump`'s `--start-address` AND
+  `--disassemble-symbols` are both **silently ignored** on it - you get a dump of
+  the whole 512 MB from the x86_64 slice, which looks like a successful run.
+- Ghidra on the whole 225 MB binary is impractical. Import just the function.
+
+```bash
+FB="$HOME/Library/Application Support/Steam/steamapps/common/Factorio/factorio.app/Contents/MacOS/factorio"
+FAT=115654656                      # arm64 slice offset in the fat binary
+nm "$FB" | grep -i <symbol> | c++filt
+# next symbol address gives the length
+dd if="$FB" of=fn.bin bs=1 skip=$(( FAT + <vaddr> - 0x100000000 )) count=<len> status=none
+r2 -a arm -b 64 -qc 'e scr.color=0; pd 20 @ 0' fn.bin      # sanity: expect a prologue
+/opt/homebrew/Cellar/ghidra/*/libexec/support/analyzeHeadless proj p \
+  -import fn.bin -processor AARCH64:LE:64:AppleSilicon \
+  -loader BinaryLoader -loader-baseAddr <vaddr> \
+  -scriptPath "$PWD/gscripts" -postScript decomp.java -deleteProject
+```
+
+`decomp.java` must be a **Java** GhidraScript (Python needs PyGhidra, which the
+Homebrew install lacks). It takes `getBlocks()[0].getStart()` as the base
+(`getImageBase()` returns null for a raw import), calls `setExecute(true)`, then
+`DisassembleCommand` -> `CreateFunctionCmd` -> `DecompInterface`.
+
+**The scriptPath gotcha that cost the most time:** the script must live in its own
+directory, and **no copy may exist in the parent directory you also pass around**,
+or Ghidra 12.1.2 fails with `Failed to find source bundle containing script` - which
+reads like a compile error and is not.
+
+Relative branch targets in the extracted blob are relative to the blob, so an
+`adrp` printed by `r2` needs the real page added back:
+`realPage = (vaddr_of_insn & ~0xfff) + printed_imm`.
