@@ -522,6 +522,11 @@ the `all` path the Vulcanus DAG is evaluated four times per pixel region.
 > the root cause. The tables in the first two are the **pre-fix** state, kept
 > because the reasoning that got from one to the other is the useful part. The
 > current figures are in "ROOT CAUSE: `cliff_smoothing`".
+>
+> **And read "The residual is in the RULE, not the fields" at the end of this
+> file before spending any time on field accuracy.** Substituting the game's own
+> `elevation` and `cliffiness` for ours does not move a single placed cell, so
+> the residual this section chases is not in the fields.
 
 **Superseded the "Not validated" section below.** `test/vulcanusCliffEntities.spec.ts`
 now compares the port against every real `cliff-vulcanus` the game places, captured
@@ -704,3 +709,174 @@ positions.
 That capture is the obvious next step and is the same shape as
 `captureCliffEntities` in `test/oracle/capture.ts`, pointed at a Vulcanus
 surface.
+
+## The residual is in the RULE, not the fields - measured 2026-07-29
+
+Everything above, and all of #18, treats the Vulcanus cliff gap as a **field
+accuracy** problem: the noise field matches to 5e-6, the constants are read from
+the game, so the ~1.15-1.19x over-placement must be residual field error
+somewhere. **That is wrong, and it is now measured rather than argued.**
+
+`test/oracle/capture.ts vulcanus-cliff-corner-fields` dumps the game's own
+`vulcanus_elevation` and `cliffiness_basic` at every corner of the placement
+lattice (`(i*4, j*4 + 0.5)`) over three calcite-dominated 256x256 regions -
+12,675 corners. Feeding those values straight into our own
+`makeCliffPlacementFromFields` instead of our fields:
+
+| region | interior cells | TP | FP | FN | precision | recall |
+| --- | --- | --- | --- | --- | --- | --- |
+| `[1500,1500]` | 3844 | 706 | 290 | 90 | 0.709 | 0.887 |
+| `[1100,2600]` | 3844 | 720 | 199 | 86 | 0.783 | 0.893 |
+| `[-1700,1900]` | 3844 | 744 | 156 | 123 | 0.827 | 0.858 |
+
+and the placed cell set is **identical, cell for cell, to the one our own fields
+produce**. Not one cell flips in any of the three regions.
+
+That is exactly what an accurate field predicts, and it is worth doing the
+arithmetic so the result does not read as suspicious: a cell can only flip if a
+corner's elevation sits within the field error of a band boundary. At ~5e-6
+relative error against 120-wide bands, over ~14k corner reads, the expected
+number of flips is ~2e-4. Zero is the expected answer.
+
+So the port's Vulcanus cliff **fields are exact for placement purposes**, and
+17-29% of the cliff cells it places are wrong anyway, with 11-14% of the game's
+missed. **The residual lives in the rule** - `crossingsForChunk`'s sampling
+geometry, the `cliff_smoothing` knot model, `toMaybeCliffOrientation`, or
+`fixImpossibleCells` - and #18 should be re-pointed there.
+
+`test/vulcanusOreCliffSeparation.spec.ts` pins this, including a `+3` elevation
+bias control so the "identical" assertion cannot pass by the substitution
+silently not happening (the bias moves tens of cells per region).
+
+### There is no ore/cliff exclusion in the engine - read out of the binary
+
+The other half of #24. Disassembled from the 2.1.12 arm64 slice (see
+`cliffs-NOTES.md` for the lldb recipe):
+
+- `EntityMapGenerationTask::generateCliffs()` (`0x1016229b4`) calls exactly
+  three things: `CliffGenerator::crossingsForChunk`,
+  `CellCliffCrossing::toMaybeCliffOrientation` (inlined) and `tryToAddCliff`.
+  **No tile lookup, no entity lookup, no resource field.**
+- `tryToAddCliff` (`0x101625038`) has one rejection path, `wouldCollide`, and it
+  is gated behind `mode == 2` (`ldrb w8, [x0, #0x10]; cmp w8, #0x2; b.ne`).
+- `computeInternal` (`0x101622860`): `generateCliffs()`, then
+  `generateEntities()` three times, then `generateDecoratives()`.
+- `apply` (`0x101623b48`): `applyCliffs()`, `applyDecoratives()`,
+  `applyEntities()`. `applyCliffs` does call `Surface::wouldCollide` and
+  `Entity::forceDestroy`, so a cliff can still be dropped at apply time - but
+  against tiles and already-generated neighbours, not against ore that does not
+  exist yet.
+
+There is no separate resource generation task: `nm | c++filt` lists
+`BasicTilesMapGenerationTask`, `EntityMapGenerationTask` and
+`TileCorrectionMapGenerationTask` and nothing else of the kind, so resources are
+entities and they are generated after cliffs.
+
+**Cliff placement is therefore a pure function of `cliff_elevation` and
+`cliffiness`.** There is no exclusion to port, and any "ore excluded from cliffs"
+item (the M3a follow-up in `client-preview-ROADMAP.md`, #24's own second cause)
+should be closed rather than implemented.
+
+Collision was already ruled out; both masks were re-read here rather than quoted
+from the issue - cliff `{item, meltable, object, player, water_tile,
+is_lower_object, is_object, cliff}`, resource `{resource}`. **Tiles cannot
+separate them either**, which is worth recording because the ore patches really
+do paint their own tile: `volcanic-jagged-ground`'s autoplace is
+`5 * min(10, max(vulcanus_calcite_region + 0.2, ...))`, and
+`tiles-vulcanus.lua` labels it "CLIFF TILE". Its mask is
+`tile_collision_masks.ground()` = `{ground_tile}`, which the cliff mask does not
+touch. Of the ~20 Vulcanus tiles only `lava` and `lava-hot` carry `water_tile`,
+and `tile_collision_masks.lava()` also carries `resource`, so lava excludes both.
+
+### #24's "100x below chance" baseline does not hold
+
+The issue divides the observed overlap by a **tile-independence** baseline
+(`ore tiles x cliff coverage / area`), which assumes each ore tile is an
+independent trial. It is not: region `[0,0]`'s 945 ore tiles are **2 connected
+blobs**, and `[-1200,800]`'s 1047 are **2**.
+
+The right null keeps the blobs and moves them - shift the whole ore tile set on
+the region torus and re-measure. 500 shifts per region, over the three committed
+regions plus six new ones (`test/oracle/capture.ts
+vulcanus-ore-cliff-replication`, region list fixed before any was measured, and
+the two that turned out to hold no ore are kept in the fixture rather than
+dropped):
+
+| region | ore tiles | blobs | cliff cover | overlap | tile-indep. | shift median | P(shift <= obs) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `[0,0]` | 945 | 2 | 6.9% | 0 | 65 | 0 | **0.51** |
+| `[1500,1500]` | 3933 | 25 | 21.6% | 8 | 850 | 789 | **0.000** |
+| `[-1200,800]` | 1047 | 2 | 9.8% | 0 | 103 | 49 | **0.29** |
+| `[700,-1800]` | 404 | 9 | 15.2% | 0 | 61 | 55 | 0.02 |
+| `[-2400,-600]` | 597 | 3 | 12.9% | 1 | 77 | 58 | 0.19 |
+| `[1100,2600]` | 3045 | 20 | 21.2% | 9 | 645 | 611 | **0.000** |
+| `[-900,-2500]` | 904 | 4 | 15.9% | 0 | 144 | 110 | 0.18 |
+| `[-1700,1900]` | 714 | 2 | 22.7% | 0 | 162 | 156 | 0.10 |
+| `[300,3400]` | 944 | 8 | 2.0% | 0 | 19 | 0 | 0.73 |
+
+**The separation replicates** - 18 of 12,533 ore tiles pooled, 0.14%, with both
+ore-rich regions outside 500 of 500 shifts. **But `[0,0]` and `[-1200,800]` were
+never evidence for it**: half of all random placements of `[0,0]`'s blob also hit
+zero cliffs. The previous write-up read their "ratio to chance 0.000" as the
+strongest signal in the set; it is the weakest, and the "no cliff can exist below
+70, so region 0 is explained by elevation" reading was explaining a
+non-observation.
+
+### What is left open, stated as a contradiction rather than a cause
+
+Put the two halves together and they do not fit:
+
+- the binary says cliff placement cannot see ore; and
+- the game's own `elevation` + `cliffiness`, through our rule, place **47** cliff
+  cells inside cells whose full 4x4 footprint is ore (172/130/29 such cells per
+  region, 8/38/1 placed) where the game placed **0**.
+
+A covariate-matched control says that is not the rule simply being worse on
+volcano terrain: pairing each full-ore cell with up to three no-ore cells at the
+same mean elevation (+/-25) and mean cliffiness (+/-0.1) in the same region, the
+rule's precision on the controls is 0.79 / 1.02 / 2.00 (n = 443/387/69). So the
+47 should have been ~47 real cliffs. Poisson P(0 | 47) ~ 4e-21.
+
+Since the binary reading is direct, the modelling of `crossingsForChunk` is the
+suspect, and **a 4x4 cell fully inside a calcite patch is the sharpest test case
+anyone has for #18**: our rule is wrong there ~100% of the time while being right
+~78% of the time everywhere else. Four explanations for the localisation were
+measured and **falsified** on 2026-07-29 - do not re-test them:
+
+1. **Elevation.** With the cliffiness gate forced open, the game's own corner
+   elevations give a band crossing in 40.5% / 34.3% / 50.0% of full-ore cells
+   against 42.7% / 37.3% / 34.0% of random cells in the same regions. Calcite
+   sits on band-crossing terrain at the background rate. (For coal and tungsten
+   the figure is 0.000 in four of five regions, and that is a real structural
+   result rather than a coincidence: `vulcanus_ashlands_func` is
+   `300 + 0.001 * min(basis, basis)`, i.e. flat 300, and the basalts branch tops
+   out near 120 against `cliff_elevation_0 = 70`. Coal and tungsten live on
+   terrain that cannot host a cliff at all. Calcite and the geysers live in the
+   mountains, with the cliffs, and are the only hard case.)
+2. **Cliffiness.** The gate is `cliffinessAvg > 0.5` and `cliffiness_basic`
+   floors at exactly 0.5, so it is a hard binary gate over roughly half the map,
+   not a soft one. It is open at 14.9% of `[1500,1500]`'s full-ore cells against
+   60.0% of random - but at **85.8%** of `[1100,2600]`'s against 64.0%, and 10.0%
+   at `[-1700,1900]`. It does not replicate in either direction, which is what a
+   coincidence looks like: `cliffiness_basic` is a `quick_multioctave_noise` at
+   `seed1 = 123`, `input_scale = 1/32`, with no dependence on any resource,
+   biome or elevation field, so there is no path by which ore could correlate
+   with it. **This one is worth naming as a near-miss** - in region 1 alone it
+   looked like a 3.8x mechanism, and one region would have been enough to write
+   it down as the answer.
+3. **`fixImpossibleCells`.** On and off changes the full-ore predictions by 0
+   (8/35/1 both ways on the interior-inset window).
+4. **Steep or aliased terrain.** Full-ore cells' max corner-to-corner elevation
+   delta is p10/p50/p90 = 17/37/63 against 13/35/66 for no-ore cells - the same
+   distribution - and the rule's precision is 0.58-0.84 across every delta bin,
+   with no bin where it collapses. (This was the best remaining guess: the
+   mountains branch carries `200 * (aux - 0.5) * (mountain_volcano_spots + 0.5)`
+   and `vulcanus_aux` is a 5-tile-wavelength noise, so elevation there swings
+   ~150 between adjacent 4-tile corners. It swings the same amount off the ore.)
+
+One measured fact that is not a cause but is where a fifth hypothesis should
+start: the false positives our rule produces **off** ore sit one cell from a real
+cliff 78% of the time (93 of 120 at `[1100,2600]`) - they are edge-of-line
+offsets along a real cliff face. The ones **inside** ore sit 2-5 cells away (4 of
+37 at distance 1). They are not misaligned cliff lines; they are cliff faces the
+game does not have at all.

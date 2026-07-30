@@ -2641,7 +2641,184 @@ async function captureVulcanusResourceEntities(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} regions)`);
 }
 
+/**
+ * Six MORE 256x256 Vulcanus regions of cliff + resource entities, for the one
+ * question the original three could not answer: **does the ore/cliff separation
+ * replicate?**
+ *
+ * Issue #24 rests entirely on `[1500,1500]`, and its "~100x below chance" figure
+ * uses a **tile-independence** baseline (`ore tiles x cliff coverage / area`).
+ * That baseline is invalid here: the ore in `[0,0]` and `[-1200,800]` is a
+ * grand total of TWO connected blobs, so those regions have ~1 independent trial
+ * and a shift-null puts their "0 overlap" at P = 0.51 and 0.29 - i.e. no signal
+ * at all. Eight extra regions turn one draw into a sample.
+ *
+ * Region choice is deliberately arbitrary (scattered angles and radii, 700 to
+ * 3800 tiles out) and was fixed BEFORE any of them was measured, so it cannot
+ * have been steered toward a result. Two of the eight (`[2900,400]`,
+ * `[-3200,-2000]`) turned out to hold no resource entities at all; they are kept
+ * in the fixture rather than dropped, because dropping the empty draws is
+ * exactly how a selection effect gets in.
+ *
+ * Regenerate: node --experimental-strip-types test/oracle/capture.ts
+ * vulcanus-ore-cliff-replication  (~6 min: two headless runs per region, and
+ * chunk generation is the cost).
+ */
+async function captureVulcanusOreCliffReplication(): Promise<void> {
+  const S = 256;
+  const regions: Region[] = [
+    { x0: 700, y0: -1800 },
+    { x0: -2400, y0: -600 },
+    { x0: 1100, y0: 2600 },
+    { x0: -900, y0: -2500 },
+    { x0: 2900, y0: 400 },
+    { x0: -1700, y0: 1900 },
+    { x0: 300, y0: 3400 },
+    { x0: -3200, y0: -2000 },
+  ].map((r) => ({ x0: r.x0, y0: r.y0, x1: r.x0 + S, y1: r.y0 + S }));
+  const seed = 123456;
+  const cases: { region: Region; cliffs: Position[]; resources: Position[] }[] = [];
+  for (const region of regions) {
+    const grab = async (entityType?: string): Promise<Position[]> => {
+      const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+      try {
+        const got = await sampleCliffEntities(region, {
+          workDir,
+          seed,
+          spaceAge: true,
+          planet: "vulcanus",
+          ...(entityType === undefined ? {} : { entityType }),
+        });
+        // An empty Lua table serialises as `{}`, not `[]` - normalise, or a
+        // region with no resources lands in the fixture as an object and every
+        // consumer has to know that.
+        return Array.isArray(got) ? got : [];
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    };
+    const cliffs = await grab();
+    const resources = await grab("resource");
+    cases.push({ region, cliffs, resources });
+    console.log(
+      `  [${String(region.x0)},${String(region.y0)}] cliffs=${String(cliffs.length)} resources=${String(resources.length)}`,
+    );
+  }
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Cliff AND resource entities over SIX " +
+      "MORE 256x256 Vulcanus regions than oracle-vulcanus-{cliff,resource}-entities covers, at the " +
+      "DEFAULT preset, after chunk-forced generation. Exists to test whether issue #24's ore/cliff " +
+      "separation REPLICATES - the issue rests on one region, and its tile-independence chance " +
+      "baseline is invalid for fields that come in a handful of blobs. Region list was fixed before " +
+      "any region was measured; the two regions that turned out to hold no resources are kept, not " +
+      "dropped. Same forced-seed Vulcanus surface as every other Vulcanus fixture (create_surface() " +
+      "with the seed FORCED to `seed`, not mapSeed + crc32('vulcanus')). Regenerate: node " +
+      "--experimental-strip-types test/oracle/capture.ts vulcanus-ore-cliff-replication",
+    seed,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-ore-cliff-replication.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} regions)`);
+}
+
+/**
+ * The GAME's own values for the two fields Vulcanus cliff placement reads, at
+ * exactly the lattice points the placement pass samples, over the three
+ * calcite-dominated regions.
+ *
+ * Why this fixture exists rather than another whole-field comparison: it lets a
+ * CI-safe spec run **our placement rule on the game's own inputs**, which
+ * separates a field error from a rule error. That distinction had never been
+ * measured for Vulcanus cliffs - #18 has been treated throughout as a field
+ * accuracy problem - and the answer is that substituting these values for ours
+ * does not move a single cell of 3481 per region.
+ *
+ * The lattice: BOTH fields at every corner `(i*4, j*4 + 0.5)` of every region.
+ * `cliffiness` is genuinely read at every corner. `cliff_elevation` at
+ * `cliff_smoothing = 1` is only ever read at the SMOOTHING KNOTS
+ * (`smoothingKnots`, in-chunk corner indices 0/4/7) - the unsmoothed term
+ * vanishes exactly at s = 1 - so ~5/6 of the elevation samples here are
+ * redundant for the CURRENT model. They are captured anyway on purpose: the
+ * smoothing model is itself a live suspect for #18's residual, and a fixture
+ * that only holds the knots can never test an alternative to it.
+ *
+ * Regenerate: node --experimental-strip-types test/oracle/capture.ts
+ * vulcanus-cliff-corner-fields
+ */
+async function captureVulcanusCliffCornerFields(): Promise<void> {
+  const seed = 123456;
+  const G = 4;
+  const CORNER_OFFSET_Y = 0.5;
+  const regions: Region[] = [
+    { x0: 1500, y0: 1500, x1: 1756, y1: 1756 },
+    { x0: 1100, y0: 2600, x1: 1356, y1: 2856 },
+    { x0: -1700, y0: 1900, x1: -1444, y1: 2156 },
+  ];
+  const key = (a: number, b: number): string => `${String(a)},${String(b)}`;
+  const cornerSet = new Set<string>();
+  for (const r of regions) {
+    const n = (r.x1 - r.x0) / G;
+    for (let j = r.y0 / G; j <= r.y0 / G + n; j++)
+      for (let i = r.x0 / G; i <= r.x0 / G + n; i++) cornerSet.add(key(i, j));
+  }
+  const corners = [...cornerSet];
+  const toPos = (list: string[]): Position[] =>
+    list.map((k) => {
+      const [i, j] = k.split(",").map(Number);
+      return { x: i * G, y: j * G + CORNER_OFFSET_Y };
+    });
+
+  const sample = async (expression: string, list: string[]): Promise<number[]> => {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      return await sampleExpression(expression, toPos(list), {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+      });
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  };
+  const elevation = await sample("vulcanus_elevation", corners);
+  console.log(`  captured vulcanus_elevation at ${String(corners.length)} corners`);
+  const cliffiness = await sample("cliffiness_basic", corners);
+  console.log(`  captured cliffiness_basic at ${String(corners.length)} corners`);
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 (Space Age) via test/oracle. The two fields Vulcanus cliff " +
+      "placement reads, sampled at the exact lattice the placement pass uses, over three " +
+      "calcite-dominated 256x256 regions. `cliffiness_basic` is read unsmoothed at EVERY corner " +
+      "(i*4, j*4+0.5); `vulcanus_elevation` only at the cliff_smoothing=1 SMOOTHING KNOTS " +
+      "(smoothingKnots: in-chunk corner indices 0/4/7), because at smoothing 1 the unsmoothed term " +
+      "vanishes exactly and no other elevation sample is ever taken. Exists to separate a FIELD " +
+      "error from a RULE error in the Vulcanus cliff port (#18) and in the ore/cliff separation " +
+      "(#24): a spec can run makeCliffPlacementFromFields on these values instead of ours. Forced " +
+      "surface seed like every other Vulcanus fixture. Regenerate: node " +
+      "--experimental-strip-types test/oracle/capture.ts vulcanus-cliff-corner-fields",
+    seed,
+    planet: "vulcanus",
+    grid: G,
+    cornerOffsetY: CORNER_OFFSET_Y,
+    regions,
+    corners,
+    elevation,
+    cliffiness,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-corner-fields.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(
+    `wrote ${out} (${String(corners.length)} corners, ${String(regions.length)} regions)`,
+  );
+}
+
 if (want("cliff-entities")) await captureCliffEntities();
+if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();
+if (want("vulcanus-cliff-corner-fields")) await captureVulcanusCliffCornerFields();
 if (want("rocks")) await captureRocks();
 if (want("vulcanus-cliff-entities")) await captureVulcanusCliffEntities();
 if (want("vulcanus-resource-entities")) await captureVulcanusResourceEntities();
