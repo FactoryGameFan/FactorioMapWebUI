@@ -61,8 +61,8 @@
       "evidence": "stated in the fixture's own _comment"
     },
     "oracle-cliff-entities.seed123456.json": {
-      "factorioVersion": "2.1.11",
-      "evidence": "stated in the fixture's own _comment"
+      "factorioVersion": "2.1.12",
+      "evidence": "re-captured 2026-07-30 by test/oracle/capture.ts cliff-entities against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Supersedes the 2.1.11 capture, which it reproduced EXACTLY - all 282 and 52 positions, in the same order - so Nauvis cliff placement did not move between those versions. The re-capture exists to add each entity's cliff_orientation (LuaEntity.cliff_orientation), which makes this a direct end-to-end oracle for CLIFF_CODE_TO_ORIENTATION."
     },
     "oracle-cliff-offset-raw.seed123456.json": {
       "factorioVersion": "2.1.11",
@@ -194,7 +194,7 @@
     },
     "oracle-vulcanus-cliff-entities.seed123456.json": {
       "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-07-28 by test/oracle/capture.ts vulcanus-cliff-entities against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time"
+      "evidence": "re-captured 2026-07-30 by test/oracle/capture.ts vulcanus-cliff-entities against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Supersedes the 2026-07-28 capture, which it reproduced exactly (283/885/409 positions). The re-capture adds each entity's cliff_orientation - see test/cliffOrientationOracle.spec.ts."
     },
     "oracle-vulcanus-cliffs.seed123456.json": {
       "factorioVersion": "2.1.12",

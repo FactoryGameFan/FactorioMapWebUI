@@ -249,13 +249,116 @@ wrong way round - and in regions `[1500,1500]` and `[-1200,800]` the bulk (42/62
 and 20/29) are more than 8 tiles from the nearest lava tile. Whatever remains is
 not a lava question, and it is not a tile question.
 
-One cheap fixture improvement fell out of this and has **not** been done: the
-cliff dump records only `{x, y, name}`. Adding each entity's `cliff_orientation`
-would turn the fixture into a direct oracle for `CLIFF_CODE_TO_ORIENTATION` end
-to end - today that table is validated only against the binary's own jump table -
-and would give the true collision box for the ~60 real cliffs per region we miss
-entirely, which is currently unobtainable because we have no orientation for a
-cell we never place.
+### The orientation oracle - DONE 2026-07-30, and it localises the residual
+
+Both cliff fixtures now record each entity's `cliff_orientation`
+(`LuaEntity.cliff_orientation`, a 20-value string union whose order matches
+`CLIFF_ORIENTATION_NAMES` exactly). Re-capturing reproduced every prior position
+- Nauvis 282/52 in the same order, Vulcanus 283/885/409 - so only the new column
+changed, and Nauvis's fixture moved from a 2.1.11 capture to 2.1.12 in the
+process. `placedCells` now returns the crossing `code` alongside the centre, so
+`test/cliffOrientationOracle.spec.ts` scores the SHIPPING path rather than a
+parallel re-derivation.
+
+**`CLIFF_CODE_TO_ORIENTATION` is confirmed against the game.** All 334 Nauvis
+cliffs match exactly. That matters because the table's only previous check was
+`cliffOrientation.spec.ts`, which compares it against the same jump table it was
+read from - a misread and a mistranscription would have agreed.
+
+**Vulcanus does not match, and this is the sharpest view of #18 yet.** Over the
+cells the port and the game both place:
+
+| region | matched | wrong orientation |
+| --- | --- | --- |
+| `[0,0]` | 228 | 68 = **29.8%** |
+| `[1500,1500]` | 830 | 67 = 8.1% |
+| `[-1200,800]` | 342 | 40 = 11.7% |
+| total | 1400 | 175 = **12.5%** |
+
+Since the table is right, a mismatch is a disagreement about the four CROSSINGS.
+The dominant failure is exactly **two edges differing** (125 of 175): one of the
+cell's two crossings is on a different side, i.e. a single corner on the wrong
+side of a band boundary. Errors spread evenly over L:87 R:80 T:87 B:89, so it is
+not a directional off-by-one. A cell can be in the right place for the wrong
+reason, and 175 of them are - which the counts could never show.
+
+Three candidate causes were tested **against this metric** and all three fail:
+
+- **The fields, again, and this time on four bits per cell.** Re-running PR #57's
+  substitution (the game's own corner elevation and cliffiness at `[1500,1500]`)
+  leaves the mismatch at 67/830, identical to the digit, while a +3 elevation
+  bias moves it to 122/793. The substitution is live, the metric is sensitive,
+  and the fields are right. #57 scored PLACEMENT only - one bit per cell - so it
+  could not have seen this either way.
+- **`fixImpossibleCells`**: turning it off moves the total 12.5% -> 14.3% and
+  `[0,0]` 29.8% -> 30.8%. It helps slightly and explains almost nothing.
+- **Chunk borders**: 13.3% wrong on the outer ring vs 11.9% interior. No
+  concentration, despite the ring being exactly where `fixImpossibleCells`
+  cannot clear an edge.
+
+**The gap that is now obvious: no field capture covers `[0,0]`.** The
+corner-fields fixture's three regions are `[1500,1500]`, `[1100,2600]` and
+`[-1700,1900]` - all calcite regions, chosen for issue #24. So "the fields are
+exact" has been measured where the port is already good (8.1%) and never where
+it is worst (29.8%). That is the next capture.
+
+### `EntityMapGenerationTask::generateCliffs` - full body read 2026-07-30
+
+At `0x1016229b4` in 2.1.12 (1080 bytes, ends where `generateEntities` begins).
+Decompiled whole. It confirms three things the port already does and turns up one
+it does not model:
+
+- **The code packing is ours.** The vertical edge array has stride `w + 1` and
+  the horizontal one stride `w`, and the cell reads
+  `L=v[cx,cy], R=v[cx+1,cy], T=h[cx,cy], B=h[cx,cy+1]` packed 2 bits each in that
+  order - matching `cellCode`.
+- **`toMaybeCliffOrientation` is INLINED here**, and its structure is exactly the
+  one `fixImpossibleCells` splits on: a `< 0x51` byte jump table at
+  `0x102d001b7`, then explicit compares for `0xC0`, `0xC1`, `0xCC`, `0xF0`
+  storing `0xc00000002`, `0x800000002`, `0x400000002`, `2` - i.e.
+  `(orientation << 32) | 2`, giving orientations 12, 8, 4, 0 for those four
+  codes. That agrees with `CLIFF_CODE_TO_ORIENTATION` entry for entry. Anything
+  in `0x51..0xBF` falls into an assert-and-abort.
+- **The centre formula, and where `grid_offset` really is applied.**
+  `x = grid_offset.x + chunk.x*32 + cx*grid.x + (grid.x >> 1)` and likewise for
+  `y`, with the shift on the INTEGER grid size. With `grid = {4,4}` and
+  `grid_offset = {0, 0.5}` that is `+2` and `+2.5` - `CLIFF_CELL_CENTER_X/Y`.
+  Note it is added to the CENTRE and nowhere else, which is the #70 finding seen
+  from the other side.
+- **New: `tryToAddCliff` takes a fifth argument, and it is `!onChunkBorder`.**
+  `bVar3` is set true when `cx == 0 || cy == 0 || cx == w-1 || cy == h-1`, and
+  the call passes `bVar3 ^ 1`. Do not assume it gates the collision test - it
+  does not (below). Measured, it does not gate placement either: the game's
+  cliffs are spread uniformly across all 64 in-chunk positions.
+
+### `tryToAddCliff` has TWO paths, and the earlier note described only one
+
+At `0x101625038` (608 bytes). It branches on a mode byte at `this + 0x10`:
+
+- `mode == 2`: switch on orientation, load that orientation's box from
+  `proto + 0x5c0 + id*0x48`, call `wouldCollide(this, box, proto+0x2b0, position,
+  Direction=0)` at `+0x430` (= `0x101625468`). On a hit, **return 0 immediately**.
+- otherwise, **no collision test at all**.
+
+The two are **sequential, not alternatives**: on a miss (`tbz w0, 0`) the
+collision path falls through into the same tail as the other branch, which
+appends a 16-byte record `{u16 protoId, u8 orientation, MapPosition position,
+bool}` to a vector at `this + 0x30..0x40`. So the shape is "test if this mode
+tests, then queue", and the fifth argument is **stored in that record at +0xc and
+never read by the collision test**. Whatever drains the queue consumes it. The
+port's `tileCollides` post-filter models the `mode == 2` path, which is the one
+map generation takes; the flag remains unmodelled and is measured not to matter
+for placement.
+
+### `crater-cliff` is not on the cliff lattice - confirmed, not assumed
+
+`space-age/prototypes/decorative/decoratives-vulcanus.lua:2776` defines it
+through `scaled_cliff_crater` with `autoplace.probability_expression =
+"crater_cliff"`, and `planet-map-gen.lua:122` lists it under Vulcanus's **entity**
+autoplace settings beside the rocks and the geyser. So it is placed by the entity
+generator with jitter, not by `generateCliffs`, which is why its positions are
+fractional. It carries its own `collision_mask` including `water_tile`. Excluding
+it from the cliff comparison is correct; it is 8 of region 2's 409 entities.
 
 #### `rotbb` boxes
 
