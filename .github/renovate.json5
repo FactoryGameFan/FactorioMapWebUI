@@ -91,7 +91,7 @@
     schedule: [],
     minimumReleaseAge: "25 hours",
     prBodyNotes: [
-      "Security update - this bypassed the weekly schedule deliberately. Still read it: `brace-expansion`'s advisory carries a flat `<=5.0.7` range, so `pnpm audit` flags a version that already has the fix. \"The audit is red\" is not by itself a reason to take a bump here.",
+      'Security update - this bypassed the weekly schedule deliberately. Still read it: `brace-expansion`\'s advisory carries a flat `<=5.0.7` range, so `pnpm audit` flags a version that already has the fix. "The audit is red" is not by itself a reason to take a bump here.',
     ],
   },
 

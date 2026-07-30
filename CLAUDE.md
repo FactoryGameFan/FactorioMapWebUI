@@ -216,7 +216,7 @@ that PR is wrong; fix the age rule, don't commit the bypass.
 
 **The app is live as of 2026-07-30** - enabled with "Automated PRs", "Require
 config file" and "Create onboarding PRs". So Renovate opens real PRs on its own
-now; `automerge: false` is what keeps anything from *landing* unread, and
+now; `automerge: false` is what keeps anything from _landing_ unread, and
 `dependencyDashboardApproval` is deliberately unset because it would re-impose
 scan-only behaviour at the config layer and defeat the app setting.
 
