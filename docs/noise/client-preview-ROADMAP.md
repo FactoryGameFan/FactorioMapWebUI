@@ -308,14 +308,20 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       noise fields (`cliff_elevation_nauvis`, `cliffiness_nauvis`) plus a
       disasm-derived geometric placement rule (`crossesCliff` + the 4-tile grid +
       `toMaybeCliffOrientation` none/not-none predicate), levers wired
-      (`nauvis_cliff` frequency/continuity + `cliffSettings`). Validated ~94% against
-      real `find_entities_filtered{type="cliff"}` dumps (frac 0.943 seed 123456,
-      0.942 seed 777771) and cross-checked against a real
+      (`nauvis_cliff` frequency/continuity + `cliffSettings`). Validated **100%**
+      against real `find_entities_filtered{type="cliff"}` dumps (frac 1.000 at
+      both seeds since 2026-07-30; was 0.943/0.942 while the fields were sampled
+      half a tile off in y) and cross-checked against a real
       `factorio --generate-map-preview` render of the same seed/region (95.7%
       spatial agreement at render resolution, using the game's own emitted
       `[144,119,87]` pixels as ground truth). Full writeup: `cliffs-NOTES.md`.
       **All three items previously listed here as "still deferred" are now
-      retired, and none of them explained the ~6% Nauvis residual** (2026-07-28,
+      retired, and none of them explained the ~6% Nauvis residual - which is
+      itself now RESOLVED (2026-07-30): the fields were sampled at `j*4 + 0.5`
+      because the port added the prototype's `grid_offset` (a CENTRE offset) to
+      the sample position. Corrected, Nauvis is **1.0000 recall / 1.0000
+      precision / ratio 1.000** at both seeds, i.e. exact. The five earlier
+      causes were falsified on** (2026-07-28,
       the day five stated causes were falsified - see
       `notes-must-say-how-they-were-measured` and `cliffs-NOTES.md`):
       `fixImpossibleCells` was **ported** in PR #32 (`dea73ac`,

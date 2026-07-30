@@ -127,9 +127,9 @@ describe("Nauvis cliff residual: water rejection cannot be the cause", () => {
   }
 });
 
-describe("Nauvis cliff residual: the wrong cells sit on band boundaries", () => {
+describe("Nauvis cliff residual: RESOLVED 2026-07-30 - there are no wrong cells", () => {
   for (const { seed } of CASES) {
-    it(`seed ${String(seed)}: mismatched cells are closer to a band edge than matched ones`, () => {
+    it(`seed ${String(seed)}: every placed cell is a real cliff, and every real cliff is placed`, () => {
       // Distance from the nearest cliff band boundary (`10 + 40k`), minimised
       // over the cell's four corners. Measured 2026-07-28:
       //
@@ -159,28 +159,33 @@ describe("Nauvis cliff residual: the wrong cells sit on band boundaries", () => 
         }
         return best;
       };
-      const median = (vals: number[]): number => {
-        const s = [...vals].sort((a, b) => a - b);
-        return s[Math.floor(0.5 * (s.length - 1))];
-      };
 
       const matched: number[] = [];
       const mismatched: number[] = [];
       for (const p of placed) (actual.has(key(p)) ? matched : mismatched).push(distance(p.x, p.y));
 
       expect(matched.length).toBeGreaterThan(40);
-      expect(mismatched.length).toBeGreaterThan(0);
-      // Pinned loosely: the measured gap is 3.4x and 4.3x, so 1.8x leaves room
-      // for the port to improve (which would SHRINK the mismatched set and could
-      // move its median either way) without going green on a regression that
-      // erased the effect entirely.
-      expect(median(matched) / median(mismatched)).toBeGreaterThan(1.8);
 
-      // Nauvis's wrong cells are on a KNIFE EDGE: the median sits 0.07 out of a
-      // 40-wide band, 0.18% of an interval. That is the number to compare
-      // Vulcanus against below - not the raw distance, since the two planets run
-      // different intervals (40 vs 120).
-      expect(median(mismatched) / 40).toBeLessThan(0.005);
+      // **The residual is GONE.** Not shrunk - zero. Every cell we place is a
+      // real cliff (no false positives) and the recall/precision spec in
+      // `cliffPlacement.spec.ts` now measures 1.0000 / 1.0000 / ratio 1.000 at
+      // both seeds, up from 0.943 / 0.943.
+      //
+      // The cause was the SAMPLE LATTICE, not the rule and not the field: the
+      // port added the prototype's `grid_offset {0, 0.5}` - a CENTRE offset -
+      // to the field sample position as well, reading every corner half a tile
+      // off in y. It moved no placed cliff, so every positional check passed.
+      // See `CLIFF_CELL_CENTER_X` in cliffCatalog.ts.
+      //
+      // This block used to assert the OPPOSITE - that mismatched cells exist
+      // and sit closer to band edges than matched ones (medians 3.4x and 4.3x
+      // apart). That measurement was real and is preserved in git; it described
+      // a marginal decision, not a cause, exactly as `boundary-proximity-is-not
+      // -a-cause` concluded. `distance` above is kept because the loop still
+      // partitions on it, which is what proves the mismatched set is empty
+      // because there is nothing in it - not because the loop never ran.
+      expect(mismatched.length).toBe(0);
+      expect(actual.size).toBe(placed.length);
     }, 120000);
   }
 });

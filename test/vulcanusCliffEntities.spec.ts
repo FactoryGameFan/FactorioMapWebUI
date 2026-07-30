@@ -86,21 +86,41 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       //
       // Updated 2026-07-28 again, after `fixImpossibleCells` was ported. That
       // pass moves these only slightly - recall +0.25 to +1.5 points, precision
-      // a shade up, count a shade WORSE - so the columns below are close to the
-      // smoothing-only numbers in the previous revision.
+      // a shade up, count a shade WORSE.
       //
-      // | region | game | ours | recall | precision | ratio | pre-smoothing |
+      // **Updated 2026-07-30: the fields were being sampled half a tile off in
+      // y.** The prototype's `grid_offset {0, 0.5}` is a CENTRE offset
+      // (`entity-util.lua:305`), and `crossingsForChunk` never reads it - the
+      // fields come from the bare `(i*4, j*4)` lattice. The port added it to the
+      // sample position as well, which moves NO placed cliff (centres are
+      // derived independently) and so was invisible to the mod-4 checks, to the
+      // preview agreement, and to PR #57's field substitution - that fixture had
+      // been captured at the port's own assumed site. See `CLIFF_CELL_CENTER_X`.
+      //
+      // | region | game | ours | recall | precision | ratio | was (y+0.5) |
       // | --- | --- | --- | --- | --- | --- | --- |
-      // | 0 `[0,0]` | 283 | 327 | 0.792 | 0.685 | 1.155 | 0.569 / 0.382 / 1.49x |
-      // | 1 `[1500,1500]` | 885 | 1071 | 0.870 | 0.719 | 1.210 | 0.694 / 0.439 / 1.58x |
-      // | 2 `[-1200,800]` | 401 | 372 | 0.803 | 0.866 | 0.928 | 0.646 / 0.569 / 1.14x |
+      // | 0 `[0,0]` | 283 | 335 | 0.806 | 0.681 | 1.184 | 0.792 / 0.685 / 1.155 |
+      // | 1 `[1500,1500]` | 885 | 1065 | 0.938 | 0.779 | 1.203 | 0.870 / 0.719 / 1.210 |
+      // | 2 `[-1200,800]` | 401 | 375 | 0.853 | 0.912 | 0.935 | 0.803 / 0.866 / 0.928 |
+      //
+      // Recall improves in all three regions (+1.4, +6.8, +5.0 points) and
+      // precision in two of three; region 0's precision is flat-to-slightly-down
+      // (-0.4) because it also places 8 more cells. Reported rather than
+      // smoothed over: this fixes a real sampling error, it does not fix
+      // over-placement.
       //
       // **Still not Nauvis-grade.** `test/cliffPlacement.spec.ts` measures Nauvis
-      // at 0.943 recall AND precision with a ratio of exactly 1.000. Vulcanus now
-      // reproduces 79-86% and its count is within 8-19%. The residual is no
-      // longer one-directional - region 2 now UNDER-places - which is why the
-      // ratio is guarded on both sides below; a uniform bias would show up as a
-      // consistent direction. Issue #18 tracks what is left.
+      // at 1.0000 recall AND precision with a ratio of exactly 1.000 - the same
+      // sampling fix took it from 0.943 to EXACT. Vulcanus now
+      // reproduces 81-94% and its count is within 7-20%. The residual is not
+      // one-directional - region 2 UNDER-places - which is why the ratio is
+      // guarded on both sides below. Issue #18 tracks what is left, which is now
+      // over-placement rather than recall.
+      //
+      // Nauvis's cliff prototype is also `scale = 1.0` and carries the same
+      // `grid_offset`, which is why one fix moved both planets - but only Nauvis
+      // went exact. Whatever is left here is Vulcanus-specific and is
+      // over-placement, not recall.
       expect(recall).toBeGreaterThan(0.75);
       expect(precision).toBeGreaterThan(0.65);
       expect(predicted.size / actual.size).toBeLessThan(1.25);

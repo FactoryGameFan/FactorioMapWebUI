@@ -86,15 +86,21 @@ describe("cliff placement vs find_entities (~94% drift guard)", () => {
       const actual = c.cliffs.map(key);
       const matched = actual.filter((k) => predicted.has(k)).length;
       const frac = matched / actual.length;
-      expect(frac).toBeGreaterThanOrEqual(0.85);
-
-      // Over-placement guard. Measured ratio is exactly 1.000 at both seeds, so
-      // this is tight on purpose: cliff placement is deterministic, and anything
-      // that starts inventing cliffs should fail here rather than hide behind a
-      // recall figure.
       const precision = matched / predicted.size;
-      expect(precision).toBeGreaterThanOrEqual(0.85);
-      expect(predicted.size / actual.length).toBeLessThan(1.1);
+
+      // **EXACT since 2026-07-30.** 282/282 at seed 123456 and 52/52 at 777771 -
+      // every real cliff placed, nothing invented. The long-standing ~6%
+      // residual was the port sampling the fields at `j*4 + 0.5`: it added the
+      // prototype's `grid_offset {0, 0.5}`, which is a CENTRE offset, to the
+      // SAMPLE position (see `CLIFF_CELL_CENTER_X`).
+      //
+      // Pinned at equality on purpose. Placement is deterministic given the seed
+      // - there is no roll - so an inequality here would let a real regression
+      // hide inside the slack, which is how the 0.943 sat unexplained for two
+      // months while five different causes were proposed for it.
+      expect(frac).toBe(1);
+      expect(precision).toBe(1);
+      expect(predicted.size).toBe(actual.length);
     });
   }
 });

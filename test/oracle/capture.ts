@@ -2750,7 +2750,6 @@ async function captureVulcanusOreCliffReplication(): Promise<void> {
 async function captureVulcanusCliffCornerFields(): Promise<void> {
   const seed = 123456;
   const G = 4;
-  const CORNER_OFFSET_Y = 0.5;
   const regions: Region[] = [
     { x0: 1500, y0: 1500, x1: 1756, y1: 1756 },
     { x0: 1100, y0: 2600, x1: 1356, y1: 2856 },
@@ -2767,7 +2766,7 @@ async function captureVulcanusCliffCornerFields(): Promise<void> {
   const toPos = (list: string[]): Position[] =>
     list.map((k) => {
       const [i, j] = k.split(",").map(Number);
-      return { x: i * G, y: j * G + CORNER_OFFSET_Y };
+      return { x: i * G, y: j * G };
     });
 
   const sample = async (expression: string, list: string[]): Promise<number[]> => {
@@ -2791,9 +2790,13 @@ async function captureVulcanusCliffCornerFields(): Promise<void> {
   const fixture = {
     _comment:
       "Ground truth from Factorio 2.1.12 (Space Age) via test/oracle. The two fields Vulcanus cliff " +
-      "placement reads, sampled at the exact lattice the placement pass uses, over three " +
-      "calcite-dominated 256x256 regions. `cliffiness_basic` is read unsmoothed at EVERY corner " +
-      "(i*4, j*4+0.5); `vulcanus_elevation` only at the cliff_smoothing=1 SMOOTHING KNOTS " +
+      "placement reads, sampled at the GAME's lattice - the bare (i*4, j*4), no grid_offset - " +
+      "over three calcite-dominated 256x256 regions. The prototype's grid_offset {0,0.5} is a " +
+      "CENTRE offset (entity-util.lua:305) and crossingsForChunk never reads it; sampling at " +
+      "j*4+0.5, as this fixture did before 2026-07-30, costs ~7 points of recall while moving no " +
+      "cliff. The superseded capture is kept as oracle-vulcanus-cliff-corner-fields-legacy-y0.5. " +
+      "`cliffiness_basic` is read unsmoothed at EVERY corner; `vulcanus_elevation` only at the " +
+      "cliff_smoothing=1 SMOOTHING KNOTS " +
       "(smoothingKnots: in-chunk corner indices 0/4/7), because at smoothing 1 the unsmoothed term " +
       "vanishes exactly and no other elevation sample is ever taken. Exists to separate a FIELD " +
       "error from a RULE error in the Vulcanus cliff port (#18) and in the ore/cliff separation " +
@@ -2803,7 +2806,7 @@ async function captureVulcanusCliffCornerFields(): Promise<void> {
     seed,
     planet: "vulcanus",
     grid: G,
-    cornerOffsetY: CORNER_OFFSET_Y,
+    cornerOffsetY: 0,
     regions,
     corners,
     elevation,
