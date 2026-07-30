@@ -184,9 +184,13 @@
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment"
     },
+    "oracle-vulcanus-cliff-corner-fields-legacy-y0.5.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-07-29 by test/oracle/capture.ts vulcanus-cliff-corner-fields against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Superseded 2026-07-30: the sample lattice (j*4+0.5) was the PORT's assumption, not the game's. Retained deliberately - it is valid ground truth for the site it names, and keeping it is what lets a spec show that substituting fields captured at OUR site cannot falsify that site."
+    },
     "oracle-vulcanus-cliff-corner-fields.seed123456.json": {
       "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-07-29 by test/oracle/capture.ts vulcanus-cliff-corner-fields against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time"
+      "evidence": "re-captured 2026-07-30 by test/oracle/capture.ts vulcanus-cliff-corner-fields against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Supersedes the 2026-07-29 capture (kept as the -legacy-y0.5 fixture): that one sampled at j*4+0.5, the port's assumed lattice, not the game's."
     },
     "oracle-vulcanus-cliff-entities.seed123456.json": {
       "factorioVersion": "2.1.12",

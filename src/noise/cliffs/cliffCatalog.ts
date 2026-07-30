@@ -57,10 +57,31 @@ export const CLIFF_MARK_SIZE_PX = 4;
  */
 export const CLIFF_MARK_BACK_PX = 2;
 
-/** X coordinate of a cliff cell's center, in cell-local tiles. */
+/**
+ * Cliff cell centre, in cell-local tiles: `grid_size/2 + grid_offset`.
+ *
+ * **`grid_offset` belongs HERE, on the centre, and nowhere else.** The
+ * prototype's `grid_offset` is `{0, 0.5}` for `scale == 1` (both `cliff` and
+ * `cliff-vulcanus`), and `base/prototypes/entity/entity-util.lua:305` says what
+ * it is for in as many words: "cliffs are auto-placed with centers at (0, 0.5)
+ * offset from the grid". So `x = 4/2 + 0 = 2` and `y = 4/2 + 0.5 = 2.5`, which
+ * is why every dumped cliff satisfies `x mod 4 == 2`, `y mod 4 == 2.5`.
+ *
+ * The FIELDS are sampled at the bare lattice `(i*4, j*4)` - no offset. This was
+ * wrong here until 2026-07-30: a `CLIFF_CORNER_OFFSET_Y = 0.5` added the centre
+ * offset to the sample position too, displacing every field read half a tile in
+ * y. It was invisible because it does not move a single placed cliff - the
+ * centre constants below are independent - so the mod-4 checks, the preview
+ * agreement and the PR #57 field substitution all passed. Confirmed against the
+ * binary (`CliffGenerator::crossingsForChunk` reads `grid_size` at
+ * `[proto+0xb60]`/`[0xb68]` and never `grid_offset` at `[0xb70]`/`[0xb78]`;
+ * sample origin is `chunkPos << 5` converted to float) and by re-capturing the
+ * oracle at the correct lattice: Vulcanus recall 0.8701 -> 0.9379, FP 301 ->
+ * 235 at `[1500,1500]`.
+ */
 export const CLIFF_CELL_CENTER_X = 2;
 
-/** Y coordinate of a cliff cell's center, in cell-local tiles. */
+/** @see CLIFF_CELL_CENTER_X - carries the prototype's `grid_offset.y` of 0.5. */
 export const CLIFF_CELL_CENTER_Y = 2.5;
 
 /** Default `cliff_elevation_0` map-gen setting (elevation of the first cliff band). */
@@ -71,9 +92,6 @@ export const CLIFF_ELEVATION_INTERVAL_DEFAULT = 40;
 
 /** seed1 for the low-frequency cliffiness basis noise. */
 export const LOW_FREQ_CLIFFINESS_SEED1 = 86883;
-
-/** Y offset applied to a cliff cell corner. */
-export const CLIFF_CORNER_OFFSET_Y = 0.5;
 
 /** The `nauvis_cliff` autoplace control's frequency/size sliders (size doubles as continuity). */
 export interface CliffControls {

@@ -585,13 +585,20 @@ describe("Vulcanus cliffs: the port's FIELDS are exact; the residual is in the R
         }
       }
     }
+    // Re-measured 2026-07-30 after the sample-lattice fix (fields are read at
+    // the bare (i*4, j*4); the prototype's grid_offset is a CENTRE offset). The
+    // per-region split shifted: [1500,1500] 8 -> 9, [1100,2600] 38 -> 37 and
+    // [-1700,1900] 1 -> 0, so the total we wrongly place inside all-calcite
+    // footprints goes 47 -> 46. The game still places ZERO in all of them, so
+    // the finding this test exists for is untouched: it is a rule error, and
+    // the sample-lattice fix does not touch it.
     expect(perRegion).toEqual({
-      "[1500,1500]": [172, 8, 0],
-      "[1100,2600]": [130, 38, 0],
-      "[-1700,1900]": [29, 1, 0],
+      "[1500,1500]": [172, 9, 0],
+      "[1100,2600]": [130, 37, 0],
+      "[-1700,1900]": [29, 0, 0],
     });
     expect(fullOreCells).toBe(331);
-    expect(predicted).toBe(47);
+    expect(predicted).toBe(46);
     expect(actual).toBe(0);
   }, 180000);
 });

@@ -83,7 +83,20 @@ describe("cliff_smoothing behaviour", () => {
     // A plane. Bilinear interpolation of a plane is the plane itself, whatever
     // the knot spacing - so this is a sharp test that the four weights sum to 1
     // and that lo/hi bracket the corner rather than merely being near it.
-    cliffElevation: (x, y) => 0.7 * x + 0.3 * y + 100,
+    //
+    // The `.37` is load-bearing and was `100` until 2026-07-30. Corners are
+    // sampled at `(i*4, j*4)`, so a constant of 100 makes every corner
+    // elevation `2.8i + 1.2j + 100` - a multiple of 0.4 - and the default bands
+    // sit at `10 + 40n`, which such a value can hit EXACTLY. Measured: all 7
+    // cells that then disagreed between smoothing 0 and 1 had a corner at
+    // distance exactly 0 from a band edge, where the raw path computes 0 and
+    // the bilerp computes 7.1e-15, so a `>=` goes two ways for reasons that have
+    // nothing to do with smoothing. `.37` is not a multiple of 0.4, so no corner
+    // can land on a band edge and the test measures the property it names.
+    //
+    // It passed before only because the port sampled at `j*4 + 0.5`, adding
+    // 0.15 and knocking the plane off the boundaries by accident.
+    cliffElevation: (x, y) => 0.7 * x + 0.3 * y + 100.37,
     cliffiness: alwaysCliffy,
   };
 

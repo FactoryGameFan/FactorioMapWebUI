@@ -208,7 +208,34 @@ presets, but all 9 strings in `builtin-presets.json` decode to `u8 = 0` and
 either way; what is unknown is whether the wire carries smoothing at all. Worth an
 issue if the Nauvis render is ever driven by a Lakes/Island preset.
 
-## Validation result and the deferred residual
+## Validation result: EXACT since 2026-07-30 (the residual is resolved)
+
+> **The ~6% Nauvis residual documented throughout this section is GONE, and the
+> cause was none of the six things named for it.** The port sampled the two
+> fields at `(i*4, j*4 + 0.5)`, adding the prototype's `grid_offset {0, 0.5}` to
+> the SAMPLE position. That offset is a **centre** offset - the game data says so
+> at `base/prototypes/entity/entity-util.lua:305` ("cliffs are auto-placed with
+> centers at (0, 0.5) offset from the grid") and `CliffGenerator::crossingsForChunk`
+> reads `grid_size` (`[proto+0xb60]`/`[0xb68]`) and never `grid_offset`
+> (`[0xb70]`/`[0xb78]`), taking its sample origin from `chunkPos << 5`.
+>
+> Correcting it takes Nauvis from **0.943 / 0.943 to 1.0000 recall, 1.0000
+> precision, ratio 1.000 at both seeds** - exact agreement with
+> `find_entities_filtered` - and Vulcanus recall from 0.792/0.870/0.803 to
+> 0.806/0.938/0.853.
+>
+> Why it hid for two months, and why five other causes were "confirmed" instead:
+> the error moves **no placed cliff**. Cell centres are derived from their own
+> constants, so `x mod 4 == 2` / `y mod 4 == 2.5` held, the preview agreement
+> held, and PR #57's substitution of the game's own field values changed zero
+> cells - because that oracle fixture had itself been captured at the port's
+> assumed lattice. A substitution test can falsify a VALUE; it cannot falsify the
+> SITE it was sampled at.
+>
+> Everything below is preserved as the record of the investigation. Read the
+> numbers in it as historical.
+
+## Validation result and the deferred residual (historical - see above)
 
 Reimplementing the rule (sample `cliff_elevation_nauvis` + `cliffiness_nauvis` at the
 corner lattice via the oracle, apply the crossing rule + lattice) reproduced the real

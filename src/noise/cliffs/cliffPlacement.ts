@@ -12,7 +12,6 @@ import { makeCliffFields } from "./cliffFields";
 import {
   CLIFF_CELL_CENTER_X,
   CLIFF_CELL_CENTER_Y,
-  CLIFF_CORNER_OFFSET_Y,
   CLIFF_GRID_SIZE,
   getModifiedElevationInterval,
   isCliffPlaced,
@@ -232,11 +231,17 @@ export function makeCliffPlacementFromFields(
       if (bands.disabled === true) return [];
 
       const raw = new Map<string, number>();
+      /**
+       * Sampled at the BARE lattice `(i*4, j*4)`. The prototype's `grid_offset`
+       * is a CENTRE offset, not a sample offset - see `CLIFF_CELL_CENTER_X` -
+       * and `crossingsForChunk` never reads it. Adding it here (as this did
+       * until 2026-07-30) moves no cliff and costs ~7 points of recall.
+       */
       const rawElevation = (i: number, j: number): number => {
         const key = `${i},${j}`;
         let value = raw.get(key);
         if (value === undefined) {
-          value = cliffElevation(i * CLIFF_GRID_SIZE, j * CLIFF_GRID_SIZE + CLIFF_CORNER_OFFSET_Y);
+          value = cliffElevation(i * CLIFF_GRID_SIZE, j * CLIFF_GRID_SIZE);
           raw.set(key, value);
         }
         return value;
@@ -277,7 +282,7 @@ export function makeCliffPlacementFromFields(
         let sample = corners.get(key);
         if (sample === undefined) {
           const wx = i * CLIFF_GRID_SIZE;
-          const wy = j * CLIFF_GRID_SIZE + CLIFF_CORNER_OFFSET_Y;
+          const wy = j * CLIFF_GRID_SIZE;
           sample = { elev: elevationAt(i, j), cliff: cliffiness(wx, wy) };
           corners.set(key, sample);
         }

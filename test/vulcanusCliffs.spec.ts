@@ -109,10 +109,14 @@ describe("Vulcanus cliffs", () => {
 
     // The blend the placement pass applies, recomputed independently here from
     // the exported knot rule.
-    const smoothed = (cx: number, cy: number): number => {
-      const kx = smoothingKnots(cx / 4);
-      const ky = smoothingKnots((cy - 0.5) / 4);
-      const at = (i: number, j: number): number => fields.cliffElevation(i * 4, j * 4 + 0.5);
+    // Takes corner INDICES, not positions: the sample lattice is the bare
+    // `(i*4, j*4)`, while a cell's centre carries the prototype's `grid_offset`
+    // (2, 2.5). Those differ by 0.5 in y, so deriving one from the other is the
+    // exact mistake `CLIFF_CELL_CENTER_X` documents.
+    const smoothed = (i0: number, j0: number): number => {
+      const kx = smoothingKnots(i0);
+      const ky = smoothingKnots(j0);
+      const at = (i: number, j: number): number => fields.cliffElevation(i * 4, j * 4);
       return (
         (1 - kx.t) * (1 - ky.t) * at(kx.lo, ky.lo) +
         kx.t * (1 - ky.t) * at(kx.hi, ky.lo) +
@@ -123,17 +127,18 @@ describe("Vulcanus cliffs", () => {
 
     let sawBelowRaw = false;
     for (const { x, y } of placement.placedCells(-256, -256, 256, 256)) {
-      // The cell's four corners. A corner is at (i*4, j*4 + 0.5) and the center
-      // at (i*4 + 2, j*4 + 2.5), so the corners sit at (x +/- 2, y +/- 2).
+      // Centre (i*4 + 2, j*4 + 2.5) -> cell index -> the four corner INDICES.
+      const i0 = (x - 2) / 4;
+      const j0 = (y - 2.5) / 4;
       const corners = [
-        [x - 2, y - 2],
-        [x + 2, y - 2],
-        [x - 2, y + 2],
-        [x + 2, y + 2],
+        [i0, j0],
+        [i0 + 1, j0],
+        [i0, j0 + 1],
+        [i0 + 1, j0 + 1],
       ];
-      const highest = Math.max(...corners.map(([cx, cy]) => smoothed(cx, cy)));
+      const highest = Math.max(...corners.map(([i, j]) => smoothed(i, j)));
       expect(highest).toBeGreaterThanOrEqual(VULCANUS_CLIFF_ELEVATION_0);
-      if (Math.max(...corners.map(([cx, cy]) => fields.cliffElevation(cx, cy))) < 70) {
+      if (Math.max(...corners.map(([i, j]) => fields.cliffElevation(i * 4, j * 4))) < 70) {
         sawBelowRaw = true;
       }
     }
