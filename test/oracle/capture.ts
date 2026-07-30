@@ -2800,10 +2800,11 @@ async function captureVulcanusCliffCornerFields(): Promise<void> {
       "CENTRE offset (entity-util.lua:305) and crossingsForChunk never reads it; sampling at " +
       "j*4+0.5, as this fixture did before 2026-07-30, costs ~7 points of recall while moving no " +
       "cliff. The superseded capture is kept as oracle-vulcanus-cliff-corner-fields-legacy-y0.5. " +
-      "`cliffiness_basic` is read unsmoothed at EVERY corner; `vulcanus_elevation` only at the " +
-      "cliff_smoothing=1 SMOOTHING KNOTS " +
-      "(smoothingKnots: in-chunk corner indices 0/4/7), because at smoothing 1 the unsmoothed term " +
-      "vanishes exactly and no other elevation sample is ever taken. Exists to separate a FIELD " +
+      "Both fields are sampled at EVERY corner of each region (65x65 per region). An earlier " +
+      "version of this comment said vulcanus_elevation was captured only at the cliff_smoothing=1 " +
+      "knots; that was never what the code did - the corner set is built from a full nested loop " +
+      "over each region and both samples take all of it, which the count confirms (3 x 65 x 65 = " +
+      "12675). Corrected 2026-07-30. Exists to separate a FIELD " +
       "error from a RULE error in the Vulcanus cliff port (#18) and in the ore/cliff separation " +
       "(#24): a spec can run makeCliffPlacementFromFields on these values instead of ours. Forced " +
       "surface seed like every other Vulcanus fixture. Regenerate: node " +
@@ -2824,9 +2825,107 @@ async function captureVulcanusCliffCornerFields(): Promise<void> {
   );
 }
 
+/**
+ * The same two cliff fields, at the three regions
+ * `oracle-vulcanus-cliff-entities` covers - which is **not** what
+ * {@link captureVulcanusCliffCornerFields} covers.
+ *
+ * That fixture's regions (`[1500,1500]`, `[1100,2600]`, `[-1700,1900]`) were
+ * chosen for issue #24 and are all calcite-dominated. The consequence went
+ * unnoticed until the orientation oracle landed (2026-07-30): "substituting the
+ * game's own fields moves nothing" had been measured **only where the port is
+ * already good**. Scored on orientation, `[1500,1500]` is wrong on 8.1% of
+ * shared cells - while `[0,0]`, which no field capture touched at all, is wrong
+ * on **29.8%**. A field error there would have been invisible to every
+ * substitution run so far.
+ *
+ * `[1500,1500]` is deliberately kept in both fixtures. It is the only region
+ * they share, so re-sampling it here is a free cross-check: the two captures
+ * must agree corner for corner, and `test/vulcanusCliffCornerFields.spec.ts`
+ * asserts they do. Without that, a mistake in this capture's corner indexing
+ * would look exactly like a field error at `[0,0]`.
+ *
+ * A separate fixture rather than more regions on the existing one, because
+ * `test/vulcanusOreCliffSeparation.spec.ts` indexes that one by region and its
+ * #24 conclusions are stated per region.
+ */
+async function captureVulcanusCliffCornerFieldsAtEntityRegions(): Promise<void> {
+  const seed = 123456;
+  const G = 4;
+  // Exactly the regions of oracle-vulcanus-cliff-entities.seed123456.json.
+  const regions: Region[] = [
+    { x0: 0, y0: 0, x1: 256, y1: 256 },
+    { x0: 1500, y0: 1500, x1: 1756, y1: 1756 },
+    { x0: -1200, y0: 800, x1: -944, y1: 1056 },
+  ];
+  const key = (a: number, b: number): string => `${String(a)},${String(b)}`;
+  const cornerSet = new Set<string>();
+  for (const r of regions) {
+    const n = (r.x1 - r.x0) / G;
+    for (let j = r.y0 / G; j <= r.y0 / G + n; j++)
+      for (let i = r.x0 / G; i <= r.x0 / G + n; i++) cornerSet.add(key(i, j));
+  }
+  const corners = [...cornerSet];
+  const toPos = (list: string[]): Position[] =>
+    list.map((k) => {
+      const [i, j] = k.split(",").map(Number);
+      return { x: i * G, y: j * G };
+    });
+
+  const sample = async (expression: string, list: string[]): Promise<number[]> => {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      return await sampleExpression(expression, toPos(list), {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+      });
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  };
+  const elevation = await sample("vulcanus_elevation", corners);
+  console.log(`  captured vulcanus_elevation at ${String(corners.length)} corners`);
+  const cliffiness = await sample("cliffiness_basic", corners);
+  console.log(`  captured cliffiness_basic at ${String(corners.length)} corners`);
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 (Space Age) via test/oracle. The two fields Vulcanus " +
+      "cliff placement reads (vulcanus_elevation, cliffiness_basic), sampled at the GAME's " +
+      "lattice - the bare (i*4, j*4), no grid_offset - at every corner of the THREE REGIONS " +
+      "oracle-vulcanus-cliff-entities.seed123456.json covers. Companion to " +
+      "oracle-vulcanus-cliff-corner-fields.seed123456.json, whose regions were chosen for issue " +
+      "#24 and are all calcite-dominated: the field substitution that cleared the port's fields " +
+      "had therefore only ever run where the port is already good (8.1% orientation error at " +
+      "[1500,1500]) and never at [0,0], which is wrong on 29.8% of shared cells. [1500,1500] is " +
+      "present in BOTH fixtures on purpose - the overlap is a cross-check that this capture's " +
+      "corner indexing is right, asserted in test/vulcanusCliffCornerFields.spec.ts. Forced " +
+      "surface seed like every other Vulcanus fixture. Regenerate: node " +
+      "--experimental-strip-types test/oracle/capture.ts " +
+      "vulcanus-cliff-corner-fields-entity-regions",
+    seed,
+    planet: "vulcanus",
+    grid: G,
+    cornerOffsetY: 0,
+    regions,
+    corners,
+    elevation,
+    cliffiness,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-corner-fields-entity-regions.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(
+    `wrote ${out} (${String(corners.length)} corners, ${String(regions.length)} regions)`,
+  );
+}
+
 if (want("cliff-entities")) await captureCliffEntities();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();
 if (want("vulcanus-cliff-corner-fields")) await captureVulcanusCliffCornerFields();
+if (want("vulcanus-cliff-corner-fields-entity-regions"))
+  await captureVulcanusCliffCornerFieldsAtEntityRegions();
 if (want("rocks")) await captureRocks();
 if (want("vulcanus-cliff-entities")) await captureVulcanusCliffEntities();
 if (want("vulcanus-resource-entities")) await captureVulcanusResourceEntities();
