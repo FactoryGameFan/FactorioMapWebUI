@@ -59,6 +59,35 @@
 // Corollary for anyone comparing against a figure recorded in the notes: the
 // per-run baseline moves several percent, so a few percent of difference in an
 // ABSOLUTE is not evidence of anything. A double-digit move in a MARGINAL is.
+//
+// ## What the cliff tile-collision rejection cost (measured 2026-07-30, #18)
+//
+// The rejection resolves tiles under each PLACED cell's collision box, so it is
+// the first thing to make the cliff overlay depend on the tile resolver. Two
+// arms of `FMW_PERF_BLOCK=vulcanus FMW_PERF_N=5`, same machine, back to back,
+// with and without `tileCollides`:
+//
+// | figure                    | without | with  | delta  |
+// | ------------------------- | ------- | ----- | ------ |
+// | terrain (the control arm) |    3948 |  3947 |  -0.0% |
+// | cliffs marginal           |    1500 |  1917 | **+28%** |
+// | ratio all/terrain, whole  |   1.944 | 2.040 |  +4.9% |
+// | ratio all/terrain, TILED  |   2.455 | 2.569 |  +4.6% |
+//
+// **Terrain being identical to 1 ms across the two arms is what makes this
+// readable at all** - per the table above a 4.8% baseline drift would otherwise
+// swamp a change this size. Read the marginal (+28%), not the ratio.
+//
+// **It puts the whole-image "under 2x terrain" gate back over the line: 1.944
+// -> 2.040.** Recorded, not buried, as the same gate was when the Vulcanus V3
+// overlays crossed it. The tiled figure - the geometry the app actually renders
+// - was already over at 2.455 and is now 2.569.
+//
+// Whether that is worth paying is a correctness-vs-cost call, not a perf bug:
+// the rejection is what the game does, and without it region `[1500,1500]`
+// over-places by 20%. If it ever needs to come back down, the cheap lever is a
+// "could lava possibly win here" pre-gate gating the full 19-tile argmax, which
+// was scoped and deliberately not taken for this change.
 import { appendFileSync, writeFileSync } from "node:fs";
 import { it } from "vite-plus/test";
 import { runRenderRequest } from "../src/noise/preview/elevationRenderRequest";
