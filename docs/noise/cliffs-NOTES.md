@@ -325,8 +325,117 @@ pins all of it.
 
 **So the entire residual is in the RULE as ported**, and there is no longer any
 input left to suspect: `crossingsForChunk`'s sampling geometry, the
-`cliff_smoothing` knot model, or `crossesCliff` itself. `crossingsForChunk`
-(`0x10160c9cc`, 2244 bytes) is the one that has never been decompiled whole.
+`cliff_smoothing` knot model, or `crossesCliff` itself.
+
+### `CliffGenerator::crossingsForChunk` - read whole 2026-07-30, and it MATCHES
+
+`0x10160c9cc`, 2244 bytes, ends where `getModifiedElevationInterval` begins.
+Decompiled whole. Every structural element agrees with the port, so this section
+is a list of things that are now confirmed rather than assumed:
+
+- **The sample lattice is bare.** The two input registers are filled with
+  `x = chunkX*32 + i*gridX`, `y = chunkY*32 + j*gridY` over a 9x9 corner block.
+  No `grid_offset` anywhere - #70's finding, seen from the producing side.
+- **The smoothing knots are exactly as ported.** Per axis:
+  `lo = i & ~3`, `hi = lo + 4` clamped to `w - 1` (the `uVar25 = uVar25 - 1`
+  before the loop is where the 7 comes from), `t = (i & 3) / (hi - lo)` with
+  `t = 0` when the span is degenerate. Blend is
+  `s * bilerp + (1 - s) * raw` with `s = cliff_smoothing` at `settings + 0xd0`.
+- **Which register is smoothed**: `settings + 0x1e0` (elevation) is smoothed into
+  a fresh array; `settings + 0x1e4` (cliffiness) is read RAW at the same indices.
+- **`crossesCliff` is inlined here** and is our rule: both elevations `>= 0`, the
+  band from `max(a,b)`, reject when the band lands below `elevation_0`, and the
+  crossing gated on `cliffinessAvg > 0.5` with the two sign cases.
+- **The two edge arrays.** Horizontal (corner `(x,y)` to `(x+1,y)`) is
+  `(h+1) x w` at index `x + w*y`; vertical (`(x,y)` to `(x,y+1)`) is `(w+1) x h`
+  at index `x + y*(w+1)`. `generateCliffs` then reads L/R from the vertical array
+  and T/B from the horizontal one. Our `vIndex`/`hIndex` and `cellCode` match.
+- Tail call is `fixImpossibleCells(this, false)`, confirming the `false`.
+
+#### Three more causes falsified, with denominators
+
+- **`float` vs `double` is NOT it.** The engine does all of this at 32 bits and
+  the port at 64, which fits the signature (one corner flipping near a band
+  boundary) well enough to be worth testing. Replaying the whole rule with
+  `Math.fround` at every step changes **nothing**: 0 of 12,480 raw edges differ
+  per region, and placement and orientation are identical.
+- **The `(int)` vs `Math.floor` difference is real but inert.** The engine
+  truncates toward zero where the port floors. They differ only when
+  `max(a,b) < elevation_0`, and there both give "no crossing" - the band lands at
+  or below `elevation_0`, and both corners are below it, so neither sign case can
+  fire. Included in the 0-of-12,480 above.
+- **The smoothing model is right IN KIND, not merely unfalsified.** Running
+  Vulcanus with `cliff_smoothing = 0` makes the orientation error much worse -
+  29.8% -> 71.3%, 8.1% -> 64.1%, 11.7% -> 54.5% - so the knot blend is doing real
+  and correct work. That is the control the disassembly reading needed.
+- The float table at `0x102cf9cf0` that a smoothing-weight table would live in is
+  just `0.0 .. 31.0`, the SIMD lane-index constant for the vectorised
+  register-fill loop. There is no weight table.
+
+#### What that leaves
+
+Fields exact, rule structurally confirmed, precision irrelevant, smoothing
+confirmed - and 12.5% of shared cells still carry the wrong crossings. The
+candidates that survive:
+
+1. **`fixImpossibleCells` in detail.** It only accounts for 1.8 points of the
+   12.5 as ported, but "our sweep differs subtly from the game's" is not excluded
+   by that - a different sweep could be both closer AND worth more.
+2. ~~**The choice of expression, which no substitution can test.**~~ **Closed
+   from the data, 2026-07-30.** The worry was real - the corner-field fixtures
+   capture `vulcanus_elevation` and `cliffiness_basic` **by name**, so if a
+   different expression fed `settings + 0x1e0` the substitution would agree with
+   the port for the same reason the port is wrong, exactly like the corner-fields
+   fixture captured at the port's own assumed lattice. But the routing is
+   explicit in `space-age/prototypes/planet/planet-map-gen.lua:13-14`, in the
+   block carrying Vulcanus's `cliff_elevation_interval = 120` /
+   `cliff_elevation_0 = 70`:
+
+   ```lua
+   cliffiness      = "cliffiness_basic",
+   cliff_elevation = "cliff_elevation_from_elevation",
+   ```
+
+   and `cliff_elevation_from_elevation` is literally `expression = "elevation"`
+   (`core/prototypes/noise-programs.lua:288`), which Vulcanus routes at
+   `vulcanus_elevation`. Worth knowing what the alternative was: the **default**
+   `cliff_elevation` is `cliff_elevation_nauvis`
+   (`10 + 30 * (nauvis_hills - nauvis_hills_cliff_level)`), a completely
+   different field - so this was a live way to be wrong, in the same shape as the
+   `cliff_smoothing` default that cost issue #18 two months.
+
+### The FFF on cliffs (#219) - checked, and mostly confirms the binary
+
+https://factorio.com/blog/post/fff-219 is the design writeup. Read 2026-07-30 so
+nobody spends the time again. It confirms the shape: an elevation threshold per
+cell edge, an **independent** `cliffiness` noise layer applied equally to the
+north-south and east-west edges ("Cliffiness only determines small-scale
+placement to ensure that there are passages through any sufficiently long cliff
+face"), a 4x4-tile cell, chunk-at-a-time generation, and that an earlier
+slope-based rule was dropped because it produced cells no cliff graphic could
+represent.
+
+Two things to be careful with:
+
+- **It is from 2017 and describes the pre-2.0 algorithm.** Where it and the
+  2.1.12 binary disagree, the binary wins.
+- **Its description of the repair pass is a simplification, and following it
+  would be a bug.** The FFF says the generator "removes edges marked as
+  cliff-crossing until no cell has more than 2 'cliff-crossing' edges". That is
+  strictly weaker than what the binary does. Of the 20 placing codes, 8 have one
+  crossing and 12 have two - but there are `C(4,2) * 2 * 2 = 24` possible
+  two-crossing codes, so **12 two-crossing codes are illegal**, the ones whose
+  two crossings disagree in direction. A "count <= 2" predicate would leave those
+  in place, and `generateCliffs` asserts and aborts on an illegal code, so the
+  engine cannot be using it. `fixImpossibleCells`' real predicate, read off the
+  jump table, is `isCliffPlaced(code)` plus code 0 - which is what is ported.
+
+The FFF's one operational detail agrees with the port: it notes the pass
+prioritises chunk boundaries because neighbouring chunks must independently agree
+there, which is the same constraint as "a boundary edge is not clearable".
+
+FFF #390 (Noise expressions 2.0) and #401 (new terrain, new planet) were checked
+for cliff-expression naming and have nothing on it.
 
 ### `EntityMapGenerationTask::generateCliffs` - full body read 2026-07-30
 
@@ -377,6 +486,29 @@ map generation takes; the flag remains unmodelled and is measured not to matter
 for placement.
 
 ### `crater-cliff` is not on the cliff lattice - confirmed, not assumed
+
+**FFF #386 explains why it exists and corroborates both readings**
+(https://factorio.com/blog/post/fff-386). Craters were originally going to be
+collidable decoratives, and were made cliffs instead because:
+
+> "the collision boxes are always rectangles so hitting invisible corners is
+> annoying, and there's a flat part in the middle that looks buildable but isn't.
+> We also wanted some partial craters which would mean even more special
+> collision rules. The solution we came up with is more like a ring of special
+> cliffs where sections of the ring can randomly be removed."
+
+Two things follow, and both match what was read out of the binary. **Cliff
+collision boxes really are plain rectangles** - said outright by the developers,
+which is the independent confirmation `CLIFF_ORIENTATION_COLLISION_BOX` and the
+`rotbb` AABB derivation never had. And a **ring with randomly dropped sections**
+is not a lattice structure at all, which is why these positions are fractional
+(`-1184.375, 814.98828125`) and why they carry orientations from the same 20-value
+enum without ever touching `crossingsForChunk`.
+
+They also cannot be issue #18's residual, which is worth stating with the count
+rather than by argument: of the three cliff-entity regions, `[0,0]` has **zero**
+crater-cliffs and `[1500,1500]` has **zero**. All 8 are in `[-1200,800]`. The
+region with the worst crossing error has none of them.
 
 `space-age/prototypes/decorative/decoratives-vulcanus.lua:2776` defines it
 through `scaled_cliff_crater` with `autoplace.probability_expression =
