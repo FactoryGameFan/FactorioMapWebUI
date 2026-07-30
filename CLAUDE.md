@@ -187,13 +187,22 @@ matters, set it explicitly.
 - `pnpm run verify:deploy` - after deploying, confirm the live site is running
   local `HEAD` (see below). Takes an optional origin argument.
 
-### CI (`.github/`) runs the same `verify`, and nothing else
+### CI (`.github/`) runs the same `verify`, plus the build
 
 `.github/workflows/verify.yml` runs `pnpm run verify` on every pull request and
 every push to `main`. It invokes the script **verbatim** rather than re-listing
 its phases as separate steps, so there is exactly one definition of "this repo is
 consistent" and CI cannot drift from local. If you change what `verify` means,
 CI follows automatically - do not mirror the change into the YAML.
+
+A second job, **`build`**, runs `pnpm vp build` in parallel (issue #61). `verify`
+is check + type-check + tests and none of them build, so a change could pass all
+three, break the production build, and only surface days later when somebody
+deployed. It is a separate job rather than a fourth phase of `verify` because
+`deploy` already runs `pnpm build` right after `pnpm run verify` - folding it in
+would build twice per deploy and slow the gate people run by hand. It does
+**not** enforce zero warnings; the job comment records both routes to that and
+why each was rejected.
 
 Conventions that file establishes, and that anything added under `.github/`
 should keep:
@@ -210,8 +219,13 @@ should keep:
   store path by invoking pnpm.
 - **No secrets, no deploy job.** Cloudflare Pages does not build this repo, so CI
   is a check only. `pnpm refs:sync` is absent for the same reason it is absent
-  from `verify`: no runner has a Factorio binary. `pnpm vp build` is also absent
-  (the build stamp reads git history) - that is a known gap, not an oversight.
+  from `verify`: no runner has a Factorio binary.
+- **The `build` job's default shallow checkout is correct, and that was
+  measured.** #61 assumed the build stamp needed deeper history; it does not.
+  `scripts/buildStamp.ts` runs `rev-parse HEAD`, `rev-parse --short HEAD` and
+  `status --porcelain` - it reads git **state**, not history. On a
+  `pull_request` event the checkout lands on the merge commit, so that job's
+  stamp is a synthetic SHA; harmless only because CI never deploys its artifact.
 
 `preview:test` needs **no Docker** on a runner, which was confirmed rather than
 assumed: the worker tests are pool-workers (`workerd` arrives from npm) and the
@@ -268,7 +282,7 @@ Two settings whose reasoning is not guessable from the outside:
 | rule                           |                                      |
 | ------------------------------ | ------------------------------------ |
 | `pull_request`                 | `required_approving_review_count: 0` |
-| `required_status_checks`       | `verify`, `strict: true`             |
+| `required_status_checks`       | `verify` + `build`, `strict: true`   |
 | `deletion`, `non_fast_forward` | blocked                              |
 | `bypass_actors`                | **empty** - binds the owner too      |
 
@@ -283,6 +297,17 @@ Two things here are load-bearing and easy to break by "tidying":
   re-pins** and only those; if bypass actors are ever added, `verify` dropped, or
   strict turned off, **that rule must be removed in the same change.** It is not
   independently safe, and the config says so at the rule.
+
+**Adding a new required check is a two-step, in this order.** Land the job
+first, confirm it ran green on `main`, and only then add its context to the
+ruleset. Requiring a check that does not yet exist on `main` blocks the very PR
+that introduces it, on a check that cannot run. `build` was added this way on
+2026-07-30: merge #64 -> green on `main` -> `PUT /rulesets/20021316`. Send the
+**whole** `rules` array in that PUT (fetch it first with
+`gh api repos/:owner/:repo/rulesets/20021316`); it replaces rather than merges.
+
+Note the second-order effect of `strict: true`: once a PR merges, every other
+open PR is behind and needs **Update branch** before it can merge.
 
 Everything else stays `automerge: false`, because `verify` proves the repo is
 consistent, not that a bump is correct - see the pako table above for the year-long
