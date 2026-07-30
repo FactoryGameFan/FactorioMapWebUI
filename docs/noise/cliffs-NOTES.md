@@ -783,9 +783,36 @@ and compared against `CLIFF_PLACED_TABLE`: **the accepted set is exactly
 Two corrections to the paragraph this replaced:
 
 - It does **not** zero the whole chunk border. The `bool` parameter gates zeroing
-  the outer edges of the four CORNER cells only (8 edges) - and
-  `crossingsForChunk` passes **`false`** (`mov w1, #0x0` at `0x10160d0c8`), so
-  that step never runs in this path at all.
+  the outer edges of the four CORNER cells only (8 edges).
+- ~~`crossingsForChunk` passes **`false`**, so that step never runs in this path
+  at all.~~ **WRONG, corrected 2026-07-30 by decompiling the function whole.**
+  The caller does pass `false`, but the `bool` is not a caller-supplied mode - it
+  is a **retry flag the function sets on itself.** On reaching a cell it cannot
+  fix, the tail does
+
+  ```
+  uVar10 = param_2 & 1;  param_2 = 1;
+  if (uVar10 != 0) { log("Unable to remove excess cliff cell edge crossings"); return; }
+  goto <top of function>;
+  ```
+
+  so it turns the flag on and **restarts the entire pass**, which now begins by
+  zeroing those eight corner edges; a second failure abandons the rest of the
+  chunk. Note the restart re-sweeps the arrays **as already mutated** by the
+  abandoned pass, not the raw crossings.
+
+  This is the error the earlier note made, in its general form: reading a
+  parameter's value at the call site says what the caller wants, not what the
+  function does with it. Ported 2026-07-30 with `test/fixImpossibleCellsRetry.spec.ts`.
+
+  **Do not read it as a fix for issue #18.** Measured over the committed
+  captures, the retry fires **once in 512 chunks** - one chunk of Vulcanus
+  `[1500,1500]`, zero across both Nauvis seeds and the other two Vulcanus regions
+  - and changes not one placed cell: `[0,0]` 335, `[1500,1500]` 1065,
+  `[-1200,800]` 375 before and after, with recall, precision and the orientation
+  count all identical. It is correctness, not progress. Because the integration
+  fixtures barely execute the branch, it has a dedicated unit spec that builds a
+  stuck corner directly; disabling the retry fails 3 of its 5 tests.
 - The binary is a **universal** Mach-O. Raw byte reads of those jump tables need
   the arm64 slice offset (115654656 here) added, or they silently return x86_64
   bytes - which is exactly what happened on the first extraction attempt and
