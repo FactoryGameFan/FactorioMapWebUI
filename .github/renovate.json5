@@ -100,6 +100,42 @@
 
   packageRules: [
     {
+      // The ONE automerge exception (#62), and it is narrow on purpose.
+      //
+      // Why this category and nothing else: a digest re-pin moves a SHA and the
+      // `# vX.Y.Z` comment beside it, together, and there is nothing else in the
+      // diff to read. It also recurs forever. Reviewing it by hand teaches
+      // nobody anything and trains the habit of skimming bot PRs, which is worse
+      // than automating the boring case.
+      //
+      // Why it is safe NOW and was not on 2026-07-30 morning: ruleset `EJ` makes
+      // `verify` a required check on `main` with `bypass_actors: []` AND
+      // `strict_required_status_checks_policy: true`. So an automerged PR cannot
+      // land red, and cannot land having been tested against a different `main`
+      // than the one it merges into. Both of those had to be true; the second
+      // arrived last and was the actual blocker.
+      //
+      // `platformAutomerge` hands the merge to GitHub's own auto-merge so the
+      // required check gates it, rather than Renovate polling and merging itself.
+      //
+      // If branch protection is ever loosened - bypass actors added, `verify`
+      // dropped, strict turned off - THIS RULE MUST GO WITH IT. It is not
+      // independently safe.
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["digest", "pin", "pinDigest"],
+      automerge: true,
+      automergeType: "pr",
+      platformAutomerge: true,
+    },
+    {
+      // Everything below stays manual, and the global `automerge: false` above is
+      // the default for anything not named here. The load-bearing reason is that
+      // `pnpm run verify` proves the repo is CONSISTENT, not that a bump is
+      // CORRECT - and this repo has the counterexample on record: pako 3.0.0
+      // flipped `legacyHash` to false, which passes a green suite while silently
+      // breaking the codec's byte-exactness, and the resulting wrong belief
+      // survived about a year. Version bumps of real dependencies get read.
+      //
       // THE ONE THAT MATTERS MOST. Without it a bot proposes 6.0.3 -> 7.x every
       // single week and someone re-derives the refusal every time (see #48, #52).
       // TypeScript 7 exposes no programmatic API yet, the official migration is
