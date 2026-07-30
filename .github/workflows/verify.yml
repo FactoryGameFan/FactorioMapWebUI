@@ -87,3 +87,63 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm run verify
+
+  # `verify` is check + type-check + tests. None of them build, so a change that
+  # passes all three and breaks the production build reached `main` unnoticed
+  # until somebody deployed - possibly days later, and landing on whoever was
+  # deploying rather than whoever broke it (issue #61). This job closes that.
+  #
+  # Deliberately a SEPARATE job rather than an extra phase inside `verify`:
+  # `deploy` already runs `pnpm build` immediately after `pnpm run verify`, so
+  # folding the build into `verify` would build twice on every deploy and slow
+  # the local gate people actually run by hand. Separate also means it runs in
+  # parallel with the test job instead of after it.
+  build:
+    runs-on: ubuntu-latest
+    # The build is ~1s of Rolldown after ~30s of setup. 15 minutes is a hang
+    # detector, matching the job above.
+    timeout-minutes: 15
+    steps:
+      # Default `fetch-depth: 1` is correct here, and that was MEASURED rather
+      # than assumed - #61 was filed believing the build needed deeper history.
+      # `scripts/buildStamp.ts` runs exactly three git commands:
+      # `rev-parse HEAD`, `rev-parse --short HEAD`, and `status --porcelain`.
+      # None of them read history, so a shallow checkout is enough and the
+      # earlier "the build stamp reads git history" was imprecise - it reads git
+      # *state*.
+      #
+      # Worth knowing rather than fixing: on a `pull_request` event checkout
+      # lands on the merge commit, so the stamp this job produces is a synthetic
+      # SHA that exists nowhere in the repo. Harmless, because CI never deploys
+      # its artifact - `deploy:app` builds locally and uploads that. If a CI
+      # build ever becomes the thing that ships, this needs revisiting.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # This catches a build that FAILS. It does not enforce "zero warnings",
+      # which CLAUDE.md leans on ("anything that does appear is new and worth
+      # reading"). Both ways of enforcing that were considered and rejected:
+      #
+      #   - Grepping the build output for /warn/i. `vp build` has no
+      #     `--fail-on-warn` (checked against vp 0.2.6 `--help`), and this repo
+      #     has already been burned once by grepping build output - a version
+      #     grep returned zero because the minifier had rewritten the string.
+      #     A false pass here is worse than no check.
+      #   - A `build.rollupOptions.onLog` hook that throws on `warn`. Robust, but
+      #     it would hard-fail every local build too the moment a dependency
+      #     emits one benign warning, and dependency-sourced warnings are exactly
+      #     what this repo has seen (zlib-asm needed two suppressions before #46
+      #     removed it). The value is in reading a new warning, not in blocking on
+      #     it.
+      #
+      # So warnings stay visible in this job's log and unenforced. If that ever
+      # needs to change, the `onLog` route is the sturdy one - not a grep.
+      - run: pnpm vp build
