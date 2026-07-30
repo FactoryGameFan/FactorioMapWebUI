@@ -8,12 +8,13 @@
 # can silently drift from package.json. Note it is `verify`, not `check` -
 # `check` is `vp check --fix` and CI must never rewrite files.
 #
+# The production build runs too, in the separate `build` job below - see its
+# own comment for why it is not a phase inside `verify`.
+#
 # What is deliberately NOT here:
 #   - `pnpm refs:sync`. It needs a Factorio binary and ~/GitHub/factorio-data,
 #     neither of which exists on a runner. `verify` is designed to pass with no
 #     Factorio installed and that property is what makes this workflow possible.
-#   - `pnpm vp build`. Not part of `verify`, and the build stamp reads git
-#     history, so it wants a checkout policy of its own. Tracked as a follow-up.
 #   - Any deploy step or credential. Cloudflare Pages does not build this repo
 #     (`deploy:app` uploads an already-built `dist`), so CI here is a check
 #     only and the job needs no secrets at all.
@@ -37,8 +38,10 @@ on:
 # `verify` on its own PR before the ruleset would let it merge - but "green on
 # the PR" and "green as it sits on main" are different claims, and only the
 # second one survives a rebase-free merge into a `main` that has since moved.
-# `strict_required_status_checks_policy` is false, which is exactly what makes
-# that gap reachable.
+# Ruleset `EJ` has since set `strict_required_status_checks_policy: true`, which
+# closes most of that gap by forcing a PR up to date before it can merge; a
+# per-commit verdict on `main` is still the thing that proves it, so these runs
+# stay uncancelled.
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
