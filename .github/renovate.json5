@@ -87,8 +87,15 @@
       // The advisory's flat `<=5.0.7` range also means `pnpm audit` still flags
       // 2.1.3 even though it carries the fix, so "the audit is red" is not a
       // reason to take this bump. Read the comment in pnpm-workspace.yaml first.
+      //
+      // Deliberately NOT narrowed with `matchDepTypes: ["pnpm.overrides"]`. The
+      // override lives in pnpm-workspace.yaml, not package.json, and if the
+      // depType Renovate reports for that location is anything other than the
+      // string guessed here the rule would silently match nothing - a config bug
+      // no validator can catch. brace-expansion appears in no manifest in this
+      // repo (only as a transitive of js-beautify), so matching it by name alone
+      // is both correct and the only form that cannot miss.
       matchPackageNames: ["brace-expansion"],
-      matchDepTypes: ["overrides", "pnpm.overrides"],
       enabled: false,
     },
     {
