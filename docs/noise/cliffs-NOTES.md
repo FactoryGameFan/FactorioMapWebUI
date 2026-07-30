@@ -164,7 +164,7 @@ extracted from the low word only.
 Also note the address above (`0x1016067a0`) is from the build this file was first
 written against; under 2.1.12 the symbol is at `0x10160c3ac`. Re-derive from `nm`.
 
-### The collision rejection - NOT ported, and it is issue #18's residual
+### The collision rejection - PORTED 2026-07-30 (PR #73), and it is half of issue #18
 
 `EntityMapGenerationTask::tryToAddCliff` (`0x101625038` in 2.1.12) does not just
 record the cell. It switches on the `CliffOrientation` (a 20-entry jump table),
@@ -209,13 +209,53 @@ the rule with the real per-orientation boxes and our own tile resolver:
 collapsing to 0.65 / 0.70. The real arm rejects almost only false positives.
 
 So it explains region `[1500,1500]`'s over-placement essentially in full and
-**does not** explain regions `[0,0]` or `[-1200,800]`, which barely move. It also
-costs 6 true positives at `[0,0]`; the tile resolver is ~98% accurate overall and
-plausibly worse at a lava boundary, but that is a hypothesis, not a measurement.
+**does not** explain regions `[0,0]` or `[-1200,800]`, which barely move.
 
-The rejection itself is **not implemented** - only the tables it needs are. Wiring
-it in gives the cliff overlay a dependency on the Vulcanus tile resolver, which is
-a render-cost decision, so it is deliberately a separate change.
+#### The 10 true positives it costs are a one-tile boundary, and the resolver is not the residual
+
+Wiring the rejection in gives the cliff overlay a dependency on the Vulcanus tile
+resolver, so the obvious next suspect was that resolver: it is ~98.2% accurate on
+the 19-way tile name, and the natural guess (written into this file and into
+`vulcanusCliffEntities.spec.ts` when the rule landed) was that it is worse at a
+lava boundary. **Measured 2026-07-30. The guess was wrong in its premise and
+right in its conclusion, and neither half needed a Factorio run** - both fixtures
+are committed.
+
+- **The binary lava classification is EXACT.** `tryToAddCliff` only ever asks
+  whether a tile carries `water_tile`, never which tile it is, so the 19-way
+  argmax is the wrong thing to have been quoting. On all 381 positions of
+  `oracle-vulcanus-tile-names.seed123456` - 49 lava/lava-hot, 332 not - the
+  resolver lands on the correct side in **both** directions, zero mismatches.
+  All 7 name errors are non-lava/non-lava confusions inside one biome family.
+  Nor is it worse near a boundary: the 42 positions at Chebyshev distance 1 from
+  a tile of the opposite lava-ness are 42/42 correct on the full name.
+  `test/vulcanusTiles.spec.ts` now pins the zero.
+- **But every real cliff is a negative-space oracle, and 10 of them contradict
+  us.** The game ran this same rejection and kept the cliff, so the game sees no
+  lava in that box. Over the 1400 real cliffs we place across the three regions,
+  10 boxes hold our lava - **0.71%** - and in all 10 the offending tile sits at
+  Chebyshev depth **1** inside our own lava, on its perimeter. Not one is deep.
+  Depth 1 is the common case for any lava tile, so that alone does not
+  discriminate; the control is region `[1500,1500]`'s 173 correct rejections,
+  which spread across the whole range (65 at depth 1, 52 deeper than 6). The
+  rule's real work is nowhere near the boundary.
+
+**This rules the resolver out as a cause of the remaining over-placement**, which
+is why it was worth measuring before reading any more of `generateCliffs`. A
+resolver that UNDER-called lava would leave false positives sitting next to lava.
+They do not: of region `[0,0]`'s 95 surviving false positives only 4.2% come
+within 2 tiles of any lava, against 7.2% of its 222 matched true positives - the
+wrong way round - and in regions `[1500,1500]` and `[-1200,800]` the bulk (42/62
+and 20/29) are more than 8 tiles from the nearest lava tile. Whatever remains is
+not a lava question, and it is not a tile question.
+
+One cheap fixture improvement fell out of this and has **not** been done: the
+cliff dump records only `{x, y, name}`. Adding each entity's `cliff_orientation`
+would turn the fixture into a direct oracle for `CLIFF_CODE_TO_ORIENTATION` end
+to end - today that table is validated only against the binary's own jump table -
+and would give the true collision box for the ~60 real cliffs per region we miss
+entirely, which is currently unobtainable because we have no orientation for a
+cell we never place.
 
 #### `rotbb` boxes
 

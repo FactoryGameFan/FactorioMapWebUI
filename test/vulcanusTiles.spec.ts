@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-vulcanus-tile-names.seed123456.json";
+import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/preview/renderVulcanusCliffs";
 import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
 
 /**
@@ -48,5 +49,53 @@ describe("makeVulcanusTileResolver vs get_tile oracle", () => {
     // genuinely wrong range transcription fails it, with modest headroom for the
     // remaining boundary-flip count.
     expect(agreement).toBeGreaterThan(0.978);
+  });
+
+  /**
+   * The BINARY lava classification, separately - because that is the only thing
+   * the cliff collision rejection reads. `tryToAddCliff` asks "does this tile
+   * carry `water_tile`", never which tile it is, so the 19-way argmax above can
+   * confuse `volcanic-folds` for `volcanic-folds-flat` all day without moving a
+   * cliff. **It is exact**: measured 2026-07-30, all 49 `lava`/`lava-hot`
+   * positions and all 332 others land on the correct side, in both directions.
+   *
+   * Pinned at zero rather than at a fraction. Every one of the 7 name mismatches
+   * is a non-lava/non-lava confusion within a biome family, so nothing is being
+   * rounded away - and the standing hypothesis this falsifies was specific: the
+   * Vulcanus cliff rejection drops 10 real cliffs (issue #18), and
+   * `vulcanusCliffEntities.spec.ts` recorded the guess that the resolver is
+   * "plausibly worse at a lava boundary". It is not worse at a lava boundary;
+   * the 42 fixture positions that sit directly on one (Chebyshev distance 1 to a
+   * tile of the opposite lava-ness) are 42/42 correct even on the full name.
+   *
+   * **Know what this zero is worth before leaning on it.** Its sensitivity was
+   * measured by planting scale factors on `lava`'s probability (2026-07-30):
+   * `1.02` and `1.2` both still pass, `2`, `5` and `20` all fail. 381 sparse
+   * oracle positions do not sit close enough to a lava boundary in probability
+   * space to register a small shift, so this is a regression guard against a
+   * broken lava range expression, NOT a sub-tile boundary check. The boundary
+   * really is off by about a tile somewhere - the 10 dropped cliffs prove it -
+   * and this spec cannot see that. The thing that can is the negative-space
+   * oracle in `vulcanusCliffEntities.spec.ts`: a real cliff the game placed is a
+   * standing assertion that the game found no lava in its box.
+   */
+  it("classifies lava exactly, which is what the cliff rejection reads", () => {
+    let ourLava = 0;
+    let gameLava = 0;
+    let mismatch = 0;
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i];
+      const ours = VULCANUS_CLIFF_BLOCKING_TILES.has(resolve(p.x, p.y).name);
+      const game = VULCANUS_CLIFF_BLOCKING_TILES.has(want[i]);
+      if (ours) ourLava++;
+      if (game) gameLava++;
+      if (ours !== game) mismatch++;
+    }
+    // Non-vacuity: the fixture really does carry lava, and plenty of it. Without
+    // this, a resolver that returned a constant non-lava tile would pass the
+    // mismatch assertion by agreeing with an empty set.
+    expect(gameLava).toBe(49);
+    expect(ourLava).toBe(49);
+    expect(mismatch).toBe(0);
   });
 });

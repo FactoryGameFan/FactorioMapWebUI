@@ -122,10 +122,40 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       // **Reported rather than smoothed over: recall gets WORSE in two regions.**
       // Region 0 loses 6 true positives (0.806 -> 0.784) and region 1 loses 4.
       // Those are cells where the game placed a cliff and our tile resolver puts
-      // lava inside its box. The resolver is ~98.2% accurate overall
-      // (`vulcanusTiles.spec.ts`) and is plausibly worse at a lava boundary, but
-      // that is a hypothesis and has not been measured - it is the first thing to
-      // check before concluding the collision geometry is wrong.
+      // lava inside its box.
+      //
+      // **Those 10 are a one-tile boundary error, and that is measured now
+      // (2026-07-30), not assumed.** This comment used to carry the guess that
+      // the resolver "is plausibly worse at a lava boundary"; the guess was
+      // wrong in its premise and right in its conclusion, so both halves are
+      // worth stating:
+      //
+      // - The resolver is NOT worse at a lava boundary. Its binary lava/not
+      //   classification - the only thing `tryToAddCliff` reads - is EXACT on
+      //   all 381 oracle positions, 49 lava and 332 not, in both directions
+      //   (`vulcanusTiles.spec.ts` now pins this at zero mismatches). The 42
+      //   positions sitting directly on a lava boundary are 42/42 correct even
+      //   on the full 19-way name.
+      // - It is nonetheless off by about one tile SOMEWHERE, because each real
+      //   cliff the game placed is itself a negative-space oracle: the game ran
+      //   this same rejection and kept the cliff, so the game sees no lava in
+      //   that box. Over the 1400 real cliffs we place across the three regions,
+      //   10 boxes contradict that - 0.71% - and in **all 10** the offending
+      //   tile sits at Chebyshev depth 1 inside our lava, i.e. on our own
+      //   perimeter. Not one is deep water.
+      //
+      // Depth 1 is the common case for any lava tile, so that alone would not
+      // discriminate; region 1's 173 correct rejections are the control and they
+      // are spread right across the range (65 at depth 1, 52 deeper than 6). The
+      // rule's real work is untouched by the boundary.
+      //
+      // **This also rules the resolver out as a cause of the residual below**,
+      // which was the reason to measure it first. An under-calling resolver
+      // would leave false positives sitting next to lava; they do not. Of region
+      // 0's 95 surviving false positives only 4.2% come within 2 tiles of any
+      // lava, against 7.2% of its matched true positives - the wrong way round -
+      // and in regions 1 and 2 the bulk (42/62 and 20/29) are more than 8 tiles
+      // from the nearest lava tile. Whatever is left is not a lava question.
       //
       // A control run pins that the rejection is not just deleting cells at the
       // background lava rate: sampling the same lava field 10,000 tiles away
