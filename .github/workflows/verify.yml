@@ -1,0 +1,77 @@
+# The whole quality gate, run automatically. Until this file existed, `pnpm run
+# verify` only ran when a human remembered to (or at deploy time, which can be
+# days after the breaking merge) - see issue #54.
+#
+# This job deliberately runs `pnpm run verify` VERBATIM rather than re-listing
+# its four phases as separate steps. `verify` is the single definition of "the
+# repo is consistent"; splitting it here would create a second definition that
+# can silently drift from package.json. Note it is `verify`, not `check` -
+# `check` is `vp check --fix` and CI must never rewrite files.
+#
+# What is deliberately NOT here:
+#   - `pnpm refs:sync`. It needs a Factorio binary and ~/GitHub/factorio-data,
+#     neither of which exists on a runner. `verify` is designed to pass with no
+#     Factorio installed and that property is what makes this workflow possible.
+#   - `pnpm vp build`. Not part of `verify`, and the build stamp reads git
+#     history, so it wants a checkout policy of its own. Tracked as a follow-up.
+#   - Any deploy step or credential. Cloudflare Pages does not build this repo
+#     (`deploy:app` uploads an already-built `dist`), so CI here is a check
+#     only and the job needs no secrets at all.
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # So a run can be forced without an empty commit.
+  workflow_dispatch:
+
+# Superseded pushes to the same PR are pointless at ~2 minutes a run.
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimum scope: the job only reads the tree. It writes no statuses, comments,
+# packages or releases, so nothing beyond `contents: read` is granted.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # `verify` is ~60-90s of work; 15 minutes is a hang detector, not a budget.
+    timeout-minutes: 15
+    env:
+      # `preview:test` shells out to wrangler (`wrangler types --check`). Keep it
+      # from phoning home for telemetry on a runner where nobody can answer the
+      # opt-in prompt.
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      # Third-party actions are pinned to a full commit SHA, never a moving tag.
+      # The trailing comment names the release each SHA is, and Renovate updates
+      # the SHA and that comment together - see .github/renovate.json5.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No `version:` input on purpose. pnpm/action-setup >= 6 reads
+      # `devEngines.packageManager` from package.json, so the pnpm pin stays in
+      # exactly one place. Hard-coding it here would be a second pin to drift.
+      # This step must precede setup-node: `cache: pnpm` below resolves the
+      # store path by running pnpm, so pnpm has to be on PATH already.
+      - uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
+
+      # `.node-version` (26.5.0) is the single source of truth for the Node
+      # version, and this is its first real consumer - the file went from
+      # documentation to machinery when this workflow landed. `engines.node`
+      # stays a permissive floor and is deliberately NOT what CI runs.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      # A full workspace install. Anything narrower can leave a sibling
+      # workspace's symlink dangling and produce fake
+      # `TS2307: Cannot find module 'vitest'` errors; a real full install is the
+      # one that reports `Scope: all 3 workspace projects`.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run verify

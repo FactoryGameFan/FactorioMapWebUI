@@ -130,25 +130,55 @@ bare `vp` or `npx vp` from the project root fails with `EBADDEVENGINES`.
 
 Node **26.5.0** (`.node-version`) is what the repo is developed and verified on.
 `engines.node` stays a permissive floor (`>=24.18.0`) rather than matching the
-pin - older versions are simply untested, not known-broken. Nothing local
-consumes `.node-version` (node comes from Homebrew, no version manager is
-installed) and Cloudflare Pages never builds this repo - `deploy:app` uploads an
-already-built `dist` - so the file is documentation, not machinery.
+pin - older versions are simply untested, not known-broken.
+
+**`.node-version` is machinery now, not documentation.** That changed when
+`.github/workflows/verify.yml` landed: `actions/setup-node` reads the file via
+`node-version-file`, so it is what CI actually installs. Nothing _local_ consumes
+it still (node comes from Homebrew, no version manager is installed) and
+Cloudflare Pages never builds this repo - `deploy:app` uploads an already-built
+`dist` - so an edit to it changes the version the gate runs on and nothing else.
+Bump it only alongside a local `pnpm run verify` on the new version.
 
 Adding a root dependency needs `pnpm add -w` (or `--workspace-root`); a bare
 `pnpm add <pkg>` at the root fails with `ERR_PNPM_ADDING_TO_ROOT`. Prefer
 targeted `pnpm add` over `pnpm up` for dependency bumps - see the type-checking
 note below for why `pnpm up`'s transitive re-resolution can break `vp check`.
+Always follow any `add` with a bare `pnpm install`: `add` relinks only its own
+workspace and leaves sibling workspaces' symlinks dangling. Only the full
+install prints `Scope: all 3 workspace projects`.
+
+**The 24-hour release-age guard is real but invisible to `pnpm config`.**
+`pnpm config get minimumReleaseAge` reports `undefined`, which reads like "no
+policy here" - it only reports what is _explicitly_ set, and nothing in this
+repo or `~/.npmrc` sets it. The value comes from pnpm 11's own defaults table,
+`"minimum-release-age": 24 * 60, // 1 day` (read out of pnpm 11.17.0's shipped
+code, 2026-07-29). So a package published less than a day ago will not install
+without pnpm writing a `minimumReleaseAgeExclude` bypass into
+`pnpm-workspace.yaml` - which is the thing to watch for in a diff. Don't
+conclude the guard is off because `config get` came back empty, and don't rely
+on it silently either: a pnpm 12 could change the default, so if it ever
+matters, set it explicitly.
 
 - `pnpm install` - install deps
 - `pnpm vp dev` - dev server
 - `pnpm vp test` - full test suite (Vitest-compatible; tests import from `"vite-plus/test"`)
 - `pnpm vp test test/controlScale.spec.ts` - a single test file
-- `pnpm vp check --fix` - format + lint + **type-check**, the single static-check
-  step (see the type-checking note below; there is still **no** `vue-tsc` check
-  of `.vue` bodies)
+- `pnpm vp check --fix` - format + lint + **type-check** of `.ts`, the main
+  static-check step (see the type-checking note below). It does **not** see
+  inside `.vue` bodies - that is `check:vue`'s job, and the two together are the
+  full net.
+- `pnpm run check:vue` - `vue-tsc --noEmit`, the type-check of `<script setup>`
+  bodies in the 22 `.vue` files (~2.1s). Nothing else checks them.
 - `pnpm vp build` - production build
-- `pnpm run verify` - `vp check` + `vp test` + `preview:test` in one gate (~9.5s)
+- `pnpm run verify` - `vp check` + `check:vue` + `vp test` + `preview:test` in
+  one gate. **~65-90s on a dev machine, ~4 minutes on a CI runner**, of which
+  the app test suite is ~57s and `check:vue` ~2.5s. The `~9.5s` this line
+  claimed for a long time was simply wrong - already wrong by a factor of six
+  before `check:vue` existed, because the suite grew to 143 files through the
+  Vulcanus and cliff work - and the gap mattered: ~63s is exactly the duration
+  at which people start skipping a manual gate, which is half the argument for
+  the CI workflow below. Don't budget 10 seconds for this.
 - `pnpm refs:sync` - pin `factorioLuaAPI/` + `~/GitHub/factorio-data` to the
   installed binary's version (`--check` reports drift only; `--fixtures` reports
   which oracle fixtures predate the binary). Deliberately **not** part of
@@ -156,6 +186,76 @@ note below for why `pnpm up`'s transitive re-resolution can break `vp check`.
 - `pnpm run deploy` - **verify** + build + `wrangler pages deploy` to Cloudflare Pages
 - `pnpm run verify:deploy` - after deploying, confirm the live site is running
   local `HEAD` (see below). Takes an optional origin argument.
+
+### CI (`.github/`) runs the same `verify`, and nothing else
+
+`.github/workflows/verify.yml` runs `pnpm run verify` on every pull request and
+every push to `main`. It invokes the script **verbatim** rather than re-listing
+its phases as separate steps, so there is exactly one definition of "this repo is
+consistent" and CI cannot drift from local. If you change what `verify` means,
+CI follows automatically - do not mirror the change into the YAML.
+
+Conventions that file establishes, and that anything added under `.github/`
+should keep:
+
+- **Third-party actions are pinned to a full commit SHA**, with the release named
+  in a trailing `# vX.Y.Z` comment. Never a moving tag.
+  `helpers:pinGitHubActionDigests` in the Renovate config makes that automatic
+  for actions added later, and Renovate updates the SHA and the comment together.
+- **`permissions:` is declared explicitly and minimally** (`contents: read`). Do
+  not fall back on the default token scope.
+- **No `version:` input on `pnpm/action-setup`.** v6+ reads
+  `devEngines.packageManager` from `package.json`, so the pnpm pin lives in one
+  place. It must run _before_ `setup-node`, because `cache: pnpm` resolves the
+  store path by invoking pnpm.
+- **No secrets, no deploy job.** Cloudflare Pages does not build this repo, so CI
+  is a check only. `pnpm refs:sync` is absent for the same reason it is absent
+  from `verify`: no runner has a Factorio binary. `pnpm vp build` is also absent
+  (the build stamp reads git history) - that is a known gap, not an oversight.
+
+`preview:test` needs **no Docker** on a runner, which was confirmed rather than
+assumed: the worker tests are pool-workers (`workerd` arrives from npm) and the
+container tests are `node --test` against `render.mjs`.
+
+**Renovate, not Dependabot** - `.github/renovate.json5`. The reason is that this
+project's dependency decisions are _holds_ with reasoning behind them, and
+Dependabot's `ignore` entries cannot express them; Renovate's `packageRules` +
+`prBodyNotes` can, so the reasoning arrives attached to the proposal. `typescript`
+is disabled outright, `pako` carries a 14-day age and a pointer at the
+byte-exactness invariant, `wrangler` + `@cloudflare/vitest-pool-workers` are
+grouped because pool-workers hard-pins wrangler, and the `brace-expansion`
+override and `engines.node` floor are both marked as deliberate rather than stale.
+
+One interaction is worth knowing before touching that file. The workspace's
+release-age guard is a **pnpm default**, not a line in `pnpm-workspace.yaml`, and
+pnpm's response to being asked for something too fresh is to write a
+`minimumReleaseAgeExclude:` bypass - which is how `vue-tsc@3.3.8` once waived it
+silently. `minimumReleaseAge: "3 days"` is therefore declared in the Renovate
+config, above pnpm's default, so Renovate can never propose a release pnpm would
+want a bypass for. If `minimumReleaseAgeExclude:` appears in a bot PR's diff,
+that PR is wrong; fix the age rule, don't commit the bypass.
+
+Renovate is inert until the GitHub App is enabled on the repo. Validate any edit
+with `renovate-config-validator` (run it from outside the project root - a bare
+`npx` here fails with `EBADDEVENGINES`).
+
+Branch protection on `main` is **not** configured. It is the natural follow-up
+now that a check exists, but it is a repository setting rather than a file.
+
+#### `testTimeout` is 30s, deliberately, and retries are not used
+
+Vitest's 5s default was too tight for this suite long before CI existed - 24
+individual tests across 10 files carry an explicit `}, 120000)`, which is the
+same complaint made 24 times by hand. The first CI run proved the default was the
+real problem rather than any one test: on a 4-core runner (~3x slower, 230s vs
+71s for the same suite) `elevationRenderRequest.spec.ts`'s `view 'all'` case
+needs **9.8s**, and that file has 27 tests and zero annotations. `vite.config.ts`
+now sets `testTimeout: 30_000`; the existing 120000 annotations still win over it.
+
+Do **not** reach for `retry` when a heavy render test fails in CI. Nothing here is
+nondeterministic - these tests compare pixels against captured game output - so a
+retry would only hide a genuine regression. A timeout means slow; read the
+duration the reporter prints before assuming a hang.
 
 ### Deploys are gated on `verify`
 
@@ -440,17 +540,21 @@ so `pnpm preview:test` fails loudly on drift.
 behind `lint.options.typeAware` + `lint.options.typeCheck` in `vite.config.ts` -
 both are on. Do not add a `tsc`-based `typecheck` script:
 
-- **`tsc` is not the type-check path.** Bare `./node_modules/.bin/tsc --noEmit`
-  **crashes** (`Debug Failure. False expression: parameter should have errors
-when reporting errors`) - a TypeScript 6.0.3 compiler bug, not a type error,
-  triggered by `vite.config.ts` alone. `vp check` type-checks that same file
-  fine because it uses **tsgolint** (the TypeScript Go toolchain), a different
-  implementation. Beware: passing globs (`tsc --noEmit 'src/**/*.ts'`) silently
-  ignores `tsconfig.json` and reports a misleading "ok".
-- **`.vue` bodies are still unchecked.** Neither `vp check` nor `tsc` reports
-  type errors inside `<script setup lang="ts">` (measured, not assumed). So
-  `vp check` is a partial net over `.ts` only, not a full gate. This gap is
-  **not** caused by the TS7 deferral - see below.
+- **`tsc` is not the type-check path**, but not because it crashes any more.
+  It used to: bare `./node_modules/.bin/tsc --noEmit` threw `Debug Failure.
+False expression: parameter should have errors when reporting errors` - a
+  TypeScript 6.0.3 compiler bug, not a type error, triggered by
+  `vite.config.ts` alone. **The `vue() as Plugin` cast below fixed that too**,
+  and both now exit 0. Still don't add a `tsc`-based `typecheck` script: it
+  duplicates what `vp check` already does through tsgolint, and it is one
+  transitive-graph shift away from crashing again. Beware also that passing
+  globs (`tsc --noEmit 'src/**/*.ts'`) silently ignores `tsconfig.json` and
+  reports a misleading "ok".
+- **`vp check` does not see inside `.vue` bodies** - it reports no type errors
+  inside `<script setup lang="ts">` (measured, not assumed: a planted `TS2322`
+  in `src/ui/FInfo.vue` left it printing "Found no warnings, lint errors, or
+  type errors in 301 files"). That gap is now covered by `pnpm run check:vue`,
+  chained into `verify` - see below. `vp check` alone is still a partial net.
 - **`vite.config.ts` sits near TypeScript's comparison-depth limit.** A shift in
   the transitive dependency graph can tip it over, making `vp check` fail with
   `TS2321: Excessive stack depth comparing types ... and 'UserConfig'` - the
@@ -471,30 +575,68 @@ when reporting errors`) - a TypeScript 6.0.3 compiler bug, not a type error,
     (`plugins: [vue() as Plugin]`, `type Plugin` imported from `vite-plus`)
     collapses the comparison without suppressing type-checking of the rest of
     the config. See voidzero-dev/vite-plus#2010's comment thread.
-- The project stays on `typescript` 6.0.3 as the _editor/LSP_ compiler; the TS7
-  upgrade is deferred because `vue-tsc`/Volar can't yet type-check `.vue`
-  against it. Note the type-_check_ already effectively runs on TS7 via
-  tsgolint, so the deferral only ever applied to `vue-tsc`.
 
-### Closing the `.vue` gap with `vue-tsc` (evaluated 2026-07-22, NOT adopted)
+    **That one cast is load-bearing for three tools, not one.** Removing it
+    (measured 2026-07-29, by deleting it and re-running) reproduces all three
+    failures at once: `vp check` fails `TS2321`, and `tsc` **and** `vue-tsc`
+    both die on the `Debug Failure` assertion. So `TS2321` in `vp check` and
+    the `Debug Failure` crash are one pathology with one fix - don't treat a
+    reappearance of either as a separate problem.
 
-The `.vue` gap is **not** blocked by the TS7 deferral, and a past framing that
-implied otherwise was wrong. `vue-tsc`'s peer range is `typescript: ">=5.0.0"`,
-so it runs on the project's existing 6.0.3. Spiked and measured:
+- The project stays on `typescript` 6.0.3 as the _editor/LSP_ compiler, and
+  **TypeScript 7 is not an upgrade this repo can take** - see below. Note the
+  type-_check_ already effectively runs on TS7 semantics via tsgolint, so
+  nothing is being given up by staying.
 
-- It **does** catch errors inside `<script setup lang="ts">` (planted `TS2322`
-  and `TS2345` were both reported).
-- Against the real codebase: **22 `.vue` files, 0 errors, 1.56s**. There is no
-  latent breakage hiding behind the gap - adding it would be a guard against
-  future regressions, not a bug hunt.
-- Bare `vue-tsc --noEmit` **crashes** with the same `Debug Failure` assertion as
-  `tsc`, because it wraps `tsc` 6.0.3 and hits `vite.config.ts`. It needs its
-  own tsconfig that excludes that file.
+### TypeScript 7: `pnpm outdated`'s `6.0.3 -> 7.0.2` row is misleading
 
-**Not adopted, for a supply-chain reason worth remembering.** `vue-tsc@3.3.8`
-was published the same day it was evaluated (< 1 hour old). This workspace
-enforces a pnpm minimum-release-age policy, and installing that fresh release
-made pnpm silently write a bypass into `pnpm-workspace.yaml`:
+Taking that row literally breaks the toolchain, so it is worth knowing why
+before someone bumps it. Re-derived 2026-07-29:
+
+- **TS 7.0 exposes no programmatic API at all.** It is a CLI-only Go binary;
+  the API is planned for 7.1. Anything that consumes the compiler
+  programmatically - tsserver, `vue-tsc`, typescript-eslint - cannot run on it.
+- The official migration is therefore a **dual install**, not a bump:
+  `typescript` aliased to `npm:@typescript/typescript6` (the JS API line) plus
+  `@typescript/native` aliased to `npm:typescript@^7` (the Go `tsc`).
+- `vue-tsc` on a bare `typescript@7` does not degrade, it **hard-crashes**:
+  `ERR_PACKAGE_PATH_NOT_EXPORTED: './lib/tsc'` (vuejs/language-tools#6124).
+  `vue-tsc@3.3.8` added shim resolution so it works _behind the alias_ - which
+  is the one thing 3.3.8 adds over 3.3.7, and it only matters if the alias is
+  adopted.
+- **And there is nothing to gain.** This repo's `typescript` devDep is purely
+  the editor/LSP compiler; the type-check already runs TS7 semantics through
+  tsgolint. The dual install would add a second compiler and an alias to buy
+  nothing the repo consumes.
+
+Revisit when 7.1 ships a programmatic API. Until then this is a "don't", not a
+"blocked on someone else".
+
+### The `.vue` gap is CLOSED - `vue-tsc` adopted 2026-07-29
+
+`pnpm run check:vue` (`vue-tsc --noEmit`) runs in `verify`, between `vp check`
+and `vp test`. It is the only thing that type-checks `<script setup lang="ts">`
+bodies.
+
+- **The guard is not vacuous, and was proven so before landing.** A planted
+  `TS2322` in `src/ui/FInfo.vue` makes `vue-tsc` report
+  `src/ui/FInfo.vue(3,7): error TS2322` and `pnpm run verify` exit **2** with
+  the test suite never running - while `vp check` on the same tree still
+  printed "Found no warnings, lint errors, or type errors in 301 files". If a
+  future change makes `check:vue` pass on a planted error, it has been
+  neutered.
+- Against the real codebase: **22 `.vue` files, 0 errors, ~2.1s**. There was no
+  latent breakage behind the gap; this is a guard against regressions, not a
+  bug hunt. It ran on the existing `typescript` 6.0.3 - `vue-tsc`'s peer range
+  is `>=5.0.0`, so no TS7 work was needed.
+- **It needs no separate tsconfig**, and a note here previously said it did.
+  That was measured 2026-07-22, one day _before_ the `vue() as Plugin` cast
+  landed; the cast fixed `vue-tsc`'s crash along with `vp check`'s `TS2321`.
+  Bare `vue-tsc --noEmit` on the root `tsconfig.json` is now clean.
+
+**Why it was not adopted on 2026-07-22, and why that reason expired.** The only
+blocker was supply-chain freshness: `vue-tsc@3.3.8` was under an hour old, and
+installing it made pnpm silently write a bypass into `pnpm-workspace.yaml`:
 
 ```yaml
 minimumReleaseAgeExclude:
@@ -502,12 +644,11 @@ minimumReleaseAgeExclude:
   - vue-tsc@3.3.8
 ```
 
-**Watch for that block appearing in a diff - it means a freshness guard was
-waived.** Don't commit one without a deliberate decision. If `vue-tsc` is
-adopted later, pick a release old enough to clear the policy (3.3.7 shipped
-2026-07-08 and needs no exclusion); the only thing 3.3.8 adds here is a fix for
-users aliasing `typescript` to `@typescript/typescript6` under the official TS7
-migration, which does not apply while the project is on 6.0.3 directly.
+**Watch for that block appearing in any diff - it means a freshness guard was
+waived.** Don't commit one without a deliberate decision. It did not appear
+this time: 3.3.8 was 7.3 days old when adopted, so the gate passed on its own
+and `pnpm-workspace.yaml` was untouched. The old advice to "pick 3.3.7 instead"
+is obsolete - just take the latest once it has aged past the policy.
 
 ### Remaining build/test log noise (investigated, left alone)
 

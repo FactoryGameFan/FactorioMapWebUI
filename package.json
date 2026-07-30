@@ -10,9 +10,10 @@
     "test": "vp test",
     "perf": "FMW_PERF=1 vp test test/render-cost.perf.spec.ts && cat perf-result.txt",
     "check": "vp check --fix",
+    "check:vue": "vue-tsc --noEmit",
     "refs:sync": "bash scripts/sync-factorio-refs.sh",
     "verify:deploy": "node scripts/verify-deploy.ts",
-    "verify": "vp check && vp test && pnpm run preview:test",
+    "verify": "vp check && pnpm run check:vue && vp test && pnpm run preview:test",
     "localpreview": "pnpm run preview:dev",
     "preview:dev": "concurrently -k -n worker,app -c blue,green \"pnpm run preview:worker\" \"pnpm run preview:app\"",
     "preview:worker": "pnpm --filter @fmw/preview-worker exec wrangler dev --var ALLOWED_ORIGIN:http://localhost:5173",
@@ -35,7 +36,8 @@
     "concurrently": "^10.0.4",
     "happy-dom": "^20.11.1",
     "typescript": "^6.0.3",
-    "vite-plus": "^0.2.6"
+    "vite-plus": "^0.2.6",
+    "vue-tsc": "^3.3.8"
   },
   "devEngines": {
     "packageManager": {

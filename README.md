@@ -1,5 +1,7 @@
 # Factorio Map WebUI
 
+[![verify](https://github.com/wormeyman/FactorioMapWebUI/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/wormeyman/FactorioMapWebUI/actions/workflows/verify.yml)
+
 A static SPA for authoring and exchanging Factorio 2.1.x map generation presets
 (exchange-string codec format `2.1.9.3`). The core editor has no backend -
 everything runs in the browser. An optional, opt-in map preview service (the app's only outbound call)
@@ -73,15 +75,31 @@ docs).
 
 ## Development
 
-Requires Node 24.18.0 (see `.node-version`) and the `vp` CLI (Vite+). The
-project pins pnpm via `devEngines`, so run `vp` through pnpm (a bare `vp` or
-`npx vp` from the project root fails with `EBADDEVENGINES`).
+Built and verified on Node **26.5.0** (`.node-version`, which is also what CI
+installs); `engines.node` is a permissive floor of `>=24.18.0` because older
+versions are untested rather than known-broken. The project pins pnpm via
+`devEngines`, so run `vp` through pnpm (a bare `vp` or `npx vp` from the project
+root fails with `EBADDEVENGINES`).
 
 - `pnpm install` - install dependencies
 - `pnpm vp dev` - dev server
-- `pnpm vp check --fix` - lint + format
+- `pnpm vp check --fix` - lint + format + type-check of `.ts`
+- `pnpm run check:vue` - `vue-tsc --noEmit`, the type-check of `<script setup>`
+  bodies in the `.vue` files. Nothing else checks them.
 - `pnpm vp test` - test suite (fixture-driven codec tests and UI tests)
 - `pnpm vp build` - production build
+- `pnpm run verify` - the whole gate: `vp check` + `check:vue` + `vp test` +
+  `preview:test`. ~65-90s locally. Needs no Factorio install.
+
+### CI
+
+`.github/workflows/verify.yml` runs `pnpm run verify` on every pull request and
+every push to `main` - the same command, invoked verbatim, so CI and local cannot
+disagree about what passing means. It needs no secrets and does not deploy.
+
+Dependency updates are handled by Renovate (`.github/renovate.json5`), which
+encodes this project's deliberate holds rather than proposing them weekly - see
+the CI section of `CLAUDE.md` for what is held and why.
 
 ## Map preview service
 
@@ -120,7 +138,7 @@ test: `pnpm --filter @fmw/preview-container test:integration`.
 The app and preview service are already deployed (Cloudflare Pages +
 Workers/Containers on the `wormeyman` account; `pnpm run deploy` verifies,
 builds, and publishes the app). Both deploy paths are gated: `pnpm run deploy`
-runs `pnpm run verify` (`vp check` + `vp test` + `preview:test`) first and
+runs `pnpm run verify` (`vp check` + `check:vue` + `vp test` + `preview:test`) first and
 aborts before `wrangler` if anything fails. The one-time setup, for reference, needs a Cloudflare account
 and Workers Paid ($5/mo, required for Containers):
 
