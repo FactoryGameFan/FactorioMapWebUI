@@ -130,10 +130,15 @@ bare `vp` or `npx vp` from the project root fails with `EBADDEVENGINES`.
 
 Node **26.5.0** (`.node-version`) is what the repo is developed and verified on.
 `engines.node` stays a permissive floor (`>=24.18.0`) rather than matching the
-pin - older versions are simply untested, not known-broken. Nothing local
-consumes `.node-version` (node comes from Homebrew, no version manager is
-installed) and Cloudflare Pages never builds this repo - `deploy:app` uploads an
-already-built `dist` - so the file is documentation, not machinery.
+pin - older versions are simply untested, not known-broken.
+
+**`.node-version` is machinery now, not documentation.** That changed when
+`.github/workflows/verify.yml` landed: `actions/setup-node` reads the file via
+`node-version-file`, so it is what CI actually installs. Nothing _local_ consumes
+it still (node comes from Homebrew, no version manager is installed) and
+Cloudflare Pages never builds this repo - `deploy:app` uploads an already-built
+`dist` - so an edit to it changes the version the gate runs on and nothing else.
+Bump it only alongside a local `pnpm run verify` on the new version.
 
 Adding a root dependency needs `pnpm add -w` (or `--workspace-root`); a bare
 `pnpm add <pkg>` at the root fails with `ERR_PNPM_ADDING_TO_ROOT`. Prefer
@@ -148,7 +153,11 @@ note below for why `pnpm up`'s transitive re-resolution can break `vp check`.
   step (see the type-checking note below; there is still **no** `vue-tsc` check
   of `.vue` bodies)
 - `pnpm vp build` - production build
-- `pnpm run verify` - `vp check` + `vp test` + `preview:test` in one gate (~9.5s)
+- `pnpm run verify` - `vp check` + `vp test` + `preview:test` in one gate.
+  **~65-90s on a dev machine, ~4 minutes on a CI runner** - the `~9.5s` this
+  line claimed for a long time was simply wrong, and the gap mattered: 63s is
+  exactly the duration at which people start skipping a manual gate, which is
+  half the argument for the CI workflow below.
 - `pnpm refs:sync` - pin `factorioLuaAPI/` + `~/GitHub/factorio-data` to the
   installed binary's version (`--check` reports drift only; `--fixtures` reports
   which oracle fixtures predate the binary). Deliberately **not** part of
@@ -156,6 +165,76 @@ note below for why `pnpm up`'s transitive re-resolution can break `vp check`.
 - `pnpm run deploy` - **verify** + build + `wrangler pages deploy` to Cloudflare Pages
 - `pnpm run verify:deploy` - after deploying, confirm the live site is running
   local `HEAD` (see below). Takes an optional origin argument.
+
+### CI (`.github/`) runs the same `verify`, and nothing else
+
+`.github/workflows/verify.yml` runs `pnpm run verify` on every pull request and
+every push to `main`. It invokes the script **verbatim** rather than re-listing
+its phases as separate steps, so there is exactly one definition of "this repo is
+consistent" and CI cannot drift from local. If you change what `verify` means,
+CI follows automatically - do not mirror the change into the YAML.
+
+Conventions that file establishes, and that anything added under `.github/`
+should keep:
+
+- **Third-party actions are pinned to a full commit SHA**, with the release named
+  in a trailing `# vX.Y.Z` comment. Never a moving tag.
+  `helpers:pinGitHubActionDigests` in the Renovate config makes that automatic
+  for actions added later, and Renovate updates the SHA and the comment together.
+- **`permissions:` is declared explicitly and minimally** (`contents: read`). Do
+  not fall back on the default token scope.
+- **No `version:` input on `pnpm/action-setup`.** v6+ reads
+  `devEngines.packageManager` from `package.json`, so the pnpm pin lives in one
+  place. It must run _before_ `setup-node`, because `cache: pnpm` resolves the
+  store path by invoking pnpm.
+- **No secrets, no deploy job.** Cloudflare Pages does not build this repo, so CI
+  is a check only. `pnpm refs:sync` is absent for the same reason it is absent
+  from `verify`: no runner has a Factorio binary. `pnpm vp build` is also absent
+  (the build stamp reads git history) - that is a known gap, not an oversight.
+
+`preview:test` needs **no Docker** on a runner, which was confirmed rather than
+assumed: the worker tests are pool-workers (`workerd` arrives from npm) and the
+container tests are `node --test` against `render.mjs`.
+
+**Renovate, not Dependabot** - `.github/renovate.json5`. The reason is that this
+project's dependency decisions are _holds_ with reasoning behind them, and
+Dependabot's `ignore` entries cannot express them; Renovate's `packageRules` +
+`prBodyNotes` can, so the reasoning arrives attached to the proposal. `typescript`
+is disabled outright, `pako` carries a 14-day age and a pointer at the
+byte-exactness invariant, `wrangler` + `@cloudflare/vitest-pool-workers` are
+grouped because pool-workers hard-pins wrangler, and the `brace-expansion`
+override and `engines.node` floor are both marked as deliberate rather than stale.
+
+One interaction is worth knowing before touching that file. The workspace's
+release-age guard is a **pnpm default**, not a line in `pnpm-workspace.yaml`, and
+pnpm's response to being asked for something too fresh is to write a
+`minimumReleaseAgeExclude:` bypass - which is how `vue-tsc@3.3.8` once waived it
+silently. `minimumReleaseAge: "3 days"` is therefore declared in the Renovate
+config, above pnpm's default, so Renovate can never propose a release pnpm would
+want a bypass for. If `minimumReleaseAgeExclude:` appears in a bot PR's diff,
+that PR is wrong; fix the age rule, don't commit the bypass.
+
+Renovate is inert until the GitHub App is enabled on the repo. Validate any edit
+with `renovate-config-validator` (run it from outside the project root - a bare
+`npx` here fails with `EBADDEVENGINES`).
+
+Branch protection on `main` is **not** configured. It is the natural follow-up
+now that a check exists, but it is a repository setting rather than a file.
+
+#### `testTimeout` is 30s, deliberately, and retries are not used
+
+Vitest's 5s default was too tight for this suite long before CI existed - 24
+individual tests across 10 files carry an explicit `}, 120000)`, which is the
+same complaint made 24 times by hand. The first CI run proved the default was the
+real problem rather than any one test: on a 4-core runner (~3x slower, 230s vs
+71s for the same suite) `elevationRenderRequest.spec.ts`'s `view 'all'` case
+needs **9.8s**, and that file has 27 tests and zero annotations. `vite.config.ts`
+now sets `testTimeout: 30_000`; the existing 120000 annotations still win over it.
+
+Do **not** reach for `retry` when a heavy render test fails in CI. Nothing here is
+nondeterministic - these tests compare pixels against captured game output - so a
+retry would only hide a genuine regression. A timeout means slow; read the
+duration the reporter prints before assuming a hang.
 
 ### Deploys are gated on `verify`
 
