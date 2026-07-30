@@ -83,11 +83,13 @@ root fails with `EBADDEVENGINES`).
 
 - `pnpm install` - install dependencies
 - `pnpm vp dev` - dev server
-- `pnpm vp check --fix` - lint + format + type-check
+- `pnpm vp check --fix` - lint + format + type-check of `.ts`
+- `pnpm run check:vue` - `vue-tsc --noEmit`, the type-check of `<script setup>`
+  bodies in the `.vue` files. Nothing else checks them.
 - `pnpm vp test` - test suite (fixture-driven codec tests and UI tests)
 - `pnpm vp build` - production build
-- `pnpm run verify` - the whole gate: `vp check` + `vp test` + `preview:test`.
-  ~65-90s locally. Needs no Factorio install.
+- `pnpm run verify` - the whole gate: `vp check` + `check:vue` + `vp test` +
+  `preview:test`. ~65-90s locally. Needs no Factorio install.
 
 ### CI
 
@@ -136,7 +138,7 @@ test: `pnpm --filter @fmw/preview-container test:integration`.
 The app and preview service are already deployed (Cloudflare Pages +
 Workers/Containers on the `wormeyman` account; `pnpm run deploy` verifies,
 builds, and publishes the app). Both deploy paths are gated: `pnpm run deploy`
-runs `pnpm run verify` (`vp check` + `vp test` + `preview:test`) first and
+runs `pnpm run verify` (`vp check` + `check:vue` + `vp test` + `preview:test`) first and
 aborts before `wrangler` if anything fails. The one-time setup, for reference, needs a Cloudflare account
 and Workers Paid ($5/mo, required for Containers):
 

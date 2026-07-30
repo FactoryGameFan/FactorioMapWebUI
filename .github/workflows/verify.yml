@@ -3,7 +3,7 @@
 # days after the breaking merge) - see issue #54.
 #
 # This job deliberately runs `pnpm run verify` VERBATIM rather than re-listing
-# its three phases as separate steps. `verify` is the single definition of "the
+# its four phases as separate steps. `verify` is the single definition of "the
 # repo is consistent"; splitting it here would create a second definition that
 # can silently drift from package.json. Note it is `verify`, not `check` -
 # `check` is `vp check --fix` and CI must never rewrite files.
