@@ -340,3 +340,38 @@ export function cliffOrientationForCode(code: number): number | undefined {
   if (!Number.isInteger(code) || code < 0 || code > 255) return undefined;
   return CLIFF_CODE_TO_ORIENTATION[code];
 }
+
+/** An inclusive tile-index rectangle: every tile in it is tested for collision. */
+export interface CliffTileBox {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+/**
+ * The tile rectangle `EntityMapGenerationTask::wouldCollide` scans for a cliff
+ * of cell `code` centred at `(centerX, centerY)`.
+ *
+ * Both ends are **inclusive** and both come from a **floor**, because the engine
+ * works in `MapPosition`'s 8-bit fixed point and takes `(box + position) >> 8` -
+ * an arithmetic shift, so a box edge landing exactly on a tile boundary still
+ * pulls that tile in. Reproducing the off-by-one exactly matters: the straight
+ * orientations' boxes are 4 tiles wide and land on integers, so an exclusive
+ * right edge would test a 4-wide span where the game tests 5.
+ */
+export function cliffCollisionTileBox(
+  code: number,
+  centerX: number,
+  centerY: number,
+): CliffTileBox | undefined {
+  const orientation = cliffOrientationForCode(code);
+  if (orientation === undefined) return undefined;
+  const [l, t, r, b] = CLIFF_ORIENTATION_COLLISION_BOX[orientation];
+  return {
+    left: Math.floor(centerX + l),
+    top: Math.floor(centerY + t),
+    right: Math.floor(centerX + r),
+    bottom: Math.floor(centerY + b),
+  };
+}

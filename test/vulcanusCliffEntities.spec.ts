@@ -8,6 +8,8 @@ import {
   makeVulcanusCliffFields,
 } from "../src/noise/cliffs/vulcanusCliffFields";
 import { makeCliffPlacementFromFields } from "../src/noise/cliffs/cliffPlacement";
+import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/preview/renderVulcanusCliffs";
+import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
 import { withCtxDefaults } from "../src/noise/eval/ctx";
 
 const key = (p: { x: number; y: number }): string => `${String(p.x)},${String(p.y)}`;
@@ -31,10 +33,15 @@ describe("Vulcanus cliff placement vs find_entities", () => {
   for (const [index, c] of fixture.cases.entries()) {
     it(`agrees with the game's cliffs in region ${String(index)} [${String(c.region.x0)},${String(c.region.y0)}]`, () => {
       const ctx = withCtxDefaults({ seed0: fixture.seed, startingPositions: [{ x: 0, y: 0 }] });
+      const tileAt = makeVulcanusTileResolver({
+        seed0: fixture.seed,
+        startingPositions: [{ x: 0, y: 0 }],
+      });
       const placement = makeCliffPlacementFromFields(makeVulcanusCliffFields(ctx), {
         elevation0: VULCANUS_CLIFF_ELEVATION_0,
         interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
         smoothing: VULCANUS_CLIFF_SMOOTHING,
+        tileCollides: (x, y) => VULCANUS_CLIFF_BLOCKING_TILES.has(tileAt(x, y).name),
       });
       const r = c.region;
       const placed = placement.placedCells(r.x0, r.y0, r.x1, r.y1);
@@ -97,34 +104,44 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       // preview agreement, and to PR #57's field substitution - that fixture had
       // been captured at the port's own assumed site. See `CLIFF_CELL_CENTER_X`.
       //
-      // | region | game | ours | recall | precision | ratio | was (y+0.5) |
+      // **Updated 2026-07-30 again, with `tileCollides` (the lava rejection).**
+      // `tryToAddCliff` tests the orientation's collision box against the tile
+      // mask grid and drops the entity on a hit; the cliff mask holds
+      // `water_tile` and `tile_collision_masks.lava()` sets it. See
+      // `CLIFF_ORIENTATION_COLLISION_BOX`.
+      //
+      // | region | game | ours | recall | precision | ratio | before rejection |
       // | --- | --- | --- | --- | --- | --- | --- |
-      // | 0 `[0,0]` | 283 | 335 | 0.806 | 0.681 | 1.184 | 0.792 / 0.685 / 1.155 |
-      // | 1 `[1500,1500]` | 885 | 1065 | 0.938 | 0.779 | 1.203 | 0.870 / 0.719 / 1.210 |
-      // | 2 `[-1200,800]` | 401 | 375 | 0.853 | 0.912 | 0.935 | 0.803 / 0.866 / 0.928 |
+      // | 0 `[0,0]` | 283 | 317 | 0.784 | 0.700 | 1.120 | 335 / 0.806 / 0.681 / 1.184 |
+      // | 1 `[1500,1500]` | 885 | 888 | 0.933 | 0.930 | **1.003** | 1065 / 0.938 / 0.779 / 1.203 |
+      // | 2 `[-1200,800]` | 401 | 371 | 0.853 | 0.922 | 0.925 | 375 / 0.853 / 0.912 / 0.935 |
       //
-      // Recall improves in all three regions (+1.4, +6.8, +5.0 points) and
-      // precision in two of three; region 0's precision is flat-to-slightly-down
-      // (-0.4) because it also places 8 more cells. Reported rather than
-      // smoothed over: this fixes a real sampling error, it does not fix
-      // over-placement.
+      // Region 1 is the case this rule was found on and it lands almost exactly:
+      // 173 false positives dropped against 4 true ones, ratio 1.203 -> 1.003.
       //
-      // **Still not Nauvis-grade.** `test/cliffPlacement.spec.ts` measures Nauvis
-      // at 1.0000 recall AND precision with a ratio of exactly 1.000 - the same
-      // sampling fix took it from 0.943 to EXACT. Vulcanus now
-      // reproduces 81-94% and its count is within 7-20%. The residual is not
-      // one-directional - region 2 UNDER-places - which is why the ratio is
-      // guarded on both sides below. Issue #18 tracks what is left, which is now
-      // over-placement rather than recall.
+      // **Reported rather than smoothed over: recall gets WORSE in two regions.**
+      // Region 0 loses 6 true positives (0.806 -> 0.784) and region 1 loses 4.
+      // Those are cells where the game placed a cliff and our tile resolver puts
+      // lava inside its box. The resolver is ~98.2% accurate overall
+      // (`vulcanusTiles.spec.ts`) and is plausibly worse at a lava boundary, but
+      // that is a hypothesis and has not been measured - it is the first thing to
+      // check before concluding the collision geometry is wrong.
       //
-      // Nauvis's cliff prototype is also `scale = 1.0` and carries the same
-      // `grid_offset`, which is why one fix moved both planets - but only Nauvis
-      // went exact. Whatever is left here is Vulcanus-specific and is
-      // over-placement, not recall.
-      expect(recall).toBeGreaterThan(0.75);
-      expect(precision).toBeGreaterThan(0.65);
-      expect(predicted.size / actual.size).toBeLessThan(1.25);
-      expect(predicted.size / actual.size).toBeGreaterThan(0.85);
+      // A control run pins that the rejection is not just deleting cells at the
+      // background lava rate: sampling the same lava field 10,000 tiles away
+      // rejects 111 TP / 40 FP at `[0,0]` and 361 TP / 82 FP at `[1500,1500]` -
+      // indiscriminate, ratio collapsing to 0.65 / 0.70. The real arm rejects
+      // almost only false positives.
+      //
+      // **Still not Nauvis-grade, and the remaining gap is no longer one thing.**
+      // `test/cliffPlacement.spec.ts` measures Nauvis at 1.0000 recall AND
+      // precision. Region 1 is now within 0.3% on count; regions 0 and 2 barely
+      // moved and are +12% and -7.5%. The residual is not one-directional - region
+      // 2 UNDER-places - which is why the ratio is guarded on both sides below.
+      expect(recall).toBeGreaterThan(0.77);
+      expect(precision).toBeGreaterThan(0.68);
+      expect(predicted.size / actual.size).toBeLessThan(1.15);
+      expect(predicted.size / actual.size).toBeGreaterThan(0.9);
     }, 120000);
   }
 });
