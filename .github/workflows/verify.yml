@@ -26,10 +26,22 @@ on:
   # So a run can be forced without an empty commit.
   workflow_dispatch:
 
-# Superseded pushes to the same PR are pointless at ~2 minutes a run.
+# Superseded pushes to the same PR are pointless at ~4 minutes a run, so those
+# get cancelled. Pushes to `main` do NOT - `cancel-in-progress` there means a
+# second merge kills the first one's run, and `main` is the branch the deploy
+# ships from, so every commit on it should carry its own verdict.
+#
+# This is not hypothetical: on 2026-07-30 six PRs merged inside half an hour and
+# the runs for `605a4cc` and `be5f592` were both cancelled by the merges that
+# followed them. Neither commit is unverified in practice - each had a green
+# `verify` on its own PR before the ruleset would let it merge - but "green on
+# the PR" and "green as it sits on main" are different claims, and only the
+# second one survives a rebase-free merge into a `main` that has since moved.
+# `strict_required_status_checks_policy` is false, which is exactly what makes
+# that gap reachable.
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Minimum scope: the job only reads the tree. It writes no statuses, comments,
 # packages or releases, so nothing beyond `contents: read` is granted.
