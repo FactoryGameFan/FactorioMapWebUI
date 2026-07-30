@@ -157,30 +157,74 @@ function cellCode(l: number, r: number, t: number, b: number): number {
  * ported. An earlier note in cliffs-NOTES.md described this pass as zeroing the
  * whole chunk border; it does not, and it does not run at all here.
  */
-function fixImpossibleCellsSweep(v: Int8Array, h: Int8Array, w: number, hh: number): void {
+export function fixImpossibleCellsSweep(v: Int8Array, h: Int8Array, w: number, hh: number): void {
   const vIndex = (cx: number, cy: number): number => cy * (w + 1) + cx;
   const hIndex = (cx: number, cy: number): number => cy * w + cx;
 
-  for (let cy = 0; cy < hh; cy++) {
-    for (let cx = 0; cx < w; cx++) {
-      const li = vIndex(cx, cy);
-      const ri = vIndex(cx + 1, cy);
-      const ti = hIndex(cx, cy);
-      const bi = hIndex(cx, cy + 1);
+  /**
+   * The `bool` parameter, and it is a **retry flag the function sets on
+   * itself** - not a caller-supplied mode, which is how it was read until
+   * 2026-07-30. `crossingsForChunk` passes `false`, and an earlier note here
+   * concluded from that alone that the corner step "never runs in this path".
+   * It does. When the sweep reaches a cell it cannot fix, the disassembly does
+   *
+   *     uVar10 = param_2 & 1;  param_2 = 1;
+   *     if (uVar10 != 0) { log(...); return; }
+   *     goto <top of function>;
+   *
+   * i.e. it turns the flag on and **restarts the whole pass**, which this time
+   * begins by zeroing the eight outer edges of the chunk's four corner cells.
+   * A second failure logs "Unable to remove excess cliff cell edge crossings"
+   * and abandons the rest of the chunk outright.
+   *
+   * Note the restart re-sweeps the arrays **as already mutated** by the
+   * abandoned pass - it is not a fresh start from the raw crossings.
+   */
+  for (let retry = 0; ; retry++) {
+    if (retry > 0) {
+      // The eight edges: the two outer edges of each corner cell. Zeroing these
+      // is what can make an otherwise unfixable corner cell legal, since its
+      // only remaining crossings were the ones the sweep is forbidden to clear.
+      v[vIndex(0, 0)] = 0;
+      h[hIndex(0, 0)] = 0;
+      v[vIndex(w, 0)] = 0;
+      h[hIndex(w - 1, 0)] = 0;
+      v[vIndex(0, hh - 1)] = 0;
+      h[hIndex(0, hh)] = 0;
+      v[vIndex(w, hh - 1)] = 0;
+      h[hIndex(w - 1, hh)] = 0;
+    }
 
-      for (;;) {
-        const code = cellCode(v[li], v[ri], h[ti], h[bi]);
-        if (code === 0 || isCliffPlaced(code)) break;
-        if (v[li] !== 0 && cx !== 0) v[li] = 0;
-        else if (h[ti] !== 0 && cy !== 0) h[ti] = 0;
-        else if (v[ri] !== 0 && cx < w - 1) v[ri] = 0;
-        else if (h[bi] !== 0 && cy < hh - 1) h[bi] = 0;
-        // The game logs "Unable to remove excess cliff cell edge crossings" and
-        // gives up here; every remaining crossing is on the chunk boundary and
-        // is not ours to clear.
-        else break;
+    let stuck = false;
+    for (let cy = 0; cy < hh && !stuck; cy++) {
+      for (let cx = 0; cx < w && !stuck; cx++) {
+        const li = vIndex(cx, cy);
+        const ri = vIndex(cx + 1, cy);
+        const ti = hIndex(cx, cy);
+        const bi = hIndex(cx, cy + 1);
+
+        for (;;) {
+          const code = cellCode(v[li], v[ri], h[ti], h[bi]);
+          // The engine first counts non-zero edges and only consults the table
+          // when the count is below 3. That is pure optimisation: every one of
+          // the 20 placing codes has one or two crossings, so a count of 3 or 4
+          // can never be legal. Checking the table directly is equivalent.
+          if (code === 0 || isCliffPlaced(code)) break;
+          if (v[li] !== 0 && cx !== 0) v[li] = 0;
+          else if (h[ti] !== 0 && cy !== 0) h[ti] = 0;
+          else if (v[ri] !== 0 && cx < w - 1) v[ri] = 0;
+          else if (h[bi] !== 0 && cy < hh - 1) h[bi] = 0;
+          else {
+            stuck = true;
+            break;
+          }
+        }
       }
     }
+
+    // Not stuck -> the pass completed. Stuck on the retry -> the engine logs and
+    // abandons the chunk, leaving the arrays as they are.
+    if (!stuck || retry > 0) return;
   }
 }
 
