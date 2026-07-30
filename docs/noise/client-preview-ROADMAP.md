@@ -248,12 +248,17 @@ issue #9 named, plus Vulcanus rocks). See "WHAT WAS ACTUALLY BUILT" in
 
 M3a follow-ups (known, deferred by priority - 2026-07-20):
 
-- [ ] **Ore excluded from cliffs** (low priority, deferred): resources also collide
-      with cliffs in-game. Cliffs now render (M4, `view: "cliffs"`), but this
-      exclusion is still not wired into `renderResources` - it would reuse the same
-      `WATER_TILE_COLORS`-style pixel-exclusion mechanism, gated on the M4 cliff
-      placement (which is itself only ~94% exact pending the deferred
-      `fixImpossibleCells`, see the M4 section below).
+- [~] **Ore excluded from cliffs** - WITHDRAWN 2026-07-30 (issue #24, PR #57).
+      **There is no exclusion rule to port.** `generateCliffs()` (`0x1016229b4`)
+      calls exactly three functions and touches no tile, entity or resource data,
+      so the game does not exclude ore from cliffs at generation time by any
+      mechanism this could reuse. The observation that started this - cliffs
+      appearing on ore far below the chance rate - also does not survive its own
+      null: region `[0,0]`'s 945 ore tiles are **2 blobs**, not 945 independent
+      samples, and under a torus-shift null two of three regions were not
+      significant at all (P = 0.51, 0.29). The effect is real pooled over nine
+      regions (18/12,533 = 0.14%) but it is a consequence of where cliffs land,
+      not of a rule that keeps them off ore. Do not re-open this as a port.
 - [x] **Oil renders as tiny dots, not patches** - DONE 2026-07-27 (Task 8). Both
       sub-items landed together, which is what the note predicted: (a)
       `renderResources.ts` now applies oil's `random_penalty{source=1,
@@ -309,11 +314,17 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       `factorio --generate-map-preview` render of the same seed/region (95.7%
       spatial agreement at render resolution, using the game's own emitted
       `[144,119,87]` pixels as ground truth). Full writeup: `cliffs-NOTES.md`.
-      **Still deferred** (do not treat as done): `fixImpossibleCells` (the ~6%
-      residual - border-crossing zeroing + impossible-cell rewriting), the exact
-      `wouldCollide` collision rejection (approximated by the existing
-      water-pixel exclusion), and the ore-on-cliff exclusion this unblocks (see the
-      M3a follow-up above). `VoronoiNoise` (layer-1 primitive table below) is
+      **All three items previously listed here as "still deferred" are now
+      retired, and none of them explained the ~6% Nauvis residual** (2026-07-28,
+      the day five stated causes were falsified - see
+      `notes-must-say-how-they-were-measured` and `cliffs-NOTES.md`):
+      `fixImpossibleCells` was **ported** in PR #32 (`dea73ac`,
+      `cliffPlacement.ts:105`, `test/cliffFixImpossibleCells.spec.ts`) and changes
+      **zero** predictions on Nauvis; the exact `wouldCollide` rejection is moot
+      because **no Nauvis cliff touches water at all**; and the ore-on-cliff
+      exclusion was withdrawn outright (see the M3a follow-up above - there is no
+      such rule in the game). The residual is still open and is now believed to be
+      a **rule** error rather than a field error (PR #57). `VoronoiNoise` (layer-1 primitive table below) is
       confirmed **unneeded for Nauvis** - it appears nowhere in the cliff tree or
       any other Nauvis expression traced so far, only on Space-Age planets - so it
       remains un-ported with no open TODO against it.
