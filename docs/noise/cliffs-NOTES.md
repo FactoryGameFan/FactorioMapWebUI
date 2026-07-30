@@ -296,11 +296,37 @@ Three candidate causes were tested **against this metric** and all three fail:
   concentration, despite the ring being exactly where `fixImpossibleCells`
   cannot clear an edge.
 
-**The gap that is now obvious: no field capture covers `[0,0]`.** The
-corner-fields fixture's three regions are `[1500,1500]`, `[1100,2600]` and
+#### That gap is now CLOSED - the fields are exact at `[0,0]` too
+
+The corner-fields fixture's three regions are `[1500,1500]`, `[1100,2600]` and
 `[-1700,1900]` - all calcite regions, chosen for issue #24. So "the fields are
-exact" has been measured where the port is already good (8.1%) and never where
-it is worst (29.8%). That is the next capture.
+exact" had been measured where the port is already good (8.1%) and never where it
+is worst (29.8%). `oracle-vulcanus-cliff-corner-fields-entity-regions` fixes that:
+both fields at every corner of all three **cliff-entity** regions, 12,675 corners,
+captured 2026-07-30.
+
+`[1500,1500]` is deliberately in **both** fixtures. That overlap is the check on
+this capture's corner indexing - an off-by-one there would look exactly like a
+field error at `[0,0]` - and the two agree bit-for-bit on all 4225 shared
+corners.
+
+**Result: the game's own values reproduce ours to the unit, in every region,
+including `[0,0]`.** Same cells placed, same matched, same wrong:
+
+| region | placed | matched | wrong orientation | +3 bias control |
+| --- | --- | --- | --- | --- |
+| `[0,0]` | 335 | 228 | 68 = 29.8% | 78 = 36.4%, 347 placed |
+| `[1500,1500]` | 1065 | 830 | 67 = 8.1% | 122 = 15.4%, 1070 placed |
+| `[-1200,800]` | 375 | 342 | 40 = 11.7% | 60 = 18.9%, 358 placed |
+
+The bias arm moves placement AND orientation in all three, so the substitution is
+live everywhere it is claimed to be. `test/vulcanusCliffCornerFields.spec.ts`
+pins all of it.
+
+**So the entire residual is in the RULE as ported**, and there is no longer any
+input left to suspect: `crossingsForChunk`'s sampling geometry, the
+`cliff_smoothing` knot model, or `crossesCliff` itself. `crossingsForChunk`
+(`0x10160c9cc`, 2244 bytes) is the one that has never been decompiled whole.
 
 ### `EntityMapGenerationTask::generateCliffs` - full body read 2026-07-30
 

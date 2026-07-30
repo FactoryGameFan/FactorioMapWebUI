@@ -263,6 +263,10 @@
     "tree-expressions.2.1.11.json": {
       "factorioVersion": "2.1.11",
       "evidence": "the version is in the filename, and in the commit that added it"
+    },
+    "oracle-vulcanus-cliff-corner-fields-entity-regions.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-07-30 by test/oracle/capture.ts vulcanus-cliff-corner-fields-entity-regions against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Companion to oracle-vulcanus-cliff-corner-fields.seed123456.json at the three regions oracle-vulcanus-cliff-entities covers; the two share region [1500,1500] and agree bit-for-bit on all 4225 of its corners, which test/vulcanusCliffCornerFields.spec.ts asserts as a check on this capture's corner indexing."
     }
   }
 }
