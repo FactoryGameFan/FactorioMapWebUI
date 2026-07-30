@@ -348,6 +348,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           tilesPerPixel: req.tilesPerPixel,
           ctx: { startingPositions: req.startingPositions },
           cellQueryBox: cliffCellQueryBox(req),
+          sharedStack: stack,
         });
       }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
