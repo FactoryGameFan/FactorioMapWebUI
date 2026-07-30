@@ -257,8 +257,36 @@ Two settings whose reasoning is not guessable from the outside:
   whole section exists to prevent. 25 hours clears pnpm and still drops the wait
   from 3 days to ~1.
 
-Branch protection on `main` is **not** configured. It is the natural follow-up
-now that a check exists, but it is a repository setting rather than a file.
+### Branch protection is a **ruleset**, and one Renovate rule depends on it
+
+`main` is protected by a repository ruleset named **`EJ`** (2026-07-30, issue
+#60), not by classic branch protection. Read it with
+`gh api repos/wormeyman/FactorioMapWebUI/rules/branches/main` - the classic
+`/branches/main/protection` endpoint returns **404**, which looks exactly like
+"unprotected" and is not.
+
+| rule                           |                                      |
+| ------------------------------ | ------------------------------------ |
+| `pull_request`                 | `required_approving_review_count: 0` |
+| `required_status_checks`       | `verify`, `strict: true`             |
+| `deletion`, `non_fast_forward` | blocked                              |
+| `bypass_actors`                | **empty** - binds the owner too      |
+
+Two things here are load-bearing and easy to break by "tidying":
+
+- **The review count is 0 on purpose.** GitHub does not let you approve your own
+  PR, so `1` would make `main` unmergeable by its only maintainer - a lockout
+  that looks like correct hardening until the first PR.
+- **`strict: true` is what makes the Renovate automerge rule safe.** With strict
+  checks a PR cannot merge having passed against a different `main` than the one
+  it lands on. `.github/renovate.json5` automerges GitHub **Action digest
+  re-pins** and only those; if bypass actors are ever added, `verify` dropped, or
+  strict turned off, **that rule must be removed in the same change.** It is not
+  independently safe, and the config says so at the rule.
+
+Everything else stays `automerge: false`, because `verify` proves the repo is
+consistent, not that a bump is correct - see the pako table above for the year-long
+wrong belief that a green suite endorsed.
 
 #### `testTimeout` is 30s, deliberately, and retries are not used
 
