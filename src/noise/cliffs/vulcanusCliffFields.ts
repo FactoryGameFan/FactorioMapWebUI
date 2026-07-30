@@ -36,6 +36,7 @@ import { makeVulcanusElevation } from "../expressions/vulcanusElevation";
 import { makeVulcanusHelpers } from "../expressions/vulcanusHelpers";
 import { makeVulcanusSpawn } from "../expressions/vulcanusSpawn";
 import { quickMultioctaveNoise } from "../quickMultioctaveNoise";
+import type { VulcanusStack } from "../tiles/vulcanusCatalog";
 import type { CliffFields } from "./cliffPlacement";
 
 /** `cliff_elevation_0` from `planet_map_gen.vulcanus()`'s `cliff_settings`. */
@@ -118,13 +119,19 @@ export function makeCliffinessBasic(
  * `cliff_elevation_from_elevation` resolves to once the planet has routed the
  * `elevation` property at `vulcanus_elevation`.
  */
-export function makeVulcanusCliffFields(ctx: EvalCtx): CliffFields {
-  const helpers = makeVulcanusHelpers(ctx);
-  const spawn = makeVulcanusSpawn(ctx, helpers);
-  const cracks = makeVulcanusCracks(ctx, helpers);
-  const biomes = makeVulcanusBiomes(ctx, helpers, spawn, cracks);
-  const climate = makeVulcanusClimate(ctx, helpers, cracks);
-  const elevation = makeVulcanusElevation(ctx, helpers, biomes, cracks, climate);
+export function makeVulcanusCliffFields(ctx: EvalCtx, shared?: VulcanusStack): CliffFields {
+  // Same seam `makeVulcanusRockFields` uses: reuse the composite's one stack
+  // when there is one, and build a private DAG only for a standalone call.
+  const elevation =
+    shared?.elevation ??
+    (() => {
+      const helpers = makeVulcanusHelpers(ctx);
+      const spawn = makeVulcanusSpawn(ctx, helpers);
+      const cracks = makeVulcanusCracks(ctx, helpers);
+      const biomes = makeVulcanusBiomes(ctx, helpers, spawn, cracks);
+      const climate = makeVulcanusClimate(ctx, helpers, cracks);
+      return makeVulcanusElevation(ctx, helpers, biomes, cracks, climate);
+    })();
 
   return {
     cliffElevation: (x, y) => elevation.elevation(x, y),

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { crossesCliff, makeCliffPlacement } from "../src/noise/cliffs/cliffPlacement";
+import { NAUVIS_CLIFF_BLOCKING_TILES } from "../src/noise/preview/renderCliffs";
+import { makeTileResolver } from "../src/noise/tiles/resolve";
 import entFixture from "./fixtures/oracle-cliff-entities.seed123456.json";
 
 const key = (p: { x: number; y: number }) => `${p.x},${p.y}`;
@@ -102,5 +104,59 @@ describe("cliff placement vs find_entities (~94% drift guard)", () => {
       expect(precision).toBe(1);
       expect(predicted.size).toBe(actual.length);
     });
+
+    /**
+     * The same run with the game's tile-collision rejection turned on, which the
+     * Nauvis renderer does NOT ship (it skips water-coloured pixels at paint
+     * time instead - cheaper, and visually identical while this holds).
+     *
+     * The claim being guarded is "no Nauvis cliff's collision box touches water",
+     * which is why skipping the rejection there is safe. That was measured once,
+     * in passing, while ruling `wouldCollide` moot for Nauvis; a remembered
+     * measurement is exactly the kind of thing this project has been burned by,
+     * so it is now a standing check. If a future change to the elevation tree or
+     * to water's autoplace makes it stop holding, this fails and the Nauvis
+     * renderer needs the rejection wiring in for real.
+     */
+    it(`stays exact with the tile-collision rejection enabled, seed=${c.seed}`, () => {
+      const r = entFixture.region;
+      const resolveTile = makeTileResolver({ seed0: c.seed });
+      let calls = 0;
+      let waterHits = 0;
+      const isWater = (x: number, y: number): boolean => {
+        calls++;
+        const water = NAUVIS_CLIFF_BLOCKING_TILES.has(resolveTile(x, y).name);
+        if (water) waterHits++;
+        return water;
+      };
+      const settings = {
+        seed0: c.seed,
+        controls: { frequency: 1, continuity: 1 },
+        settings: { cliffElevation0: 10, cliffElevationInterval: 40, richness: 1 },
+      };
+      const plain = makeCliffPlacement(settings).placedCells(r.x0, r.y0, r.x1, r.y1);
+      const gated = makeCliffPlacement(settings, { tileCollides: isWater }).placedCells(
+        r.x0,
+        r.y0,
+        r.x1,
+        r.y1,
+      );
+
+      expect(gated.map(key)).toEqual(plain.map(key));
+
+      // **Non-vacuity, three ways.** "The gated and ungated lists are equal"
+      // would also pass if `tileCollides` were silently ignored, if the
+      // predicate were never called, or if this seed's region simply had no
+      // water. So: the predicate ran (at least one box tile per placed cell),
+      // it found no water under any cliff, and the SAME resolver does find
+      // water elsewhere in the region.
+      expect(calls).toBeGreaterThanOrEqual(plain.length);
+      expect(waterHits).toBe(0);
+      let waterInRegion = 0;
+      for (let x = r.x0; x < r.x1; x += 8)
+        for (let y = r.y0; y < r.y1; y += 8)
+          if (NAUVIS_CLIFF_BLOCKING_TILES.has(resolveTile(x, y).name)) waterInRegion++;
+      expect(waterInRegion).toBeGreaterThan(0);
+    }, 120000);
   }
 });

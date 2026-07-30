@@ -13,6 +13,7 @@ import {
   CLIFF_CELL_CENTER_X,
   CLIFF_CELL_CENTER_Y,
   CLIFF_GRID_SIZE,
+  cliffCollisionTileBox,
   getModifiedElevationInterval,
   isCliffPlaced,
 } from "./cliffCatalog";
@@ -90,6 +91,29 @@ export interface CliffBands {
   readonly fixImpossibleCells?: boolean;
   /** When true, `placedCells` returns nothing (continuity or richness is 0). */
   readonly disabled?: boolean;
+  /**
+   * The game's tile-collision rejection: return `true` for a tile a cliff cannot
+   * occupy. Omit it and no rejection runs, which is what every caller did before
+   * 2026-07-30.
+   *
+   * `EntityMapGenerationTask::tryToAddCliff` (`0x101625038`) looks up the cell's
+   * orientation, takes that orientation's `collision_bounding_box`, and calls
+   * `wouldCollide` (`0x101625468`) against the tile mask grid; on a hit the
+   * cliff is simply **not added**. `generateCliffs` ignores the return value
+   * entirely - there is no retry, no alternative orientation, and no effect on
+   * the neighbouring cells - so this is a pure post-filter on the emit loop,
+   * which is why it can run per-cell in any order and leaves tiling
+   * byte-identical.
+   *
+   * Which tiles collide is planet-specific but the rule is not: a tile collides
+   * when its `CollisionMask` shares a layer with the cliff's. The cliff mask
+   * holds `water_tile`, so on Nauvis that is water and on Vulcanus it is
+   * `lava` / `lava-hot` (whose `tile_collision_masks.lava()` sets `water_tile`).
+   *
+   * The predicate is called with **integer tile coordinates**, up to ~30 per
+   * placed cell, and only for cells that are actually placed.
+   */
+  readonly tileCollides?: (x: number, y: number) => boolean;
 }
 
 /** Cells per chunk axis: a 32-tile chunk over the 4-tile placement grid. */
@@ -202,7 +226,10 @@ export interface CliffPlacement {
  * enumerates the 4-tile placement grid over a world box and returns the
  * center `{x,y}` of every cell whose crossing code places a cliff.
  */
-export function makeCliffPlacement(ctx: CliffFieldCtx): CliffPlacement {
+export function makeCliffPlacement(
+  ctx: CliffFieldCtx,
+  opts: Pick<CliffBands, "tileCollides"> = {},
+): CliffPlacement {
   return makeCliffPlacementFromFields(makeCliffFields(ctx), {
     elevation0: ctx.settings.cliffElevation0,
     interval: getModifiedElevationInterval(
@@ -210,6 +237,7 @@ export function makeCliffPlacement(ctx: CliffFieldCtx): CliffPlacement {
       ctx.controls.frequency,
     ),
     disabled: ctx.controls.continuity === 0 || ctx.settings.richness === 0,
+    tileCollides: opts.tileCollides,
   });
 }
 
@@ -225,6 +253,22 @@ export function makeCliffPlacementFromFields(
   const { cliffElevation, cliffiness } = fields;
   const { elevation0: e0, interval } = bands;
   const smoothing = bands.smoothing ?? 0;
+  const tileCollides = bands.tileCollides;
+
+  /**
+   * `tryToAddCliff`'s rejection, as a predicate on an already-placed cell: scan
+   * the orientation's collision box and drop the cell if any tile in it collides.
+   * With no `tileCollides` supplied this is a constant `false` and costs nothing.
+   */
+  const rejected = (code: number, x: number, y: number): boolean => {
+    if (tileCollides === undefined) return false;
+    const box = cliffCollisionTileBox(code, x, y);
+    // `undefined` only for a code that places nothing, which cannot reach here.
+    if (box === undefined) return false;
+    for (let tx = box.left; tx <= box.right; tx++)
+      for (let ty = box.top; ty <= box.bottom; ty++) if (tileCollides(tx, ty)) return true;
+    return false;
+  };
 
   return {
     placedCells(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] {
@@ -367,7 +411,12 @@ export function makeCliffPlacementFromFields(
                 if (!isCliffPlaced(code)) continue;
                 const x = (baseX + cx) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_X;
                 const y = (baseY + cy) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_Y;
-                if (x >= x0 && x < x1 && y >= y0 && y < y1) result.push({ x, y });
+                // Bounds-test BEFORE the collision test: the rejection is the
+                // expensive half (it resolves tiles), and a chunk always
+                // overhangs the query box.
+                if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
+                if (rejected(code, x, y)) continue;
+                result.push({ x, y });
               }
             }
           }
@@ -393,9 +442,9 @@ export function makeCliffPlacementFromFields(
 
           const x = cx * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_X;
           const y = cy * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_Y;
-          if (x >= x0 && x < x1 && y >= y0 && y < y1) {
-            result.push({ x, y });
-          }
+          if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
+          if (rejected(code, x, y)) continue;
+          result.push({ x, y });
         }
       }
       return result;

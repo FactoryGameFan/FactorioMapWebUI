@@ -27,6 +27,20 @@ import {
 } from "../cliffs/cliffCatalog";
 import { WATER_TILE_COLORS } from "./renderResources";
 
+/**
+ * The Nauvis tiles whose `CollisionMask` shares a layer with the cliff's - the
+ * planet's answer to `VULCANUS_CLIFF_BLOCKING_TILES`. `tile_collision_masks.water()`
+ * sets `water_tile`, which the cliff mask holds.
+ *
+ * **`renderCliffs` does not use this, on purpose.** It skips water-COLOURED
+ * pixels as it paints, which is cheaper (no tile resolution at all) and visually
+ * identical for as long as no Nauvis cliff's collision box actually touches
+ * water - which is measured, and now guarded, in `test/cliffPlacement.spec.ts`.
+ * If that guard ever fails, the placement pass here needs the real
+ * `tileCollides` rejection and this set is what to pass it.
+ */
+export const NAUVIS_CLIFF_BLOCKING_TILES: ReadonlySet<string> = new Set(["water", "deepwater"]);
+
 export interface RenderCliffsOptions {
   readonly seed0: number;
   /** World tile at the top-left pixel. Default (0, 0). */
