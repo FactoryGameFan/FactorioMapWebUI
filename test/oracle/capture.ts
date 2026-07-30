@@ -1430,7 +1430,7 @@ async function captureCliffEntities(): Promise<void> {
   }
   const fixture = {
     _comment:
-      "Ground truth from Factorio 2.1.11 via test/oracle. Every cliff entity (find_entities_filtered{type='cliff'}) the game placed in the region at the DEFAULT preset, after chunk-forced generation. Positions are cliff cell centers (x mod 4 == 2, y mod 4 == 2.5). The CI spec runs makeCliffPlacement().placedCells over region and asserts >= 85% of these are reproduced (residual = deferred fixImpossibleCells + water rejection). Regenerate: node --experimental-strip-types test/oracle/capture.ts cliff-entities",
+      "Ground truth from Factorio 2.1.12 via test/oracle. Every cliff entity (find_entities_filtered{type='cliff'}) the game placed in the region at the DEFAULT preset, after chunk-forced generation. Positions are cliff cell centers (x mod 4 == 2, y mod 4 == 2.5). Each entry also carries the entity's `orientation` (LuaEntity.cliff_orientation), which makes this a direct end-to-end oracle for CLIFF_CODE_TO_ORIENTATION - see test/cliffOrientationOracle.spec.ts. Re-captured 2026-07-30 at 2.1.12 to add that field; it reproduced the 2.1.11 capture's 282 and 52 positions exactly, in the same order, so Nauvis cliff placement did not move between those versions. The CI spec runs makeCliffPlacement().placedCells over region; it now matches 1.0000 in both directions, not the >= 85% this line used to describe. Regenerate: node --experimental-strip-types test/oracle/capture.ts cliff-entities",
     region,
     cases,
   };
@@ -2551,7 +2551,12 @@ async function captureVulcanusCliffEntities(): Promise<void> {
       "Ground truth from Factorio 2.1.12 via test/oracle. Every cliff entity " +
       "(find_entities_filtered{type='cliff'}) the game placed in each region on VULCANUS at the " +
       "DEFAULT preset, after chunk-forced generation. Positions are cliff cell centers on the " +
-      "4-tile grid. Sampled on a create_surface() surface whose seed is FORCED to `seed` (like " +
+      "4-tile grid, and each entry carries the entity's `orientation` " +
+      "(LuaEntity.cliff_orientation), added 2026-07-30 - it makes this a direct end-to-end " +
+      "oracle for CLIFF_CODE_TO_ORIENTATION (see test/cliffOrientationOracle.spec.ts) and gives " +
+      "the true collision box for cliffs the port does NOT place, which is otherwise " +
+      "unobtainable. The re-capture reproduced the 2026-07-28 positions exactly. Sampled on a " +
+      "create_surface() surface whose seed is FORCED to `seed` (like " +
       "every other Vulcanus oracle fixture), not the derived mapSeed + crc32('vulcanus') - so a " +
       "comparing spec builds its ctx from `seed` directly. Compared against " +
       "makeVulcanusCliffFields + makeCliffPlacementFromFields in " +

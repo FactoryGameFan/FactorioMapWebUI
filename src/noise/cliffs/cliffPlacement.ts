@@ -217,8 +217,23 @@ export function smoothingKnots(index: number): { lo: number; hi: number; t: numb
   return { lo: base + lo, hi: base + hi, t: (i & 3) / (hi - lo) };
 }
 
+/**
+ * A placed cliff: the cell centre, plus the 8-bit edge-crossing `code` it was
+ * placed by. The code is carried out rather than discarded because it is the
+ * only thing that names the cliff's ORIENTATION, and therefore its collision
+ * box - `cliffOrientationForCode(code)`. Every consumer that only wants
+ * positions can ignore it; `test/cliffOrientationOracle.spec.ts` compares it
+ * against the game's own `LuaEntity.cliff_orientation`, which is what makes
+ * `CLIFF_CODE_TO_ORIENTATION` checkable against something outside this port.
+ */
+export interface PlacedCliffCell {
+  readonly x: number;
+  readonly y: number;
+  readonly code: number;
+}
+
 export interface CliffPlacement {
-  placedCells(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[];
+  placedCells(x0: number, y0: number, x1: number, y1: number): PlacedCliffCell[];
 }
 
 /**
@@ -271,7 +286,7 @@ export function makeCliffPlacementFromFields(
   };
 
   return {
-    placedCells(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] {
+    placedCells(x0: number, y0: number, x1: number, y1: number): PlacedCliffCell[] {
       if (bands.disabled === true) return [];
 
       const raw = new Map<string, number>();
@@ -367,7 +382,7 @@ export function makeCliffPlacementFromFields(
         // recomputing the edges it shares with its neighbours, which both
         // chunks own a private copy of. That is what makes the result
         // independent of the query box, so worker tiling stays byte-identical.
-        const result: { x: number; y: number }[] = [];
+        const result: PlacedCliffCell[] = [];
         const chunkX0 = Math.floor(cxMin / CHUNK_CELLS);
         const chunkX1 = Math.floor(cxMax / CHUNK_CELLS);
         const chunkY0 = Math.floor(cyMin / CHUNK_CELLS);
@@ -416,7 +431,7 @@ export function makeCliffPlacementFromFields(
                 // overhangs the query box.
                 if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
                 if (rejected(code, x, y)) continue;
-                result.push({ x, y });
+                result.push({ x, y, code });
               }
             }
           }
@@ -424,7 +439,7 @@ export function makeCliffPlacementFromFields(
         return result;
       }
 
-      const result: { x: number; y: number }[] = [];
+      const result: PlacedCliffCell[] = [];
       for (let cy = cyMin; cy <= cyMax; cy++) {
         for (let cx = cxMin; cx <= cxMax; cx++) {
           const cx0y0 = corner(cx, cy);
@@ -444,7 +459,7 @@ export function makeCliffPlacementFromFields(
           const y = cy * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_Y;
           if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
           if (rejected(code, x, y)) continue;
-          result.push({ x, y });
+          result.push({ x, y, code });
         }
       }
       return result;

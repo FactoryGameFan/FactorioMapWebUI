@@ -1,5 +1,5 @@
 {
-  "_comment": "Ground truth from Factorio 2.1.11 via test/oracle. Every cliff entity (find_entities_filtered{type='cliff'}) the game placed in the region at the DEFAULT preset, after chunk-forced generation. Positions are cliff cell centers (x mod 4 == 2, y mod 4 == 2.5). The CI spec runs makeCliffPlacement().placedCells over region and asserts >= 85% of these are reproduced (residual = deferred fixImpossibleCells + water rejection). Regenerate: node --experimental-strip-types test/oracle/capture.ts cliff-entities",
+  "_comment": "Ground truth from Factorio 2.1.12 via test/oracle. Every cliff entity (find_entities_filtered{type='cliff'}) the game placed in the region at the DEFAULT preset, after chunk-forced generation. Positions are cliff cell centers (x mod 4 == 2, y mod 4 == 2.5). Each entry also carries the entity's `orientation` (LuaEntity.cliff_orientation), which makes this a direct end-to-end oracle for CLIFF_CODE_TO_ORIENTATION - see test/cliffOrientationOracle.spec.ts. Re-captured 2026-07-30 at 2.1.12 to add that field; it reproduced the 2.1.11 capture's 282 and 52 positions exactly, in the same order, so Nauvis cliff placement did not move between those versions. The CI spec runs makeCliffPlacement().placedCells over region; it now matches 1.0000 in both directions, not the >= 85% this line used to describe. Regenerate: node --experimental-strip-types test/oracle/capture.ts cliff-entities",
   "region": {
     "x0": 512,
     "y0": 512,
@@ -12,1131 +12,1695 @@
       "cliffs": [
         {
           "x": 898,
-          "y": 514.5
+          "y": 514.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 902,
-          "y": 514.5
+          "y": 514.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 978,
-          "y": 514.5
+          "y": 514.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 982,
-          "y": 514.5
+          "y": 514.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1014,
-          "y": 514.5
+          "y": 514.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 894,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 898,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 982,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 986,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 990,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1014,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1018,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 890,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 894,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 990,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 994,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1018,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 882,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 886,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 890,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 994,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1018,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "north-to-none"
         },
         {
           "x": 854,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 858,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 862,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 866,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 870,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 874,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 878,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 882,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 994,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 998,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 1018,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "none-to-south"
         },
         {
           "x": 850,
-          "y": 534.5
+          "y": 534.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 854,
-          "y": 534.5
+          "y": 534.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 1018,
-          "y": 534.5
+          "y": 534.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 846,
-          "y": 538.5
+          "y": 538.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 850,
-          "y": 538.5
+          "y": 538.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 998,
-          "y": 538.5
+          "y": 538.5,
+          "name": "cliff",
+          "orientation": "south-to-none"
         },
         {
           "x": 1018,
-          "y": 538.5
+          "y": 538.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 994,
-          "y": 542.5
+          "y": 542.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 998,
-          "y": 542.5
+          "y": 542.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 1014,
-          "y": 542.5
+          "y": 542.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 1018,
-          "y": 542.5
+          "y": 542.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 994,
-          "y": 546.5
+          "y": 546.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 994,
-          "y": 550.5
+          "y": 550.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1014,
-          "y": 550.5
+          "y": 550.5,
+          "name": "cliff",
+          "orientation": "none-to-south"
         },
         {
           "x": 994,
-          "y": 554.5
+          "y": 554.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1010,
-          "y": 554.5
+          "y": 554.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 1014,
-          "y": 554.5
+          "y": 554.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 994,
-          "y": 558.5
+          "y": 558.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1010,
-          "y": 558.5
+          "y": 558.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 994,
-          "y": 562.5
+          "y": 562.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1010,
-          "y": 562.5
+          "y": 562.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 814,
-          "y": 566.5
+          "y": 566.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 818,
-          "y": 566.5
+          "y": 566.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 994,
-          "y": 566.5
+          "y": 566.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1010,
-          "y": 566.5
+          "y": 566.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 806,
-          "y": 570.5
+          "y": 570.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 810,
-          "y": 570.5
+          "y": 570.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 814,
-          "y": 570.5
+          "y": 570.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 994,
-          "y": 570.5
+          "y": 570.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1010,
-          "y": 570.5
+          "y": 570.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 798,
-          "y": 574.5
+          "y": 574.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 802,
-          "y": 574.5
+          "y": 574.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 806,
-          "y": 574.5
+          "y": 574.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 994,
-          "y": 574.5
+          "y": 574.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1010,
-          "y": 574.5
+          "y": 574.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 794,
-          "y": 578.5
+          "y": 578.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 798,
-          "y": 578.5
+          "y": 578.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 994,
-          "y": 578.5
+          "y": 578.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1010,
-          "y": 578.5
+          "y": 578.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 786,
-          "y": 582.5
+          "y": 582.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 790,
-          "y": 582.5
+          "y": 582.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 794,
-          "y": 582.5
+          "y": 582.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 994,
-          "y": 582.5
+          "y": 582.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1010,
-          "y": 582.5
+          "y": 582.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 782,
-          "y": 586.5
+          "y": 586.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 786,
-          "y": 586.5
+          "y": 586.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 994,
-          "y": 586.5
+          "y": 586.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 998,
-          "y": 586.5
+          "y": 586.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1010,
-          "y": 586.5
+          "y": 586.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1014,
-          "y": 586.5
+          "y": 586.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 750,
-          "y": 590.5
+          "y": 590.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 754,
-          "y": 590.5
+          "y": 590.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 758,
-          "y": 590.5
+          "y": 590.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 762,
-          "y": 590.5
+          "y": 590.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 998,
-          "y": 590.5
+          "y": 590.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1014,
-          "y": 590.5
+          "y": 590.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 750,
-          "y": 594.5
+          "y": 594.5,
+          "name": "cliff",
+          "orientation": "north-to-none"
         },
         {
           "x": 994,
-          "y": 594.5
+          "y": 594.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 998,
-          "y": 594.5
+          "y": 594.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 1014,
-          "y": 594.5
+          "y": 594.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 742,
-          "y": 598.5
+          "y": 598.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 746,
-          "y": 598.5
+          "y": 598.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 994,
-          "y": 598.5
+          "y": 598.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1014,
-          "y": 598.5
+          "y": 598.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1018,
-          "y": 598.5
+          "y": 598.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 738,
-          "y": 602.5
+          "y": 602.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 742,
-          "y": 602.5
+          "y": 602.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 990,
-          "y": 602.5
+          "y": 602.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 994,
-          "y": 602.5
+          "y": 602.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 1018,
-          "y": 602.5
+          "y": 602.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 738,
-          "y": 606.5
+          "y": 606.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 982,
-          "y": 606.5
+          "y": 606.5,
+          "name": "cliff",
+          "orientation": "none-to-east"
         },
         {
           "x": 986,
-          "y": 606.5
+          "y": 606.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 990,
-          "y": 606.5
+          "y": 606.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 1018,
-          "y": 606.5
+          "y": 606.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 734,
-          "y": 610.5
+          "y": 610.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 738,
-          "y": 610.5
+          "y": 610.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 1018,
-          "y": 610.5
+          "y": 610.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 734,
-          "y": 614.5
+          "y": 614.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 1018,
-          "y": 614.5
+          "y": 614.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1022,
-          "y": 614.5
+          "y": 614.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 734,
-          "y": 618.5
+          "y": 618.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 1022,
-          "y": 618.5
+          "y": 618.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 734,
-          "y": 622.5
+          "y": 622.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 738,
-          "y": 622.5
+          "y": 622.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 1022,
-          "y": 622.5
+          "y": 622.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 738,
-          "y": 626.5
+          "y": 626.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 1022,
-          "y": 626.5
+          "y": 626.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 738,
-          "y": 630.5
+          "y": 630.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 1022,
-          "y": 630.5
+          "y": 630.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 738,
-          "y": 634.5
+          "y": 634.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 1022,
-          "y": 634.5
+          "y": 634.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 738,
-          "y": 638.5
+          "y": 638.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 1022,
-          "y": 638.5
+          "y": 638.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 738,
-          "y": 642.5
+          "y": 642.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 1022,
-          "y": 642.5
+          "y": 642.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 738,
-          "y": 646.5
+          "y": 646.5,
+          "name": "cliff",
+          "orientation": "north-to-none"
         },
         {
           "x": 694,
-          "y": 694.5
+          "y": 694.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 698,
-          "y": 694.5
+          "y": 694.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 690,
-          "y": 698.5
+          "y": 698.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 694,
-          "y": 698.5
+          "y": 698.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 682,
-          "y": 702.5
+          "y": 702.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 686,
-          "y": 702.5
+          "y": 702.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 690,
-          "y": 702.5
+          "y": 702.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 674,
-          "y": 706.5
+          "y": 706.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 678,
-          "y": 706.5
+          "y": 706.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 682,
-          "y": 706.5
+          "y": 706.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 666,
-          "y": 710.5
+          "y": 710.5,
+          "name": "cliff",
+          "orientation": "none-to-south"
         },
         {
           "x": 670,
-          "y": 710.5
+          "y": 710.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 674,
-          "y": 710.5
+          "y": 710.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 650,
-          "y": 714.5
+          "y": 714.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 654,
-          "y": 714.5
+          "y": 714.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 658,
-          "y": 714.5
+          "y": 714.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 662,
-          "y": 714.5
+          "y": 714.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 666,
-          "y": 714.5
+          "y": 714.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 634,
-          "y": 718.5
+          "y": 718.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 638,
-          "y": 718.5
+          "y": 718.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 642,
-          "y": 718.5
+          "y": 718.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 646,
-          "y": 718.5
+          "y": 718.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 650,
-          "y": 718.5
+          "y": 718.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 622,
-          "y": 722.5
+          "y": 722.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 626,
-          "y": 722.5
+          "y": 722.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 630,
-          "y": 722.5
+          "y": 722.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 634,
-          "y": 722.5
+          "y": 722.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 550,
-          "y": 730.5
+          "y": 730.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 554,
-          "y": 730.5
+          "y": 730.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 558,
-          "y": 730.5
+          "y": 730.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 562,
-          "y": 730.5
+          "y": 730.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 566,
-          "y": 730.5
+          "y": 730.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 570,
-          "y": 730.5
+          "y": 730.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 574,
-          "y": 730.5
+          "y": 730.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 578,
-          "y": 730.5
+          "y": 730.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 862,
-          "y": 814.5
+          "y": 814.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 866,
-          "y": 814.5
+          "y": 814.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 870,
-          "y": 814.5
+          "y": 814.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 874,
-          "y": 814.5
+          "y": 814.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 878,
-          "y": 814.5
+          "y": 814.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 882,
-          "y": 814.5
+          "y": 814.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 886,
-          "y": 814.5
+          "y": 814.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 890,
-          "y": 814.5
+          "y": 814.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 894,
-          "y": 814.5
+          "y": 814.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 862,
-          "y": 818.5
+          "y": 818.5,
+          "name": "cliff",
+          "orientation": "north-to-none"
         },
         {
           "x": 894,
-          "y": 818.5
+          "y": 818.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 898,
-          "y": 818.5
+          "y": 818.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 902,
-          "y": 818.5
+          "y": 818.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 902,
-          "y": 822.5
+          "y": 822.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 906,
-          "y": 822.5
+          "y": 822.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 910,
-          "y": 822.5
+          "y": 822.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 926,
-          "y": 834.5
+          "y": 834.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 930,
-          "y": 834.5
+          "y": 834.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 930,
-          "y": 838.5
+          "y": 838.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 934,
-          "y": 838.5
+          "y": 838.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 938,
-          "y": 838.5
+          "y": 838.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 938,
-          "y": 842.5
+          "y": 842.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 942,
-          "y": 842.5
+          "y": 842.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1014,
-          "y": 842.5
+          "y": 842.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 1018,
-          "y": 842.5
+          "y": 842.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 1022,
-          "y": 842.5
+          "y": 842.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 942,
-          "y": 846.5
+          "y": 846.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 946,
-          "y": 846.5
+          "y": 846.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1010,
-          "y": 846.5
+          "y": 846.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 1014,
-          "y": 846.5
+          "y": 846.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 946,
-          "y": 850.5
+          "y": 850.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1006,
-          "y": 850.5
+          "y": 850.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 1010,
-          "y": 850.5
+          "y": 850.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 946,
-          "y": 854.5
+          "y": 854.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 950,
-          "y": 854.5
+          "y": 854.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 1006,
-          "y": 854.5
+          "y": 854.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 1002,
-          "y": 858.5
+          "y": 858.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 1006,
-          "y": 858.5
+          "y": 858.5,
+          "name": "cliff",
+          "orientation": "north-to-west"
         },
         {
           "x": 1002,
-          "y": 862.5
+          "y": 862.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 954,
-          "y": 866.5
+          "y": 866.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 958,
-          "y": 866.5
+          "y": 866.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1002,
-          "y": 866.5
+          "y": 866.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 958,
-          "y": 870.5
+          "y": 870.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 962,
-          "y": 870.5
+          "y": 870.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1002,
-          "y": 870.5
+          "y": 870.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 962,
-          "y": 874.5
+          "y": 874.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 966,
-          "y": 874.5
+          "y": 874.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1002,
-          "y": 874.5
+          "y": 874.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 966,
-          "y": 878.5
+          "y": 878.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1002,
-          "y": 878.5
+          "y": 878.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 966,
-          "y": 882.5
+          "y": 882.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 970,
-          "y": 882.5
+          "y": 882.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 1002,
-          "y": 882.5
+          "y": 882.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 970,
-          "y": 886.5
+          "y": 886.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1002,
-          "y": 886.5
+          "y": 886.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 970,
-          "y": 890.5
+          "y": 890.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1002,
-          "y": 890.5
+          "y": 890.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 970,
-          "y": 894.5
+          "y": 894.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1002,
-          "y": 894.5
+          "y": 894.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 970,
-          "y": 898.5
+          "y": 898.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1002,
-          "y": 898.5
+          "y": 898.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 970,
-          "y": 902.5
+          "y": 902.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1002,
-          "y": 902.5
+          "y": 902.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 970,
-          "y": 906.5
+          "y": 906.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1002,
-          "y": 906.5
+          "y": 906.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 970,
-          "y": 910.5
+          "y": 910.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1002,
-          "y": 910.5
+          "y": 910.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 966,
-          "y": 914.5
+          "y": 914.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 970,
-          "y": 914.5
+          "y": 914.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 1002,
-          "y": 914.5
+          "y": 914.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 966,
-          "y": 918.5
+          "y": 918.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1002,
-          "y": 918.5
+          "y": 918.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 962,
-          "y": 922.5
+          "y": 922.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 966,
-          "y": 922.5
+          "y": 922.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 1002,
-          "y": 922.5
+          "y": 922.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1006,
-          "y": 922.5
+          "y": 922.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 910,
-          "y": 926.5
+          "y": 926.5,
+          "name": "cliff",
+          "orientation": "south-to-none"
         },
         {
           "x": 962,
-          "y": 926.5
+          "y": 926.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 1006,
-          "y": 926.5
+          "y": 926.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 838,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "none-to-south"
         },
         {
           "x": 890,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 894,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 898,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 902,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 906,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 910,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 958,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 962,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 1006,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1010,
-          "y": 930.5
+          "y": 930.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 838,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 842,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 882,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "none-to-east"
         },
         {
           "x": 886,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 890,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 934,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "none-to-east"
         },
         {
           "x": 938,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 954,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 958,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 1010,
-          "y": 934.5
+          "y": 934.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 842,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 846,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 850,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 854,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 858,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 862,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-none"
         },
         {
           "x": 938,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 942,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 946,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 950,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 954,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 1010,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1014,
-          "y": 938.5
+          "y": 938.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 1014,
-          "y": 942.5
+          "y": 942.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1018,
-          "y": 942.5
+          "y": 942.5,
+          "name": "cliff",
+          "orientation": "west-to-east"
         },
         {
           "x": 1022,
-          "y": 942.5
+          "y": 942.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 1022,
-          "y": 946.5
+          "y": 946.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         }
       ]
     },
@@ -1145,211 +1709,315 @@
       "cliffs": [
         {
           "x": 898,
-          "y": 514.5
+          "y": 514.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 938,
-          "y": 514.5
+          "y": 514.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 942,
-          "y": 514.5
+          "y": 514.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 898,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 902,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 938,
-          "y": 518.5
+          "y": 518.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 846,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 850,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 854,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 858,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "none-to-west"
         },
         {
           "x": 902,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 934,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 938,
-          "y": 522.5
+          "y": 522.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 862,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "east-to-none"
         },
         {
           "x": 866,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "east-to-west"
         },
         {
           "x": 870,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 902,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 934,
-          "y": 526.5
+          "y": 526.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 870,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 874,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 902,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 934,
-          "y": 530.5
+          "y": 530.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 874,
-          "y": 534.5
+          "y": 534.5,
+          "name": "cliff",
+          "orientation": "east-to-north"
         },
         {
           "x": 878,
-          "y": 534.5
+          "y": 534.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 902,
-          "y": 534.5
+          "y": 534.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 930,
-          "y": 534.5
+          "y": 534.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 934,
-          "y": 534.5
+          "y": 534.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 878,
-          "y": 538.5
+          "y": 538.5,
+          "name": "cliff",
+          "orientation": "none-to-north"
         },
         {
           "x": 902,
-          "y": 538.5
+          "y": 538.5,
+          "name": "cliff",
+          "orientation": "north-to-south"
         },
         {
           "x": 930,
-          "y": 538.5
+          "y": 538.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 902,
-          "y": 542.5
+          "y": 542.5,
+          "name": "cliff",
+          "orientation": "north-to-none"
         },
         {
           "x": 926,
-          "y": 542.5
+          "y": 542.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 930,
-          "y": 542.5
+          "y": 542.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 926,
-          "y": 546.5
+          "y": 546.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 922,
-          "y": 550.5
+          "y": 550.5,
+          "name": "cliff",
+          "orientation": "south-to-east"
         },
         {
           "x": 926,
-          "y": 550.5
+          "y": 550.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 922,
-          "y": 554.5
+          "y": 554.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 922,
-          "y": 558.5
+          "y": 558.5,
+          "name": "cliff",
+          "orientation": "south-to-north"
         },
         {
           "x": 918,
-          "y": 562.5
+          "y": 562.5,
+          "name": "cliff",
+          "orientation": "none-to-east"
         },
         {
           "x": 922,
-          "y": 562.5
+          "y": 562.5,
+          "name": "cliff",
+          "orientation": "west-to-north"
         },
         {
           "x": 946,
-          "y": 582.5
+          "y": 582.5,
+          "name": "cliff",
+          "orientation": "east-to-south"
         },
         {
           "x": 950,
-          "y": 582.5
+          "y": 582.5,
+          "name": "cliff",
+          "orientation": "south-to-west"
         },
         {
           "x": 946,
-          "y": 586.5
+          "y": 586.5,
+          "name": "cliff",
+          "orientation": "north-to-none"
         },
         {
           "x": 950,
-          "y": 586.5
+          "y": 586.5,
+          "name": "cliff",
+          "orientation": "none-to-north"
         },
         {
           "x": 1002,
-          "y": 942.5
+          "y": 942.5,
+          "name": "cliff",
+          "orientation": "none-to-east"
         },
         {
           "x": 1006,
-          "y": 942.5
+          "y": 942.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 1006,
-          "y": 946.5
+          "y": 946.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1010,
-          "y": 946.5
+          "y": 946.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 1010,
-          "y": 950.5
+          "y": 950.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1014,
-          "y": 950.5
+          "y": 950.5,
+          "name": "cliff",
+          "orientation": "west-to-south"
         },
         {
           "x": 1014,
-          "y": 954.5
+          "y": 954.5,
+          "name": "cliff",
+          "orientation": "north-to-east"
         },
         {
           "x": 1018,
-          "y": 954.5
+          "y": 954.5,
+          "name": "cliff",
+          "orientation": "west-to-none"
         }
       ]
     }

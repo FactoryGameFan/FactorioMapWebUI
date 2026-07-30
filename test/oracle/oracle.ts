@@ -442,10 +442,20 @@ export function buildCliffModList(): object {
  * chunk overlapping `region` (`request_to_generate_chunks` per chunk with
  * radius 0, then a single blocking `force_generate_chunk_requests()`), then read
  * every placed cliff back with `find_entities_filtered{ type = "cliff", area =
- * {{x0,y0},{x1,y1}} }` and write `{ cliffs: [{x, y}, ...] }` JSON (the entity's
- * `position`, which for a cliff is the cell CENTER on the game's 4-tile grid),
- * then `error(DUMPED-OK)` to exit. Chunk generation over the whole region (not a
- * per-point neighborhood like the tile path) is what makes real cliffs appear.
+ * {{x0,y0},{x1,y1}} }` and write `{ cliffs: [{x, y, name, orientation}, ...] }`
+ * JSON (the entity's `position`, which for a cliff is the cell CENTER on the
+ * game's 4-tile grid), then `error(DUMPED-OK)` to exit. Chunk generation over the
+ * whole region (not a per-point neighborhood like the tile path) is what makes
+ * real cliffs appear.
+ *
+ * **`orientation` is what makes this an oracle for the port's tables rather than
+ * only for its counts** (added 2026-07-30). `CLIFF_CODE_TO_ORIENTATION` maps a
+ * cell's 8-bit crossing code to one of 20 `CliffOrientation`s, and until now it
+ * was checked only against the binary's own jump table - so a misread and a
+ * mistranscription would agree with each other. The game's `cliff_orientation`
+ * string breaks that loop. It also yields the true `collision_bounding_box` for
+ * cliffs we do NOT place, which is otherwise unobtainable: no placement, no code,
+ * no box.
  */
 export function buildCliffControlLua(
   region: Region,
@@ -480,7 +490,13 @@ ${surfaceLua}
   local ents = surface.find_entities_filtered{ type = "${opts.entityType ?? "cliff"}", area = {{x0, y0}, {x1, y1}} }
   local cliffs = {}
   for i, e in ipairs(ents) do
-    cliffs[i] = {x = e.position.x, y = e.position.y, name = e.name}
+    -- \`cliff_orientation\` is a Cliff-subclass attribute, so reading it on any
+    -- other type RAISES. This probe is reused verbatim with entityType =
+    -- "resource" (captureVulcanusResourceEntities), hence the guard - without it
+    -- that capture dies on its first entity.
+    local orientation = nil
+    if e.type == "cliff" then orientation = e.cliff_orientation end
+    cliffs[i] = {x = e.position.x, y = e.position.y, name = e.name, orientation = orientation}
   end
   helpers.write_file("${dumpFile}", helpers.table_to_json({ cliffs = cliffs }), false)
   error("DUMPED-OK")
