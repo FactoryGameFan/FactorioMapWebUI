@@ -214,9 +214,27 @@ config, above pnpm's default, so Renovate can never propose a release pnpm would
 want a bypass for. If `minimumReleaseAgeExclude:` appears in a bot PR's diff,
 that PR is wrong; fix the age rule, don't commit the bypass.
 
-Renovate is inert until the GitHub App is enabled on the repo. Validate any edit
-with `renovate-config-validator` (run it from outside the project root - a bare
-`npx` here fails with `EBADDEVENGINES`).
+**The app is live as of 2026-07-30** - enabled with "Automated PRs", "Require
+config file" and "Create onboarding PRs". So Renovate opens real PRs on its own
+now; `automerge: false` is what keeps anything from *landing* unread, and
+`dependencyDashboardApproval` is deliberately unset because it would re-impose
+scan-only behaviour at the config layer and defeat the app setting.
+
+"Require config file" is the one with teeth: **a config that fails to parse makes
+Renovate do nothing at all, silently**, which is indistinguishable from "no
+updates available". Validate any edit with `renovate-config-validator` (run it
+from outside the project root - a bare `npx` here fails with `EBADDEVENGINES`).
+
+Two settings whose reasoning is not guessable from the outside:
+
+- **`lockFileMaintenance` is pinned off.** It is automated `pnpm up` for the
+  lockfile - the one dependency operation measured as harmful here, since
+  transitive re-resolution is what triggered the `TS2321` pathology below.
+- **`vulnerabilityAlerts.minimumReleaseAge` is `"25 hours"`, not `0`.** Security
+  fixes skip the weekly window, but they cannot skip pnpm's 24-hour floor: a
+  same-day PR would make pnpm write the `minimumReleaseAgeExclude:` bypass this
+  whole section exists to prevent. 25 hours clears pnpm and still drops the wait
+  from 3 days to ~1.
 
 Branch protection on `main` is **not** configured. It is the natural follow-up
 now that a check exists, but it is a repository setting rather than a file.
