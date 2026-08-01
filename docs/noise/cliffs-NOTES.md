@@ -508,17 +508,84 @@ difference between the game's smoothed cliff elevation and a linear bilerp of
 the raw field on the chunk-anchored 0/4/7 lattice - a difference of a few
 elevation units, at corners where the raw field agrees to 0.05.
 
-**The next step is the binary, not another behavioural sweep.** The space of
-transforms reachable by varying the port has been searched and it bottoms out
-here. `CliffGenerator::crossingsForChunk` @ `0x10160c9cc` should be re-read for
-the smoothing loop specifically - what it reads, in what order, and into what -
-rather than for its structure, which is already confirmed.
+~~**The next step is the binary, not another behavioural sweep.**~~ **Wrong, and
+the game said so within the hour - see the next section.** The conclusion drawn
+from all of the above was "the residual is inside the smoothing"; it is not in
+the smoothing at all. Every measurement above stands; the inference from them
+did not. Read the next section before acting on this one.
 
 **One methodological note, because it cost a wrong reading.** Nauvis's fixture
 cases are the same region at **different seeds**. Merging them into one cell map
 invents four "inconsistent" adjacent pairs out of nothing, which briefly looked
 like a finding about chunk-boundary edges. Tally per case. The committed spec
 says so at the function.
+
+### `cliff_smoothing` swept IN THE GAME - and it is NOT the residual (2026-08-01)
+
+The section above searched the smoothing exhaustively *inside the port* and
+concluded the residual must live within it. **That conclusion is false.** The
+refutation is one setting, and it is the kind only the game can supply.
+
+`cliff_smoothing` is a `map_gen_settings.cliff_settings` field, so it can be
+**overridden on the created surface** rather than accepted as the planet ships
+it. `sampleCliffEntitiesFull` (oracle.ts) takes a `cliffSmoothing` option and the
+probe dumps the `cliff_settings` the surface **reports back**, which is what
+makes the sweep non-vacuous: an override that silently failed to apply is
+otherwise indistinguishable from a setting that does not matter.
+
+`s = 0` is the decisive member of the family. With smoothing off the cliff
+elevation **is** the raw field - measured accurate to a max of 4.8e-2 - fed to a
+rule that reproduces Nauvis 334/334. A port whose only defect were the smoothing
+would therefore be **exact** at `s = 0`. Region `[0,0]`, captured 2026-08-01:
+
+| `cliff_smoothing` | game | ours | matched | wrong |
+| --- | --- | --- | --- | --- |
+| **0** | 352 | 432 | 289 | **83 = 28.7%** |
+| 0.5 | 315 | 374 | 267 | 73 = 27.3% |
+| 1 | 283 | 335 | 228 | 68 = 29.8% |
+
+**The error is flat in `s`.** Turning the suspect off does not move it. So the
+smoothing is not the cause, and the four-dimensional in-port sweep was searching
+the wrong transform the whole time.
+
+Two things worth keeping from it anyway. The smoothing model is *good* - the
+placement counts track the game's across all three values, and the parameter
+optima were real - which is precisely why it was so convincing. And the dumped
+settings are the only direct evidence outside the `.lua` files that Vulcanus
+generates with `cliff_elevation_0 = 70`, `cliff_elevation_interval = 120`,
+`cliff_smoothing = 1`. `test/vulcanusCliffSmoothingSweep.spec.ts` pins all of it.
+
+**The general lesson, which this repo keeps re-learning.** A parameter sweep
+inside the port can only rank models *within the family the port already
+implements*; a sharp optimum says "best in family", never "correct". The whole
+family was wrong here, and no amount of internal sweeping could have said so.
+When a suspect is reachable as a *game setting*, vary it in the game and see
+whether the error moves - that is a one-run experiment which either indicts the
+suspect or clears it outright, and it does not depend on being right about the
+mechanism. Same shape as the surface-seed bug: self-consistency is not
+validation.
+
+#### Where that leaves #18
+
+The residual survives with smoothing disabled, so it is in something Nauvis and
+Vulcanus share, differing only in the inputs - and the inputs are measured right.
+Still standing after this session, now with smoothing removed from the list:
+
+- **The cliffiness gate is not it either.** Swept against the `s = 0` fixture:
+  `avg > 0.5` (shipping) 28.7%, requiring BOTH corners (`min`) 37.1%, `max` is
+  arithmetically identical to `avg` because `cliffiness_basic` is confined to
+  `[0.5, 1.5]`. A threshold sweep bottoms exactly at 0.5. And `min` is refuted
+  outright by Nauvis, which drops from 334/334 to 295 placed / 32 wrong.
+- The one asymmetry left unexplained is that Nauvis's cliffiness is the binary
+  `{0, 10}` while Vulcanus's is continuous - so on Nauvis the gate is never
+  near-threshold and on Vulcanus it always is. The gate combination is now
+  measured, but nothing has yet tested how the engine *rounds or stores* that
+  field.
+
+Beware one measurement trap met here: scoring edges over **all** the game's
+cells (rather than the cells both place) reports ~57% agreement and ~260 "sign
+flips" at every smoothing value. Those are an artifact of the wider denominator,
+not a finding - the rate is flat in `s`, which is the control that catches it.
 
 ### The FFF on cliffs (#219) - checked, and mostly confirms the binary
 
