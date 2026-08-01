@@ -378,9 +378,12 @@ Fields exact, rule structurally confirmed, precision irrelevant, smoothing
 confirmed - and 12.5% of shared cells still carry the wrong crossings. The
 candidates that survive:
 
-1. **`fixImpossibleCells` in detail.** It only accounts for 1.8 points of the
-   12.5 as ported, but "our sweep differs subtly from the game's" is not excluded
-   by that - a different sweep could be both closer AND worth more.
+1. ~~**`fixImpossibleCells` in detail.**~~ **Closed 2026-08-01** - see the next
+   section. All 24 clear orders were swept (the ported `L, T, R, B` wins) and,
+   decisively, the pass finds only 35 illegal cells and clears 59 edges across
+   all three regions. It is too small by a factor of five to be the cause. The
+   original wording here - "a different sweep could be both closer AND worth
+   more" - was right to keep it open and wrong about the size.
 2. ~~**The choice of expression, which no substitution can test.**~~ **Closed
    from the data, 2026-07-30.** The worry was real - the corner-field fixtures
    capture `vulcanus_elevation` and `cliffiness_basic` **by name**, so if a
@@ -403,6 +406,119 @@ candidates that survive:
    (`10 + 30 * (nauvis_hills - nauvis_hills_cliff_level)`), a completely
    different field - so this was a live way to be wrong, in the same shape as the
    `cliff_smoothing` default that cost issue #18 two months.
+
+### Nine more causes falsified, 2026-08-01 - and candidate 1 above is now CLOSED
+
+The list above left `fixImpossibleCells` as the surviving candidate. It is not the
+cause, and neither is anything else that can be reached by varying the port.
+
+**The harness, because it is reusable and it is what makes these cheap.** The
+smoothing is a transform on the elevation field, so a candidate smoothing can be
+*pre-applied to the field* and the placement then run with `smoothing: 0`. That
+runs the SHIPPING rule over a candidate transform, needs no edit to
+`cliffPlacement.ts`, and scores in ~1.5s for all three regions because one field
+cache is shared across every candidate. The control arm reproduces
+**1400 matched / 175 wrong** to the digit, which is what licenses the rest.
+
+**1. The smoothing knot geometry is right, and it is a sharp optimum in four
+dimensions.** Sweeping `(span, clamp, anchor offset, blend s)`:
+
+| variation | wrong / matched | |
+| --- | --- | --- |
+| **shipping: span 4, clamp 7, offset 0, s=1** | **175 / 1400** | **12.5%** |
+| clamp 8 (the "clean" global bilerp) | 378 / 1124 | 33.6% |
+| clamp 6 | 485 / 1189 | 40.8% |
+| anchor offset 1..7 | 523-578 | 51-72% |
+| s = 0.9 / 0.75 / 0.5 / 0 | 238 / 371 / 530 / 705 | 17.6-62.8% |
+| span 8 / span 2 | 367 / 572 | 64.8% / 55.1% |
+
+Both axes were also swept independently (`clampX` x `clampY`, `offsetX` x
+`offsetY`): the minimum is at (7,7) and (0,0), not on any off-diagonal. **The
+odd clamp-to-7 asymmetry that reads like a misread is 2.7x better than the clean
+reading** - so the disassembly is now corroborated by something other than
+itself, which is exactly what that section needed.
+
+**2. Cliffiness stays raw.** Smoothing it too: 279/1397 = 20.0%.
+
+**3. Linear interpolation, not a curve.** smoothstep 29.3%, smootherstep 37.3%,
+nearest 61.8%, sqrt 50.5%, square 53.9% - against linear's 14.3% in the same
+(fix-sweep-free) harness.
+
+**4. The band constants are a sharp optimum too.** `cliff_elevation_0` swept
+64..76 bottoms exactly at **70** (12.5%, rising to 25.7% at 65 and 23.1% at 76);
+`cliff_elevation_interval` bottoms exactly at **120**. The elevation range over
+the sampled corners is -62.3 .. 1226.3, so ~10 bands are genuinely in play and
+the interval is not inert.
+
+**5. No structural variant of `crossesCliff` helps.** Dropping the negative-
+elevation gate 12.9%, gating on raw elevation instead 12.5%, non-strict
+comparison 12.5%, dropping the cliffiness gate 22.5%, anchoring the band on
+`min(a,b)` places nothing at all. The "different band" formulation scores
+**exactly** 175 - it is provably identical to the max-anchored one except when
+`max(a,b)` sits exactly on a boundary.
+
+**6. `fixImpossibleCells` cannot be the cause, by size.** All 24 edge-clearing
+priorities were swept: the ported **`L, T, R, B` is the best of all 24** (175,
+against 181-217). But the decisive number is that across all three regions the
+pass finds only **35 illegal cells and clears 59 edges**. Identical fields plus
+an identical rule give identical pre-fix codes, so a pass that touches ~35 cells
+cannot produce 175 wrong ones. This closes candidate 1.
+
+**7. The fields were compared as VALUES for the first time, not as outcomes.**
+Every previous exoneration ran the substitution and asserted the placement did
+not move. That is weaker than it sounds. Comparing our field directly against
+`oracle-vulcanus-cliff-corner-fields-entity-regions` over all 12,675 corners:
+
+| | median | max |
+| --- | --- | --- |
+| elevation \|ours - game\| | 2.7e-4 | **4.8e-2** |
+| cliffiness \|ours - game\| | 0 | 6.4e-6 |
+
+The corrections the failures need are **~3.6 elevation units** (below), four
+orders of magnitude larger. The fields are right, and now that is measured
+rather than inferred from a null result.
+
+**8. The packing, the lattice and the table are cleared from the fixture alone.**
+See `test/cliffEdgeConsistency.spec.ts`: the game's own adjacent cliffs agree on
+**every** shared edge (Nauvis 147 h + 166 v, Vulcanus 805 h + 834 v, zero
+mismatches), and all 1569 `cliff-vulcanus` land exactly on `(cx*4+2, cy*4+2.5)`
+while exactly the 8 `crater-cliff`s do not.
+
+**9. The failure shape says "diffuse", not "structural".** The cliffiness gate
+blocks **zero** of the edges the game crossed; 141 of 156 are `sameSide` (our two
+corner elevations do not straddle a band) and 13 are `band<e0`. Not one
+disagreement is a sign flip - every differing edge is a crossing appearing or
+disappearing, never reversing. The error rate is flat over in-chunk cell position
+(8x8, no structure), flat over position in the smoothing lattice (so it is not
+concentrated on interpolated corners), spread over 64 distinct orientation
+transitions, and mostly isolated (137 wrong cells have a correct neighbour, 66 a
+wrong one).
+
+#### What this leaves, stated as the contradiction it is
+
+Fields right to 5e-2. Smoothing at a sharp four-dimensional optimum. Rule,
+bands, packing, table and lattice all confirmed. Fix sweep too small by a factor
+of five. And yet 175 of 1400 shared cells still carry different crossings.
+
+The sharpest single statement of the residual: over the 5891 edges of the game's
+own cliffs where the cliffiness gate is open, **our smoothed elevation predicts
+the game's crossing 88.7% of the time and the raw elevation 60.3%**. So the
+smoothing is doing real and largely correct work, and the last ~11% is a
+difference between the game's smoothed cliff elevation and a linear bilerp of
+the raw field on the chunk-anchored 0/4/7 lattice - a difference of a few
+elevation units, at corners where the raw field agrees to 0.05.
+
+**The next step is the binary, not another behavioural sweep.** The space of
+transforms reachable by varying the port has been searched and it bottoms out
+here. `CliffGenerator::crossingsForChunk` @ `0x10160c9cc` should be re-read for
+the smoothing loop specifically - what it reads, in what order, and into what -
+rather than for its structure, which is already confirmed.
+
+**One methodological note, because it cost a wrong reading.** Nauvis's fixture
+cases are the same region at **different seeds**. Merging them into one cell map
+invents four "inconsistent" adjacent pairs out of nothing, which briefly looked
+like a finding about chunk-boundary edges. Tally per case. The committed spec
+says so at the function.
 
 ### The FFF on cliffs (#219) - checked, and mostly confirms the binary
 
