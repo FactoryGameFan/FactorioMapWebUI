@@ -24,6 +24,23 @@
 > come from. Each of the last three corrects the one before it - read all three,
 > in order, or you will act on a superseded number.
 >
+> ## UPDATE 2, 2026-08-02: the BLOB is ORE - #84 item 2 is #24
+>
+> The "blob" - the contiguous patch in `[0,0]` where the game places no cliff
+> whatever `cliff_elevation` is routed onto it - **is a tungsten-ore field**. The
+> game does not put cliffs on ore (3 of its 1,569 cliffs across the three oracle
+> regions do) and the port does. Read the LAST section,
+> **`## The blob is ore`**; it supersedes the "field-independent suppression of
+> unknown cause" framing below. Two corrections ride with it:
+>
+> - **`37 / 1531 = 2.4%` is the NO-lava-rejection arm**, not what ships. With the
+>   rejection `renderVulcanusCliffs` actually applies it is **33 wrong of 1,525
+>   matched**, plus 45 over-placed and 6 missed cells. Both arms are now pinned in
+>   `test/cliffOreExclusion.spec.ts` so they cannot be confused again.
+> - **The cliffiness gate is exact** - 0 flips over all 24,960 captured edges of
+>   the three regions, measured as the boolean `crossesCliff` reads rather than as
+>   a value. That closes the clamp-vacuity worry properly.
+>
 > ## UPDATE, 2026-08-02: the FIELD is exonerated; the residual is two defects
 >
 > The last section, **`## The residual is TWO defects, and the field is not
@@ -1320,3 +1337,108 @@ therefore structurally could not find that class of error).
 **This is the sharpest open lead**, and a much better one than "we over-place at
 low elevation": it is a bounded, contiguous, field-independent suppression, so
 whatever causes it is a rule the port does not implement at all.
+
+## The blob is ore (2026-08-02, #84 item 2 -> #24)
+
+The section above called the blob "the sharpest open lead", on the reasoning that
+a bounded, contiguous, field-independent hole cannot be a field error and must be
+a rule the port does not implement at all. That reasoning was right and the rule
+is **ore exclusion**. The patch is a tungsten-ore field.
+
+Measured in `test/cliffOreExclusion.spec.ts`, over the three oracle regions:
+
+| | game | port |
+| --- | --- | --- |
+| cliffs whose 4x4 cell contains an ore tile | **3** of 1,569 | 29 |
+| of the port's 45 surplus cells | - | **26** on ore, all at `[1500,1500]` |
+| the collapsed arms' 10-cell blob | 0 | **10 of 10 on ore** |
+
+The blob's ten cells are `x 178/182/186`, `y 138.5-150.5`, and they are the
+**same ten in all four collapsed arms** - gate open and gate real, single contour
+and real bands. A set that is invariant to both the band structure and the gate
+cannot be a field or a cliffiness effect.
+
+The handoff quoted a looser envelope (`cx 43-48, cy 34-40`, world
+`x 172-196, y 136-164`). That is the union over the 19-level `cliff_elevation_0`
+sweep; the arm-invariant core is the ten.
+
+**Note what this does to the scope.** At real settings the port places nothing in
+the blob at all - `[0,0]` scores 283/283 with 2 surplus and 2 missed, neither in
+the blob. The blob is only reachable when a sweep forces a contour through the
+ore field. The ore rule costs real accuracy only at `[1500,1500]`, where it is
+26 of that region's 42 surplus cells.
+
+### What it is NOT, each measured rather than read
+
+- **Not lava.** 2,597 `surface.get_tile` samples from the game over
+  `x 160..208, y 124..176`, 0 lookup misses: the blob's interior is
+  `volcanic-cracks-warm` / `-hot` / `volcanic-smooth-stone`, with no lava
+  anywhere in it. The standing "not lava" claim had been made with OUR resolver,
+  which is exactly the component it needed to exonerate - and which is known to
+  miss lava the game has (4 tiles in 483 in this same neighbourhood).
+- **Not the cliffiness gate.** 0 flips over 24,960 edges; see below.
+- **Not any other tile.** Read off a running game rather than deduced:
+  `cliff-vulcanus`'s collision mask is
+  `cliff, is_lower_object, is_object, item, meltable, object, player, water_tile`,
+  and of the 18 Vulcanus tile prototypes only `lava` and `lava-hot` share a layer
+  with it (`item`, `player`, `water_tile`). Every other tile, including
+  `volcanic-jagged-ground` - the tile ore patches paint, which the Lua labels
+  "CLIFF TILE" - is `ground_tile` only. **`VULCANUS_CLIFF_BLOCKING_TILES` is now
+  measured, not inferred from `tile_collision_masks.lava()`.**
+- **Not entity collision**, and this one is worth its own note because a real
+  unported rule was found while ruling it out. `applyCliffs` (`0x101623c98`)
+  re-tests every accepted cliff through **`Surface::wouldCollide`**
+  (`0x10160c088`), which calls `constCollideWithTile` **and**
+  `collideWithEntity`. The port implements neither - only the task-level
+  `EntityMapGenerationTask::wouldCollide` (`0x101625468`), which is **tile-only**
+  (it indexes `Tile::collisionMasks` over a 96x96 working-area grid and treats
+  anything outside that grid as a collision). So there IS a second, entity-aware
+  rejection that is not ported. It cannot be what excludes ore, though:
+  `tungsten-ore`, `calcite`, `coal` and `sulfuric-acid-geyser` all carry the bare
+  `resource` layer, which the cliff mask does not hold.
+
+  What DOES collide with a cliff and is not ported: `big-volcanic-rock`,
+  `huge-volcanic-rock` (both `is_lower_object, is_object, item, meltable, object,
+  player, water_tile`) and **`crater-cliff`** - a Vulcanus cliff-type entity
+  placed by autoplace (`probability_expression = "crater_cliff"`,
+  `crater_radius = 7`, `crater_edge_thickness = 5`). Craters are already in the
+  fixtures and filtered out by name: 8 in `[-1200,800]`, 3 near `(0, 164)` in the
+  collapsed arms. Only two rocks touch the blob, so rocks explain at most 1 of
+  its 10 cells - but this is a genuine open item for the wider residual.
+
+So the exclusion is real and its **mechanism is still open**. It is not a
+collision, so it is either an ordering effect inside `EntityMapGenerationTask`
+(`generateCliffs` runs before `generateEntities`, so the direction may be that
+ore avoids cliffs rather than cliffs avoiding ore) or something in
+`resource_autoplace` that the cliff pass reads. The next step is to settle the
+direction, not to add a rejection.
+
+### The cliffiness gate, measured as the BINARY its consumer reads
+
+`cliffiness_basic` is `clamp(qmn, 0, 1) + 0.5` and two thirds of its captured
+corners sit ON a clamp, which is why the value comparison was two-thirds
+vacuous. But what the consumer reads is `crossesCliff`'s gate, and that is a
+**threshold**:
+
+```
+crossesCliff(a, b, cliffiness, e0, interval)   // 0x10160c914
+  if (a < 0 || b < 0) return 0
+  level = e0 + interval * floor((max(a,b) - e0) / interval)
+  if (level < e0) return 0
+  if (cliffiness > 0.5) { if (a-level < 0 && b-level > 0) return +1
+                          if (a-level > 0 && b-level < 0) return -1 }
+  return 0
+```
+
+and `crossingsForChunk` feeds it the **average of the two corners**
+(`0x10160d1cc`, and again at `0x10160d06c` for the vertical edges). A clamped
+corner is therefore not vacuous for the gate at all - it is precisely where an
+arbitrarily small error flips the answer. Scored as a boolean over every captured
+edge of all three regions the port agrees with the game on **all 24,960**, with
+13,661 open and 11,299 shut, so a constant predicate could not pass.
+
+Also re-derived while reading `crossingsForChunk` end to end, and matching the
+port: the corner lattice is the bare `chunkOrigin + (i, j) * grid_size`, the
+elevation register is smoothed with knots at in-chunk indices `{0, 4, 7}`
+(`hi = min(lo + 4, 7)`) and **cliffiness is read unsmoothed**, and
+`getModifiedElevationInterval` is `cliff_elevation_interval / frequency`.
