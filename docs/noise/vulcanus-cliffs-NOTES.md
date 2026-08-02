@@ -996,3 +996,58 @@ sides of a comparison ran different **rule sets** - and in both cases the
 mismatch had a plausible mechanism ready to absorb it, so the wrong explanation
 was the comfortable one. Before attributing a residual to a mechanism, check
 that both sides of the comparison are running the same rules.
+
+## Channel audit: cliffs really are the only coarse-grid consumer (#84 item 4)
+
+#83 left an assumption behind: cliffs are the only consumer reading a
+`multisample`-bearing field on a grid other than 1 tile. That was never
+measured - which is precisely the status the cliff case itself had before #83 -
+so it is measured now. `test/multisampleChannelAudit.spec.ts`.
+
+**The surface is much smaller than "audit every consumer", and that is the first
+finding.** `multisample` appears in `~/GitHub/factorio-data` @ 2.1.12 in exactly
+**one** place, `vulcanus_basalt_lakes_multisample`
+(`planet-vulcanus-map-gen.lua:547`), used only by `vulcanus_elev`. No other
+planet uses the primitive at all. So the audit reduces to "who consumes Vulcanus
+`elevation`":
+
+| consumer | reads `elevation`? | grid | how established |
+| --- | --- | --- | --- |
+| cliff generator | yes, via `cliff_elevation_from_elevation` | **4** | measured, #83 |
+| tile generator (19 `*_range` expressions) | yes, via `vulcanus_elev` | **1** | measured, below |
+| `vulcanus_temperature` | yes, `min(elev, elev/100)` | 1 | same program as tiles |
+| resources: tungsten, coal, calcite, sulfuric acid | **no** | n/a | read below |
+| rocks, geyser | **no** | n/a | read below |
+
+**The resource row is the one that had to be checked rather than assumed**,
+because the generic path *does* couple to elevation:
+`starting_resources_lake_mask = clamp((elevation - 1) / 10, 0, 1)` feeds
+`starting_patches`' `spot_favorability_expression`
+(`core/prototypes/noise-programs.lua:270`), and CLAUDE.md flags that this
+coupling is exactly what changed at 2.1.9. Vulcanus does not take that path -
+each of its four resources is placed by its own `vulcanus_*_region` expression,
+and those four definitions contain **0** references to `elevation`. So the lake
+mask is a Nauvis-only coupling and no Vulcanus resource can see the multisample.
+
+### The tile generator reads grid 1, measured against the game
+
+Substituting the cliff generator's 4-tile elevation into the tile resolver and
+comparing against the game's own `get_tile` output over the 381 oracle
+positions:
+
+| | grid 1 (ships) | grid 4 |
+| --- | --- | --- |
+| tile-name agreement | **0.9816** | 0.8609 |
+| lava misclassifications | **0 / 381** | 27 / 381 |
+
+46 tiles would be named wrongly, and the binary lava call - the only thing the
+cliff collision rejection reads - goes from exact to 27 wrong. The 1-tile field
+is not merely adequate here; it is the one that matches, and the metric is
+demonstrably sensitive to the swap. That sensitivity is the part worth insisting
+on: PR #57's substitution failed precisely because "nothing changed" was
+indistinguishable from "the substitution never ran".
+
+**A side result.** This also clears the lava perimeter that costs 13 real cliffs
+their placement: reading the other elevation channel makes the lava
+classification dramatically worse, not better, so the perimeter error is not a
+channel mistake. It is somewhere else in `vulcanusCatalog`.
