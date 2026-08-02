@@ -18,10 +18,12 @@ import { dirname, join } from "node:path";
 // (`--experimental-strip-types`), which does no extension resolution; the specs,
 // run through Vite, import extensionless. allowImportingTsExtensions permits both.
 import {
+  type DumpedCliffSettings,
   oracleAvailable,
   type Position,
   type Region,
   sampleCliffEntities,
+  sampleCliffEntitiesFull,
   sampleExpression,
   sampleTileNames,
   type TileSample,
@@ -2571,6 +2573,80 @@ async function captureVulcanusCliffEntities(): Promise<void> {
 }
 
 /**
+ * **The `cliff_smoothing` sweep** - the same Vulcanus region captured at several
+ * values of `map_gen_settings.cliff_settings.cliff_smoothing` (issue #18).
+ *
+ * Every other cliff fixture samples the one setting the planet ships with, so
+ * the smoothing transform could only ever be tested as a whole. Overriding it
+ * turns one data point into a family, and the decisive member is **`s = 0`**:
+ * with smoothing off, the cliff elevation IS the raw field, which is measured
+ * accurate to a max of 4.8e-2, over a rule that reproduces Nauvis 334/334. So
+ * the port must match the game exactly at `s = 0`. If it does, the entire
+ * residual is inside the smoothing and the disassembly is the only thing left to
+ * read. **If it does NOT, the smoothing is innocent** and 2026-08-01's whole
+ * sweep - knots, clamp, anchor, blend, interpolation family - was searching the
+ * wrong transform.
+ *
+ * `[0,0]` is the region deliberately chosen: it is where the port is worst
+ * (29.8% wrong orientation against 8.1% and 11.7% elsewhere), so it has the most
+ * signal, and it contains zero `crater-cliff`s to exclude.
+ *
+ * Each case records the `cliffSettings` the surface reported back. That is not
+ * bookkeeping: without it, an override that silently failed to apply would look
+ * exactly like a setting that does not matter.
+ */
+async function captureVulcanusCliffSmoothing(): Promise<void> {
+  const region: Region = { x0: 0, y0: 0, x1: 256, y1: 256 };
+  const seed = 123456;
+  const cases: {
+    cliffSmoothing: number;
+    effective: DumpedCliffSettings | undefined;
+    cliffs: Position[];
+  }[] = [];
+  for (const cliffSmoothing of [0, 0.5, 1]) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        cliffSmoothing,
+      });
+      cases.push({ cliffSmoothing, effective: dump.cliffSettings, cliffs: dump.cliffs });
+      console.log(
+        `  captured vulcanus cliffs smoothing=${String(cliffSmoothing)} ` +
+          `(effective ${String(dump.cliffSettings?.cliff_smoothing)}, ${String(dump.cliffs.length)} cliffs)`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Every cliff entity the game placed in " +
+      "the Vulcanus region [0,0]-[256,256] at THREE values of " +
+      "map_gen_settings.cliff_settings.cliff_smoothing (0, 0.5, 1), with each entity's " +
+      "cliff_orientation. Exists for issue #18: every other cliff fixture samples only the " +
+      "setting the planet ships with (the prototype default of 1), so the smoothing transform " +
+      "could be tested only as a whole. The s=0 case is the discriminating one - with smoothing " +
+      "off the cliff elevation is the raw field, which agrees with ours to a max of 4.8e-2 over " +
+      "a rule that reproduces Nauvis 334/334, so the port must match the game exactly there. " +
+      "`effective` is the cliff_settings the SURFACE reported back after the override, not what " +
+      "was written, so an override that failed to apply cannot be mistaken for a setting that " +
+      "does not matter. Sampled on a create_surface() surface whose seed is FORCED to `seed`, " +
+      "like every other Vulcanus oracle fixture. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts vulcanus-cliff-smoothing",
+    seed,
+    region,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-smoothing.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} smoothing values)`);
+}
+
+/**
  * Every ACTUAL Vulcanus RESOURCE entity in the same three regions
  * `captureVulcanusCliffEntities` covers, so the two dumps can be compared
  * directly (issue #24).
@@ -2928,6 +3004,7 @@ if (want("vulcanus-cliff-corner-fields-entity-regions"))
   await captureVulcanusCliffCornerFieldsAtEntityRegions();
 if (want("rocks")) await captureRocks();
 if (want("vulcanus-cliff-entities")) await captureVulcanusCliffEntities();
+if (want("vulcanus-cliff-smoothing")) await captureVulcanusCliffSmoothing();
 if (want("vulcanus-resource-entities")) await captureVulcanusResourceEntities();
 if (want("multisample")) await captureMultisample();
 if (want("vulcanus-smoke")) await captureVulcanusSmoke();

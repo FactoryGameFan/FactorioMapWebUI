@@ -459,7 +459,13 @@ export function buildCliffModList(): object {
  */
 export function buildCliffControlLua(
   region: Region,
-  opts: { dumpFile?: string; planet?: string; seed?: number; entityType?: string } = {},
+  opts: {
+    dumpFile?: string;
+    planet?: string;
+    seed?: number;
+    entityType?: string;
+    cliffSmoothing?: number;
+  } = {},
 ): string {
   const dumpFile = opts.dumpFile ?? CLIFF_DUMP_FILE;
   // With `planet` set, run on that planet's own surface with the seed FORCED,
@@ -467,12 +473,18 @@ export function buildCliffControlLua(
   // the surface `withCtxDefaults({ seed0: seed })` describes, not the
   // `seed + crc32(planet)` one a real save would generate. Every committed
   // Vulcanus fixture is captured this way; see `entityCounts.ts`'s header.
+  // `cliff_smoothing` is set on the SAME `mgs` round-trip as the seed, before any
+  // chunk is generated, so the surface is created with it already in force.
+  const smoothingLua =
+    opts.cliffSmoothing === undefined
+      ? ""
+      : `\n  mgs.cliff_settings.cliff_smoothing = ${String(opts.cliffSmoothing)}`;
   const surfaceLua =
     opts.planet === undefined
       ? `  local surface = game.surfaces[1]`
       : `  local surface = game.planets["${opts.planet}"].create_surface()
   local mgs = surface.map_gen_settings
-  mgs.seed = ${String(opts.seed ?? 123456)}
+  mgs.seed = ${String(opts.seed ?? 123456)}${smoothingLua}
   surface.map_gen_settings = mgs`;
   return `script.on_init(function()
 ${surfaceLua}
@@ -498,16 +510,50 @@ ${surfaceLua}
     if e.type == "cliff" then orientation = e.cliff_orientation end
     cliffs[i] = {x = e.position.x, y = e.position.y, name = e.name, orientation = orientation}
   end
-  helpers.write_file("${dumpFile}", helpers.table_to_json({ cliffs = cliffs }), false)
+  -- Read the cliff settings back OFF THE SURFACE rather than echoing what was
+  -- written. That is what makes a smoothing sweep non-vacuous: if an override
+  -- silently failed to apply, "the cliffs did not move" and "the setting did
+  -- not change" are otherwise indistinguishable. It also reports the PROTOTYPE
+  -- default when nothing was overridden, which is the only direct evidence of
+  -- Vulcanus's cliff_smoothing = 1 outside the .lua data files.
+  local cs = surface.map_gen_settings.cliff_settings
+  local settings = {
+    name = cs.name,
+    cliff_elevation_0 = cs.cliff_elevation_0,
+    cliff_elevation_interval = cs.cliff_elevation_interval,
+    cliff_smoothing = cs.cliff_smoothing,
+    richness = cs.richness,
+  }
+  helpers.write_file("${dumpFile}", helpers.table_to_json({ cliffs = cliffs, cliffSettings = settings }), false)
   error("DUMPED-OK")
 end)
 `;
 }
 
+/** The cliff-placement settings the surface reported, as dumped by the probe. */
+export interface DumpedCliffSettings {
+  readonly name: string;
+  readonly cliff_elevation_0: number;
+  readonly cliff_elevation_interval: number;
+  readonly cliff_smoothing: number;
+  readonly richness: number;
+}
+
+/** The cliff probe's full dump: the entities plus the settings that produced them. */
+export interface CliffDump {
+  readonly cliffs: Position[];
+  readonly cliffSettings?: DumpedCliffSettings;
+}
+
 /** Parse the cliff-entity mod's dump into `{x, y}` cliff positions. */
 export function parseCliffDump(jsonText: string): Position[] {
-  const parsed = JSON.parse(jsonText) as { cliffs: Position[] };
+  const parsed = JSON.parse(jsonText) as CliffDump;
   return parsed.cliffs;
+}
+
+/** Parse the cliff-entity mod's dump whole, including the effective settings. */
+export function parseCliffDumpFull(jsonText: string): CliffDump {
+  return JSON.parse(jsonText) as CliffDump;
 }
 
 // ---------------------------------------------------------------------------
@@ -575,6 +621,15 @@ export interface OracleOptions {
   planet?: string;
   /** Entity `type` for {@link sampleCliffEntities}'s dump. Default "cliff". */
   entityType?: string;
+  /**
+   * Override `map_gen_settings.cliff_settings.cliff_smoothing` on the created
+   * surface. Omit to take whatever the planet's prototype supplies - which is
+   * the point of {@link CliffDump.cliffSettings}: the dump reports the value the
+   * game actually read back, so "the override applied" is measured rather than
+   * assumed. See `docs/noise/cliffs-NOTES.md`; Vulcanus takes the prototype
+   * default of 1 while every other planet sets 0 explicitly.
+   */
+  cliffSmoothing?: number;
 }
 
 /**
@@ -726,6 +781,19 @@ export async function sampleCliffEntities(
   region: Region,
   opts: OracleOptions,
 ): Promise<Position[]> {
+  return (await sampleCliffEntitiesFull(region, opts)).cliffs;
+}
+
+/**
+ * As {@link sampleCliffEntities}, but returns the effective `cliff_settings` the
+ * surface reported alongside the entities. Use this whenever a capture varies a
+ * cliff setting: the reported value is the proof the override took, and a sweep
+ * that cannot show that is not a sweep.
+ */
+export async function sampleCliffEntitiesFull(
+  region: Region,
+  opts: OracleOptions,
+): Promise<CliffDump> {
   const seed = opts.seed ?? 123456;
   const factorioBin = opts.factorioBin ?? DEFAULT_FACTORIO_BIN;
   const dataDir = opts.dataDir ?? defaultDataDir(factorioBin);
@@ -748,6 +816,7 @@ export async function sampleCliffEntities(
       planet: opts.spaceAge === true ? (opts.planet ?? "vulcanus") : undefined,
       seed,
       entityType: opts.entityType,
+      cliffSmoothing: opts.cliffSmoothing,
     }),
   );
   await writeFile(
@@ -773,5 +842,5 @@ export async function sampleCliffEntities(
       `cliff oracle produced no dump at ${dumpPath}. Factorio stderr tail:\n${stderr.slice(-2000)}`,
     );
   }
-  return parseCliffDump(jsonText);
+  return parseCliffDumpFull(jsonText);
 }

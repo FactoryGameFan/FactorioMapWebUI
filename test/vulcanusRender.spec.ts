@@ -11,6 +11,14 @@ import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
 
 const SEED = 123456;
 
+// Three tests here used to carry an explicit `}, 15000)`. They were the only
+// annotations in the suite BELOW `vite.config.ts`'s 30s `testTimeout`, so they
+// silently opted out of the margin that default exists to provide, and the
+// slowest of them ("composites ... in view:'all'", 3.0s locally) timed out on a
+// 4-core CI runner as soon as the suite grew. Removing them is the fix: the
+// default is ~10x the measured cost and still fails a genuine hang well inside
+// the job's cap. Do not re-add a per-test timeout under 30s here.
+
 describe("renderVulcanusTerrain", () => {
   it("produces an ImageData of the requested size", () => {
     const img = renderVulcanusTerrain({ seed0: SEED, width: 8, height: 6 });
@@ -57,7 +65,7 @@ describe("renderVulcanusTerrain", () => {
     // (otherwise a renderer that always paints a single hardcoded color
     // would pass the opacity checks above for the wrong reason).
     expect(seen.size).toBeGreaterThan(1);
-  }, 15000);
+  });
 
   it("a near-spawn pixel matches the full Vulcanus tile resolver's color at the same world point", () => {
     // World point (-320, -320), seed 123456 - a near-spawn point also sampled by
@@ -263,7 +271,7 @@ describe("runRenderRequest planet dispatch", () => {
     expect(coverage).toBeLessThan(0.065);
     expect(coverage).toBeGreaterThan(0.02);
     expect(coverage).toBeGreaterThan(0); // and it must still paint SOMETHING
-  }, 15000);
+  });
 
   it("paints Vulcanus cliffs for view:'cliffs', in the shared CLIFF_MAP_COLOR", () => {
     const common = {
@@ -372,5 +380,5 @@ describe("runRenderRequest planet dispatch", () => {
       0,
     );
     expect(overRocks, "window must have pixels both rocks and resources paint").toBeGreaterThan(0);
-  }, 15000);
+  });
 });
