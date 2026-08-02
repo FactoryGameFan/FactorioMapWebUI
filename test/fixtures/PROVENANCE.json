@@ -271,6 +271,10 @@
     "oracle-vulcanus-cliff-smoothing.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-cliff-smoothing against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The same Vulcanus region [0,0] at three values of map_gen_settings.cliff_settings.cliff_smoothing (0, 0.5, 1); each case records the cliff_settings the SURFACE reported back, so the override is proven to have applied. The s=1 case reproduces the 283 cliffs oracle-vulcanus-cliff-entities holds for that region."
+    },
+    "oracle-vulcanus-cliff-collapsed.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-cliff-collapsed against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The Vulcanus region [0,0] with the placement rule collapsed a term at a time via map_gen_settings.cliff_settings (smoothing 0, a single contour via cliff_elevation_interval = 1e6, the cliffiness gate held open via richness = 4), plus Nauvis control arms in [512,1024) at the default settings and at cliff_elevation_interval = 80. Each case records the cliff_settings the SURFACE reported back, so every override is proven to have applied."
     }
   }
 }
