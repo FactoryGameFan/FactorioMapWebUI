@@ -68,6 +68,10 @@
       "factorioVersion": "2.1.11",
       "evidence": "stated in the fixture's own _comment"
     },
+    "oracle-cliff-smoothing-stencil.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "stated - captured 2026-08-02 against the installed 2.1.12 binary (refs:sync --check in sync). Each arm records the effective cliff_settings; the in-chunk-3 arms are self-validating in that the model predicts an EMPTY result and the game produces one"
+    },
     "oracle-cliffiness.seed123456.json": {
       "factorioVersion": "2.1.11",
       "evidence": "stated in the fixture's own _comment"
@@ -111,6 +115,10 @@
     "oracle-multioctave.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "RE-CAPTURED 2026-07-29 against Factorio 2.1.12 (build 87038) via test/oracle: all 7 configs x 38 points = 266 values re-sampled and matched bit-for-bit (266/266, max |diff| 0). Originally captured on 2.1.11, as the fixture's own _comment still states"
+    },
+    "oracle-multisample-grid.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-01 by test/oracle/capture.ts multisample-grid against the installed binary, in sync at 2.1.12 per pnpm refs:sync --check. Probe expressions routed onto property_expression_names.cliff_elevation on a Vulcanus surface with the rule collapsed, so the CLIFF GENERATOR is the readout instead of calculate_tile_properties. Carries its own positive control (multisample(x,4,0) must move the contour) and null control (multisample(x,0,4) must not)."
     },
     "oracle-multisample.seed123456.json": {
       "factorioVersion": "2.1.12",
@@ -184,6 +192,14 @@
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment"
     },
+    "oracle-vulcanus-cliff-collapsed.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-cliff-collapsed against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The Vulcanus region [0,0] with the placement rule collapsed a term at a time via map_gen_settings.cliff_settings (smoothing 0, a single contour via cliff_elevation_interval = 1e6, the cliffiness gate held open via richness = 4), plus Nauvis control arms in [512,1024) at the default settings and at cliff_elevation_interval = 80. Each case records the cliff_settings the SURFACE reported back, so every override is proven to have applied."
+    },
+    "oracle-vulcanus-cliff-corner-fields-entity-regions.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-07-30 by test/oracle/capture.ts vulcanus-cliff-corner-fields-entity-regions against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Companion to oracle-vulcanus-cliff-corner-fields.seed123456.json at the three regions oracle-vulcanus-cliff-entities covers; the two share region [1500,1500] and agree bit-for-bit on all 4225 of its corners, which test/vulcanusCliffCornerFields.spec.ts asserts as a check on this capture's corner indexing."
+    },
     "oracle-vulcanus-cliff-corner-fields-legacy-y0.5.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "captured 2026-07-29 by test/oracle/capture.ts vulcanus-cliff-corner-fields against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Superseded 2026-07-30: the sample lattice (j*4+0.5) was the PORT's assumption, not the game's. Retained deliberately - it is valid ground truth for the site it names, and keeping it is what lets a spec show that substituting fields captured at OUR site cannot falsify that site."
@@ -195,6 +211,18 @@
     "oracle-vulcanus-cliff-entities.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "re-captured 2026-07-30 by test/oracle/capture.ts vulcanus-cliff-entities against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Supersedes the 2026-07-28 capture, which it reproduced exactly (283/885/409 positions). The re-capture adds each entity's cliff_orientation - see test/cliffOrientationOracle.spec.ts."
+    },
+    "oracle-vulcanus-cliff-ore-direction.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-02 by test/oracle/capture.ts vulcanus-cliff-ore-direction against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Six paired ON/OFF arms that turn the Vulcanus resources off through map_gen_settings.autoplace_controls (size = 0) and regenerate: [1500,1500] at default cliff settings with all resources on, all off, calcite only off and geyser only off, plus [0,0] with the cliff rule collapsed to a single contour at 70 with the gate held open and smoothing off, resources on and off. Each case records the autoplace controls AND the cliff_settings the SURFACE reported back, so every override is proven to have applied, and each dumps the cliffs, the resources and the prototype collision geometry from ONE generated surface so the two populations are never compared across separate worlds."
+    },
+    "oracle-vulcanus-cliff-smoothing-off-regions.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "stated - captured 2026-08-02 against the installed 2.1.12 binary (refs:sync --check in sync). Case 0 overrides nothing and READS cliff_settings back off Vulcanus's own surface, which is how cliff_smoothing=1 stopped being an inference from the CliffPlacementSettings prototype default and became a measurement; cases 1-2 record the effective settings the surface reported, so a failed override cannot pass as a null result"
+    },
+    "oracle-vulcanus-cliff-smoothing.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-cliff-smoothing against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The same Vulcanus region [0,0] at three values of map_gen_settings.cliff_settings.cliff_smoothing (0, 0.5, 1); each case records the cliff_settings the SURFACE reported back, so the override is proven to have applied. The s=1 case reproduces the 283 cliffs oracle-vulcanus-cliff-entities holds for that region."
     },
     "oracle-vulcanus-cliffs.seed123456.json": {
       "factorioVersion": "2.1.12",
@@ -208,6 +236,10 @@
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment"
     },
+    "oracle-vulcanus-elevation-levels.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-elevation-levels against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The Vulcanus region [0,0] at 19 values of cliff_elevation_0 (20..200 step 10) with the rule collapsed (cliff_smoothing=0, cliff_elevation_interval=1e6, richness=4), so a cell carries a cliff exactly when its corner elevations straddle the level - inverting the elevation field the generator itself reads. Each case records the cliff_settings the SURFACE reported back."
+    },
     "oracle-vulcanus-elevation.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment"
@@ -215,6 +247,10 @@
     "oracle-vulcanus-helpers.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment"
+    },
+    "oracle-vulcanus-lava-boundary.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-lava-boundary against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Dense radius-4 neighbourhoods around the 35 tiles the cliff rejection accused the lava mask over; it EXONERATED the mask (0 lava mismatches in 994 positions) and redirected the search to the collision box."
     },
     "oracle-vulcanus-ore-cliff-replication.seed123456.json": {
       "factorioVersion": "2.1.12",
@@ -244,10 +280,6 @@
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment"
     },
-    "oracle-vulcanus-lava-boundary.seed123456.json": {
-      "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-lava-boundary against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Dense radius-4 neighbourhoods around the 35 tiles the cliff rejection accused the lava mask over; it EXONERATED the mask (0 lava mismatches in 994 positions) and redirected the search to the collision box."
-    },
     "oracle-vulcanus-tile-names.natural-mapseed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment"
@@ -267,34 +299,6 @@
     "tree-expressions.2.1.11.json": {
       "factorioVersion": "2.1.11",
       "evidence": "the version is in the filename, and in the commit that added it"
-    },
-    "oracle-vulcanus-cliff-corner-fields-entity-regions.seed123456.json": {
-      "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-07-30 by test/oracle/capture.ts vulcanus-cliff-corner-fields-entity-regions against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Companion to oracle-vulcanus-cliff-corner-fields.seed123456.json at the three regions oracle-vulcanus-cliff-entities covers; the two share region [1500,1500] and agree bit-for-bit on all 4225 of its corners, which test/vulcanusCliffCornerFields.spec.ts asserts as a check on this capture's corner indexing."
-    },
-    "oracle-vulcanus-cliff-smoothing.seed123456.json": {
-      "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-cliff-smoothing against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The same Vulcanus region [0,0] at three values of map_gen_settings.cliff_settings.cliff_smoothing (0, 0.5, 1); each case records the cliff_settings the SURFACE reported back, so the override is proven to have applied. The s=1 case reproduces the 283 cliffs oracle-vulcanus-cliff-entities holds for that region."
-    },
-    "oracle-vulcanus-cliff-collapsed.seed123456.json": {
-      "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-cliff-collapsed against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The Vulcanus region [0,0] with the placement rule collapsed a term at a time via map_gen_settings.cliff_settings (smoothing 0, a single contour via cliff_elevation_interval = 1e6, the cliffiness gate held open via richness = 4), plus Nauvis control arms in [512,1024) at the default settings and at cliff_elevation_interval = 80. Each case records the cliff_settings the SURFACE reported back, so every override is proven to have applied."
-    },
-    "oracle-vulcanus-elevation-levels.seed123456.json": {
-      "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-elevation-levels against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The Vulcanus region [0,0] at 19 values of cliff_elevation_0 (20..200 step 10) with the rule collapsed (cliff_smoothing=0, cliff_elevation_interval=1e6, richness=4), so a cell carries a cliff exactly when its corner elevations straddle the level - inverting the elevation field the generator itself reads. Each case records the cliff_settings the SURFACE reported back."
-    },
-    "oracle-multisample-grid.seed123456.json": {
-      "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-08-01 by test/oracle/capture.ts multisample-grid against the installed binary, in sync at 2.1.12 per pnpm refs:sync --check. Probe expressions routed onto property_expression_names.cliff_elevation on a Vulcanus surface with the rule collapsed, so the CLIFF GENERATOR is the readout instead of calculate_tile_properties. Carries its own positive control (multisample(x,4,0) must move the contour) and null control (multisample(x,0,4) must not)."
-    },
-    "oracle-vulcanus-cliff-smoothing-off-regions.seed123456.json": {
-      "factorioVersion": "2.1.12",
-      "evidence": "stated - captured 2026-08-02 against the installed 2.1.12 binary (refs:sync --check in sync). Case 0 overrides nothing and READS cliff_settings back off Vulcanus's own surface, which is how cliff_smoothing=1 stopped being an inference from the CliffPlacementSettings prototype default and became a measurement; cases 1-2 record the effective settings the surface reported, so a failed override cannot pass as a null result"
-    },
-    "oracle-cliff-smoothing-stencil.seed123456.json": {
-      "factorioVersion": "2.1.12",
-      "evidence": "stated - captured 2026-08-02 against the installed 2.1.12 binary (refs:sync --check in sync). Each arm records the effective cliff_settings; the in-chunk-3 arms are self-validating in that the model predicts an EMPTY result and the game produces one"
     }
   }
 }

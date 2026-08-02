@@ -31,7 +31,11 @@
 > game does not put cliffs on ore (3 of its 1,569 cliffs across the three oracle
 > regions do) and the port does. Read the LAST section,
 > **`## The blob is ore`**; it supersedes the "field-independent suppression of
-> unknown cause" framing below. Two corrections ride with it:
+> unknown cause" framing below. Its "mechanism is still open / settle the
+> direction first" close is itself superseded by the LAST section,
+> **`## The direction is ORE -> CLIFF`**: the resources suppress the cliffs, the
+> rule is a box overlap against the resource ENTITY's rectangle, and it is worth
+> 31 of the 42 surplus cells at `[1500,1500]`. Two corrections ride with it:
 >
 > - **`37 / 1531 = 2.4%` is the NO-lava-rejection arm**, not what ships. With the
 >   rejection `renderVulcanusCliffs` actually applies it is **33 wrong of 1,525
@@ -1442,3 +1446,91 @@ port: the corner lattice is the bare `chunkOrigin + (i, j) * grid_size`, the
 elevation register is smoothed with knots at in-chunk indices `{0, 4, 7}`
 (`hi = min(lo + 4, 7)`) and **cliffiness is read unsmoothed**, and
 `getModifiedElevationInterval` is `cliff_elevation_interval / frequency`.
+
+## The direction is ORE -> CLIFF (2026-08-02, #84 item 1)
+
+The section above ends "the next step is to settle the direction, not to add a
+rejection." It is settled, and the answer is **the resources suppress the
+cliffs**. It was settled by a lever rather than by an argument:
+`map_gen_settings.autoplace_controls` is settable on the surface exactly like
+`cliff_settings`, so the resources can be switched OFF (`size = 0`) and the same
+regions regenerated. That is #82's collapse trick pointed one subsystem over.
+Captured as `oracle-vulcanus-cliff-ore-direction.seed123456.json`, pinned in
+`test/cliffOreDirection.spec.ts`.
+
+| arm | cliff-vulcanus | resources |
+| --- | --- | --- |
+| `[1500,1500]`, resources ON | 885 | 3,933 |
+| `[1500,1500]`, calcite OFF | 912 | 19 |
+| `[1500,1500]`, geyser OFF | 889 | 3,914 |
+| `[1500,1500]`, ALL OFF | 916 | 0 |
+| `[0,0]` collapsed, resources ON | 335 | 945 |
+| `[0,0]` collapsed, ALL OFF | **345** | 0 |
+
+**Both arms of the question, not just one.** Turning the ore off puts a cliff in
+**all ten** blob cells, `0/10 -> 10/10`. And the converse arm is what makes it a
+direction rather than a correlation: the collapsed settings force 335 cliffs
+through that region against the default's 283, straight through the tungsten
+field, and the ore does not move - the same 945 entities. Cliffs do not push ore
+around; ore removes cliffs.
+
+Three properties fall out, and each constrains the mechanism:
+
+- **One-way.** Removing a resource only ever ADDS cliffs. Nothing the game placed
+  with the resources on disappears when they are removed, in any of the four
+  paired arms. A perturbed field would move cells both ways; a rejection cannot.
+- **Additive.** calcite alone accounts for 27 cells, the geyser alone for 4, and
+  all resources together for exactly those same 31, with no overlap. So each
+  resource acts independently and locally.
+- **Local, with a geometry that is a BOX OVERLAP.** Not "is a resource tile
+  inside the 4x4 cell" - the test is the cliff's own collision rectangle against
+  the **resource entity's** rectangle. That distinction is measurable only
+  because `sulfuric-acid-geyser`'s collision half-extent is **1.398** against the
+  ores' **0.098**: a test treating every resource as a point at its tile centre
+  explains the calcite cells and cannot explain the geyser ones, which is exactly
+  the residual that made every candidate geometry score 20-27 of 31.
+
+Scored as a box overlap it explains **21 of the 31** suppressed cells and raises
+**zero** false alarms across the 885 the game kept. The other 10 are not
+scattered: the suppressed set has six 4-connected components and **every one of
+them contains at least one directly-overlapped cell**, so they are the remainder
+of runs whose interior was rejected. Adjacency is not a free pass - only 8 of the
+885 kept cliffs touch a suppressed cell at all.
+
+### What it is worth, and what is still open
+
+Every one of the 31 is a cell the port currently places, and none is a cliff the
+game kept. So the rule is **pure precision**: it can only remove surplus, and it
+removes 31 of the 42 cells the port over-places at `[1500,1500]`.
+
+**The mechanism is still not a collision, and now that is doubly established.**
+The mask argument stands - the fixture now carries the layers rather than a claim
+about them, and `resource` is disjoint from the cliff mask. The disassembly says
+the same thing from the other end, and more strongly:
+`EntityMapGenerationTask::computeInternal` (`0x101622860`) calls `generateCliffs`
+at `+44` and `generateEntities` at `+148`; `apply` (`0x101623b48`) calls
+`applyCliffs` at `+124`, `applyDecoratives` at `+152` and `applyEntities` at
+`+164`. **The cliffs are both computed and placed before any resource exists**,
+so no collision test in the cliff path can see one, and the "ordering effect -
+maybe ore avoids cliffs" half of the previous section's guess is refuted by the
+converse arm above.
+
+That leaves a rejection that reads the resource *placement* without the resource
+*entity*: something the cliff pass evaluates that knows where the patches will
+be. `Surface::wouldCollide` (`0x10160c088`) is `constCollideWithTile` +
+`collideWithEntity` and nothing else, so it is not there either - and
+`collideWithEntity` (`0x100a5b108`) was read rather than assumed this time: it
+walks the entities in the box and tests them through the inlined
+`CollisionMask::collides` (`CollisionMask.hpp:36`, at `+676`/`+680`), so it is
+purely a layer test with no special case for resources. Note also that
+`crater-cliff` is suppressed by calcite the same way (0 with calcite on, 8 with
+it off), and craters are placed on a completely different path
+(`CliffCraterPlacer::tryToPlaceCliffAsCrater`, `0x10160bcac`, called from
+`applyEntities`) - so whatever this is, it is common to both cliff kinds rather
+than specific to the cliff generator.
+
+**Do not port this as a collision test against our own resource positions
+without checking that arm separately.** The 31/0 score above uses the GAME's
+resource entities as the input, which isolates the rule from the accuracy of the
+resource port; driving it from `renderVulcanusResources` is a second question and
+has not been measured.
