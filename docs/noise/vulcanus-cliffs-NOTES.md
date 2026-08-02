@@ -1715,3 +1715,45 @@ geyser's were in #100).
 this time on the mechanism's geometry rather than on the ceiling argument that
 died with the recall gap.** What remains unexplained: 25 surplus, 6 missing (all
 lava-rejection over-rejections), and the 33 wrong orientations.
+
+## The orientation residual is NOT a boundary tie - and the cliff channel still has no oracle (#84, 2026-08-02)
+
+`cliffOrientationResidual.spec.ts` pins the shape: every wrong cell differs in
+exactly ONE edge, always an OVER-detection (game finds no crossing, port finds
+one). That shape has an obvious cheap explanation, and it is worth writing down
+that it is **wrong**, because it eliminates a whole class of cause.
+
+`crossesCliff` decides on the SIGN of `elevation - boundary`. If an endpoint sat
+within float noise of a band boundary, the ~1e-6 our fields agree to would flip
+the crossing, the residual would be an irreducible precision limit, and there
+would be nothing to fix.
+
+**Measured: every crossing edge in a wrong cell sits at least 0.205 from its
+boundary**, median ~9.9 - four to seven orders of magnitude clear of float
+noise. For the game to disagree, its elevation there must differ from ours by
+more than 0.2. That is a real field or rule difference.
+
+Non-vacuity: the overall minimum across all 2,920 crossing edges is 6.4e-3,
+thirty times tighter, so "far from the boundary" is a property of the wrong
+cells rather than of the sample. `test/cliffOrientationMargin.spec.ts`.
+
+### The one input never checked corner-by-corner
+
+`oracle-vulcanus-cliff-corner-fields-entity-regions` holds the **tile** channel.
+That is stated in prose at the top of `vulcanusCliffCornerFields.spec.ts`, and
+is now asserted as a number: against our per-tile elevation the worst corner
+differs by **4.8e-2**; against the grid-4 cliff channel the cliff generator
+actually reads, by **96.09**.
+
+So **the grid-4 cliff-elevation channel has no per-corner oracle at all.** It is
+the only input to the placement rule never checked against the game corner by
+corner, and after the margin result it is also the only remaining candidate that
+could move an endpoint the required 0.2.
+
+**Capturing it is the next concrete step**, and it is not a plain
+`calculate_tile_properties` dump - that is the 1-tile program and is exactly what
+produced the wrong-channel fixture. It needs the cliff-channel value routed out
+of the 4-grid program, e.g. a mod that publishes
+`vulcanus_basalt_lakes_multisample` at grid 4 into a readable tile property.
+Until that exists, "the fields are exonerated" cannot be said of the channel that
+matters - and #93's exoneration rested on a substitution in the tile channel.
