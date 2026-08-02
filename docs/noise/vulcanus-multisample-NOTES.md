@@ -139,3 +139,50 @@ const multisampled = Math.min(
 where `sampleBasaltLakes` is the `vulcanus_basalt_lakes` expression port,
 called at 4 integer-shifted neighbor points and combined with `Math.min` (the
 `min(...)` in the Lua source, not part of `multisample` itself).
+
+## AMENDED 2026-08-01: the offsets are in GRID UNITS, not tiles
+
+Everything above is correct **for the channel it was measured in**, and that
+qualification turned out to matter more than the result.
+
+`sampleExpression` reads values back through `LuaSurface.calculate_tile_properties`,
+whose noise program has a **1-tile grid**. In that channel `dx = 1` shifts by one
+tile and the derived rule `multisample(e, dx, dy) == e(x + dx, y + dy)` holds
+exactly, as the 150/150 residual-zero table shows.
+
+It does not hold anywhere else. Measured through the **cliff generator**, whose
+program walks the 4-tile corner lattice (`test/oracle/capture.ts multisample-grid`,
+`test/multisampleGrid.spec.ts`): a probe routed onto `cliff_elevation` with the
+placement rule collapsed puts its contour in one cell column, and
+
+| probe | column | |
+| --- | --- | --- |
+| `x` | 70 | baseline |
+| `multisample(x, 0, 0)` | 70 | identity |
+| `multisample(x, 4, 0)` | **54** | shifted **16 tiles**, not 4 |
+| `multisample(x, 0, 4)` | 70 | null control |
+
+So the true rule is
+
+```
+multisample(e, dx, dy) at (x, y) == e(x + dx * G, y + dy * G)
+```
+
+where `G` is the **grid step of the noise program doing the calling** - 1 for
+`calculate_tile_properties` and the tile renderer, 4 for cliff placement. The
+doc text quoted above says exactly this and was read as an implementation note:
+"evaluates the expression in a separate noise program with **a larger grid**".
+
+The consequence for this port: `vulcanus_basalt_lakes_multisample`'s `min` over
+`{0,1}x{0,1}` is a 1-tile min-filter for tiles and a **4-tile** one for cliffs.
+`min` is erosion, so the cliff channel's elevation is markedly smoother. Using
+the 1-tile field for cliffs was issue #18's root cause; see the top of
+`docs/noise/cliffs-NOTES.md` for the numbers.
+
+**The methodological point.** The measurement here was right, thorough and
+non-vacuous - 150 comparisons, residual exactly zero, cross-terms ruled out - and
+it still supported a false generalisation, because every one of those comparisons
+came through one channel. A primitive documented as depending on the calling
+program's grid cannot be characterised from a single caller. When adding an
+oracle for a primitive, ask what varies between its CONSUMERS, not only what
+varies in its arguments.

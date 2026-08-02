@@ -134,7 +134,23 @@ export function makeVulcanusCliffFields(ctx: EvalCtx, shared?: VulcanusStack): C
     })();
 
   return {
-    cliffElevation: (x, y) => elevation.elevation(x, y),
+    /**
+     * **`cliffElevation`, not `elevation`** - the cliff generator and the tile
+     * generator read genuinely different fields.
+     *
+     * `multisample`'s offsets are in the consuming noise program's GRID UNITS,
+     * and the cliff generator walks the 4-tile corner lattice while every
+     * per-tile consumer walks 1 tile, so `vulcanus_basalt_lakes_multisample`'s
+     * 2x2 min-filter spans 4 tiles here and 1 there. Using the per-tile field
+     * made the cliff elevation too rough and was issue #18's root cause -
+     * measured through the cliff generator itself in
+     * `test/multisampleGrid.spec.ts`, where `multisample(x, 4, 0)` routed onto
+     * `cliff_elevation` moves the contour 16 tiles rather than 4.
+     *
+     * Both variants hang off the one stack and share every sub-expression below
+     * the multisample, so this costs a second memo table and nothing else.
+     */
+    cliffElevation: (x, y) => elevation.cliffElevation(x, y),
     cliffiness: makeCliffinessBasic(ctx.seed0),
   };
 }

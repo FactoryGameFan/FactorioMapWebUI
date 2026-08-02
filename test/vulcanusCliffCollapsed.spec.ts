@@ -160,26 +160,33 @@ describe("Vulcanus cliffs with the rule collapsed term by term", () => {
     expect(degenerate.ours).toBe(0);
   });
 
-  it("VULCANUS is wrong even with the rule collapsed to sign(elevation - 70)", () => {
+  it("VULCANUS is now EXACT with the rule collapsed to sign(elevation - 70)", () => {
     const collapsed = vulcanusArm(2);
-    // Measured game=335 ours=463 matched=265 wrong=99. Bounds, not equalities,
-    // so a genuine fix does not require editing this line - but tight enough
-    // that a regression fails. The over-placement is the informative half: our
-    // 70-contour is ~38% longer than the game's, i.e. our field is rougher.
+    // **Inverted from what it asserted on 2026-08-01.** This arm is the sharpest
+    // instrument in the file: with smoothing off, a single contour and the gate
+    // held open, a cliff exists iff the elevation crosses 70. It used to read
+    // game 335 / ours 463 / 99 wrong - a 38% over-placement saying our field was
+    // ROUGHER than the generator's. That is what pointed at `multisample`, whose
+    // offsets turned out to be in grid units rather than tiles
+    // (test/multisampleGrid.spec.ts). With the 4-tile footprint it is exact.
     expect(collapsed.game).toBe(335);
-    expect(collapsed.ours).toBeGreaterThan(collapsed.game);
-    expect(collapsed.ours).toBeLessThanOrEqual(463);
-    expect(collapsed.wrong).toBeGreaterThan(50);
-    expect(collapsed.wrong).toBeLessThanOrEqual(99);
+    expect(collapsed.matched).toBe(335);
+    expect(collapsed.wrong).toBe(0);
   });
 
-  it("is wrong in every arm - no combination of the levers makes it exact", () => {
+  it("reproduces the game's whole cliff set in EVERY arm", () => {
     for (let i = 0; i < fx.cases.length; i++) {
       const r = vulcanusArm(i);
-      expect(r.matched).toBeGreaterThan(150);
-      // The claim is that nothing here is close to exact, in either direction.
-      expect(r.wrong / r.matched).toBeGreaterThan(0.2);
-      expect(r.ours).toBeGreaterThan(r.game);
+      // Recall 1.000 in all four arms, with zero wrong orientations.
+      expect(r.matched).toBe(r.game);
+      expect(r.wrong).toBe(0);
+      // Non-vacuity: real cells were compared, so this is agreement and not an
+      // empty comparison.
+      expect(r.matched).toBeGreaterThan(250);
+      // Residual over-placement, measured 1.028 - 1.044. The lava-collision
+      // rejection is deliberately not applied in this arm and removes part of
+      // it in the shipping renderer; the rest is the open remainder.
+      expect(r.ours / r.game).toBeLessThanOrEqual(1.05);
     }
   });
 });

@@ -465,6 +465,7 @@ export function buildCliffControlLua(
     seed?: number;
     entityType?: string;
     cliffSettings?: Readonly<Record<string, number | string>>;
+    propertyRoutes?: Readonly<Record<string, string>>;
   } = {},
 ): string {
   const dumpFile = opts.dumpFile ?? CLIFF_DUMP_FILE;
@@ -481,22 +482,32 @@ export function buildCliffControlLua(
         `\n  mgs.cliff_settings.${k} = ${typeof v === "string" ? JSON.stringify(v) : String(v)}`,
     )
     .join("");
+  // Property routes ride the same round-trip. Routing `cliff_elevation` at a
+  // probe expression is what lets the CLIFF GENERATOR be used as the readout for
+  // an expression, instead of `calculate_tile_properties` - a different channel,
+  // and the whole point when the primitive under test is documented as
+  // grid-dependent.
+  const routesLua = Object.entries(opts.propertyRoutes ?? {})
+    .map(
+      ([k, v]) => `\n  mgs.property_expression_names[${JSON.stringify(k)}] = ${JSON.stringify(v)}`,
+    )
+    .join("");
   // The Nauvis path needs the same round-trip when settings are overridden. It
   // is safe on `surfaces[1]` because the sampled regions are far from spawn and
   // therefore ungenerated at `on_init` - a setting cannot retro-edit a chunk
   // that already exists, so a near-spawn region would silently ignore this.
   const nauvisLua =
-    settingsLua === ""
+    settingsLua === "" && routesLua === ""
       ? `  local surface = game.surfaces[1]`
       : `  local surface = game.surfaces[1]
-  local mgs = surface.map_gen_settings${settingsLua}
+  local mgs = surface.map_gen_settings${settingsLua}${routesLua}
   surface.map_gen_settings = mgs`;
   const surfaceLua =
     opts.planet === undefined
       ? nauvisLua
       : `  local surface = game.planets["${opts.planet}"].create_surface()
   local mgs = surface.map_gen_settings
-  mgs.seed = ${String(opts.seed ?? 123456)}${settingsLua}
+  mgs.seed = ${String(opts.seed ?? 123456)}${settingsLua}${routesLua}
   surface.map_gen_settings = mgs`;
   return `script.on_init(function()
 ${surfaceLua}
@@ -665,6 +676,21 @@ export interface OracleOptions {
    * override that failed to apply cannot be mistaken for one that did nothing.
    */
   cliffSettings?: Readonly<Record<string, number | string>>;
+  /**
+   * Register this expression as `oracle_probe` at the data stage and route it
+   * onto {@link probeProperty} (default `cliff_elevation`) for the cliff
+   * sampler, so the CLIFF GENERATOR becomes the readout for an expression
+   * instead of `calculate_tile_properties`.
+   *
+   * That distinction is the point. The two are different channels - the cliff
+   * generator walks a 4-tile corner lattice, `calculate_tile_properties` does
+   * not - and `multisample` is documented as evaluating "in a separate noise
+   * program with a larger grid". Every measurement of that primitive so far went
+   * through the other channel, so a grid dependence would have been invisible.
+   */
+  probeExpression?: string;
+  /** Property {@link probeExpression} is routed onto. Default `cliff_elevation`. */
+  probeProperty?: string;
 }
 
 /**
@@ -852,8 +878,16 @@ export async function sampleCliffEntitiesFull(
       seed,
       entityType: opts.entityType,
       cliffSettings: opts.cliffSettings,
+      propertyRoutes:
+        opts.probeExpression === undefined
+          ? undefined
+          : { [opts.probeProperty ?? "cliff_elevation"]: PROBE_NAME },
     }),
   );
+  // The probe is a data-stage registration, so it goes in the same mod as the
+  // control script rather than a second mod.
+  if (opts.probeExpression !== undefined)
+    await writeFile(join(modFilesDir, "data.lua"), buildDataLua(opts.probeExpression));
   await writeFile(
     join(modDir, "mod-list.json"),
     JSON.stringify(

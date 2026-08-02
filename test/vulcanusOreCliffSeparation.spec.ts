@@ -226,13 +226,20 @@ describe("Vulcanus: the game separates cliffs from ore", () => {
           if (touches) falsePosOre++;
         }
       }
-      const tpRate = truePosOre / truePos;
-      const fpRate = falsePosOre / falsePos;
+      // **The false-positive population has largely collapsed** since the
+      // `multisample` grid fix (test/multisampleGrid.spec.ts) took recall to
+      // 1.000 / 0.973 / 0.965. Region 0 is down from 103 false positives to 9,
+      // too few to measure an enrichment on, so the comparison now runs only
+      // where a population survives - region 1, still ~209.
       expect(truePos).toBeGreaterThan(100);
-      expect(falsePos).toBeGreaterThan(50);
-      // Pinned well inside the measured 0.0%/7.8% and 0.4%/6.7%.
-      expect(tpRate).toBeLessThan(0.02);
-      expect(fpRate).toBeGreaterThan(0.04);
+      // True positives never touch ore, and that half is unaffected and still
+      // worth pinning: it is the stronger of the two statements.
+      expect(truePosOre / truePos).toBeLessThan(0.02);
+      if (falsePos < 50) continue;
+      // Where enough over-placement remains, it is still enriched on ore the
+      // game kept clear - so the exclusion this file documents is real and is
+      // part of what is LEFT of #18, not part of what was fixed.
+      expect(falsePosOre / falsePos).toBeGreaterThan(0.04);
     }
   }, 120000);
 });
@@ -462,12 +469,23 @@ describe("Vulcanus cliffs: the port's FIELDS are exact; the residual is in the R
     return new Set(cells.map((c) => key(c.x, c.y)));
   }
 
-  it("substituting the game's own elevation and cliffiness does not move a single cell", () => {
+  it("substituting the game's TILE-CHANNEL fields now MOVES cells", () => {
+    // **Inverted 2026-08-01.** These fixtures sample `vulcanus_elevation` through
+    // `calculate_tile_properties`, whose noise program has a 1-tile grid, while
+    // the CLIFF generator's has a 4-tile one - and `multisample`'s offsets are in
+    // GRID UNITS, so `vulcanus_basalt_lakes_multisample`'s min-filter spans 4
+    // tiles for cliffs and 1 tile here (test/multisampleGrid.spec.ts). The port
+    // now reads the cliff-channel field, so these values are the right numbers
+    // for the wrong consumer and must NOT reproduce our placement.
+    //
+    // This test agreeing for months is how the wrong channel stayed invisible:
+    // the fixture and the port were making the same mistake, so they agreed with
+    // each other rather than with the game.
     for (let i = 0; i < REGIONS.length; i++) {
       const game = placementForRegion(i, "game");
       const ours = placementForRegion(i, "ours");
       expect(game.size).toBeGreaterThan(500);
-      expect([...game].sort()).toEqual([...ours].sort());
+      expect([...game].sort()).not.toEqual([...ours].sort());
     }
   }, 180000);
 
