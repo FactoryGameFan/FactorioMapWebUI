@@ -3460,6 +3460,258 @@ async function captureVulcanusCliffCornerFieldsAtEntityRegions(): Promise<void> 
   );
 }
 
+/**
+ * **`cliff_smoothing = 0` at the OTHER two entity regions** (#84).
+ *
+ * `captureVulcanusCliffSmoothing` above asks this question at `[0,0]` only, and
+ * `oracle-vulcanus-cliff-collapsed`'s first arm answers it there at the real
+ * bands. The answer at `[0,0]` is that the port is EXACT with smoothing off -
+ * which reads like "the whole residual is the smoothing" until the same arm is
+ * run at the other two regions, and it is not: `[-1200,800]` is also exact, and
+ * `[1500,1500]` still carries 21 wrong orientations. **The residual is two
+ * different defects, and one region-worth of evidence could not tell them
+ * apart.** That is why this capture covers all three rather than the worst one.
+ *
+ * Case 0 overrides NOTHING and exists to read `cliff_settings` back off the
+ * planet's own surface. `VULCANUS_CLIFF_SMOOTHING = 1` had until now been
+ * inferred from the `CliffPlacementSettings` prototype default (issue #28) and
+ * never once read out of a running game; the value is load-bearing enough that
+ * an inference is not good enough, and the same class of assumption is what #28
+ * itself was.
+ */
+async function captureVulcanusCliffSmoothingOffRegions(): Promise<void> {
+  const seed = 123456;
+  const regions: Region[] = [
+    { x0: 1500, y0: 1500, x1: 1756, y1: 1756 },
+    { x0: -1200, y0: 800, x1: -944, y1: 1056 },
+  ];
+  const cases: {
+    label: string;
+    effective: DumpedCliffSettings | undefined;
+    region: Region;
+    cliffs: Position[];
+  }[] = [];
+
+  {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(regions[0], {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+      });
+      cases.push({
+        label: "planet defaults (nothing overridden)",
+        effective: dump.cliffSettings,
+        region: regions[0],
+        cliffs: dump.cliffs,
+      });
+      console.log(`  defaults reported back: ${JSON.stringify(dump.cliffSettings)}`);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  for (const region of regions) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        cliffSettings: {
+          cliff_smoothing: 0,
+          cliff_elevation_interval: 120,
+          cliff_elevation_0: 70,
+          richness: 1,
+        },
+      });
+      cases.push({
+        label: `smoothing=0 at [${String(region.x0)},${String(region.y0)}]`,
+        effective: dump.cliffSettings,
+        region,
+        cliffs: dump.cliffs,
+      });
+      console.log(
+        `  smoothing=0 at [${String(region.x0)},${String(region.y0)}] -> ${String(dump.cliffs.length)} cliffs`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 (Space Age) via test/oracle. Case 0 overrides NOTHING and " +
+      "exists purely to read cliff_settings back off Vulcanus's own surface, which is how " +
+      "cliff_smoothing=1 stopped being an inference from the CliffPlacementSettings prototype " +
+      "default and became a measurement. Cases 1-2 are the SAME rule with cliff_smoothing forced " +
+      "to 0 and every other term left real (cliff_elevation_0=70, cliff_elevation_interval=120, " +
+      "richness=1), at the two entity regions oracle-vulcanus-cliff-smoothing and " +
+      "oracle-vulcanus-cliff-collapsed do not cover. With smoothing off the generator reads the " +
+      "RAW 4-tile corner field, so these arms score the port's grid-4 cliff elevation directly. " +
+      "They are what splits the standing orientation residual in two: [-1200,800] is exact with " +
+      "smoothing off (as [0,0] already was) while [1500,1500] is not. `effective` is the " +
+      "cliff_settings the SURFACE reported back, so an override that failed to apply cannot be " +
+      "mistaken for one that did nothing. Forced surface seed like every other Vulcanus fixture. " +
+      "Regenerate: node --experimental-strip-types test/oracle/capture.ts " +
+      "vulcanus-cliff-smoothing-off-regions",
+    seed,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-smoothing-off-regions.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} cases)`);
+}
+
+/**
+ * **The `cliff_smoothing` STENCIL, measured directly instead of derived** (#84).
+ *
+ * `smoothingKnots` claims the engine interpolates each corner between knots at
+ * IN-CHUNK indices 0, 4 and 7 - the 7 rather than 8 being the asymmetry that
+ * makes smoothing "inaccurate" in the prototype's own words. That came off a
+ * disassembly of `crossingsForChunk`, and a disassembly is a reading, not a
+ * measurement.
+ *
+ * This measures it. The probe is a DELTA on one corner column (or row):
+ *
+ *     1 + 1000 * if(1 - abs(x - X0), 1, 0)
+ *
+ * routed onto `cliff_elevation` with smoothing left at 1, a single contour
+ * (`interval = 1e6`) and the cliffiness gate held open (`richness = 4`). The
+ * smoothed field is then exactly `1 + 1000 * w(i)`, where `w(i)` is the weight
+ * corner `i` gives the knot at `X0/4` and nothing else - every other corner
+ * contributes the constant 1. Cliffs appear where that crosses
+ * `cliff_elevation_0 = 500`, i.e. where `w` crosses 0.5, so the cliff columns
+ * read the stencil off the game directly.
+ *
+ * **The arms include a corner that is NOT a knot under the model, and its
+ * prediction is that the game produces NOTHING AT ALL.** That is the whole point
+ * of the design: a stencil test that can only ever confirm weights is much
+ * weaker than one with an arm whose predicted output is empty, because an empty
+ * result cannot be produced by a stencil that is merely close.
+ */
+async function captureCliffSmoothingStencil(): Promise<void> {
+  const seed = 123456;
+  const arms: { label: string; axis: "x" | "y"; index: number; region: Region }[] = [
+    {
+      label: "column 432 (in-chunk 0, knot)",
+      axis: "x",
+      index: 432,
+      region: { x0: 1700, y0: 1500, x1: 1800, y1: 1600 },
+    },
+    {
+      label: "column 435 (in-chunk 3, NOT a knot)",
+      axis: "x",
+      index: 435,
+      region: { x0: 1700, y0: 1500, x1: 1800, y1: 1600 },
+    },
+    {
+      label: "column 436 (in-chunk 4, knot)",
+      axis: "x",
+      index: 436,
+      region: { x0: 1700, y0: 1500, x1: 1800, y1: 1600 },
+    },
+    {
+      label: "column 439 (in-chunk 7, knot)",
+      axis: "x",
+      index: 439,
+      region: { x0: 1700, y0: 1500, x1: 1800, y1: 1600 },
+    },
+    {
+      label: "row 376 (in-chunk 0, knot)",
+      axis: "y",
+      index: 376,
+      region: { x0: 1500, y0: 1450, x1: 1600, y1: 1560 },
+    },
+    {
+      label: "row 379 (in-chunk 3, NOT a knot)",
+      axis: "y",
+      index: 379,
+      region: { x0: 1500, y0: 1450, x1: 1600, y1: 1560 },
+    },
+    {
+      label: "row 380 (in-chunk 4, knot)",
+      axis: "y",
+      index: 380,
+      region: { x0: 1500, y0: 1450, x1: 1600, y1: 1560 },
+    },
+    {
+      label: "row 383 (in-chunk 7, knot)",
+      axis: "y",
+      index: 383,
+      region: { x0: 1500, y0: 1450, x1: 1600, y1: 1560 },
+    },
+  ];
+  const E0 = 500;
+  const cases: {
+    label: string;
+    axis: "x" | "y";
+    index: number;
+    region: Region;
+    expression: string;
+    effective: DumpedCliffSettings | undefined;
+    cliffs: Position[];
+  }[] = [];
+
+  for (const arm of arms) {
+    const at = arm.index * 4;
+    const expression = `1 + 1000 * if(1 - abs(${arm.axis} - ${String(at)}), 1, 0)`;
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(arm.region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        probeExpression: expression,
+        cliffSettings: {
+          cliff_smoothing: 1,
+          cliff_elevation_interval: 1000000,
+          cliff_elevation_0: E0,
+          richness: 4,
+        },
+      });
+      cases.push({
+        label: arm.label,
+        axis: arm.axis,
+        index: arm.index,
+        region: arm.region,
+        expression,
+        effective: dump.cliffSettings,
+        cliffs: dump.cliffs,
+      });
+      console.log(`  ${arm.label.padEnd(38)} -> ${String(dump.cliffs.length)} cliffs`);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 (Space Age) via test/oracle. Measures the cliff_smoothing " +
+      "STENCIL rather than deriving it. A DELTA probe `1 + 1000 * if(1 - abs(x - X0), 1, 0)` is " +
+      "routed onto property_expression_names.cliff_elevation with cliff_smoothing left at 1, " +
+      "cliff_elevation_interval=1e6 (a single contour) and richness=4 (the cliffiness gate held " +
+      "open). Every corner except column X0/4 carries the constant 1, so the smoothed field is " +
+      "exactly 1 + 1000*w(i) where w(i) is the weight corner i gives the knot at X0/4 - the game's " +
+      "cliffs at cliff_elevation_0=500 therefore trace the w=0.5 contour of the stencil itself. " +
+      "Four column arms and four row arms cover in-chunk indices 0, 3, 4 and 7 on both axes. The " +
+      "in-chunk-3 arms are the load-bearing ones: 3 is NOT a knot under `smoothingKnots`, so the " +
+      "model predicts the game places NOTHING, and an empty prediction cannot be satisfied by a " +
+      "stencil that is merely close. Forced surface seed like every other Vulcanus fixture. " +
+      "Regenerate: node --experimental-strip-types test/oracle/capture.ts cliff-smoothing-stencil",
+    seed,
+    cliffElevation0: E0,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-cliff-smoothing-stencil.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
 if (want("cliff-entities")) await captureCliffEntities();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();
 if (want("vulcanus-cliff-corner-fields")) await captureVulcanusCliffCornerFields();
@@ -3468,6 +3720,8 @@ if (want("vulcanus-cliff-corner-fields-entity-regions"))
 if (want("rocks")) await captureRocks();
 if (want("vulcanus-cliff-entities")) await captureVulcanusCliffEntities();
 if (want("vulcanus-cliff-smoothing")) await captureVulcanusCliffSmoothing();
+if (want("vulcanus-cliff-smoothing-off-regions")) await captureVulcanusCliffSmoothingOffRegions();
+if (want("cliff-smoothing-stencil")) await captureCliffSmoothingStencil();
 if (want("vulcanus-cliff-collapsed")) await captureVulcanusCliffCollapsed();
 if (want("vulcanus-elevation-levels")) await captureVulcanusElevationLevels();
 if (want("multisample-grid")) await captureMultisampleGrid();

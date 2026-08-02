@@ -287,6 +287,14 @@
     "oracle-multisample-grid.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "captured 2026-08-01 by test/oracle/capture.ts multisample-grid against the installed binary, in sync at 2.1.12 per pnpm refs:sync --check. Probe expressions routed onto property_expression_names.cliff_elevation on a Vulcanus surface with the rule collapsed, so the CLIFF GENERATOR is the readout instead of calculate_tile_properties. Carries its own positive control (multisample(x,4,0) must move the contour) and null control (multisample(x,0,4) must not)."
+    },
+    "oracle-vulcanus-cliff-smoothing-off-regions.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "stated - captured 2026-08-02 against the installed 2.1.12 binary (refs:sync --check in sync). Case 0 overrides nothing and READS cliff_settings back off Vulcanus's own surface, which is how cliff_smoothing=1 stopped being an inference from the CliffPlacementSettings prototype default and became a measurement; cases 1-2 record the effective settings the surface reported, so a failed override cannot pass as a null result"
+    },
+    "oracle-cliff-smoothing-stencil.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "stated - captured 2026-08-02 against the installed 2.1.12 binary (refs:sync --check in sync). Each arm records the effective cliff_settings; the in-chunk-3 arms are self-validating in that the model predicts an EMPTY result and the game produces one"
     }
   }
 }
