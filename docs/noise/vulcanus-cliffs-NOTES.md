@@ -2,15 +2,14 @@
 
 > ## STATUS, 2026-08-01: issue #18 is CLOSED; remainder tracked in #84
 >
-> **As shipped**: recall **0.9758**, precision **0.9727**, ratio 1.003. Region
-> `[0,0]` reproduces the game's cliff set entirely (recall **1.0000**). Before
+> **As shipped**: recall **0.9720**, precision **0.9713**, ratio 1.001. Before
 > #18's fix: recall 0.806 / 0.938 / 0.853 and 12.5% wrong orientations.
 >
 > Two rules do that work and both were found late: `tryToAddCliff`'s
-> lava-collision rejection (185 false positives across the three oracle regions,
-> precision 0.8719 -> 0.9743) and the fact that its box is a **rotated**
-> rectangle rather than its bounding box (recovers 13 real cliffs, recall
-> 0.9675 -> 0.9758). See the last two sections.
+> lava-collision rejection (185 false positives across the three oracle regions)
+> and the shape of its box, which is the **raw stored rectangle** - the engine
+> discards the `1/8` orientation tag. See the last three sections, and note the
+> LAST one corrects the one before it.
 >
 > **Root cause: `multisample`'s offsets are in the calling noise program's GRID
 > UNITS, not tiles**, so `vulcanus_basalt_lakes_multisample`'s `min` is a 4-tile
@@ -22,7 +21,8 @@
 > **Every accuracy table below this banner is the PRE-FIX state**, kept because the
 > reasoning is the useful part. Do not quote one as current. The exceptions are
 > the last two sections, which are post-fix and are where this banner's numbers
-> come from. Note the SECOND of them corrects the first - read both.
+> come from. Each of the last three corrects the one before it - read all three,
+> in order, or you will act on a superseded number.
 
 Factorio 2.1.12 (build 87038, mac-arm64). Ported 2026-07-26. Companion to
 `cliffs-NOTES.md`, which holds the reverse-engineering of the placement rule
@@ -1135,3 +1135,72 @@ loosening that trades precision for recall.
   enrichment), and in every case the game's is a smaller `-to-none` variant of
   ours. A wrong orientation means the wrong box, so the two defects compound.
   Those 6 belong to the standing orientation residual, which is unchanged.
+
+## The collision box, settled by disassembly (2026-08-02)
+
+The section above is **wrong about the mechanism** and its numbers are
+superseded. It concluded the engine collides against `rotbb`'s rectangle rotated
+45 degrees. It does not. The engine uses the **raw stored rectangle**, and
+discards the orientation tag.
+
+### What the binary does
+
+Three steps, all in the 2.1.12 arm64 slice:
+
+1. `EntityMapGenerationTask::tryToAddCliff` (`0x101625038`) switches on the
+   orientation, loads that entry's box from `proto + 0x5c0 + id*0x48` (20 bytes:
+   four `int32` edges at `+4`, the orientation word at `+0x14`), and calls
+   `wouldCollide` with **`Direction = 0`** - literally `mov x4, #0x0`.
+2. `EntityMapGenerationTask::wouldCollide` (`0x101625468`) forwards box and
+   direction to `BoundingBox::BoundingBox(BoundingBox const&, Direction)`
+   (`0x101c04380`), then floors the result with `(box + position) >> 8` and scans
+   the inclusive tile rectangle against a 96x96 mask grid.
+3. That constructor zeroes the destination, writes the sentinel `0x80010000` into
+   the destination's orientation word, and dispatches on the direction through a
+   jump table whose **entry 0 is 0** (read at `0x102d01400`) - the identity arm,
+   which copies `left_top`/`right_bottom` verbatim and returns. The source box's
+   own orientation is never read. The rotation arm below it, which calls
+   `Vector2<double, Vector>::rotate(Direction)`, is reachable only for a non-zero
+   `Direction`.
+
+Corroborated by the API mirror rather than by disassembly alone: `BoundingBox` is
+documented as `{MapPosition, MapPosition}` **or** `{MapPosition, MapPosition,
+RealOrientation}` with `orientation` optional, and
+`OrientedCliffPrototype::collision_bounding_box` is a plain `BoundingBox`.
+Nothing in the docs says collision honours the orientation, and the binary says
+it does not.
+
+### Three shapes, and the best-scoring one is wrong
+
+| box | false rejections | recall | precision | evidence |
+| --- | --- | --- | --- | --- |
+| AABB `[x, x+size] x [y, y+size]` | 13 | 0.9675 | 0.9743 | none - an assumption |
+| 45-degree oriented rect (#88) | **0** | **0.9758** | 0.9727 | empirical fit only |
+| **raw stored rect (current)** | 6 | 0.9720 | 0.9713 | **disassembly + API docs** |
+
+**#88 scored best on every metric and was wrong.** It shrank the box past what
+the engine uses, and the excess shrinkage also absorbed a *different* defect: 4
+of the 6 cliffs the correct box still rejects are cells where our orientation
+disagrees with the game's, so we load the wrong box entirely. Those 4 belong to
+the standing orientation residual and should stay visible.
+
+Note the raw rectangle is not simply "smaller". `hx + hy` is fixed at
+`size/2*sqrt2`, so its area is at most half the AABB's - but with a small
+`intersect` it sticks out PAST the AABB in x while collapsing in y. A first
+attempt to assert containment on every axis failed for that reason.
+
+Edges are quantised to 1/256 because `MapPosition` is 8-bit fixed point, so
+`x_dist`'s `sqrt(2)` cannot reach the engine at full precision.
+
+### The lesson, which is the same one twice in two days
+
+**A correction that scores better than the truth is still wrong, and it is
+dangerous precisely because it scores better.** #86 over-reported a collapsing
+gap because the AABB box was over-rejecting; #88 then hit 13/13 by over-shrinking
+and hid four orientation bugs. Both times the flattering number came from a
+too-strong correction. When a fix lands on a metric perfectly, treat that as a
+prompt to find the independent evidence, not as the evidence.
+
+The route that worked here was: stop tuning shapes against the metric, and go
+read what the engine does. The binary is unstripped and the whole chain took
+three `lldb` calls.

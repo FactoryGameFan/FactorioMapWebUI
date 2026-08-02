@@ -114,19 +114,34 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       // That fix is measured in `test/multisampleGrid.spec.ts`; these are its
       // end-to-end numbers on the path the renderer actually runs.
       //
-      // **Updated 2026-08-01 again, after the collision box was narrowed from
-      // `rotbb`'s AABB to the rotated rectangle it actually is**
-      // (`cliffBoxCoversTile`). That recovered 13 real cliffs at the cost of 3
-      // false positives.
+      // **Updated 2026-08-02, after DISASSEMBLING the collision test.** The box
+      // is the RAW stored rectangle: `tryToAddCliff` calls `wouldCollide` with
+      // `Direction = 0`, and `BoundingBox(BoundingBox const&, Direction)` takes
+      // its identity arm, copying `left_top`/`right_bottom` and discarding the
+      // `1/8` orientation tag. See `rotbbBox` in `cliffCatalog.ts`.
       //
       // | region | game | ours | recall | precision | ratio |
       // | --- | --- | --- | --- | --- | --- |
-      // | 0 `[0,0]` | 283 | 285 | **1.0000** | 0.9930 | 1.007 |
-      // | 1 `[1500,1500]` | 885 | 901 | 0.9729 | 0.9556 | 1.018 |
-      // | 2 `[-1200,800]` | 401 | 388 | 0.9651 | 0.9974 | 0.968 |
-      // | **total** | **1569** | **1574** | **0.9758** | **0.9727** | 1.003 |
+      // | 0 `[0,0]` | 283 | 283 | 0.9929 | 0.9929 | 1.000 |
+      // | 1 `[1500,1500]` | 885 | 900 | 0.9695 | 0.9533 | 1.017 |
+      // | 2 `[-1200,800]` | 401 | 387 | 0.9626 | 0.9974 | 0.965 |
+      // | **total** | **1569** | **1570** | **0.9720** | **0.9713** | 1.001 |
       //
-      // Region 0 reproduces the game's cliff set ENTIRELY - recall 1.0000.
+      // **These are WORSE than the numbers this comment carried for one day, and
+      // they are the right ones.** Three box models have shipped here:
+      //
+      // | box | false rejections | recall | precision | evidence |
+      // | --- | --- | --- | --- | --- |
+      // | AABB of the rotated rect | 13 | 0.9675 | 0.9743 | none |
+      // | 45-degree oriented rect (#88) | 0 | 0.9758 | 0.9727 | empirical fit |
+      // | raw stored rect (current) | 6 | 0.9720 | 0.9713 | **disassembly** |
+      //
+      // #88's middle row scored best on every metric and was wrong. It shrank
+      // the box past what the engine uses, which ALSO absorbed the unrelated
+      // orientation residual - 4 of the 6 cliffs the correct box still rejects
+      // are cells where our orientation disagrees with the game's, so we load
+      // the wrong box entirely. A model that scores perfectly by hiding a second
+      // defect is worse than one that leaves it visible.
       //
       // **The lava rejection is what closes the over-placement, and #84 item 1
       // asked how much.** The answer is nearly all of it. Without it the same
@@ -175,17 +190,16 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       // indiscriminate, ratio collapsing to 0.65 / 0.70. The real arm rejects
       // almost only false positives.
       //
-      // **Still not Nauvis-grade, and what is left is now pure over-placement.**
-      // `test/cliffPlacement.spec.ts` measures Nauvis at 1.0000 recall AND
-      // precision. Here 38 of the game's 1569 are missing and 43 of our 1574 are
-      // spurious - and none of the 38 is a collision-rejection loss any more,
-      // which is what the box fix bought. The residual is not one-directional
-      // (region 2 UNDER-places, regions 0 and 1 over-place), which is why the
-      // ratio is guarded on both sides below.
+      // **Still not Nauvis-grade.** `test/cliffPlacement.spec.ts` measures Nauvis
+      // at 1.0000 recall AND precision. Here 44 of the game's 1569 are missing
+      // and 45 of our 1570 are spurious; 6 of the 44 are collision rejections,
+      // 4 of those traceable to the orientation residual. The remainder is not
+      // one-directional (region 2 UNDER-places, region 1 over-places), which is
+      // why the ratio is guarded on both sides below.
       //
       // Guards sit just outside the measured values in the direction that would
       // signal a regression, and open in the direction of improvement.
-      expect(recall).toBeGreaterThan(0.96);
+      expect(recall).toBeGreaterThan(0.95);
       expect(precision).toBeGreaterThan(0.94);
       expect(predicted.size / actual.size).toBeLessThan(1.05);
       expect(predicted.size / actual.size).toBeGreaterThan(0.95);
