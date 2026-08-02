@@ -31,7 +31,9 @@ import {
   VULCANUS_CLIFF_SMOOTHING,
   makeVulcanusCliffFields,
 } from "../cliffs/vulcanusCliffFields";
+import { makeVulcanusOreRejection } from "../cliffs/vulcanusOreRejection";
 import { paintCliffCells } from "./renderCliffs";
+import { buildResources } from "./renderVulcanusResources";
 import {
   type VulcanusStack,
   makeVulcanusTileResolver,
@@ -96,11 +98,17 @@ export function renderVulcanusCliffs(base: ImageData, opts: RenderVulcanusCliffs
   // the window and break tiled equality.
   const tileAt =
     shared === undefined ? makeVulcanusTileResolver(ctx) : makeVulcanusTileResolverFrom(shared);
+  // The ORE -> CLIFF suppression (#84 item 1). Same sourcing rule as the tile
+  // resolver above: the composite's own resource stack when there is one, so the
+  // two overlays agree on where the ore is by construction rather than by
+  // coincidence, and a private DAG only when running standalone.
+  const resources = shared?.resources ?? buildResources(ctx);
   const placement = makeCliffPlacementFromFields(makeVulcanusCliffFields(ctx, shared), {
     elevation0: VULCANUS_CLIFF_ELEVATION_0,
     interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
     smoothing: VULCANUS_CLIFF_SMOOTHING,
     tileCollides: (x, y) => VULCANUS_CLIFF_BLOCKING_TILES.has(tileAt(x, y).name),
+    cellRejects: makeVulcanusOreRejection(resources, ctx.vulcanusResourceControls),
   });
 
   const box = opts.cellQueryBox ?? {

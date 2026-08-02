@@ -33,6 +33,46 @@ import type { VulcanusResourceControls, VulcanusResourceLevers } from "../eval/c
 import type { VulcanusResources } from "../expressions/vulcanusResources";
 
 /**
+ * The threshold a `"threshold"` entry's probability must clear for the game to
+ * have placed an ore entity on that tile: `probability >= 0.5`.
+ *
+ * **This lives here rather than in the renderer because it now has two
+ * consumers.** `renderVulcanusResources` paints with it, and
+ * `makeVulcanusOreRejection` (`../cliffs/vulcanusOreRejection.ts`) asks the same
+ * question to decide whether an ore entity suppresses a cliff. Two copies of the
+ * number could drift apart and the cliff overlay would then reject against a
+ * footprint the ore overlay does not draw - a disagreement that would be
+ * invisible in both renders. `test/cliffOreRejection.spec.ts` pins the two
+ * footprints equal on top of sharing this constant.
+ */
+export const RESOURCE_PROBABILITY_THRESHOLD = 0.5;
+
+/**
+ * Does the game hold a solid-ore entity on the tile whose centre is
+ * `(x + 0.5, y + 0.5)`?
+ *
+ * The three solid ores THRESHOLD (see `VulcanusResourcePlacement`), so their
+ * footprint is exactly `1000 * region >= RESOURCE_PROBABILITY_THRESHOLD` over
+ * the entries whose `size` lever is positive. A disabled ore occupies nothing,
+ * which is not a special case bolted on: it is the same `size = 0` lever the
+ * game itself was driven with to establish that ore suppresses cliffs (#99).
+ *
+ * The geyser is deliberately absent - it ROLLS rather than thresholds, so it has
+ * no footprint expressible this way. Callers that want it pass their own
+ * predicate.
+ */
+export function makeVulcanusOreFootprint(
+  resources: VulcanusResources,
+  controls: VulcanusResourceControls,
+): (x: number, y: number) => boolean {
+  const active = VULCANUS_RESOURCE_CATALOG.filter(
+    (p) => p.placement === "threshold" && p.levers(controls).size > 0,
+  ).map((p) => p.region(resources));
+  if (active.length === 0) return () => false;
+  return (x, y) => active.some((region) => 1000 * region(x, y) >= RESOURCE_PROBABILITY_THRESHOLD);
+}
+
+/**
  * How this entry decides where it is drawn.
  *
  * - `"threshold"` - draw wherever the entry's own probability clears
