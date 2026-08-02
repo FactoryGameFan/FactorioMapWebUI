@@ -1,0 +1,1698 @@
+{
+  "_comment": "Ground truth from Factorio 2.1.12 (Space Age) via test/oracle. Measures the cliff_smoothing STENCIL rather than deriving it. A DELTA probe `1 + 1000 * if(1 - abs(x - X0), 1, 0)` is routed onto property_expression_names.cliff_elevation with cliff_smoothing left at 1, cliff_elevation_interval=1e6 (a single contour) and richness=4 (the cliffiness gate held open). Every corner except column X0/4 carries the constant 1, so the smoothed field is exactly 1 + 1000*w(i) where w(i) is the weight corner i gives the knot at X0/4 - the game's cliffs at cliff_elevation_0=500 therefore trace the w=0.5 contour of the stencil itself. Four column arms and four row arms cover in-chunk indices 0, 3, 4 and 7 on both axes. The in-chunk-3 arms are the load-bearing ones: 3 is NOT a knot under `smoothingKnots`, so the model predicts the game places NOTHING, and an empty prediction cannot be satisfied by a stencil that is merely close. Forced surface seed like every other Vulcanus fixture. Regenerate: node --experimental-strip-types test/oracle/capture.ts cliff-smoothing-stencil",
+  "seed": 123456,
+  "cliffElevation0": 500,
+  "cases": [
+    {
+      "label": "column 432 (in-chunk 0, knot)",
+      "axis": "x",
+      "index": 432,
+      "region": {
+        "x0": 1700,
+        "y0": 1500,
+        "x1": 1800,
+        "y1": 1600
+      },
+      "expression": "1 + 1000 * if(1 - abs(x - 1728), 1, 0)",
+      "effective": {
+        "name": "cliff-vulcanus",
+        "cliff_elevation_0": 500,
+        "cliff_elevation_interval": 1000000,
+        "cliff_smoothing": 1,
+        "richness": 4
+      },
+      "cliffs": [
+        {
+          "x": 1726,
+          "y": 1498.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1498.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1506.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1506.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1726,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1726,
+          "y": 1518.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-none"
+        },
+        {
+          "x": 1738,
+          "y": 1522.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-none"
+        },
+        {
+          "x": 1726,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1530.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1530.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1538.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1538.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1542.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1542.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1751.9375,
+          "y": 1542.5,
+          "name": "crater-cliff",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1749.88671875,
+          "y": 1545.99609375,
+          "name": "crater-cliff",
+          "orientation": "north-to-west"
+        },
+        {
+          "x": 1726,
+          "y": 1546.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1546.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1744.9375,
+          "y": 1547.44921875,
+          "name": "crater-cliff",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1726,
+          "y": 1550.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1550.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1554.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1554.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1558.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1558.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1562.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1562.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1566.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1566.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1570.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1570.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1574.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1574.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1578.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1578.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1582.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1582.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1586.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1586.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1590.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1590.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1594.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1594.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1726,
+          "y": 1598.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1738,
+          "y": 1598.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        }
+      ]
+    },
+    {
+      "label": "column 435 (in-chunk 3, NOT a knot)",
+      "axis": "x",
+      "index": 435,
+      "region": {
+        "x0": 1700,
+        "y0": 1500,
+        "x1": 1800,
+        "y1": 1600
+      },
+      "expression": "1 + 1000 * if(1 - abs(x - 1740), 1, 0)",
+      "effective": {
+        "name": "cliff-vulcanus",
+        "cliff_elevation_0": 500,
+        "cliff_elevation_interval": 1000000,
+        "cliff_smoothing": 1,
+        "richness": 4
+      },
+      "cliffs": [
+        {
+          "x": 1739.98828125,
+          "y": 1539,
+          "name": "crater-cliff",
+          "orientation": "south-to-east"
+        },
+        {
+          "x": 1737.9375,
+          "y": 1542.5,
+          "name": "crater-cliff",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1751.9375,
+          "y": 1542.5,
+          "name": "crater-cliff",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1739.98828125,
+          "y": 1545.99609375,
+          "name": "crater-cliff",
+          "orientation": "east-to-north"
+        },
+        {
+          "x": 1749.88671875,
+          "y": 1545.99609375,
+          "name": "crater-cliff",
+          "orientation": "north-to-west"
+        },
+        {
+          "x": 1744.9375,
+          "y": 1547.44921875,
+          "name": "crater-cliff",
+          "orientation": "east-to-west"
+        }
+      ]
+    },
+    {
+      "label": "column 436 (in-chunk 4, knot)",
+      "axis": "x",
+      "index": 436,
+      "region": {
+        "x0": 1700,
+        "y0": 1500,
+        "x1": 1800,
+        "y1": 1600
+      },
+      "expression": "1 + 1000 * if(1 - abs(x - 1744), 1, 0)",
+      "effective": {
+        "name": "cliff-vulcanus",
+        "cliff_elevation_0": 500,
+        "cliff_elevation_interval": 1000000,
+        "cliff_smoothing": 1,
+        "richness": 4
+      },
+      "cliffs": [
+        {
+          "x": 1734,
+          "y": 1498.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1498.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1506.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1734,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-none"
+        },
+        {
+          "x": 1734,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-south"
+        },
+        {
+          "x": 1734,
+          "y": 1530.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1734,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1734,
+          "y": 1538.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1734,
+          "y": 1542.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1542.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-none"
+        },
+        {
+          "x": 1734,
+          "y": 1546.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1546.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1550.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1550.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1554.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1554.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1558.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1558.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1562.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1562.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1566.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1566.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1570.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1570.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1574.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1574.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1578.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1578.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1582.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1582.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1586.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1586.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-north"
+        },
+        {
+          "x": 1734,
+          "y": 1590.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1734,
+          "y": 1594.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1734,
+          "y": 1598.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1750,
+          "y": 1598.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-none"
+        }
+      ]
+    },
+    {
+      "label": "column 439 (in-chunk 7, knot)",
+      "axis": "x",
+      "index": 439,
+      "region": {
+        "x0": 1700,
+        "y0": 1500,
+        "x1": 1800,
+        "y1": 1600
+      },
+      "expression": "1 + 1000 * if(1 - abs(x - 1756), 1, 0)",
+      "effective": {
+        "name": "cliff-vulcanus",
+        "cliff_elevation_0": 500,
+        "cliff_elevation_interval": 1000000,
+        "cliff_smoothing": 1,
+        "richness": 4
+      },
+      "cliffs": [
+        {
+          "x": 1750,
+          "y": 1498.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1498.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-none"
+        },
+        {
+          "x": 1758,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1758,
+          "y": 1506.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-north"
+        },
+        {
+          "x": 1758,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-none"
+        },
+        {
+          "x": 1739.98828125,
+          "y": 1539,
+          "name": "crater-cliff",
+          "orientation": "south-to-east"
+        },
+        {
+          "x": 1758,
+          "y": 1538.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1737.9375,
+          "y": 1542.5,
+          "name": "crater-cliff",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1542.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1542.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1739.98828125,
+          "y": 1545.99609375,
+          "name": "crater-cliff",
+          "orientation": "east-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1546.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1546.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1550.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1550.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1554.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1554.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1558.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1558.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1562.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1562.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1566.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1566.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1570.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1570.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1574.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1574.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1578.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1578.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1582.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1582.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-north"
+        },
+        {
+          "x": 1750,
+          "y": 1586.5,
+          "name": "cliff-vulcanus",
+          "orientation": "north-to-none"
+        },
+        {
+          "x": 1750,
+          "y": 1598.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-south"
+        },
+        {
+          "x": 1758,
+          "y": 1598.5,
+          "name": "cliff-vulcanus",
+          "orientation": "south-to-none"
+        }
+      ]
+    },
+    {
+      "label": "row 376 (in-chunk 0, knot)",
+      "axis": "y",
+      "index": 376,
+      "region": {
+        "x0": 1500,
+        "y0": 1450,
+        "x1": 1600,
+        "y1": 1560
+      },
+      "expression": "1 + 1000 * if(1 - abs(y - 1504), 1, 0)",
+      "effective": {
+        "name": "cliff-vulcanus",
+        "cliff_elevation_0": 500,
+        "cliff_elevation_interval": 1000000,
+        "cliff_smoothing": 1,
+        "richness": 4
+      },
+      "cliffs": [
+        {
+          "x": 1498,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1502,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1506,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1510,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1514,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1518,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1522,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1526,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1530,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1534,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1538,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1542,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-west"
+        },
+        {
+          "x": 1566,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-none"
+        },
+        {
+          "x": 1570,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1574,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1578,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1582,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1586,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1590,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1594,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1598,
+          "y": 1502.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1498,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1502,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1506,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1510,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1514,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1518,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1522,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1526,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1530,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1534,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1538,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1542,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1546,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-none"
+        },
+        {
+          "x": 1570,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-east"
+        },
+        {
+          "x": 1574,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1578,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1582,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1586,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1590,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1594,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1598,
+          "y": 1514.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        }
+      ]
+    },
+    {
+      "label": "row 379 (in-chunk 3, NOT a knot)",
+      "axis": "y",
+      "index": 379,
+      "region": {
+        "x0": 1500,
+        "y0": 1450,
+        "x1": 1600,
+        "y1": 1560
+      },
+      "expression": "1 + 1000 * if(1 - abs(y - 1516), 1, 0)",
+      "effective": {
+        "name": "cliff-vulcanus",
+        "cliff_elevation_0": 500,
+        "cliff_elevation_interval": 1000000,
+        "cliff_smoothing": 1,
+        "richness": 4
+      },
+      "cliffs": []
+    },
+    {
+      "label": "row 380 (in-chunk 4, knot)",
+      "axis": "y",
+      "index": 380,
+      "region": {
+        "x0": 1500,
+        "y0": 1450,
+        "x1": 1600,
+        "y1": 1560
+      },
+      "expression": "1 + 1000 * if(1 - abs(y - 1520), 1, 0)",
+      "effective": {
+        "name": "cliff-vulcanus",
+        "cliff_elevation_0": 500,
+        "cliff_elevation_interval": 1000000,
+        "cliff_smoothing": 1,
+        "richness": 4
+      },
+      "cliffs": [
+        {
+          "x": 1498,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1502,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1506,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1510,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1514,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1518,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1522,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1526,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1530,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1534,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1538,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1542,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-west"
+        },
+        {
+          "x": 1566,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-none"
+        },
+        {
+          "x": 1570,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1574,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1578,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1582,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1586,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1590,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1594,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1598,
+          "y": 1510.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1498,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1502,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1506,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1510,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1514,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1518,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1522,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1526,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1530,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1534,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1538,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1542,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1546,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1550,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-none"
+        },
+        {
+          "x": 1582,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-east"
+        },
+        {
+          "x": 1586,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1590,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1594,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1598,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        }
+      ]
+    },
+    {
+      "label": "row 383 (in-chunk 7, knot)",
+      "axis": "y",
+      "index": 383,
+      "region": {
+        "x0": 1500,
+        "y0": 1450,
+        "x1": 1600,
+        "y1": 1560
+      },
+      "expression": "1 + 1000 * if(1 - abs(y - 1532), 1, 0)",
+      "effective": {
+        "name": "cliff-vulcanus",
+        "cliff_elevation_0": 500,
+        "cliff_elevation_interval": 1000000,
+        "cliff_smoothing": 1,
+        "richness": 4
+      },
+      "cliffs": [
+        {
+          "x": 1498,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1502,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1506,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1510,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1514,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1518,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1522,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1526,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1530,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1534,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1538,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1542,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1546,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1550,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-west"
+        },
+        {
+          "x": 1582,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-none"
+        },
+        {
+          "x": 1586,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1590,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1594,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1598,
+          "y": 1526.5,
+          "name": "cliff-vulcanus",
+          "orientation": "east-to-west"
+        },
+        {
+          "x": 1498,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1502,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1506,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1510,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1514,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1518,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1522,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1526,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1530,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1534,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1538,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1542,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1546,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1550,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1554,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1558,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-none"
+        },
+        {
+          "x": 1574,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "none-to-east"
+        },
+        {
+          "x": 1578,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1582,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1586,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1590,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1594,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-east"
+        },
+        {
+          "x": 1598,
+          "y": 1534.5,
+          "name": "cliff-vulcanus",
+          "orientation": "west-to-none"
+        }
+      ]
+    }
+  ]
+}

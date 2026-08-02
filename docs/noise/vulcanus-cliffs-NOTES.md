@@ -23,6 +23,17 @@
 > the last two sections, which are post-fix and are where this banner's numbers
 > come from. Each of the last three corrects the one before it - read all three,
 > in order, or you will act on a superseded number.
+>
+> ## UPDATE, 2026-08-02: the FIELD is exonerated; the residual is two defects
+>
+> The last section, **`## The residual is TWO defects, and the field is not
+> either of them`**, supersedes the "the defect is in the grid-4 cliff-elevation
+> field" lead that #91 handed over. That field is now measured correct, along
+> with `cliffiness_basic` (over its unclamped corners), the smoothing stencil on
+> both axes, and `cliff_smoothing = 1` read back from the game. Read that section
+> before touching anything: **with `cliff_smoothing = 0` the port is exact at
+> `[0,0]` and `[-1200,800]` and still 21-wrong at `[1500,1500]`**, so there is no
+> single cause left to look for.
 
 Factorio 2.1.12 (build 87038, mac-arm64). Ported 2026-07-26. Companion to
 `cliffs-NOTES.md`, which holds the reverse-engineering of the placement rule
@@ -1204,3 +1215,108 @@ prompt to find the independent evidence, not as the evidence.
 The route that worked here was: stop tuning shapes against the metric, and go
 read what the engine does. The binary is unstripped and the whole chain took
 three `lldb` calls.
+
+## The residual is TWO defects, and the field is not either of them (2026-08-02)
+
+The handoff into this session (#91) named one lead: "the defect is in the
+**grid-4 cliff-elevation field** - the one input in the chain with no direct
+per-corner oracle", with the next step being to capture `cliff_elevation` at the
+4-tile corner lattice. **That lead is refuted.** The grid-4 field is correct, and
+so is everything else upstream of the crossing test. What is left splits into two
+defects that live in different regions and have different causes, which is why a
+single number ("37 wrong orientations") could never be chased to a single cause.
+
+### What was eliminated, and how
+
+Each of these is a measurement, not a reading. Do not re-derive them.
+
+| input | verdict | how |
+| --- | --- | --- |
+| grid-1 `vulcanus_elevation` | exact, worst **4.8e-2** | all **12,675** corners of `oracle-vulcanus-cliff-corner-fields-entity-regions` |
+| grid-4 `multisample` min-filter | exact | through the CLIFF GENERATOR at `[0,0]` **and** `[1500,1500]`; grid 1 / 2 / 8 / centred all score far worse |
+| `multisample(e, 0, 0)` | the identity in this channel | arm A ≡ arm B, cell for cell, both regions |
+| `cliffiness_basic` | exact, worst **6.4e-6** | over the **4,266 UNCLAMPED** corners (see the vacuity note below) |
+| `cliff_smoothing = 1` | **measured**, not inferred | read back off the planet's own surface with nothing overridden |
+| the smoothing stencil | exact | delta probe, both axes, `test/cliffSmoothingModel.spec.ts` |
+| `crossesCliff` | exact | disassembly, `0x10160c914` |
+| `crossingsForChunk`'s smoothing | matches `smoothingKnots` | disassembly, `0x10160c9cc` (**the VA in cliffs-NOTES.md had moved**) |
+| `fixImpossibleCells` give-up branch | never fires | **0** chunks in these regions need even one retry |
+
+Two of those deserve their own note.
+
+**The `cliffiness_basic` exoneration was two-thirds vacuous and is now not.**
+`cliffiness_basic` is `clamp(qmn, 0, 1) + 0.5`, and **8,409 of the 12,675
+captured corners sit ON a clamp** (6,330 at the floor, 2,079 at the ceiling).
+Agreeing there says nothing whatever about `qmn`; it says both sides clamped. The
+comparison that carries information is the 4,266-corner interior, and it agrees
+to 6.4e-6. Any future "field X is exact" claim about a clamped expression has to
+report the interior separately or it is measuring the clamp.
+
+**The smoothing stencil was measured, not just disassembled.** The probe is a
+DELTA on one corner column: `1 + 1000 * if(1 - abs(x - X0), 1, 0)` routed onto
+`cliff_elevation` with smoothing left at 1. Every corner but one carries the
+constant 1, so the smoothed field is exactly `1 + 1000 * w(i)` for the stencil
+weight `w`, and the game's cliffs trace `w = 0.5` directly. The design's teeth
+are the **in-chunk-index-3 arms**: 3 is not a knot, so the model predicts the game
+places *nothing at all*, and the game places nothing at all. An arm whose
+predicted output is EMPTY cannot be satisfied by a stencil that is merely close -
+which is the failure mode of every weight-matching check.
+
+### The split
+
+Force `cliff_smoothing = 0` and leave every other term real, and the port's
+grid-4 field is scored with no interpolation in the way:
+
+| region | smoothing = 0 | smoothing = 1 (ships) |
+| --- | --- | --- |
+| `[0,0]` | **0** wrong | 7 wrong |
+| `[-1200,800]` | **0** wrong, precision 1.0000 | 4 wrong |
+| `[1500,1500]` | **21** wrong | 26 wrong |
+
+So `[0,0]` and `[-1200,800]` carry a defect that exists ONLY under smoothing,
+while `[1500,1500]` carries one that survives smoothing being switched off
+entirely. `[1500,1500]`'s 21 are all **over-detections**, all at the HIGH bands
+(670 / 790 / 1030), with margins of **0.69 - 46.6 elevation units** - far too
+large for float32, and the cliffiness there sits up to 1.0 clear of its gate.
+
+**This is why one region was never enough.** `[0,0]` alone says "smoothing off is
+exact, therefore the residual is the smoothing", and that is false for 21 of the
+37. Two of three regions agreeing is exactly the evidence that produces a
+confident wrong conclusion - the same shape as #88.
+
+Note also what this does to `docs/noise/...` note "cliff_smoothing is NOT the
+residual (#79, #80)". That was measured **before #83 fixed the multisample grid**,
+when the field was wrong everywhere and so nothing downstream could be scored. It
+has expired: with the field right, smoothing off is exact in two regions of three.
+
+### The smoothing-side defect is NOT in the stencil
+
+The stencil arms are exact in six of eight; the two that are not are exact
+everywhere except one four-cell vertical run at `x = 1750`, rows 1526.5-1538.5,
+which appears in both arms regardless of which delta column is used. It is not
+the collision rejection - the game's tiles over `x 1742..1760, y 1518..1546` are
+all `volcanic-*` ground tiles with **no lava at all**, and only `lava`/`lava-hot`
+carry the `water_tile` layer the cliff mask collides with.
+
+That is the same signature as the `[0,0]` **blob** below, and they are probably
+one thing.
+
+### The blob: a place the game puts no cliff, whatever field it is given
+
+`#84` item 2 ("over-placement below elevation 120") is not spread over the low
+band at all. In region `[0,0]` **every** excess cell, at every level of the
+19-level sweep and in both probe arms, sits in one contiguous patch: cells
+`cx 43-48, cy 34-40` (world `x 172-196, y 136-164`). The game places **zero**
+cliffs there under real settings, under all four collapsed arms, at all 19 sweep
+levels, and with a completely synthetic `cliff_elevation` routed onto it.
+
+A field-independent hole is not a field error. The obvious suspect, lava, is
+mostly ruled out: most of those cells have no lava within 10 tiles by our
+resolver, and our resolver is right about lava there to 4 tiles in 483 (those 4
+being lava the game HAS and we miss - note the 994-position capture that
+"exonerated the mask" sampled neighbourhoods of tiles OUR mask calls lava and
+therefore structurally could not find that class of error).
+
+**This is the sharpest open lead**, and a much better one than "we over-place at
+low elevation": it is a bounded, contiguous, field-independent suppression, so
+whatever causes it is a rule the port does not implement at all.
