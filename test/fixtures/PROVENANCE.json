@@ -279,6 +279,10 @@
     "oracle-vulcanus-elevation-levels.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "captured 2026-08-01 by test/oracle/capture.ts vulcanus-elevation-levels against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The Vulcanus region [0,0] at 19 values of cliff_elevation_0 (20..200 step 10) with the rule collapsed (cliff_smoothing=0, cliff_elevation_interval=1e6, richness=4), so a cell carries a cliff exactly when its corner elevations straddle the level - inverting the elevation field the generator itself reads. Each case records the cliff_settings the SURFACE reported back."
+    },
+    "oracle-multisample-grid.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-01 by test/oracle/capture.ts multisample-grid against the installed binary, in sync at 2.1.12 per pnpm refs:sync --check. Probe expressions routed onto property_expression_names.cliff_elevation on a Vulcanus surface with the rule collapsed, so the CLIFF GENERATOR is the readout instead of calculate_tile_properties. Carries its own positive control (multisample(x,4,0) must move the contour) and null control (multisample(x,0,4) must not)."
     }
   }
 }

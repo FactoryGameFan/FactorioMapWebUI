@@ -106,28 +106,34 @@ describe("Vulcanus cliffs across a cliff_smoothing sweep", () => {
     expect(s1?.cliffs.filter((c) => c.name === "cliff-vulcanus").length).toBe(283);
   });
 
-  it("is WRONG at s = 0, which is what clears the smoothing of causing #18", () => {
+  it("is EXACT at s = 0 - which is how the smoothing was cleared, then the field fixed", () => {
     const s0 = sweep.cases.find((c) => c.cliffSmoothing === 0);
     const r = score(0, s0?.cliffs ?? []);
-    // Measured 289 matched / 83 wrong. With smoothing off the elevation is the
-    // raw field and the rule is the one that scores Nauvis 334/334, so a port
-    // whose only defect were the smoothing would be EXACT here.
-    expect(r.matched).toBeGreaterThan(250);
-    expect(r.wrong).toBeGreaterThan(50);
-    // An upper bound as well, so this cannot silently rot in either direction.
-    expect(r.wrong).toBeLessThanOrEqual(83);
+    // **This assertion is inverted from what it was on 2026-08-01, and the
+    // inversion is the story.** With smoothing off the elevation is the raw
+    // field, so a port whose only defect were the smoothing would be exact
+    // here - and it was NOT: 289 matched / 83 wrong. That cleared the smoothing
+    // and sent the search to the field, where the cause turned out to be
+    // `multisample`'s offsets being in GRID UNITS rather than tiles
+    // (test/multisampleGrid.spec.ts). With that fixed, s = 0 is exact.
+    expect(r.game).toBe(352);
+    expect(r.matched).toBe(352);
+    expect(r.wrong).toBe(0);
   });
 
-  it("is no better at any other smoothing value - the error is flat in s", () => {
-    const rates = sweep.cases.map((c) => {
+  it("reproduces the game's whole cliff set at every smoothing value", () => {
+    // Measured 2026-08-01 after the grid fix: recall 1.000 at all three values,
+    // and 0 / 0 / 7 wrong orientations. The residual left at s = 1 is small and
+    // real; see the tracking issue. Before the fix these were 83 / 73 / 68.
+    const wrongs: number[] = [];
+    for (const c of sweep.cases) {
       const r = score(c.cliffSmoothing, c.cliffs);
-      return r.wrong / r.matched;
-    });
-    // Measured 0.287 / 0.273 / 0.298. Pinned as a band rather than three numbers:
-    // the claim is that nothing in this range is exact, not the exact values.
-    for (const rate of rates) {
-      expect(rate).toBeGreaterThan(0.2);
-      expect(rate).toBeLessThan(0.35);
+      expect(r.matched).toBe(r.game);
+      // Non-vacuity: a port placing nothing would trivially satisfy an
+      // orientation bound, so pin that real cells were compared.
+      expect(r.matched).toBeGreaterThan(280);
+      wrongs.push(r.wrong);
     }
+    expect(wrongs).toEqual([0, 0, 7]);
   });
 });

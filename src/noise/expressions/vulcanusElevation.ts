@@ -88,6 +88,20 @@ export interface VulcanusElevation {
   elev(x: number, y: number): number;
   /** `vulcanus_elevation` (= `max(-500, vulcanus_elev)`). */
   elevation(x: number, y: number): number;
+  /**
+   * `vulcanus_elevation` as the CLIFF GENERATOR sees it - the same field with
+   * `vulcanus_basalt_lakes_multisample`'s min-filter widened from 1 tile to the
+   * 4-tile cliff lattice, because `multisample`'s offsets are in the consuming
+   * noise program's GRID UNITS. See `msGrid` in {@link makeVulcanusElevation}.
+   *
+   * It hangs off the same object rather than needing a second stack: every
+   * sub-expression below the multisample (helpers, cracks, biomes, climate, the
+   * basalt-lakes field itself) is shared and stays memoized, so the extra cost is
+   * one more top-level lerp and four already-memoized basalt-lakes lookups at
+   * shifted points. Building a private DAG for cliffs instead cost enough to
+   * time the render tests out.
+   */
+  cliffElevation(x: number, y: number): number;
 }
 
 /** Build the Vulcanus elevation surface for one seed/ctx. */
@@ -98,6 +112,22 @@ export function makeVulcanusElevation(
   cracks: VulcanusCracks,
   climate: VulcanusClimate,
 ): VulcanusElevation {
+  /**
+   * **`multisample`'s offsets are in GRID UNITS, not tiles** - so this scales
+   * the basalt-lakes min-filter's footprint to the grid of whatever noise
+   * program is consuming the field. 1 (the default) is the per-tile channel
+   * every tile/terrain consumer uses; the cliff generator walks the 4-tile
+   * corner lattice and passes 4.
+   *
+   * Measured 2026-08-01 through the cliff generator itself
+   * (`test/oracle/capture.ts multisample-grid`, `test/multisampleGrid.spec.ts`):
+   * routing `multisample(x, 4, 0)` onto `cliff_elevation` moves the contour by
+   * **16 tiles, not 4**. The primitive's own docs say it evaluates "in a
+   * separate noise program with a larger grid", and that is what "larger grid"
+   * means. `docs/noise/vulcanus-multisample-NOTES.md` measured `x + dx` and was
+   * right - for `calculate_tile_properties`, whose grid is 1 tile.
+   */
+  const CLIFF_MULTISAMPLE_GRID = 4;
   const seed0 = ctx.seed0;
 
   // --- basis_noise leaves (own seed tables) ----------------------------------
@@ -154,21 +184,22 @@ export function makeVulcanusElevation(
           ),
     );
 
-  // vulcanus_basalt_lakes_multisample: 2x2 min-filter over the four integer corners.
-  const basaltLakesMultisample = (x: number, y: number): number =>
+  // vulcanus_basalt_lakes_multisample: a 2x2 min-filter whose footprint is one
+  // GRID STEP wide - `g` tiles, not necessarily one tile. See the note above.
+  const basaltLakesMultisample = (x: number, y: number, g: number): number =>
     min(
       multisample(basaltLakes, x, y, 0, 0),
-      multisample(basaltLakes, x, y, 1, 0),
-      multisample(basaltLakes, x, y, 0, 1),
-      multisample(basaltLakes, x, y, 1, 1),
+      multisample(basaltLakes, x, y, g, 0),
+      multisample(basaltLakes, x, y, 0, g),
+      multisample(basaltLakes, x, y, g, g),
     );
 
   // --- vulcanus_elev / vulcanus_elevation ------------------------------------
   // `elev` is read ~12x per pixel by the tile `*_range` expressions (and again by
   // temperature), so memoize it; `elevation` piggybacks on the memoized `elev`.
-  const elev = memoXY((x: number, y: number): number => {
+  const elevAtGrid = (x: number, y: number, g: number): number => {
     const mountainsBlend = lerp(
-      120 * basaltLakesMultisample(x, y),
+      120 * basaltLakesMultisample(x, y, g),
       20 + mountainsFunc(x, y) * VULCANUS_MOUNTAINS_ELEVATION_MULTIPLIER,
       biomes.mountainsBiome(x, y),
     );
@@ -176,11 +207,19 @@ export function makeVulcanusElevation(
       VULCANUS_ELEVATION_OFFSET +
       lerp(mountainsBlend, ashlandsFunc(x, y), biomes.ashlandsBiome(x, y))
     );
-  });
+  };
 
+  const elev = memoXY((x: number, y: number): number => elevAtGrid(x, y, 1));
   const elevation = (x: number, y: number): number => max(-500, elev(x, y));
 
-  return { elev, elevation };
+  // Memoized separately: the cliff pass samples only the 4-tile corner lattice,
+  // so its working set is ~1/16 of the tile pass's and must not evict it.
+  const cliffElev = memoXY((x: number, y: number): number =>
+    elevAtGrid(x, y, CLIFF_MULTISAMPLE_GRID),
+  );
+  const cliffElevation = (x: number, y: number): number => max(-500, cliffElev(x, y));
+
+  return { elev, elevation, cliffElevation };
 }
 
 /**

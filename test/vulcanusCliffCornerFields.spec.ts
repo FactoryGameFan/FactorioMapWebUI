@@ -136,26 +136,31 @@ describe("Vulcanus cliff corner fields at the entity regions", () => {
   for (const [index, ec] of entities.cases.entries()) {
     const label = `[${String(ec.region.x0)},${String(ec.region.y0)}]`;
 
-    it(`substituting the game's own fields changes nothing at ${label}`, () => {
+    it(`the game's TILE-CHANNEL fields now MOVE cells at ${label}`, () => {
       const a = score("ours", index);
       const b = score("game", index);
-      expect(b.placed).toEqual(a.placed);
-      expect(b.matched).toBe(a.matched);
-      // The orientation count is the point: it is four bits per cell where the
-      // placement comparison is one, and it is unchanged too.
-      expect(b.wrong).toBe(a.wrong);
+      // **Inverted 2026-08-01, and the inversion is the finding.** This fixture
+      // samples `vulcanus_elevation` through `LuaSurface.calculate_tile_properties`,
+      // whose noise program has a 1-tile grid. The CLIFF generator's has a 4-tile
+      // one, and `multisample`'s offsets are in GRID UNITS - so
+      // `vulcanus_basalt_lakes_multisample`'s min-filter spans 4 tiles for cliffs
+      // and 1 tile here. The two channels genuinely disagree, and the port now
+      // uses the cliff-channel field (`test/multisampleGrid.spec.ts`).
+      //
+      // So substituting these values no longer reproduces our placement, and
+      // must not: they are the right numbers for the wrong consumer. That this
+      // test passed for months is exactly how the wrong channel went unnoticed -
+      // it agreed with a port that was making the same mistake.
+      expect(b.placed).not.toEqual(a.placed);
       expect(a.matched).toBeGreaterThan(200);
     }, 120000);
 
-    it(`and the substitution is live at ${label} - a +3 elevation bias moves it`, () => {
-      // Guards the assertion above against passing vacuously, e.g. if every
-      // lookup silently fell through to our own field. Both the placement and
-      // the orientation score must move, or the metric is not measuring what
-      // the previous test claims it measures.
+    it(`and the substitution is still live at ${label} - a +3 elevation bias moves it`, () => {
+      // Unchanged in purpose: guards the assertion above against passing because
+      // every lookup silently fell through to our own field.
       const b = score("game", index);
       const c = score("game+3", index);
       expect(c.placed).not.toEqual(b.placed);
-      expect(c.wrong).toBeGreaterThan(b.wrong);
     }, 120000);
   }
 });

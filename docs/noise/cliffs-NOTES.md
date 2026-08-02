@@ -633,6 +633,62 @@ here refutes the multisample port; what has never been tested is whether it
 behaves the same when the calling program's grid is 4 tiles rather than 1.
 `test/vulcanusCliffCollapsed.spec.ts` pins all of the above.
 
+## ROOT CAUSE, 2026-08-01: `multisample`'s offsets are in GRID UNITS, not tiles
+
+> **Issue #18 is resolved.** `docs/noise/vulcanus-multisample-NOTES.md` proved
+> `multisample(e, dx, dy) == e(x + dx, y + dy)` at 150/150 comparisons, and that
+> is correct **for `LuaSurface.calculate_tile_properties`, whose noise program has
+> a 1-tile grid**. It was never checked in any other channel. The primitive's own
+> docs say it evaluates "in a separate noise program with **a larger grid**" whose
+> "sub-grids are copied to the main program", and that phrase is load-bearing.
+>
+> Asked through the CLIFF GENERATOR - whose grid is the 4-tile corner lattice -
+> by routing a probe onto `cliff_elevation` with the rule collapsed, so cliffs
+> mark exactly where the routed field crosses 71:
+>
+> | arm | column | |
+> | --- | --- | --- |
+> | `x` | 70 | baseline |
+> | `multisample(x, 0, 0)` | 70 | identical |
+> | `multisample(x, 4, 0)` | **54** | shifted **16 tiles**, not 4 |
+> | `multisample(x, 0, 4)` | 70 | null control |
+>
+> **`dx = 4` moves the field 16 tiles = 4 x the grid step.** So Vulcanus's
+> `vulcanus_basalt_lakes_multisample` - a `min` over `{0,1}x{0,1}` - spans **4
+> tiles** for cliffs and **1 tile** for every per-tile consumer. `min` is an
+> erosion operator, so the cliff channel's elevation is much smoother; the port
+> used the 1-tile field for both, making the cliff elevation too rough and
+> over-placing by ~40%.
+>
+> | | before | after |
+> | --- | --- | --- |
+> | wrong orientation | 175 = 12.5% | **37 = 2.4%** |
+> | recall | 0.806 / 0.938 / 0.853 | **1.000 / 0.973 / 0.965** |
+> | `[0,0]` (worst region) | 29.8% wrong | **2.5%**, recall 1.000 |
+> | level sweep, ratio | 1.20-1.49 below 120 | **1.00-1.09 at every level** |
+>
+> `VulcanusElevation` now exposes `cliffElevation` beside `elevation`; both hang
+> off one stack and share every sub-expression below the multisample, so the cost
+> is a second memo table. **Do not collapse them back together** - they are
+> different fields, not a cache miss.
+>
+> Nothing here refutes the multisample port or the per-tile consumers:
+> `calculate_tile_properties` and the tile renderer both live in the 1-tile
+> channel, where `e(x + dx, y + dy)` is exactly right. What was wrong was using
+> one channel's field in the other's consumer. `test/multisampleGrid.spec.ts`.
+>
+> **The lesson, which is the third form of the same trap this repo keeps hitting.**
+> It was not a fixture captured at the wrong SITE (#70's `grid_offset`), nor a
+> value that was simply wrong - it was a fixture captured through the wrong
+> CHANNEL, agreeing with a port that made the same mistake. Ask which code path
+> CONSUMES a value, not only which coordinates it is sampled at. And note that no
+> amount of sweeping inside the port could have found this: every arm of the
+> 4-dimensional smoothing sweep, the band sweep and the rule sweep was searching a
+> family that shared the defect.
+>
+> The sections below are preserved as the record of the investigation. Their
+> measurements stand; read their conclusions as historical.
+
 ### The level-set inversion - #18 is ONE TERM of `vulcanus_elev` (2026-08-01)
 
 The collapsed rule is also an **instrument**. A cell carries a cliff exactly when

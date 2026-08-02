@@ -2891,6 +2891,113 @@ async function captureVulcanusElevationLevels(): Promise<void> {
 }
 
 /**
+ * **Is `multisample` grid-dependent? Asked through the CLIFF GENERATOR** (#18).
+ *
+ * The level-set sweep narrowed the Vulcanus residual to
+ * `120 * vulcanus_basalt_lakes_multisample` - the only `multisample` in the
+ * elevation chain, and the only term with no Nauvis counterpart. The primitive's
+ * own documentation says it evaluates "in a separate noise program with a larger
+ * grid" whose "sub-grids are copied to the main program", i.e. it is explicitly
+ * grid-dependent; and `vulcanus-multisample-NOTES.md` established
+ * `multisample(e, dx, dy) == e(x + dx, y + dy)` at 150/150 - but measured it
+ * only through `calculate_tile_properties`, which is not the channel the cliff
+ * generator uses.
+ *
+ * This asks the primitive the same question through the OTHER channel. Routing
+ * a probe onto `cliff_elevation` and collapsing the rule (single contour,
+ * smoothing off, gate open) makes the cliff generator a readout: cliffs appear
+ * exactly where the routed field crosses `cliff_elevation_0`.
+ *
+ * With `x` as the field the contour is a vertical line, so the cliffs land in
+ * one column of cells - trivially readable, and a shift in the field moves the
+ * column. Corners sit 4 tiles apart, so the arms are chosen to make a real shift
+ * land a whole column away:
+ *
+ * - **A `x`** - the baseline, no multisample at all.
+ * - **B `multisample(x, 0, 0)`** - must equal A if multisample is the identity
+ *   at zero offset in this channel. **If B differs from A, the primitive IS
+ *   grid-dependent and that is issue #18.**
+ * - **C `multisample(x, 4, 0)`** - the POSITIVE control. A 4-tile shift must
+ *   move the column by exactly one cell; if it does not, the experiment cannot
+ *   detect a difference and B == A would mean nothing.
+ * - **D `multisample(x, 0, 4)`** - the NULL control. Shifting y cannot move a
+ *   vertical contour, so D must equal A. Catches an axis mix-up.
+ *
+ * `cliff_elevation_0 = 71` deliberately avoids a corner landing exactly on the
+ * contour, where `crossesCliff`'s strict comparison would drop the crossing.
+ */
+async function captureMultisampleGrid(): Promise<void> {
+  const region: Region = { x0: 0, y0: 0, x1: 256, y1: 256 };
+  const seed = 123456;
+  const arms: { label: string; expression: string }[] = [
+    { label: "A x (baseline, no multisample)", expression: "x" },
+    { label: "B multisample(x, 0, 0)", expression: "multisample(x, 0, 0)" },
+    { label: "C multisample(x, 4, 0) - positive control", expression: "multisample(x, 4, 0)" },
+    { label: "D multisample(x, 0, 4) - null control", expression: "multisample(x, 0, 4)" },
+  ];
+  const cases: {
+    label: string;
+    expression: string;
+    effective: DumpedCliffSettings | undefined;
+    cliffs: Position[];
+  }[] = [];
+  for (const arm of arms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        probeExpression: arm.expression,
+        cliffSettings: {
+          cliff_smoothing: 0,
+          cliff_elevation_interval: 1000000,
+          cliff_elevation_0: 71,
+          richness: 4,
+        },
+      });
+      const columns = [...new Set(dump.cliffs.map((c) => c.x))].sort((a, b) => a - b);
+      cases.push({
+        label: arm.label,
+        expression: arm.expression,
+        effective: dump.cliffSettings,
+        cliffs: dump.cliffs,
+      });
+      console.log(
+        `  ${arm.label} -> ${String(dump.cliffs.length)} cliffs, columns x=${columns.join(",")}`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Asks whether `multisample` is " +
+      "grid-dependent by reading it through the CLIFF GENERATOR instead of " +
+      "calculate_tile_properties (issue #18). A probe expression is routed onto " +
+      "property_expression_names.cliff_elevation on a Vulcanus surface with the placement rule " +
+      "collapsed (cliff_smoothing=0, cliff_elevation_interval=1e6, cliff_elevation_0=71, " +
+      "richness=4), so cliffs appear exactly where the routed field crosses 71. With `x` as the " +
+      "field that contour is vertical and the cliffs land in a single column of cells, so a shift " +
+      "in the field moves the column. Arms: A `x` baseline; B `multisample(x,0,0)` which must " +
+      "equal A unless the primitive is grid-dependent; C `multisample(x,4,0)` the POSITIVE " +
+      "control, which must move the column one cell (4 tiles = one corner spacing) or the " +
+      "experiment could not detect a difference at all; D `multisample(x,0,4)` the NULL control, " +
+      "which cannot move a vertical contour. e0=71 avoids a corner landing exactly on the " +
+      "contour, where crossesCliff's strict comparison drops the crossing. Regenerate: node " +
+      "--experimental-strip-types test/oracle/capture.ts multisample-grid",
+    seed,
+    region,
+    cliffElevation0: 71,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-multisample-grid.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
+/**
  * Every ACTUAL Vulcanus RESOURCE entity in the same three regions
  * `captureVulcanusCliffEntities` covers, so the two dumps can be compared
  * directly (issue #24).
@@ -3251,6 +3358,7 @@ if (want("vulcanus-cliff-entities")) await captureVulcanusCliffEntities();
 if (want("vulcanus-cliff-smoothing")) await captureVulcanusCliffSmoothing();
 if (want("vulcanus-cliff-collapsed")) await captureVulcanusCliffCollapsed();
 if (want("vulcanus-elevation-levels")) await captureVulcanusElevationLevels();
+if (want("multisample-grid")) await captureMultisampleGrid();
 if (want("vulcanus-resource-entities")) await captureVulcanusResourceEntities();
 if (want("multisample")) await captureMultisample();
 if (want("vulcanus-smoke")) await captureVulcanusSmoke();

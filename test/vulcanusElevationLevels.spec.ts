@@ -103,34 +103,38 @@ describe("Vulcanus elevation, inverted through a cliff_elevation_0 sweep", () =>
     for (const r of rows) expect(r.game).toBeGreaterThan(90);
   });
 
-  it("matches the game ABOVE the basalt-lakes saturation point of 120", () => {
-    const high = rows.filter((r) => r.level >= 120);
+  it("reproduces the game's whole cliff set at EVERY level - recall 1.000", () => {
+    // **The threshold this file was written to document is GONE, and that is the
+    // point.** Before the grid fix the ratio was 1.20-1.49 below an elevation of
+    // 120 and 1.00-1.04 above it - a clean edge exactly where
+    // `120 * vulcanus_basalt_lakes_multisample` saturates, which is what
+    // identified `multisample` as the cause (test/multisampleGrid.spec.ts).
+    // With its offsets scaled to the consuming program's grid, every level
+    // matches.
+    for (const r of rows) {
+      expect(r.both).toBe(r.game);
+      // Non-vacuity: every level compared a substantial set.
+      expect(r.game).toBeGreaterThan(90);
+    }
+  });
+
+  it("has no regime split left - the edge at 120 is gone", () => {
+    const high = rows.filter((r) => r.level >= 120).map((r) => r.ours / r.game);
+    const low = rows.filter((r) => r.level <= 110).map((r) => r.ours / r.game);
     expect(high.length).toBe(9);
-    for (const r of high) {
-      // Measured 1.00 - 1.04.
-      expect(r.ours / r.game).toBeLessThanOrEqual(1.1);
-      // And it is the same cells, not merely the same count.
-      expect(r.both / r.game).toBeGreaterThan(0.9);
-    }
-  });
-
-  it("over-places BELOW it, where 120 * vulcanus_basalt_lakes_multisample governs", () => {
-    const low = rows.filter((r) => r.level <= 110);
     expect(low.length).toBe(10);
-    for (const r of low) {
-      // Measured 1.20 - 1.49. The separation from the >= 120 arm is clean:
-      // the worst high level is 1.04 and the best low level is 1.20.
-      expect(r.ours / r.game).toBeGreaterThan(1.15);
-    }
-  });
-
-  it("separates the two regimes with no overlap - the edge is real, not a trend", () => {
-    const worstHigh = Math.max(...rows.filter((r) => r.level >= 120).map((r) => r.ours / r.game));
-    const bestLow = Math.min(...rows.filter((r) => r.level <= 110).map((r) => r.ours / r.game));
-    // Measured 1.04 vs 1.20. Asserting the gap rather than the two bounds
-    // separately is what makes this a statement about a THRESHOLD: a smooth
-    // drift in accuracy with elevation would not produce a gap.
-    expect(bestLow).toBeGreaterThan(worstHigh);
-    expect(bestLow - worstHigh).toBeGreaterThan(0.1);
+    // Measured: every ratio now lies in 1.000 - 1.085, against 1.20 - 1.49
+    // below the edge before. Asserting a single band across BOTH regimes is the
+    // inversion of the old test, which asserted a gap between them.
+    for (const v of [...high, ...low]) expect(v).toBeLessThanOrEqual(1.09);
+    // The regime split has NOT vanished entirely, and that is worth recording
+    // rather than rounding away: the worst low-level ratio is 1.085 against the
+    // worst high-level 1.018, a gap of 0.067 where it used to be 1.20 vs 1.04
+    // (0.16). So it shrank ~2.4x but a small residual of the SAME SHAPE - excess
+    // placement concentrated in the basalt-lakes elevation range - survives. It
+    // is the remaining lead for the Vulcanus cliff follow-up.
+    const gap = Math.max(...low) - Math.max(...high);
+    expect(gap).toBeGreaterThan(0);
+    expect(gap).toBeLessThan(0.1);
   });
 });
