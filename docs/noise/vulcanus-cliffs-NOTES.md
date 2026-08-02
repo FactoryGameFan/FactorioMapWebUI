@@ -1623,3 +1623,50 @@ an ore, 4x3 for a geyser, against the lava rejection's ~30), and it reuses the
 composite's `VulcanusStack.resources` rather than building a second DAG. The
 derived window is guarded by a brute-force scan a tile wider on every side, not
 trusted.
+
+## The budget FLIPPED: recall is now the bigger defect, and item 3 is closed by size (#84, 2026-08-02)
+
+Every cliff defect found since #18 has been a rule the port over-places without -
+lava collision, the rotbb box shape, the ore suppression - so "find another
+rejection" has been the shape of the work throughout. **After the ore rejection
+landed that is no longer where the error is.** `test/cliffErrorBudget.spec.ts`
+splits it:
+
+| region | surplus | missing | lava-killed | ore-killed | **never generated** |
+| --- | --- | --- | --- | --- | --- |
+| `[0,0]` | 2 | 2 | 2 | 0 | **0** |
+| `[1500,1500]` | 22 | 27 | 3 | 0 | **24** |
+| `[-1200,800]` | 1 | 15 | 1 | 0 | **14** |
+| **total** | **25** | **44** | 6 | 0 | **38** |
+
+**The port now misses more cells than it over-places, 44 to 25** - and 38 of the
+44 are cells the crossings stage never produces at all, which is a different
+defect in a different part of the port from everything solved so far. The other 6
+are cells our own lava rejection removed and the game kept.
+
+### `[0,0]` generates everything the game does
+
+Its entire miss is the two cells the lava rejection took; `neverGenerated` is
+**zero**. All 38 sit in the two far-field regions. That is a sharp regional
+signature and the strongest open lead - and it agrees with #93, which found the
+port exact at `[0,0]` and `[-1200,800]` with `cliff_smoothing = 0` and still
+wrong at `[1500,1500]`, so the two are probably not one defect.
+
+### Item 3 (the entity half of `Surface::wouldCollide`) is CLOSED, unported
+
+Not because it is hard - because of its size, the same move that retired
+`fixImpossibleCells` as a suspect (35 cells against a 175-cell effect).
+
+**It is a rejection, and rejections can only remove cells.** Total surplus across
+all three regions is 25, so 25 bounds what the entire entity half - rocks,
+craters, everything - could ever be worth, against a 44-cell recall gap it cannot
+touch and could only widen.
+
+The crater arm is settled exactly, because craters are already in the fixtures:
+all 8 sit in `[-1200,800]` and **not one touches a cell the port over-places**
+(nor any cliff the game kept). Worth exactly zero. The rock arm has no fixture
+and does not need one - the ceiling argument covers it.
+
+**Do not port it without first fixing recall**, and if it is ever ported, score
+`missing` alongside `surplus` or it will look like an improvement while making
+the port worse.
