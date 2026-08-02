@@ -633,6 +633,69 @@ here refutes the multisample port; what has never been tested is whether it
 behaves the same when the calling program's grid is 4 tiles rather than 1.
 `test/vulcanusCliffCollapsed.spec.ts` pins all of the above.
 
+### The level-set inversion - #18 is ONE TERM of `vulcanus_elev` (2026-08-01)
+
+The collapsed rule is also an **instrument**. A cell carries a cliff exactly when
+its corner elevations straddle `cliff_elevation_0`, so sweeping that threshold
+measures the elevation field **the generator itself reads** - the one thing an
+expression sample cannot do, since `calculate_tile_properties` answers for its
+own channel and whether the two agree was precisely the open question.
+
+19 levels, `cliff_elevation_0` 20..200 step 10, region `[0,0]`:
+
+| `cliff_elevation_0` | game | ours | ours/game |
+| --- | --- | --- | --- |
+| 20 | 658 | 979 | 1.49 |
+| 40 | 603 | 816 | 1.35 |
+| 70 | 335 | 463 | 1.38 |
+| 110 | 142 | 200 | 1.41 |
+| **120** | 122 | 126 | **1.03** |
+| 150 | 117 | 117 | **1.00** |
+| 200 | 97 | 97 | **1.00** |
+
+**There is a clean edge at 120**: every level at or above it is 1.00-1.04 (and
+the same CELLS, `both/game > 0.9`, not merely the same count), every level below
+it is 1.20-1.49. The worst high level is 1.04 and the best low level is 1.20, so
+this is a threshold, not a drift.
+
+That edge is not arbitrary. `vulcanus_elev` is
+
+```
+vulcanus_elevation_offset
+  + lerp(lerp(120 * vulcanus_basalt_lakes_multisample,
+              20 + vulcanus_mountains_func * vulcanus_mountains_elevation_multiplier,
+              vulcanus_mountains_biome),
+         vulcanus_ashlands_func,
+         vulcanus_ashlands_biome)
+```
+
+and `vulcanus_basalt_lakes` is a `min(1, ...)`, so **the basalt-lakes branch
+saturates at exactly 120**. Everything above 120 comes from the mountains and
+ashlands branches - which contain no `multisample` - and the port reproduces
+those *exactly*. Everything below is governed by
+`vulcanus_basalt_lakes_multisample`, which is the only `multisample` in the chain
+and the only term with no Nauvis counterpart.
+
+**So the residual is that one term, and the port is exact everywhere else in the
+field.** `test/vulcanusElevationLevels.spec.ts` pins the threshold and its
+separation.
+
+The mechanism to suspect is the one the primitive's own docs describe: it
+evaluates "in a separate noise program with a larger grid" whose "sub-grids are
+copied to the main program". The cliff generator's program walks the 4-tile
+corner lattice; `calculate_tile_properties` does not - and that is the channel
+`vulcanus-multisample-NOTES.md` measured `multisample(e,dx,dy) == e(x+dx,y+dy)`
+through, and the channel every elevation fixture was captured through. A `min()`
+of four samples is an erosion operator, so a coarser effective grid in the
+generator smooths the field exactly the way a 40% over-placement implies.
+
+Note what this does NOT say: the multisample port is not refuted, and neither is
+the corner-fields fixture. Both are correct **in their channel**. What has never
+been tested is whether the primitive behaves the same when the calling program's
+grid is 4 tiles rather than 1 - and the tile renderer, which consumes
+`vulcanus_elevation` through the same 1-tile channel the fixtures use, is not
+implicated by any of this.
+
 #### Where that leaves #18
 
 The residual survives with smoothing disabled, so it is in something Nauvis and

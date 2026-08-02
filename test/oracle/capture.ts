@@ -2803,6 +2803,94 @@ async function captureVulcanusCliffCollapsed(): Promise<void> {
 }
 
 /**
+ * **A level-set sweep that INVERTS the generator's own elevation field** (#18).
+ *
+ * With the rule collapsed (`cliff_smoothing = 0`, a single contour via
+ * `cliff_elevation_interval = 1e6`, the cliffiness gate held open by
+ * `richness = 4`), a cell carries a cliff exactly when its corner elevations
+ * **straddle** `cliff_elevation_0`. Sweeping that threshold therefore brackets
+ * every cell: the set of levels at which a cell is "mixed" is
+ * `(min of its corners, max of its corners]`, to the resolution of the step.
+ *
+ * That converts the game's cliffs into a **measurement of the elevation field
+ * the generator actually reads**, which is the one thing no expression sample
+ * can give - `calculate_tile_properties` answers for its own channel, and the
+ * open question is precisely whether the generator's channel agrees.
+ *
+ * The quantity to compare is the per-cell corner SPREAD (`max - min`), because
+ * that is what the collapsed arm's over-placement implicates: we place 463
+ * cliffs where the game places 335, so our 70-contour is ~38% longer, i.e. our
+ * field is rougher at the 4-tile scale. If our spreads come out systematically
+ * wider than the game's, that is the roughness difference quantified rather
+ * than inferred, and it bounds how much smoothing the generator applies.
+ *
+ * Step 10 over `[20, 200]` is chosen against the field itself: adjacent corners
+ * (4 tiles apart) differ by tens of units, so a step of 10 resolves a spread
+ * difference well below the effect being measured, and 19 levels keeps the
+ * capture near ten minutes.
+ */
+async function captureVulcanusElevationLevels(): Promise<void> {
+  const region: Region = { x0: 0, y0: 0, x1: 256, y1: 256 };
+  const seed = 123456;
+  const ONE_BAND = 1000000;
+  const levels: number[] = [];
+  for (let e0 = 20; e0 <= 200; e0 += 10) levels.push(e0);
+
+  const cases: {
+    elevation0: number;
+    effective: DumpedCliffSettings | undefined;
+    cliffs: Position[];
+  }[] = [];
+  for (const elevation0 of levels) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        cliffSettings: {
+          cliff_smoothing: 0,
+          cliff_elevation_interval: ONE_BAND,
+          cliff_elevation_0: elevation0,
+          richness: 4,
+        },
+      });
+      cases.push({ elevation0, effective: dump.cliffSettings, cliffs: dump.cliffs });
+      console.log(
+        `  level ${String(elevation0)} -> ${String(dump.cliffs.length)} cliffs ` +
+          `(effective e0=${String(dump.cliffSettings?.cliff_elevation_0)})`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. The Vulcanus region [0,0]-[256,256] " +
+      "captured at 19 values of cliff_elevation_0 (20..200 step 10) with the placement rule " +
+      "COLLAPSED: cliff_smoothing=0 (raw elevation), cliff_elevation_interval=1e6 (a single " +
+      "contour at cliff_elevation_0, no band arithmetic) and richness=4 (cliffiness_basic " +
+      "saturates at 1.5 so its >0.5 gate is always open). Under those settings a cell carries a " +
+      "cliff exactly when its corner elevations STRADDLE cliff_elevation_0, so the set of levels " +
+      "at which a cell appears brackets (min corner, max corner] - i.e. this fixture INVERTS the " +
+      "elevation field the generator itself reads, which no expression sample can do because " +
+      "calculate_tile_properties answers for a different channel. Exists to measure the per-cell " +
+      "corner spread against ours: the collapsed arm shows we place 463 cliffs where the game " +
+      "places 335, implying our field is rougher at the 4-tile scale. `effective` is the " +
+      "cliff_settings the SURFACE reported back. Sampled on a create_surface() surface whose seed " +
+      "is FORCED to `seed`. Regenerate: node --experimental-strip-types test/oracle/capture.ts " +
+      "vulcanus-elevation-levels",
+    seed,
+    region,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-elevation-levels.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} levels)`);
+}
+
+/**
  * Every ACTUAL Vulcanus RESOURCE entity in the same three regions
  * `captureVulcanusCliffEntities` covers, so the two dumps can be compared
  * directly (issue #24).
@@ -3162,6 +3250,7 @@ if (want("rocks")) await captureRocks();
 if (want("vulcanus-cliff-entities")) await captureVulcanusCliffEntities();
 if (want("vulcanus-cliff-smoothing")) await captureVulcanusCliffSmoothing();
 if (want("vulcanus-cliff-collapsed")) await captureVulcanusCliffCollapsed();
+if (want("vulcanus-elevation-levels")) await captureVulcanusElevationLevels();
 if (want("vulcanus-resource-entities")) await captureVulcanusResourceEntities();
 if (want("multisample")) await captureMultisample();
 if (want("vulcanus-smoke")) await captureVulcanusSmoke();
