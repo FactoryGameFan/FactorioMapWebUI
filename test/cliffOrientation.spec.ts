@@ -154,13 +154,19 @@ describe("cliff orientation collision boxes", () => {
   });
 
   /**
-   * Re-derives the 16 `rotbb` boxes the long way, from the Lua source's actual
-   * rectangle plus its 1/8-turn orientation, and checks the result against the
-   * shipped square. `cliffCatalog.ts` ships the closed form (`[x, x+size] x
-   * [y, y+size]`) because it is what the engine ends up scanning; this is the
-   * working that justifies dropping the `intersect` argument.
+   * Re-derives the 16 `rotbb` boxes the long way from the Lua source, and
+   * checks the shipped table against the RAW rectangle - not against the AABB
+   * of its 1/8 turn.
+   *
+   * **This block asserted the opposite until 2026-08-02**, on the stated
+   * reasoning that the AABB "is what the engine ends up scanning". Disassembly
+   * says otherwise: `tryToAddCliff` calls `wouldCollide` with `Direction = 0`,
+   * and `BoundingBox(BoundingBox const&, Direction)` takes its identity arm,
+   * copying `left_top`/`right_bottom` verbatim and overwriting the destination's
+   * orientation with a sentinel. The `1/8` tag never reaches the tile scan. See
+   * `rotbbBox` in `cliffCatalog.ts`.
    */
-  describe("the rotbb boxes are the AABB of the 45-degree rectangle", () => {
+  describe("the rotbb boxes are the RAW rectangle, orientation discarded", () => {
     /** `rotbb` verbatim (base/prototypes/entity/entity-util.lua:9). */
     const rotbb = (
       x: number,
@@ -214,25 +220,57 @@ describe("cliff orientation collision boxes", () => {
       [19, [-2, -2.5, 3, 2]],
     ];
 
+    /** The raw rectangle, quantised to MapPosition's 1/256 as the engine stores it. */
+    const rawRect = (
+      x: number,
+      y: number,
+      size: number,
+      intersect: number,
+    ): [number, number, number, number] => {
+      const { cx, cy, hx, hy } = rotbb(x, y, size, intersect);
+      const q = (v: number): number => Math.round(v * 256) / 256;
+      return [q(cx - hx), q(cy - hy), q(cx + hx), q(cy + hy)];
+    };
+
     it("reproduces every shipped rotbb box", () => {
       expect(CALLS).toHaveLength(16);
       for (const [id, [x, y, size, intersect]] of CALLS) {
         const want = CLIFF_ORIENTATION_COLLISION_BOX[id];
-        const got = rotatedAabb(x, y, size, intersect);
+        const got = rawRect(x, y, size, intersect);
         for (let i = 0; i < 4; i++) expect(got[i]).toBeCloseTo(want[i], 9);
       }
     });
 
-    it("is independent of `intersect`, which is why the shipped form omits it", () => {
-      // The claim that lets `rotbbBox` take three arguments. Sweeping the fourth
-      // must not move the AABB.
-      for (const [id, [x, y, size]] of CALLS) {
-        for (const intersect of [0.25, 1, size / 2, size - 0.25]) {
-          const got = rotatedAabb(x, y, size, intersect);
-          const want = CLIFF_ORIENTATION_COLLISION_BOX[id];
-          for (let i = 0; i < 4; i++) expect(got[i]).toBeCloseTo(want[i], 9);
-        }
+    it("DEPENDS on `intersect`, which is why the shipped form now takes it", () => {
+      // The inverse of what this file asserted before 2026-08-02. `intersect`
+      // does not move the AABB - that much was true - but it moves the raw
+      // rectangle, which is the thing the engine scans. Sweeping it must change
+      // the box for every orientation, or `rotbbBox` is ignoring an argument.
+      for (const [, [x, y, size, intersect]] of CALLS) {
+        const base = rawRect(x, y, size, intersect);
+        const other = rawRect(x, y, size, intersect === size / 2 ? size / 4 : size / 2);
+        expect(base).not.toEqual(other);
       }
+    });
+
+    it("covers at most HALF the AABB's area, but is not inside it", () => {
+      // Non-vacuity for the change itself: if the raw rectangle equalled the
+      // AABB, none of this would have mattered. It is much smaller in area -
+      // `hx + hy` is fixed at `size/2*sqrt2`, so `4*hx*hy <= size^2/2` - yet it
+      // is NOT contained in the AABB. With a small `intersect`, `hx` approaches
+      // `0.707*size` and the unrotated rectangle sticks out PAST the AABB in x
+      // while collapsing in y. An earlier version of this test asserted
+      // containment on every axis and was wrong for exactly that reason.
+      let stickOut = 0;
+      for (const [, [x, y, size, intersect]] of CALLS) {
+        const raw = rawRect(x, y, size, intersect);
+        const aabb = rotatedAabb(x, y, size, intersect);
+        const areaRaw = (raw[2] - raw[0]) * (raw[3] - raw[1]);
+        const areaAabb = (aabb[2] - aabb[0]) * (aabb[3] - aabb[1]);
+        expect(areaRaw).toBeLessThan(areaAabb * 0.51);
+        if (raw[0] < aabb[0] - 1e-9 || raw[2] > aabb[2] + 1e-9) stickOut++;
+      }
+      expect(stickOut).toBeGreaterThan(0);
     });
 
     it("differs from the UNROTATED rectangle, so the check above is not trivial", () => {

@@ -220,10 +220,19 @@ describe("Vulcanus elevation, inverted through a cliff_elevation_0 sweep", () =>
     // with it. Guarded as an upper bound only - it may shrink to zero or invert.
     expect(low - high).toBeLessThan(0.03);
 
-    // **Recall, which is what the box fix bought.** Every level reproduces the
-    // game's whole cliff set; level 20 misses 1 of 658. Before `cliffBoxCoversTile`
-    // this ran 0.951 at level 20. Asserted per level rather than in aggregate so
-    // a regime-shaped regression cannot average itself away.
-    for (const w of withRejection) expect(w.both / w.game).toBeGreaterThan(0.99);
+    // **Recall, which is what the box shape buys.** Asserted per level rather
+    // than in aggregate so a regime-shaped regression cannot average itself
+    // away. The three box models measured on this sweep, worst level:
+    //
+    // | box | worst per-level recall |
+    // | --- | --- |
+    // | AABB of the rotated rect (until #88) | 0.951 |
+    // | 45-degree oriented rect (#88, WRONG) | 0.999 |
+    // | raw stored rect (disasm, current) | 0.977 |
+    //
+    // The middle row scored best and was wrong - it shrank the box past what
+    // the engine uses and so also absorbed the unrelated orientation residual.
+    // Guarding at the truth, not at the flattering number.
+    for (const w of withRejection) expect(w.both / w.game).toBeGreaterThan(0.97);
   }, 120000);
 });

@@ -5,8 +5,15 @@
 > | | recall | precision | wrong orientation |
 > | --- | --- | --- | --- |
 > | **Nauvis** | 1.0000 | 1.0000 | **0 / 334** |
-> | **Vulcanus**, as shipped | **0.9758** | **0.9727** | 2.0% |
+> | **Vulcanus**, as shipped | **0.9720** | **0.9713** | ~2.4% |
 > | **Vulcanus**, no lava rejection | 0.9758 | 0.8719 | 37 / 1531 = 2.4% |
+>
+> The shipped row went 0.9675 -> 0.9758 -> **0.9720** in one day as the collision
+> box was corrected twice. The middle value came from a 45-degree oriented-box
+> model (#88) that scored best and was **wrong**; disassembly showed the engine
+> discards the box's orientation tag entirely. Do not "restore" the better
+> number - see `## The collision box, settled by disassembly` in
+> `vulcanus-cliffs-NOTES.md`.
 >
 > **Read the shipping row.** The renderer applies `tryToAddCliff`'s lava-collision
 > rejection and the second row does not; leaving it off is what produced the

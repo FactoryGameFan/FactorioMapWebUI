@@ -263,38 +263,65 @@ export const CLIFF_CODE_TO_ORIENTATION: Readonly<Record<number, number>> = {
 export type CliffCollisionBox = readonly [number, number, number, number];
 
 /**
- * `rotbb(x, y, size, intersect)`'s axis-aligned bounding box
+ * `rotbb(x, y, size, intersect)` as the ENGINE reads it back
  * (`base/prototypes/entity/entity-util.lua:9`).
  *
  * `rotbb` builds a rectangle centred at `(x + size/2, y + size/2)` with
  * half-extents `((1 - intersect/size) * d, (intersect/size) * d)` where
- * `d = size/2 * sqrt(2)`, and tags it with an orientation of **1/8** - a 45
- * degree rotation. Rotating those half-extents by 45 gives an AABB half-extent
- * of `(hx + hy) * cos(45) = (d) * cos(45) = size/2` on BOTH axes, whatever
- * `intersect` was. So the AABB is exactly the square `[x, x+size] x [y, y+size]`
- * and `intersect` only decides how the diagonal is split inside it.
+ * `d = size/2 * sqrt(2)`, and tags it with an orientation of **1/8**.
  *
- * **The AABB is the BROAD phase only - `intersect` is load-bearing after all.**
- * A note here used to say `intersect` could be dropped because it does not move
- * the AABB. That is true of the AABB and false of the collision: `rotbb` tags
- * the box with orientation `1/8` and the engine collides against the ROTATED
- * rectangle, whose corners the AABB overruns. `intersect` decides how far the
- * diagonal is split, hence which corners are empty. See
- * {@link CLIFF_ORIENTATION_ROTBB} and {@link cliffBoxCoversTile}; measured in
- * `test/cliffOrientedBox.spec.ts`.
+ * **The 1/8 tag is DISCARDED for collision, so this returns the raw rectangle.**
+ * Established by disassembly 2026-08-02, three steps deep:
+ *
+ * 1. `EntityMapGenerationTask::tryToAddCliff` (`0x101625038`) loads the
+ *    orientation's box from `proto + 0x5c0 + id*0x48`, copies 20 bytes (four
+ *    `int32` edges at `+4` plus the orientation word at `+0x14`), and calls
+ *    `wouldCollide` with **`Direction = 0`** (`mov x4, #0x0`).
+ * 2. `EntityMapGenerationTask::wouldCollide` (`0x101625468`) forwards that box
+ *    and direction to `BoundingBox::BoundingBox(BoundingBox const&, Direction)`
+ *    (`0x101c04380`).
+ * 3. That constructor zeroes the destination, writes the sentinel `0x80010000`
+ *    into the destination's orientation word, and dispatches on the direction
+ *    through a jump table whose **entry 0 is 0** - the identity arm, which
+ *    copies `left_top`/`right_bottom` verbatim and returns. The source box's own
+ *    orientation is never read; the rotation arm below it is reached only for a
+ *    non-zero `Direction`.
+ *
+ * So the collision rectangle is the stored rectangle, axis-aligned, and the
+ * tile scan floors it with `(box + position) >> 8` over an inclusive rect.
+ *
+ * **Two shapes were shipped here before this and both were wrong.** The AABB
+ * `[x, x+size] x [y, y+size]` (until #88) is too big at the corners; a 45-degree
+ * separating-axis test (#88) is too SMALL, and scored better than the truth
+ * because it also absorbed the unrelated orientation residual. See
+ * `test/cliffCollisionBox.spec.ts`.
+ *
+ * Edges are quantised to 1/256 because `MapPosition` is 8-bit fixed point, so
+ * `x_dist`'s `sqrt(2)` cannot survive into the engine at full precision.
  */
-function rotbbBox(x: number, y: number, size: number): CliffCollisionBox {
-  return [x, y, x + size, y + size];
+function rotbbBox(x: number, y: number, size: number, intersect: number): CliffCollisionBox {
+  const dist = (size / 2) * SQRT2;
+  const yRatio = intersect / size;
+  const xDist = (1 - yRatio) * dist;
+  const yDist = yRatio * dist;
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  const q = (v: number): number => Math.round(v * 256) / 256;
+  return [q(cx - xDist), q(cy - yDist), q(cx + xDist), q(cy + yDist)];
 }
+
+/** The four straight orientations, written as plain boxes in the Lua. */
+const CLIFF_STRAIGHT_COLLISION_BOX: readonly CliffCollisionBox[] = [
+  [-2.0, -1.5, 2.0, 1.5], //  0 west-to-east
+  [-1.0, -2.0, 1.0, 2.0], //  1 north-to-south
+  [-2.0, -0.5, 2.0, 0.5], //  2 east-to-west
+  [-1.0, -2.0, 1.0, 2.0], //  3 south-to-north
+];
 
 /**
  * `rotbb(x, y, size, intersect)`'s four arguments per orientation id, verbatim
  * from `create_cliff_data_specification` (`entity-util.lua:85`), or `null` for
- * the four straight orientations, whose boxes are written out as plain
- * axis-aligned rectangles with no orientation tag.
- *
- * This exists because {@link CLIFF_ORIENTATION_COLLISION_BOX} is only the
- * bounding box. The engine's collision uses the rotated rectangle itself.
+ * the four straight orientations. Verified identical to the Lua, in order.
  */
 export const CLIFF_ORIENTATION_ROTBB: readonly (
   | readonly [number, number, number, number]
@@ -325,81 +352,6 @@ export const CLIFF_ORIENTATION_ROTBB: readonly (
 const SQRT2 = 1.4142135623730951;
 
 /**
- * Does the tile `[tx, tx+1] x [ty, ty+1]` overlap the collision shape of a
- * cliff of orientation `id` centred at `(centerX, centerY)`?
- *
- * For the four straight orientations the shape IS the axis-aligned box, so any
- * tile the broad phase enumerated overlaps it and this returns `true`. For the
- * sixteen `rotbb` orientations the shape is that rectangle rotated 45 degrees
- * clockwise (Factorio orientation `1/8`, and `+y` is south), which the AABB
- * overruns at all four corners - a separating-axis test over the two world axes
- * and the rectangle's own two decides it.
- *
- * **Why this is not gold-plating.** Using the AABB drops real cliffs: across the
- * three Vulcanus oracle regions the game placed 13 cliffs whose AABB contains
- * lava and whose rotated box does not, and it kept every one. Narrowing to the
- * oriented rectangle clears **13 of 13** while retaining 182 of the 185
- * rejections that were removing genuine false positives - so it is not a
- * loosening that trades precision for recall, it is the correct shape.
- */
-export function cliffBoxCoversTile(
-  id: number,
-  centerX: number,
-  centerY: number,
-  tx: number,
-  ty: number,
-): boolean {
-  const spec = CLIFF_ORIENTATION_ROTBB[id];
-  if (spec === undefined || spec === null) return true;
-  const [bx, by, size, intersect] = spec;
-  const dist = (size / 2) * SQRT2;
-  const yRatio = intersect / size;
-  const xDist = (1 - yRatio) * dist;
-  const yDist = yRatio * dist;
-  const cx = centerX + bx + size / 2;
-  const cy = centerY + by + size / 2;
-  // cos 45 = sin 45; clockwise in screen coords (x east, y south).
-  const k = Math.SQRT1_2;
-  const corners: readonly (readonly [number, number])[] = [
-    [-xDist, -yDist],
-    [xDist, -yDist],
-    [xDist, yDist],
-    [-xDist, yDist],
-  ].map(([u, v]) => [cx + (u - v) * k, cy + (u + v) * k] as const);
-  const square: readonly (readonly [number, number])[] = [
-    [tx, ty],
-    [tx + 1, ty],
-    [tx + 1, ty + 1],
-    [tx, ty + 1],
-  ];
-  const axes: readonly (readonly [number, number])[] = [
-    [1, 0],
-    [0, 1],
-    [k, k],
-    [-k, k],
-  ];
-  for (const [ax, ay] of axes) {
-    let aMin = Infinity;
-    let aMax = -Infinity;
-    let bMin = Infinity;
-    let bMax = -Infinity;
-    for (const [px, py] of corners) {
-      const d = px * ax + py * ay;
-      if (d < aMin) aMin = d;
-      if (d > aMax) aMax = d;
-    }
-    for (const [px, py] of square) {
-      const d = px * ax + py * ay;
-      if (d < bMin) bMin = d;
-      if (d > bMax) bMax = d;
-    }
-    // Touching is not overlapping: a tile the rectangle only grazes is free.
-    if (aMax <= bMin || bMax <= aMin) return false;
-  }
-  return true;
-}
-
-/**
  * `CliffOrientation` id -> the orientation's `collision_bounding_box`, at
  * `scale = 1.0` (both `cliff` and `cliff-vulcanus`), relative to the cliff's
  * centre. Transcribed from `create_cliff_data_specification`
@@ -427,28 +379,10 @@ export function cliffBoxCoversTile(
  * 0.779) to 888 predicted (ratio **1.003**, precision **0.930**), rejecting 173
  * false positives and only 4 true ones. See issue #18.
  */
-export const CLIFF_ORIENTATION_COLLISION_BOX: readonly CliffCollisionBox[] = [
-  [-2.0, -1.5, 2.0, 1.5], //  0 west-to-east
-  [-1.0, -2.0, 1.0, 2.0], //  1 north-to-south
-  [-2.0, -0.5, 2.0, 0.5], //  2 east-to-west
-  [-1.0, -2.0, 1.0, 2.0], //  3 south-to-north
-  rotbbBox(-3.5, -3, 4.5), //  4 west-to-north
-  rotbbBox(-1, -3, 4.5), //  5 north-to-east
-  rotbbBox(-1, -0.5, 3.5), //  6 east-to-south
-  rotbbBox(-2.5, -0.5, 3.5), //  7 south-to-west
-  rotbbBox(-3.5, -1.5, 4.5), //  8 west-to-south
-  rotbbBox(-2.5, -3, 3.5), //  9 north-to-west
-  rotbbBox(-1, -3, 3.5), // 10 east-to-north
-  rotbbBox(-1, -1.5, 4.5), // 11 south-to-east
-  rotbbBox(-3, -1.5, 3), // 12 west-to-none
-  rotbbBox(0, -1.5, 3), // 13 none-to-east
-  rotbbBox(0, -0.5, 2.5), // 14 east-to-none
-  rotbbBox(-2.5, -0.5, 2.51), // 15 none-to-west
-  rotbbBox(-1, -2.5, 3), // 16 north-to-none
-  rotbbBox(-1, -0.5, 3), // 17 none-to-south
-  rotbbBox(-2, -0.5, 3), // 18 south-to-none
-  rotbbBox(-2, -2.5, 3), // 19 none-to-north
-];
+export const CLIFF_ORIENTATION_COLLISION_BOX: readonly CliffCollisionBox[] =
+  CLIFF_ORIENTATION_ROTBB.map((spec, id) =>
+    spec === null ? CLIFF_STRAIGHT_COLLISION_BOX[id] : rotbbBox(...spec),
+  );
 
 /**
  * The `CliffOrientation` id a cell code places, or `undefined` when the code
