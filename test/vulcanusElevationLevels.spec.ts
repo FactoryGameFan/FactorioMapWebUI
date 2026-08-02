@@ -6,6 +6,8 @@ import {
   makeCliffinessBasic,
   makeVulcanusCliffFields,
 } from "../src/noise/cliffs/vulcanusCliffFields";
+import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/preview/renderVulcanusCliffs";
+import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
 import { withCtxDefaults } from "../src/noise/eval/ctx";
 
 const key = (x: number, y: number): string => `${String(x)},${String(y)}`;
@@ -18,8 +20,21 @@ const fields = {
   cliffiness: makeCliffinessBasic(fx.seed, 4),
 };
 
+/**
+ * The lava rejection, the same predicate `renderVulcanusCliffs` passes. Off by
+ * default here: this file's job is to invert the elevation FIELD, and the
+ * rejection brings the tile resolver - a different subsystem - into the answer.
+ * The last test turns it on deliberately, to attribute a residual to it.
+ */
+const tileAt = makeVulcanusTileResolver({ seed0: fx.seed, startingPositions: [{ x: 0, y: 0 }] });
+const lavaCollides = (x: number, y: number): boolean =>
+  VULCANUS_CLIFF_BLOCKING_TILES.has(tileAt(x, y).name);
+
 /** Per level: how many cells the game placed, how many we place, and the overlap. */
-const atLevel = (index: number): { level: number; game: number; ours: number; both: number } => {
+const atLevel = (
+  index: number,
+  reject = false,
+): { level: number; game: number; ours: number; both: number } => {
   const c = fx.cases[index];
   const r = fx.region;
   const game = new Set<string>();
@@ -29,11 +44,13 @@ const atLevel = (index: number): { level: number; game: number; ours: number; bo
     elevation0: c.elevation0,
     interval: c.effective?.cliff_elevation_interval ?? 1000000,
     smoothing: 0,
+    tileCollides: reject ? lavaCollides : undefined,
   }).placedCells(r.x0, r.y0, r.x1, r.y1);
   let both = 0;
   const ours = new Set<string>();
   for (const p of cells) {
     const k = key(Math.round((p.x - 2) / 4), Math.round((p.y - 2.5) / 4));
+    if (ours.has(k)) continue;
     ours.add(k);
     if (game.has(k)) both++;
   }
@@ -127,14 +144,77 @@ describe("Vulcanus elevation, inverted through a cliff_elevation_0 sweep", () =>
     // below the edge before. Asserting a single band across BOTH regimes is the
     // inversion of the old test, which asserted a gap between them.
     for (const v of [...high, ...low]) expect(v).toBeLessThanOrEqual(1.09);
-    // The regime split has NOT vanished entirely, and that is worth recording
-    // rather than rounding away: the worst low-level ratio is 1.085 against the
-    // worst high-level 1.018, a gap of 0.067 where it used to be 1.20 vs 1.04
-    // (0.16). So it shrank ~2.4x but a small residual of the SAME SHAPE - excess
-    // placement concentrated in the basalt-lakes elevation range - survives. It
-    // is the remaining lead for the Vulcanus cliff follow-up.
+    // A small split does survive here - worst low ratio 1.085 against worst
+    // high 1.018, a gap of 0.067 where it used to be 0.16 - and #84 item 2
+    // recorded it as a suspected second-order error in the same `multisample`
+    // term. **It is not. See the next test**, which attributes it.
     const gap = Math.max(...low) - Math.max(...high);
     expect(gap).toBeGreaterThan(0);
     expect(gap).toBeLessThan(0.1);
   });
+
+  /**
+   * **The surviving split is a MEASUREMENT artefact, not a second-order error
+   * in `multisample`** (measured 2026-08-01, closing #84 item 2).
+   *
+   * Everything above compares our placement, which does not run the lava
+   * rejection, against the game's, which always does. `tryToAddCliff` drops any
+   * cliff whose collision box touches a lava tile - and on Vulcanus the lava is
+   * the basalt lakes, i.e. exactly the low-elevation range where the excess sat.
+   * So the arm reading "we over-place below 120" was really reading "we do not
+   * delete what the game deletes, and there is more to delete down there."
+   *
+   * Running both sides with the rejection collapses it:
+   *
+   * | `cliff_elevation_0` | ours/game, no rejection | with rejection |
+   * | --- | --- | --- |
+   * | 20 | 1.085 | 0.988 |
+   * | 40 | 1.048 | 1.022 |
+   * | 60 | 1.044 | **1.027** |
+   * | 90 - 130 | 1.008 - 1.018 | 0.991 - 1.000 |
+   * | 140 - 200 | 1.000 - 1.009 | 1.000 - 1.009 |
+   *
+   * Worst-low 1.027 against worst-high 1.009: the gap goes 0.067 -> 0.018, and
+   * the low regime now straddles 1.0 rather than sitting above it.
+   *
+   * **What remains at low levels is a boundary error in the TILES, not the
+   * elevation.** The rejection also costs recall, and it costs it in the same
+   * regime: 0.951 at level 20 rising to 1.000 at 140 and above. Every one of
+   * those losses is a real cliff whose box hits our lava at Chebyshev depth 1 -
+   * our own perimeter - never deeper: 32/32 at level 20, 52/52 across the sweep,
+   * 13/13 at default settings. A sub-tile disagreement about where lava stops.
+   *
+   * **Stated carefully, because depth only discriminates in one of the two
+   * places it was checked.** At default settings it does: region `[1500,1500]`'s
+   * 170 CORRECT rejections span depth 1 to 9 with 45 bottomed out deep in lava,
+   * against wrong rejections that are 100% perimeter. At level 20 it does not -
+   * there the correct rejections are 32/32 perimeter as well, because the
+   * contour has walked down onto the lake edges and every candidate is near a
+   * boundary. So the honest claim is that the low-level errors are
+   * boundary-SITED in both directions, and that at level 20 we get about half of
+   * them right; not that depth alone proves the perimeter is one tile fat.
+   */
+  it("attributes the split to the lava rejection, not to the elevation field", () => {
+    const withRejection = fx.cases.map((_, i) => atLevel(i, true));
+    // Non-vacuity: the rejection must actually remove cells, or "the split went
+    // away" and "the predicate never fired" are the same observation.
+    const removed = rows.reduce((n, r, i) => n + (r.ours - withRejection[i].ours), 0);
+    expect(removed).toBeGreaterThan(100);
+
+    const ratios = (rs: typeof rows, pick: (level: number) => boolean): number[] =>
+      rs.filter((r) => pick(r.level)).map((r) => r.ours / r.game);
+    const low = Math.max(...ratios(withRejection, (l) => l <= 110));
+    const high = Math.max(...ratios(withRejection, (l) => l >= 120));
+    // Measured 1.0266 and 1.0085. Both bounds are upper, so the port may improve
+    // without editing them.
+    expect(low).toBeLessThanOrEqual(1.03);
+    expect(high).toBeLessThanOrEqual(1.01);
+    // The gap is what #84 item 2 was about: 0.067 without the rejection, 0.018
+    // with it. Guarded as an upper bound only - it may shrink to zero or invert.
+    expect(low - high).toBeLessThan(0.03);
+
+    // And the low regime no longer sits entirely ABOVE the game, which is the
+    // part that read as over-placement: level 20 goes 1.085 -> 0.988.
+    expect(withRejection[0].ours / withRejection[0].game).toBeLessThan(1);
+  }, 120000);
 });

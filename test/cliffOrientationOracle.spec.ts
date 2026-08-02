@@ -96,43 +96,58 @@ describe("cliff orientation vs the game's own cliff_orientation", () => {
   }, 120000);
 
   /**
-   * **Vulcanus does NOT agree, and that is issue #18's residual seen up close.**
+   * **Vulcanus still does not agree everywhere, and this is issue #18's
+   * residual seen up close.**
    *
    * Nauvis passing exactly means the table above is right, so a disagreement
    * here is a disagreement about the CROSSINGS - the four edges - not about the
-   * lookup. Measured 2026-07-30, over the cells the port and the game both
-   * place:
+   * lookup. Measured 2026-08-01, after the `multisample` grid-units fix (#83),
+   * over the cells the port and the game both place:
    *
-   * | region | matched | wrong orientation |
-   * | --- | --- | --- |
-   * | `[0,0]` | 228 | 68 = **29.8%** |
-   * | `[1500,1500]` | 830 | 67 = 8.1% |
-   * | `[-1200,800]` | 342 | 40 = 11.7% |
-   * | total | 1400 | 175 = 12.5% |
+   * | region | matched | wrong orientation | was, before #83 |
+   * | --- | --- | --- | --- |
+   * | `[0,0]` | 283 | 7 = 2.5% | 228 / 68 = **29.8%** |
+   * | `[1500,1500]` | 861 | 26 = 3.0% | 830 / 67 = 8.1% |
+   * | `[-1200,800]` | 387 | 4 = 1.0% | 342 / 40 = 11.7% |
+   * | total | 1531 | **37 = 2.4%** | 1400 / 175 = 12.5% |
+   *
+   * Note the comparison set GREW as the error shrank - the port now matches 131
+   * more of the game's cliffs - so this is not 175 falling to 37 by comparing
+   * fewer cells.
    *
    * This is a far sharper instrument than the counts in
    * `vulcanusCliffEntities.spec.ts`: a cell can land in the right place for the
-   * wrong reason, and 175 of them do. The dominant failure is **exactly two
-   * edges differing** (125 of 175), which is one of the cell's two crossings
-   * sitting on a different side - a single corner on the wrong side of a band
-   * boundary. Errors are spread evenly over the four edges (L:87 R:80 T:87
-   * B:89), so it is not a directional off-by-one.
+   * wrong reason, and 37 of them still do. Before #83 the dominant failure was
+   * **exactly two edges differing** (125 of 175), which is one of the cell's two
+   * crossings sitting on a different side - a single corner on the wrong side of
+   * a band boundary - spread evenly over the four edges (L:87 R:80 T:87 B:89),
+   * so never a directional off-by-one.
    *
-   * Three causes were tested against this metric and none of them explain it:
+   * **This arm deliberately runs WITHOUT the lava rejection**, which is not the
+   * shipping path and is the point. Rejection only ever REMOVES cells, so
+   * leaving it off compares the larger set (1531 rather than 1518) and cannot
+   * hide a bad crossing behind a cell that got dropped for an unrelated reason.
+   * On the shipping path the same measurement is 31 / 1518 = 2.04%; the
+   * rejection removes 6 wrong ones with the 185 false positives it is there for.
    *
-   * - **The fields are exonerated a second time.** Re-running PR #57's
-   *   substitution - the game's own corner elevation and cliffiness, at
-   *   `[1500,1500]` - leaves the mismatch at 67/830, identical to the digit,
-   *   while a +3 elevation bias moves it to 122/793. So the substitution is
-   *   live and this metric is sensitive to it; the fields are simply right.
-   *   #57 only scored PLACEMENT, one bit per cell, and could not have seen this.
-   * - **`fixImpossibleCells` is not it.** Turning it off moves the total from
-   *   12.5% to 14.3%, and region `[0,0]` from 29.8% to 30.8%. It helps slightly
-   *   and explains almost nothing.
-   * - **Chunk borders are not it.** `generateCliffs` passes `tryToAddCliff` a
+   * Causes tested against this metric before #83, none of which explained it,
+   * kept because each is a closed door:
+   *
+   * - **The fields were exonerated at the site they were sampled.** Re-running
+   *   PR #57's substitution - the game's own corner elevation and cliffiness, at
+   *   `[1500,1500]` - left the mismatch at 67/830, identical to the digit, while
+   *   a +3 elevation bias moved it to 122/793. The substitution was live and the
+   *   metric sensitive to it. What that could not see is that the fixture had
+   *   been captured through `calculate_tile_properties`, a DIFFERENT channel
+   *   from the one the cliff generator reads - which is exactly what #83 turned
+   *   out to be. A field can be right at the right site and still be the wrong
+   *   field for the consumer.
+   * - **`fixImpossibleCells` was not it.** Turning it off moved the total from
+   *   12.5% to 14.3%, and region `[0,0]` from 29.8% to 30.8%.
+   * - **Chunk borders were not it.** `generateCliffs` passes `tryToAddCliff` a
    *   `!onChunkBorder` flag, and `fixImpossibleCells` cannot clear a border
    *   edge, so the outer ring of each 8x8 chunk was the obvious suspect. Border
-   *   cells are wrong 13.3% of the time against interior's 11.9% - no
+   *   cells were wrong 13.3% of the time against interior's 11.9% - no
    *   concentration - and the game places cliffs uniformly across all 64
    *   in-chunk positions (17-36 each), so that flag suppresses nothing.
    *
@@ -163,14 +178,16 @@ describe("cliff orientation vs the game's own cliff_orientation", () => {
       }
     }
     // Non-vacuity: this arm skips cells the port does not place, so without a
-    // floor a port that placed NOTHING would pass on an empty comparison. 1400
-    // is the measured matched count (2026-07-30, placement without the lava
-    // rejection, which is what is built above).
-    expect(compared).toBeGreaterThan(1350);
-    // Measured 175. An upper bound, not an equality, so fixing the rule does not
-    // require editing this line - but tight enough that a regression fails.
+    // floor a port that placed NOTHING would pass on an empty comparison. 1531
+    // is the measured matched count (2026-08-01, placement without the lava
+    // rejection, which is what is built above). The floor is raised with the
+    // bound below for a reason: a change that shrinks BOTH numbers has not
+    // fixed anything, it has stopped comparing.
+    expect(compared).toBeGreaterThan(1500);
+    // Measured 37. An upper bound, not an equality, so improving the rule does
+    // not require editing this line - but tight enough that a regression fails.
     // Do NOT raise it to make a change pass: this number going up means the
     // crossings got worse, which is the whole thing #18 is about.
-    expect(wrong.length).toBeLessThanOrEqual(175);
+    expect(wrong.length).toBeLessThanOrEqual(37);
   }, 120000);
 });
