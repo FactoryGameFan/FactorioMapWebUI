@@ -13,7 +13,7 @@
     "check:vue": "vue-tsc --noEmit",
     "refs:sync": "bash scripts/sync-factorio-refs.sh",
     "verify:deploy": "node scripts/verify-deploy.ts",
-    "verify": "vp check && pnpm run check:vue && vp test && pnpm run preview:test",
+    "verify": "vp check && pnpm run check:vue && vp run --cache test && pnpm run preview:test",
     "localpreview": "pnpm run preview:dev",
     "preview:dev": "concurrently -k -n worker,app -c blue,green \"pnpm run preview:worker\" \"pnpm run preview:app\"",
     "preview:worker": "pnpm --filter @fmw/preview-worker exec wrangler dev --var ALLOWED_ORIGIN:http://localhost:5173",
