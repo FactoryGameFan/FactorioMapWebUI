@@ -466,6 +466,11 @@ export function buildCliffControlLua(
     entityType?: string;
     cliffSettings?: Readonly<Record<string, number | string>>;
     propertyRoutes?: Readonly<Record<string, string>>;
+    autoplaceControls?: Readonly<
+      Record<string, { frequency: number; size: number; richness: number }>
+    >;
+    alsoResources?: boolean;
+    protoNames?: readonly string[];
   } = {},
 ): string {
   const dumpFile = opts.dumpFile ?? CLIFF_DUMP_FILE;
@@ -492,23 +497,71 @@ export function buildCliffControlLua(
       ([k, v]) => `\n  mgs.property_expression_names[${JSON.stringify(k)}] = ${JSON.stringify(v)}`,
     )
     .join("");
+  // Rides the same `mgs` round-trip as the cliff settings and the routes, so a
+  // resource arm and a cliff arm are set the same way and land before any chunk
+  // in the sampled region exists.
+  const autoplaceLua = Object.entries(opts.autoplaceControls ?? {})
+    .map(
+      ([k, v]) =>
+        `\n  mgs.autoplace_controls[${JSON.stringify(k)}] = ` +
+        `{frequency = ${String(v.frequency)}, size = ${String(v.size)}, richness = ${String(v.richness)}}`,
+    )
+    .join("");
   // The Nauvis path needs the same round-trip when settings are overridden. It
   // is safe on `surfaces[1]` because the sampled regions are far from spawn and
   // therefore ungenerated at `on_init` - a setting cannot retro-edit a chunk
   // that already exists, so a near-spawn region would silently ignore this.
   const nauvisLua =
-    settingsLua === "" && routesLua === ""
+    settingsLua === "" && routesLua === "" && autoplaceLua === ""
       ? `  local surface = game.surfaces[1]`
       : `  local surface = game.surfaces[1]
-  local mgs = surface.map_gen_settings${settingsLua}${routesLua}
+  local mgs = surface.map_gen_settings${settingsLua}${routesLua}${autoplaceLua}
   surface.map_gen_settings = mgs`;
   const surfaceLua =
     opts.planet === undefined
       ? nauvisLua
       : `  local surface = game.planets["${opts.planet}"].create_surface()
   local mgs = surface.map_gen_settings
-  mgs.seed = ${String(opts.seed ?? 123456)}${settingsLua}${routesLua}
+  mgs.seed = ${String(opts.seed ?? 123456)}${settingsLua}${routesLua}${autoplaceLua}
   surface.map_gen_settings = mgs`;
+  // `resources`, `protos` and `autoplace` stay nil unless asked for, so
+  // `table_to_json` simply omits them and every existing fixture's shape is
+  // byte-identical to what it was before this option existed.
+  const resourceLua =
+    opts.alsoResources !== true
+      ? "  local resources, protos, autoplace = nil, nil, nil"
+      : `  local resources = {}
+  for i, e in ipairs(surface.find_entities_filtered{ type = "resource", area = {{x0, y0}, {x1, y1}} }) do
+    resources[i] = {x = e.position.x, y = e.position.y, name = e.name}
+  end
+  -- Prototype geometry read off the RUNNING GAME. #94 ruled entity collision
+  -- out for ore by reasoning about layers; the game then said ore suppresses
+  -- cliffs anyway, so the layers belong in the fixture rather than in a claim.
+  -- The collision boxes are what makes the geyser separable from the ores: its
+  -- half-extent is 1.398 against their 0.098.
+  local protos = {}
+  for _, n in ipairs({${(opts.protoNames ?? []).map((p) => JSON.stringify(p)).join(", ")}}) do
+    local p = prototypes.entity[n]
+    if p then
+      local layers = {}
+      if p.collision_mask and p.collision_mask.layers then
+        for l, v in pairs(p.collision_mask.layers) do if v then layers[#layers + 1] = l end end
+      end
+      table.sort(layers)
+      protos[n] = {
+        type = p.type,
+        layers = layers,
+        box = p.collision_box and {
+          lx = p.collision_box.left_top.x, ly = p.collision_box.left_top.y,
+          rx = p.collision_box.right_bottom.x, ry = p.collision_box.right_bottom.y,
+        } or nil,
+      }
+    end
+  end
+  local autoplace = {}
+  for k, v in pairs(surface.map_gen_settings.autoplace_controls) do
+    autoplace[k] = {frequency = v.frequency, size = v.size, richness = v.richness}
+  end`;
   return `script.on_init(function()
 ${surfaceLua}
   local x0, y0, x1, y1 = ${region.x0}, ${region.y0}, ${region.x1}, ${region.y1}
@@ -547,7 +600,11 @@ ${surfaceLua}
     cliff_smoothing = cs.cliff_smoothing,
     richness = cs.richness,
   }
-  helpers.write_file("${dumpFile}", helpers.table_to_json({ cliffs = cliffs, cliffSettings = settings }), false)
+${resourceLua}
+  helpers.write_file("${dumpFile}", helpers.table_to_json({
+    cliffs = cliffs, cliffSettings = settings,
+    resources = resources, protos = protos, autoplaceControls = autoplace,
+  }), false)
   error("DUMPED-OK")
 end)
 `;
@@ -562,10 +619,26 @@ export interface DumpedCliffSettings {
   readonly richness: number;
 }
 
+/** A prototype's collision geometry, as the running game reports it. */
+export interface DumpedProto {
+  readonly type: string;
+  readonly layers: string[];
+  readonly box?: { lx: number; ly: number; rx: number; ry: number };
+}
+
 /** The cliff probe's full dump: the entities plus the settings that produced them. */
 export interface CliffDump {
   readonly cliffs: Position[];
   readonly cliffSettings?: DumpedCliffSettings;
+  /** Present only with `alsoResources`. `type = "resource"` entities in the same region. */
+  readonly resources?: Position[];
+  /** Present only with `alsoResources`. Collision geometry of `protoNames`. */
+  readonly protos?: Record<string, DumpedProto>;
+  /** Present only with `alsoResources`. The autoplace controls the surface read BACK. */
+  readonly autoplaceControls?: Record<
+    string,
+    { frequency: number; size: number; richness: number }
+  >;
 }
 
 /** Parse the cliff-entity mod's dump into `{x, y}` cliff positions. */
@@ -585,10 +658,28 @@ export function parseCliffDump(jsonText: string): Position[] {
  * zero rather than as a broken dump.
  */
 export function parseCliffDumpFull(jsonText: string): CliffDump {
-  const parsed = JSON.parse(jsonText) as { cliffs?: unknown; cliffSettings?: DumpedCliffSettings };
+  const parsed = JSON.parse(jsonText) as {
+    cliffs?: unknown;
+    cliffSettings?: DumpedCliffSettings;
+    resources?: unknown;
+    protos?: Record<string, DumpedProto>;
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+  };
   return {
     cliffs: Array.isArray(parsed.cliffs) ? (parsed.cliffs as Position[]) : [],
     cliffSettings: parsed.cliffSettings,
+    // The `Array.isArray` guard is load-bearing on BOTH lists, not defensive
+    // padding: an EMPTY Lua table serialises to `{}`, so a resources-off arm -
+    // exactly the arm these captures exist for - comes back as an object and
+    // dies on the first `for ... of` without it.
+    resources:
+      parsed.resources === undefined
+        ? undefined
+        : Array.isArray(parsed.resources)
+          ? (parsed.resources as Position[])
+          : [],
+    protos: parsed.protos,
+    autoplaceControls: parsed.autoplaceControls,
   };
 }
 
@@ -691,6 +782,39 @@ export interface OracleOptions {
   probeExpression?: string;
   /** Property {@link probeExpression} is routed onto. Default `cliff_elevation`. */
   probeProperty?: string;
+  /**
+   * Override `map_gen_settings.autoplace_controls`, keyed by the GAME's own
+   * control names (`tungsten_ore`, `calcite`, `vulcanus_coal`,
+   * `sulfuric_acid_geyser` - note the underscores, and that they are NOT the
+   * entity names).
+   *
+   * This is {@link cliffSettings}'s trick applied one subsystem over: instead of
+   * arguing about whether resources and cliffs interact, set `size = 0` and let
+   * the game answer. It is what settled the direction of the cliff/ore exclusion
+   * (#84, #24) - with the resources off, cliffs appear where the game otherwise
+   * leaves a hole, while forcing 335 cliffs through an ore field moves the ore
+   * not one tile.
+   *
+   * The dump reports the controls the surface read BACK
+   * ({@link CliffDump.autoplaceControls}), for the same reason `cliffSettings`
+   * does: an override that silently failed to apply and a term that does not
+   * matter are otherwise indistinguishable.
+   */
+  autoplaceControls?: Readonly<
+    Record<string, { frequency: number; size: number; richness: number }>
+  >;
+  /**
+   * Also dump `type = "resource"` entities and the collision geometry of the
+   * named prototypes, in the SAME run as the cliffs.
+   *
+   * Two runs cannot answer this question. "The resources moved" and "the cliffs
+   * moved" have to be read off one generated surface or the comparison is
+   * between two different worlds; and a resource arm's non-vacuity check ("the
+   * ore really did disappear") has to come from the arm itself.
+   */
+  alsoResources?: boolean;
+  /** Entity prototypes whose collision box and mask layers to dump. Needs {@link alsoResources}. */
+  protoNames?: readonly string[];
 }
 
 /**
@@ -878,6 +1002,9 @@ export async function sampleCliffEntitiesFull(
       seed,
       entityType: opts.entityType,
       cliffSettings: opts.cliffSettings,
+      autoplaceControls: opts.autoplaceControls,
+      alsoResources: opts.alsoResources,
+      protoNames: opts.protoNames,
       propertyRoutes:
         opts.probeExpression === undefined
           ? undefined

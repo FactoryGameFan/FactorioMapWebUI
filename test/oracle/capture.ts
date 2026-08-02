@@ -3712,7 +3712,169 @@ async function captureCliffSmoothingStencil(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} arms)`);
 }
 
+/**
+ * **The DIRECTION of the cliff/ore exclusion, asked of the game** (#84 item 1,
+ * which is really #24).
+ *
+ * The port puts cliffs on ore and the game essentially does not - 3 of its 1,569
+ * against the port's 29. That correlation fits two mechanisms which demand
+ * opposite fixes: ore suppresses cliffs, or cliffs suppress ore. `#94` handed the
+ * question over unresolved after ruling out lava, every other tile, the
+ * cliffiness gate and entity collision.
+ *
+ * It is settleable by experiment rather than argument, because the resources are
+ * a `map_gen_settings` lever like `cliff_settings`: turn them OFF and look. The
+ * arms are cumulative in neither direction - they are a 2x2, because each
+ * hypothesis needs its own control:
+ *
+ * - `[1500,1500]` at DEFAULT cliff settings, resources ON then OFF. The
+ *   difference IS the suppressed set, with no model of the geometry needed to
+ *   obtain it, and this is the region where the exclusion costs the port
+ *   accuracy (26 of its 42 surplus cells).
+ * - The same region with only `calcite` off and only `sulfuric_acid_geyser` off,
+ *   so the suppressed set can be attributed per resource. It is exactly
+ *   additive: 27 + 4 = 31.
+ * - `[0,0]` with the rule COLLAPSED (single contour at 70, gate forced open,
+ *   smoothing off) so a contour is forced through the tungsten blob that #94
+ *   named the sharpest open lead, resources ON then OFF.
+ *
+ * Every arm dumps the resources and the effective autoplace controls **in the
+ * same run as the cliffs**. Two runs cannot answer this: "the ore moved" and
+ * "the cliffs moved" have to be read off one generated surface, and the
+ * non-vacuity check that the ore really did vanish has to come from the arm
+ * making the claim.
+ *
+ * The prototype geometry rides along because the answer turned on it. The ores'
+ * collision half-extent is 0.098 and the geyser's is 1.398, which is why a test
+ * treating every resource as a point at its tile centre explains the calcite
+ * cells and cannot explain the geyser ones.
+ */
+async function captureVulcanusCliffOreDirection(): Promise<void> {
+  const seed = 123456;
+  const entityRegion: Region = { x0: 1500, y0: 1500, x1: 1756, y1: 1756 };
+  const blobRegion: Region = { x0: 0, y0: 0, x1: 256, y1: 256 };
+  const ONE_BAND = 1000000;
+  // The collapsed rule of `oracle-vulcanus-cliff-collapsed`'s third arm, which is
+  // where the blob is reachable at all: at real settings the port places nothing
+  // there, so the exclusion is only visible once a contour is forced through it.
+  const COLLAPSED = {
+    cliff_smoothing: 0,
+    cliff_elevation_interval: ONE_BAND,
+    cliff_elevation_0: 70,
+    richness: 4,
+  };
+  const OFF = { frequency: 1, size: 0, richness: 1 };
+  const ALL_OFF = {
+    tungsten_ore: OFF,
+    calcite: OFF,
+    vulcanus_coal: OFF,
+    sulfuric_acid_geyser: OFF,
+  };
+  const PROTOS = [
+    "cliff-vulcanus",
+    "crater-cliff",
+    "tungsten-ore",
+    "calcite",
+    "coal",
+    "sulfuric-acid-geyser",
+    "big-volcanic-rock",
+    "huge-volcanic-rock",
+  ];
+
+  const arms: {
+    label: string;
+    region: Region;
+    cliffSettings?: Record<string, number>;
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+  }[] = [
+    { label: "entity region, resources ON", region: entityRegion },
+    { label: "entity region, ALL resources OFF", region: entityRegion, autoplaceControls: ALL_OFF },
+    {
+      label: "entity region, calcite OFF",
+      region: entityRegion,
+      autoplaceControls: { calcite: OFF },
+    },
+    {
+      label: "entity region, geyser OFF",
+      region: entityRegion,
+      autoplaceControls: { sulfuric_acid_geyser: OFF },
+    },
+    { label: "blob region COLLAPSED, resources ON", region: blobRegion, cliffSettings: COLLAPSED },
+    {
+      label: "blob region COLLAPSED, ALL resources OFF",
+      region: blobRegion,
+      cliffSettings: COLLAPSED,
+      autoplaceControls: ALL_OFF,
+    },
+  ];
+
+  const cases: unknown[] = [];
+  for (const arm of arms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(arm.region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        cliffSettings: arm.cliffSettings,
+        autoplaceControls: arm.autoplaceControls,
+        alsoResources: true,
+        protoNames: PROTOS,
+      });
+      cases.push({
+        label: arm.label,
+        region: arm.region,
+        cliffSettings: arm.cliffSettings ?? null,
+        autoplaceControls: arm.autoplaceControls ?? null,
+        effectiveCliffSettings: dump.cliffSettings,
+        effectiveAutoplace: dump.autoplaceControls,
+        cliffs: dump.cliffs,
+        resources: dump.resources,
+        protos: dump.protos,
+      });
+      // The probe writes `name` and `orientation` alongside the position, but
+      // `CliffDump.cliffs` is typed as the bare `Position` the noise samplers
+      // share. Only this progress line needs the name, so it is narrowed here
+      // rather than by widening a type six other captures depend on.
+      const named = dump.cliffs as unknown as readonly { name: string }[];
+      const vulc = named.filter((c) => c.name === "cliff-vulcanus").length;
+      console.log(
+        `  ${arm.label} -> ${String(vulc)} cliff-vulcanus, ` +
+          `${String(dump.cliffs.length - vulc)} other cliff, ` +
+          `${String(dump.resources?.length ?? -1)} resources`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Settles the DIRECTION of the Vulcanus " +
+      "cliff/ore exclusion (#84 item 1, #24) by turning the resources OFF through " +
+      "map_gen_settings.autoplace_controls and regenerating - the same trick " +
+      "oracle-vulcanus-cliff-collapsed plays on cliff_settings. Arms are NOT cumulative; they are " +
+      "paired ON/OFF controls, because 'ore suppresses cliffs' and 'cliffs suppress ore' each need " +
+      "their own. Every arm dumps the cliffs, the resources, the prototype collision geometry and " +
+      "the autoplace controls the SURFACE read back, all from ONE generated surface, so an override " +
+      "that failed to apply cannot be mistaken for a term that does not matter and 'the ore moved' " +
+      "and 'the cliffs moved' are never compared across two different worlds. Sampled on a " +
+      "create_surface() surface whose seed is FORCED to `seed`, like every other Vulcanus oracle " +
+      "fixture. Regenerate: node --experimental-strip-types test/oracle/capture.ts " +
+      "vulcanus-cliff-ore-direction",
+    seed,
+    entityRegion,
+    blobRegion,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-ore-direction.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
 if (want("cliff-entities")) await captureCliffEntities();
+if (want("vulcanus-cliff-ore-direction")) await captureVulcanusCliffOreDirection();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();
 if (want("vulcanus-cliff-corner-fields")) await captureVulcanusCliffCornerFields();
 if (want("vulcanus-cliff-corner-fields-entity-regions"))
