@@ -164,57 +164,66 @@ describe("Vulcanus elevation, inverted through a cliff_elevation_0 sweep", () =>
    * So the arm reading "we over-place below 120" was really reading "we do not
    * delete what the game deletes, and there is more to delete down there."
    *
-   * Running both sides with the rejection collapses it:
+   * Running both sides with the rejection accounts for most of it:
    *
    * | `cliff_elevation_0` | ours/game, no rejection | with rejection |
    * | --- | --- | --- |
-   * | 20 | 1.085 | 0.988 |
-   * | 40 | 1.048 | 1.022 |
-   * | 60 | 1.044 | **1.027** |
-   * | 90 - 130 | 1.008 - 1.018 | 0.991 - 1.000 |
+   * | 20 | 1.085 | 1.037 |
+   * | 40 | 1.048 | **1.042** |
+   * | 60 | 1.044 | 1.039 |
+   * | 90 - 130 | 1.008 - 1.018 | 1.008 - 1.018 |
    * | 140 - 200 | 1.000 - 1.009 | 1.000 - 1.009 |
    *
-   * Worst-low 1.027 against worst-high 1.009: the gap goes 0.067 -> 0.018, and
-   * the low regime now straddles 1.0 rather than sitting above it.
+   * Worst-low 1.042 against worst-high 1.018: the gap goes 0.067 -> **0.024**.
    *
-   * **What remains at low levels is a boundary error in the TILES, not the
-   * elevation.** The rejection also costs recall, and it costs it in the same
-   * regime: 0.951 at level 20 rising to 1.000 at 140 and above. Every one of
-   * those losses is a real cliff whose box hits our lava at Chebyshev depth 1 -
-   * our own perimeter - never deeper: 32/32 at level 20, 52/52 across the sweep,
-   * 13/13 at default settings. A sub-tile disagreement about where lava stops.
+   * **These numbers correct PR #86, which reported 0.018.** That measurement was
+   * taken while the collision box was the `rotbb` AABB rather than the rotated
+   * rectangle, so the rejection was over-aggressive - it deleted cells the game
+   * keeps, which flattered exactly this ratio. Fixing the box
+   * (`cliffBoxCoversTile`) removes that flattery and the honest residual is
+   * larger. A too-strong correction hides the thing it is correcting.
    *
-   * **Stated carefully, because depth only discriminates in one of the two
-   * places it was checked.** At default settings it does: region `[1500,1500]`'s
-   * 170 CORRECT rejections span depth 1 to 9 with 45 bottomed out deep in lava,
-   * against wrong rejections that are 100% perimeter. At level 20 it does not -
-   * there the correct rejections are 32/32 perimeter as well, because the
-   * contour has walked down onto the lake edges and every candidate is near a
-   * boundary. So the honest claim is that the low-level errors are
-   * boundary-SITED in both directions, and that at level 20 we get about half of
-   * them right; not that depth alone proves the perimeter is one tile fat.
+   * **Recall is the strong signal here, and it is now ~1.000 everywhere**: every
+   * level from 30 to 200 reproduces the game's entire cliff set, and level 20
+   * misses exactly 1 of 658. Before the box fix the rejection cost recall in
+   * precisely this regime - 0.951 at level 20 rising to 1.000 at 140 - which is
+   * what pointed at the box in the first place. The old reading of that deficit
+   * (a lava mask one tile too fat) was WRONG and is recorded in
+   * `docs/noise/vulcanus-cliffs-NOTES.md`: a dense 994-position capture at those
+   * exact boundaries found ZERO lava mismatches.
+   *
+   * What is left is pure over-placement concentrated below elevation 120, with
+   * no recall cost. That is a smaller and cleaner residual than #84 item 2
+   * described, and it is still open.
    */
   it("attributes the split to the lava rejection, not to the elevation field", () => {
     const withRejection = fx.cases.map((_, i) => atLevel(i, true));
     // Non-vacuity: the rejection must actually remove cells, or "the split went
     // away" and "the predicate never fired" are the same observation.
     const removed = rows.reduce((n, r, i) => n + (r.ours - withRejection[i].ours), 0);
-    expect(removed).toBeGreaterThan(100);
+    console.log(`levels: rejection removed ${String(removed)} cells across the sweep`);
+    expect(removed).toBeGreaterThan(25);
+    for (const [i, w] of withRejection.entries())
+      console.log(
+        `  level ${String(w.level).padStart(3)} game=${String(w.game).padStart(4)} noRej=${(rows[i].ours / w.game).toFixed(4)} rej=${(w.ours / w.game).toFixed(4)} rec=${(w.both / w.game).toFixed(4)}`,
+      );
 
     const ratios = (rs: typeof rows, pick: (level: number) => boolean): number[] =>
       rs.filter((r) => pick(r.level)).map((r) => r.ours / r.game);
     const low = Math.max(...ratios(withRejection, (l) => l <= 110));
     const high = Math.max(...ratios(withRejection, (l) => l >= 120));
-    // Measured 1.0266 and 1.0085. Both bounds are upper, so the port may improve
-    // without editing them.
-    expect(low).toBeLessThanOrEqual(1.03);
-    expect(high).toBeLessThanOrEqual(1.01);
-    // The gap is what #84 item 2 was about: 0.067 without the rejection, 0.018
+    // Measured 1.0415 (level 40) and 1.0177 (level 130). Both bounds are upper,
+    // so the port may improve without editing them.
+    expect(low).toBeLessThanOrEqual(1.05);
+    expect(high).toBeLessThanOrEqual(1.02);
+    // The gap is what #84 item 2 was about: 0.067 without the rejection, 0.024
     // with it. Guarded as an upper bound only - it may shrink to zero or invert.
     expect(low - high).toBeLessThan(0.03);
 
-    // And the low regime no longer sits entirely ABOVE the game, which is the
-    // part that read as over-placement: level 20 goes 1.085 -> 0.988.
-    expect(withRejection[0].ours / withRejection[0].game).toBeLessThan(1);
+    // **Recall, which is what the box fix bought.** Every level reproduces the
+    // game's whole cliff set; level 20 misses 1 of 658. Before `cliffBoxCoversTile`
+    // this ran 0.951 at level 20. Asserted per level rather than in aggregate so
+    // a regime-shaped regression cannot average itself away.
+    for (const w of withRejection) expect(w.both / w.game).toBeGreaterThan(0.99);
   }, 120000);
 });

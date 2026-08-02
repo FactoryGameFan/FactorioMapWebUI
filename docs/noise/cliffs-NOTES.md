@@ -5,7 +5,7 @@
 > | | recall | precision | wrong orientation |
 > | --- | --- | --- | --- |
 > | **Nauvis** | 1.0000 | 1.0000 | **0 / 334** |
-> | **Vulcanus**, as shipped | **0.9675** | **0.9743** | **31 / 1518 = 2.0%** |
+> | **Vulcanus**, as shipped | **0.9758** | **0.9727** | 2.0% |
 > | **Vulcanus**, no lava rejection | 0.9758 | 0.8719 | 37 / 1531 = 2.4% |
 >
 > **Read the shipping row.** The renderer applies `tryToAddCliff`'s lava-collision
@@ -16,10 +16,12 @@
 > `test/vulcanusCliffEntities.spec.ts`; the no-rejection row is kept because
 > `test/cliffOrientationOracle.spec.ts` deliberately scores the larger set.
 >
-> What is left on Vulcanus: 51 of the game's 1569 missing, 40 of our 1558
-> spurious, 31 matched cells carrying a wrong orientation. **13 of the 51 are a
-> TILE question, not a cliff one** - real cliffs whose collision box hits our lava
-> at Chebyshev depth 1, our own perimeter, never deeper. Remainder in **#84**.
+> What is left on Vulcanus: 38 of the game's 1569 missing and 43 of our 1574
+> spurious. **The 13 that used to be a "TILE question" were neither** - not the
+> lava mask (a dense 994-position capture found ZERO mismatches) but the
+> collision box, which the port had collapsed from `rotbb`'s rotated rectangle to
+> its bounding box. Fixed; see `## The lava perimeter was the COLLISION BOX` in
+> `vulcanus-cliffs-NOTES.md`. Remainder in **#84**.
 >
 > **Read `## ROOT CAUSE, 2026-08-01` (further down) before anything else in this
 > file.** It is the resolution of issue #18: `multisample`'s offsets are in the

@@ -2262,6 +2262,118 @@ async function captureVulcanusTemperature(): Promise<void> {
  * map_color port. Regenerate: node --experimental-strip-types test/oracle/capture.ts
  * vulcanus-tile-names
  */
+/**
+ * **A DENSE tile-name capture at the lava boundaries the cliff rejection reads**
+ * (issue #84, the lava-perimeter thread).
+ *
+ * `oracle-vulcanus-tile-names` is a sparse survey - a 64-tile grid plus a
+ * golden-angle spiral - and its lava classification is exact on all 381 of its
+ * positions. That exactness is real but it cannot settle a SUB-TILE boundary
+ * question: its sensitivity was measured by planting scale factors on `lava`'s
+ * probability, and `1.02` and `1.2` both still pass. Sparse positions simply do
+ * not sit close enough to a boundary in probability space.
+ *
+ * The negative-space oracle in `vulcanusCliffEntities.spec.ts` says the boundary
+ * IS off somewhere: 13 real cliffs the game placed have our lava inside their
+ * collision box, and the game ran that same rejection and kept them. The 35
+ * distinct tiles responsible are the seeds here, each expanded to a Chebyshev
+ * radius-4 neighbourhood so the SHAPE of the disagreement is visible - whether
+ * our blob is a uniform tile too fat, fat only on one side, or something else.
+ *
+ * These are deliberately the hardest positions on the map for the resolver
+ * rather than a representative sample, so the agreement rate here is not
+ * comparable with the survey's and is not meant to be.
+ *
+ * Regenerate: node --experimental-strip-types test/oracle/capture.ts
+ * vulcanus-lava-boundary
+ */
+async function captureVulcanusLavaBoundary(): Promise<void> {
+  const seed = 123456;
+  const planet = "vulcanus";
+  // The 35 tiles our mask calls lava inside a REAL cliff's collision box,
+  // dumped from the placement itself (see the spec that consumes this fixture).
+  const seeds: readonly (readonly [number, number])[] = [
+    [88, 41],
+    [89, 40],
+    [89, 41],
+    [85, 45],
+    [86, 43],
+    [86, 44],
+    [87, 42],
+    [87, 43],
+    [87, 44],
+    [82, 48],
+    [83, 47],
+    [83, 48],
+    [24, 181],
+    [25, 181],
+    [4, 187],
+    [5, 187],
+    [6, 187],
+    [7, 187],
+    [1637, 1598],
+    [1693, 1599],
+    [1693, 1600],
+    [1694, 1599],
+    [1694, 1600],
+    [1695, 1600],
+    [1696, 1600],
+    [1697, 1600],
+    [1635, 1599],
+    [1636, 1599],
+    [1663, 1636],
+    [1663, 1637],
+    [1521, 1680],
+    [-1052, 1016],
+    [-1051, 1016],
+    [-1051, 1017],
+    [-1061, 1029],
+  ];
+  const RADIUS = 4;
+  const seen = new Set<string>();
+  const positions: Position[] = [];
+  for (const [sx, sy] of seeds)
+    for (let dx = -RADIUS; dx <= RADIUS; dx++)
+      for (let dy = -RADIUS; dy <= RADIUS; dy++) {
+        const x = sx + dx;
+        const y = sy + dy;
+        const k = `${String(x)},${String(y)}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        // Sample the tile's own integer coordinate; `sampleTileNames` echoes the
+        // floored `get_tile` input back, so the fixture records what was asked.
+        positions.push({ x: x + 0.5, y: y + 0.5 });
+      }
+
+  const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+  try {
+    const samples: TileSample[] = await sampleTileNames(positions, {
+      workDir,
+      seed,
+      spaceAge: true,
+      planet,
+    });
+    const fixture = {
+      _comment:
+        "Ground truth from Factorio 2.1.12 (Space Age enabled) via the test/oracle harness. surface.get_tile(x, y).name on a real Vulcanus surface (game.planets['vulcanus'].create_surface(), seed 123456) after real chunk generation. DENSE: Chebyshev radius-4 neighbourhoods around the 35 tiles our lava mask wrongly places inside a real cliff's collision box, so the boundary error's shape is visible. Deliberately the hardest positions for the resolver, NOT a representative sample - the agreement rate here is not comparable with oracle-vulcanus-tile-names. positions are the mod's ECHOED floored get_tile input. Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-lava-boundary",
+      seed0: seed,
+      planet,
+      seeds: seeds.map(([x, y]) => ({ x, y })),
+      radius: RADIUS,
+      positions: samples.map((s) => ({ x: s.x, y: s.y })),
+      tileNames: samples.map((s) => s.name),
+    };
+    const out = join(FIXTURES, "oracle-vulcanus-lava-boundary.seed123456.json");
+    await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+    const distinct = [...new Set(fixture.tileNames)].sort();
+    console.log(
+      `wrote ${out} (${String(positions.length)} points, ${String(distinct.length)} distinct tiles: ${distinct.join(", ")})`,
+    );
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
+
 async function captureVulcanusTileNames(): Promise<void> {
   const seed = 123456;
   const planet = "vulcanus";
@@ -3373,5 +3485,6 @@ if (want("vulcanus-climate")) await captureVulcanusClimate();
 if (want("vulcanus-elevation")) await captureVulcanusElevation();
 if (want("vulcanus-temperature")) await captureVulcanusTemperature();
 if (want("vulcanus-tile-names")) await captureVulcanusTileNames();
+if (want("vulcanus-lava-boundary")) await captureVulcanusLavaBoundary();
 if (want("vulcanus-cliffs")) await captureVulcanusCliffs();
 if (want("vulcanus-rocks")) await captureVulcanusRocks();
