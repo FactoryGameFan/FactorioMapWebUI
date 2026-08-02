@@ -180,6 +180,45 @@ matters, set it explicitly.
   `test/**/*.spec.ts` include actually matches) - and the gap mattered: ~63s is exactly the duration
   at which people start skipping a manual gate, which is half the argument for
   the CI workflow below. Don't budget 10 seconds for this.
+
+  The test phase runs through **`vp run --cache test`**, not a bare `vp test`.
+  Measured 2026-08-02: the four phases are `vp check` 2.0s, `check:vue` 3.0s,
+  `vp test` **61.2s**, `preview:test` 3.1s - so one phase is **88%** of the gate
+  and it is the only one worth caching. That phase alone goes 62.0s cold to
+  **0.6s** warm; the whole gate goes **64.9s to 7.0s**, the remainder being the
+  three phases that are not cached.
+
+  The cache is content-keyed, and that was established by trying to break it
+  rather than by reading the flag's docs: an edit to a source file misses and
+  re-runs; a **planted failing assertion misses and still fails with rc=1**, so
+  a hit cannot mask a regression; and a `touch` that changes only the mtime
+  still **hits**, which is what proves it hashes contents. Only the most recent
+  result is stored, so reverting to a previously-seen tree misses.
+
+  Consequences worth knowing before reading a fast `verify` as a skipped one:
+
+  - **It is a no-op in CI.** Every runner starts cold, so the required `verify`
+    check runs in full whatever this flag says.
+  - **It pays on `deploy` and almost nowhere else.** `deploy:app` runs `verify`
+    immediately after you have probably just run one by hand. The normal
+    edit -> verify loop misses every time, by design.
+  - **A hit is a replay, not a run.** Legitimate for file content, per the
+    probes above. What is NOT established is whether the key covers inputs
+    outside the tree - env vars, the node version, or whether a Factorio install
+    appeared or vanished (the oracle specs are `it.skipIf(!oracleAvailable())`,
+    so their skip status can change with no file changing). If you are chasing
+    something environmental rather than something you edited, clear it with
+    `vp cache clean`, or call `vp test` directly.
+
+  Two changes that were measured and **rejected**, so they don't get retried:
+  running the four phases in parallel is only 60.6s against 69.3s serial (13%),
+  and it turns a 2s type error into a 61s one because `vp check` no longer runs
+  first - it would also need a new script, since a `dependsOn: ["check"]` would
+  pull in the `check` script, which is `vp check --fix` and must never run in a
+  deploy path. And `maxWorkers` is already at its optimum: 4 -> 74.7s, 8 ->
+  61.7s, 11 -> 61.8s against a default of 61.2s, because the extra cores on this
+  machine are E-cores.
+
 - `pnpm refs:sync` - pin `factorioLuaAPI/` + `~/GitHub/factorio-data` to the
   installed binary's version (`--check` reports drift only; `--fixtures` reports
   which oracle fixtures predate the binary). Deliberately **not** part of
