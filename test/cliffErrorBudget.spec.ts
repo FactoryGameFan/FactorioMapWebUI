@@ -8,8 +8,10 @@ import {
   VULCANUS_CLIFF_SMOOTHING,
   makeVulcanusCliffFields,
 } from "../src/noise/cliffs/vulcanusCliffFields";
-import { makeVulcanusOreRejection } from "../src/noise/cliffs/vulcanusOreRejection";
-import { VULCANUS_CLIFF_BASE_COLLISION_BOX } from "../src/noise/cliffs/vulcanusOreRejection";
+import {
+  VULCANUS_CLIFF_BASE_COLLISION_BOX,
+  makeVulcanusOreRejection,
+} from "../src/noise/cliffs/vulcanusOreRejection";
 import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/preview/renderVulcanusCliffs";
 import { buildResources } from "../src/noise/preview/renderVulcanusResources";
 import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
@@ -22,8 +24,14 @@ interface Ent {
   y: number;
   name: string;
 }
+interface Region {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
 interface Case {
-  region: { x0: number; y0: number; x1: number; y1: number };
+  region: Region;
   cliffs: Ent[];
 }
 
@@ -32,7 +40,6 @@ const ctx = withCtxDefaults(INPUT);
 const fields = makeVulcanusCliffFields(ctx);
 const tileAt = makeVulcanusTileResolver(INPUT);
 const resources = buildResources(ctx);
-const oreRejects = makeVulcanusOreRejection(resources, ctx.vulcanusResourceControls);
 const tileCollides = (x: number, y: number): boolean =>
   VULCANUS_CLIFF_BLOCKING_TILES.has(tileAt(x, y).name);
 const BANDS = {
@@ -40,198 +47,212 @@ const BANDS = {
   interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
   smoothing: VULCANUS_CLIFF_SMOOTHING,
 };
+const SHIPPED = {
+  ...BANDS,
+  tileCollides,
+  cellRejects: makeVulcanusOreRejection(resources, ctx.vulcanusResourceControls),
+};
 
-const cellsFor = (r: Case["region"], opts: { lava?: boolean; ore?: boolean }): Set<string> =>
+const cases = entities.cases as unknown as Case[];
+const allCliffs = (c: Case): Ent[] => c.cliffs.filter((e) => e.name === "cliff-vulcanus");
+const inBox = (c: Case): Ent[] =>
+  allCliffs(c).filter(
+    (p) => p.x >= c.region.x0 && p.x < c.region.x1 && p.y >= c.region.y0 && p.y < c.region.y1,
+  );
+const placed = (
+  r: Region,
+  bands: Parameters<typeof makeCliffPlacementFromFields>[1],
+  pad = 0,
+): Set<string> =>
   new Set(
-    makeCliffPlacementFromFields(fields, {
-      ...BANDS,
-      tileCollides: opts.lava === true ? tileCollides : undefined,
-      cellRejects: opts.ore === true ? oreRejects : undefined,
-    })
-      .placedCells(r.x0, r.y0, r.x1, r.y1)
+    makeCliffPlacementFromFields(fields, bands)
+      .placedCells(r.x0 - pad, r.y0 - pad, r.x1 + pad, r.y1 + pad)
       .map((p) => key(p.x, p.y)),
   );
 
-interface Budget {
-  at: string;
-  surplus: number;
-  missing: number;
-  lavaKilled: number;
-  oreKilled: number;
-  neverGenerated: number;
-}
-
-const budget = (c: Case): Budget => {
-  const r = c.region;
-  const game = new Set(
-    c.cliffs.filter((e) => e.name === "cliff-vulcanus").map((e) => key(e.x, e.y)),
-  );
-  const raw = cellsFor(r, {});
-  const lava = cellsFor(r, { lava: true });
-  const full = cellsFor(r, { lava: true, ore: true });
-  const missing = [...game].filter((k) => !full.has(k));
-  return {
-    at: key(r.x0, r.y0),
-    surplus: [...full].filter((k) => !game.has(k)).length,
-    missing: missing.length,
-    lavaKilled: missing.filter((k) => raw.has(k) && !lava.has(k)).length,
-    oreKilled: missing.filter((k) => lava.has(k) && !full.has(k)).length,
-    neverGenerated: missing.filter((k) => !raw.has(k)).length,
-  };
-};
-
 /**
- * **Where the remaining Vulcanus cliff error actually is**, split so that the
- * next piece of work is chosen by size rather than by which lead reads best.
+ * **The recall gap was a comparison artifact, and it is worth reading how it
+ * hid.**
  *
- * This exists because the ore rejection (#100) changed the answer. Every cliff
- * defect found since #18 has been a rule the port OVER-places without - lava
- * collision, the rotbb box shape, the ore suppression - so "find another
- * rejection" has been the shape of the work throughout. After #100 that is no
- * longer where the budget is: **the port now misses more cells than it
- * over-places**, and no rejection rule can ever fix a missed cell.
+ * `find_entities_filtered` returns every entity whose BOUNDING BOX touches the
+ * query area; `placedCells` emits every cell whose CENTRE lies inside it. Those
+ * are different inclusion rules, so the game's list carries cliffs centred just
+ * outside the box that the port was never asked about - and scoring one against
+ * the other counts each of them as a miss.
  *
- * The split below is the whole point. `missing` decomposes into cells one of our
- * own rejections killed (so the rejection is too aggressive) and cells the
- * crossings stage **never produced at all** - which is a completely different
- * defect, in a different part of the port.
+ * It is worth 38 cells, which is the entire apparent recall gap:
+ *
+ * | region | game rows | centred inside | centred OUTSIDE |
+ * | --- | --- | --- | --- |
+ * | `[0,0]` | 283 | 283 | **0** |
+ * | `[1500,1500]` | 885 | 861 | **24** |
+ * | `[-1200,800]` | 401 | 387 | **14** |
+ *
+ * And the port places **38 of 38** of them once the query box is widened enough
+ * to include their centres - so every one is an agreement being scored as a
+ * failure.
+ *
+ * This is the same failure as #86, where a 187-cell "excess" turned out to be
+ * 185 cells of a rule only one side was applying. Before believing a gap,
+ * check both sides are being asked the same question.
  */
-describe("the remaining error budget, by region and by cause", () => {
-  it("pins the composition", () => {
-    const budgets = (entities.cases as unknown as Case[]).map(budget);
-
-    expect(budgets).toEqual([
-      {
-        at: "0,0",
-        surplus: 2,
-        missing: 2,
-        lavaKilled: 2,
-        oreKilled: 0,
-        neverGenerated: 0,
-      },
-      {
-        at: "1500,1500",
-        surplus: 22,
-        missing: 27,
-        lavaKilled: 3,
-        oreKilled: 0,
-        neverGenerated: 24,
-      },
-      {
-        at: "-1200,800",
-        surplus: 1,
-        missing: 15,
-        lavaKilled: 1,
-        oreKilled: 0,
-        neverGenerated: 14,
-      },
-    ]);
-
-    const sum = (f: (b: Budget) => number): number => budgets.reduce((a, b) => a + f(b), 0);
-    // The headline the rest of this file is about: MISSING now outweighs
-    // SURPLUS, 44 to 25, and 38 of the 44 are cells we never generate.
-    expect(sum((b) => b.surplus)).toBe(25);
-    expect(sum((b) => b.missing)).toBe(44);
-    expect(sum((b) => b.neverGenerated)).toBe(38);
-    expect(sum((b) => b.lavaKilled)).toBe(6);
-    // The ore rule kills nothing the game kept, in any region - the gate #100
-    // shipped under, re-asserted here against the full pipeline rather than the
-    // predicate in isolation.
-    expect(sum((b) => b.oreKilled)).toBe(0);
-  }, 120000);
+describe("the apparent recall gap is a query-window artifact", () => {
+  it("finds 38 game cliffs centred outside the box they were captured for", () => {
+    const outside = cases.map((c) => allCliffs(c).length - inBox(c).length);
+    expect(outside).toEqual([0, 24, 14]);
+    expect(outside.reduce((a, b) => a + b, 0)).toBe(38);
+  });
 
   /**
-   * **`[0,0]` generates every cell the game does.** Its entire miss is two cells
-   * our own lava rejection removed; `neverGenerated` is zero. The other two
-   * regions account for all 38.
-   *
-   * That is a sharp regional signature and the strongest lead this file
-   * produces: whatever fails to generate those 38 cells does not fail near
-   * spawn. It is also consistent with #93, which found the port exact at `[0,0]`
-   * and `[-1200,800]` with `cliff_smoothing = 0` and still wrong at
-   * `[1500,1500]` - so the two are probably not one defect.
+   * **The decisive arm.** Widening the query so those centres ARE asked about
+   * places every one of them. Without this the finding would only be "we never
+   * looked there", which is consistent with the port being wrong as well as with
+   * it being right.
    */
-  it("localises the never-generated cells away from spawn", () => {
-    const budgets = (entities.cases as unknown as Case[]).map(budget);
-    const spawn = budgets.find((b) => b.at === "0,0");
-    expect(spawn?.neverGenerated).toBe(0);
-    expect(spawn?.missing).toBe(spawn?.lavaKilled);
-    // Non-vacuity: `[0,0]` is not a region where nothing happens - the raw pass
-    // produces 292 cells there and the lava rejection removes 9 of them.
-    const r = (entities.cases as unknown as Case[])[0].region;
-    expect(cellsFor(r, {}).size).toBe(292);
-    expect(cellsFor(r, { lava: true }).size).toBe(283);
+  it("places 38 of 38 once the query box includes their centres", () => {
+    let found = 0;
+    let total = 0;
+    for (const c of cases) {
+      const inside = new Set(inBox(c).map((p) => key(p.x, p.y)));
+      const outside = allCliffs(c).filter((p) => !inside.has(key(p.x, p.y)));
+      const wide = placed(c.region, SHIPPED, 8);
+      total += outside.length;
+      found += outside.filter((p) => wide.has(key(p.x, p.y))).length;
+    }
+    expect(total).toBe(38);
+    expect(found).toBe(38);
   }, 120000);
 });
 
 /**
- * **Item 3 of #84 - the entity half of `Surface::wouldCollide` - is closed by
- * size, before any of it is ported.**
+ * **The corrected budget.** Scored with both sides on the same inclusion rule:
+ * the game set restricted to cliffs centred in the box, against the pipeline the
+ * renderer actually runs (lava rejection + ore rejection).
  *
- * `#94` established that cliffs get TWO collision tests and the port implements
- * one: `applyCliffs` re-tests through `Surface::wouldCollide`, which is
- * `constCollideWithTile` AND `collideWithEntity`. `big-volcanic-rock`,
- * `huge-volcanic-rock` and `crater-cliff` all share a layer with the cliff mask,
- * so all three can reject a cliff, and none of it is ported.
+ * | region | game | port | matched | surplus | missing |
+ * | --- | --- | --- | --- | --- | --- |
+ * | `[0,0]` | 283 | 283 | 281 | 2 | 2 |
+ * | `[1500,1500]` | 861 | 880 | 858 | 22 | 3 |
+ * | `[-1200,800]` | 387 | 387 | 386 | 1 | 1 |
+ * | **total** | **1531** | **1550** | **1525** | **25** | **6** |
  *
- * It is still not worth porting, for a reason that has nothing to do with how
- * hard it is: **it is a rejection, and rejections can only remove cells.** The
- * entire surplus across all three oracle regions is 25 cells, so 25 is the
- * absolute ceiling on what the whole entity half could ever be worth - against a
- * 44-cell recall gap it would leave untouched and could only make worse.
- *
- * This is the same "close a candidate by SIZE first" move that retired
- * `fixImpossibleCells` as a suspect (35 cells against a 175-cell effect).
+ * **Recall 0.9961, precision 0.9839.** The long-standing 0.972 recall figure in
+ * `vulcanus-cliffs-NOTES.md` was this artifact: it divided the same 1525 matches
+ * by 1569 rather than 1531.
  */
-describe("the entity collision half is bounded before it is built", () => {
-  /**
-   * The crater arm can be settled exactly, because craters are already in the
-   * fixtures - and it is worth **zero**. All 8 sit in `[-1200,800]`, and not one
-   * of them touches a cell the port over-places.
-   */
-  it("craters explain none of the surplus", () => {
-    const [l, t, r, b] = VULCANUS_CLIFF_BASE_COLLISION_BOX;
-    let cratersSeen = 0;
-    let touchingSurplus = 0;
+describe("the remaining error budget, both sides scored alike", () => {
+  interface Budget {
+    at: string;
+    game: number;
+    port: number;
+    matched: number;
+    surplus: number;
+    missing: number;
+    lavaKilled: number;
+    oreKilled: number;
+  }
 
-    for (const c of entities.cases as unknown as Case[]) {
-      const game = new Set(
-        c.cliffs.filter((e) => e.name === "cliff-vulcanus").map((e) => key(e.x, e.y)),
-      );
-      const craters = c.cliffs.filter((e) => e.name === "crater-cliff");
-      cratersSeen += craters.length;
-      const surplus = [...cellsFor(c.region, { lava: true, ore: true })].filter(
-        (k) => !game.has(k),
-      );
-      for (const k of surplus) {
+  const budget = (c: Case): Budget => {
+    const game = new Set(inBox(c).map((p) => key(p.x, p.y)));
+    const raw = placed(c.region, BANDS);
+    const lava = placed(c.region, { ...BANDS, tileCollides });
+    const full = placed(c.region, SHIPPED);
+    const missing = [...game].filter((k) => !full.has(k));
+    const matched = [...full].filter((k) => game.has(k)).length;
+    return {
+      at: key(c.region.x0, c.region.y0),
+      game: game.size,
+      port: full.size,
+      matched,
+      surplus: full.size - matched,
+      missing: missing.length,
+      lavaKilled: missing.filter((k) => raw.has(k) && !lava.has(k)).length,
+      oreKilled: missing.filter((k) => lava.has(k) && !full.has(k)).length,
+    };
+  };
+
+  it("pins the corrected composition", () => {
+    const budgets = cases.map(budget);
+    expect(budgets.map((b) => [b.at, b.game, b.port, b.surplus, b.missing])).toEqual([
+      ["0,0", 283, 283, 2, 2],
+      ["1500,1500", 861, 880, 22, 3],
+      ["-1200,800", 387, 387, 1, 1],
+    ]);
+
+    const sum = (f: (b: Budget) => number): number => budgets.reduce((a, b) => a + f(b), 0);
+    expect(sum((b) => b.matched)).toBe(1525);
+    expect(sum((b) => b.game)).toBe(1531);
+    expect(sum((b) => b.port)).toBe(1550);
+    expect(sum((b) => b.surplus)).toBe(25);
+    expect(sum((b) => b.missing)).toBe(6);
+
+    // Every missing cell is one OUR OWN lava rejection removed. There is no
+    // cell left that the port simply fails to generate.
+    expect(sum((b) => b.lavaKilled)).toBe(6);
+    expect(sum((b) => b.oreKilled)).toBe(0);
+
+    expect(sum((b) => b.matched) / sum((b) => b.game)).toBeCloseTo(0.9961, 4);
+    expect(sum((b) => b.matched) / sum((b) => b.port)).toBeCloseTo(0.9839, 4);
+  }, 120000);
+
+  /**
+   * **So precision is the remaining defect, not recall** - 25 surplus cells
+   * against 6 missing, and the 6 are all attributable to one rule we already
+   * implement being slightly too aggressive rather than to anything unported.
+   */
+  it("leaves precision as the dominant defect", () => {
+    const budgets = cases.map(budget);
+    const surplus = budgets.reduce((a, b) => a + b.surplus, 0);
+    const missing = budgets.reduce((a, b) => a + b.missing, 0);
+    expect(surplus).toBeGreaterThan(missing * 4);
+  }, 120000);
+});
+
+/**
+ * **Item 3 of #84 - the entity half of `Surface::wouldCollide` - stays OPEN, and
+ * the crater arm is worth zero.**
+ *
+ * An earlier draft of this file closed item 3 by size, reasoning that a
+ * rejection can only remove cells and so could not help a 44-cell recall gap.
+ * That reasoning died with the gap: recall is 0.9961 and the dominant defect is
+ * now the 25 surplus cells, which is exactly what a rejection removes. The
+ * entity half is therefore the leading candidate rather than a closed one.
+ *
+ * The crater arm can still be settled exactly, and it is worth nothing.
+ */
+describe("the entity collision half: craters are worth zero, rocks are the lead", () => {
+  it("finds no crater touching any cell the port over-places", () => {
+    const [l, t, r, b] = VULCANUS_CLIFF_BASE_COLLISION_BOX;
+    let craters = 0;
+    let touching = 0;
+
+    for (const c of cases) {
+      const game = new Set(inBox(c).map((p) => key(p.x, p.y)));
+      const cr = c.cliffs.filter((e) => e.name === "crater-cliff");
+      craters += cr.length;
+      for (const k of [...placed(c.region, SHIPPED)].filter((s) => !game.has(s))) {
         const [xs, ys] = k.split(",");
         const cx = Number(xs);
         const cy = Number(ys);
-        // Two cliff-shaped boxes overlap when their centres are within the sum
-        // of the half-extents; `crater-cliff` carries the same box as
-        // `cliff-vulcanus` (both `+/-0.988 x +/-0.488` in the fixture protos).
-        if (craters.some((q) => Math.abs(q.x - cx) < r - l && Math.abs(q.y - cy) < b - t))
-          touchingSurplus++;
+        // `crater-cliff` carries the same box as `cliff-vulcanus` in the fixture
+        // protos, so two of them overlap within the summed half-extents.
+        if (cr.some((q) => Math.abs(q.x - cx) < r - l && Math.abs(q.y - cy) < b - t)) touching++;
       }
     }
 
-    // Non-vacuity: there really are craters to have found, they simply do not
-    // coincide with any cell the port gets wrong.
-    expect(cratersSeen).toBe(8);
-    expect(touchingSurplus).toBe(0);
+    // Non-vacuity: there really are craters to have found.
+    expect(craters).toBe(8);
+    expect(touching).toBe(0);
   }, 120000);
 
   /**
-   * The rock arm cannot be settled from the fixtures - no oracle capture carries
-   * `big-volcanic-rock` / `huge-volcanic-rock` - but it does not need to be. The
-   * ceiling below bounds the entire entity half, rocks included: a rejection
-   * cannot place a cell, so it can never touch the 44 the port is missing.
+   * The rock arm is unmeasurable from the fixtures - no oracle capture carries
+   * `big-volcanic-rock` / `huge-volcanic-rock` - so capturing one is the next
+   * concrete step, and it now has a 25-cell target to aim at rather than a
+   * ceiling argument against it.
    */
-  it("bounds the whole entity half at 25 cells, against a 44-cell recall gap", () => {
-    const budgets = (entities.cases as unknown as Case[]).map(budget);
-    const surplus = budgets.reduce((a, b) => a + b.surplus, 0);
-    const missing = budgets.reduce((a, b) => a + b.missing, 0);
-    expect(surplus).toBe(25);
-    expect(missing).toBeGreaterThan(surplus);
-  }, 120000);
+  it("records that no fixture carries the rock entities the arm needs", () => {
+    const names = new Set(cases.flatMap((c) => c.cliffs.map((e) => e.name)));
+    expect([...names].sort()).toEqual(["cliff-vulcanus", "crater-cliff"]);
+  });
 });

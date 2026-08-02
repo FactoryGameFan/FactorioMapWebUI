@@ -45,6 +45,20 @@
 >   the three regions, measured as the boolean `crossesCliff` reads rather than as
 >   a value. That closes the clamp-vacuity worry properly.
 >
+> ## UPDATE 4, 2026-08-02: RECALL IS 0.9961 - every recall figure below is wrong
+>
+> **Read `## The recall gap was a QUERY-WINDOW ARTIFACT` (last section) before
+> quoting any accuracy number in this file.** The port was scored against game
+> entity lists that include cliffs centred OUTSIDE the captured box, because
+> `find_entities_filtered` selects by bounding box and `placedCells` emits by
+> centre. That is 38 cells, the whole apparent recall gap, and the port places
+> **38 of 38** once asked about their centres.
+>
+> Corrected: **recall 0.9961, precision 0.9839**, 1525 matched of 1531. The match
+> count was never wrong - only the denominator. All 6 remaining missing cells are
+> ones our own lava rejection removed, so **precision (25 surplus) is the only
+> real defect left**, and item 3 is re-OPENED as the leading candidate for it.
+>
 > ## UPDATE 3, 2026-08-02: the ore rule is PORTED and SHIPS
 >
 > The last section, **`## The rule is PORTED, and driving it from our own ore
@@ -1624,49 +1638,56 @@ composite's `VulcanusStack.resources` rather than building a second DAG. The
 derived window is guarded by a brute-force scan a tile wider on every side, not
 trusted.
 
-## The budget FLIPPED: recall is now the bigger defect, and item 3 is closed by size (#84, 2026-08-02)
+## The recall gap was a QUERY-WINDOW ARTIFACT - recall is 0.9961, not 0.972 (#84, 2026-08-02)
 
-Every cliff defect found since #18 has been a rule the port over-places without -
-lava collision, the rotbb box shape, the ore suppression - so "find another
-rejection" has been the shape of the work throughout. **After the ore rejection
-landed that is no longer where the error is.** `test/cliffErrorBudget.spec.ts`
-splits it:
+**The port has been scored against a game set it was never asked to reproduce.**
+`find_entities_filtered` returns every entity whose BOUNDING BOX touches the
+query area; `placedCells` emits every cell whose CENTRE lies inside it. Those are
+different inclusion rules, so the fixtures carry cliffs centred just outside the
+box, and every one has been counted as a miss.
 
-| region | surplus | missing | lava-killed | ore-killed | **never generated** |
+| region | game rows | centred inside | centred OUTSIDE |
+| --- | --- | --- | --- |
+| `[0,0]` | 283 | 283 | **0** |
+| `[1500,1500]` | 885 | 861 | **24** |
+| `[-1200,800]` | 401 | 387 | **14** |
+
+That is 38 cells - the entire apparent recall gap - and **the port places 38 of
+38 of them** once the query box is widened to include their centres. Every one is
+an agreement that was being scored as a failure. `test/cliffErrorBudget.spec.ts`
+pins both arms; the widening arm is the load-bearing one, since "we never looked
+there" alone is equally consistent with the port being wrong.
+
+### The corrected budget, both sides scored alike
+
+| region | game | port | matched | surplus | missing |
 | --- | --- | --- | --- | --- | --- |
-| `[0,0]` | 2 | 2 | 2 | 0 | **0** |
-| `[1500,1500]` | 22 | 27 | 3 | 0 | **24** |
-| `[-1200,800]` | 1 | 15 | 1 | 0 | **14** |
-| **total** | **25** | **44** | 6 | 0 | **38** |
+| `[0,0]` | 283 | 283 | 281 | 2 | 2 |
+| `[1500,1500]` | 861 | 880 | 858 | 22 | 3 |
+| `[-1200,800]` | 387 | 387 | 386 | 1 | 1 |
+| **total** | **1531** | **1550** | **1525** | **25** | **6** |
 
-**The port now misses more cells than it over-places, 44 to 25** - and 38 of the
-44 are cells the crossings stage never produces at all, which is a different
-defect in a different part of the port from everything solved so far. The other 6
-are cells our own lava rejection removed and the game kept.
+**Recall 0.9961, precision 0.9839.** The 0.972 recall quoted in this file's
+banner and throughout #84 divided the same 1525 matches by 1569 instead of 1531.
+**Correct every recall figure you find here before acting on it** - the match
+count was never wrong, only the denominator.
 
-### `[0,0]` generates everything the game does
+**All 6 missing cells are ones our own lava rejection removed.** There is no cell
+left that the port simply fails to generate, in any region. So precision is the
+remaining defect, 25 against 6.
 
-Its entire miss is the two cells the lava rejection took; `neverGenerated` is
-**zero**. All 38 sit in the two far-field regions. That is a sharp regional
-signature and the strongest open lead - and it agrees with #93, which found the
-port exact at `[0,0]` and `[-1200,800]` with `cliff_smoothing = 0` and still
-wrong at `[1500,1500]`, so the two are probably not one defect.
+### Consequence: item 3 stays OPEN, and the crater arm is worth zero
 
-### Item 3 (the entity half of `Surface::wouldCollide`) is CLOSED, unported
+An earlier draft of this section closed item 3 (the entity half of
+`Surface::wouldCollide`) by size, arguing a rejection can only remove cells and
+so could not help a 44-cell recall gap. **That argument died with the gap.** With
+recall at 0.9961 the dominant defect is the 25 surplus cells, which is exactly
+what a rejection removes - so the entity half is the leading candidate, not a
+closed one.
 
-Not because it is hard - because of its size, the same move that retired
-`fixImpossibleCells` as a suspect (35 cells against a 175-cell effect).
-
-**It is a rejection, and rejections can only remove cells.** Total surplus across
-all three regions is 25, so 25 bounds what the entire entity half - rocks,
-craters, everything - could ever be worth, against a 44-cell recall gap it cannot
-touch and could only widen.
-
-The crater arm is settled exactly, because craters are already in the fixtures:
-all 8 sit in `[-1200,800]` and **not one touches a cell the port over-places**
-(nor any cliff the game kept). Worth exactly zero. The rock arm has no fixture
-and does not need one - the ceiling argument covers it.
-
-**Do not port it without first fixing recall**, and if it is ever ported, score
-`missing` alongside `surplus` or it will look like an improvement while making
-the port worse.
+The crater arm is still settled exactly, and is worth **nothing**: all 8 craters
+sit in `[-1200,800]` and not one touches a cell the port over-places. The rock
+arm (`big-volcanic-rock`, `huge-volcanic-rock`) has no oracle capture at all -
+no cliff fixture carries anything but `cliff-vulcanus` and `crater-cliff` - so
+capturing one is the next concrete step, now with a 25-cell target rather than a
+ceiling argument against it.
