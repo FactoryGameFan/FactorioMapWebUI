@@ -329,8 +329,14 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       **zero** predictions on Nauvis; the exact `wouldCollide` rejection is moot
       because **no Nauvis cliff touches water at all**; and the ore-on-cliff
       exclusion was withdrawn outright (see the M3a follow-up above - there is no
-      such rule in the game). The residual is still open and is now believed to be
-      a **rule** error rather than a field error (PR #57). `VoronoiNoise` (layer-1 primitive table below) is
+      such rule in the game). **The residual is CLOSED as of 2026-08-01 (PR #83).**
+      It was a FIELD error after all, not the rule error PR #57 concluded:
+      `multisample`'s offsets are in the calling noise program's GRID UNITS, so
+      the cliff generator (4-tile lattice) and the tile generator (1 tile) read
+      different `vulcanus_elevation`. PR #57's substitution missed it because its
+      fixture came through the same 1-tile channel the port used. Vulcanus recall
+      is now 1.000/0.973/0.965 with 2.4% wrong orientations; see the ROOT CAUSE
+      section of `cliffs-NOTES.md` and issue #84 for the remainder. `VoronoiNoise` (layer-1 primitive table below) is
       confirmed **unneeded for Nauvis** - it appears nowhere in the cliff tree or
       any other Nauvis expression traced so far, only on Space-Age planets - so it
       remains un-ported with no open TODO against it.
