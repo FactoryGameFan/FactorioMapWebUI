@@ -2,9 +2,12 @@
 
 > ## STATUS, 2026-08-01: issue #18 is CLOSED; remainder tracked in #84
 >
-> Recall **1.000 / 0.973 / 0.965** across the three regions, **37 / 1531 = 2.4%**
-> wrong orientations (was 0.806 / 0.938 / 0.853 and 12.5%). Precision 0.872,
-> measured **without** the lava-collision rejection the shipping renderer applies.
+> **As shipped** (with `tryToAddCliff`'s lava-collision rejection, which is what
+> the renderer runs): recall **0.9675**, precision **0.9743**, **31 / 1518 = 2.0%**
+> wrong orientations. Without the rejection the same code scores recall 0.9758,
+> precision 0.8719, 37 / 1531 = 2.4% - and it is that second row, not a defect,
+> that #84 opened against. The rejection drops 198 cells, 185 false positives to
+> 13 true. Before the fix: recall 0.806 / 0.938 / 0.853 and 12.5% wrong.
 >
 > **Root cause: `multisample`'s offsets are in the calling noise program's GRID
 > UNITS, not tiles**, so `vulcanus_basalt_lakes_multisample`'s `min` is a 4-tile
@@ -14,7 +17,9 @@
 > `test/multisampleGrid.spec.ts`.
 >
 > **Every accuracy table below this banner is the PRE-FIX state**, kept because the
-> reasoning is the useful part. Do not quote one as current.
+> reasoning is the useful part. Do not quote one as current. The one exception is
+> the final section, `## The lava rejection accounted for the "excess"`, which is
+> post-fix and is where the numbers in this banner come from.
 
 Factorio 2.1.12 (build 87038, mac-arm64). Ported 2026-07-26. Companion to
 `cliffs-NOTES.md`, which holds the reverse-engineering of the placement rule
@@ -138,8 +143,16 @@ positions - which is part of why `sulfuricAcidPatches` carries a 2.9e-3 bound.
 geometry (`makeCliffPlacementFromFields`, factored out of `makeCliffPlacement`
 for this) and the paint loop (`paintCliffCells`). Two differences:
 
-- **No water exclusion.** Vulcanus has no water tile. Lava plays that visual
-  role but is not water, and the game does not exclude cliffs from it here.
+- **No water exclusion, but there IS a lava exclusion.** Vulcanus has no water
+  tile, so `renderCliffs`' water check has nothing to test. This section used to
+  read "the game does not exclude cliffs from lava" and **that was wrong** - it
+  was inferred from the absence of a *water* tile rather than measured.
+  `tryToAddCliff` tests the orientation's collision box against the tile mask
+  grid, and `tile_collision_masks.lava()` sets the same `water_tile` bit the
+  cliff mask excludes, so lava rejects cliffs by exactly the same mechanism water
+  does. Ported in #71/#73; it is worth 185 false positives across the three
+  oracle regions (precision 0.8719 -> 0.9743) and is passed as `tileCollides`
+  from `VULCANUS_CLIFF_BLOCKING_TILES`.
 - **No disable path.** With no continuity slider there is nothing to zero.
 
 `cliff-vulcanus` declares `map_color = {144, 119, 87}`
@@ -912,3 +925,74 @@ cliff 78% of the time (93 of 120 at `[1100,2600]`) - they are edge-of-line
 offsets along a real cliff face. The ones **inside** ore sit 2-5 cells away (4 of
 37 at distance 1). They are not misaligned cliff lines; they are cliff faces the
 game does not have at all.
+
+## The lava rejection accounted for the "excess", 2026-08-01 (#84 items 1-2)
+
+Issue #84 opened with two symptoms, and they turned out to be one measurement
+error. Both arms compared **our placement, which did not run the lava-collision
+rejection, against the game's, which always does.** `tryToAddCliff` drops any
+cliff whose collision box touches a lava tile, and on Vulcanus the lava is the
+basalt lakes - so the comparison was missing a deletion rule whose effect is
+concentrated in exactly the low-elevation range where the residual sat.
+
+**Item 1, the 187-cell excess.** Turning the rejection on removes 198 cells
+across the three regions: **185 false positives against 13 true**.
+
+| | game | ours | matched | recall | precision | wrong orientation |
+| --- | --- | --- | --- | --- | --- | --- |
+| no rejection | 1569 | 1756 | 1531 | 0.9758 | 0.8719 | 37 = 2.42% |
+| **with rejection** | 1569 | **1558** | 1518 | 0.9675 | **0.9743** | 31 = 2.04% |
+
+Per region, with it on: `[0,0]` 283/277, precision **exactly 1.000**;
+`[1500,1500]` 885/895, precision 0.9564; `[-1200,800]` 401/386, precision 0.9974.
+The port goes from over-placing 12% to under-placing 0.7%.
+
+**Item 2, the surviving regime split.** `test/vulcanusElevationLevels.spec.ts`
+had the low-elevation over-placement ratio at 1.085 against 1.018 high, a gap of
+0.067 that read as a second-order error in the same `multisample` term. Run both
+sides with the rejection and it collapses:
+
+| `cliff_elevation_0` | ours/game, no rejection | with rejection |
+| --- | --- | --- |
+| 20 | 1.085 | 0.988 |
+| 40 | 1.048 | 1.022 |
+| 60 | 1.044 | **1.027** |
+| 90 - 130 | 1.008 - 1.018 | 0.991 - 1.000 |
+| 140 - 200 | 1.000 - 1.009 | 1.000 - 1.009 |
+
+Gap 0.067 -> **0.018**, and the low regime now straddles 1.0 instead of sitting
+above it. There is no second `multisample` defect to find.
+
+### What is actually left is a TILE boundary, not a cliff field
+
+The rejection costs recall, and it costs it in the same regime: 0.951 at level
+20 rising to 1.000 at 140 and above. Each real cliff is a negative-space oracle -
+the game ran this rejection and kept it, so the game saw no lava in that box -
+and every contradiction sits at Chebyshev depth 1 in our lava, our own perimeter,
+**never deeper**: 32/32 at level 20, 52/52 across the sweep, 13/13 at default
+settings.
+
+**Depth discriminates in one of the two places it was checked, and not the
+other.** At default settings it does: `[1500,1500]`'s 170 *correct* rejections
+span depth 1 to 9, 45 of them bottomed out deep in lava, against wrong rejections
+that are 100% perimeter. At level 20 it does not - there the correct rejections
+are 32/32 perimeter too, because the contour has walked down onto the lake edges
+and every candidate is near a boundary. So the supported claim is that these
+errors are boundary-**sited** in both directions and that at level 20 we call
+about half of them right; not that depth alone proves the perimeter is one tile
+fat. Narrowing that is a `vulcanusCatalog` question, not a cliff one.
+
+Note what the tile resolver is already known to get right, so this is not a
+retread: its binary lava/not classification is **exact on all 381 oracle
+positions**, including 42 sitting directly on a lava boundary
+(`vulcanusTiles.spec.ts`). Whatever is off is finer than the sample that pinned
+it.
+
+### Method note
+
+This is the same trap as #83 wearing different clothes. There, a fixture was
+right at the right site but captured through the wrong **channel**. Here, two
+sides of a comparison ran different **rule sets** - and in both cases the
+mismatch had a plausible mechanism ready to absorb it, so the wrong explanation
+was the comfortable one. Before attributing a residual to a mechanism, check
+that both sides of the comparison are running the same rules.

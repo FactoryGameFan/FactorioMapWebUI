@@ -335,8 +335,9 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       the cliff generator (4-tile lattice) and the tile generator (1 tile) read
       different `vulcanus_elevation`. PR #57's substitution missed it because its
       fixture came through the same 1-tile channel the port used. Vulcanus recall
-      is now 1.000/0.973/0.965 with 2.4% wrong orientations; see the ROOT CAUSE
-      section of `cliffs-NOTES.md` and issue #84 for the remainder. `VoronoiNoise` (layer-1 primitive table below) is
+      on the shipping path is now 0.9675 with precision 0.9743 and 2.0% wrong
+      orientations; see the ROOT CAUSE section of `cliffs-NOTES.md` and issue #84
+      for the remainder. `VoronoiNoise` (layer-1 primitive table below) is
       confirmed **unneeded for Nauvis** - it appears nowhere in the cliff tree or
       any other Nauvis expression traced so far, only on Space-Age planets - so it
       remains un-ported with no open TODO against it.

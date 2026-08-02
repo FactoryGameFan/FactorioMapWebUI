@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeCliffElevation, makeCliffFields } from "../src/noise/cliffs/cliffFields";
-import { makeCliffPlacementFromFields, smoothingKnots } from "../src/noise/cliffs/cliffPlacement";
+import { makeCliffPlacementFromFields } from "../src/noise/cliffs/cliffPlacement";
 import {
   VULCANUS_CLIFF_ELEVATION_0,
   VULCANUS_CLIFF_ELEVATION_INTERVAL,

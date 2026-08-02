@@ -5,10 +5,21 @@
 > | | recall | precision | wrong orientation |
 > | --- | --- | --- | --- |
 > | **Nauvis** | 1.0000 | 1.0000 | **0 / 334** |
-> | **Vulcanus** | 1.000 / 0.973 / 0.965 | 0.872 | **37 / 1531 = 2.4%** |
+> | **Vulcanus**, as shipped | **0.9675** | **0.9743** | **31 / 1518 = 2.0%** |
+> | **Vulcanus**, no lava rejection | 0.9758 | 0.8719 | 37 / 1531 = 2.4% |
 >
-> Vulcanus's precision is measured **without** the lava-collision rejection, which
-> the shipping renderer does apply; the remainder is tracked in **issue #84**.
+> **Read the shipping row.** The renderer applies `tryToAddCliff`'s lava-collision
+> rejection and the second row does not; leaving it off is what produced the
+> "precision 0.872 / 187-cell excess" figure #84 opened with. The rejection drops
+> 198 cells, **185 of them false positives and 13 true**, so almost the whole
+> excess was a rule the measurement was not applying. Measured 2026-08-01 in
+> `test/vulcanusCliffEntities.spec.ts`; the no-rejection row is kept because
+> `test/cliffOrientationOracle.spec.ts` deliberately scores the larger set.
+>
+> What is left on Vulcanus: 51 of the game's 1569 missing, 40 of our 1558
+> spurious, 31 matched cells carrying a wrong orientation. **13 of the 51 are a
+> TILE question, not a cliff one** - real cliffs whose collision box hits our lava
+> at Chebyshev depth 1, our own perimeter, never deeper. Remainder in **#84**.
 >
 > **Read `## ROOT CAUSE, 2026-08-01` (further down) before anything else in this
 > file.** It is the resolution of issue #18: `multisample`'s offsets are in the
@@ -689,6 +700,11 @@ behaves the same when the calling program's grid is 4 tiles rather than 1.
 > | recall | 0.806 / 0.938 / 0.853 | **1.000 / 0.973 / 0.965** |
 > | `[0,0]` (worst region) | 29.8% wrong | **2.5%**, recall 1.000 |
 > | level sweep, ratio | 1.20-1.49 below 120 | **1.00-1.09 at every level** |
+>
+> Both columns are measured **without** the lava-collision rejection, which is the
+> right control for isolating this one change but is not the shipping path. On the
+> path the renderer runs, "after" is recall 0.9675 / precision 0.9743 / 31 wrong -
+> see the banner at the top of this file.
 >
 > `VulcanusElevation` now exposes `cliffElevation` beside `elevation`; both hang
 > off one stack and share every sub-expression below the multisample, so the cost

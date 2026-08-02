@@ -110,25 +110,36 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       // `water_tile` and `tile_collision_masks.lava()` sets it. See
       // `CLIFF_ORIENTATION_COLLISION_BOX`.
       //
-      // | region | game | ours | recall | precision | ratio | before rejection |
-      // | --- | --- | --- | --- | --- | --- | --- |
-      // | 0 `[0,0]` | 283 | 317 | 0.784 | 0.700 | 1.120 | 335 / 0.806 / 0.681 / 1.184 |
-      // | 1 `[1500,1500]` | 885 | 888 | 0.933 | 0.930 | **1.003** | 1065 / 0.938 / 0.779 / 1.203 |
-      // | 2 `[-1200,800]` | 401 | 371 | 0.853 | 0.922 | 0.925 | 375 / 0.853 / 0.912 / 0.935 |
+      // **Updated 2026-08-01, after the `multisample` grid-units fix (#83).**
+      // That fix is measured in `test/multisampleGrid.spec.ts`; these are its
+      // end-to-end numbers on the path the renderer actually runs.
       //
-      // Region 1 is the case this rule was found on and it lands almost exactly:
-      // 173 false positives dropped against 4 true ones, ratio 1.203 -> 1.003.
+      // | region | game | ours | recall | precision | ratio |
+      // | --- | --- | --- | --- | --- | --- |
+      // | 0 `[0,0]` | 283 | 277 | 0.9788 | **1.0000** | 0.979 |
+      // | 1 `[1500,1500]` | 885 | 895 | 0.9672 | 0.9564 | 1.011 |
+      // | 2 `[-1200,800]` | 401 | 386 | 0.9601 | 0.9974 | 0.963 |
+      // | **total** | **1569** | **1558** | **0.9675** | **0.9743** | 0.993 |
       //
-      // **Reported rather than smoothed over: recall gets WORSE in two regions.**
-      // Region 0 loses 6 true positives (0.806 -> 0.784) and region 1 loses 4.
-      // Those are cells where the game placed a cliff and our tile resolver puts
-      // lava inside its box.
+      // Region 0 now places no cell the game did not - precision is exactly 1.
       //
-      // **Those 10 are a one-tile boundary error, and that is measured now
-      // (2026-07-30), not assumed.** This comment used to carry the guess that
-      // the resolver "is plausibly worse at a lava boundary"; the guess was
-      // wrong in its premise and right in its conclusion, so both halves are
-      // worth stating:
+      // **The lava rejection is what closes the over-placement, and #84 item 1
+      // asked how much.** The answer is nearly all of it. Without it the same
+      // code places 1756 against the game's 1569 for a precision of 0.8719; the
+      // rejection drops 198 cells, of which **185 are false positives and 13 are
+      // true**. Precision 0.8719 -> 0.9743 and the port goes from over-placing
+      // 12% to under-placing 0.7%. So the "187-cell excess" recorded in #84 was
+      // 185 cells of a rule the measurement was not applying, not a defect.
+      //
+      // **Reported rather than smoothed over: the rejection costs recall.**
+      // Those 13 lost true positives are cells where the game placed a cliff and
+      // our tile resolver puts lava inside its box.
+      //
+      // **They are a one-tile boundary error, and that is measured (2026-07-30,
+      // re-measured 2026-08-01), not assumed.** This comment used to carry the
+      // guess that the resolver "is plausibly worse at a lava boundary"; the
+      // guess was wrong in its premise and right in its conclusion, so both
+      // halves are worth stating:
       //
       // - The resolver is NOT worse at a lava boundary. Its binary lava/not
       //   classification - the only thing `tryToAddCliff` reads - is EXACT on
@@ -139,23 +150,17 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       // - It is nonetheless off by about one tile SOMEWHERE, because each real
       //   cliff the game placed is itself a negative-space oracle: the game ran
       //   this same rejection and kept the cliff, so the game sees no lava in
-      //   that box. Over the 1400 real cliffs we place across the three regions,
-      //   10 boxes contradict that - 0.71% - and in **all 10** the offending
+      //   that box. Over the 1531 real cliffs we place across the three regions,
+      //   13 boxes contradict that - 0.85% - and in **all 13** the offending
       //   tile sits at Chebyshev depth 1 inside our lava, i.e. on our own
-      //   perimeter. Not one is deep water.
+      //   perimeter. Not one is deep lava.
       //
       // Depth 1 is the common case for any lava tile, so that alone would not
-      // discriminate; region 1's 173 correct rejections are the control and they
-      // are spread right across the range (65 at depth 1, 52 deeper than 6). The
-      // rule's real work is untouched by the boundary.
-      //
-      // **This also rules the resolver out as a cause of the residual below**,
-      // which was the reason to measure it first. An under-calling resolver
-      // would leave false positives sitting next to lava; they do not. Of region
-      // 0's 95 surviving false positives only 4.2% come within 2 tiles of any
-      // lava, against 7.2% of its matched true positives - the wrong way round -
-      // and in regions 1 and 2 the bulk (42/62 and 20/29) are more than 8 tiles
-      // from the nearest lava tile. Whatever is left is not a lava question.
+      // discriminate; region 1's 170 correct rejections are the control and they
+      // are spread right across the range (62 at depth 1, 61 deeper than 6, 45
+      // of those bottomed out at depth 9). Wrong rejections are 100% perimeter
+      // against a control that is 36% perimeter, so the rule's real work is
+      // untouched by the boundary.
       //
       // A control run pins that the rejection is not just deleting cells at the
       // background lava rate: sampling the same lava field 10,000 tiles away
@@ -163,15 +168,20 @@ describe("Vulcanus cliff placement vs find_entities", () => {
       // indiscriminate, ratio collapsing to 0.65 / 0.70. The real arm rejects
       // almost only false positives.
       //
-      // **Still not Nauvis-grade, and the remaining gap is no longer one thing.**
+      // **Still not Nauvis-grade, but it is now one thing, not several.**
       // `test/cliffPlacement.spec.ts` measures Nauvis at 1.0000 recall AND
-      // precision. Region 1 is now within 0.3% on count; regions 0 and 2 barely
-      // moved and are +12% and -7.5%. The residual is not one-directional - region
-      // 2 UNDER-places - which is why the ratio is guarded on both sides below.
-      expect(recall).toBeGreaterThan(0.77);
-      expect(precision).toBeGreaterThan(0.68);
-      expect(predicted.size / actual.size).toBeLessThan(1.15);
-      expect(predicted.size / actual.size).toBeGreaterThan(0.9);
+      // precision. Here 51 of the game's 1569 are missing and 40 of our 1558 are
+      // spurious. 13 of the 51 are the perimeter error above - a TILE question,
+      // not a cliff one. The residual is not one-directional (regions 0 and 2
+      // UNDER-place, region 1 over-places), which is why the ratio is guarded on
+      // both sides below.
+      //
+      // Guards sit just outside the measured values in the direction that would
+      // signal a regression, and open in the direction of improvement.
+      expect(recall).toBeGreaterThan(0.95);
+      expect(precision).toBeGreaterThan(0.94);
+      expect(predicted.size / actual.size).toBeLessThan(1.05);
+      expect(predicted.size / actual.size).toBeGreaterThan(0.95);
     }, 120000);
   }
 });
