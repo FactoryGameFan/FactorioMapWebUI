@@ -50,6 +50,7 @@ import {
 } from "../placement/placementRoll";
 import type { PlacementCollisionBox } from "../placement/placementRoll";
 import {
+  RESOURCE_PROBABILITY_THRESHOLD,
   VULCANUS_RESOURCE_CATALOG,
   sulfuricAcidGeyserProbability,
 } from "../resources/vulcanusResourceCatalog";
@@ -60,8 +61,12 @@ import {
 } from "../tiles/vulcanusCatalog";
 import { paintMark } from "./renderCliffs";
 
-/** The overlay's placement threshold: probability >= 0.5 (see the module comment). */
-const PROBABILITY_THRESHOLD = 0.5;
+/**
+ * The overlay's placement threshold: probability >= 0.5 (see the module
+ * comment). Defined in `vulcanusResourceCatalog.ts` because the cliff overlay's
+ * ore rejection asks the same question - see `RESOURCE_PROBABILITY_THRESHOLD`.
+ */
+const PROBABILITY_THRESHOLD = RESOURCE_PROBABILITY_THRESHOLD;
 
 /**
  * The two Vulcanus tiles no geyser may sit on.
@@ -110,8 +115,16 @@ const GEYSER_FORBIDDEN_TILES = new Set(["lava", "lava-hot"]);
  */
 const GEYSER_COLLISION_BOX: PlacementCollisionBox = { w: 2.8, h: 2.8 };
 
-/** Build the Vulcanus resource field stack `renderVulcanusResources` sweeps. */
-function buildResources(ctx: EvalCtx): VulcanusResources {
+/**
+ * Build the Vulcanus resource field stack `renderVulcanusResources` sweeps.
+ *
+ * Exported because the cliff overlay needs the same stack for its ore rejection
+ * when it runs standalone (with a shared `VulcanusStack` it takes
+ * `stack.resources` instead). Assembling the sub-DAG by hand in a second place
+ * is precisely the duplication that lets two callers drift onto different
+ * fields.
+ */
+export function buildResources(ctx: EvalCtx): VulcanusResources {
   const helpers = makeVulcanusHelpers(ctx);
   const spawn = makeVulcanusSpawn(ctx, helpers);
   const cracks = makeVulcanusCracks(ctx, helpers);
@@ -119,7 +132,15 @@ function buildResources(ctx: EvalCtx): VulcanusResources {
   return makeVulcanusResources(ctx, helpers, spawn, biomes, cracks);
 }
 
-function geyserPlacementFrom(
+/**
+ * The geyser placement predicate over an ALREADY-BUILT resource stack.
+ *
+ * Exported (unlike the ctx-only `makeVulcanusGeyserPlacement` below) so the
+ * cliff overlay's ore rejection can reuse the composite's one `VulcanusStack`
+ * instead of building a second field DAG: `memoXY` is single-entry, so a private
+ * copy would share nothing and pay for the whole tree again.
+ */
+export function geyserPlacementFrom(
   ctx: EvalCtx,
   resources: VulcanusResources,
   stack?: VulcanusStack,

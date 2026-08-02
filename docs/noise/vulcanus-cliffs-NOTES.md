@@ -45,6 +45,18 @@
 >   the three regions, measured as the boolean `crossesCliff` reads rather than as
 >   a value. That closes the clamp-vacuity worry properly.
 >
+> ## UPDATE 3, 2026-08-02: the ore rule is PORTED and SHIPS
+>
+> The last section, **`## The rule is PORTED, and driving it from our own ore
+> model costs one cell`**, supersedes the previous one's closing warning not to
+> port this against our own resource positions without measuring that arm. The
+> arm is measured: **zero false rejections across all three oracle regions**, and
+> `[1500,1500]`'s surplus falls 42 -> 22 (precision 0.953 -> 0.975) with recall
+> untouched. It ships as `CliffBands.cellRejects`, ores only, base collision box.
+> The geyser arm and the per-orientation box were both scored and both LOSE - see
+> the table there before re-proposing either. 11 of the 31 remain unexplained and
+> the box is deliberately not widened to cover them.
+>
 > ## UPDATE, 2026-08-02: the FIELD is exonerated; the residual is two defects
 >
 > The last section, **`## The residual is TWO defects, and the field is not
@@ -1534,3 +1546,80 @@ without checking that arm separately.** The 31/0 score above uses the GAME's
 resource entities as the input, which isolates the rule from the accuracy of the
 resource port; driving it from `renderVulcanusResources` is a second question and
 has not been measured.
+
+## The rule is PORTED, and driving it from our own ore model costs one cell (#84 item 1, 2026-08-02)
+
+The section above closes with "driving it from `renderVulcanusResources` is a
+second question and has not been measured." It is measured now, and the answer
+is that it is safe: `test/cliffOreRejection.spec.ts` scores the shipped
+predicate - `makeVulcanusOreRejection`, driven off `buildResources`, the same
+field stack the ore overlay paints from - across all three oracle regions.
+
+| region | game | port placed | fires | **false rejections** | surplus |
+| --- | --- | --- | --- | --- | --- |
+| `[0,0]` | 283 | 283 | 0 | 0 | 2 -> 2 |
+| `[1500,1500]` | 885 | 900 | 20 | **0** | 42 -> **22** |
+| `[-1200,800]` | 401 | 387 | 0 | 0 | 1 -> 1 |
+
+Precision at `[1500,1500]` goes 0.953 -> **0.975** with the 858 true positives
+untouched. **Recall is not touched anywhere**, which was the gate: this rule may
+only ever cost precision, and a cell removed that the game kept would be the one
+outcome worth refusing.
+
+Driving it from our own ore model rather than the game's entities costs exactly
+**one** cell - the fixture-driven geometry explains 21 of the 31, the port-driven
+one 20. That is the whole price of the substitution the section above flagged.
+
+### Three variants were scored, and the two that lose are in the spec
+
+Not dismissed in a comment, because #88/#90 already paid for that lesson here -
+the best-scoring collision model was the wrong one.
+
+| variant | fires | correct of 31 | false rejections |
+| --- | --- | --- | --- |
+| **base box, ores only (SHIPPED)** | 20 | 20 | **0** |
+| base box + geyser | 21 | 20 | 1 |
+| per-orientation box | 23 | 21 | 2 |
+| per-orientation + geyser | 24 | 21 | 3 |
+
+- **The geyser arm is strictly harmful**, not merely risky: one more false
+  rejection and *not one* additional correct suppression. Its placements are
+  salt-dependent (46-63 over eight salts against the game's 56) and its box is
+  14x the ores', so a geyser in the wrong place sweeps a wide area. It is
+  implemented behind `includeGeyser`, defaulting off, so the arm stays scored
+  rather than deleted.
+- **The per-orientation rotbb box catches one MORE true cell and pays two kept
+  cliffs for it.** Higher `correct` is exactly the trap: recall is the half that
+  must not be traded. Note this means the ore rule and the lava rejection use
+  *different* cliff rectangles - the base `collision_box` and the per-orientation
+  one respectively - which is only defensible because the ore mechanism is open
+  and the base box is the shape it was measured with. If the mechanism is ever
+  found, revisit this first.
+
+### What is NOT claimed
+
+**11 of the 31 are still unexplained** and the box is deliberately not widened
+until they fall out: 10 are #99's run remainders and 1 is the cell our ore model
+misses. `test/cliffOreRejection.spec.ts` pins that 11 so the gap stays tracked.
+
+The **mechanism is still open**. This ships a characterised empirical rule -
+one-way, additive, local, box-shaped - and the disassembly still says cliffs are
+computed and placed before any resource entity exists, so whatever the engine is
+really doing, it is not the collision test this models.
+
+### Where it lives
+
+`CliffBands.cellRejects`, a second optional per-cell predicate beside
+`tileCollides` in `cliffPlacement.ts`, applied at the same site. It is
+deliberately opaque - the shared cliff core stays planet-agnostic, and a
+planet-specific, mechanism-open rule does not leak into it. It hangs there rather
+than filtering `placedCells`' output so that **the model the specs score is the
+model the renderer ships**; every spec drives `makeCliffPlacementFromFields`
+directly, so a filter further out would score a different thing than it renders.
+
+Two cheapnesses worth knowing: the predicate never enumerates entities (it solves
+the two rectangles for the tiles whose centres can overlap - exactly 2 tiles for
+an ore, 4x3 for a geyser, against the lava rejection's ~30), and it reuses the
+composite's `VulcanusStack.resources` rather than building a second DAG. The
+derived window is guarded by a brute-force scan a tile wider on every side, not
+trusted.

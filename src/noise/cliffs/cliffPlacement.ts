@@ -114,6 +114,28 @@ export interface CliffBands {
    * placed cell, and only for cells that are actually placed.
    */
   readonly tileCollides?: (x: number, y: number) => boolean;
+  /**
+   * An additional per-cell rejection, called with the cell's crossing `code` and
+   * its centre, for cells that survive the bounds test and `tileCollides`.
+   * Return `true` to drop the cell.
+   *
+   * **Deliberately opaque.** This module is planet-agnostic - the corner
+   * lattice, `crossesCliff` and the orientation table are engine behaviour - and
+   * the one rule that currently uses this hook is not engine behaviour at all
+   * but a characterised empirical one (Vulcanus's ORE -> CLIFF suppression, see
+   * `vulcanusOreRejection.ts`). Keeping it a bare predicate is what stops a
+   * planet-specific and mechanism-open rule from leaking into the shared core.
+   *
+   * It runs at the same site as `tileCollides` rather than as a filter over
+   * `placedCells`' return value so that the model the specs score is the model
+   * the renderer ships; every spec here drives `makeCliffPlacementFromFields`
+   * directly, so a filter applied further out would score a different thing than
+   * it renders.
+   *
+   * Like `tileCollides` this is a pure post-filter on the emit loop - it cannot
+   * affect a neighbouring cell, so it leaves worker tiling byte-identical.
+   */
+  readonly cellRejects?: (code: number, x: number, y: number) => boolean;
 }
 
 /** Cells per chunk axis: a 32-tile chunk over the 4-tile placement grid. */
@@ -313,6 +335,7 @@ export function makeCliffPlacementFromFields(
   const { elevation0: e0, interval } = bands;
   const smoothing = bands.smoothing ?? 0;
   const tileCollides = bands.tileCollides;
+  const cellRejects = bands.cellRejects;
 
   /**
    * `tryToAddCliff`'s rejection, as a predicate on an already-placed cell: scan
@@ -480,6 +503,7 @@ export function makeCliffPlacementFromFields(
                 // overhangs the query box.
                 if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
                 if (rejected(code, x, y)) continue;
+                if (cellRejects?.(code, x, y) === true) continue;
                 result.push({ x, y, code });
               }
             }
@@ -508,6 +532,7 @@ export function makeCliffPlacementFromFields(
           const y = cy * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_Y;
           if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
           if (rejected(code, x, y)) continue;
+          if (cellRejects?.(code, x, y) === true) continue;
           result.push({ x, y, code });
         }
       }
