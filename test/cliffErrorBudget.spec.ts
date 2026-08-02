@@ -3,6 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import entities from "./fixtures/oracle-vulcanus-cliff-entities.seed123456.json";
 import { makeCliffPlacementFromFields } from "../src/noise/cliffs/cliffPlacement";
 import {
+  CLIFF_CELL_CENTER_X,
+  CLIFF_CELL_CENTER_Y,
+  CLIFF_GRID_SIZE,
+} from "../src/noise/cliffs/cliffCatalog";
+import {
   VULCANUS_CLIFF_ELEVATION_0,
   VULCANUS_CLIFF_ELEVATION_INTERVAL,
   VULCANUS_CLIFF_SMOOTHING,
@@ -245,14 +250,71 @@ describe("the entity collision half: craters are worth zero, rocks are the lead"
     expect(touching).toBe(0);
   }, 120000);
 
-  /**
-   * The rock arm is unmeasurable from the fixtures - no oracle capture carries
-   * `big-volcanic-rock` / `huge-volcanic-rock` - so capturing one is the next
-   * concrete step, and it now has a 25-cell target to aim at rather than a
-   * ceiling argument against it.
-   */
   it("records that no fixture carries the rock entities the arm needs", () => {
     const names = new Set(cases.flatMap((c) => c.cliffs.map((e) => e.name)));
     expect([...names].sort()).toEqual(["cliff-vulcanus", "crater-cliff"]);
   });
+
+  /**
+   * **The rock arm fails a test that does not depend on our rock model at all.**
+   *
+   * `computeInternal` runs `generateCliffs` before `generateEntities`, and
+   * `apply` runs `applyCliffs` (`+124`) before `applyEntities` (`+164`) - so
+   * within a chunk no rock exists when the cliff is applied. A rock can only
+   * ever block a cliff from an ALREADY-GENERATED NEIGHBOUR, which confines the
+   * whole mechanism to cells near a 32-tile chunk border.
+   *
+   * The port's surplus cells sit near a chunk border at **44.0%**, against
+   * **44.1%** for the cells it gets right. That is the base rate to three
+   * significant figures: the surplus has no chunk-border character whatever, so
+   * the one geometry this mechanism is confined to is not where the errors are.
+   *
+   * The direct overlap test agrees and is the weaker arm, which is why it is not
+   * leaned on: 3 of 25 surplus cells overlap a modelled rock against a 6.6% base
+   * rate, i.e. ~1.7 expected. Three against 1.7 is nothing (and our rock
+   * placement is a salt-dependent roll, so individual positions are unreliable
+   * exactly as the geyser's were in #100).
+   *
+   * **So item 3 explains approximately none of the 25.** It is closed a second
+   * time - but on the mechanism's own geometry rather than on the ceiling
+   * argument that died with the recall gap, and without needing a rock capture.
+   */
+  it("finds no chunk-border character in the surplus, which is where rocks must act", () => {
+    const nearBorder = (x: number, y: number): boolean => {
+      const cx = (x - CLIFF_CELL_CENTER_X) / CLIFF_GRID_SIZE;
+      const cy = (y - CLIFF_CELL_CENTER_Y) / CLIFF_GRID_SIZE;
+      const ix = ((cx % 8) + 8) % 8;
+      const iy = ((cy % 8) + 8) % 8;
+      return ix === 0 || ix === 7 || iy === 0 || iy === 7;
+    };
+
+    let surplus = 0;
+    let surplusBorder = 0;
+    let matched = 0;
+    let matchedBorder = 0;
+    for (const c of cases) {
+      const game = new Set(inBox(c).map((p) => key(p.x, p.y)));
+      for (const k of placed(c.region, SHIPPED)) {
+        const [xs, ys] = k.split(",");
+        const border = nearBorder(Number(xs), Number(ys));
+        if (game.has(k)) {
+          matched++;
+          if (border) matchedBorder++;
+        } else {
+          surplus++;
+          if (border) surplusBorder++;
+        }
+      }
+    }
+
+    expect(surplus).toBe(25);
+    expect(matched).toBe(1525);
+    // Within a percentage point of each other - no enrichment at all.
+    const sRate = surplusBorder / surplus;
+    const mRate = matchedBorder / matched;
+    expect(Math.abs(sRate - mRate)).toBeLessThan(0.02);
+    // Non-vacuity: "near a border" is a real subset, not everything or nothing.
+    expect(mRate).toBeGreaterThan(0.3);
+    expect(mRate).toBeLessThan(0.6);
+  }, 120000);
 });

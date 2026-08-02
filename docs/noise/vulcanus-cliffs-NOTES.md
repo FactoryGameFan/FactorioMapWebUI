@@ -57,7 +57,9 @@
 > Corrected: **recall 0.9961, precision 0.9839**, 1525 matched of 1531. The match
 > count was never wrong - only the denominator. All 6 remaining missing cells are
 > ones our own lava rejection removed, so **precision (25 surplus) is the only
-> real defect left**, and item 3 is re-OPENED as the leading candidate for it.
+> real defect left**. Item 3 (rocks/craters) is then CLOSED on the mechanism's own
+> geometry: it can only act across chunk borders, and the surplus sits at borders
+> at 44.0% against the matched cells' 44.1% - the base rate exactly.
 >
 > ## UPDATE 3, 2026-08-02: the ore rule is PORTED and SHIPS
 >
@@ -1686,8 +1688,30 @@ what a rejection removes - so the entity half is the leading candidate, not a
 closed one.
 
 The crater arm is still settled exactly, and is worth **nothing**: all 8 craters
-sit in `[-1200,800]` and not one touches a cell the port over-places. The rock
-arm (`big-volcanic-rock`, `huge-volcanic-rock`) has no oracle capture at all -
-no cliff fixture carries anything but `cliff-vulcanus` and `crater-cliff` - so
-capturing one is the next concrete step, now with a 25-cell target rather than a
-ceiling argument against it.
+sit in `[-1200,800]` and not one touches a cell the port over-places.
+
+### And then the rock arm failed too - on the mechanism's own geometry
+
+**No rock capture is needed to kill it.** `computeInternal` runs
+`generateCliffs` before `generateEntities`, and `apply` runs `applyCliffs`
+(`+124`) before `applyEntities` (`+164`), so within a chunk no rock exists when
+the cliff is applied. A rock can only ever block a cliff from an
+ALREADY-GENERATED NEIGHBOUR - which confines the entire mechanism to cells near a
+32-tile chunk border.
+
+| | n | near chunk border |
+| --- | --- | --- |
+| surplus | 25 | 11 = **44.0%** |
+| matched | 1525 | 673 = **44.1%** |
+
+**The base rate to three significant figures.** The surplus has no chunk-border
+character at all, so the one geometry this mechanism is confined to is not where
+the errors are. The direct overlap test agrees and is the weaker arm (3 of 25
+against a 6.6% base rate, ~1.7 expected - nothing, and our rock placement is a
+salt-dependent roll whose individual positions are unreliable exactly as the
+geyser's were in #100).
+
+**So item 3 explains approximately none of the 25 surplus cells, and is closed -
+this time on the mechanism's geometry rather than on the ceiling argument that
+died with the recall gap.** What remains unexplained: 25 surplus, 6 missing (all
+lava-rejection over-rejections), and the 33 wrong orientations.
