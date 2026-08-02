@@ -1,5 +1,28 @@
 # Cliffs (M4) - reverse-engineering notes
 
+> ## STATUS, 2026-08-01: both planets validated; issue #18 is CLOSED
+>
+> | | recall | precision | wrong orientation |
+> | --- | --- | --- | --- |
+> | **Nauvis** | 1.0000 | 1.0000 | **0 / 334** |
+> | **Vulcanus** | 1.000 / 0.973 / 0.965 | 0.872 | **37 / 1531 = 2.4%** |
+>
+> Vulcanus's precision is measured **without** the lava-collision rejection, which
+> the shipping renderer does apply; the remainder is tracked in **issue #84**.
+>
+> **Read `## ROOT CAUSE, 2026-08-01` (further down) before anything else in this
+> file.** It is the resolution of issue #18: `multisample`'s offsets are in the
+> calling noise program's GRID UNITS, not tiles, so the cliff generator and the
+> tile generator read genuinely different elevation fields.
+>
+> **Everything between here and that section is the investigation record.** Its
+> measurements stand and are worth reading for method; its *conclusions* are
+> superseded, several of them within hours of being written. Do not act on a
+> number from those sections without checking it against this banner - in
+> particular the `~90%` in the next heading, the 12.5% / 29.8% / 8.1% / 11.7%
+> orientation-error tables, and the 0.806 / 0.938 / 0.853 recalls all describe the
+> port BEFORE the fix.
+
 Factorio 2.1.11 (build 86962, mac-arm64). Measured 2026-07-20 against the headless
 oracle (`test/oracle/oracle.ts` `sampleExpression` for the noise fields; a
 `find_entities_filtered{type="cliff"}` chunk-forced dump for placement) and the
@@ -89,7 +112,7 @@ refactor), the offset/ringbreak chain (string seeds `'nauvis_offset_x/y'`), the 
 86883 `basis_noise`, and `slider_to_linear`. **No `VoronoiNoise`** anywhere in the
 Nauvis cliff tree (it appears only on Space-Age planets).
 
-## Placement rule (disasm-confirmed + validated ~90% tile-for-tile)
+## Placement rule (disasm-confirmed; see the STATUS banner for current accuracy)
 
 Reverse-engineered from the non-stripped binary and validated against a real
 `find_entities_filtered{type="cliff"}` dump (chunk-forced generation, default preset).
@@ -963,7 +986,7 @@ presets, but all 9 strings in `builtin-presets.json` decode to `u8 = 0` and
 either way; what is unknown is whether the wire carries smoothing at all. Worth an
 issue if the Nauvis render is ever driven by a Lakes/Island preset.
 
-## Validation result: EXACT since 2026-07-30 (the residual is resolved)
+## Validation result: NAUVIS exact since 2026-07-30 (historical - Nauvis only)
 
 > **The ~6% Nauvis residual documented throughout this section is GONE, and the
 > cause was none of the six things named for it.** The port sampled the two

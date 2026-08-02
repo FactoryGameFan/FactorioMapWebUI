@@ -1,5 +1,21 @@
 # Vulcanus cliffs - port notes
 
+> ## STATUS, 2026-08-01: issue #18 is CLOSED; remainder tracked in #84
+>
+> Recall **1.000 / 0.973 / 0.965** across the three regions, **37 / 1531 = 2.4%**
+> wrong orientations (was 0.806 / 0.938 / 0.853 and 12.5%). Precision 0.872,
+> measured **without** the lava-collision rejection the shipping renderer applies.
+>
+> **Root cause: `multisample`'s offsets are in the calling noise program's GRID
+> UNITS, not tiles**, so `vulcanus_basalt_lakes_multisample`'s `min` is a 4-tile
+> min-filter for the cliff generator and a 1-tile one for every per-tile consumer.
+> The port used the 1-tile field for both, making cliff elevation too rough. Full
+> write-up at `## ROOT CAUSE, 2026-08-01` in `cliffs-NOTES.md`; the measurement is
+> `test/multisampleGrid.spec.ts`.
+>
+> **Every accuracy table below this banner is the PRE-FIX state**, kept because the
+> reasoning is the useful part. Do not quote one as current.
+
 Factorio 2.1.12 (build 87038, mac-arm64). Ported 2026-07-26. Companion to
 `cliffs-NOTES.md`, which holds the reverse-engineering of the placement rule
 itself - none of that had to be redone, because the placement geometry is engine
@@ -523,10 +539,14 @@ the `all` path the Vulcanus DAG is evaluated four times per pixel region.
 > because the reasoning that got from one to the other is the useful part. The
 > current figures are in "ROOT CAUSE: `cliff_smoothing`".
 >
-> **And read "The residual is in the RULE, not the fields" at the end of this
-> file before spending any time on field accuracy.** Substituting the game's own
-> `elevation` and `cliffiness` for ours does not move a single placed cell, so
-> the residual this section chases is not in the fields.
+> ~~**And read "The residual is in the RULE, not the fields"...**~~ **FALSIFIED
+> 2026-08-01.** The residual WAS in the field. The substitution test that
+> "does not move a single placed cell" was comparing against a fixture sampled
+> through `calculate_tile_properties` - a 1-tile-grid noise program - while the
+> cliff generator reads the same expression on a 4-tile grid, where `multisample`
+> returns different values. The fixture and the port shared the same mistake and
+> so agreed with each other. That substitution now correctly MOVES cells; see
+> `test/vulcanusCliffCornerFields.spec.ts`.
 
 **Superseded the "Not validated" section below.** `test/vulcanusCliffEntities.spec.ts`
 now compares the port against every real `cliff-vulcanus` the game places, captured
@@ -710,12 +730,24 @@ That capture is the obvious next step and is the same shape as
 `captureCliffEntities` in `test/oracle/capture.ts`, pointed at a Vulcanus
 surface.
 
-## The residual is in the RULE, not the fields - measured 2026-07-29
+## ~~The residual is in the RULE, not the fields~~ - FALSIFIED 2026-08-01
+
+> **This section's conclusion is wrong, and the way it was wrong is the most
+> useful thing in this file.** The residual WAS in the field. The substitution
+> below is sound as an experiment and its numbers are real - but the fixture it
+> substitutes was captured through `LuaSurface.calculate_tile_properties`, whose
+> noise program has a **1-tile grid**, while the cliff generator reads the same
+> expression on a **4-tile** grid. `multisample`'s offsets are in grid units, so
+> the two channels return different values for `vulcanus_elevation`. The fixture
+> and the port were making the same mistake, so substituting one into the other
+> could never move a cell. See `## ROOT CAUSE, 2026-08-01` in `cliffs-NOTES.md`.
+>
+> Read on for the method, not the verdict.
 
 Everything above, and all of #18, treats the Vulcanus cliff gap as a **field
 accuracy** problem: the noise field matches to 5e-6, the constants are read from
 the game, so the ~1.15-1.19x over-placement must be residual field error
-somewhere. **That is wrong, and it is now measured rather than argued.**
+somewhere. **That was believed to be wrong; it was in fact right.**
 
 `test/oracle/capture.ts vulcanus-cliff-corner-fields` dumps the game's own
 `vulcanus_elevation` and `cliffiness_basic` at every corner of the placement

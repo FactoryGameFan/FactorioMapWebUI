@@ -175,8 +175,9 @@ matters, set it explicitly.
   one gate. **~65-90s on a dev machine, ~4 minutes on a CI runner**, of which
   the app test suite is ~57s and `check:vue` ~2.5s. The `~9.5s` this line
   claimed for a long time was simply wrong - already wrong by a factor of six
-  before `check:vue` existed, because the suite grew to 143 files through the
-  Vulcanus and cliff work - and the gap mattered: ~63s is exactly the duration
+  before `check:vue` existed, because the suite grew through the Vulcanus and
+  cliff work (143 files then; **152 as of 2026-08-01**, which is what the
+  `test/**/*.spec.ts` include actually matches) - and the gap mattered: ~63s is exactly the duration
   at which people start skipping a manual gate, which is half the argument for
   the CI workflow below. Don't budget 10 seconds for this.
 - `pnpm refs:sync` - pin `factorioLuaAPI/` + `~/GitHub/factorio-data` to the

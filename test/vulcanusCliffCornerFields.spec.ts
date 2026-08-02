@@ -17,8 +17,19 @@ import { withCtxDefaults } from "../src/noise/eval/ctx";
 const key = (x: number, y: number): string => `${String(x)},${String(y)}`;
 
 /**
- * **The Vulcanus cliff FIELDS are exact at the regions the port is scored on -
- * including `[0,0]`, where it is worst** (issue #18).
+ * **The Vulcanus cliff fields are exact IN THE TILE CHANNEL - which turned out
+ * not to be the channel the cliff generator reads** (issue #18).
+ *
+ * This fixture samples `vulcanus_elevation` and `cliffiness_basic` through
+ * `LuaSurface.calculate_tile_properties`, whose noise program has a 1-tile grid.
+ * The cliff generator walks the 4-tile corner lattice, and `multisample`'s
+ * offsets are in GRID UNITS, so `vulcanus_basalt_lakes_multisample` returns
+ * different values in the two channels. The port now reads the cliff-channel
+ * field, so these values no longer reproduce our placement - and must not.
+ * See `test/multisampleGrid.spec.ts`.
+ *
+ * The history below is kept because it is how the wrong channel stayed hidden:
+ * every check agreed, because the fixture and the port shared the mistake.
  *
  * PR #57 established this by substituting the game's own `vulcanus_elevation`
  * and `cliffiness_basic` into our placement and finding it moved not one cell.

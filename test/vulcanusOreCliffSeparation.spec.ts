@@ -399,7 +399,7 @@ function gameCornerFields(): { elevation: Map<string, number>; cliffiness: Map<s
 const cornerIndex = (x: number, y: number): string =>
   key(x / cornerFix.grid, Math.round((y - cornerFix.cornerOffsetY) / cornerFix.grid));
 
-describe("Vulcanus cliffs: the port's FIELDS are exact; the residual is in the RULE", () => {
+describe("Vulcanus cliffs: the game's TILE-CHANNEL fields are not the cliff channel", () => {
   /**
    * The measurement `#18` never had, and the one that resolves `#24`.
    *
