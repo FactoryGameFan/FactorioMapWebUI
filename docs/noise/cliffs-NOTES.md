@@ -565,6 +565,74 @@ suspect or clears it outright, and it does not depend on being right about the
 mechanism. Same shape as the surface-seed bug: self-consistency is not
 validation.
 
+### The rule COLLAPSED term by term - #18 is in the FIELD, not the placement (2026-08-01)
+
+`cliff_settings` holds every constant the placement rule uses and all of them are
+settable on the surface, so a term does not have to be *modelled* - it can be
+switched **off in the game**:
+
+| lever | effect |
+| --- | --- |
+| `cliff_smoothing = 0` | leaves the RAW elevation |
+| `cliff_elevation_interval = 1e6` | a **single contour** at `cliff_elevation_0`; no band arithmetic |
+| `richness = 4` | `0.5*log2(4) = 1`, so `cliffiness_basic` saturates at 1.5 and its `> 0.5` gate is always open |
+
+All three together reduce the rule to **"an edge crosses iff elevation crosses
+70"**, which makes the game's own cliffs a direct readout of
+`sign(elevation - 70)` at the generator's sample points.
+
+| Vulcanus arm | game | ours | matched | wrong |
+| --- | --- | --- | --- | --- |
+| smoothing off only | 352 | 432 | 289 | 83 = 28.7% |
+| + single contour | 271 | 349 | 208 | 79 = 38.0% |
+| **+ gate held open** | 335 | **463** | 265 | **99 = 37.4%** |
+| bands, gate open | 431 | 559 | 360 | 105 = 29.2% |
+
+**And Nauvis, through the same code and the same lattice, is EXACT - including at
+a setting never captured before.** `cliff_elevation_interval = 80` gives
+**281/281 in both directions**, so the port tracks the game when a cliff setting
+*moves*, not merely at the default. It also agrees on the degenerate arm, where a
+single contour at 50 yields zero cliffs from both, because `cliffiness_nauvis`'s
+cutoff is derived from the interval while `cliffiness_basic`'s is not.
+
+That control is what gives the Vulcanus numbers their meaning. The rule, the
+lattice, the code packing, the repair sweep and the settings plumbing are all now
+confirmed **against the game**, under a changed setting. What is left is the
+field - and the informative half is not the error rate but the over-placement:
+with everything else switched off **we place 463 cliffs where the game places
+335**, so our 70-contour is ~38% longer. Our elevation is *rougher at the 4-tile
+scale* than the one the generator reads.
+
+#### The open lead: our elevation may be right in the wrong CHANNEL
+
+Our field is not wrong against the channel it was checked in - it reproduces
+`oracle-vulcanus-cliff-corner-fields-entity-regions` to a max of 4.8e-2, and that
+fixture came from `LuaSurface.calculate_tile_properties`. The question this
+raises is whether the map GENERATOR reads the same values that channel reports.
+
+The prime suspect is **`multisample`**, which sits in `vulcanus_elevation`'s
+chain through `vulcanus_basalt_lakes_multisample`
+(`planet-vulcanus-map-gen.lua:540,547`) and which Nauvis's `cliff_elevation_nauvis`
+does not contain at all - the asymmetry the whole residual needs. Its own
+documentation describes it as evaluating
+
+> in a separate noise program with a larger grid. Sub-grids are copied to the
+> main program.
+
+which is explicitly **grid-dependent**, and the two channels have different
+grids: the cliff generator walks a 4-tile corner lattice, `calculate_tile_properties`
+does not. `docs/noise/vulcanus-multisample-NOTES.md` established
+`multisample(e, dx, dy) == e(x+dx, y+dy)` at 150/150 comparisons - but measured
+it **through `calculate_tile_properties`**, the same channel as the fixture. A
+`min()` of four samples is an erosion operator, so a coarser effective grid in
+the generator would smooth the field exactly the way the over-placement implies.
+
+This is the repo's recurring trap in a new place: not a fixture captured at the
+wrong *site* this time, but one captured through the wrong *channel*. Nothing
+here refutes the multisample port; what has never been tested is whether it
+behaves the same when the calling program's grid is 4 tiles rather than 1.
+`test/vulcanusCliffCollapsed.spec.ts` pins all of the above.
+
 #### Where that leaves #18
 
 The residual survives with smoothing disabled, so it is in something Nauvis and

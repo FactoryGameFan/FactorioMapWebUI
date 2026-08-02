@@ -464,7 +464,7 @@ export function buildCliffControlLua(
     planet?: string;
     seed?: number;
     entityType?: string;
-    cliffSmoothing?: number;
+    cliffSettings?: Readonly<Record<string, number | string>>;
   } = {},
 ): string {
   const dumpFile = opts.dumpFile ?? CLIFF_DUMP_FILE;
@@ -473,18 +473,30 @@ export function buildCliffControlLua(
   // the surface `withCtxDefaults({ seed0: seed })` describes, not the
   // `seed + crc32(planet)` one a real save would generate. Every committed
   // Vulcanus fixture is captured this way; see `entityCounts.ts`'s header.
-  // `cliff_smoothing` is set on the SAME `mgs` round-trip as the seed, before any
-  // chunk is generated, so the surface is created with it already in force.
-  const smoothingLua =
-    opts.cliffSmoothing === undefined
-      ? ""
-      : `\n  mgs.cliff_settings.cliff_smoothing = ${String(opts.cliffSmoothing)}`;
+  // Cliff settings go on the SAME `mgs` round-trip as the seed, before any chunk
+  // in the sampled region is generated, so generation sees them in force.
+  const settingsLua = Object.entries(opts.cliffSettings ?? {})
+    .map(
+      ([k, v]) =>
+        `\n  mgs.cliff_settings.${k} = ${typeof v === "string" ? JSON.stringify(v) : String(v)}`,
+    )
+    .join("");
+  // The Nauvis path needs the same round-trip when settings are overridden. It
+  // is safe on `surfaces[1]` because the sampled regions are far from spawn and
+  // therefore ungenerated at `on_init` - a setting cannot retro-edit a chunk
+  // that already exists, so a near-spawn region would silently ignore this.
+  const nauvisLua =
+    settingsLua === ""
+      ? `  local surface = game.surfaces[1]`
+      : `  local surface = game.surfaces[1]
+  local mgs = surface.map_gen_settings${settingsLua}
+  surface.map_gen_settings = mgs`;
   const surfaceLua =
     opts.planet === undefined
-      ? `  local surface = game.surfaces[1]`
+      ? nauvisLua
       : `  local surface = game.planets["${opts.planet}"].create_surface()
   local mgs = surface.map_gen_settings
-  mgs.seed = ${String(opts.seed ?? 123456)}${smoothingLua}
+  mgs.seed = ${String(opts.seed ?? 123456)}${settingsLua}
   surface.map_gen_settings = mgs`;
   return `script.on_init(function()
 ${surfaceLua}
@@ -551,9 +563,22 @@ export function parseCliffDump(jsonText: string): Position[] {
   return parsed.cliffs;
 }
 
-/** Parse the cliff-entity mod's dump whole, including the effective settings. */
+/**
+ * Parse the cliff-entity mod's dump whole, including the effective settings.
+ *
+ * `cliffs` is normalised to an array because `helpers.table_to_json` serialises
+ * an EMPTY Lua table as `{}`, not `[]` - so a run that legitimately placed no
+ * cliffs comes back as an object and `.length` reads `undefined` rather than 0.
+ * That is a real configuration (setting `richness` high on Nauvis raises
+ * `cliffiness_nauvis`'s cutoff until nothing qualifies), and it must read as
+ * zero rather than as a broken dump.
+ */
 export function parseCliffDumpFull(jsonText: string): CliffDump {
-  return JSON.parse(jsonText) as CliffDump;
+  const parsed = JSON.parse(jsonText) as { cliffs?: unknown; cliffSettings?: DumpedCliffSettings };
+  return {
+    cliffs: Array.isArray(parsed.cliffs) ? (parsed.cliffs as Position[]) : [],
+    cliffSettings: parsed.cliffSettings,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -622,14 +647,24 @@ export interface OracleOptions {
   /** Entity `type` for {@link sampleCliffEntities}'s dump. Default "cliff". */
   entityType?: string;
   /**
-   * Override `map_gen_settings.cliff_settings.cliff_smoothing` on the created
-   * surface. Omit to take whatever the planet's prototype supplies - which is
-   * the point of {@link CliffDump.cliffSettings}: the dump reports the value the
-   * game actually read back, so "the override applied" is measured rather than
-   * assumed. See `docs/noise/cliffs-NOTES.md`; Vulcanus takes the prototype
-   * default of 1 while every other planet sets 0 explicitly.
+   * Override fields of `map_gen_settings.cliff_settings` on the created surface,
+   * keyed by the GAME's own field names so the generated Lua is a direct
+   * assignment with no translation layer to get wrong.
+   *
+   * This is the sharpest tool the cliff work has: `cliff_settings` is where the
+   * whole placement rule's constants live, so a term can be turned OFF in the
+   * game rather than modelled. `cliff_elevation_interval` set huge leaves a
+   * single contour at `cliff_elevation_0` (no band arithmetic); `richness = 4`
+   * makes `0.5*log2(4) = 1`, so `cliffiness_basic` saturates at 1.5 and its
+   * `> 0.5` gate is always open; `cliff_smoothing = 0` removes the smoothing.
+   * All three at once reduce the rule to "an edge crosses iff elevation crosses
+   * `cliff_elevation_0`".
+   *
+   * Omit to take whatever the planet supplies. Either way the dump reports the
+   * settings the surface read BACK ({@link CliffDump.cliffSettings}), so an
+   * override that failed to apply cannot be mistaken for one that did nothing.
    */
-  cliffSmoothing?: number;
+  cliffSettings?: Readonly<Record<string, number | string>>;
 }
 
 /**
@@ -816,7 +851,7 @@ export async function sampleCliffEntitiesFull(
       planet: opts.spaceAge === true ? (opts.planet ?? "vulcanus") : undefined,
       seed,
       entityType: opts.entityType,
-      cliffSmoothing: opts.cliffSmoothing,
+      cliffSettings: opts.cliffSettings,
     }),
   );
   await writeFile(

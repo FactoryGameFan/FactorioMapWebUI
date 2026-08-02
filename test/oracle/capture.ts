@@ -2611,7 +2611,7 @@ async function captureVulcanusCliffSmoothing(): Promise<void> {
         seed,
         spaceAge: true,
         planet: "vulcanus",
-        cliffSmoothing,
+        cliffSettings: { cliff_smoothing: cliffSmoothing },
       });
       cases.push({ cliffSmoothing, effective: dump.cliffSettings, cliffs: dump.cliffs });
       console.log(
@@ -2644,6 +2644,162 @@ async function captureVulcanusCliffSmoothing(): Promise<void> {
   const out = join(FIXTURES, "oracle-vulcanus-cliff-smoothing.seed123456.json");
   await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
   console.log(`wrote ${out} (${String(cases.length)} smoothing values)`);
+}
+
+/**
+ * **The cliff rule COLLAPSED, one term at a time** (issue #18).
+ *
+ * `cliff_settings` holds every constant the placement rule uses, and all of them
+ * are settable on the surface - so instead of modelling a term and arguing about
+ * it, the term can simply be turned OFF in the game:
+ *
+ * - `cliff_smoothing = 0` removes the smoothing, leaving the RAW elevation.
+ * - `cliff_elevation_interval` set huge leaves a **single contour** at
+ *   `cliff_elevation_0`, so there is no band arithmetic left to be wrong about.
+ * - `richness = 4` makes `cliffiness_basic`'s `0.5*log2(4) = 1`, so
+ *   `clamp(1 + noise, 0, 1) + 0.5` saturates at 1.5 and the `> 0.5` gate is open
+ *   essentially everywhere.
+ *
+ * With all three the rule reduces to **"an edge crosses iff elevation crosses
+ * 70"**, which turns the game's own cliffs into a direct readout of
+ * `sign(elevation - 70)` at the generator's own sample points. Our raw elevation
+ * is known to agree with the game's to a max of 4.8e-2, so any disagreement at a
+ * corner further than that from 70 is proof the generator is not reading the
+ * field we think it is - which is the "how does the engine store or round it"
+ * question, asked as an experiment rather than a disassembly.
+ *
+ * The arms are cumulative on purpose, so whichever one first fails to reproduce
+ * the game names the term that is wrong.
+ */
+async function captureVulcanusCliffCollapsed(): Promise<void> {
+  const region: Region = { x0: 0, y0: 0, x1: 256, y1: 256 };
+  const seed = 123456;
+  // A single contour: no Vulcanus corner reaches 70 + 1e6.
+  const ONE_BAND = 1000000;
+  const arms: { label: string; cliffSettings: Record<string, number> }[] = [
+    {
+      label: "raw elevation, bands, gate (smoothing off only)",
+      cliffSettings: { cliff_smoothing: 0 },
+    },
+    {
+      label: "raw elevation, SINGLE contour at 70, gate",
+      cliffSettings: { cliff_smoothing: 0, cliff_elevation_interval: ONE_BAND },
+    },
+    {
+      label: "raw elevation, SINGLE contour at 70, NO gate (richness 4)",
+      cliffSettings: { cliff_smoothing: 0, cliff_elevation_interval: ONE_BAND, richness: 4 },
+    },
+    {
+      label: "raw elevation, bands, NO gate (richness 4)",
+      cliffSettings: { cliff_smoothing: 0, richness: 4 },
+    },
+  ];
+  const cases: {
+    label: string;
+    settings: Record<string, number>;
+    effective: DumpedCliffSettings | undefined;
+    cliffs: Position[];
+  }[] = [];
+  for (const arm of arms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        cliffSettings: arm.cliffSettings,
+      });
+      cases.push({
+        label: arm.label,
+        settings: arm.cliffSettings,
+        effective: dump.cliffSettings,
+        cliffs: dump.cliffs,
+      });
+      console.log(
+        `  captured ${arm.label} -> ${String(dump.cliffs.length)} cliffs ` +
+          `(effective interval=${String(dump.cliffSettings?.cliff_elevation_interval)} ` +
+          `richness=${String(dump.cliffSettings?.richness)} ` +
+          `smoothing=${String(dump.cliffSettings?.cliff_smoothing)})`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+  // THE CONTROL. The same collapse on Nauvis, whose cliff_elevation
+  // (`cliff_elevation_nauvis`) contains no `multisample` and which the port
+  // already reproduces 334/334. If Nauvis stays exact under the collapsed rule
+  // while Vulcanus does not, the rule and the lattice are cleared and the
+  // difference is the elevation FIELD, not the placement.
+  const nauvisRegion: Region = { x0: 512, y0: 512, x1: 1024, y1: 1024 };
+  const nauvisCases: {
+    label: string;
+    effective: DumpedCliffSettings | undefined;
+    cliffs: Position[];
+  }[] = [];
+  // NB `richness` is deliberately NOT raised here, unlike the Vulcanus arms.
+  // It acts in the OPPOSITE direction on Nauvis: `cliffiness_nauvis` is
+  // `(main_cliffiness >= cliff_cutoff) * 10` with the cutoff derived from
+  // richness, so richness = 4 raises the cutoff until nothing qualifies and the
+  // region comes back with ZERO cliffs (measured). Only the interval is
+  // collapsed on this arm.
+  // A single contour at Nauvis's own `cliff_elevation_0` of 10 is NOT a usable
+  // arm: it comes back with zero cliffs (measured), because Nauvis's cliffs sit
+  // on the higher bands and almost nothing crosses 10. The arms below instead
+  // change the interval to a value that still populates the region, which is
+  // what the control actually needs - does our rule track the game's when a
+  // cliff SETTING moves? - and a single contour placed where the field lives.
+  const nauvisArms: { label: string; cliffSettings?: Record<string, number> }[] = [
+    { label: "nauvis baseline (no override)" },
+    { label: "nauvis interval 80", cliffSettings: { cliff_elevation_interval: 80 } },
+    {
+      label: "nauvis SINGLE contour at 50",
+      cliffSettings: { cliff_elevation_0: 50, cliff_elevation_interval: ONE_BAND },
+    },
+  ];
+  for (const arm of nauvisArms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(nauvisRegion, {
+        workDir,
+        seed,
+        cliffSettings: arm.cliffSettings,
+      });
+      nauvisCases.push({ label: arm.label, effective: dump.cliffSettings, cliffs: dump.cliffs });
+      console.log(
+        `  captured ${arm.label} -> ${String(dump.cliffs.length)} cliffs ` +
+          `(effective interval=${String(dump.cliffSettings?.cliff_elevation_interval)} ` +
+          `richness=${String(dump.cliffSettings?.richness)})`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    nauvisRegion,
+    nauvisCases,
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. The Vulcanus region [0,0]-[256,256] with " +
+      "the cliff placement rule COLLAPSED one term at a time through map_gen_settings.cliff_settings " +
+      "(issue #18). cliff_smoothing=0 leaves the raw elevation; cliff_elevation_interval=1e6 leaves a " +
+      "SINGLE contour at cliff_elevation_0=70, so no band arithmetic remains; richness=4 makes " +
+      "cliffiness_basic's 0.5*log2(4)=1 so it saturates at 1.5 and its >0.5 gate is always open. With " +
+      "all three the rule is just 'an edge crosses iff elevation crosses 70', making the game's cliffs " +
+      "a direct readout of sign(elevation - 70) at the generator's own sample points. `effective` is " +
+      "the cliff_settings the SURFACE reported back, so an override that failed to apply cannot be " +
+      "mistaken for a term that does not matter. Arms are cumulative so the first one that stops " +
+      "reproducing the game names the wrong term. Sampled on a create_surface() surface whose seed is " +
+      "FORCED to `seed`, like every other Vulcanus oracle fixture. Regenerate: node " +
+      "--experimental-strip-types test/oracle/capture.ts vulcanus-cliff-collapsed",
+    seed,
+    region,
+    cliffElevation0: 70,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-collapsed.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
 }
 
 /**
@@ -3005,6 +3161,7 @@ if (want("vulcanus-cliff-corner-fields-entity-regions"))
 if (want("rocks")) await captureRocks();
 if (want("vulcanus-cliff-entities")) await captureVulcanusCliffEntities();
 if (want("vulcanus-cliff-smoothing")) await captureVulcanusCliffSmoothing();
+if (want("vulcanus-cliff-collapsed")) await captureVulcanusCliffCollapsed();
 if (want("vulcanus-resource-entities")) await captureVulcanusResourceEntities();
 if (want("multisample")) await captureMultisample();
 if (want("vulcanus-smoke")) await captureVulcanusSmoke();
