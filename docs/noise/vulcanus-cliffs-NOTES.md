@@ -2,12 +2,15 @@
 
 > ## STATUS, 2026-08-01: issue #18 is CLOSED; remainder tracked in #84
 >
-> **As shipped** (with `tryToAddCliff`'s lava-collision rejection, which is what
-> the renderer runs): recall **0.9675**, precision **0.9743**, **31 / 1518 = 2.0%**
-> wrong orientations. Without the rejection the same code scores recall 0.9758,
-> precision 0.8719, 37 / 1531 = 2.4% - and it is that second row, not a defect,
-> that #84 opened against. The rejection drops 198 cells, 185 false positives to
-> 13 true. Before the fix: recall 0.806 / 0.938 / 0.853 and 12.5% wrong.
+> **As shipped**: recall **0.9758**, precision **0.9727**, ratio 1.003. Region
+> `[0,0]` reproduces the game's cliff set entirely (recall **1.0000**). Before
+> #18's fix: recall 0.806 / 0.938 / 0.853 and 12.5% wrong orientations.
+>
+> Two rules do that work and both were found late: `tryToAddCliff`'s
+> lava-collision rejection (185 false positives across the three oracle regions,
+> precision 0.8719 -> 0.9743) and the fact that its box is a **rotated**
+> rectangle rather than its bounding box (recovers 13 real cliffs, recall
+> 0.9675 -> 0.9758). See the last two sections.
 >
 > **Root cause: `multisample`'s offsets are in the calling noise program's GRID
 > UNITS, not tiles**, so `vulcanus_basalt_lakes_multisample`'s `min` is a 4-tile
@@ -17,9 +20,9 @@
 > `test/multisampleGrid.spec.ts`.
 >
 > **Every accuracy table below this banner is the PRE-FIX state**, kept because the
-> reasoning is the useful part. Do not quote one as current. The one exception is
-> the final section, `## The lava rejection accounted for the "excess"`, which is
-> post-fix and is where the numbers in this banner come from.
+> reasoning is the useful part. Do not quote one as current. The exceptions are
+> the last two sections, which are post-fix and are where this banner's numbers
+> come from. Note the SECOND of them corrects the first - read both.
 
 Factorio 2.1.12 (build 87038, mac-arm64). Ported 2026-07-26. Companion to
 `cliffs-NOTES.md`, which holds the reverse-engineering of the placement rule
@@ -1051,3 +1054,84 @@ indistinguishable from "the substitution never ran".
 their placement: reading the other elevation channel makes the lava
 classification dramatically worse, not better, so the perimeter error is not a
 channel mistake. It is somewhere else in `vulcanusCatalog`.
+
+## The lava perimeter was the COLLISION BOX, not the mask (2026-08-01)
+
+The section above concluded that a "sub-tile disagreement about where lava
+stops" cost 13 real cliffs their placement, and `vulcanusCliffEntities.spec.ts`
+carried the same claim: the tile resolver is "off by about one tile SOMEWHERE".
+**That was wrong.** The mask is exact; the collision box was the wrong shape.
+
+### The mask was exonerated by a capture designed to convict it
+
+`oracle-vulcanus-lava-boundary.seed123456.json` samples Chebyshev radius-4
+neighbourhoods around the 35 tiles our mask calls lava inside a real cliff's box
+- deliberately the hardest positions on the map rather than a representative
+sample. Result over 994 positions: **0 lava mismatches in either direction**, and
+at the 35 accusing tiles themselves **35/35 agreement**. The game has lava
+exactly where we say it does.
+
+That capture was worth making because the existing 381-position survey
+structurally could not answer the question: its sensitivity was measured by
+planting scale factors on `lava`'s probability, and `1.02` and `1.2` both still
+pass. A sparse survey cannot see a sub-tile boundary shift.
+
+### `rotbb` boxes are ROTATED, and the port used their bounding box
+
+`rotbb(x, y, size, intersect)` (`entity-util.lua:9`) returns
+`{{cx - x_dist, cy - y_dist}, {cx + x_dist, cy + y_dist}, 1/8}` - a rectangle
+**plus an orientation of 1/8**, i.e. 45 degrees. Sixteen of the twenty cliff
+orientations are built with it; only the four straight ones are plain
+axis-aligned rectangles.
+
+`CLIFF_ORIENTATION_COLLISION_BOX` holds the axis-aligned bounding box. That is
+the correct BROAD phase - `wouldCollide` derives its tile rectangle from a
+fixed-point floor and scans an inclusive rect, which `cliffCollisionTileBox`
+reproduces - but the collision itself is against the rotated rectangle, and the
+AABB overruns it at all four corners. `cliffBoxCoversTile` now runs a
+separating-axis narrow phase; `test/cliffOrientedBox.spec.ts` pins the geometry.
+
+A note on `rotbbBox` used to say `intersect` could be dropped because it does not
+move the AABB. True of the AABB, false of the collision: `intersect` sets how the
+diagonal splits, hence which corners are empty.
+
+| | AABB (before) | oriented (after) |
+| --- | --- | --- |
+| recall | 0.9675 | **0.9758** |
+| precision | 0.9743 | 0.9727 |
+| `[0,0]` recall | 0.9788 | **1.0000** |
+| level-sweep recall | 0.951 at level 20 | **~1.000 at every level** |
+
+It clears **13 of 13** false rejections while keeping 182 of the 185 rejections
+that remove genuine false positives - so it is the correct shape, not a
+loosening that trades precision for recall.
+
+### Two corrections this forces
+
+- **PR #86's "gap 0.067 -> 0.018" is wrong; it is 0.024.** That figure was
+  measured with the over-aggressive AABB rejection, which deleted cells the game
+  keeps and so flattered exactly the ratio it was reporting. **A too-strong
+  correction hides the thing it is correcting.** The remaining over-placement
+  below elevation 120 is real and still open - and it is now pure over-placement,
+  with no recall cost.
+- **"All 13 sit at Chebyshev depth 1 in our lava" was a true measurement that
+  pointed at the wrong suspect.** The box's four corners ARE its perimeter, so a
+  corner-shaped box error produces exactly the signature a one-tile-fat mask
+  would. Two mechanisms, one fingerprint. A statistic can only rule a suspect
+  out if it would come out DIFFERENTLY for each candidate, and a depth histogram
+  comes out the same for both.
+
+### What was checked and cleared on the way
+
+- **The inclusive-floor fringe is real engine behaviour, not our bug.**
+  `wouldCollide` uses `(box + position) >> 8` and an inclusive rect, so a box
+  edge landing exactly on a tile boundary does pull that tile in. Already
+  established by disassembly; re-confirmed as not the cause.
+- **Chunk ordering is not it.** If the generator read a partly-generated tile
+  grid, the offending tiles would sit disproportionately in neighbouring chunks.
+  They do not: 2 of 13 cross a chunk boundary against 50 of 185 in the control -
+  *less* than baseline.
+- **6 of the 13 also carry a wrong orientation** (against a 2.0% base rate, ~23x
+  enrichment), and in every case the game's is a smaller `-to-none` variant of
+  ours. A wrong orientation means the wrong box, so the two defects compound.
+  Those 6 belong to the standing orientation residual, which is unchanged.

@@ -13,7 +13,9 @@ import {
   CLIFF_CELL_CENTER_X,
   CLIFF_CELL_CENTER_Y,
   CLIFF_GRID_SIZE,
+  cliffBoxCoversTile,
   cliffCollisionTileBox,
+  cliffOrientationForCode,
   getModifiedElevationInterval,
   isCliffPlaced,
 } from "./cliffCatalog";
@@ -318,14 +320,25 @@ export function makeCliffPlacementFromFields(
    * `tryToAddCliff`'s rejection, as a predicate on an already-placed cell: scan
    * the orientation's collision box and drop the cell if any tile in it collides.
    * With no `tileCollides` supplied this is a constant `false` and costs nothing.
+   *
+   * **Two phases, because sixteen of the twenty boxes are rotated.**
+   * `cliffCollisionTileBox` is the BROAD phase - the axis-aligned tile rectangle
+   * `wouldCollide` derives with `(box + position) >> 8`. For the four straight
+   * orientations that is the whole shape. For the sixteen `rotbb` ones the real
+   * shape is that rectangle turned 45 degrees, so `cliffBoxCoversTile` runs a
+   * narrow phase and discards the AABB's four empty corners. Skipping it drops
+   * 13 real Vulcanus cliffs whose corners happen to overhang lava.
    */
   const rejected = (code: number, x: number, y: number): boolean => {
     if (tileCollides === undefined) return false;
     const box = cliffCollisionTileBox(code, x, y);
     // `undefined` only for a code that places nothing, which cannot reach here.
     if (box === undefined) return false;
+    const id = cliffOrientationForCode(code);
+    if (id === undefined) return false;
     for (let tx = box.left; tx <= box.right; tx++)
-      for (let ty = box.top; ty <= box.bottom; ty++) if (tileCollides(tx, ty)) return true;
+      for (let ty = box.top; ty <= box.bottom; ty++)
+        if (tileCollides(tx, ty) && cliffBoxCoversTile(id, x, y, tx, ty)) return true;
     return false;
   };
 

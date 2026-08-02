@@ -274,11 +274,129 @@ export type CliffCollisionBox = readonly [number, number, number, number];
  * `intersect` was. So the AABB is exactly the square `[x, x+size] x [y, y+size]`
  * and `intersect` only decides how the diagonal is split inside it.
  *
- * That is why this helper does not take `intersect`. `test/cliffOrientation.spec.ts`
- * re-derives it from the full rotated rectangle instead of restating it here.
+ * **The AABB is the BROAD phase only - `intersect` is load-bearing after all.**
+ * A note here used to say `intersect` could be dropped because it does not move
+ * the AABB. That is true of the AABB and false of the collision: `rotbb` tags
+ * the box with orientation `1/8` and the engine collides against the ROTATED
+ * rectangle, whose corners the AABB overruns. `intersect` decides how far the
+ * diagonal is split, hence which corners are empty. See
+ * {@link CLIFF_ORIENTATION_ROTBB} and {@link cliffBoxCoversTile}; measured in
+ * `test/cliffOrientedBox.spec.ts`.
  */
 function rotbbBox(x: number, y: number, size: number): CliffCollisionBox {
   return [x, y, x + size, y + size];
+}
+
+/**
+ * `rotbb(x, y, size, intersect)`'s four arguments per orientation id, verbatim
+ * from `create_cliff_data_specification` (`entity-util.lua:85`), or `null` for
+ * the four straight orientations, whose boxes are written out as plain
+ * axis-aligned rectangles with no orientation tag.
+ *
+ * This exists because {@link CLIFF_ORIENTATION_COLLISION_BOX} is only the
+ * bounding box. The engine's collision uses the rotated rectangle itself.
+ */
+export const CLIFF_ORIENTATION_ROTBB: readonly (
+  | readonly [number, number, number, number]
+  | null
+)[] = [
+  null, //  0 west-to-east
+  null, //  1 north-to-south
+  null, //  2 east-to-west
+  null, //  3 south-to-north
+  [-3.5, -3, 4.5, 3], //  4 west-to-north
+  [-1, -3, 4.5, 1.5], //  5 north-to-east
+  [-1, -0.5, 3.5, 2.5], //  6 east-to-south
+  [-2.5, -0.5, 3.5, 1], //  7 south-to-west
+  [-3.5, -1.5, 4.5, 1.5], //  8 west-to-south
+  [-2.5, -3, 3.5, 2.5], //  9 north-to-west
+  [-1, -3, 3.5, 1], // 10 east-to-north
+  [-1, -1.5, 4.5, 3], // 11 south-to-east
+  [-3, -1.5, 3, 2], // 12 west-to-none
+  [0, -1.5, 3, 1], // 13 none-to-east
+  [0, -0.5, 2.5, 2], // 14 east-to-none
+  [-2.5, -0.5, 2.51, 0.5], // 15 none-to-west
+  [-1, -2.5, 3, 1], // 16 north-to-none
+  [-1, -0.5, 3, 2.5], // 17 none-to-south
+  [-2, -0.5, 3, 0.5], // 18 south-to-none
+  [-2, -2.5, 3, 2], // 19 none-to-north
+];
+
+const SQRT2 = 1.4142135623730951;
+
+/**
+ * Does the tile `[tx, tx+1] x [ty, ty+1]` overlap the collision shape of a
+ * cliff of orientation `id` centred at `(centerX, centerY)`?
+ *
+ * For the four straight orientations the shape IS the axis-aligned box, so any
+ * tile the broad phase enumerated overlaps it and this returns `true`. For the
+ * sixteen `rotbb` orientations the shape is that rectangle rotated 45 degrees
+ * clockwise (Factorio orientation `1/8`, and `+y` is south), which the AABB
+ * overruns at all four corners - a separating-axis test over the two world axes
+ * and the rectangle's own two decides it.
+ *
+ * **Why this is not gold-plating.** Using the AABB drops real cliffs: across the
+ * three Vulcanus oracle regions the game placed 13 cliffs whose AABB contains
+ * lava and whose rotated box does not, and it kept every one. Narrowing to the
+ * oriented rectangle clears **13 of 13** while retaining 182 of the 185
+ * rejections that were removing genuine false positives - so it is not a
+ * loosening that trades precision for recall, it is the correct shape.
+ */
+export function cliffBoxCoversTile(
+  id: number,
+  centerX: number,
+  centerY: number,
+  tx: number,
+  ty: number,
+): boolean {
+  const spec = CLIFF_ORIENTATION_ROTBB[id];
+  if (spec === undefined || spec === null) return true;
+  const [bx, by, size, intersect] = spec;
+  const dist = (size / 2) * SQRT2;
+  const yRatio = intersect / size;
+  const xDist = (1 - yRatio) * dist;
+  const yDist = yRatio * dist;
+  const cx = centerX + bx + size / 2;
+  const cy = centerY + by + size / 2;
+  // cos 45 = sin 45; clockwise in screen coords (x east, y south).
+  const k = Math.SQRT1_2;
+  const corners: readonly (readonly [number, number])[] = [
+    [-xDist, -yDist],
+    [xDist, -yDist],
+    [xDist, yDist],
+    [-xDist, yDist],
+  ].map(([u, v]) => [cx + (u - v) * k, cy + (u + v) * k] as const);
+  const square: readonly (readonly [number, number])[] = [
+    [tx, ty],
+    [tx + 1, ty],
+    [tx + 1, ty + 1],
+    [tx, ty + 1],
+  ];
+  const axes: readonly (readonly [number, number])[] = [
+    [1, 0],
+    [0, 1],
+    [k, k],
+    [-k, k],
+  ];
+  for (const [ax, ay] of axes) {
+    let aMin = Infinity;
+    let aMax = -Infinity;
+    let bMin = Infinity;
+    let bMax = -Infinity;
+    for (const [px, py] of corners) {
+      const d = px * ax + py * ay;
+      if (d < aMin) aMin = d;
+      if (d > aMax) aMax = d;
+    }
+    for (const [px, py] of square) {
+      const d = px * ax + py * ay;
+      if (d < bMin) bMin = d;
+      if (d > bMax) bMax = d;
+    }
+    // Touching is not overlapping: a tile the rectangle only grazes is free.
+    if (aMax <= bMin || bMax <= aMin) return false;
+  }
+  return true;
 }
 
 /**
