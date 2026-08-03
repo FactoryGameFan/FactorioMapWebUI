@@ -3874,6 +3874,179 @@ async function captureVulcanusCliffOreDirection(): Promise<void> {
 }
 
 /**
+ * **Is any placed ENTITY what suppresses the non-ore residual at `[1500,1500]`?**
+ * (#84.) The lever, not a predicate.
+ *
+ * Running both sides with the resources switched off leaves 13 wrong
+ * orientations and 10 surplus cells that the ore rule cannot reach, and their
+ * shape is a SUPPRESSION: the game's code is the port's code with edges removed,
+ * and the cells the port over-places are ones the game emits nothing at. #109
+ * excluded the field twice over, plus rocks, the cliffiness gate, smoothing and
+ * the repair; #108 excluded the stage. The obvious remaining class is the
+ * unported half of `Surface::wouldCollide` - an entity standing where the cliff
+ * would go.
+ *
+ * `autoplace_controls` cannot ask that question, because a control only reaches
+ * prototypes that name one: the four resources have controls, and the rocks,
+ * the chimneys and `crater-cliff` have none. `autoplace_settings.entity` with
+ * `treat_missing_as_default = false` switches the whole category off at once, so
+ * one arm answers it for every entity there is.
+ *
+ * The second lever aims at LAVA, and it is the one that pays. Dropping
+ * `lava`/`lava-hot` from the tile autoplace leaves the elevation the crossings
+ * read untouched (tiles are downstream of it) and takes away the only thing the
+ * tile-collision rejection can reject against - so the cells that APPEAR are the
+ * game's own answer to "which cliffs does lava suppress", the way
+ * `autoplace_controls` gave the ore's answer in #110. Our lava rejection can
+ * then be scored for precision and recall against a known set instead of tuned
+ * until the totals agree, which is the thing #88 says must not happen to a
+ * collision box.
+ *
+ * Five arms, all over the same `[1500,1500]` entity region:
+ *
+ * - **resources OFF via controls** - the baseline the residual is measured
+ *   against, captured again here so the comparison is within one fixture and one
+ *   binary rather than across two.
+ * - **the whole `entity` category OFF** - the entity lever. If the cliffs are
+ *   unchanged, no entity suppresses them, positively rather than by elimination.
+ * - **default (resources ON)** - the shipping world, for the entity list.
+ * - **resources OFF + lava tiles OFF** - the lava lever with the ore already out
+ *   of the picture, so what moves is lava alone.
+ * - **lava tiles OFF only** - the same lever against the shipping world.
+ *
+ * Every arm dumps EVERY entity in the region with its type, so a null result
+ * still says what was standing there; reads `autoplace_settings` back off the
+ * surface; and COUNTS the lava tiles in the region it just generated. That last
+ * one is what separates "lava suppresses nothing" from "the tile override never
+ * applied" - the two are the same observation without it. `cliff-vulcanus` is
+ * placed from `cliff_settings`, not from either category, so a lever arm that
+ * also emptied the cliffs would be vacuous and says nothing.
+ */
+async function captureVulcanusCliffSuppressorLevers(): Promise<void> {
+  const seed = 123456;
+  const region: Region = { x0: 1500, y0: 1500, x1: 1756, y1: 1756 };
+  const OFF = { frequency: 1, size: 0, richness: 1 };
+  const ALL_OFF = {
+    tungsten_ore: OFF,
+    calcite: OFF,
+    vulcanus_coal: OFF,
+    sulfuric_acid_geyser: OFF,
+  };
+  const PROTOS = [
+    "cliff-vulcanus",
+    "crater-cliff",
+    "big-volcanic-rock",
+    "huge-volcanic-rock",
+    "big-volcanic-rock-hot",
+    "huge-volcanic-rock-hot",
+    "vulcanus-chimney",
+    "vulcanus-chimney-faded",
+    "vulcanus-chimney-cold",
+    "vulcanus-chimney-short",
+    "vulcanus-chimney-truncated",
+    "ashland-lichen-tree",
+    "ashland-lichen-tree-flaming",
+  ];
+
+  const LAVA_TILES = ["lava", "lava-hot"];
+  const arms: {
+    label: string;
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+    disableAutoplaceCategories?: readonly string[];
+    excludeFromAutoplaceCategory?: Readonly<Record<string, readonly string[]>>;
+    /** Only the two arms the ENTITY lever compares carry the full list. */
+    alsoEntities?: boolean;
+  }[] = [
+    { label: "resources OFF via controls", autoplaceControls: ALL_OFF, alsoEntities: true },
+    {
+      label: "entity autoplace category OFF",
+      disableAutoplaceCategories: ["entity"],
+      alsoEntities: true,
+    },
+    { label: "default, resources ON" },
+    {
+      label: "resources OFF, LAVA TILES OFF",
+      autoplaceControls: ALL_OFF,
+      excludeFromAutoplaceCategory: { tile: LAVA_TILES },
+    },
+    { label: "LAVA TILES OFF only", excludeFromAutoplaceCategory: { tile: LAVA_TILES } },
+  ];
+
+  const cases: unknown[] = [];
+  for (const arm of arms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        autoplaceControls: arm.autoplaceControls,
+        disableAutoplaceCategories: arm.disableAutoplaceCategories,
+        excludeFromAutoplaceCategory: arm.excludeFromAutoplaceCategory,
+        countTileNames: LAVA_TILES,
+        alsoResources: true,
+        alsoEntities: arm.alsoEntities,
+        protoNames: PROTOS,
+      });
+      cases.push({
+        label: arm.label,
+        region,
+        autoplaceControls: arm.autoplaceControls ?? null,
+        disabledCategories: arm.disableAutoplaceCategories ?? null,
+        excludedFromCategory: arm.excludeFromAutoplaceCategory ?? null,
+        effectiveCliffSettings: dump.cliffSettings,
+        effectiveAutoplace: dump.autoplaceControls,
+        effectiveAutoplaceSettings: dump.autoplaceSettings,
+        tileCounts: dump.tileCounts,
+        cliffs: dump.cliffs,
+        entities: dump.entities ?? null,
+        protos: dump.protos,
+      });
+      const named = dump.cliffs as unknown as readonly { name: string }[];
+      const vulc = named.filter((c) => c.name === "cliff-vulcanus").length;
+      const nonCliff = (dump.entities ?? []).filter((e) => e.type !== "cliff").length;
+      const lava = Object.values(dump.tileCounts ?? {}).reduce((a, b) => a + b, 0);
+      console.log(
+        `  ${arm.label} -> ${String(vulc)} cliff-vulcanus, ` +
+          `${String(dump.cliffs.length - vulc)} other cliff, ` +
+          `${String(nonCliff)} non-cliff entities, ${String(lava)} lava tiles`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Asks whether any placed ENTITY suppresses " +
+      "the non-ore cliff residual at [1500,1500] (#84), with LEVERS rather than predicates: " +
+      "map_gen_settings.autoplace_settings.entity = {treat_missing_as_default = false, settings = {}} " +
+      "switches the whole entity autoplace category off, which autoplace_controls cannot do - a " +
+      "control only reaches prototypes that name one, so the four resources have one and the rocks, " +
+      "chimneys and crater-cliff have none. A second lever drops lava/lava-hot from the TILE " +
+      "autoplace, which leaves the elevation the crossings read untouched and takes away the only " +
+      "thing the tile-collision rejection can reject against - so the cells that appear are the " +
+      "game's own answer to which cliffs lava suppresses, scorable for precision and recall rather " +
+      "than tuned to fit. Every arm dumps EVERY entity in the region with its type (so a null " +
+      "result still says what was standing there), the prototype collision geometry, the " +
+      "autoplace_settings the SURFACE read back, and a COUNT of the lava tiles actually generated " +
+      "- the last two are what make an empty entity list or an unmoved cliff evidence rather than " +
+      "an unapplied override. cliff-vulcanus comes from cliff_settings, not from either category, " +
+      "so a lever arm that also emptied the cliffs would be vacuous. " +
+      "Sampled on a create_surface() surface whose seed is FORCED to `seed`, like every other " +
+      "Vulcanus oracle fixture. Regenerate: node --experimental-strip-types test/oracle/capture.ts " +
+      "vulcanus-cliff-suppressor-levers",
+    seed,
+    region,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-suppressor-levers.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
+/**
  * **The grid-4 cliff-elevation channel, read out corner by corner at the bands
  * the placement rule actually consults** (#84).
  *
@@ -4155,6 +4328,7 @@ async function captureVulcanusCliffFineSweep(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} levels)`);
 }
 
+if (want("vulcanus-cliff-suppressor-levers")) await captureVulcanusCliffSuppressorLevers();
 if (want("vulcanus-cliff-bands")) await captureVulcanusCliffBands();
 if (want("vulcanus-cliff-fine-sweep")) await captureVulcanusCliffFineSweep();
 if (want("cliff-entities")) await captureCliffEntities();
