@@ -155,6 +155,16 @@ export interface CliffBands {
    * that 0 times where the model predicts 1,662.
    */
   readonly rejectAtCrossingStage?: boolean;
+  /**
+   * With `rejectAtCrossingStage`, re-run the rejection pass until it finds
+   * nothing, so a cell whose ORIENTATION changed because a neighbour's edges
+   * were zeroed is re-tested with its new collision box.
+   *
+   * This is the "cascade along cliff connections" half of the open question in
+   * `vulcanusOreRejection.ts` - the other half being a wider box. Off by
+   * default; `test/cliffOreCascade.spec.ts` is what decides it.
+   */
+  readonly rejectionCascades?: boolean;
 }
 
 /** Cells per chunk axis: a 32-tile chunk over the 4-tile placement grid. */
@@ -510,28 +520,40 @@ export function makeCliffPlacementFromFields(
               // Collect first, then clear: a cell's rejection is decided from
               // the code the repair left, not from a code a previous cell's
               // clearing has already eaten into.
-              const kill: number[] = [];
-              for (let cy = 0; cy < n; cy++) {
-                for (let cx = 0; cx < n; cx++) {
-                  const code = cellCode(
-                    v[cy * (n + 1) + cx],
-                    v[cy * (n + 1) + cx + 1],
-                    hEdges[cy * n + cx],
-                    hEdges[(cy + 1) * n + cx],
-                  );
-                  if (!isCliffPlaced(code)) continue;
-                  const x = (baseX + cx) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_X;
-                  const y = (baseY + cy) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_Y;
-                  if (rejected(code, x, y) || cellRejects?.(code, x, y) === true) kill.push(cx, cy);
+              //
+              // `rejectionCascades` re-runs that to a fixpoint. Zeroing a cell's
+              // edges changes its neighbours' codes, and a changed code is a
+              // changed ORIENTATION, so a neighbour can become rejectable when
+              // it was not before. Whether the game does that is a measurement,
+              // not a deduction - see `cliffOreCascade.spec.ts`.
+              for (let pass = 0; ; pass++) {
+                const kill: number[] = [];
+                for (let cy = 0; cy < n; cy++) {
+                  for (let cx = 0; cx < n; cx++) {
+                    const code = cellCode(
+                      v[cy * (n + 1) + cx],
+                      v[cy * (n + 1) + cx + 1],
+                      hEdges[cy * n + cx],
+                      hEdges[(cy + 1) * n + cx],
+                    );
+                    if (!isCliffPlaced(code)) continue;
+                    const x = (baseX + cx) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_X;
+                    const y = (baseY + cy) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_Y;
+                    if (rejected(code, x, y) || cellRejects?.(code, x, y) === true)
+                      kill.push(cx, cy);
+                  }
                 }
-              }
-              for (let i = 0; i < kill.length; i += 2) {
-                const cx = kill[i];
-                const cy = kill[i + 1];
-                v[cy * (n + 1) + cx] = 0;
-                v[cy * (n + 1) + cx + 1] = 0;
-                hEdges[cy * n + cx] = 0;
-                hEdges[(cy + 1) * n + cx] = 0;
+                for (let i = 0; i < kill.length; i += 2) {
+                  const cx = kill[i];
+                  const cy = kill[i + 1];
+                  v[cy * (n + 1) + cx] = 0;
+                  v[cy * (n + 1) + cx + 1] = 0;
+                  hEdges[cy * n + cx] = 0;
+                  hEdges[(cy + 1) * n + cx] = 0;
+                }
+                // One pass is the shipping model; the cascade stops when a pass
+                // finds nothing, and `pass` is bounded by the cell count anyway.
+                if (bands.rejectionCascades !== true || kill.length === 0 || pass > 64) break;
               }
             }
 

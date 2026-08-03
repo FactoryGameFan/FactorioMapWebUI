@@ -50,6 +50,28 @@
  *    overlapped cell - and whether that is a cascade along cliff connections or
  *    a wider box is open. Widening the box until all 31 fall out is exactly how
  *    #88 shipped a wrong model that scored perfectly.
+ *
+ *    **Half of that is now settled, and the remainder count is down by two**
+ *    (`test/cliffOreCascade.spec.ts`):
+ *
+ *    - **The cascade half is REFUTED.** #108 established that a rejection zeroes
+ *      the cell's edge registers, so a neighbour's code - hence its orientation,
+ *      hence its collision box - changes. Re-testing to a fixpoint is exactly
+ *      "a cascade along cliff connections", and `rejectionCascades` measures it:
+ *      a bit-for-bit no-op at the shipping settings, and net harmful on the
+ *      collapsed rule. Rejected cells do not turn neighbours rejectable.
+ *    - **The crossing STAGE explains 2 of the remainders with no tuning at all.**
+ *      The predicate fires on 20 placed cells; the placement loses 22, because
+ *      zeroing a rejected cell's edges leaves two neighbours with codes that no
+ *      longer place.
+ *    - Scored against the lever rather than by totals, the rule is
+ *      **precision 1.000, recall 0.710** (22 of 31): exactly right where it
+ *      fires, simply too narrow. Of the 9 it misses, **4 are geyser** cells the
+ *      `includeGeyser` default deliberately excludes, and 5 are calcite; all 9
+ *      are adjacent to another suppressed cell.
+ *
+ *    That leaves the wider-box half open - and it is the half #88 says must not
+ *    be tuned into fitting.
  */
 import type { VulcanusResourceControls } from "../eval/ctx";
 import type { VulcanusResources } from "../expressions/vulcanusResources";
