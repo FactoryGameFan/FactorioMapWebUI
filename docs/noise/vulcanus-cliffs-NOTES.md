@@ -2063,3 +2063,67 @@ question about WHICH cells the game refuses, and the sweep cannot answer it
 where the game emits nothing at any level: those corners get no bracket, so the
 field there is still unmeasured. A wider sweep (well outside `[700,900]`) is the
 measurement that would close that gap.
+
+## The residual is a SUPPRESSION, and the wider sweep is not worth capturing (2026-08-03, #84)
+
+The section above handed over "a sweep well outside `[700,900]` is the
+measurement that would close the gap". **Do not capture it.** The constraints
+already on disk answer the question, because
+`oracle-vulcanus-cliff-bands`'s `constant1` arm covers the SAME region under the
+SAME collapsed rule at 70..1150 - its observations fold straight into the fine
+sweep's. `test/vulcanusCliffSuppression.spec.ts`.
+
+### The field's exoneration is much wider than #107 stated
+
+#107 checked 998 two-sided brackets. It left the **one-sided** bounds unused, and
+those falsify just as well: a corner the game only ever made the HIGH side at
+level `L` is asserted to be above `L`, which a port value below `L` would refute.
+
+| | |
+| --- | --- |
+| corners constrained from one side only | **1711** |
+| of those, contradicting the port's value | **0** |
+
+### The silence is not the field running out of range
+
+Adding the bands' 10 levels widens the window 5x (70..1150 rather than 700..900)
+and rescues exactly **1** of the 681 corners the fine sweep left unbracketed.
+294 corners whose port value sits in `[700,900]` get **no constraint of any
+kind** across all 50 levels - while the port asserts **8,906** crossings on their
+edges over those same levels, with **not one** of the 294 where the port is
+silent too.
+
+For a field error to produce that it would have to move those corners outside
+`[70, 1150]` entirely *and* leave all 1,711 one-sided bounds elsewhere satisfied.
+The two sides are not disagreeing about a value; they are disagreeing about
+whether anything is emitted at all.
+
+### Two suppressor candidates refuted, each against a base rate
+
+| population | n | rock in the cliff's box | default gate fully shut |
+| --- | --- | --- | --- |
+| matched (base rate) | 18654 | 1312 = **7.03%** | 8588 = 46.0% |
+| surplus | 1200 | 127 = **10.58%** | 617 = 51.4% |
+| wrong orientation | 693 | 35 = **5.05%** | 311 = 44.9% |
+
+- **Rocks** - `Surface::wouldCollide`'s unported entity half, the obvious
+  candidate. Refuted: 1.5x on the surplus is weak, and the wrong-orientation
+  cells are *anti*-correlated at 5.05% against 7.03%. A suppressor cannot be
+  anti-correlated with half the defect it is supposed to cause.
+- **The default `cliffiness_basic` gate** - a confound check rather than a
+  candidate. Flat across all three populations.
+
+**That last row is worth more than the refutation it came from.** The game emits
+**8,588** cells where the default gate would be fully shut, so routing
+`cliffiness` at a literal 1 genuinely opened it. The collapsed-rule oracle that
+#106, #107 and #108 all rest on is not quietly confounded by the gate it claims
+to have removed - which had never been checked.
+
+### Where that leaves it
+
+Still the predicate. What is now excluded for the suppression: the field (twice
+over, by brackets and by one-sided bounds), rocks, the cliffiness gate, the
+smoothing, the repair, and - since #108 - the STAGE. What remains is which cells
+the game refuses, and the honest statement is that the list is open: the same
+trap #106 fell into is available here, so the next candidate needs a positive
+measurement rather than promotion by elimination.
