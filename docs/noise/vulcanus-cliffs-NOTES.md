@@ -1,5 +1,32 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 7, 2026-08-03: the far ten are DESTROYED, and #114's exactness covers 14 of 225
+>
+> **The first thread out of UPDATE 6 is answered for 2 of the far ten, from a
+> fixture already on disk.** Destruction and non-generation leave *different*
+> marks: `Cliff::onDestroy` trims a connected neighbour's facing end
+> unconditionally, while a cell that was never queued only costs its neighbour
+> that end if `updateConnections` runs on it - which is gated on the neighbour
+> sitting on its chunk's outer ring. So any disputed cell with a **non-border**
+> neighbour the game KEPT is decidable from the game's own recorded orientation.
+>
+> `1546,1550.5` and `1746,1538.5` are decidable and both say **destroyed**, one
+> in each of the far group's two multi-cell clusters. Across all 225 cells the
+> game destroys the never-queued signature appears **zero** times. So the search
+> is for something `Surface::wouldCollide` returns true on that the port does not
+> model - **not** for a crossing-field difference.
+>
+> **Two things to carry forward before quoting UPDATE 6.** First, `1531 of 1531`
+> is informative for only **14** of the 225 destructions and vacuous for the
+> other 211 - the rest have neighbours the game also destroyed, neighbours on a
+> chunk border, or no facing end. Those 14 are exactly #114's 14 no-cascade
+> rewrites, cell for cell. Second, the verdict is **conditional on the
+> chunk-border gate**, which `cliffConnections.spec.ts` records as *unscored* and
+> which has been inert until now: switch it off and both counterfactuals stop
+> disagreeing with the game. This is the first thing that has ever depended on
+> it. If it was misread those two cells revert to *undecidable* - they do not
+> become never-queued.
+>
 > ## UPDATE 6, 2026-08-03: the residual is 31 DESTRUCTION DECISIONS - read the LAST section
 >
 > **Hand the port the game's own destruction set and it reproduces the game
@@ -2728,3 +2755,127 @@ that is the one the arm scores.
 
 Do not re-derive this. If cliff-versus-cliff is ever revisited it needs a
 different box or a mask argument, not the overlap test.
+
+## The far ten are DESTROYED, not never queued - and the border gate now matters (2026-08-03, #84)
+
+The section above split the 25 missed destructions into a near group a lava box
+could plausibly reach and a **far ten** with no lava within twelve tiles, and
+handed over two threads. This is the first one, and it named itself unmeasured:
+
+> The whole `applyCliffs` framing assumes destruction. #114's exact result is
+> consistent with destruction but does not prove it - a strict superset says
+> nothing about whether the game's crossing field emitted them at all.
+
+It is decidable, and it needed no capture. `test/cliffFarTenProvenance.spec.ts`.
+
+### The two hypotheses leave different marks on the NEIGHBOURS
+
+Both rules were already ported off the disassembly in `cliffConnections.ts`; the
+point is that they differ in exactly one respect:
+
+| hypothesis | what happens to a connected neighbour |
+| --- | --- |
+| **destroyed** by `applyCliffs` | `Cliff::onDestroy` calls `destroyEnd(opposite(side))` on it - **unconditionally** |
+| **never queued** by `generateCliffs` | the cell is simply absent; the neighbour loses its end only if `updateConnections` runs on it, and that is gated on the neighbour being on its chunk's OUTER RING |
+
+So a disputed cell is decidable whenever it has a neighbour that is (a) in the
+game's kept set, so the fixture records its orientation, (b) **not** on a chunk
+border, so `updateConnections` cannot trim the end under either hypothesis, and
+(c) queued with an end facing the disputed cell, so there is an end to lose.
+Then the game's own recorded orientation settles it: end **gone** means the
+cascade ran, and only destruction runs it.
+
+### 2 of the far ten are decidable, and both say DESTROYED
+
+| cell | neighbour | the game's orientation | verdict |
+| --- | --- | --- | --- |
+| `1546,1550.5` | `1546,1546.5` | `north-to-none` | end gone - **destroyed** |
+| `1746,1538.5` | `1746,1542.5` | `east-to-none` | end gone - **destroyed** |
+
+Both are the trimmed `*-to-none` half of a run whose other end pointed at the
+disputed cell, which is the mark `Cliff::onDestroy` leaves and nothing else does.
+
+**Across all 225 cells the game destroys, the never-queued signature appears
+zero times.** That zero is a measurement rather than a branch that never runs -
+the counterfactual below produces the other verdict on demand.
+
+One decidable cell sits in **each** of the far group's two multi-cell clusters -
+`1546,1550.5` in the `1542/1546, 1550.5..1558.5` knot and `1746,1538.5` in the
+`1746, 1530.5..1538.5` vertical run - which is the argument for reading both
+clusters as destruction events. The two singletons, `1590,1618.5` and
+`1602,1622.5`, are in neither and this says nothing about them.
+
+### The counterfactual, which is what makes it more than reading a table
+
+Re-run the whole model with the cell removed from the QUEUE rather than
+destroyed in it - the never-queued hypothesis expressed exactly - and the game
+disagrees:
+
+| arm | result |
+| --- | --- |
+| the game's destruction set (baseline) | 283 / 861 / 387, **wrong 0** |
+| `1546,1550.5` never queued | wrong **1**, at `1546,1546.5` (`north-to-south` vs the game's `north-to-none`) |
+| `1746,1538.5` never queued | wrong **1**, at `1746,1542.5` (`east-to-north` vs `east-to-none`) |
+| both never queued | wrong **2**, both neighbours |
+| four far cells with no decidable neighbour, never queued | wrong **0** - unchanged |
+
+The last row is the contrast arm: this is a property of those two cells, not
+something removing any cell would do.
+
+### #114's exactness is informative for 14 of the 225 and VACUOUS for 211
+
+That is the second finding and it is the one to carry forward. Only **14** of
+the 225 destroyed cells have a decidable neighbour at all - the rest have
+neighbours the game also destroyed, or neighbours on a chunk border, or no
+facing end. So `1531 of 1531` must not be quoted as having confirmed destruction
+for the whole 225; it confirmed it for 14.
+
+| group | n | decidable | destroyed | never queued |
+| --- | --- | --- | --- | --- |
+| far (no lava within 12) | 10 | **2** | 2 | 0 |
+| near (within 2) | 9 | 2 | 2 | 0 |
+| mid (4 to 11) | 6 | 0 | - | - |
+| agreed (the port destroys them too) | 200 | 10 | 10 | 0 |
+
+Those 14 are **exactly** #114's 14 no-cascade rewrites, cell for cell. A
+neighbour is observable precisely when the cascade is the only thing that would
+have trimmed it, so the two routes must agree - and they do, which is what says
+the decision rule was read out of `cliffConnections.ts` rather than fitted.
+
+### The result is CONDITIONAL on the chunk-border gate, and that is new
+
+Row two of the table at the top is the whole discriminator, and it is a reading
+of `applyCliffs`' fifth-argument test. `test/cliffConnections.spec.ts` records
+that gate as explicitly **unscored**:
+
+> It also means the chunk-border gate cannot be SCORED here - `everyCell` gives
+> the identical answer, because neither fires. Do not read that as evidence the
+> gate was read wrongly; read it as unscored.
+
+It stays unscored. What changed is that it is no longer **inert**. Removing a
+cell from the queue creates the dangling end that the port's own set never has,
+and the gate then decides whether the neighbour trims it. Switch the gate off
+and both counterfactuals above go to **wrong 0**, i.e. the hypotheses become
+indistinguishable. The baseline is identical either way, so nothing before this
+could have caught a misreading.
+
+**This is the first thing that has ever depended on that gate.** If it was read
+wrongly the two cells revert to *undecidable* - they do not become never-queued.
+Planting `onChunkBorder` returning `true` fails 7 of the file's 10 tests, so the
+spec catches exactly that.
+
+Scoring the gate against the game is now worth doing on its own account, and was
+not before.
+
+### Where this leaves the far ten
+
+Destruction is the mechanism, so the search is still for something
+`Surface::wouldCollide` returns true on that the port does not model - thread 2
+of the previous handoff, the unmodelled half of that function - and **not** for
+a crossing-field difference. That is worth knowing before anyone re-opens the
+field, which #107 already exonerated once.
+
+Still true and unchanged: all 25 are `ore = false`, no entity suppresses them
+(#111), cliff-versus-cliff is refuted on the base rate (#115), and the tile
+resolver is exonerated (#115). Shipping accuracy is untouched by this section -
+recall 0.9961, precision 0.9858 - because it is measurement only.
