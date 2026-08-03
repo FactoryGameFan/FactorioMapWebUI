@@ -163,7 +163,7 @@
       matchPackageNames: ["wrangler", "@cloudflare/vitest-pool-workers"],
       groupName: "cloudflare worker toolchain",
       prBodyNotes: [
-        "After merging, regenerate the worker types: `pnpm --filter @fmw/preview-worker exec wrangler types && pnpm vp check --fix`. The formatter pass is not optional.",
+        "**Regenerate the worker types on this branch BEFORE merging** - this PR cannot go green without it. A wrangler bump moves `workerd`, and `wrangler types --check` compares that version as well as the config hash, so `types:check` fails inside `preview:test` inside the required `verify` check. Run `pnpm --filter @fmw/preview-worker exec wrangler types && pnpm vp check --fix` and commit the result. The formatter pass is not optional - wrangler emits tabs and unwrapped types, so a raw regen buries the real one-line change in a whole-file whitespace diff.",
       ],
     },
     {
