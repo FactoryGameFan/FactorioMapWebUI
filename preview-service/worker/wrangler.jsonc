@@ -12,8 +12,21 @@
     {
       "class_name": "PreviewContainer",
       "image": "../container/Dockerfile",
-      "instance_type": "standard-1",
-      "max_instances": 3,
+      // Memory is billed on PROVISIONED size for the whole time an instance is
+      // awake, not on what the process touches - so instance_type is the single
+      // biggest cost lever here, and it was 4x oversized. Measured over 20 days
+      // of production (containersMetricsAdaptiveGroups): peak 603 MiB, idle
+      // ~205 MiB, peak disk 522 MiB. `basic` is 1 GiB / 4 GB, ~40% memory
+      // headroom over the observed peak. `size` is pinned to 1024 in
+      // src/schema.ts, so no request can enlarge a render past that peak.
+      // Re-measure before shrinking further; the next size down is `lite`
+      // (256 MiB), which the 603 MiB peak rules out.
+      "instance_type": "basic",
+      // The worker only ever addresses idFromName("pool-0"), so a second
+      // instance is unreachable by design - but max_instances is what caps the
+      // blast radius if that ever changes or an instance leaks. At 3 this bill
+      // could silently triple.
+      "max_instances": 1,
     },
   ],
   "durable_objects": {

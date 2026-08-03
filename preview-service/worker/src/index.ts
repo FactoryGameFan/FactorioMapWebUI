@@ -76,6 +76,15 @@ export default {
       }),
     );
     if (!renderRes.ok) {
+      // Drain the body before dropping this response. @cloudflare/containers
+      // proxies the container through a TransformStream and decrements its
+      // inflight-request counter only when that stream finishes piping. A
+      // container that still looks busy never reaches `sleepAfter` (see
+      // isActivityExpired in the package), so it stays provisioned - and billed
+      // for its full instance_type memory - around the clock. One un-drained
+      // error body pins the instance awake indefinitely.
+      const detail = await renderRes.text().catch(() => "<unreadable>");
+      console.error(`container render failed (${renderRes.status}): ${detail.slice(0, 200)}`);
       return new Response("render failed", { status: 502, headers: corsHeaders(env) });
     }
     const png = await renderRes.arrayBuffer();
