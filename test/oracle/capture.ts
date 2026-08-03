@@ -3873,6 +3873,187 @@ async function captureVulcanusCliffOreDirection(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} arms)`);
 }
 
+/**
+ * **The grid-4 cliff-elevation channel, read out corner by corner at the bands
+ * the placement rule actually consults** (#84).
+ *
+ * This is the one input to cliff placement that has never had a per-corner
+ * oracle. `oracle-vulcanus-cliff-corner-fields-entity-regions` holds the TILE
+ * channel - `calculate_tile_properties` evaluates the 1-tile noise program, and
+ * `multisample`'s offsets are in the calling program's grid units, so against
+ * the grid-4 field the cliff generator reads it differs by **96.09**. Every
+ * "the field is exact" claim in the residual work rests on the wrong channel.
+ *
+ * The readout uses the cliff generator itself, which is the only consumer known
+ * to walk the 4-tile lattice. Collapse the rule through `cliff_settings`:
+ *
+ * - `cliff_smoothing = 0` - the cliff elevation IS the raw grid-4 field, with
+ *   no interpolation between knots standing between the field and the cliff.
+ * - `cliff_elevation_interval = 1e6` - one contour, at `cliff_elevation_0`, so
+ *   `crossesCliff`'s band arithmetic (`boundary = e0 + interval*floor(...)`)
+ *   collapses to a single threshold test.
+ * - `richness = 4` - `0.5*log2(4) = 1`, so `cliffiness_basic` saturates at 1.5
+ *   and its `> 0.5` gate is open EVERYWHERE.
+ *
+ * Under those three, `crossesCliff(a, b)` reduces to `min(a,b) < e0 <= max(a,b)`
+ * with both corners non-negative. So the game places a cliff on an edge exactly
+ * when that edge's two corners straddle the level - and the ORIENTATION says
+ * which side is the high one. Each run is therefore a **1-bit comparator on
+ * every one of the region's 4,225 corners at once**, and the fixture is the
+ * game's own answer to "is your grid-4 field above this level here?".
+ *
+ * **The levels are the real bands, not a uniform sweep**, and that is the whole
+ * design. `crossesCliff` only ever compares the field against `70 + 120k`, so
+ * the game's bits at those levels are the entire placement-relevant content of
+ * the channel: if they match, the port's placement is right whatever the field's
+ * exact values are, and no finer sweep can add anything. Per region, the bands
+ * its field actually spans (port-side range, so the set is not a guess):
+ *
+ * | region | grid-4 range | bands crossed |
+ * | --- | --- | --- |
+ * | `[0,0]` | -53.16 .. 402.44 | 70, 190, 310 |
+ * | `[1500,1500]` | -36.38 .. 1226.33 | 70 .. 1150, all ten |
+ * | `[-1200,800]` | -54.86 .. 300.06 | 70, 190 |
+ *
+ * `oracle-vulcanus-elevation-levels` already collapses the rule this way, but
+ * only over `[0,0]` and only at 20..200 step 10 - it never reaches a single band
+ * above 190, while the residual's wrong cells sit at **670 / 790 / 1030**, in
+ * `[1500,1500]`, which that fixture does not cover at all.
+ */
+async function captureVulcanusCliffBands(): Promise<void> {
+  const seed = 123456;
+  const ONE_BAND = 1000000;
+  // Exactly the regions of oracle-vulcanus-cliff-entities.seed123456.json, so
+  // this joins to the entity fixture and to every residual spec built on it.
+  const plan: { region: Region; levels: number[] }[] = [
+    { region: { x0: 0, y0: 0, x1: 256, y1: 256 }, levels: [70, 190, 310] },
+    {
+      region: { x0: 1500, y0: 1500, x1: 1756, y1: 1756 },
+      levels: [70, 190, 310, 430, 550, 670, 790, 910, 1030, 1150],
+    },
+    { region: { x0: -1200, y0: 800, x1: -944, y1: 1056 }, levels: [70, 190] },
+  ];
+
+  /**
+   * **Two ways to hold the cliffiness gate open, because one of them is a
+   * MODEL and the other is not.**
+   *
+   * `richness = 4` works through `cliffiness_basic` itself:
+   * `clamp(0.5*log2(4) + qmn, 0, 1) + 0.5`. Comparing against it therefore
+   * requires the port to reproduce `qmn` in the region where the DEFAULT-richness
+   * field is clamped flat at 0.5 - and that is precisely the population no
+   * fixture validates. `oracle-vulcanus-cliff-corner-fields-entity-regions` puts
+   * **8,409 of its 12,675 corners** on a clamp, and shifting the richness term by
+   * +1 turns exactly those into the ones that decide the gate. So a disagreement
+   * under this arm cannot be attributed: it is either the field or `qmn` below
+   * the clamp.
+   *
+   * Routing the `cliffiness` PROPERTY at the constant `1` removes the model
+   * entirely - the gate is open at every corner by construction, with no
+   * expression of ours in the way - so a disagreement under that arm is the
+   * cliff-elevation field and nothing else. Both arms are captured because the
+   * pair is the measurement: agreement between them says the richness route was
+   * sound, and disagreement localises which input moved.
+   */
+  const arms = [
+    {
+      gate: "richness4",
+      cliffSettings: { richness: 4 } as Record<string, number>,
+      probe: undefined as string | undefined,
+    },
+    { gate: "constant1", cliffSettings: {}, probe: "1" },
+  ];
+
+  const cases: {
+    region: Region;
+    level: number;
+    gate: string;
+    effective: DumpedCliffSettings | undefined;
+    cliffs: Position[];
+  }[] = [];
+  for (const arm of arms) {
+    for (const { region, levels } of plan) {
+      for (const level of levels) {
+        const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+        try {
+          const dump = await sampleCliffEntitiesFull(region, {
+            workDir,
+            seed,
+            spaceAge: true,
+            planet: "vulcanus",
+            cliffSettings: {
+              cliff_smoothing: 0,
+              cliff_elevation_interval: ONE_BAND,
+              cliff_elevation_0: level,
+              ...arm.cliffSettings,
+            },
+            probeProperty: arm.probe === undefined ? undefined : "cliffiness",
+            probeExpression: arm.probe,
+          });
+          cases.push({
+            region,
+            level,
+            gate: arm.gate,
+            effective: dump.cliffSettings,
+            cliffs: dump.cliffs,
+          });
+          console.log(
+            `  ${arm.gate} [${String(region.x0)},${String(region.y0)}] level ${String(level)} -> ` +
+              `${String(dump.cliffs.length)} cliffs (effective e0=` +
+              `${String(dump.cliffSettings?.cliff_elevation_0)}, ` +
+              `interval=${String(dump.cliffSettings?.cliff_elevation_interval)}, ` +
+              `smoothing=${String(dump.cliffSettings?.cliff_smoothing)}, ` +
+              `richness=${String(dump.cliffSettings?.richness)})`,
+          );
+        } finally {
+          await rm(workDir, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. THE GRID-4 CLIFF-ELEVATION CHANNEL, " +
+      "read out corner by corner - the one input to cliff placement that had no per-corner oracle " +
+      "(#84). oracle-vulcanus-cliff-corner-fields-entity-regions holds the TILE channel " +
+      "(calculate_tile_properties runs the 1-tile program, and multisample's offsets are in the " +
+      "calling program's grid units), which differs from the channel the cliff generator reads by " +
+      "96.09. Here the CLIFF GENERATOR is the readout: with cliff_smoothing=0 (the raw field, no " +
+      "interpolation), cliff_elevation_interval=1e6 (one contour, so crossesCliff's band " +
+      "arithmetic collapses to a single threshold) and richness=4 (cliffiness_basic saturates at " +
+      "1.5 so its >0.5 gate is open everywhere) OR the `cliffiness` property routed at the literal " +
+      "constant 1, the game places a cliff on an edge exactly when " +
+      "its two corners straddle cliff_elevation_0, and the entity's orientation says which side " +
+      "is high. Each case is therefore a 1-bit comparator applied to all 4,225 corners of the " +
+      "region at once. The levels are the REAL bands (70 + 120k) rather than a uniform sweep, " +
+      "because crossesCliff only ever compares the field against those - the bits at the bands " +
+      "are the entire placement-relevant content of the channel. Per region the levels span the " +
+      "bands that region's field actually crosses. Distinct from " +
+      "oracle-vulcanus-elevation-levels, which collapses the rule the same way but covers only " +
+      "[0,0] at 20..200 step 10 and so reaches no band above 190, while the residual's wrong " +
+      "cells sit at 670/790/1030 in [1500,1500]. `effective` is the cliff_settings the SURFACE " +
+      "reported back, so an override that failed to apply cannot be mistaken for one that did " +
+      "nothing. Sampled on a create_surface() surface whose seed is FORCED to `seed`, like every " +
+      "other Vulcanus oracle fixture. TWO GATE ARMS per case (`gate`): richness4 opens the gate " +
+      "through cliffiness_basic itself, so comparing against it needs the port to reproduce qmn " +
+      "BELOW the clamp - the 8,409-of-12,675 corner population that no fixture validates, since " +
+      "shifting the richness term by +1 turns exactly the clamped corners into the ones that " +
+      "decide the gate. constant1 routes the cliffiness PROPERTY at the literal 1, so the gate is " +
+      "open by construction with no expression of ours in the way and a disagreement there is the " +
+      "cliff-elevation field and nothing else. The pair is the measurement. Regenerate: node " +
+      "--experimental-strip-types " +
+      "test/oracle/capture.ts vulcanus-cliff-bands",
+    seed,
+    cliffElevation0: 70,
+    cliffElevationInterval: 120,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-bands.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} cases)`);
+}
+
+if (want("vulcanus-cliff-bands")) await captureVulcanusCliffBands();
 if (want("cliff-entities")) await captureCliffEntities();
 if (want("vulcanus-cliff-ore-direction")) await captureVulcanusCliffOreDirection();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();

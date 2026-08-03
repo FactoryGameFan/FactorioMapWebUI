@@ -1823,3 +1823,102 @@ cells, and all of `[0,0]`'s. `test/cliffPhantomNeighbour.spec.ts`.
   grid-4 variant to be captured in the wrong channel. Its gate test scores the
   binary the consumer reads over 24,960 edges with hit counts and both outcomes
   asserted - 0 flips.
+
+## The grid-4 channel HAS a per-corner oracle now, and it moves the defect (2026-08-03, #84)
+
+The blocker named above - "the grid-4 cliff-elevation channel has no per-corner
+oracle at all" - is cleared. It needed no new mod: the cliff generator is itself
+the readout, driven entirely through `cliff_settings`.
+
+With `cliff_smoothing = 0` and `cliff_elevation_interval = 1e6`, `crossesCliff`'s
+band arithmetic (`boundary = e0 + interval * floor((max(a,b) - e0) / interval)`)
+collapses to a single threshold, and the rule becomes exactly
+
+    a cliff sits on an edge  <=>  min(a, b) < cliff_elevation_0 <= max(a, b)
+
+so one run is a **1-bit comparator on all 4,225 corners of a region at once**,
+and the entity's `cliff_orientation` says which side is the high one.
+
+**The levels are the real bands (`70 + 120k`), not a uniform sweep**, and that is
+the design rather than a shortcut. `crossesCliff` only ever compares the field
+against those, so the game's bits at the bands are the *entire*
+placement-relevant content of the channel: if they match, the placement is right
+whatever the field's exact values are. `oracle-vulcanus-cliff-bands` holds all
+three regions at every band their field crosses (3 / 10 / 2 levels), 30 cases
+over two gate arms. `test/vulcanusCliffBands.spec.ts`.
+
+### `richness = 4` was never opening the gate, and that matters retroactively
+
+Every collapsed arm since 2026-08-01 held the cliffiness gate open with
+`richness = 4`, on the reasoning that `0.5*log2(4) = 1` saturates
+`cliffiness_basic` at 1.5. It does not. The expression is
+`clamp(0.5*log2(richness) + qmn, 0, 1) + 0.5`, so at richness 4 the clamp is
+`clamp(1 + qmn, 0, 1)` - **still 0, and the gate still shut, wherever
+`qmn <= -1`.** Routing the `cliffiness` property at the literal `1` places
+strictly more cliffs at 13 of the 15 levels, by up to 135 at one.
+
+The second-order problem is worse than the first. Shifting the richness term by
++1 moves the clamp by exactly one, so the corners that *decide* the gate under
+that arm are the ones the DEFAULT field clamps flat at 0.5 - the
+**8,409-of-12,675** population that the corner-fields fixture cannot speak to
+(the vacuity note above). A richness-4 arm therefore cannot separate "the field
+is wrong" from "`qmn` below the clamp is wrong". Both arms are captured for
+exactly that reason; prefer the constant route when the gate is meant to be gone.
+
+### What the oracle says
+
+| region | bands | verdict |
+| --- | --- | --- |
+| `[0,0]` | 70, 190, 310 | **EXACT**, both arms - same cells, same orientations, nothing spare |
+| `[-1200,800]` | 70, 190 | **EXACT**, both arms (317/317 and 407/407) |
+| `[1500,1500]` | 70 .. 1150 | exact at 310 / 430 / 550; wrong at the HIGH bands |
+
+`[1500,1500]`, constant-1 arm, as wrong/surplus: L70 1/3, L190 2/2, L310 0/0,
+L430 0/0, L550 0/0, L670 8/5, L790 36/42, L910 22/41, L1030 2/2, L1150 2/2.
+
+**So two of the three regions reproduce the game's cliffs exactly with nothing
+between the field and the placement.** That is a much stronger statement than
+any cell-count score, and it is the first time the channel has been checked
+rather than argued about.
+
+### Every cheap explanation for `[1500,1500]` is eliminated, each with a control
+
+- **Not the smoothing** - it is 0 here.
+- **Not the cliffiness gate** - the constant-1 arm removes it by construction,
+  and the disagreement is *larger* there than under richness 4, not smaller.
+- **Not `fixImpossibleCells`** - **0 of the 73** disputed cells have a code our
+  repair changed, so all 73 are raw crossing-test disagreements. (The repair is
+  also doing real work in the right direction: turning it off makes agreement
+  worse, 44 wrong against 33 at L790.)
+- **Not the rejections** - a rejection is a post-filter that cannot alter a
+  neighbouring cell's orientation, and the disputed cells are ones BOTH sides
+  place.
+- **Not the query window** - the game's cells are centre-filtered, so the
+  bbox-vs-centre artefact of #101 is out; `missing` is 0-2 per case.
+- **Not a boundary tie** - the disputed edges sit a median 18.8 and a maximum
+  **69.0** elevation units from the level.
+
+### The paradox that replaces it, and the handoff
+
+At **72 of the 73** disputed edges the game's OWN TILE CHANNEL straddles the
+level, and agrees with our cliff-channel value at those corners (worst 18.9,
+almost all 0). So the game's cliff generator is reading a field that differs from
+the game's own `calculate_tile_properties` elevation at those corners, while the
+port has the two equal.
+
+**`multisample` cannot be that difference.** At these corners our grid-4 and
+grid-1 variants return the same value - the basalt-lakes term is lerped away at
+high elevation, and the bake-off scores the tile channel *identically* to the
+shipping field at L790 and L910. The two natural widenings of the min-filter
+(over the whole elevation, and over the cliff channel) are catastrophic: 791 and
+735 wrong against 73.
+
+So what separates the game's two channels at `[1500,1500]` is something the port
+does not model at all, it lives in the MOUNTAINS branch of `vulcanus_elev` (the
+only branch that reaches 670+), and it is region-local - `[0,0]` and
+`[-1200,800]` never rise past 402 and are exact. That is the next thing to find.
+
+The obvious next measurement is a **fine level sweep** (e.g. 700..900 step 5 at
+`[1500,1500]`), which brackets the game's cliff-channel value per corner to the
+step and turns "differs by at least 69" into the actual field. It is ~40 runs of
+the same capture, no new machinery.

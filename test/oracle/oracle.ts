@@ -756,11 +756,26 @@ export interface OracleOptions {
    * This is the sharpest tool the cliff work has: `cliff_settings` is where the
    * whole placement rule's constants live, so a term can be turned OFF in the
    * game rather than modelled. `cliff_elevation_interval` set huge leaves a
-   * single contour at `cliff_elevation_0` (no band arithmetic); `richness = 4`
-   * makes `0.5*log2(4) = 1`, so `cliffiness_basic` saturates at 1.5 and its
-   * `> 0.5` gate is always open; `cliff_smoothing = 0` removes the smoothing.
-   * All three at once reduce the rule to "an edge crosses iff elevation crosses
-   * `cliff_elevation_0`".
+   * single contour at `cliff_elevation_0` (no band arithmetic); `cliff_smoothing
+   * = 0` removes the smoothing. Together they reduce the rule to "an edge
+   * crosses iff elevation crosses `cliff_elevation_0`, wherever the gate is
+   * open".
+   *
+   * **`richness = 4` does NOT hold the gate open everywhere, and this comment
+   * used to say it did.** The reasoning was that `0.5*log2(4) = 1` saturates
+   * `cliffiness_basic` at 1.5 - but the expression is
+   * `clamp(0.5*log2(richness) + qmn, 0, 1) + 0.5`, so at richness 4 the clamp is
+   * `clamp(1 + qmn, 0, 1)`, which is still 0 - and the `> 0.5` gate still SHUT -
+   * wherever `qmn <= -1`. Measured 2026-08-03 (#84): routing the `cliffiness`
+   * property at the literal `1` instead places strictly more cliffs at 13 of 15
+   * levels, by up to 135 at one. Worse, richness 4 shifts the clamp by exactly
+   * +1, so the corners that decide the gate become the ones the DEFAULT field
+   * clamps flat - the 8,409-of-12,675 population no fixture validates.
+   *
+   * So prefer `probeProperty: "cliffiness", probeExpression: "1"` when the gate
+   * is meant to be out of the way: that is a construction, not a model.
+   * `richness = 4` stays useful as the arm that keeps `cliffiness_basic` in the
+   * loop, and `oracle-vulcanus-cliff-bands` captures both for that reason.
    *
    * Omit to take whatever the planet supplies. Either way the dump reports the
    * settings the surface read BACK ({@link CliffDump.cliffSettings}), so an
