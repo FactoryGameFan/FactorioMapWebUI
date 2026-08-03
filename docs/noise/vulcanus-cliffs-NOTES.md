@@ -2193,3 +2193,118 @@ Running BOTH sides with the resources off isolates it:
 So 13 wrong orientations and 10 surplus cells survive with the ore entirely out
 of the picture. Tuning the ore rule cannot reach them, and that non-ore half is
 the larger target now.
+
+## Two LEVERS: no entity suppresses a cliff, and the lava rule is 166/169 (2026-08-03, #84)
+
+#110 handed over "find a lever that isolates the non-ore suppressor the way
+`autoplace_controls` isolated the ore", with the suspect unnamed.
+`oracle-vulcanus-cliff-suppressor-levers` supplies two, through
+`map_gen_settings.autoplace_settings` - a knob `autoplace_controls` cannot
+reach, because a control only touches prototypes that name one, and the rocks,
+the chimneys and `crater-cliff` name none.
+`test/vulcanusCliffSuppressorLevers.spec.ts`.
+
+### The entity class is excluded POSITIVELY
+
+Switching the whole `entity` category off (`treat_missing_as_default = false`,
+empty settings) removes every autoplaced entity in the region - **409 rocks, 115
+chimneys, 45 rock explosions and all 8 `crater-cliff`s** - and the cliff set does
+not move by one cell: same 916 cells, same orientations, bit for bit.
+
+Rocks were previously refuted only statistically, against the port's OWN rock
+model (#109). This is the whole class, measured, with the lever's own proof in
+the same run three ways: the `autoplace_settings` read back off the surface, the
+569 entities that vanished, and the crater ring that went with them. The
+vacuity arm runs the other way too - `cliff-vulcanus` comes from `cliff_settings`
+rather than the category, so it must SURVIVE the lever, and it does.
+
+`crater-cliff` is worth a line of its own: it is a real Vulcanus feature the port
+does not model (8 entities in a radius-7 ring at `(1646.6, 1679.75)`, present
+only when calcite is off), and every spec's `name === "cliff-vulcanus"` filter
+had been discarding it - the same trap as #94. It is not the residual: the whole
+ring is 47 to 180 tiles from the nearest disputed cell.
+
+### Cliffs do not collide with each other
+
+The tempting candidate, since a cliff IS an entity with a collision box and
+`tryToAddCliff` adds them one at a time. Refuted by the game's own output rather
+than by a model: **293 pairs of the game's own cliffs have overlapping collision
+rectangles**. No model needed and no scoring - whatever that call tests, it is
+not this. (The port's own set reports 299, so the counter is not dead.)
+
+### The lava lever, and the rejection's first precision/recall
+
+Dropping `lava`/`lava-hot` from the TILE category leaves the elevation the
+crossings read untouched - tiles are downstream of it - and takes away the only
+thing the tile test can reject against. The cells that appear are the game's own
+answer to which cliffs lava suppresses.
+
+| | |
+| --- | --- |
+| lava tiles in the region, on / off | **6709** (2466 + 4243) / **0** |
+| game cells, lava on / off | 892 / 1058 |
+| cells lava suppresses | **169** |
+| cells that DISAPPEAR when lava is added back | 3 |
+| our rejection fires on | **171**, of which true **166** |
+| | **precision 0.9708, recall 0.9822** |
+
+Until now this rule was scored only by how much it improved the totals (#84 item
+1: "drops 198 cells, 185 false positives and 13 true"), which cannot tell a rule
+that is right from one that is merely profitable.
+
+**Its errors are the residual, not a scatter.** With 1,058 cells to be wrong
+about, all 8 land inside the 26 the port already disputes:
+
+- the **3** suppressions we miss - `1658,1598.5`, `1662,1630.5`, `1722,1630.5` -
+  are 3 of the 10 surplus cells;
+- the **5** false rejections include all **3** of the port's missing cells -
+  `1638,1598.5`, `1638,1602.5`, `1662,1634.5`.
+
+They point BOTH WAYS, which a box uniformly too small or too big cannot produce.
+The shape is wrong, not the size - and that is precisely the thing #88 says must
+not be tuned until it fits, so it is left measured and unfixed.
+
+### The sharpest statement of the residual there has been
+
+With neither ore nor lava in the world:
+
+| | matched | wrong | surplus | missing |
+| --- | --- | --- | --- | --- |
+| `[1500,1500]`, both sides, no ore, no lava | **1049** | 9 | 12 | **0** |
+
+**Recall 1.0000.** The crossing field plus the repair produce a strict SUPERSET
+of the game's cells, so everything left is over-placement and the two rejections
+are the only things that can remove one. That reframes the target: the question
+is no longer "what does the port miss" but "what else does the game refuse".
+
+The 12 surplus cells sit in four tight clusters, each the same shape - the port
+runs a cliff one or two cells past where the game's run ends in an entrance
+orientation - and the 9 wrong orientations are the far side of those same edges
+(#103), not a separate defect.
+
+### What led here, and what it is worth as a lead
+
+The lava lever was not a guess. Measuring each cell's gap from its collision box
+to the nearest tile the resolver calls lava, against the matched cells as
+control:
+
+| population | n | lava within 2 tiles of the box |
+| --- | --- | --- |
+| matched (control) | 876 | 9 = **1.0%** |
+| surplus | 10 | 4 = **40%** |
+| wrong | 13 | 5 = **38%** |
+
+A 40x enrichment. Two cautions are kept with it rather than dropped: the
+effective sample size is the number of CLUSTERS, four, not 23 cells - and one
+cluster, `[1742..1746, 1530..1542]`, has no lava within 10 tiles at all. The
+lever confirms that reservation: that cluster survives with lava gone from the
+world entirely.
+
+### Where that leaves it
+
+Still open, and the exclusion list is still open on principle (#106 -> #107).
+What is now excluded with a positive measurement rather than by elimination: the
+whole entity class, cliff-on-cliff collision, and - for 166 of 169 cells - lava.
+Of the four surviving clusters, none is ore, none is lava, and none is an entity.
+The next question is what else the game refuses, and the useful new constraint is
+that whatever it is only ever REMOVES: the port under-places nothing.

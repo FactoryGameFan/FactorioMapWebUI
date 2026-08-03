@@ -471,6 +471,10 @@ export function buildCliffControlLua(
     >;
     alsoResources?: boolean;
     protoNames?: readonly string[];
+    disableAutoplaceCategories?: readonly string[];
+    excludeFromAutoplaceCategory?: Readonly<Record<string, readonly string[]>>;
+    countTileNames?: readonly string[];
+    alsoEntities?: boolean;
   } = {},
 ): string {
   const dumpFile = opts.dumpFile ?? CLIFF_DUMP_FILE;
@@ -507,22 +511,63 @@ export function buildCliffControlLua(
         `{frequency = ${String(v.frequency)}, size = ${String(v.size)}, richness = ${String(v.richness)}}`,
     )
     .join("");
+  // The LEVER for "is any placed ENTITY what suppresses these cliffs" (#84).
+  // `autoplace_settings[category] = {treat_missing_as_default = false, settings
+  // = {}}` switches a whole autoplace category off wholesale, which
+  // `autoplace_controls` cannot do: a control only reaches the prototypes that
+  // name one, so rocks, chimneys and crater-cliffs have no control to turn.
+  //
+  // It rides the same `mgs` round-trip as everything else, and the dump reports
+  // `autoplace_settings` read BACK off the surface - which is the arm that
+  // separates "no entity matters" from "the override never applied".
+  const autoplaceSettingsLua = (opts.disableAutoplaceCategories ?? [])
+    .map(
+      (c) =>
+        `\n  mgs.autoplace_settings[${JSON.stringify(c)}] = ` +
+        `{treat_missing_as_default = false, settings = {}}`,
+    )
+    .join("");
+  // The same lever aimed at ONE prototype instead of a whole category: keep the
+  // category's own settings, minus the named entries. Built by reading the
+  // surface's defaults rather than by listing 19 Vulcanus tile names here, so it
+  // cannot drift from the game's own list.
+  //
+  // This is what makes lava a LEVER rather than a model: with `lava`/`lava-hot`
+  // out of the tile autoplace, the cliff generator's tile-collision rejection has
+  // nothing to reject against, while the elevation the crossings read is
+  // untouched (tiles are downstream of it). The cells that appear are then the
+  // game's own answer to "which cliffs does lava suppress".
+  const excludeLua = Object.entries(opts.excludeFromAutoplaceCategory ?? {})
+    .map(
+      ([cat, names]) => `
+  do
+    local kept = {}
+    for n, v in pairs((mgs.autoplace_settings[${JSON.stringify(cat)}] or {}).settings or {}) do
+      kept[n] = v
+    end
+${names.map((n) => `    kept[${JSON.stringify(n)}] = nil`).join("\n")}
+    mgs.autoplace_settings[${JSON.stringify(cat)}] =
+      {treat_missing_as_default = false, settings = kept}
+  end`,
+    )
+    .join("");
   // The Nauvis path needs the same round-trip when settings are overridden. It
   // is safe on `surfaces[1]` because the sampled regions are far from spawn and
   // therefore ungenerated at `on_init` - a setting cannot retro-edit a chunk
   // that already exists, so a near-spawn region would silently ignore this.
+  const overridesLua = `${settingsLua}${routesLua}${autoplaceLua}${autoplaceSettingsLua}${excludeLua}`;
   const nauvisLua =
-    settingsLua === "" && routesLua === "" && autoplaceLua === ""
+    overridesLua === ""
       ? `  local surface = game.surfaces[1]`
       : `  local surface = game.surfaces[1]
-  local mgs = surface.map_gen_settings${settingsLua}${routesLua}${autoplaceLua}
+  local mgs = surface.map_gen_settings${overridesLua}
   surface.map_gen_settings = mgs`;
   const surfaceLua =
     opts.planet === undefined
       ? nauvisLua
       : `  local surface = game.planets["${opts.planet}"].create_surface()
   local mgs = surface.map_gen_settings
-  mgs.seed = ${String(opts.seed ?? 123456)}${settingsLua}${routesLua}${autoplaceLua}
+  mgs.seed = ${String(opts.seed ?? 123456)}${overridesLua}
   surface.map_gen_settings = mgs`;
   // `resources`, `protos` and `autoplace` stay nil unless asked for, so
   // `table_to_json` simply omits them and every existing fixture's shape is
@@ -561,6 +606,42 @@ export function buildCliffControlLua(
   local autoplace = {}
   for k, v in pairs(surface.map_gen_settings.autoplace_controls) do
     autoplace[k] = {frequency = v.frequency, size = v.size, richness = v.richness}
+  end`;
+  // Every entity in the region, whatever its type - the positive half of the
+  // lever above. "No entity suppresses these cliffs" is worth much more when the
+  // same run says WHICH entities were standing there to not suppress them.
+  const entitiesLua =
+    opts.alsoEntities !== true
+      ? "  local entities = nil"
+      : `  local entities = {}
+  for i, e in ipairs(surface.find_entities_filtered{ area = {{x0, y0}, {x1, y1}} }) do
+    entities[i] = {x = e.position.x, y = e.position.y, name = e.name, type = e.type}
+  end`;
+  // Read BACK, per category: the proof an autoplace_settings lever landed. An
+  // empty entity list, or an unmoved cliff, means nothing either way unless this
+  // says the category was actually changed. Emitted whenever a lever is pulled
+  // as well as on demand, so a lever can never be reported without it.
+  const usesLever =
+    (opts.disableAutoplaceCategories ?? []).length > 0 ||
+    Object.keys(opts.excludeFromAutoplaceCategory ?? {}).length > 0;
+  const apSettingsLua =
+    opts.alsoEntities !== true && !usesLever
+      ? "  local apSettings = nil"
+      : `  local apSettings = {}
+  for k, v in pairs(surface.map_gen_settings.autoplace_settings or {}) do
+    local n = 0
+    for _ in pairs(v.settings or {}) do n = n + 1 end
+    apSettings[k] = {treat_missing_as_default = v.treat_missing_as_default, settingsCount = n}
+  end`;
+  // Tiles counted in the SAME run that placed the cliffs. This is the
+  // non-vacuity arm for a tile lever: "lava suppresses no cliffs" and "the lava
+  // override never applied" are otherwise the same observation.
+  const tileCountLua =
+    (opts.countTileNames ?? []).length === 0
+      ? "  local tileCounts = nil"
+      : `  local tileCounts = {}
+  for _, n in ipairs({${(opts.countTileNames ?? []).map((n) => JSON.stringify(n)).join(", ")}}) do
+    tileCounts[n] = surface.count_tiles_filtered{ name = n, area = {{x0, y0}, {x1, y1}} }
   end`;
   return `script.on_init(function()
 ${surfaceLua}
@@ -601,9 +682,13 @@ ${surfaceLua}
     richness = cs.richness,
   }
 ${resourceLua}
+${entitiesLua}
+${apSettingsLua}
+${tileCountLua}
   helpers.write_file("${dumpFile}", helpers.table_to_json({
     cliffs = cliffs, cliffSettings = settings,
     resources = resources, protos = protos, autoplaceControls = autoplace,
+    entities = entities, autoplaceSettings = apSettings, tileCounts = tileCounts,
   }), false)
   error("DUMPED-OK")
 end)
@@ -639,6 +724,19 @@ export interface CliffDump {
     string,
     { frequency: number; size: number; richness: number }
   >;
+  /** Present only with `alsoEntities`. EVERY entity in the region, any type. */
+  readonly entities?: { x: number; y: number; name: string; type: string }[];
+  /**
+   * Present only with `alsoEntities`. `autoplace_settings` read back off the
+   * surface, per category - the proof that a `disableAutoplaceCategories` lever
+   * applied, rather than an empty entity list that could mean anything.
+   */
+  readonly autoplaceSettings?: Record<
+    string,
+    { treat_missing_as_default: boolean; settingsCount: number }
+  >;
+  /** Present only with `countTileNames`. Tile counts in the region, per name. */
+  readonly tileCounts?: Record<string, number>;
 }
 
 /** Parse the cliff-entity mod's dump into `{x, y}` cliff positions. */
@@ -664,6 +762,12 @@ export function parseCliffDumpFull(jsonText: string): CliffDump {
     resources?: unknown;
     protos?: Record<string, DumpedProto>;
     autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+    entities?: unknown;
+    autoplaceSettings?: Record<
+      string,
+      { treat_missing_as_default: boolean; settingsCount: number }
+    >;
+    tileCounts?: Record<string, number>;
   };
   return {
     cliffs: Array.isArray(parsed.cliffs) ? (parsed.cliffs as Position[]) : [],
@@ -680,6 +784,16 @@ export function parseCliffDumpFull(jsonText: string): CliffDump {
           : [],
     protos: parsed.protos,
     autoplaceControls: parsed.autoplaceControls,
+    // Same `{}`-for-empty hazard as `resources`, and it bites harder here: the
+    // whole point of the lever arm is that its entity list comes back EMPTY.
+    entities:
+      parsed.entities === undefined
+        ? undefined
+        : Array.isArray(parsed.entities)
+          ? (parsed.entities as { x: number; y: number; name: string; type: string }[])
+          : [],
+    autoplaceSettings: parsed.autoplaceSettings,
+    tileCounts: parsed.tileCounts,
   };
 }
 
@@ -830,6 +944,39 @@ export interface OracleOptions {
   alsoResources?: boolean;
   /** Entity prototypes whose collision box and mask layers to dump. Needs {@link alsoResources}. */
   protoNames?: readonly string[];
+  /**
+   * `map_gen_settings.autoplace_settings` categories (`"entity"`, `"tile"`,
+   * `"decorative"`) to switch off wholesale - `treat_missing_as_default = false`
+   * with no settings, so nothing in the category is placed.
+   *
+   * This is the lever `autoplaceControls` cannot pull. A control only reaches
+   * prototypes that name one, so the ores have one and the rocks, chimneys and
+   * crater-cliffs do not; asking "does ANY placed entity suppress these cliffs"
+   * needs the category. Pair it with {@link alsoEntities}, whose read-back of
+   * `autoplace_settings` is what proves the override applied.
+   */
+  disableAutoplaceCategories?: readonly string[];
+  /**
+   * Per autoplace category, prototype names to REMOVE from the category's own
+   * settings (the rest are kept, `treat_missing_as_default` goes false). Built
+   * in Lua from the surface's own defaults, so it never has to restate the
+   * game's list.
+   *
+   * This is what turns lava into a lever: with `lava`/`lava-hot` out of the tile
+   * autoplace, the cliff generator's tile-collision rejection has nothing to
+   * reject against, while the elevation its crossings read is untouched. Pair it
+   * with {@link countTileNames} - "lava suppresses nothing" and "the override
+   * never applied" are otherwise the same observation.
+   */
+  excludeFromAutoplaceCategory?: Readonly<Record<string, readonly string[]>>;
+  /** Count tiles of these names in the region, in the same run. */
+  countTileNames?: readonly string[];
+  /**
+   * Dump every entity in the region (any type, with its `type`), not just the
+   * `entityType` ones. The positive half of the lever above: it says what was
+   * standing where, rather than only that the cliffs did or did not move.
+   */
+  alsoEntities?: boolean;
 }
 
 /**
@@ -1020,6 +1167,10 @@ export async function sampleCliffEntitiesFull(
       autoplaceControls: opts.autoplaceControls,
       alsoResources: opts.alsoResources,
       protoNames: opts.protoNames,
+      disableAutoplaceCategories: opts.disableAutoplaceCategories,
+      excludeFromAutoplaceCategory: opts.excludeFromAutoplaceCategory,
+      countTileNames: opts.countTileNames,
+      alsoEntities: opts.alsoEntities,
       propertyRoutes:
         opts.probeExpression === undefined
           ? undefined
