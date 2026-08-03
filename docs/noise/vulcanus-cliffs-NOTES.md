@@ -16,11 +16,16 @@
 > destructions**. Quote **31** for the rule and **27** for the rendered output;
 > same defect, two stages.
 >
-> Two things narrow the next step: **all 6 false rejections are the LAVA box and
-> none is the ore rule**, and the raw set is a strict superset of the game's in
-> every region. The open thread is that `Surface::wouldCollide` reads the REAL
-> surface's tiles while the port reads our own tile model, and that has never
-> been compared inside these boxes.
+> Two things narrow it: **all 6 false rejections are the LAVA box and none is the
+> ore rule**, and the raw set is a strict superset of the game's in every region.
+>
+> **And the 31 are TWO defects - read the LAST section before acting on them.**
+> The tile resolver is exonerated (70/70 box tiles against a committed dense
+> capture, zero disagreements, no new capture needed), and the 25 missed
+> destructions split into 9 cells within 2 tiles of our lava - a 10.5x
+> enrichment over the 3.4% base rate - and **10 with no lava within twelve
+> tiles**, which no collision box can reach. Fitting one box to all 31 would be
+> fitting a rule to two causes at once.
 >
 > ## UPDATE 5, 2026-08-03: the WRONG ORIENTATIONS are not a defect
 >
@@ -2621,3 +2626,105 @@ disputed cells, plus a control set of cells where the predicate agrees, so that
 "the tiles match" cannot mean "the comparison is broken". If the tiles disagree,
 the defect is the tile resolver and not the box; if they agree, the tile half is
 exonerated and the box's shape is next.
+
+## The 31 are TWO defects, and the tile resolver is not either of them (2026-08-03, #84)
+
+The section above reduced the residual to 31 destruction disagreements and handed
+over one question: `Surface::wouldCollide` runs `constCollideWithTile` against the
+REAL surface while the port resolves tiles from our own Vulcanus model, so a
+disagreement between the two inside a cliff's box would produce exactly this
+two-sided error set. It read as needing a new capture. It needed none.
+
+`test/cliffCollisionResidualShape.spec.ts`.
+
+### The tile half is exonerated for all 6 false rejections
+
+`oracle-vulcanus-lava-boundary` is a committed 994-position dense capture of
+`surface.get_tile(x, y).name` from a real 2.1.12 Vulcanus surface. It was taken
+for a different question - the 35 tiles our mask called lava inside a real
+cliff's box, back when the collision box was the defect - and it covers **every
+tile of all six** of today's false rejections' boxes.
+
+**70 of 70 tiles covered, zero disagreements, both directions.** The game read
+the same lava out of those boxes that we do and placed the cliff anyway. So the
+six are not a resolver error; the box or the rule is holding them.
+
+The vacuity arms are in the spec and they matter, because "0 mismatches" is also
+what a comparison that never ran would print: every one of the six boxes does
+contain lava by our model, and the fixture carries both lava and non-lava names.
+
+A second candidate died as cheaply, in `factorio-data` @ 2.1.12 rather than in a
+capture: `space-age/prototypes/tile/tiles-vulcanus.lua` gives 17 tiles
+`tile_collision_masks.ground()` and exactly **2** - `lava` and `lava-hot` -
+`tile_collision_masks.lava()`, which is the mask carrying `water_tile`. So
+`VULCANUS_CLIFF_BLOCKING_TILES` is complete and no unmodelled tile type is
+blocking anything.
+
+### The 25 in the other direction do NOT share a cause
+
+Chebyshev distance from each cell's collision box to the nearest tile our own
+model calls lava, scored against the 1525 cells the port gets right so there is a
+base rate:
+
+| distance to our lava | missed (25) | matched (1525) |
+| --- | --- | --- |
+| within 2 tiles | **9 (36%)** | 52 (**3.4%**) |
+| 4 to 11 tiles | 6 | 436 |
+| none within 12 | **10** | 1037 |
+
+The near group is enriched **10.5x**, which is the signature of a lava boundary or
+a box that is a tile short, and it is the one place a small change to the box
+could be right.
+
+**Ten of the 25 have no lava within twelve tiles.** No adjustment to a lava
+collision box can reach them; neither can the ore rule, since all 25 are
+`ore = false`; and neither can any entity, since #111's `autoplace_settings`
+lever moved zero cliffs. They also cluster where the near group does not -
+`1746,{1530.5, 1534.5, 1538.5}` is a vertical run of three, `1542/1546,
+{1550.5..1558.5}` a knot, `1622/1626,1614.5` a pair.
+
+Note "far from lava" is the COMMON case - 1037 of the 1525 correct cells are also
+99 - so the far group carries no signal by itself. The near group is the unusual
+one. What the split establishes is only that one mechanism cannot produce both,
+which is enough to stop anyone tuning a box against all 25 at once.
+
+### So the handover framing was too narrow
+
+"Which cells does `Surface::wouldCollide` reject that ours does not" is the right
+question for at most 15 of the 25 and for none of the 6. Fitting one collision
+box to all 31 would be fitting a rule to two causes at once, which is the failure
+#88 exists to record.
+
+Two things to take next, in this order:
+
+1. **The far ten.** They are clustered, they are nowhere near lava, and every
+   named suppressor is ruled out for them. That is a mechanism nobody has
+   identified, not a mistuned parameter, and it is the bigger half.
+2. **The near nine**, where a one-tile question is legitimate - but note the six
+   false rejections are also near lava and the tile data says our lava is right
+   there, so a uniform dilation is already refuted and it is the box's SHAPE
+   again.
+
+### Refuted on the way: cliff-versus-cliff collision
+
+It is the first idea the far ten suggest, and it is a good one on its face.
+`applyCliffs` adds each cliff to the surface immediately after testing it, so
+cliff N+1's `Surface::wouldCollide` sees cliffs 1..N already there - and #111's
+`autoplace_settings` lever, which closed the entity half of `wouldCollide`,
+**cannot remove cliffs**, so this is the one case that lever never covered. The
+far ten cluster, which is what a neighbour-versus-neighbour rule produces.
+
+**It dies on the base rate.** 9 of the far 10 overlap another cliff's `rotbb`
+box - and so do **1405 of the 1531 cliffs the game KEEPS, 91.8%**. The far group
+is not enriched, it is marginally below the base rate, and a rule destroying on
+box overlap would have destroyed nearly every cliff on the map.
+
+An independent a-priori reason agrees, from `base/prototypes/entity/entity-util.lua`
+@ 2.1.12: the cliff prototype's generic `collision_box` is
+`{{-0.99, -0.49}, {0.99, 0.49}}` - the comment there calls it "intentionally
+small" - and cliff cells sit on a 4-tile grid, so two cliffs' generic boxes
+cannot overlap at all. Only the per-orientation `rotbb` rectangle overlaps, and
+that is the one the arm scores.
+
+Do not re-derive this. If cliff-versus-cliff is ever revisited it needs a
+different box or a mask argument, not the overlap test.
