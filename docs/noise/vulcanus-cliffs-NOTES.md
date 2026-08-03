@@ -45,6 +45,22 @@
 >   the three regions, measured as the boolean `crossesCliff` reads rather than as
 >   a value. That closes the clamp-vacuity worry properly.
 >
+> ## UPDATE 4, 2026-08-02: RECALL IS 0.9961 - every recall figure below is wrong
+>
+> **Read `## The recall gap was a QUERY-WINDOW ARTIFACT` (last section) before
+> quoting any accuracy number in this file.** The port was scored against game
+> entity lists that include cliffs centred OUTSIDE the captured box, because
+> `find_entities_filtered` selects by bounding box and `placedCells` emits by
+> centre. That is 38 cells, the whole apparent recall gap, and the port places
+> **38 of 38** once asked about their centres.
+>
+> Corrected: **recall 0.9961, precision 0.9839**, 1525 matched of 1531. The match
+> count was never wrong - only the denominator. All 6 remaining missing cells are
+> ones our own lava rejection removed, so **precision (25 surplus) is the only
+> real defect left**. Item 3 (rocks/craters) is then CLOSED on the mechanism's own
+> geometry: it can only act across chunk borders, and the surplus sits at borders
+> at 44.0% against the matched cells' 44.1% - the base rate exactly.
+>
 > ## UPDATE 3, 2026-08-02: the ore rule is PORTED and SHIPS
 >
 > The last section, **`## The rule is PORTED, and driving it from our own ore
@@ -1623,3 +1639,79 @@ an ore, 4x3 for a geyser, against the lava rejection's ~30), and it reuses the
 composite's `VulcanusStack.resources` rather than building a second DAG. The
 derived window is guarded by a brute-force scan a tile wider on every side, not
 trusted.
+
+## The recall gap was a QUERY-WINDOW ARTIFACT - recall is 0.9961, not 0.972 (#84, 2026-08-02)
+
+**The port has been scored against a game set it was never asked to reproduce.**
+`find_entities_filtered` returns every entity whose BOUNDING BOX touches the
+query area; `placedCells` emits every cell whose CENTRE lies inside it. Those are
+different inclusion rules, so the fixtures carry cliffs centred just outside the
+box, and every one has been counted as a miss.
+
+| region | game rows | centred inside | centred OUTSIDE |
+| --- | --- | --- | --- |
+| `[0,0]` | 283 | 283 | **0** |
+| `[1500,1500]` | 885 | 861 | **24** |
+| `[-1200,800]` | 401 | 387 | **14** |
+
+That is 38 cells - the entire apparent recall gap - and **the port places 38 of
+38 of them** once the query box is widened to include their centres. Every one is
+an agreement that was being scored as a failure. `test/cliffErrorBudget.spec.ts`
+pins both arms; the widening arm is the load-bearing one, since "we never looked
+there" alone is equally consistent with the port being wrong.
+
+### The corrected budget, both sides scored alike
+
+| region | game | port | matched | surplus | missing |
+| --- | --- | --- | --- | --- | --- |
+| `[0,0]` | 283 | 283 | 281 | 2 | 2 |
+| `[1500,1500]` | 861 | 880 | 858 | 22 | 3 |
+| `[-1200,800]` | 387 | 387 | 386 | 1 | 1 |
+| **total** | **1531** | **1550** | **1525** | **25** | **6** |
+
+**Recall 0.9961, precision 0.9839.** The 0.972 recall quoted in this file's
+banner and throughout #84 divided the same 1525 matches by 1569 instead of 1531.
+**Correct every recall figure you find here before acting on it** - the match
+count was never wrong, only the denominator.
+
+**All 6 missing cells are ones our own lava rejection removed.** There is no cell
+left that the port simply fails to generate, in any region. So precision is the
+remaining defect, 25 against 6.
+
+### Consequence: item 3 stays OPEN, and the crater arm is worth zero
+
+An earlier draft of this section closed item 3 (the entity half of
+`Surface::wouldCollide`) by size, arguing a rejection can only remove cells and
+so could not help a 44-cell recall gap. **That argument died with the gap.** With
+recall at 0.9961 the dominant defect is the 25 surplus cells, which is exactly
+what a rejection removes - so the entity half is the leading candidate, not a
+closed one.
+
+The crater arm is still settled exactly, and is worth **nothing**: all 8 craters
+sit in `[-1200,800]` and not one touches a cell the port over-places.
+
+### And then the rock arm failed too - on the mechanism's own geometry
+
+**No rock capture is needed to kill it.** `computeInternal` runs
+`generateCliffs` before `generateEntities`, and `apply` runs `applyCliffs`
+(`+124`) before `applyEntities` (`+164`), so within a chunk no rock exists when
+the cliff is applied. A rock can only ever block a cliff from an
+ALREADY-GENERATED NEIGHBOUR - which confines the entire mechanism to cells near a
+32-tile chunk border.
+
+| | n | near chunk border |
+| --- | --- | --- |
+| surplus | 25 | 11 = **44.0%** |
+| matched | 1525 | 673 = **44.1%** |
+
+**The base rate to three significant figures.** The surplus has no chunk-border
+character at all, so the one geometry this mechanism is confined to is not where
+the errors are. The direct overlap test agrees and is the weaker arm (3 of 25
+against a 6.6% base rate, ~1.7 expected - nothing, and our rock placement is a
+salt-dependent roll whose individual positions are unreliable exactly as the
+geyser's were in #100).
+
+**So item 3 explains approximately none of the 25 surplus cells, and is closed -
+this time on the mechanism's geometry rather than on the ceiling argument that
+died with the recall gap.** What remains unexplained: 25 surplus, 6 missing (all
+lava-rejection over-rejections), and the 33 wrong orientations.
