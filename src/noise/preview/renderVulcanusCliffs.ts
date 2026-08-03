@@ -109,6 +109,13 @@ export function renderVulcanusCliffs(base: ImageData, opts: RenderVulcanusCliffs
     smoothing: VULCANUS_CLIFF_SMOOTHING,
     tileCollides: (x, y) => VULCANUS_CLIFF_BLOCKING_TILES.has(tileAt(x, y).name),
     cellRejects: makeVulcanusOreRejection(resources, ctx.vulcanusResourceControls),
+    // Both rejections act on the CROSSING, not on the emitted entity (#84).
+    // A rejected cell's four edges go with it, so a surviving neighbour loses
+    // the shared one and changes orientation. See
+    // `test/vulcanusCliffRejectionStage.spec.ts`: the post-filter reading
+    // predicts 1,662 cases of a survivor keeping such an edge and the game
+    // shows 0. Worth 33 -> 21 wrong orientations at no cost in recall.
+    rejectAtCrossingStage: true,
   });
 
   const box = opts.cellQueryBox ?? {

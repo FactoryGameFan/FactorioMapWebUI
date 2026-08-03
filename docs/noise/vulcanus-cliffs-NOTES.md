@@ -1985,3 +1985,81 @@ neighbourhood of a rejected cell. Note this is a HYPOTHESIS from one chunk plus
 the coverage statistics; it has not been tested, and the obvious control is
 whether disputed edges are adjacent to rejected cells at a rate above the base
 rate of all crossing edges.
+
+## The rejections act on the CROSSING, not on the entity (2026-08-03, #84)
+
+#107 handed over a hypothesis - "disputed edges sit adjacent to rejected cells
+above the base rate of all crossing edges" - and named the control. Run, it is
+not an enrichment over a base rate. It is a dichotomy, and it refutes the stage
+at which the port applies both Vulcanus cliff rejections.
+
+`test/vulcanusCliffRejectionStage.spec.ts`, over the fine sweep's 41 levels at
+`[1500,1500]`:
+
+| | |
+| --- | --- |
+| edges the port has and the game does not | **1235** |
+| ... sitting against a cell the game did not emit | **1233** |
+| edges both sides agree on (in region) | **36103** |
+| ... sitting against a cell the game did not emit | **0** |
+
+Zero, not "fewer". A cell's edge register is the same array slot as its
+neighbour's (#103), so this says the game's absences take their crossings with
+them, every time.
+
+### The refutation is structural, not a score
+
+The post-filter reading makes a falsifiable prediction, and it does not need any
+model to score well. When cell `N` is rejected, a pure post-filter leaves the
+shared crossing in `C`'s code, so `C` is emitted still carrying it. Counted with
+the port's own rejection predicate, that should happen **1,662 times** across the
+41 levels. The game does it **0 times**.
+
+The vacuity arm is the same counter reading the port's own post-filter output
+instead of the game's: it fires on all 1,662. So the zero is a property of the
+game's cliffs, not a dead branch. (A first attempt at a vacuity arm compared
+against the *next* level's game output and also returned 0 - not a broken
+control but a stronger result, since the invariant holds independently at all 41
+levels.)
+
+Note what this does and does not settle. `tryToAddCliff` really does ignore
+`wouldCollide`'s return value - the disassembly reading behind #71/#73 was not
+misread. What is refuted is that the OBSERVABLE output behaves like a
+post-filter. Whether `wouldCollide` removes the crossings or the game never
+computed them there is not decidable from entity dumps, and the port now models
+the first because it is the one that can be written.
+
+### The fix, and what it is worth
+
+`rejectAtCrossingStage` in `cliffPlacement.ts` zeroes a rejected cell's four edge
+registers after the repair sweep, before any code is read. Scored two ways:
+
+| | matched | wrong | surplus | missing |
+| --- | --- | --- | --- | --- |
+| collapsed rule, post-filter | 18130 | 1235 | 1366 | 85 |
+| collapsed rule, crossing stage | **18654** | **693** | **1200** | 103 |
+
+and at the SHIPPING settings (smoothing 1, the real 120-tile interval,
+`cliffiness_basic` rather than a constant) across the three entity regions:
+wrong orientations **33 -> 21**, precision 0.9839 -> 0.9858, and the matched set
+**identical** at 1525 - this removes wrong edges and costs no recall at all.
+
+It is not free: 18 more of the game's cells go missing under the collapsed rule,
+because an edge taken off a survivor can leave its code non-placing. Reported
+rather than buried.
+
+Nauvis is unaffected in both directions - it already matched 1.0000 recall and
+precision, and enabling the flag there reproduces the same 282 and 52 cells with
+0 wrong orientations. So this is not a regression risk on the other planet, but
+neither is it corroboration from it: Nauvis has no cells that could move.
+
+### What is left
+
+The predicate, not the stage. 693 wrong orientations and 1200 surplus cells
+survive under the collapsed rule, and the remaining absences still follow the
+same "the game emitted nothing there" shape - so the lava-box + ore predicate is
+catching most of what the game suppresses but not all of it. Chasing that is a
+question about WHICH cells the game refuses, and the sweep cannot answer it
+where the game emits nothing at any level: those corners get no bracket, so the
+field there is still unmeasured. A wider sweep (well outside `[700,900]`) is the
+measurement that would close that gap.

@@ -100,10 +100,13 @@ export interface CliffBands {
    * orientation, takes that orientation's `collision_bounding_box`, and calls
    * `wouldCollide` (`0x101625468`) against the tile mask grid; on a hit the
    * cliff is simply **not added**. `generateCliffs` ignores the return value
-   * entirely - there is no retry, no alternative orientation, and no effect on
-   * the neighbouring cells - so this is a pure post-filter on the emit loop,
-   * which is why it can run per-cell in any order and leaves tiling
-   * byte-identical.
+   * entirely - there is no retry and no alternative orientation.
+   *
+   * That reading of the code is unchanged, but the conclusion drawn from it -
+   * "and therefore no effect on the neighbouring cells" - **is refuted by the
+   * game's output**, so see `rejectAtCrossingStage` below before assuming this
+   * is a post-filter. The observable behaviour is that a rejected cell's
+   * crossings go with it and its neighbour's orientation changes.
    *
    * Which tiles collide is planet-specific but the rule is not: a tile collides
    * when its `CollisionMask` shares a layer with the cliff's. The cliff mask
@@ -132,10 +135,26 @@ export interface CliffBands {
    * directly, so a filter applied further out would score a different thing than
    * it renders.
    *
-   * Like `tileCollides` this is a pure post-filter on the emit loop - it cannot
-   * affect a neighbouring cell, so it leaves worker tiling byte-identical.
+   * Like `tileCollides`, whether this acts as a post-filter or on the crossing
+   * itself is `rejectAtCrossingStage`'s decision, and the measurement says the
+   * crossing. Either way it stays chunk-local - the zeroing runs over the whole
+   * chunk, including cells outside the query box - so worker tiling remains
+   * byte-identical.
    */
   readonly cellRejects?: (code: number, x: number, y: number) => boolean;
+  /**
+   * EXPERIMENTAL (#84): apply `tileCollides` / `cellRejects` by zeroing the
+   * rejected cell's four edge registers after the repair sweep, instead of
+   * filtering the emitted cell. A neighbour sharing one of those edges therefore
+   * loses it too, and its orientation changes.
+   *
+   * The post-filter reading came from `tryToAddCliff` ignoring `wouldCollide`'s
+   * return value, and it is REFUTED as a description of the observable output:
+   * see `test/vulcanusCliffRejectionStage.spec.ts`. Under a post-filter, a
+   * surviving cell keeps an edge whose neighbour was rejected; the game shows
+   * that 0 times where the model predicts 1,662.
+   */
+  readonly rejectAtCrossingStage?: boolean;
 }
 
 /** Cells per chunk axis: a 32-tile chunk over the 4-tile placement grid. */
@@ -487,6 +506,35 @@ export function makeCliffPlacementFromFields(
 
             fixImpossibleCellsSweep(v, hEdges, n, n);
 
+            if (bands.rejectAtCrossingStage === true) {
+              // Collect first, then clear: a cell's rejection is decided from
+              // the code the repair left, not from a code a previous cell's
+              // clearing has already eaten into.
+              const kill: number[] = [];
+              for (let cy = 0; cy < n; cy++) {
+                for (let cx = 0; cx < n; cx++) {
+                  const code = cellCode(
+                    v[cy * (n + 1) + cx],
+                    v[cy * (n + 1) + cx + 1],
+                    hEdges[cy * n + cx],
+                    hEdges[(cy + 1) * n + cx],
+                  );
+                  if (!isCliffPlaced(code)) continue;
+                  const x = (baseX + cx) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_X;
+                  const y = (baseY + cy) * CLIFF_GRID_SIZE + CLIFF_CELL_CENTER_Y;
+                  if (rejected(code, x, y) || cellRejects?.(code, x, y) === true) kill.push(cx, cy);
+                }
+              }
+              for (let i = 0; i < kill.length; i += 2) {
+                const cx = kill[i];
+                const cy = kill[i + 1];
+                v[cy * (n + 1) + cx] = 0;
+                v[cy * (n + 1) + cx + 1] = 0;
+                hEdges[cy * n + cx] = 0;
+                hEdges[(cy + 1) * n + cx] = 0;
+              }
+            }
+
             for (let cy = 0; cy < n; cy++) {
               for (let cx = 0; cx < n; cx++) {
                 const code = cellCode(
@@ -502,8 +550,10 @@ export function makeCliffPlacementFromFields(
                 // expensive half (it resolves tiles), and a chunk always
                 // overhangs the query box.
                 if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
-                if (rejected(code, x, y)) continue;
-                if (cellRejects?.(code, x, y) === true) continue;
+                if (bands.rejectAtCrossingStage !== true) {
+                  if (rejected(code, x, y)) continue;
+                  if (cellRejects?.(code, x, y) === true) continue;
+                }
                 result.push({ x, y, code });
               }
             }
