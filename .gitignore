@@ -21,6 +21,14 @@ vite.config.ts.timestamp-*
 coverage/
 test-results/
 
+# Vitest blob reports. Nothing here uses `--reporter=blob` - the sharded CI path
+# deliberately does not, because `vp test --merge-reports` does not merge, it
+# re-runs (measured: a 57-file shard's blob came back reporting 114 files). This
+# stays ignored anyway because running that reporter by hand drops a ~500 KB
+# JSON in the repo root, which `vp check`'s format step would then trip over.
+.vitest-reports/
+.vitest-attachments/
+
 # Lighthouse CLI report output (--output html|json|csv) - a stray report left
 # in the repo root once failed `vp check`'s format step and blocked a deploy
 *.report.html
