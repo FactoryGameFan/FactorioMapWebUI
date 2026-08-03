@@ -52,10 +52,20 @@ const BANDS = {
   interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
   smoothing: VULCANUS_CLIFF_SMOOTHING,
 };
+/**
+ * **This must mirror `renderVulcanusCliffs.ts` exactly, or the budget below
+ * describes a model the app does not run.** It drifted once already:
+ * `rejectAtCrossingStage` landed in the renderer with #108 and was not added
+ * here, so for a day this file pinned 25 surplus and precision 0.9839 while the
+ * shipping path was at 22 and 0.9858 - a spec named SHIPPED measuring something
+ * else. If a flag is added to the renderer's call, add it here in the same
+ * change.
+ */
 const SHIPPED = {
   ...BANDS,
   tileCollides,
   cellRejects: makeVulcanusOreRejection(resources, ctx.vulcanusResourceControls),
+  rejectAtCrossingStage: true,
 };
 
 const cases = entities.cases as unknown as Case[];
@@ -137,13 +147,19 @@ describe("the apparent recall gap is a query-window artifact", () => {
  * | region | game | port | matched | surplus | missing |
  * | --- | --- | --- | --- | --- | --- |
  * | `[0,0]` | 283 | 283 | 281 | 2 | 2 |
- * | `[1500,1500]` | 861 | 880 | 858 | 22 | 3 |
+ * | `[1500,1500]` | 861 | 877 | 858 | 19 | 3 |
  * | `[-1200,800]` | 387 | 387 | 386 | 1 | 1 |
- * | **total** | **1531** | **1550** | **1525** | **25** | **6** |
+ * | **total** | **1531** | **1547** | **1525** | **22** | **6** |
  *
- * **Recall 0.9961, precision 0.9839.** The long-standing 0.972 recall figure in
+ * **Recall 0.9961, precision 0.9858.** The long-standing 0.972 recall figure in
  * `vulcanus-cliffs-NOTES.md` was this artifact: it divided the same 1525 matches
  * by 1569 rather than 1531.
+ *
+ * `matched` here is a POSITION match: 21 of those 1525 carry the wrong
+ * orientation, so scored on position and orientation together the same three
+ * regions give recall 0.9824 and precision 0.9722. Both numbers are worth
+ * knowing and they answer different questions - this file scores positions,
+ * because that is what the surplus/missing split is about.
  */
 describe("the remaining error budget, both sides scored alike", () => {
   interface Budget {
@@ -180,15 +196,15 @@ describe("the remaining error budget, both sides scored alike", () => {
     const budgets = cases.map(budget);
     expect(budgets.map((b) => [b.at, b.game, b.port, b.surplus, b.missing])).toEqual([
       ["0,0", 283, 283, 2, 2],
-      ["1500,1500", 861, 880, 22, 3],
+      ["1500,1500", 861, 877, 19, 3],
       ["-1200,800", 387, 387, 1, 1],
     ]);
 
     const sum = (f: (b: Budget) => number): number => budgets.reduce((a, b) => a + f(b), 0);
     expect(sum((b) => b.matched)).toBe(1525);
     expect(sum((b) => b.game)).toBe(1531);
-    expect(sum((b) => b.port)).toBe(1550);
-    expect(sum((b) => b.surplus)).toBe(25);
+    expect(sum((b) => b.port)).toBe(1547);
+    expect(sum((b) => b.surplus)).toBe(22);
     expect(sum((b) => b.missing)).toBe(6);
 
     // Every missing cell is one OUR OWN lava rejection removed. There is no
@@ -197,35 +213,57 @@ describe("the remaining error budget, both sides scored alike", () => {
     expect(sum((b) => b.oreKilled)).toBe(0);
 
     expect(sum((b) => b.matched) / sum((b) => b.game)).toBeCloseTo(0.9961, 4);
-    expect(sum((b) => b.matched) / sum((b) => b.port)).toBeCloseTo(0.9839, 4);
+    expect(sum((b) => b.matched) / sum((b) => b.port)).toBeCloseTo(0.9858, 4);
   }, 120000);
 
   /**
-   * **So precision is the remaining defect, not recall** - 25 surplus cells
-   * against 6 missing, and the 6 are all attributable to one rule we already
-   * implement being slightly too aggressive rather than to anything unported.
+   * **So precision is the remaining defect, not recall** - 22 surplus cells
+   * against 6 missing, and #111 identified all 6: three are our lava rejection
+   * firing where the game's does not, measured against the lava lever rather
+   * than inferred.
+   *
+   * The guard is `x3` rather than the `x4` it was at 25 surplus. That is not a
+   * weakened test - the gap narrowed because #108's crossing stage removed 3
+   * surplus cells and no missing ones, which is the improvement working. Do not
+   * raise it back without re-measuring.
    */
   it("leaves precision as the dominant defect", () => {
     const budgets = cases.map(budget);
     const surplus = budgets.reduce((a, b) => a + b.surplus, 0);
     const missing = budgets.reduce((a, b) => a + b.missing, 0);
-    expect(surplus).toBeGreaterThan(missing * 4);
+    expect(surplus).toBeGreaterThan(missing * 3);
   }, 120000);
 });
 
 /**
- * **Item 3 of #84 - the entity half of `Surface::wouldCollide` - stays OPEN, and
- * the crater arm is worth zero.**
+ * **Item 3 of #84 - the entity half of `Surface::wouldCollide` - is CLOSED, and
+ * these two arms are how it looked on the way there.**
  *
- * An earlier draft of this file closed item 3 by size, reasoning that a
- * rejection can only remove cells and so could not help a 44-cell recall gap.
- * That reasoning died with the gap: recall is 0.9961 and the dominant defect is
- * now the 25 surplus cells, which is exactly what a rejection removes. The
- * entity half is therefore the leading candidate rather than a closed one.
+ * The history is worth keeping because the item was closed twice on bad grounds
+ * before it was closed on a measurement. An early draft closed it by size (a
+ * rejection only removes cells, so it could not help a 44-cell recall gap); that
+ * reasoning died when the gap turned out to be the query-window artifact above,
+ * and the item re-opened as the leading candidate. The arms below then closed
+ * the crater half exactly and argued the rock half down from the mechanism's own
+ * geometry.
  *
- * The crater arm can still be settled exactly, and it is worth nothing.
+ * **#111 settled it outright with a lever instead.** Switching the whole
+ * `entity` autoplace category off through `map_gen_settings.autoplace_settings`
+ * removes 409 rocks, 115 chimneys and all 8 craters from `[1500,1500]`, and the
+ * game's cliff set does not move by one cell - so no placed entity suppresses a
+ * Vulcanus cliff, the whole class at once. See
+ * `test/vulcanusCliffSuppressorLevers.spec.ts`.
+ *
+ * These arms are kept rather than deleted because they are independent
+ * corroboration from a different direction, and because the reasoning they
+ * document - closing a suspect on the geometry it is confined to rather than on
+ * a score - is the part worth reusing. The one thing NOT to reuse is the
+ * overlap-count statistic in the rock arm's comment: it was measured at 25
+ * surplus cells, before #108 removed 3 of them, and has not been re-measured
+ * under the shipping config. The chunk-border arm below is re-measured and does
+ * assert.
  */
-describe("the entity collision half: craters are worth zero, rocks are the lead", () => {
+describe("the entity collision half: craters are worth zero, rocks are refuted", () => {
   it("finds no crater touching any cell the port over-places", () => {
     const [l, t, r, b] = VULCANUS_CLIFF_BASE_COLLISION_BOX;
     let craters = 0;
@@ -269,15 +307,17 @@ describe("the entity collision half: craters are worth zero, rocks are the lead"
    * significant figures: the surplus has no chunk-border character whatever, so
    * the one geometry this mechanism is confined to is not where the errors are.
    *
-   * The direct overlap test agrees and is the weaker arm, which is why it is not
-   * leaned on: 3 of 25 surplus cells overlap a modelled rock against a 6.6% base
-   * rate, i.e. ~1.7 expected. Three against 1.7 is nothing (and our rock
+   * A direct overlap test agreed and was the weaker arm, which is why it was not
+   * leaned on: at the time, 3 of 25 surplus cells overlapped a modelled rock
+   * against a 6.6% base rate, i.e. ~1.7 expected - nothing, and our rock
    * placement is a salt-dependent roll, so individual positions are unreliable
-   * exactly as the geyser's were in #100).
+   * exactly as the geyser's were in #100. That count is NOT re-measured here;
+   * treat it as history, not as a current figure.
    *
-   * **So item 3 explains approximately none of the 25.** It is closed a second
-   * time - but on the mechanism's own geometry rather than on the ceiling
-   * argument that died with the recall gap, and without needing a rock capture.
+   * **So item 3 explains approximately none of the surplus**, argued from the
+   * mechanism's own geometry rather than from the ceiling argument that died
+   * with the recall gap, and without needing a rock capture. #111 then confirmed
+   * it directly by removing every rock from the game.
    */
   it("finds no chunk-border character in the surplus, which is where rocks must act", () => {
     const nearBorder = (x: number, y: number): boolean => {
@@ -307,7 +347,7 @@ describe("the entity collision half: craters are worth zero, rocks are the lead"
       }
     }
 
-    expect(surplus).toBe(25);
+    expect(surplus).toBe(22);
     expect(matched).toBe(1525);
     // Within a percentage point of each other - no enrichment at all.
     const sRate = surplusBorder / surplus;

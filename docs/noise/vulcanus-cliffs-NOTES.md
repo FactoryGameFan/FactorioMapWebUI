@@ -61,6 +61,22 @@
 > geometry: it can only act across chunk borders, and the surplus sits at borders
 > at 44.0% against the matched cells' 44.1% - the base rate exactly.
 >
+> **Superseded 2026-08-03 (#108, #111): precision is now 0.9858 and the surplus
+> is 22, not 25.** `rejectAtCrossingStage` removed 3 surplus cells and no missing
+> ones. The current figures over the same three regions, measured with the exact
+> config `renderVulcanusCliffs.ts` runs:
+>
+> | | position only | position AND orientation |
+> | --- | --- | --- |
+> | recall | **0.9961** (1525/1531) | 0.9824 (1504/1531) |
+> | precision | **0.9858** (1525/1547) | 0.9722 (1504/1547) |
+>
+> 1504 matched, 21 wrong orientation, 22 surplus, 6 missing. Per region: `[0,0]`
+> 4 wrong / 2 surplus / 2 missing, `[1500,1500]` 16 / 19 / 3, `[-1200,800]`
+> 1 / 1 / 1. Nauvis is exact, 1.0000 both ways. `test/cliffErrorBudget.spec.ts`
+> pins the position figures and its `SHIPPED` constant must mirror the renderer -
+> it did not for a day, which is how 0.9839 outlived itself.
+>
 > ## UPDATE 3, 2026-08-02: the ore rule is PORTED and SHIPS
 >
 > The last section, **`## The rule is PORTED, and driving it from our own ore
