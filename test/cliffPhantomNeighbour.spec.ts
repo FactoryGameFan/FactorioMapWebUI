@@ -166,8 +166,11 @@ const score = (c: Case, withRejections: boolean): Scored => {
  * channel, which has no per-corner oracle (see `cliffOrientationMargin.spec.ts`).
  * The value of capturing it was previously scored against 33 wrong orientations -
  * about 1.6% of cells, easy to read as a rounding-error chase. It is worth more
- * than that: on the shipping path it also owns 12 of the 25 surplus cells, and at
- * `[0,0]` it owns **every** surplus cell there is.
+ * than that: on the shipping path it also owns 12 of the surplus cells, and at
+ * `[0,0]` it owns **every** surplus cell there is. (That 12 was measured when
+ * the shipping surplus was 25; #108 has since taken it to 22 and the share has
+ * not been re-measured. The assertions below all run with the rejections OFF, so
+ * none of them depends on it.)
  */
 describe("the wrong orientations and the surplus cells are the same defect", () => {
   const bare = (entities.cases as unknown as Case[]).map((c) => score(c, false));
