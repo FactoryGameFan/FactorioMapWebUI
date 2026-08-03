@@ -2127,3 +2127,69 @@ smoothing, the repair, and - since #108 - the STAGE. What remains is which cells
 the game refuses, and the honest statement is that the list is open: the same
 trap #106 fell into is available here, so the next candidate needs a positive
 measurement rather than promotion by elimination.
+
+## The ore rule, scored against the lever - and the cascade refuted (2026-08-03, #84)
+
+`oracle-vulcanus-cliff-ore-direction` re-ran `[1500,1500]` with the resources
+switched off through `autoplace_controls`, so the ore's effect is a known SET of
+cells rather than an inference. Scoring the port's predicate against it gives a
+precision and a recall instead of a total to match.
+`test/cliffOreCascade.spec.ts`.
+
+| | |
+| --- | --- |
+| game, resources ON / ALL OFF (in region) | 861 / 892 |
+| cells the ore suppresses | **31** |
+| cells that APPEAR when ore is added | **0** (the one-way property of #99, re-confirmed on the entity region) |
+| cells merely re-coded | 5 |
+| our model suppresses | **22**, of which genuinely suppressed **22** |
+| | **precision 1.000, recall 0.710** |
+
+**The rule is exactly right where it fires and simply too narrow.** That is a
+much more useful statement than "it explains 21 of 31", because it says which
+direction is safe to move in.
+
+Attribution of the 31, from the per-control arms: **27 calcite, 4 geyser, 0
+tungsten/coal**. Of the 9 our predicate misses, **4 are geyser** cells that
+`includeGeyser: false` deliberately excludes (the geyser rolls, so including it
+costs precision - measured, still harmful), 5 are calcite, and **all 9 are
+adjacent to another suppressed cell**.
+
+### The crossing stage explains 2 remainders for free
+
+The predicate fires on **20** placed cells; the placement loses **22**. The extra
+two are neighbours left with a non-placing code after a rejected cell's edges
+were zeroed (#108). No tuning - it falls out of the mechanism, and it is the
+first thing to reduce the remainder count since the rule was characterised.
+
+### The cascade half of the open question is REFUTED
+
+`vulcanusOreRejection.ts` left it as "a cascade along cliff connections **or** a
+wider box". #108 makes the cascade concrete: zeroing a cell's edges changes a
+neighbour's code, hence its orientation, hence its collision box, so re-testing
+to a fixpoint is exactly that cascade. `rejectionCascades` is the arm.
+
+| | matched | wrong | surplus | missing |
+| --- | --- | --- | --- | --- |
+| collapsed rule, one pass | 18654 | 693 | 1200 | 103 |
+| collapsed rule, fixpoint | 18640 | 700 | 1196 | 110 |
+
+At the SHIPPING settings it is **bit-for-bit identical** - and the collapsed-rule
+row is what makes that a result rather than an untriggered branch. A rejected
+cell never turns a neighbour into a rejectable orientation.
+
+That leaves the wider-box half, which is the one #88 says must not be tuned into
+fitting.
+
+### Half of `[1500,1500]`'s residual is not ore at all
+
+Running BOTH sides with the resources off isolates it:
+
+| | matched | wrong | surplus | missing |
+| --- | --- | --- | --- | --- |
+| resources ON, both sides | 842 | 16 | 19 | 3 |
+| resources OFF, both sides | 876 | **13** | **10** | 3 |
+
+So 13 wrong orientations and 10 surplus cells survive with the ore entirely out
+of the picture. Tuning the ore rule cannot reach them, and that non-ore half is
+the larger target now.
