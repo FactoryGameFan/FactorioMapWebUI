@@ -884,6 +884,12 @@ it does not model:
   does not (below). Measured, it does not gate placement either: the game's
   cliffs are spread uniformly across all 64 in-chunk positions.
 
+  **It gates something else, and "the flag remains unmodelled and is measured
+  not to matter" was true only of `tryToAddCliff` itself.** `applyCliffs` reads
+  it out of the queued record and uses it to decide which cliffs get
+  `Cliff::updateConnections()`. See the `applyCliffs` section below - added
+  2026-08-03, and the first time anything downstream of the queue was read.
+
 ### `tryToAddCliff` has TWO paths, and the earlier note described only one
 
 At `0x101625038` (608 bytes). It branches on a mode byte at `this + 0x10`:
@@ -898,10 +904,63 @@ collision path falls through into the same tail as the other branch, which
 appends a 16-byte record `{u16 protoId, u8 orientation, MapPosition position,
 bool}` to a vector at `this + 0x30..0x40`. So the shape is "test if this mode
 tests, then queue", and the fifth argument is **stored in that record at +0xc and
-never read by the collision test**. Whatever drains the queue consumes it. The
-port's `tileCollides` post-filter models the `mode == 2` path, which is the one
-map generation takes; the flag remains unmodelled and is measured not to matter
-for placement.
+never read by the collision test**. Whatever drains the queue consumes it.
+
+> **CORRECTION, 2026-08-03 (#84): mode 2 is the map PREVIEW generator, not map
+> generation, so on a real map `tryToAddCliff` runs NO collision test.** This
+> paragraph used to end "the port's `tileCollides` post-filter models the
+> `mode == 2` path, which is the one map generation takes". That is backwards,
+> and the constructors say so in one instruction each:
+>
+> | constructor | mode byte at `this+0x10` |
+> | --- | --- |
+> | `(Surface&, ChunkPosition const&)` | `0` (`0x101622118`) |
+> | `(Surface&, MapGenerator const&, ChunkPosition const&, ...)` - **map generation** | **`1`** (`0x101622238`) |
+> | `(MapPreviewGenerator const&, ChunkPosition const&)` | **`2`** (`0x101622348`) |
+>
+> Every rejection on a real map therefore happens in `applyCliffs`, through
+> `Surface::wouldCollide` on a cliff that has already been created and added to
+> the surface - which is why it can affect its neighbours, and why #108's
+> `rejectAtCrossingStage` measured what it measured. See the next section.
+
+### `EntityMapGenerationTask::applyCliffs` - the queue's consumer, read 2026-08-03
+
+At `0x101623c98` (1008 bytes), and until #84 nothing downstream of the queue had
+been read at all. Per queued `CliffAddition`:
+
+```
+collided = Surface::wouldCollide(proto, position, orientation)   // 0x10160c088
+entity   = proto->createEntity(spec)                             // vtable +0x740
+addEntityToSurface(surface, entity)
+if (collided)          -> list A     ([x29-0x70])
+else if (!record.bool) -> list B     ([x29-0x88]); record.bool is !onChunkBorder
+```
+
+then, after the whole chunk's cliffs are on the surface, list A gets
+`Entity::forceDestroy()` and list B gets vtable `+0x6b0`, which the `Cliff`
+vtable resolves to **`Cliff::updateConnections()`** (`0x1007a90d4`).
+
+Two consequences the port had no model for:
+
+- **A rejected cliff is destroyed, not skipped**, and `Cliff::onDestroy`
+  (`0x1007a8770`) calls `destroyEnd(opposite(side))` on each connected
+  neighbour. `Cliff::destroyEnd` (`0x1007a8d40`) rewrites the orientation with
+  that side replaced by `none`, or `forceDestroy`s when nothing is left - so it
+  cascades. `Cliff::destroyWithoutCorrection` exists precisely because the
+  ordinary destroy corrects.
+- **`updateConnections` runs on the chunk's outer ring only**, and drops any end
+  whose neighbour chunk is generated (status `> 0x31`) but holds no cliff that
+  `isCliffConnected` accepts.
+
+`Surface::wouldCollide(CliffPrototype const&, MapPosition const&,
+CliffOrientation)` itself is: the orientation's box from `proto + 0x5c0 +
+id*0x48` offset by the position, an early `return false` if the box is
+degenerate, then `constCollideWithTile` and `collideWithEntity`. Same box and
+mask as `EntityMapGenerationTask::wouldCollide` - only the stage differs.
+
+The full port, the four extracted tables and the scoring are in
+`src/noise/cliffs/cliffConnections.ts` and `test/cliffConnections.spec.ts`; the
+result is in `vulcanus-cliffs-NOTES.md`.
 
 ### `crater-cliff` is not on the cliff lattice - confirmed, not assumed
 

@@ -1,5 +1,28 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 5, 2026-08-03: the WRONG ORIENTATIONS are not a defect - read the LAST section
+>
+> **`generateCliffs` does not place cliffs, it QUEUES them, and the consumer -
+> `EntityMapGenerationTask::applyCliffs` - had never been read.** A rejected
+> cliff there is created, added to the surface and then DESTROYED, and
+> `Cliff::onDestroy` takes the facing end of every connected neighbour with it.
+>
+> At `[1500,1500]` with no ore and no lava, destroying the 12 cells the game
+> lacks and letting that cascade run reproduces the game's set **exactly - 1058
+> of 1058, positions and orientations**. So the 9 wrong orientations were the
+> cascade's fallout, not a second defect, and the same holds over all three
+> regions: killing the 22 surplus takes the wrong count from 18 to 5.
+>
+> **The target is 22 cells, not 43 errors.** Two readings elsewhere are corrected
+> by this and have been fixed in place: `tryToAddCliff` runs no collision test
+> during map generation (mode 2 is the map PREVIEW generator), and its fifth
+> argument does gate something - `updateConnections`.
+>
+> `rejectAtCrossingStage` still ships. The real stage scores better (1508/18/22/5
+> against 1504/21/22/6) but only in ORIENTATION, which the renderer does not
+> paint; see the last section for why that is not worth changing the tiling
+> geometry for.
+>
 > ## STATUS, 2026-08-01: issue #18 is CLOSED; remainder tracked in #84
 >
 > **As shipped**: recall **0.9720**, precision **0.9713**, ratio 1.001. Before
@@ -2324,3 +2347,147 @@ whole entity class, cliff-on-cliff collision, and - for 166 of 169 cells - lava.
 Of the four surviving clusters, none is ore, none is lava, and none is an entity.
 The next question is what else the game refuses, and the useful new constraint is
 that whatever it is only ever REMOVES: the port under-places nothing.
+
+## The queue has a CONSUMER, and the wrong orientations were its cascade (2026-08-03, #84)
+
+#111 handed over the sharpest statement the residual has had - with neither ore
+nor lava in the world at `[1500,1500]`, recall is **1.0000**, so the port is a
+strict SUPERSET and everything left is over-placement - and named the exclusion
+list as still open on principle (#106 -> #107). It was open. The thing missing
+was not another suppressor but a whole STAGE: `generateCliffs` does not place
+cliffs, it queues them, and nothing downstream of that queue had ever been read.
+
+`EntityMapGenerationTask::applyCliffs` (`0x101623c98`) is the consumer. Full
+disassembly in `cliffs-NOTES.md`; the shape is
+
+```
+collided = Surface::wouldCollide(proto, position, orientation)
+addEntityToSurface(surface, proto->createEntity(spec))
+if (collided)          -> destroy list
+else if (!record.bool) -> updateConnections list      // record.bool = !onChunkBorder
+```
+
+`src/noise/cliffs/cliffConnections.ts`, `test/cliffConnections.spec.ts`.
+
+### `tryToAddCliff` does no collision test during map generation
+
+The mode byte at `this+0x10` gates it, and the constructors say which mode is
+which: `(Surface&, MapGenerator const&, ChunkPosition const&, ...)` stores **1**
+(`0x101622238`), `(MapPreviewGenerator const&, ChunkPosition const&)` stores
+**2** (`0x101622348`), and only mode 2 tests. `cliffs-NOTES.md` had these the
+wrong way round and has been corrected in place.
+
+So on a real map - which is what the oracle captures - the only rejection is
+`applyCliffs`', on a cliff that has already been created and added to the
+surface, by destroying it. **That is the mechanism `rejectAtCrossingStage`
+(#108) was an empirical stand-in for.** #108's measurement was right and its
+reading of why was not available at the time: a rejected cell's crossings do go
+with it, because `Cliff::onDestroy` calls `destroyEnd(opposite(side))` on every
+connected neighbour.
+
+### The rule, and why none of it is a fit
+
+Four tables, each extracted from the arm64 slice and each **exactly** what the
+orientation NAMES say - which is the check that they were read in the right
+order rather than assumed:
+
+| table | address | holds |
+| --- | --- | --- |
+| ends `from` / `to` | `0x102ed8ff8`, `0x102ed9020` | the two sides of `A-to-B`, `none` = 4 |
+| `oppositeSide` | immediate `0x01000302` | `N<->S`, `E<->W` |
+| `destroyEnd` | 4 jump tables under `0x102cfc9db` | `side -> none`, else destroy, else no-op |
+| `neighborSidesForOrientation` | `0x102cfc9c7` | the ends, `none` dropped |
+
+`isCliffConnected` (`0x1007a93fc`) is the one that is not guessable from a
+diagram: it is a **parity** test, not a "do they touch" test. A run is directed,
+so `A-to-B` leaves through `B` and its neighbour must ENTER through
+`opposite(B)`. A neighbour presenting the right side with the wrong parity is
+touching and not connected. The spec pins that with both arms.
+
+`test/cliffConnections.spec.ts` asserts all 80 `(side, orientation)` pairs of
+`destroyEnd` against the transcribed table, so a transcription slip fails rather
+than quietly shifting the model.
+
+### The result: the residual at `[1500,1500]` is 12 DESTRUCTIONS and nothing else
+
+| | matched | wrong | surplus | missing |
+| --- | --- | --- | --- | --- |
+| before (#111) | 1049 | 9 | 12 | 0 |
+| after destroying the 12, with the cascade | **1058** | **0** | **0** | **0** |
+
+**Exact, positions and orientations, over all 1058 cells.** Only the 12 are
+fitted - they are chosen as the cells the game lacks. The 9 orientation outcomes
+are PREDICTED, and so is the absence of any further destruction: a cascade
+running one step too far would have shown up as `missing`, and a rule that got
+an orientation wrong had 19 ways to do it.
+
+The control is in the same file: destroy the same 12 **without** telling their
+neighbours and all 9 wrong orientations stand. (With the cascade off but
+`updateConnections` on, it repairs 7 of the 9 by itself - the two mechanisms
+overlap, and only the cascade gets all 9. That is why the control switches both
+off.)
+
+**So the wrong orientations were never an independent defect.** #103's reading -
+that the wrong orientations are "the far side of the same edges" as the surplus -
+was right, and this is the mechanism behind it. The target is now 12 cells, not
+21 errors.
+
+### Scored against what ships, over all three regions
+
+Running the same lava and ore predicates through the real stage instead of
+`rejectAtCrossingStage`:
+
+| model | matched | wrong | surplus | missing |
+| --- | --- | --- | --- | --- |
+| `rejectAtCrossingStage` (ships) | 1504 | 21 | 22 | 6 |
+| `applyCliffs`, lava + ore | **1508** | **18** | 22 | **5** |
+| `applyCliffs`, no cascade | 1500 | 25 | 22 | 6 |
+
+Better on three counts, worse on none, and the no-cascade row says the cascade
+rather than the re-staging is doing it. Killing the surviving 22 surplus with the
+cascade takes `wrong` from 18 to **5**, so 13 of the 18 are again fallout.
+
+**It is deliberately NOT wired into `renderVulcanusCliffs`.** The renderer paints
+positions and ignores orientation, and on positions alone the two models are one
+cell (1526 against 1525 matched of 1531). Adopting it means running the pass over
+a padded query and filtering afterwards, which changes the geometry
+`test/renderTiling` pins byte-identical between the whole render and 64 tiles.
+Worth doing on its own evidence, not smuggled in for one cell.
+
+### `Cliff::updateConnections` is ported and INERT - recorded, not dressed up
+
+It was the lead that opened all of this: it runs only on the chunk's outer ring,
+it only ever removes, and 9 of the 12 surplus cells sit on that ring against a
+44% base rate. Ported exactly, **it finds a dangling end zero times** inside the
+region, at every halo from 16 to 128 tiles. The port's own cell set is already
+connection-consistent.
+
+Two things follow. Nobody needs to re-derive this pass hoping it explains a
+surplus. And the chunk-border gate cannot be SCORED on this data - `everyCell`
+gives the identical answer because neither fires - so read that as unscored, not
+as evidence the gate was read wrongly.
+
+The one place it does fire is the outer rim of whatever was computed, where the
+neighbour is absent only because nobody asked for it. That is a halo artifact,
+and it is why `applyCliffConnections` documents a halo requirement; the spec
+holds the two apart rather than letting the rim reading pass as a finding.
+
+### Where that leaves it
+
+| target | size | status |
+| --- | --- | --- |
+| cells the game destroys and the port does not | **22** | the whole remaining target |
+| cells the port destroys and the game does not | 5 | our lava box's shape (#111), unchanged |
+| wrong orientations not explained by the surplus cascade | 5 | expected to be the 5 above, unmeasured |
+
+The 21 wrong orientations are gone as a separate line. What is left is one
+question - which cells does `Surface::wouldCollide` reject that ours does not -
+and #111 already showed that rule's errors point both ways, so it is the box's
+SHAPE and #88 still says do not tune it until it fits.
+
+One thing this does NOT settle: the chunk-generated gate in `updateConnections`
+means the game's answer depends on chunk generation ORDER, which is not knowable
+from a fixture. The port models every chunk as generated. That is an upper bound
+on how much the rule removes, and since the rule removes nothing here, the bound
+is not currently doing any work - but it will matter if the pass is ever made to
+fire.
