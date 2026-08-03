@@ -1757,3 +1757,69 @@ of the 4-grid program, e.g. a mod that publishes
 `vulcanus_basalt_lakes_multisample` at grid 4 into a readable tile property.
 Until that exists, "the fields are exonerated" cannot be said of the channel that
 matters - and #93's exoneration rested on a substitution in the tile channel.
+
+## The residual and the OVER-PLACEMENT are one defect (2026-08-03, #84)
+
+Everything above treats two numbers as separate problems: the wrong orientations
+(33 on the shipping path) and the surplus cells (25). They are the same defect,
+and the reason is structural rather than statistical.
+
+`placedCells` builds **one edge register per chunk**. `v[cy][cx]` is cell `cx`'s
+left edge and cell `cx-1`'s right edge - not two equal values, the same array
+slot. So a spurious crossing can never sit inside one cell. It corrupts the
+orientation of the real cell on one side and manufactures a cliff the game never
+placed on the other.
+
+Measured over all three oracle regions, rejections off so the geometry is not
+masked:
+
+| | |
+| --- | --- |
+| matched cells | 1531 |
+| wrong orientations | 37 |
+| of those whose disputed-edge neighbour the GAME places | **0** |
+| distinct phantom neighbours | 34 |
+| of those the PORT places, i.e. that are surplus cells | **34 of 34** |
+
+Not one of the 37 has a neighbour the game agrees about, and not one phantom
+fails to be surplus. On the shipping path:
+
+| region | matched | wrong | surplus | surplus that ARE phantoms |
+| --- | --- | --- | --- | --- |
+| `[0,0]` | 281 | 5 | 2 | **2 of 2** |
+| `[1500,1500]` | 858 | 25 | 22 | 10 of 22 |
+| `[-1200,800]` | 386 | 3 | 1 | 0 of 1 |
+
+**At `[0,0]` the spurious crossings are the whole of the over-placement.** And
+the reason 33 wrong cells do not imply 33 surplus is that the lava and ore
+rejections already remove 19 of the phantoms - the rejection hides the phantom
+while leaving the neighbouring cell's orientation wrong, which is exactly how the
+two counts drifted apart and came to be read as unrelated mechanisms.
+
+What this changes is the **value** of the blocked oracle capture above, not its
+design. It was being weighed against "33 wrong orientations, ~1.6% of cells",
+which reads like a rounding-error chase; it is also worth 12 of the 25 surplus
+cells, and all of `[0,0]`'s. `test/cliffPhantomNeighbour.spec.ts`.
+
+### Ruled out on the way, each with a discriminating control
+
+- **No gate in `crossesCliff` is marginal on the disputed edges.** Measured
+  against every crossing edge of every matched cell as control: cliffiness gap
+  above the `> 0.5` threshold (disputed min 6.8e-3 vs control 1.0e-3), the
+  `a < 0 || b < 0` early-out (disputed min elevation 15.6, nowhere near zero) and
+  `boundary < e0` (disputed min 2.73 above `e0`). The disputed edges are not
+  sitting on any cliff edge of the rule. This corroborates the band-margin result
+  above by a different route.
+- **The asymmetric smoothing knot lattice is not a misreading.** The port puts
+  in-chunk knots at corner indices **0, 4 and 7** because `hi` is clamped to
+  `CHUNK_CORNERS - 1`, which is odd enough to look like an off-by-one. Scoring
+  the natural alternative - knots every 4 corners globally, i.e. 0, 4, 8 - it is
+  **8x worse**: 312 wrong orientations against 37, matched collapsing 1531 -> 1173
+  and missing 38 -> 396. Raw (`s = 0`) is worse still at 677. The disassembly
+  reading now has a measurement behind it, not just a careful read.
+- **`cliffiness_basic` stays exonerated, and the exoneration is sound.** It
+  contains no `multisample` (the channel audit, #87, found `multisample` in
+  exactly one expression in all of factorio-data), so unlike elevation it has no
+  grid-4 variant to be captured in the wrong channel. Its gate test scores the
+  binary the consumer reads over 24,960 edges with hit counts and both outcomes
+  asserted - 0 flips.
