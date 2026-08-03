@@ -1,6 +1,28 @@
 # Vulcanus cliffs - port notes
 
-> ## UPDATE 5, 2026-08-03: the WRONG ORIENTATIONS are not a defect - read the LAST section
+> ## UPDATE 6, 2026-08-03: the residual is 31 DESTRUCTION DECISIONS - read the LAST section
+>
+> **Hand the port the game's own destruction set and it reproduces the game
+> exactly: 1531 of 1531 across all three oracle regions, positions AND
+> orientations, with the real ore and lava in the world.** So the exactness #113
+> found at `[1500,1500]` was not a property of that stripped-down world, and
+> there is no orientation defect, no crossing defect, no field defect and no
+> missing suppressor left anywhere in this port.
+>
+> Every disagreement with the game is one cell where `Surface::wouldCollide` and
+> our stand-in return different booleans. Scored as one boolean per raw cell -
+> which is sharper than surplus/missing, because the cascade blurs those - the
+> predicate is **200 right of 225, 6 false rejections and 25 missed
+> destructions**. Quote **31** for the rule and **27** for the rendered output;
+> same defect, two stages.
+>
+> Two things narrow the next step: **all 6 false rejections are the LAVA box and
+> none is the ore rule**, and the raw set is a strict superset of the game's in
+> every region. The open thread is that `Surface::wouldCollide` reads the REAL
+> surface's tiles while the port reads our own tile model, and that has never
+> been compared inside these boxes.
+>
+> ## UPDATE 5, 2026-08-03: the WRONG ORIENTATIONS are not a defect
 >
 > **`generateCliffs` does not place cliffs, it QUEUES them, and the consumer -
 > `EntityMapGenerationTask::applyCliffs` - had never been read.** A rejected
@@ -13,15 +35,17 @@
 > cascade's fallout, not a second defect, and the same holds over all three
 > regions: killing the 22 surplus takes the wrong count from 18 to 5.
 >
-> **The target is 22 cells, not 43 errors.** Two readings elsewhere are corrected
+> **The target is 22 cells, not 43 errors** - superseded by UPDATE 6, which
+> counts the same defect at the RULE rather than at the output and gets 31. Two
+> readings elsewhere are corrected
 > by this and have been fixed in place: `tryToAddCliff` runs no collision test
 > during map generation (mode 2 is the map PREVIEW generator), and its fifth
 > argument does gate something - `updateConnections`.
 >
 > `rejectAtCrossingStage` still ships. The real stage scores better (1508/18/22/5
 > against 1504/21/22/6) but only in ORIENTATION, which the renderer does not
-> paint; see the last section for why that is not worth changing the tiling
-> geometry for.
+> paint; see `## The queue has a CONSUMER` for why that is not worth changing the
+> tiling geometry for.
 >
 > ## STATUS, 2026-08-01: issue #18 is CLOSED; remainder tracked in #84
 >
@@ -2491,3 +2515,109 @@ from a fixture. The port models every chunk as generated. That is an upper bound
 on how much the rule removes, and since the rule removes nothing here, the bound
 is not currently doing any work - but it will matter if the pass is ever made to
 fire.
+
+## The residual is 31 DESTRUCTION DECISIONS and nothing else (2026-08-03, #84)
+
+#113 left one question open and named it as unmeasured: are the 5 wrong
+orientations that survive the surplus cascade the fallout of the 5 false
+rejections, or a second defect? They are the fallout - and measuring it the
+direct way settles considerably more than the question asked.
+
+The direct way is to stop scoring predicates and hand the port **the game's own
+destruction set**: destroy the raw cells the game does not have, keep everything
+else, and let `applyCliffs` and the `onDestroy` cascade run. Over all three
+oracle regions, with the real ore and the real lava in the world:
+
+**1531 of 1531. Zero wrong, zero surplus, zero missing.**
+
+`test/cliffDestructionResidual.spec.ts`.
+
+So the exactness #113 found at `[1500,1500]` in the levers arm - resources and
+lava both removed from the world - was not a property of that stripped-down
+world. It holds everywhere the port has ground truth. **There is no orientation
+defect, no crossing defect, no field defect and no missing suppressor left
+anywhere in the Vulcanus cliff port.** Every disagreement with the game is a cell
+where `Surface::wouldCollide` and our stand-in for it return different booleans.
+
+### What is fitted and what is predicted
+
+FITTED: the 225-cell destruction set, chosen as the raw cells the game lacks -
+225 booleans, and the only thing taken from the answer.
+
+PREDICTED: all 1531 orientations, of which **14 are ones the cascade actively
+rewrites** and each had 19 other orientations available to be wrong with; that
+the cascade destroys nothing beyond the 225, which would have shown up as
+`missing`; and that the answer does not depend on the halo, which is checked by
+re-running with our own lava + ore predicate outside the region instead of
+nothing (identical).
+
+The control is the same one #113 used and it still bites: destroy the same 225
+cells **without** telling their neighbours and 14 orientations come out wrong.
+
+### The 18 wrong orientations split cleanly into the two destruction errors
+
+| `collides` | matched | wrong | surplus | missing |
+| --- | --- | --- | --- | --- |
+| lava + ore (what #113 scored) | 1508 | 18 | 22 | 5 |
+| ...plus the 22 the game destroys | 1521 | **5** | 0 | 5 |
+| ...instead sparing the cells the game keeps | 1517 | 14 | 22 | **0** |
+| the game's set - both fixed | **1531** | **0** | **0** | **0** |
+
+Row 2 is #113's prediction confirmed (18 -> 5 on closing the surplus). Row 3 is
+the half it could not measure: sparing the false rejections alone takes 18 -> 14.
+Neither error is a separate orientation defect and there is no remainder.
+
+### The target, restated as the predicate's own confusion matrix
+
+Surplus and missing are OUTCOMES, and the cascade has already blurred them.
+Scoring one boolean per raw cell against the game's destruction set - before any
+cascade - is the sharper number and it is bigger than the outcome counts suggest:
+
+| | count |
+| --- | --- |
+| raw cells inside the three regions | 1756 |
+| the game destroys | 225 |
+| we destroy | 206 |
+| agree | 200 |
+| we destroy, the game keeps | **6** |
+| the game destroys, we keep | **25** |
+
+**31, not 27.** One of the 6 false rejections never shows as `missing` because a
+neighbour's cascade destroys that cell first, and 3 of the 25 missed destructions
+are cascade casualties anyway. Quote 31 when talking about the rule and 27 when
+talking about the rendered output; they are the same defect counted at two
+stages.
+
+Precision **200/206 = 0.971**, recall **200/225 = 0.889**, and the errors point
+BOTH WAYS - #111's finding restated on the stage that actually does the
+rejecting. No uniform dilation or shrink of the collision box can produce that
+error set, and #88 still says do not tune it until it fits.
+
+### Two facts that narrow the next step
+
+**Every one of the 6 false rejections is the LAVA box; the ore rule invents
+none.** The ore rule is a clean subset here - it never destroys a cell the game
+keeps - so the whole two-sided error set belongs to one predicate, the tile half
+of `Surface::wouldCollide`. The six are `86,38.5`, `22,178.5`, `1638,1598.5`,
+`1638,1602.5`, `1662,1634.5`, `-1054,1018.5`.
+
+**The raw set is a strict superset of the game's in all three regions**, not just
+at `[1500,1500]` where #111 measured it with the levers off: 1756 raw cells
+contain all 1531 the game keeps (292/283, 1070/861, 394/387). Nothing the port
+must explain is a failure to generate a cliff.
+
+### Where that leaves it
+
+One question, and it now has a cheap positive measurement in front of it rather
+than a tuning exercise. `Surface::wouldCollide` runs `constCollideWithTile`
+against the **real surface**; the port resolves tiles from our own Vulcanus tile
+model. A disagreement between the two inside a cliff's box would produce exactly
+this two-sided error set, and it has never been checked because
+`oracle-vulcanus-tile-names` is a ~2600-tile spiral that does not cover these
+regions densely.
+
+The capture that would settle it is small - the collision boxes of the 31
+disputed cells, plus a control set of cells where the predicate agrees, so that
+"the tiles match" cannot mean "the comparison is broken". If the tiles disagree,
+the defect is the tile resolver and not the box; if they agree, the tile half is
+exonerated and the box's shape is next.
