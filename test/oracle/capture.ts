@@ -4053,7 +4053,110 @@ async function captureVulcanusCliffBands(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} cases)`);
 }
 
+/**
+ * **The fine level sweep: what IS the game's grid-4 cliff elevation?** (#84)
+ *
+ * `captureVulcanusCliffBands` established that the port's grid-4 field is exact
+ * at `[0,0]` and `[-1200,800]` and wrong at `[1500,1500]`'s HIGH bands, and
+ * bounded the disagreement from below (median 18.8, max 69.0 units). It cannot
+ * say what the game's value actually is, because it only samples the field at
+ * the ten band boundaries.
+ *
+ * This sweeps `cliff_elevation_0` across `[700, 900]` in steps of 5 with the
+ * same collapsed rule and the gate held open by the constant route, which turns
+ * the game's cliffs into a **per-corner bracket** on its own field:
+ *
+ * - A placed cell's code names its crossing edges and their SIGN, so each
+ *   crossing edge at level `L` says "this corner >= L, that corner < L" - two
+ *   one-sided constraints per edge, in world terms, with no model in between.
+ * - Sweeping `L` tightens both sides. For a corner of value `v` and a neighbour
+ *   of value `w`, their shared edge crosses for every `L` in `(min, max]`, so a
+ *   corner accumulates constraints from every neighbour it out-ranks - and the
+ *   binding ones are the levels nearest `v`. At step 5 the bracket closes to 5.
+ *
+ * **Only POSITIVE observations are used, and that is what makes it sound.** An
+ * absent cliff is ambiguous - the lava/ore rejections drop cells, and
+ * `fixImpossibleCells` clears edges - so absence is never read as "no crossing".
+ * A PRESENT crossing is unambiguous in the other direction: the repair sweep
+ * only ever writes `0` (`fixImpossibleCellsSweep`, verified line by line), so it
+ * can delete a crossing but never invent one, and the rejections are post-filters
+ * that do not touch the edge registers at all. Every bracket here is therefore a
+ * constraint the game actually asserted.
+ *
+ * The range covers L790 and L910, where the disagreement is worst (36/42 and
+ * 22/41), and the corners inside it whose cells the port already reproduces are
+ * the built-in control: if the reconstruction is sound, THEIR brackets must
+ * contain the port's values.
+ */
+async function captureVulcanusCliffFineSweep(): Promise<void> {
+  const seed = 123456;
+  const ONE_BAND = 1000000;
+  const region: Region = { x0: 1500, y0: 1500, x1: 1756, y1: 1756 };
+  const levels: number[] = [];
+  for (let e0 = 700; e0 <= 900; e0 += 5) levels.push(e0);
+
+  const cases: {
+    level: number;
+    effective: DumpedCliffSettings | undefined;
+    cliffs: Position[];
+  }[] = [];
+  for (const level of levels) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        cliffSettings: {
+          cliff_smoothing: 0,
+          cliff_elevation_interval: ONE_BAND,
+          cliff_elevation_0: level,
+        },
+        // The gate as a construction, not a model - see captureVulcanusCliffBands.
+        probeProperty: "cliffiness",
+        probeExpression: "1",
+      });
+      cases.push({ level, effective: dump.cliffSettings, cliffs: dump.cliffs });
+      console.log(
+        `  level ${String(level)} -> ${String(dump.cliffs.length)} cliffs ` +
+          `(effective e0=${String(dump.cliffSettings?.cliff_elevation_0)}, ` +
+          `smoothing=${String(dump.cliffSettings?.cliff_smoothing)})`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. The Vulcanus region [1500,1500]-" +
+      "[1756,1756] at 41 values of cliff_elevation_0 (700..900 step 5) with the placement rule " +
+      "COLLAPSED (cliff_smoothing=0, cliff_elevation_interval=1e6) and the cliffiness gate held " +
+      "open by routing the cliffiness PROPERTY at the literal 1 - a construction, not a model. " +
+      "Under those settings a cliff sits on an edge exactly when its two corners straddle " +
+      "cliff_elevation_0, and the entity's orientation names which side is high, so each placed " +
+      "cell asserts one-sided constraints on its corners' values. Sweeping the level brackets " +
+      "every corner to the step: this fixture MEASURES the grid-4 cliff-elevation field the " +
+      "generator reads, which oracle-vulcanus-cliff-bands could only bound from below (median " +
+      "18.8, max 69.0 units) because it samples the field only at the ten band boundaries. Use " +
+      "POSITIVE observations only - an absent cliff is ambiguous (lava/ore rejections drop cells, " +
+      "fixImpossibleCells clears edges) but a PRESENT crossing is not, because the repair sweep " +
+      "only ever writes 0 and so can delete a crossing but never invent one. The range covers the " +
+      "bands where the port disagrees worst (790, 910). `effective` is the cliff_settings the " +
+      "SURFACE reported back. Sampled on a create_surface() surface whose seed is FORCED to " +
+      "`seed`. Regenerate: node --experimental-strip-types test/oracle/capture.ts " +
+      "vulcanus-cliff-fine-sweep",
+    seed,
+    region,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-fine-sweep.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} levels)`);
+}
+
 if (want("vulcanus-cliff-bands")) await captureVulcanusCliffBands();
+if (want("vulcanus-cliff-fine-sweep")) await captureVulcanusCliffFineSweep();
 if (want("cliff-entities")) await captureCliffEntities();
 if (want("vulcanus-cliff-ore-direction")) await captureVulcanusCliffOreDirection();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();

@@ -1922,3 +1922,66 @@ The obvious next measurement is a **fine level sweep** (e.g. 700..900 step 5 at
 `[1500,1500]`), which brackets the game's cliff-channel value per corner to the
 step and turns "differs by at least 69" into the actual field. It is ~40 runs of
 the same capture, no new machinery.
+
+## CORRECTION: the field is RIGHT - the fine sweep refutes the section above (2026-08-03, #84)
+
+The section immediately above concluded, from `oracle-vulcanus-cliff-bands`,
+that the port's grid-4 cliff-elevation field is wrong at `[1500,1500]`'s high
+bands, and handed over "it lives in the mountains branch of `vulcanus_elev`". The
+fine sweep was run to quantify that. **It refutes it instead.**
+
+`oracle-vulcanus-cliff-fine-sweep` sweeps `cliff_elevation_0` across
+`[700, 900]` step 5 with the same collapsed rule. Each placed cell's orientation
+asserts one-sided constraints on its corners - a crossing at level `L` says "this
+corner > L, that one < L" - so 41 levels bracket a corner to the step. Only
+POSITIVE observations are used, which is what makes it sound: an absent cliff is
+ambiguous (the lava/ore rejections drop whole cells) but a present crossing is
+not, because `fixImpossibleCellsSweep` only ever writes `0` and the rejections
+never touch the edge registers.
+
+| | |
+| --- | --- |
+| corners with a two-sided bracket | **998** |
+| mean bracket width | **5.72** |
+| where the port's value is INSIDE the game's bracket | **996** |
+| worst miss of the other two | **6.7e-4** (the port sits ON a swept level, where the strict test yields no observation - the open endpoint, not an error) |
+| disputed-edge corner slots with a bracket | 26 of 72 |
+| of those, containing the port's value | **26 of 26** |
+
+So the field is exonerated **by direct measurement** rather than by scoring, and
+this also independently re-confirms the `(i*4, j*4)` corner lattice: a wrong
+sampling site could not put 996 of 998 values inside 5-unit brackets.
+
+### Where the earlier reasoning went wrong
+
+The bands fixture established what the residual is NOT (not smoothing, not the
+gate, not the repair, not the rejections, not a boundary tie) and then treated
+the field as the last man standing. But it never measured the field - it measured
+that the port's value sits a median 18.8 from the level at the disputed edges,
+which is a statement about OUR field, not the game's. "Everything else is
+excluded, so it must be X" is only as good as the list, and the list was not
+closed. **The lower bound was real; the attribution was not.** Same shape as #88,
+where the best-scoring model was the wrong one.
+
+### What is actually left
+
+Across all 41 levels, the game's cell code is the port's code **with edges
+removed** in **1231 of 1235** disputed cells - the port finds crossings the game
+does not, and essentially never the reverse.
+
+The lead is in the coverage number: only 26 of 72 disputed corner slots get a
+two-sided bracket, and 661 of the 1,659 corners whose value lies in `[700,900]`
+get none. A corner goes unbracketed when the game emits no entity beside it at
+any level - which is what the lava and ore rejections do to whole neighbourhoods.
+Read one chunk at `L = 790` and the pattern is visible directly: cell
+`1634,1706.5` keeps its TIGHT edge (714.4 -> 795.9, margin 5.9) and loses its
+WIDE one (721.0 -> 875.4, margin 69), and the cell sharing that wide edge
+(`1634,1702.5`) is absent from the game entirely. The dropped crossings sit
+against cells the game did not emit.
+
+That points at the emission/rejection path, not at the field - i.e. back toward
+whether something suppresses a crossing (not merely an entity) in the
+neighbourhood of a rejected cell. Note this is a HYPOTHESIS from one chunk plus
+the coverage statistics; it has not been tested, and the obvious control is
+whether disputed edges are adjacent to rejected cells at a rate above the base
+rate of all crossing edges.
