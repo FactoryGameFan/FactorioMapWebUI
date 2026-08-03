@@ -40,6 +40,30 @@ describe("worker /preview", () => {
     expect(buf[0]).toBe(0x89);
   });
 
+  it("drains the container response body when a render fails", async () => {
+    // Regression guard for a cost bug, not a correctness one: the response is
+    // discarded either way. @cloudflare/containers only decrements its
+    // inflight-request counter when the proxied body finishes streaming, and a
+    // container with a nonzero counter never reaches `sleepAfter`. Dropping one
+    // error body left a 4 GiB instance provisioned 24/7 on ~7 requests/day,
+    // which is where the bill went. Assert the body is consumed.
+    const failing = new Response("boom", { status: 500 });
+    const fakeEnv = {
+      ...env,
+      PREVIEW_CONTAINER: {
+        idFromName: () => "pool-0",
+        get: () => ({ fetch: async () => failing }),
+      },
+    } as unknown as typeof env;
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(post({ ...body, seed: 987654 }), fakeEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(502);
+    expect(failing.bodyUsed).toBe(true);
+  });
+
   it("rejects disallowed origins", async () => {
     const ctx = createExecutionContext();
     const res = await worker.fetch(post(body, "https://evil.example"), env, ctx);
