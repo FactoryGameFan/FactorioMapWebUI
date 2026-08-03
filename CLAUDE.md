@@ -171,9 +171,24 @@ matters, set it explicitly.
 - `pnpm run check:vue` - `vue-tsc --noEmit`, the type-check of `<script setup>`
   bodies in the 22 `.vue` files (~2.1s). Nothing else checks them.
 - `pnpm vp build` - production build
-- `pnpm run verify` - `vp check` + `check:vue` + `vp test` + `preview:test` in
-  one gate. **~65-90s on a dev machine, ~4 minutes on a CI runner**, of which
-  the app test suite is ~57s and `check:vue` ~2.5s. The `~9.5s` this line
+- `pnpm run verify:lint` - `vp check` + `check:vue`. Exists so CI can run the
+  static phases without the app suite; `verify` composes it rather than
+  repeating the commands, so there is still one definition of each phase.
+- `pnpm run verify:static` - `verify:lint` + `preview:test`. Everything in
+  `verify` that is **not** the app suite. This is the `static` CI job.
+- `pnpm run verify:shard` - bare `vp test`, for CI's sharded matrix. Takes a
+  passthrough arg: `pnpm run verify:shard -- --shard=1/3`. The `--` is
+  required.
+- `pnpm run require:docker` - preflight that fails loudly when no container
+  runtime is reachable, naming the start command for whichever one you have
+  installed (`scripts/require-docker.ts`). `preview:dev` and `preview:deploy`
+  run it first, since both build the Factorio image. Deliberately **not** in
+  `preview:test` or `verify` - those must keep passing on a runner with no
+  Docker at all, which is what makes the CI workflow possible. Auto-start is
+  opt-in behind `FMW_AUTO_START_DOCKER=1`.
+- `pnpm run verify` - `verify:lint` + `vp test` + `preview:test` in
+  one gate. **~65-90s on a dev machine.** On a runner it is no longer one job -
+  see the CI section, which shards it. The `~9.5s` this line
   claimed for a long time was simply wrong - already wrong by a factor of six
   before `check:vue` existed, because the suite grew through the Vulcanus and
   cliff work (143 files then; **152 as of 2026-08-01**, which is what the
@@ -210,7 +225,7 @@ matters, set it explicitly.
     something environmental rather than something you edited, clear it with
     `vp cache clean`, or call `vp test` directly.
 
-  Two changes that were measured and **rejected**, so they don't get retried:
+  Changes that were measured and **rejected**, so they don't get retried:
   running the four phases in parallel is only 60.6s against 69.3s serial (13%),
   and it turns a 2s type error into a 61s one because `vp check` no longer runs
   first - it would also need a new script, since a `dependsOn: ["check"]` would
@@ -218,6 +233,24 @@ matters, set it explicitly.
   deploy path. And `maxWorkers` is already at its optimum: 4 -> 74.7s, 8 ->
   61.7s, 11 -> 61.8s against a default of 61.2s, because the extra cores on this
   machine are E-cores.
+
+  Three more, measured 2026-08-03 while sharding CI:
+
+  - **`isolate: false` is not available to this suite.** It fails **66 of 171
+    files**. Those same files pass individually with `--no-isolate`, so it is
+    cross-file module-state pollution, not a misconfiguration - the field DAG's
+    memo caches are module-level. It only bought 7.6% anyway (68.24s -> 63.07s).
+  - **`--reporter=blob` + `--merge-reports` does not work here.** Blob writes
+    correctly, but `vp test --merge-reports` does not merge, it **re-runs**: a
+    57-file shard's blob came back reporting 114 files. Vite+ is not bare vitest
+    on this path. That is why the sharded CI job uploads no artifacts.
+  - **The wall clock is set by the slowest FILE, not by total CPU.** The suite
+    is 497s of CPU in 68s of wall (~7.5x on 12 cores), and
+    `test/previewAgreement.spec.ts` alone is **67s** of that 68s. Removing it
+    drops the suite to 52.76s. So splitting the top files is the only local
+    lever, and it is worth ~2s because the throughput bound (~66s) binds almost
+    as hard. `environment: "node"` by default is worth ~3s more (only ~30 of 164
+    spec files touch `document`/`window`). Neither is worth the churn; see #119.
 
 - `pnpm refs:sync` - pin `factorioLuaAPI/` + `~/GitHub/factorio-data` to the
   installed binary's version (`--check` reports drift only; `--fixtures` reports
@@ -227,13 +260,55 @@ matters, set it explicitly.
 - `pnpm run verify:deploy` - after deploying, confirm the live site is running
   local `HEAD` (see below). Takes an optional origin argument.
 
-### CI (`.github/`) runs the same `verify`, plus the build
+### CI (`.github/`) runs `verify`'s phases SHARDED, plus the build
 
-`.github/workflows/verify.yml` runs `pnpm run verify` on every pull request and
-every push to `main`. It invokes the script **verbatim** rather than re-listing
-its phases as separate steps, so there is exactly one definition of "this repo is
-consistent" and CI cannot drift from local. If you change what `verify` means,
-CI follows automatically - do not mirror the change into the YAML.
+`.github/workflows/verify.yml` runs on every pull request and every push to
+`main`. Until 2026-08-03 it ran `pnpm run verify` verbatim as one job. It no
+longer does, and the note that used to sit here said so emphatically ("do not
+mirror the change into the YAML") - if you are here because the YAML does not
+match that instruction, the instruction is what changed.
+
+**Why it changed:** the single job measured **9m03s** (PR #116), of which the
+test phase is ~95%. A runner is ~3x slower than a dev machine, and only 4 cores,
+so the phase that is 88% of the local gate dominates a CI run completely.
+Four jobs now run in parallel:
+
+| job               | what                                                               |
+| ----------------- | ------------------------------------------------------------------ |
+| `static`          | `pnpm run verify:static` - `vp check`, `check:vue`, `preview:test` |
+| `tests (1..3, 3)` | `pnpm run verify:shard -- --shard=N/3` - the app suite             |
+| `verify`          | the required check: asserts every job above succeeded              |
+| `build`           | `pnpm vp build`, unchanged (issue #61)                             |
+
+Measured result: **9m03s -> 4m36s.**
+
+**The anti-drift rule still holds, by a different mechanism.** The point of
+"verbatim" was that there is exactly one definition of "this repo is
+consistent". That is now enforced by the workflow naming only package.json
+**scripts** - never the underlying commands - and by `verify`, `verify:static`
+and `verify:shard` all composing the same `verify:lint`. Do not inline
+`vp check` or `vue-tsc` into the YAML; add or edit a script instead.
+
+**Two traps in that file, both of which look like tidying:**
+
+- **The job named `verify` does no work, and must keep that name.** Ruleset `EJ`
+  requires a status check called `verify`; a required check that never appears
+  blocks every PR _forever_, on a check that cannot run. Renaming that job needs
+  a ruleset PUT in the same change - see the two-step below.
+- **It asserts `needs.*.result` explicitly rather than relying on `needs:`.**
+  A job whose dependency _failed_ is **skipped**, and a skipped required check
+  does not block a merge. Deleting those assertions would make a red suite
+  mergeable. `if: ${{ !cancelled() }}` rather than `always()` is also
+  deliberate: a superseded push should stay cancelled, not become a failure.
+
+**Why three shards and not four**, measured rather than guessed: vitest splits
+by **file**, so one file is an unsplittable floor, and
+`test/previewAgreement.spec.ts` is 67s of the 68s local suite. Slowest-shard
+wall - which is what the gate waits on - is 55.7s at N=3 and 53.5s at N=4, i.e.
+inside run-to-run noise, for 33% more runner minutes. Raise it only after
+splitting that file into its three independent tests, and re-measure. Issue #119
+tracks re-measuring this **on CI**, because a 12-core dev box cannot separate
+the file floor from the CPU bound and a 4-core runner may answer differently.
 
 A second job, **`build`**, runs `pnpm vp build` in parallel (issue #61). `verify`
 is check + type-check + tests and none of them build, so a change could pass all
@@ -279,6 +354,18 @@ is disabled outright, `pako` carries a 14-day age and a pointer at the
 byte-exactness invariant, `wrangler` + `@cloudflare/vitest-pool-workers` are
 grouped because pool-workers hard-pins wrangler, and the `brace-expansion`
 override and `engines.node` floor are both marked as deliberate rather than stale.
+
+**That group's `prBodyNotes` has its ordering backwards, and should be fixed.**
+It says to regenerate the worker types _after merging_. It has to happen
+**before**: `types:check` runs inside `preview:test`, which runs inside the
+required `verify` check, so a stale `workerd` stamp means the PR cannot merge at
+all. The regen is a precondition, not a follow-up. This is not hypothetical - it
+is why #97 sat red. The command, with the formatter pass that is **not**
+optional:
+
+```bash
+pnpm --filter @fmw/preview-worker exec wrangler types && pnpm vp check --fix
+```
 
 One interaction is worth knowing before touching that file. The workspace's
 release-age guard is a **pnpm default**, not a line in `pnpm-workspace.yaml`, and
@@ -326,8 +413,13 @@ Two settings whose reasoning is not guessable from the outside:
 | `deletion`, `non_fast_forward` | blocked                              |
 | `bypass_actors`                | **empty** - binds the owner too      |
 
-Two things here are load-bearing and easy to break by "tidying":
+Three things here are load-bearing and easy to break by "tidying":
 
+- **`verify` is now a gate job that does no work.** Since the CI sharding above,
+  the check by that name only asserts that `static` and the three `tests` shards
+  passed. It looks deletable and is not: the ruleset matches required checks by
+  **name**, so renaming or removing that job makes the required `verify` never
+  appear, which blocks every PR permanently.
 - **The review count is 0 on purpose.** GitHub does not let you approve your own
   PR, so `1` would make `main` unmergeable by its only maintainer - a lockout
   that looks like correct hardening until the first PR.
@@ -429,6 +521,11 @@ Preview-service stack (optional feature, needs Docker): **`pnpm localpreview`**
 (memorable alias for `pnpm preview:dev`) runs the Worker (`:8787`) + app
 (`:5173`) together; `pnpm preview:test` runs its unit tests. Both bind localhost
 only - never add `--host`. See README for the full list.
+
+`preview:dev` and `preview:deploy` are gated on `require:docker`, so a stopped
+daemon now fails immediately with the start command for your runtime instead of
+a wrangler build error several screens deep. `preview:test` is **not** gated -
+it needs no Docker at all, which is what lets CI run it.
 
 ## Architecture
 
@@ -617,6 +714,28 @@ A separate pnpm workspace (`worker/` Cloudflare Worker + `container/`
 digest-pinned Factorio headless image). Opt-in and the app's only outbound call;
 the editor is fully functional offline without it.
 
+**The container's sizing is a measured cost decision, not a default** (#116).
+Memory bills on **provisioned** size for the whole time an instance is awake, so
+`instance_type` is the dominant cost lever - it was `standard-1` (4 GiB) while
+production peaked at **603 MiB**, idled at ~205 MiB, and served ~7 requests/day.
+It is now `basic` (1 GiB / 4 GB) with `max_instances: 1`. Two things to know
+before changing it:
+
+- **`sleepAfter` is load-bearing and fragile.** `@cloudflare/containers` only
+  decrements its inflight-request counter when a proxied response body finishes
+  piping. Dropping a response without reading it - which the 502 path used to do
+  - leaves the counter above zero, `isActivityExpired()` returns false forever,
+    and the instance never sleeps. That cost ~$28/month for weeks. Any new code
+    path that discards a container response **must drain it first**; the guard is
+    in `preview-service/worker/test/worker.spec.ts`.
+- **To check what is actually running, read the billing metrics, not
+  `wrangler containers instances`.** That command reported `state: running` with
+  an 80-minute-old `created` timestamp during an hour when allocation was zero -
+  it describes the placement, not whether you are paying. The
+  `containersUsageAdaptiveGroups` GraphQL dataset is the truth, and the
+  disk-to-memory ratio identifies the live instance type: **2.0** = `standard-1`
+  (4 GiB / 8 GB), **4.0** = `basic` (1 GiB / 4 GB). See #120 for the idle tail.
+
 `wrangler` is not global - drive it through the workspace:
 `pnpm --filter @fmw/preview-worker exec wrangler <cmd>`.
 
@@ -632,9 +751,25 @@ so `pnpm preview:test` fails loudly on drift.
   The formatter pass is **not optional** - wrangler emits tabs/unwrapped types
   and the repo formats to 2-space/wrapped, so a raw regen shows a whole-file
   whitespace diff that hides the real change.
-- Limitation: `--check` compares the **config** against the hash recorded in the
-  generated file's header. It catches a changed `wrangler.jsonc`, but it does
-  **not** notice hand-edits to the generated file itself. Don't hand-edit it.
+- **`--check` compares two things, and the second one surprises people.** It
+  checks the config against the hash in the generated file's header, AND the
+  **`workerd` version** stamped on the line below it. Both halves were observed
+  directly on 2026-08-03:
+  - Editing the `containers` block of `wrangler.jsonc` (`instance_type`,
+    `max_instances`) regenerated the file with the hash **identical** and
+    `--check` passing - so that block is not in the hash at all, and a regen
+    after such an edit is a pure whitespace diff.
+  - A wrangler-only bump invalidates the file with the hash **unchanged**: PR
+    #97's 4.115.0 -> 4.118.0 drags `workerd` 1.20260722.1 -> 1.20260730.1, every
+    type body is byte-identical, and `verify` went red on that one line.
+
+  So a wrangler bump that touches no binding still requires a regen. Reading
+  this note in its old form ("compares the config against the hash") would rule
+  that out, which is exactly the wrong call.
+
+  It still does **not** notice hand-edits to the generated file itself. Don't
+  hand-edit it.
+
 - The worker deliberately has **no** `typescript` and **no**
   `@cloudflare/workers-types` devDependency, and ignores wrangler's
   "Install @types/node" advice. See the comment in
