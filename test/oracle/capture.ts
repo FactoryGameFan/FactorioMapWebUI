@@ -26,6 +26,7 @@ import {
   sampleCliffEntitiesFull,
   sampleExpression,
   sampleTileNames,
+  sampleTileNamesFull,
   type TileSample,
 } from "./oracle.ts";
 import { TREE_SPECIES } from "../../src/noise/trees/treeCatalog.ts";
@@ -3874,6 +3875,127 @@ async function captureVulcanusCliffOreDirection(): Promise<void> {
 }
 
 /**
+ * **Does a RESOURCE control move TILES, and is any of them cliff-blocking?**
+ * (#84.)
+ *
+ * `autoplace_controls` has been used as an entity-only lever throughout #84 -
+ * "switch the ore off and see which cliffs come back". It is not one.
+ * `space-age/prototypes/planet/planet-vulcanus-map-gen.lua` defines
+ * `vulcanus_calcite_region` in terms of `control:calcite:size` (through
+ * `vulcanus_calcite_size = slider_rescale(control:calcite:size, 2)`) and
+ * `control:calcite:frequency`, and
+ * `space-age/prototypes/tile/tiles-vulcanus.lua` feeds that straight into a TILE
+ * range:
+ *
+ * ```lua
+ * name = "volcanic_jagged_ground_range",
+ * expression = "5 * min(10, max(vulcanus_calcite_region + 0.2, ...))"
+ * ```
+ *
+ * So the lever moves tiles as well as entities, and the question that decides
+ * whether that matters for #84 is whether any moved tile crosses the
+ * cliff-BLOCKING boundary - `lava` and `lava-hot`, the only two carrying
+ * `tile_collision_masks.lava()`. If none does, the confound is real but inert
+ * for cliffs and every ore result stands. If one does, `Surface::wouldCollide`'s
+ * TILE half is a live route from the lever to the cliffs, which is exactly what
+ * #124 left open after closing the entity half.
+ *
+ * Our own port answers "none" - but that is our tile model marking its own
+ * homework, and #115 only exonerated it over 70 tiles around six cells. This
+ * asks the game.
+ *
+ * **Deliberately model-independent.** A uniform stride-2 grid over the lever's
+ * own region rather than the positions our port predicts will change, so the
+ * fixture does not encode the very model it exists to check, and stays valid if
+ * the port's tile field is later corrected.
+ *
+ * Regenerate: `node --experimental-strip-types test/oracle/capture.ts
+ * vulcanus-tile-lever`
+ */
+async function captureVulcanusTileLever(): Promise<void> {
+  const seed = 123456;
+  const planet = "vulcanus";
+  const region = { x0: 1500, y0: 1500, x1: 1756, y1: 1756 };
+  const STRIDE = 2;
+  const OFF = { frequency: 1, size: 0, richness: 1 };
+
+  const positions: { x: number; y: number }[] = [];
+  for (let x = region.x0; x < region.x1; x += STRIDE)
+    for (let y = region.y0; y < region.y1; y += STRIDE) positions.push({ x: x + 0.5, y: y + 0.5 });
+
+  const arms: {
+    label: string;
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+  }[] = [
+    { label: "resources ON" },
+    { label: "calcite OFF", autoplaceControls: { calcite: OFF } },
+    {
+      label: "ALL resources OFF",
+      autoplaceControls: {
+        tungsten_ore: OFF,
+        calcite: OFF,
+        vulcanus_coal: OFF,
+        sulfuric_acid_geyser: OFF,
+      },
+    },
+  ];
+
+  const cases: unknown[] = [];
+  for (const arm of arms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleTileNamesFull(positions, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet,
+        autoplaceControls: arm.autoplaceControls,
+      });
+      cases.push({
+        label: arm.label,
+        autoplaceControls: arm.autoplaceControls ?? null,
+        effectiveAutoplace: dump.autoplaceControls,
+        positions: dump.samples.map((s) => ({ x: s.x, y: s.y })),
+        tileNames: dump.samples.map((s) => s.name),
+      });
+      const distinct = [...new Set(dump.samples.map((s) => s.name))].sort();
+      console.log(
+        `  ${arm.label} -> ${String(dump.samples.length)} tiles, ${String(distinct.length)} distinct`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 (Space Age enabled) via test/oracle. Does an " +
+      "autoplace_controls RESOURCE lever move TILES, and is any moved tile cliff-blocking? (#84.) " +
+      "vulcanus_calcite_region depends on control:calcite:size and :frequency, and feeds the tile " +
+      "range volcanic_jagged_ground_range, so the lever every ore result in #84 treats as " +
+      "entity-only also moves tiles. What decides whether that matters is whether any moved tile " +
+      "crosses the cliff-blocking boundary - lava and lava-hot, the only two carrying " +
+      "tile_collision_masks.lava(). Three arms over the lever's own region [1500,1500], sampling " +
+      "surface.get_tile(x, y).name on a uniform stride-2 grid: resources ON, calcite OFF, ALL " +
+      "resources OFF. The grid is uniform rather than the positions our port predicts will change, " +
+      "so the fixture does not encode the model it exists to check. Each arm records the " +
+      "autoplace_controls the SURFACE read back, so 'no tile moved' cannot be confused with 'the " +
+      "override never applied'. positions are the mod's ECHOED floored get_tile input. Regenerate: " +
+      "node --experimental-strip-types test/oracle/capture.ts vulcanus-tile-lever",
+    seed,
+    planet,
+    region,
+    stride: STRIDE,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-tile-lever.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(
+    `wrote ${out} (${String(cases.length)} arms, ${String(positions.length)} points each)`,
+  );
+}
+
+/**
  * **The ore lever on the OTHER TWO oracle regions - an out-of-sample test**
  * (#84).
  *
@@ -4443,6 +4565,7 @@ if (want("vulcanus-cliff-fine-sweep")) await captureVulcanusCliffFineSweep();
 if (want("cliff-entities")) await captureCliffEntities();
 if (want("vulcanus-cliff-ore-direction")) await captureVulcanusCliffOreDirection();
 if (want("vulcanus-cliff-ore-direction-regions")) await captureVulcanusCliffOreDirectionRegions();
+if (want("vulcanus-tile-lever")) await captureVulcanusTileLever();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();
 if (want("vulcanus-cliff-corner-fields")) await captureVulcanusCliffCornerFields();
 if (want("vulcanus-cliff-corner-fields-entity-regions"))

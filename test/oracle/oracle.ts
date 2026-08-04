@@ -351,7 +351,23 @@ end)
  */
 export function buildSpaceAgeTileControlLua(
   positions: readonly Position[],
-  opts: { radius?: number; dumpFile?: string; planet?: string; seed?: number } = {},
+  opts: {
+    radius?: number;
+    dumpFile?: string;
+    planet?: string;
+    seed?: number;
+    /**
+     * Override `map_gen_settings.autoplace_controls`, keyed by the GAME's own
+     * control names (`calcite`, `sulfuric_acid_geyser`, ...). Added for #84: the
+     * resource controls are NOT an entity-only lever - `vulcanus_calcite_region`
+     * depends on `control:calcite:size` and `frequency`, and it feeds the TILE
+     * expression `volcanic_jagged_ground_range` in
+     * `space-age/prototypes/tile/tiles-vulcanus.lua`. So switching a resource
+     * off moves tiles, and whether any of them is cliff-BLOCKING is the question
+     * this probe exists to answer against the game rather than against our port.
+     */
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+  } = {},
 ): string {
   const dumpFile = opts.dumpFile ?? TILE_DUMP_FILE;
   const radius = opts.radius ?? 1;
@@ -360,13 +376,20 @@ export function buildSpaceAgeTileControlLua(
   const posLua = positions
     .map((p) => `    {x = ${Math.floor(p.x)}, y = ${Math.floor(p.y)}}`)
     .join(",\n");
+  const controlsLua = Object.entries(opts.autoplaceControls ?? {})
+    .map(
+      ([k, v]) =>
+        `\n  mgs.autoplace_controls[${JSON.stringify(k)}] = ` +
+        `{frequency = ${String(v.frequency)}, size = ${String(v.size)}, richness = ${String(v.richness)}}`,
+    )
+    .join("");
   return `script.on_init(function()
   local positions = {
 ${posLua}
   }
   local surface = game.planets["${planet}"].create_surface()
   local mgs = surface.map_gen_settings
-  mgs.seed = ${seed}
+  mgs.seed = ${seed}${controlsLua}
   surface.map_gen_settings = mgs
   for i, p in ipairs(positions) do
     surface.request_to_generate_chunks({x = p.x, y = p.y}, ${radius})
@@ -377,7 +400,13 @@ ${posLua}
     local tile = surface.get_tile(p.x, p.y)
     results[i] = {x = p.x, y = p.y, name = tile.name}
   end
-  helpers.write_file("${dumpFile}", helpers.table_to_json({ results = results }), false)
+  -- Read the controls BACK off the surface. "No tile moved" and "the override
+  -- never applied" print the same thing without this.
+  local applied = {}
+  for k, v in pairs(surface.map_gen_settings.autoplace_controls) do
+    applied[k] = {frequency = v.frequency, size = v.size, richness = v.richness}
+  end
+  helpers.write_file("${dumpFile}", helpers.table_to_json({ results = results, autoplaceControls = applied }), false)
   error("DUMPED-OK")
 end)
 `;
@@ -391,6 +420,22 @@ export function parseTileDump(
     results: { x: number; y: number; name: string }[];
   };
   return parsed.results;
+}
+
+/**
+ * {@link parseTileDump} plus the `autoplace_controls` the surface reported back.
+ * Older dumps carry no such key, so it defaults to an empty object rather than
+ * throwing - a fixture captured before #84 is still readable.
+ */
+export function parseTileDumpFull(jsonText: string): {
+  samples: { readonly x: number; readonly y: number; readonly name: string }[];
+  autoplaceControls: Record<string, { frequency: number; size: number; richness: number }>;
+} {
+  const parsed = JSON.parse(jsonText) as {
+    results: { x: number; y: number; name: string }[];
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+  };
+  return { samples: parsed.results, autoplaceControls: parsed.autoplaceControls ?? {} };
 }
 
 // ---------------------------------------------------------------------------
@@ -1065,6 +1110,33 @@ export async function sampleTileNames(
   positions: readonly Position[],
   opts: OracleOptions & { radius?: number },
 ): Promise<TileSample[]> {
+  return (await sampleTileNamesFull(positions, opts)).samples;
+}
+
+/**
+ * {@link sampleTileNames} plus the `autoplace_controls` the SURFACE read back,
+ * and the ability to override them.
+ *
+ * Added for #84. The resource controls are not an entity-only lever:
+ * `vulcanus_calcite_region` depends on `control:calcite:size` and `frequency`
+ * and feeds the TILE expression `volcanic_jagged_ground_range`, so switching a
+ * resource off moves tiles. Whether any of those tiles is cliff-BLOCKING decides
+ * whether the ore lever is confounded for cliffs, and that has to be asked of
+ * the game rather than of our own tile model.
+ *
+ * The read-back is the point of the separate entry: "no tile moved" and "the
+ * override never applied" print the same thing without it.
+ */
+export async function sampleTileNamesFull(
+  positions: readonly Position[],
+  opts: OracleOptions & {
+    radius?: number;
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+  },
+): Promise<{
+  samples: TileSample[];
+  autoplaceControls: Record<string, { frequency: number; size: number; richness: number }>;
+}> {
   const seed = opts.seed ?? 123456;
   const factorioBin = opts.factorioBin ?? DEFAULT_FACTORIO_BIN;
   const dataDir = opts.dataDir ?? defaultDataDir(factorioBin);
@@ -1084,7 +1156,12 @@ export async function sampleTileNames(
   await writeFile(
     join(modFilesDir, "control.lua"),
     opts.spaceAge
-      ? buildSpaceAgeTileControlLua(positions, { radius: opts.radius, planet: opts.planet, seed })
+      ? buildSpaceAgeTileControlLua(positions, {
+          radius: opts.radius,
+          planet: opts.planet,
+          seed,
+          autoplaceControls: opts.autoplaceControls,
+        })
       : buildTileControlLua(positions, { radius: opts.radius }),
   );
   await writeFile(
@@ -1110,7 +1187,7 @@ export async function sampleTileNames(
       `tile oracle produced no dump at ${dumpPath}. Factorio stderr tail:\n${stderr.slice(-2000)}`,
     );
   }
-  return parseTileDump(jsonText);
+  return parseTileDumpFull(jsonText);
 }
 
 /**
