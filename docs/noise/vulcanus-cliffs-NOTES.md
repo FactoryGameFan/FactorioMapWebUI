@@ -1,5 +1,48 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 18, 2026-08-04: the border enrichment is NOT a cascade artifact - and there is a shipping gain on the table
+>
+> The ore thread's two wins came from auditing populations rather than hunting
+> mechanisms, so the border residual got the same treatment. The obvious
+> deflation - after #142 showed four of ten ore "misses" were cascade casualties
+> - is that the 44 unexplained cells are largely casualties too, since the
+> residual is counted at the OUTPUT and a casualty of a *correct* kill scores as
+> an independent defect.
+>
+> **It is not that.** Applying the destruction cascade (confirmed against the
+> game in #139, and again in #141) to the port's own kill set,
+> `test/cliffResidualCascadeAudit.spec.ts`:
+>
+> | | unknown | on border | z | false rejections |
+> | --- | --- | --- | --- | --- |
+> | before cascade | 33 | 22 | 2.36 | 12 |
+> | after cascade | **23** | 17 | **2.67** | **14** |
+>
+> The cascade explains 10 of 33 and the enrichment **concentrates** rather than
+> dissolving. So the border signal has now survived both of its plausible
+> deflations - the orientation-reach rival (#134) and cascade double-counting.
+>
+> **A shipping accuracy gain is measured here and deliberately not taken: 10
+> fewer missed cells for 2 more false rejections, net 8.** `renderVulcanusCliffs`
+> does not cascade at all today; `applyCliffConnections` exists but only specs
+> use it. Adopting it changes rendered ORIENTATIONS as well as positions, needs
+> `cliffErrorBudget.spec.ts` moved in lockstep, and `applyCliffConnections` also
+> bundles the `updateConnections` model, which is an explicit UPPER BOUND and is
+> **not** what this audit applied. Apply the destroy cascade alone first, and
+> re-measure the whole budget.
+>
+> **Look at the 2 new false rejections before the 10 wins.** They are cells the
+> game KEPT that our cascade removes, and #134 recorded a gate the port does not
+> model: `Cliff::destroyEnd` refuses to `forceDestroy` when entity flag bit 4 of
+> `+0x6e` is set, returning with the orientation UNCHANGED rather than merely
+> undestroyed.
+>
+> Scope, since the headline differs from the published 44: this pairs **14**
+> regions across three fixtures, not 15 - `[1500,1500]`'s pair lives in a fixture
+> with a different case shape. The overlap is the correctness check, and it
+> passes: on the eight-region border batch this harness reproduces **17 unknown,
+> 12 on a border**, exactly what `cliffResidualBorderEnrichment` publishes.
+
 > ## UPDATE 17, 2026-08-04: the ore recall gap is SIX cells, not thirty-one
 >
 > The direct follow-on from UPDATE 16, and another zero-capture fold
