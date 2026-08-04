@@ -3875,6 +3875,113 @@ async function captureVulcanusCliffOreDirection(): Promise<void> {
 }
 
 /**
+ * **Does the LEVER itself move cliffs, independently of the ore?** (#84.)
+ *
+ * By #128 every route from a resource control to a cliff is closed: the cliff
+ * FIELD reads `elevation`, whose 47-node expression closure contains no resource
+ * region; `Surface::wouldCollide` has exactly two halves; its entity half cannot
+ * fire (disjoint masks, and cliffs are placed before entities); and its tile half
+ * does not fire (no tile crosses the blocking boundary). Yet switching the
+ * resources off returns exactly 31 cliffs.
+ *
+ * The one route never excluded is that the lever perturbs something structural -
+ * a `CompiledMapGenSettings` re-layout, a noise-program index shift - rather than
+ * the ore mattering at all. **`richness` is the control that separates them.**
+ *
+ * `vulcanus_calcite_probability` does not reference richness, and neither does
+ * `vulcanus_calcite_region`, so `control:calcite:richness` changes neither where
+ * the calcite lands nor the `volcanic_jagged_ground_range` tile it drives. It
+ * changes only `vulcanus_calcite_richness`, i.e. how much ore each tile holds -
+ * and the compiled settings the generator is handed.
+ *
+ * So: same entity positions, same tiles, different settings object.
+ *
+ * - If the cliffs move, the lever is perturbing something structural and "the ore
+ *   suppresses cliffs" is the wrong reading of every arm in #84.
+ * - If they do not, the effect genuinely tracks ore PRESENCE, and the
+ *   impossibility recorded in #128 stands as an impossibility.
+ *
+ * The arm dumps the resources too, so "positions unchanged" is measured rather
+ * than argued from the Lua.
+ *
+ * Regenerate: `node --experimental-strip-types test/oracle/capture.ts
+ * vulcanus-cliff-ore-richness`
+ */
+async function captureVulcanusCliffOreRichness(): Promise<void> {
+  const seed = 123456;
+  const region: Region = { x0: 1500, y0: 1500, x1: 1756, y1: 1756 };
+  const PROTOS = ["cliff-vulcanus", "calcite", "sulfuric-acid-geyser"];
+  const arms: {
+    label: string;
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+  }[] = [
+    { label: "default" },
+    {
+      label: "calcite richness x2",
+      autoplaceControls: { calcite: { frequency: 1, size: 1, richness: 2 } },
+    },
+    {
+      label: "calcite richness x0.5",
+      autoplaceControls: { calcite: { frequency: 1, size: 1, richness: 0.5 } },
+    },
+  ];
+
+  const cases: unknown[] = [];
+  for (const arm of arms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        autoplaceControls: arm.autoplaceControls,
+        alsoResources: true,
+        protoNames: PROTOS,
+      });
+      cases.push({
+        label: arm.label,
+        region,
+        autoplaceControls: arm.autoplaceControls ?? null,
+        effectiveAutoplace: dump.autoplaceControls,
+        cliffs: dump.cliffs,
+        resources: dump.resources,
+      });
+      const named = dump.cliffs as unknown as readonly { name: string }[];
+      const vulc = named.filter((c) => c.name === "cliff-vulcanus").length;
+      console.log(
+        `  ${arm.label} -> ${String(vulc)} cliff-vulcanus, ${String(dump.resources?.length ?? -1)} resources`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Separates 'the ore suppresses cliffs' " +
+      "from 'the autoplace_controls lever perturbs something structural' (#84). By #128 every " +
+      "route from a resource control to a cliff is closed - the field reads elevation, whose " +
+      "expression closure holds no resource region; Surface::wouldCollide has two halves and " +
+      "neither can fire - yet switching the resources off returns 31 cliffs. control:calcite:" +
+      "richness is the control that distinguishes the two: it appears in vulcanus_calcite_richness " +
+      "only, NOT in vulcanus_calcite_probability (where the ore goes) nor in " +
+      "vulcanus_calcite_region (which drives the volcanic_jagged_ground_range tile), so it changes " +
+      "the compiled settings while leaving entity positions and tiles alone. If the cliffs move, " +
+      "the lever is structural and every ore arm in #84 is misread; if not, the effect tracks ore " +
+      "presence. Each arm dumps the resources too, so 'positions unchanged' is measured rather " +
+      "than argued. Regenerate: node --experimental-strip-types test/oracle/capture.ts " +
+      "vulcanus-cliff-ore-richness",
+    seed,
+    region,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-ore-richness.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
+/**
  * **Does a RESOURCE control move TILES, and is any of them cliff-blocking?**
  * (#84.)
  *
@@ -4566,6 +4673,7 @@ if (want("cliff-entities")) await captureCliffEntities();
 if (want("vulcanus-cliff-ore-direction")) await captureVulcanusCliffOreDirection();
 if (want("vulcanus-cliff-ore-direction-regions")) await captureVulcanusCliffOreDirectionRegions();
 if (want("vulcanus-tile-lever")) await captureVulcanusTileLever();
+if (want("vulcanus-cliff-ore-richness")) await captureVulcanusCliffOreRichness();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();
 if (want("vulcanus-cliff-corner-fields")) await captureVulcanusCliffCornerFields();
 if (want("vulcanus-cliff-corner-fields-entity-regions"))

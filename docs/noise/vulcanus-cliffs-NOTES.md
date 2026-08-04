@@ -3383,3 +3383,66 @@ over. Ranked by how well corroborated each is:
 The obvious next question is whether that one cell (`1546,1550.5`) is really a
 destruction, or whether the discriminator misreads it. Note it is also one of the
 six cells #125's cascade does not explain, so it has been anomalous twice.
+
+## The ore mechanism: EVERY route is closed and the effect is still there (2026-08-03, #84)
+
+The section above closed the tile half and recorded a three-way contradiction.
+Two more routes are now closed, and the honest summary is stronger than
+"unknown": **the search space is exhausted, not merely unexplored.**
+
+`test/cliffOreMechanismClosure.spec.ts`.
+
+### The five closed routes
+
+| route | closed by | evidence |
+| --- | --- | --- |
+| the cliff FIELD reads a resource | here | `cliff_elevation = cliff_elevation_from_elevation = elevation = vulcanus_elevation`, whose **47-node** expression closure contains no resource region; and our port's raw cell set is **bit-identical** under every lever arm (2277 cells, same codes) |
+| `Surface::wouldCollide` does something else | disassembly | exactly: per-orientation box from the jump table, degenerate early-out, `constCollideWithTile`, `collideWithEntity` - both with the cliff's own mask at `proto+0x2b0`. **No third input** |
+| its ENTITY half | #124 | resource masks are `{resource}` at PROTOTYPE level against the cliff's eight layers - disjoint; and cliffs are computed and applied before any entity exists |
+| its TILE half | #128 | the lever moves 841 tiles and **none** crosses the `lava`/`lava-hot` boundary, on the game's own data, with 1682 blocking tiles in the sample |
+| the lever perturbs something STRUCTURAL | here | `control:calcite:richness` x2 and x0.5 - **zero** cliffs move |
+
+### The richness control, which was the last open route
+
+`control:calcite:richness` appears in `vulcanus_calcite_richness` **alone** - not
+in `vulcanus_calcite_probability`, which decides where the ore lands, and not in
+`vulcanus_calcite_region`, which drives the `volcanic_jagged_ground_range` tile.
+So it hands the generator a different `CompiledMapGenSettings` describing the
+same world.
+
+Measured over `[1500,1500]`, three arms:
+
+| | default | richness x2 | richness x0.5 |
+| --- | --- | --- | --- |
+| cliffs in region | 861 | **861, identical** | **861, identical** |
+| resource entities | 3933 | **3933, identical** | **3933, identical** |
+
+Identical cell for cell and orientation for orientation, positions included. The
+surface reads the changed richness back in both arms, so the override applied.
+
+**So the lever is not a structural perturbation.** The effect tracks ore
+PRESENCE - and nothing that can see ore presence can reach a cliff.
+
+### What this does and does not say
+
+It does **not** say the rule is wrong. Box overlap against the real resource
+positions reproduces the game at precision 1.000 over 31 cells and survives out
+of sample (#126). The rule is right; the mechanism is missing.
+
+It says the port's model of map generation is incomplete in a way none of these
+five rows covers. The next step is to find what map generation does that is not
+in the list - **not** to re-test a row. Every one of them now has a direct
+measurement or a data fact behind it, and re-deriving any is wasted work.
+
+Ideas that are still untouched, for whoever picks this up:
+
+- Chunk-generation ORDER and the cross-chunk case, beyond the mask argument.
+  Masks make the collision impossible, but nothing has looked at whether the ore
+  changes which chunks get generated, or in what sequence.
+- Something between `generateCliffs` and `applyCliffs` that neither reads. The
+  queue is filled in the compute phase and drained in the apply phase, and no
+  measurement covers what happens to it in between.
+- `CliffCraterPlacer::tryToPlaceCliffAsCrater`, which runs at the head of
+  `applyEntities` and is the one thing in the entity stage that touches cliffs at
+  all. Ruled out for the residual by position (#84's crater-cliff note) but never
+  ruled out as a mechanism.
