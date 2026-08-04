@@ -521,6 +521,27 @@ export function buildCliffControlLua(
     countTileNames?: readonly string[];
     alsoEntities?: boolean;
     /**
+     * **The runtime destroy probe (#127).** After the region's cliffs are read,
+     * destroy the cliff at each of these positions, then read every cliff back
+     * a SECOND time into {@link CliffDump.cliffsAfter}.
+     *
+     * This is the only instrument that can build the world map generation never
+     * produces - a cliff run truncated so a neighbour's end has nothing to
+     * connect to. #127 established that no capture of map-generation OUTPUT can
+     * score the connection rules, because the game's output is always
+     * connection-consistent, so the counterfactual has to be constructed.
+     *
+     * `cliffCorrection` is passed straight through to `LuaEntity.destroy`'s
+     * `do_cliff_correction`, and passing it explicitly is **load-bearing: it
+     * defaults to `false`.** A probe calling a bare `destroy()` would see no
+     * neighbour change, and that null would mean "the flag was off", not "the
+     * game does not cascade" - a vacuous arm that reads exactly like a result.
+     * Both values are captured for precisely that reason.
+     */
+    destroyPositions?: readonly { x: number; y: number }[];
+    /** @see destroyPositions - `do_cliff_correction`, which DEFAULTS TO FALSE. */
+    cliffCorrection?: boolean;
+    /**
      * Order the region's chunks are GENERATED in. `forward` is the row-major
      * loop with one blocking drain that every other capture has always used.
      * The other two split the region and call `force_generate_chunk_requests()`
@@ -777,6 +798,47 @@ ${yRange("cymid + 1", "cy1")}
 ${snapshotLua}
 ${yRange("cy0", "cymid")}`
         : oneDrain(xRange("cx0", "cx1"));
+  // The destroy probe.
+  //
+  // **The search box is 8 tiles wide and the match is on POSITION, and both
+  // halves are load-bearing.** `find_entities_filtered{area}` selects on the
+  // entity's BOUNDING BOX, and a cliff's box is the per-orientation `rotbb`
+  // rectangle, which is offset from the cell centre and need not contain it -
+  // so a tight box around the target's own position misses it. Measured: a
+  // +/-0.25 box found only 4 of 8 targets that were provably in the same run's
+  // own cliff list. The box is therefore widened past the largest cliff
+  // half-extent (3.371 tiles) and the exact position picks the right one out of
+  // the several cliffs that box now overlaps - `near[1]` would destroy a
+  // NEIGHBOUR of the target. Positions are exact on the 4-tile grid
+  // (`x = 4k + 2`, `y = 4k + 2.5`), so float equality is safe here.
+  //
+  // `found` is dumped per target because a lookup miss and a cascade removal
+  // are otherwise the same observation.
+  const destroyLua =
+    opts.destroyPositions === undefined
+      ? "  local destroyReport, cliffsAfter = nil, nil"
+      : `  local destroyReport = {}
+  for _, t in ipairs({${opts.destroyPositions
+    .map((p) => `{x = ${String(p.x)}, y = ${String(p.y)}}`)
+    .join(", ")}}) do
+    local near = surface.find_entities_filtered{
+      type = "cliff", area = {{t.x - 4, t.y - 4}, {t.x + 4, t.y + 4}} }
+    local e = nil
+    for _, cand in ipairs(near) do
+      if cand.position.x == t.x and cand.position.y == t.y then e = cand break end
+    end
+    local rec = {x = t.x, y = t.y, found = e ~= nil and e.valid, orientation = nil, destroyed = false}
+    if e ~= nil and e.valid then
+      rec.orientation = e.cliff_orientation
+      rec.destroyed = e.destroy{do_cliff_correction = ${opts.cliffCorrection === true ? "true" : "false"}}
+    end
+    destroyReport[#destroyReport + 1] = rec
+  end
+  local entsAfter = surface.find_entities_filtered{ type = "cliff", area = {{x0, y0}, {x1, y1}} }
+  local cliffsAfter = {}
+  for i, e in ipairs(entsAfter) do
+    cliffsAfter[i] = {x = e.position.x, y = e.position.y, name = e.name, orientation = e.cliff_orientation}
+  end`;
   const chunkDumpLua = !opts.recordChunks
     ? "  local chunkSequence, chunksAtEnd = nil, nil"
     : `  local chunkSequence = chunkSeq
@@ -825,12 +887,14 @@ ${entitiesLua}
 ${apSettingsLua}
 ${tileCountLua}
 ${chunkDumpLua}
+${destroyLua}
   helpers.write_file("${dumpFile}", helpers.table_to_json({
     cliffs = cliffs, cliffSettings = settings,
     resources = resources, protos = protos, autoplaceControls = autoplace,
     entities = entities, autoplaceSettings = apSettings, tileCounts = tileCounts,
     chunkSequence = chunkSequence, chunksAtEnd = chunksAtEnd,
     chunksAfterFirstDrain = chunksAfterFirstDrain,
+    destroyReport = destroyReport, cliffsAfter = cliffsAfter,
   }), false)
   error("DUMPED-OK")
 end)
@@ -906,6 +970,22 @@ export interface CliffDump {
    * an arm whose perturbation is unproven cannot close anything.
    */
   readonly chunksAfterFirstDrain?: { x: number; y: number }[];
+  /**
+   * Present only with `destroyPositions`. Per target: whether a cliff was
+   * actually `found` there, its orientation before the destroy, and whether
+   * `destroy` returned true. All three are dumped because "the cliff is gone
+   * from `cliffsAfter`" is the same observation whether it was destroyed, never
+   * there, or missed by the search box.
+   */
+  readonly destroyReport?: {
+    x: number;
+    y: number;
+    found: boolean;
+    orientation: string | null;
+    destroyed: boolean;
+  }[];
+  /** Present only with `destroyPositions`. Every cliff AFTER the destroys. */
+  readonly cliffsAfter?: Position[];
 }
 
 /** Parse the cliff-entity mod's dump into `{x, y}` cliff positions. */
@@ -940,6 +1020,8 @@ export function parseCliffDumpFull(jsonText: string): CliffDump {
     chunkSequence?: unknown;
     chunksAtEnd?: unknown;
     chunksAfterFirstDrain?: unknown;
+    destroyReport?: unknown;
+    cliffsAfter?: unknown;
   };
   return {
     cliffs: Array.isArray(parsed.cliffs) ? (parsed.cliffs as Position[]) : [],
@@ -987,6 +1069,21 @@ export function parseCliffDumpFull(jsonText: string): CliffDump {
         ? undefined
         : Array.isArray(parsed.chunksAfterFirstDrain)
           ? (parsed.chunksAfterFirstDrain as { x: number; y: number }[])
+          : [],
+    // The `{}`-for-empty hazard once more. `cliffsAfter` is the arm most likely
+    // to be legitimately empty - destroy every cliff in a small region and the
+    // game returns an empty table - so it must read as 0, not throw.
+    destroyReport:
+      parsed.destroyReport === undefined
+        ? undefined
+        : Array.isArray(parsed.destroyReport)
+          ? (parsed.destroyReport as CliffDump["destroyReport"])
+          : [],
+    cliffsAfter:
+      parsed.cliffsAfter === undefined
+        ? undefined
+        : Array.isArray(parsed.cliffsAfter)
+          ? (parsed.cliffsAfter as Position[])
           : [],
   };
 }
@@ -1179,6 +1276,10 @@ export interface OracleOptions {
   chunkOrder?: "forward" | "right-half-first" | "bottom-half-first";
   /** Dump the generated-chunk SET (and mid-run half) alongside the entities. */
   recordChunks?: boolean;
+  /** Destroy the cliffs at these positions, then read every cliff back again. */
+  destroyPositions?: readonly { x: number; y: number }[];
+  /** `LuaEntity.destroy`'s `do_cliff_correction`. DEFAULTS TO FALSE in the game. */
+  cliffCorrection?: boolean;
 }
 
 /**
@@ -1407,6 +1508,8 @@ export async function sampleCliffEntitiesFull(
       alsoEntities: opts.alsoEntities,
       chunkOrder: opts.chunkOrder,
       recordChunks: opts.recordChunks,
+      destroyPositions: opts.destroyPositions,
+      cliffCorrection: opts.cliffCorrection,
       propertyRoutes:
         opts.probeExpression === undefined
           ? undefined
