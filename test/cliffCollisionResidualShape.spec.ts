@@ -196,6 +196,16 @@ describe("the tile resolver is exonerated where the port over-rejects", () => {
  * three, `1542/1546,{1550..1558}` a knot, `1622/1626,1614` a pair - where the
  * near group does not.
  *
+ * > **CORRECTED - the ore clause above is wrong, see
+ * > `test/cliffMissedDestructionsLever.spec.ts`.** `ore = false` is OUR
+ * > predicate's output, and it explains only 20 of the 31 cells the ore actually
+ * > suppresses, so it cannot rule the ore out - that inference is circular. The
+ * > game's own `autoplace_controls` lever, on a fixture already on disk covering
+ * > this very region, says **6 of the far ten are ore** (4 geyser, 2 calcite) and
+ * > **11 of the 25** are. Only 11 have no known cause. Everything else in this
+ * > file stands: the distances are right, the tile resolver is exonerated, and no
+ * > lava box reaches the far group.
+ *
  * That is worth saying plainly because it contradicts the framing #113 handed
  * over. "Which cells does `Surface::wouldCollide` reject that ours does not" is
  * the right question for at most 15 of the 25; for the other 10 the mechanism is

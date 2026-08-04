@@ -1,5 +1,29 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 8, 2026-08-03: 11 of the 25 are the ORE - the "far ten" was SIX ore cells and four unknowns
+>
+> **The residual with no known cause is 11 cells, not 25.** UPDATE 6's section
+> ruled the ore out for all of them with the clause "all 25 are `ore = false`" -
+> but that is OUR predicate's output, and `vulcanusOreRejection.ts` says on its
+> own front page that the rule is too narrow, explaining 20 of the 31 cells the
+> ore actually suppresses. The inference was circular, and the instrument that
+> settles it non-circularly was already on disk:
+> `oracle-vulcanus-cliff-ore-direction` re-runs `[1500,1500]` - where every one
+> of the far ten lives - with the resources switched off.
+>
+> Switch them off and **six of the far ten appear**. Its two clusters have
+> different causes: the `1542/1546` knot is the **geyser**, the two singletons
+> are **calcite**, and only the `1742/1746` vertical run of four survives as
+> unexplained. Of the 25: **11 ore** (7 calcite + 4 geyser), **11 unknown**, 3
+> outside the lever's region.
+>
+> **And the distance grouping is not the causal grouping** - ore cells land in
+> the near, mid AND far groups - so do not act on the near/far split that
+> UPDATE 6 handed over. Act on the lever.
+>
+> The two recall numbers in these notes, 0.710 and 0.645, are the PLACED and RAW
+> stages of the same predicate, not a disagreement. Precision is 1.000 at both.
+>
 > ## UPDATE 7, 2026-08-03: the far ten are DESTROYED, and #114's exactness covers 14 of 225
 >
 > **The first thread out of UPDATE 6 is answered for 2 of the far ten, from a
@@ -2879,3 +2903,96 @@ Still true and unchanged: all 25 are `ore = false`, no entity suppresses them
 (#111), cliff-versus-cliff is refuted on the base rate (#115), and the tile
 resolver is exonerated (#115). Shipping accuracy is untouched by this section -
 recall 0.9961, precision 0.9858 - because it is measurement only.
+
+## CORRECTION: 11 of the 25 are the ORE, and the lever says so (2026-08-03, #84)
+
+The section before last ruled the ore out for the whole residual in one clause:
+
+> **But ten of the 25 have no lava within twelve tiles**, so no adjustment to a
+> lava collision box can ever reach them, and neither can the ore rule (all 25
+> are `ore = false`) nor any entity...
+
+**`ore = false` there is our own predicate's output, not the game's behaviour.**
+`vulcanusOreRejection.ts` says on its own front page that the rule is "exactly
+right where it fires, simply too narrow" - it accounts for 20 of the 31 cells
+the ore actually suppresses. Ruling the ore out with it is circular, and the
+non-circular instrument was already on disk and already covers the right region:
+`oracle-vulcanus-cliff-ore-direction` re-runs `[1500,1500]` - where every one of
+the far ten lives - with the resources switched off through `autoplace_controls`.
+
+`test/cliffMissedDestructionsLever.spec.ts`.
+
+### Switch the resources off and six of the far ten appear
+
+| of the 25 missed destructions | count |
+| --- | --- |
+| **ORE**, by the lever - 7 calcite + 4 geyser | **11** |
+| **unknown** - absent even with every resource off | **11** |
+| outside the lever's region, undetermined here | 3 |
+
+The far ten's two multi-cell clusters have **different** causes, which is why
+treating them as one population was never going to work:
+
+| far cell(s) | cause |
+| --- | --- |
+| `1542,1554.5` `1542,1558.5` `1546,1550.5` `1546,1554.5` (the knot) | **geyser** |
+| `1590,1618.5` `1602,1622.5` (the singletons) | **calcite** |
+| `1742,1530.5` `1746,1530.5` `1746,1534.5` `1746,1538.5` (the vertical run) | **unknown** |
+
+So the population with an unidentified mechanism is **11, not 25**, and the far
+group's share of it is **4, not 10**.
+
+This also sharpens the section above it: of the two far cells whose destruction
+#122 proved from the game's own orientations, `1546,1550.5` is now known to be a
+geyser suppression, so the genuinely-unknown group's destruction proof rests on
+`1746,1538.5` alone.
+
+### The distance grouping is not the CAUSAL grouping
+
+| | ore | unknown |
+| --- | --- | --- |
+| far (no lava within 12) | 6 | 4 |
+| mid (4 to 11) | 4 | 2 |
+| near (within 2) | 1 | 5 |
+
+Ore cells land in all three. "Near the lava" and "caused by the lava box" are not
+the same claim, and neither are "far from lava" and "unidentified mechanism".
+The near/far split is what the previous handoff proposed to act on; act on the
+lever instead.
+
+### The two recall numbers are different STAGES, not a disagreement
+
+`## The ore rule, scored against the lever` gives recall **0.710** and this gives
+**0.645**. Both are right. That one scores PLACED cells after the crossing stage,
+where the predicate fires on 20 and the placement loses 22; this one scores the
+raw queue, which is the set `applyCliffs` actually tests and the stage #114
+established as the right place to count a rule. Precision is 1.000 either way -
+our predicate has never fired on a cell the ore does not suppress.
+
+### What the correction does NOT touch
+
+The careful half of #115 stands: the lava distances are right, no lava box
+reaches the far group, and the tile resolver is exonerated 70/70. #111's entity
+lever and #115's cliff-versus-cliff refutation are untouched. And the 11 ore
+cells are not a new defect - `vulcanusOreRejection.ts` has documented the
+narrowness since it was written, with the geyser arm excluded deliberately
+(`includeGeyser: false`, because our geyser placement rolls and misses the
+game's) and the calcite remainder open. What changed is knowing that this known
+gap is where 11 of the 25 went.
+
+### Where this leaves #84
+
+**11 cells with no known cause**, of which 5 sit within two tiles of our lava and
+are still a legitimate box-shape question, and 6 are not. Plus 3 in `[0,0]` and
+`[-1200,800]` that the lever's region cannot speak about - settling those needs
+those regions re-run with the resources off, which is the first capture this line
+of work has actually needed in a while.
+
+Two things worth doing before another suppressor hunt, both cheap:
+
+1. **Widen the ore rule and re-score.** It is the largest single explained block
+   in the residual and its precision is 1.000, so there is headroom. Do not
+   widen the box until it fits - #88 - but the geyser arm is a MODEL gap
+   (`includeGeyser: false`), not a shape question, and that is a different fix.
+2. **Re-run the lever on the other two regions**, which turns 3 undetermined
+   cells into a cause and would also re-test the whole split out of sample.
