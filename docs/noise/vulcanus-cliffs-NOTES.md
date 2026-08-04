@@ -3446,3 +3446,63 @@ Ideas that are still untouched, for whoever picks this up:
   `applyEntities` and is the one thing in the entity stage that touches cliffs at
   all. Ruled out for the residual by position (#84's crater-cliff note) but never
   ruled out as a mechanism.
+
+## `crater-cliff` moves under the lever too - a SECOND effect, and an RNG lead (2026-08-03, #84)
+
+Found while checking something that should have been checked long ago: are the 31
+suppressed `cliff-vulcanus` cells actually **absent**, or merely renamed? #94's
+lesson was that a `name === "cliff-vulcanus"` filter threw away an answer a
+fixture already held, so the question was overdue.
+
+They are absent - no cliff entity of any prototype at those positions, or within
+a tile of them. But the same dump shows something nobody had looked at.
+
+`test/craterCliffLeverSensitivity.spec.ts`.
+
+### Calcite suppresses crater-cliffs as well
+
+| arm | `crater-cliff` in `[1500,1500]` |
+| --- | --- |
+| resources ON | **0** |
+| calcite OFF | **8** |
+| ALL resources OFF | **8** |
+| geyser OFF | **0** |
+
+The same eight, in the same places, in both calcite-off arms. And
+`crater_cliff`'s probability expression cannot see calcite either - its 47-node
+closure holds no resource region, and neither do the two Vulcanus biomes it
+reads. **The same impossibility, in a second entity type.**
+
+### But it is a DIFFERENT effect, and it names a new mechanism class
+
+Crater-cliffs are **autoplaced entities**, placed during `applyEntities`, and
+entity autoplace **rolls**. Removing calcite removes rolls, which shifts the
+per-chunk `RandomGenerator` stream and moves everything drawn after it. That is a
+mechanism class #84 has never considered, and it explains the craters with no
+noise dependency at all.
+
+**It cannot explain the 31.** `cliff-vulcanus` comes from `generateCliffs` and
+`applyCliffs`, which run before any entity is rolled - `computeInternal` calls
+`generateCliffs` at `+0x2c`, before it even builds the `NoiseCache` the
+`generateEntities` passes use. A cliff decided before the first roll cannot be
+moved by a change to the roll sequence.
+
+**Recorded as a HYPOTHESIS, not a result.** Nothing here tests it. It is worth
+writing down because it is the first mechanism class in this investigation that
+is not already closed - and because the alternative, that craters share the 31's
+unknown cause, is a much bigger claim needing much better evidence.
+
+The craters are also **16.4 tiles** from the nearest suppressed cell at closest
+approach, against their own 2.8-tile collision box, so crater placement is not
+the 31's mechanism even before the ordering argument.
+
+### The practical takeaway: a fixture hazard, now guarded
+
+The arms of `oracle-vulcanus-cliff-ore-direction` **disagree about how many
+crater-cliffs exist**, so any cross-arm comparison over "all cliff entities" is
+confounded by an effect that has nothing to do with the cliff generator. The
+unfiltered difference is **39**; the real suppression is **31**.
+
+Every spec in #84 filters to `name === "cliff-vulcanus"` and is therefore
+correct - but that was inherited convention rather than a guarded decision. It is
+guarded now.
