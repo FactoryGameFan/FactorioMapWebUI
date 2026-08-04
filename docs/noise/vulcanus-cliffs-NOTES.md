@@ -1,5 +1,48 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 12, 2026-08-04: CHUNK-GENERATION ORDER is closed - both links, and the ore effect survives
+>
+> The first of the three ideas UPDATE 9 left as untouched is answered, and it is
+> a **negative on both halves**. Do not re-walk it.
+>
+> The idea was not idle. `Surface::getEffectiveTileID` returns **0 for an absent
+> chunk** and `checkTileCollisions` then skips that tile, so whether a
+> neighbouring chunk exists yet is a genuine input to whether a cliff survives -
+> and `applyCliffs` adds each cliff to the surface before testing the next.
+> Order is a live causal channel on its face. It is nonetheless inert here.
+>
+> Six arms over `[1500,1500]`, crossing the resources ON/OFF lever with three
+> generation orders over an identical chunk set
+> (`test/cliffChunkOrder.spec.ts`):
+>
+> | link | prediction | result |
+> | --- | --- | --- |
+> | ore -> which chunks generate | identical | **81 chunks in all six arms** |
+> | order -> cliffs | identical | **identical cell for cell AND orientation for orientation**, in both the ON and the OFF arms |
+> | ore effect still present | 885 -> 916 | yes, and the delta is **31 in every order** - no interaction |
+>
+> **The order perturbation is measured, not inferred, and getting there is the
+> reusable part.** The first pass read generation order from
+> `on_chunk_generated` and got a **zero-length sequence in every arm while 81
+> chunks generated**: Factorio dispatches no events raised during `on_init`,
+> which is where every capture in this repo generates its chunks. An arm whose
+> perturbation is unproven closes nothing, so the arms were rebuilt as **two
+> blocking drains with a chunk snapshot taken between them**, splitting on
+> different axes - the x-split holds columns 51-54 at its midpoint, the y-split
+> holds rows 51-54. Two different sets, therefore two different orders, resting
+> on nothing about how the game drains a queue. The measured zero is asserted
+> rather than dropped, so nobody spends a run rediscovering it.
+>
+> **A second result falls out, and it was never checked before.** Every
+> committed cliff fixture is captured with the forward request order, and
+> nothing had established that the capture's own loop was not shaping its ground
+> truth. It is not: all three orders agree exactly. The 15-region corpus the
+> border result rests on is not an artifact of how it was captured.
+>
+> Two of the three untouched ideas remain: **the queue between `generateCliffs`
+> and `applyCliffs`**, and **`CliffCraterPlacer::tryToPlaceCliffAsCrater` as a
+> mechanism** (ruled out for the residual by position, never as a mechanism).
+>
 > ## UPDATE 10, 2026-08-03: the border effect is ORIENTATION-BLIND, and the connection system is decompiled
 >
 > Read with UPDATE 9, which it sharpens rather than replaces.
@@ -3527,9 +3570,12 @@ measurement or a data fact behind it, and re-deriving any is wasted work.
 
 Ideas that are still untouched, for whoever picks this up:
 
-- Chunk-generation ORDER and the cross-chunk case, beyond the mask argument.
-  Masks make the collision impossible, but nothing has looked at whether the ore
-  changes which chunks get generated, or in what sequence.
+- ~~Chunk-generation ORDER and the cross-chunk case, beyond the mask argument.~~
+  **CLOSED 2026-08-04 - see UPDATE 12.** The ore changes neither which chunks
+  generate (81 in all six arms) nor anything a change of order could reach:
+  three different generation orders over the identical chunk set place identical
+  cliffs, cell for cell and orientation for orientation, with the ore effect
+  present and unchanged at 31 in every order.
 - Something between `generateCliffs` and `applyCliffs` that neither reads. The
   queue is filled in the compute phase and drained in the apply phase, and no
   measurement covers what happens to it in between.
