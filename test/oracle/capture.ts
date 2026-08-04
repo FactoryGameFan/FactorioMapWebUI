@@ -4875,6 +4875,147 @@ async function captureVulcanusCliffFineSweep(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} levels)`);
 }
 
+/**
+ * **Does CHUNK-GENERATION ORDER carry the ore effect? (#84)**
+ *
+ * The ore moves cliffs - 885 vs 916 `cliff-vulcanus` in `[1500,1500]` - and
+ * every route from a resource control to a cliff is closed: the field (both
+ * properties), `Surface::wouldCollide`'s entity half and tile half, and a
+ * structural perturbation of the settings object. `vulcanus-cliffs-NOTES.md`
+ * lists three ideas that no measurement touches, and this is the first: nothing
+ * has looked at whether the ore changes **which chunks get generated, or in what
+ * sequence**.
+ *
+ * It is not an idle one. `Surface::getEffectiveTileID` returns **0 for an
+ * absent chunk** and `checkTileCollisions` then SKIPS that tile, so whether a
+ * neighbouring chunk exists yet is a real input to whether a cliff survives -
+ * and `applyCliffs` adds each cliff to the surface before testing the next.
+ * Order is a live causal channel on its face; the question is whether the ore
+ * can move it.
+ *
+ * **The hypothesis has two links, and breaking either closes the route.**
+ *
+ * - **Link A, ore -> order.** Arms 1 and 2, the established resources-ON /
+ *   resources-OFF pair from `vulcanus-cliff-ore-direction`, now recording the
+ *   generated chunk set and sequence.
+ * - **Link B, order -> cliffs.** Arms 3-6, identical settings to 1 and 2,
+ *   differing only in the order the SAME chunks are generated in. This is the
+ *   sharper of the two: it tests the second link directly, and a negative
+ *   closes the route whatever the ore does to the order.
+ *
+ * **The order perturbation is measured, not assumed.** The first pass at this
+ * tried to read generation order from `on_chunk_generated`, and it came back
+ * with a ZERO-length sequence in all four arms while 81 chunks generated -
+ * Factorio does not dispatch events raised during `on_init`. So the arms are
+ * built as TWO blocking drains with a chunk snapshot taken between them, and
+ * they split on different axes: `right-half-first` reports 36 chunks at its
+ * midpoint, `bottom-half-first` reports a different 36. Those are two
+ * demonstrably different generation orders over one identical chunk set, and
+ * neither claim rests on how the game drains a queue.
+ *
+ * **Predictions, registered here before the capture runs:**
+ *
+ * | comparison | prediction | what a violation means |
+ * | --- | --- | --- |
+ * | ON vs OFF, chunk SET | identical | the ore changes which chunks exist - the route is OPEN |
+ * | x-split vs y-split, mid-run half | **differs** | the perturbation is INERT and arms 3-6 say nothing |
+ * | x-split vs y-split, chunk SET | identical | the perturbation changed more than the order; arms void |
+ * | across all 3 orders, cliffs | identical | order moves cliffs - a result on its own account |
+ * | ON vs OFF, cliffs | **differs** (885/916) | the ore effect is absent here and every arm is off-target |
+ * | arm 1 cliffs | 885, as every prior fixture | this capture is not describing the studied world |
+ *
+ * The bold rows are the non-vacuity arms and they are why this is six runs
+ * rather than two. Without the second, "the orders agree on the cliffs" is
+ * indistinguishable from an order that never changed; without the fifth, it is
+ * a statement about a run in which the thing being explained did not happen.
+ *
+ * The two levers are CROSSED rather than each tested against the default, so an
+ * INTERACTION is visible - the only shape in which a closed Link B could still
+ * leave the ore acting through order.
+ */
+async function captureVulcanusCliffChunkOrder(): Promise<void> {
+  const seed = 123456;
+  const region: Region = { x0: 1500, y0: 1500, x1: 1756, y1: 1756 };
+  const OFF = { frequency: 1, size: 0, richness: 1 };
+  const ALL_OFF = {
+    tungsten_ore: OFF,
+    calcite: OFF,
+    vulcanus_coal: OFF,
+    sulfuric_acid_geyser: OFF,
+  };
+  const ORDERS = ["forward", "right-half-first", "bottom-half-first"] as const;
+  const arms: {
+    label: string;
+    chunkOrder: (typeof ORDERS)[number];
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+  }[] = ORDERS.flatMap((chunkOrder) => [
+    { label: `${chunkOrder} order, resources ON`, chunkOrder },
+    { label: `${chunkOrder} order, ALL resources OFF`, chunkOrder, autoplaceControls: ALL_OFF },
+  ]);
+
+  const cases: unknown[] = [];
+  for (const arm of arms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        autoplaceControls: arm.autoplaceControls,
+        alsoResources: true,
+        recordChunks: true,
+        chunkOrder: arm.chunkOrder,
+      });
+      cases.push({
+        label: arm.label,
+        chunkOrder: arm.chunkOrder,
+        autoplaceControls: arm.autoplaceControls ?? null,
+        effectiveAutoplace: dump.autoplaceControls,
+        cliffs: dump.cliffs,
+        resourceCount: dump.resources?.length ?? -1,
+        chunkSequenceLength: dump.chunkSequence?.length ?? -1,
+        chunksAtEnd: dump.chunksAtEnd,
+        chunksAfterFirstDrain: dump.chunksAfterFirstDrain,
+      });
+      const named = dump.cliffs as unknown as readonly { name: string }[];
+      const vulc = named.filter((c) => c.name === "cliff-vulcanus").length;
+      console.log(
+        `  ${arm.label} -> ${String(vulc)} cliff-vulcanus, ` +
+          `${String(dump.resources?.length ?? -1)} resources, ` +
+          `${String(dump.chunksAtEnd?.length ?? -1)} chunks, ` +
+          `mid ${String(dump.chunksAfterFirstDrain?.length ?? -1)}, ` +
+          `seq ${String(dump.chunkSequence?.length ?? -1)}`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Tests whether CHUNK-GENERATION ORDER is " +
+      "the missing mechanism behind the Vulcanus ore/cliff effect (#84) - the first of the three " +
+      "ideas vulcanus-cliffs-NOTES.md lists as untouched after all five direct routes closed. Two " +
+      "levers are CROSSED: resources ON/OFF (the established autoplace_controls arm) against the " +
+      "order the SAME chunks are generated in (one blocking drain; or two drains splitting the " +
+      "region on x, or on y). Every arm records the generated chunk SET, and the two-drain arms " +
+      "also record the half that existed BETWEEN their drains - that snapshot is what proves the " +
+      "order really changed, since chunkSequenceLength is 0 everywhere (Factorio dispatches no " +
+      "on_chunk_generated for chunks generated during on_init). Cliffs, resource count and chunks " +
+      "all come from ONE surface per arm, so 'the order did not move the cliffs' can never be " +
+      "confused with 'the order never moved' or with 'the ore effect was absent from this run'. " +
+      "Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-cliff-chunk-order",
+    seed,
+    region,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-chunk-order.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
+if (want("vulcanus-cliff-chunk-order")) await captureVulcanusCliffChunkOrder();
 if (want("vulcanus-cliff-suppressor-levers")) await captureVulcanusCliffSuppressorLevers();
 if (want("vulcanus-cliff-bands")) await captureVulcanusCliffBands();
 if (want("vulcanus-cliff-fine-sweep")) await captureVulcanusCliffFineSweep();
