@@ -3285,3 +3285,101 @@ another region. Do not capture more of the same hoping the gate falls out.
 Connection consistency of the game's cliff output is now pinned across every
 capture, which nothing asserted before. Any future model that emits a dangling
 end is wrong on the game's own terms, wherever it emits one.
+
+## `autoplace_controls` is NOT an entity-only lever - it moves 5% of the TILES (2026-08-03, #84)
+
+Every ore result in #84 uses one instrument: switch a resource off through
+`map_gen_settings.autoplace_controls` and see which cliffs come back. It has been
+treated throughout as removing entities and nothing else. **It does more, and the
+Lua says so outright.**
+
+`test/cliffOreLeverTileConfound.spec.ts`,
+`oracle-vulcanus-tile-lever.seed123456.json`.
+
+### The route, in the game's own data files
+
+`space-age/prototypes/planet/planet-vulcanus-map-gen.lua`:
+
+```lua
+vulcanus_calcite_size   = "slider_rescale(control:calcite:size, 2)"
+vulcanus_calcite_region = "max(vulcanus_starting_calcite,
+                               min(1 - vulcanus_starting_circle,
+                                   vulcanus_place_non_metal_spots(749, 12, 1,
+                                     vulcanus_calcite_size * ..., control:calcite:frequency, ...)))"
+```
+
+`space-age/prototypes/tile/tiles-vulcanus.lua` then feeds that region into a
+**tile** range:
+
+```lua
+name = "volcanic_jagged_ground_range",
+expression = "5 * min(10, max(vulcanus_calcite_region + 0.2, ...))"
+```
+
+So `calcite size = 0` changes which tile the argmax picks. That is a live route
+from the lever to `Surface::wouldCollide`'s TILE half - exactly the kind #124 was
+left looking for once it closed the entity half.
+
+### Measured against the game: real, and inert for cliffs
+
+Three arms over `[1500,1500]`, a uniform stride-2 grid of 16384 points:
+
+| arm | tiles changed | blocking gained | blocking lost |
+| --- | --- | --- | --- |
+| calcite OFF | **841** (5.1%) | **0** | **0** |
+| ALL resources OFF | **1066** | **0** | **0** |
+
+Every change is ground-to-ground: `volcanic-jagged-ground` losing the argmax to
+`volcanic-folds`, `-folds-warm`, `-soil-dark`, `-soil-light`, `-folds-flat`. Only
+`lava` and `lava-hot` carry `tile_collision_masks.lava()`, and **nothing crosses
+that boundary**, so `constCollideWithTile` cannot see any of it.
+
+**Every ore result in #84 therefore stands.** But the instrument was
+mischaracterised, and anyone reaching for `autoplace_controls` for a NEW question
+needs to know it moves tiles - for a question about tiles, or about anything
+downstream of them, it is confounded.
+
+Two things make the zero mean something: **1682 of the 16384 sampled tiles ARE
+blocking**, so there was a boundary to cross, and each arm records the controls
+the SURFACE read back, so "no tile moved" cannot be confused with "the override
+never applied".
+
+### Our port reproduces it, which is what covers the unsampled tiles
+
+The capture is a 25% sample. Our tile model can answer over all 65536, and says
+**3335 changed, 0 blocking** - a rate of 5.09% against the game's 5.13%,
+agreeing to within 0.05 percentage points on a lever nobody had ever pointed at
+it. That is independent corroboration of the port's response, and it is what
+lets its "no blocking flip anywhere" cover the tiles the grid skipped.
+
+Control: **tungsten OFF moves zero tiles here**, because there is no tungsten in
+this region - it is what fills `[0,0]`, where #126 measured the ore suppressing
+zero cliffs. A lever with no region to act on moves nothing, which is the arm
+showing the 3335 is calcite's doing rather than an artifact of rebuilding the
+resolver.
+
+### Where this leaves the mechanism - a three-way contradiction
+
+Both halves of `Surface::wouldCollide` are now closed against the ore:
+
+| half | closed by |
+| --- | --- |
+| entity | #124 - disjoint masks at prototype level, ordering, and `applyEntities` skipping rather than destroying |
+| tile | this section, on the game's own data |
+
+And yet #124 also found the ore acting at the **destroy stage**, where
+`wouldCollide` is the only thing that destroys. **All three cannot be right.**
+
+That tension is the finding to carry forward rather than something to smooth
+over. Ranked by how well corroborated each is:
+
+1. The entity half being closed - three independent routes, one of them a
+   prototype-level data fact. Strong.
+2. The tile half being closed - the game's own tiles, with a non-vacuity arm and
+   a corroborating port model. Strong, but a 25% grid.
+3. The ore acting at the destroy stage - **n = 1**, one cell, one neighbour.
+   Weakest, and the first place to look.
+
+The obvious next question is whether that one cell (`1546,1550.5`) is really a
+destruction, or whether the discriminator misreads it. Note it is also one of the
+six cells #125's cascade does not explain, so it has been anomalous twice.
