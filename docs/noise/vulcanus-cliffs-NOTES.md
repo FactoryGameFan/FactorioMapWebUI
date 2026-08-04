@@ -1,5 +1,44 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 16, 2026-08-04: the ore effect is FULLY DECOMPOSED - rejections + cascade, and the open question is now much narrower
+>
+> With every route and every idea closed (UPDATES 12, 13, 15) the premise itself
+> became the suspect - the lesson of #136. **It was re-audited and it survives,
+> sharper than it went in.** No capture: this is a fold of fixtures already on
+> disk (`test/cliffOreEffectDecomposition.spec.ts`).
+>
+> - **Pure SUPPRESSION.** The resources-ON cliff set is a **strict subset** of
+>   the resources-OFF set in all three arms - **zero** cells are lost when the
+>   ore is removed. A perturbed field moves cells both ways; only a rejection
+>   moves them one way. That is the shape test, and it passes.
+> - **Exactly ADDITIVE.** 27 (calcite) + 4 (geyser) = 31 (all), the same cells,
+>   disjoint sets.
+> - **The orientation changes among SURVIVING cells are the destruction
+>   cascade.** Take the ore-OFF world, destroy exactly the cells the ore rejects,
+>   run the port's `destroyEnd` cascade - and you get the ore-ON world
+>   **EXACTLY**, positions and orientations, in all three arms.
+>
+> **There is therefore no unexplained *component* of the ore effect at all.**
+> Every difference between the two worlds, the 5 / 4 / 1 orientation changes
+> included, is rejection-plus-cascade.
+>
+> **This reframes what is open, and the old framing was the thing keeping it
+> stuck.** "What mechanism lets the ore reach a cliff?" has an answer - a
+> rejection at the apply stage, as #108 and #113 said, with the cascade as its
+> only secondary effect. That is why five routes and three ideas all came back
+> negative: they were looking for a *pathway* that is already known. What remains
+> open is narrower and far more tractable: **which cells get rejected, and by
+> what criterion.** `makeVulcanusOreRejection` already reproduces that criterion
+> at precision 1.000 without reaching recall 1, so the gap is a geometry question
+> about specific cells - not a missing route through the generator.
+>
+> It is also a **second, independent confirmation of the cascade model**: #139
+> confirmed it against the game through a Lua runtime probe, this confirms it
+> against ordinary map-generation output. Note the honest limit, measured by
+> planting one-sided `destroyEnd` no-ops: this fold's rejections only ever trim
+> SOUTH and WEST ends, so it covers two of four directions. #139's probe covers
+> north. Read the two together; neither is a whole-model guard alone.
+
 > ## UPDATE 15, 2026-08-04: the CRATER PLACER is ADD-ONLY - the third and last untouched idea is closed
 >
 > `CliffCraterPlacer::tryToPlaceCliffAsCrater` was the last of UPDATE 9's three
