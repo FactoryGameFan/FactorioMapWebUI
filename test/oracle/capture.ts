@@ -3875,6 +3875,113 @@ async function captureVulcanusCliffOreDirection(): Promise<void> {
 }
 
 /**
+ * **Eight more regions, to make the CHUNK-BORDER question decisive** (#84).
+ *
+ * The unexplained residual is enriched on chunk borders: 9 of 14 on the original
+ * three regions (64.3% against a 45.0% base), then 9 of 13 on the four added in
+ * #131 (69.2% against 47.2%). The second was a pre-registered test on fresh data
+ * and it replicated in direction and magnitude - but at 1.59 sigma alone and
+ * ~2.1 combined, it is a lead rather than a result.
+ *
+ * n is the only thing in the way. **The prediction, recorded here before the
+ * capture ran:** if the enrichment is real at ~66%, eight more regions should
+ * add roughly 26 unexplained cells with about 17 on a border, taking the
+ * combined figure to ~2.9 sigma. If it is noise, the new batch should sit near
+ * its own base rate of ~46% and the combined figure should FALL.
+ *
+ * That is a prediction with a real way to lose, which the first two rounds did
+ * not have.
+ *
+ * Regions are spread away from spawn, from each other, and from the seven
+ * already captured. ~2.5s an arm.
+ *
+ * Regenerate: `node --experimental-strip-types test/oracle/capture.ts
+ * vulcanus-cliff-entities-border-batch`
+ */
+async function captureVulcanusCliffEntitiesBorderBatch(): Promise<void> {
+  const seed = 123456;
+  const OFF = { frequency: 1, size: 0, richness: 1 };
+  const ALL_OFF = {
+    tungsten_ore: OFF,
+    calcite: OFF,
+    vulcanus_coal: OFF,
+    sulfuric_acid_geyser: OFF,
+  };
+  const PROTOS = [
+    "cliff-vulcanus",
+    "crater-cliff",
+    "tungsten-ore",
+    "calcite",
+    "coal",
+    "sulfuric-acid-geyser",
+  ];
+  const mk = (x: number, y: number): Region => ({ x0: x, y0: y, x1: x + 256, y1: y + 256 });
+  const regions: { label: string; region: Region }[] = [
+    { label: "[2200,-2800]", region: mk(2200, -2800) },
+    { label: "[-3400,-900]", region: mk(-3400, -900) },
+    { label: "[1200,2600]", region: mk(1200, 2600) },
+    { label: "[-1600,3200]", region: mk(-1600, 3200) },
+    { label: "[3600,600]", region: mk(3600, 600) },
+    { label: "[-900,-3300]", region: mk(-900, -3300) },
+    { label: "[2800,2000]", region: mk(2800, 2000) },
+    { label: "[-3000,2800]", region: mk(-3000, 2800) },
+  ];
+
+  const cases: unknown[] = [];
+  for (const r of regions) {
+    for (const off of [false, true]) {
+      const label = `${r.label}, ${off ? "ALL resources OFF" : "resources ON"}`;
+      const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+      try {
+        const dump = await sampleCliffEntitiesFull(r.region, {
+          workDir,
+          seed,
+          spaceAge: true,
+          planet: "vulcanus",
+          autoplaceControls: off ? ALL_OFF : undefined,
+          alsoResources: true,
+          protoNames: PROTOS,
+        });
+        cases.push({
+          label,
+          region: r.region,
+          autoplaceControls: off ? ALL_OFF : null,
+          effectiveAutoplace: dump.autoplaceControls,
+          effectiveCliffSettings: dump.cliffSettings,
+          cliffs: dump.cliffs,
+          resources: dump.resources,
+        });
+        const named = dump.cliffs as unknown as readonly { name: string }[];
+        const vulc = named.filter((c) => c.name === "cliff-vulcanus").length;
+        console.log(`  ${label} -> ${String(vulc)} cliff-vulcanus`);
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Eight more Vulcanus cliff-entity regions " +
+      "with the paired ON / ALL-resources-OFF ore lever, captured to make the CHUNK-BORDER question " +
+      "decisive (#84). The unexplained residual ran 9/14 on a border in the original three regions " +
+      "and 9/13 in the four added by #131 - replicated, but 1.59 sigma alone and ~2.1 combined. " +
+      "PREDICTION RECORDED BEFORE CAPTURE: if the enrichment is real at ~66%, these should add ~26 " +
+      "unexplained cells with ~17 on a border, taking the combined figure to ~2.9 sigma; if it is " +
+      "noise, the new batch sits near its own ~46% base rate and the combined figure FALLS. Regions " +
+      "are spread away from spawn, from each other, and from the seven already captured. Each arm " +
+      "records the autoplace_controls and cliff_settings the SURFACE read back and dumps cliffs and " +
+      "resources from one generated surface. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts vulcanus-cliff-entities-border-batch",
+    seed,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-entities-border-batch.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
+/**
  * **Four MORE cliff-entity regions, with the ore lever, to raise n** (#84).
  *
  * Two things are stuck at a sample size rather than at an idea.
@@ -4777,6 +4884,7 @@ if (want("vulcanus-cliff-ore-direction-regions")) await captureVulcanusCliffOreD
 if (want("vulcanus-tile-lever")) await captureVulcanusTileLever();
 if (want("vulcanus-cliff-ore-richness")) await captureVulcanusCliffOreRichness();
 if (want("vulcanus-cliff-entities-more-regions")) await captureVulcanusCliffEntitiesMoreRegions();
+if (want("vulcanus-cliff-entities-border-batch")) await captureVulcanusCliffEntitiesBorderBatch();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();
 if (want("vulcanus-cliff-corner-fields")) await captureVulcanusCliffCornerFields();
 if (want("vulcanus-cliff-corner-fields-entity-regions"))
