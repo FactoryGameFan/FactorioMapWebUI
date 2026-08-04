@@ -31,6 +31,16 @@
 > **not** what this audit applied. Apply the destroy cascade alone first, and
 > re-measure the whole budget.
 >
+> **CORRECTION (2026-08-04): that net 8 is against the wrong baseline; the real
+> figure is +2 positions and +3 orientations.** It scores the cascade against a
+> post-filter model, but the renderer ships `rejectAtCrossingStage`, which
+> already reproduces most of the cascade. Re-measured on the error budget's own
+> regions the cascade gives surplus 22 -> 20 and wrong orientations 21 -> 18 with
+> recall unchanged - and a cascade forbidden to cross a chunk boundary is
+> **byte-identical** to what ships, so the whole gain is the cross-chunk part.
+> See the section at the end of this file, and
+> `test/cliffCrossChunkCascade.spec.ts`.
+>
 > **Look at the 2 new false rejections before the 10 wins.** They are cells the
 > game KEPT that our cascade removes, and #134 recorded a gate the port does not
 > model: `Cliff::destroyEnd` refuses to `forceDestroy` when entity flag bit 4 of
@@ -4287,3 +4297,69 @@ that is a real gap: `destroyEnd` is already a no-op on a side the orientation
 lacks, so the guard only bites on a WRONG-PARITY facing side, and no cell in
 these 14 regions has one. This spec does not cover the parity rule;
 `test/cliffConnections.spec.ts` is what pins that.
+
+## The cascade's WHOLE gain is CROSS-CHUNK, and it is border-exclusive (2026-08-04, #84)
+
+Priced against the model that actually ships, not the post-filter baseline #143
+used. Zero capture - `test/cliffCrossChunkCascade.spec.ts`, scored on the error
+budget's own three regions.
+
+| model | port | surplus | missing | wrong orientation |
+| --- | --- | --- | --- | --- |
+| shipped (`rejectAtCrossingStage`) | 1547 | 22 | 6 | 21 |
+| **destroy cascade** | 1545 | **20** | 6 | **18** |
+| cascade, forbidden to cross a chunk | 1547 | 22 | 6 | 21 |
+
+**#143's net +8 does not survive this.** The real gain is **+2 positions and +3
+orientations**, recall untouched. The +8 was scored against a post-filter model -
+kills applied, no cascade - but the renderer ships `rejectAtCrossingStage`, which
+zeroes a rejected cell's four edge registers so its neighbours lose the shared
+edge. That already reproduces most of the cascade.
+
+### The third row is the finding
+
+**Restricting the cascade to within a chunk reproduces the shipped model
+exactly**, on all four counts. Everything the cascade buys is a cascade that
+CROSSES A CHUNK BOUNDARY - which `rejectAtCrossingStage` cannot do by
+construction, because each chunk owns a private copy of its shared edges. That
+privacy is exactly what keeps the pass chunk-local and worker tiling
+byte-identical.
+
+All **six** cells where the two models disagree are `onChunkBorder`, and every
+one the game has an opinion about is a correction:
+
+| kind | cell | shipped | cascade | game |
+| --- | --- | --- | --- | --- |
+| removed | `(1606, 1598.5)` | present | gone | absent (surplus) |
+| removed | `(-1050, 1022.5)` | present | gone | absent (surplus) |
+| reoriented | `(1634, 1534.5)` | `west-to-east` | `none-to-east` | **`none-to-east`** |
+| reoriented | `(1694, 1598.5)` | `north-to-east` | `north-to-none` | **`north-to-none`** |
+| reoriented | `(1670, 1662.5)` | `south-to-west` | `none-to-west` | **`none-to-west`** |
+| reoriented | `(1722, 1630.5)` | `east-to-south` | `east-to-none` | not in game set |
+
+### Why this is worth more than the two cells
+
+That is the same place the residual's unexplained cells concentrate. The
+chunk-border enrichment has survived both of its plausible deflations - the
+orientation-reach rival (#134) and cascade double-counting (#143) - and stands at
+z = 2.67. **A chunk-local rejection model that cannot cascade across a chunk
+boundary is a mechanism of exactly that shape**, and it is the first candidate
+that PREDICTS border-only errors rather than merely being consistent with them.
+
+It does **not** explain the enrichment yet: 6 cells here against 23 unexplained
+there, scored on different fixtures. What is established is that the mechanism
+exists and is border-exclusive, which is what makes testing it against the
+residual directly the next move.
+
+### Adoption is deferred, and the reason is a perf guard
+
+The gain IS the cross-chunk part, so adopting it needs a one-chunk halo in the
+placement pass. `test/cliffCellBounds.spec.ts` pins the tiled-to-whole noise
+ratio below **1.1** precisely to stop that kind of inflation: a 128px worker tile
+is 4x4 chunks and would become 6x6, ~**2.25x** the cliff-pass cell work by
+geometry (estimated, not benchmarked). Buying +2 positions for that is a trade to
+make with a benchmark in hand.
+
+The cascade's reach is bounded at **one hop** (`maxDepth` 1, `maxDist` 4 tiles =
+one grid step), so one chunk is all the halo would ever need. The reach is not
+the obstacle; the tiled cost is.
