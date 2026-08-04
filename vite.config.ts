@@ -75,6 +75,37 @@ export default defineConfig({
     // they are set. Retries were deliberately NOT used - a retry would hide a
     // real flake, and nothing here is actually flaky, just slow.
     testTimeout: 30_000,
+    // Both of these are leak guards, adopted in #144 against Vitest's "Writing
+    // Tests with AI" guidance. Neither was set before, and `vi.unstubAllGlobals`
+    // appeared nowhere in the repo.
+    //
+    // `unstubGlobals` closes a real leak. `vi.restoreAllMocks()` - which two
+    // files already call in an `afterEach` - restores `vi.spyOn` spies and does
+    // NOT undo `vi.stubGlobal`, so a stubbed global persisted into every later
+    // test in the same file. `test/previewPanel.spec.ts` has two tests that stub
+    // only `fetch` and were inheriting the `URL` stub from the test before them.
+    //
+    // **No test DEPENDED on that, and the flag was proven to work anyway** -
+    // both facts measured rather than assumed, because a guard for a leak that
+    // cannot be observed is indistinguishable from a no-op:
+    //
+    // - Turning it on changes nothing in either stubbing file (9/9 still pass),
+    //   and both stub-inheriting tests also pass when run ALONE with `-t`. So
+    //   the leak was present but not load-bearing.
+    // - A planted probe - test A stubs `fetch`, test B asserts the global is
+    //   still the stub - PASSES with the flag off and FAILS with it on. That is
+    //   what establishes the flag is doing something, given the suite itself
+    //   cannot tell the difference.
+    //
+    // Cross-FILE leakage was never possible, but only because `isolate` is on -
+    // and that is load-bearing for an unrelated reason (the field DAG's memo
+    // caches are module-level; see CLAUDE.md). So this was masked, not absent.
+    unstubGlobals: true,
+    // `restoreMocks` is the `vi.spyOn` half. Cleanup here was manual - 5 spies
+    // against 5 `vi.restoreAllMocks()` calls, in only 6 `afterEach` blocks
+    // across the suite - so it happened to be complete, and this keeps it that
+    // way without depending on the next author remembering.
+    restoreMocks: true,
   },
   // Never reformat the byte-verified spec docs or the read-only fixture
   // ground truth - `vp check --fix` would otherwise rewrite them on every run.

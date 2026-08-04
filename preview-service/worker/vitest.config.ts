@@ -9,6 +9,23 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 // try to build the Factorio Docker image). The container path is not exercised
 // in unit tests; PREVIEW_CONTAINER is bound as a plain DO and never invoked.
 export default defineConfig({
+  // The same two leak guards the app config carries (#144). **Inert here today,
+  // and that is measured, not assumed: this suite contains zero `vi.` calls of
+  // any kind** - no mocks, no spies, no stubbed globals - so neither flag can
+  // change a result, and no test would notice if they were deleted.
+  //
+  // They are set anyway because the cost is two lines and the failure they
+  // prevent is silent: the first worker test to reach for `vi.spyOn` or
+  // `vi.stubGlobal` would otherwise leak into the tests after it, in a suite
+  // whose specs already share a Miniflare instance. Do NOT read them as guards
+  // that are doing work - the app-side pair in `test/mockLeakGuards.spec.ts` is
+  // what actually pins the behaviour, and there is deliberately no equivalent
+  // here, because a guard asserting a mock is cleaned up would be this suite's
+  // only use of mocks.
+  test: {
+    unstubGlobals: true,
+    restoreMocks: true,
+  },
   plugins: [
     cloudflareTest({
       main: "./src/index.ts",

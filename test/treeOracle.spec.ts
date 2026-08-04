@@ -46,7 +46,13 @@ describe("every tree species matches the game", () => {
   const fields = makeTreeSpeciesFields({ seed0 });
 
   it("covers all 15 species in the fixture", () => {
-    for (const f of fields) expect(values[f.species.name], f.species.name).toBeDefined();
+    // The count the title claims is now asserted rather than described (#144),
+    // and each column is checked for LENGTH rather than mere existence -
+    // `toBeDefined()` was satisfied by an empty array, which would have let a
+    // fixture that covers no positions at all pass a test named "covers".
+    expect(fields).toHaveLength(15);
+    for (const f of fields)
+      expect(values[f.species.name], f.species.name).toHaveLength(positions.length);
   });
 
   it.each(fields.map((f) => [f.species.name, f] as const))(
