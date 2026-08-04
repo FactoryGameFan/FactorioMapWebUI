@@ -1396,3 +1396,71 @@ reads like a compile error and is not.
 Relative branch targets in the extracted blob are relative to the blob, so an
 `adrp` printed by `r2` needs the real page added back:
 `realPage = (vaddr_of_insn & ~0xfff) + printed_imm`.
+
+## `applyEntities` and the entity stage - read for the ore mechanism (2026-08-03, #84)
+
+Read while chasing the ore -> cliff mechanism (`vulcanus-cliffs-NOTES.md`,
+`## The ore rule's mechanism`). Recorded here because it is engine-side RE and
+because one of these symbols was not in these notes at all.
+
+| symbol | address |
+| --- | --- |
+| `EntityMapGenerationTask::applyEntities(Surface&)` | `0x10162422c` |
+| `EntityMapGenerationTask::tryToAddEntity(...)` | `0x101625298` |
+| `EntityMapGenerationTask::generateEntities(NoiseCache&)` | `0x101622dec` |
+| **`Surface::mapGeneratorWouldCollide(EntityPrototype const&, MapPosition const&, Direction const&)**` | `0x101624a44` |
+| `CliffCraterPlacer::tryToPlaceCliffAsCrater(...)` | `0x10160bcac` |
+
+**`Surface::mapGeneratorWouldCollide` is a different function from both
+`EntityMapGenerationTask::wouldCollide` (`0x101625468`, tile-index based) and
+`Surface::wouldCollide` (`0x10160c088`, the cliff one).** It is the entity
+stage's own surface query, and it had not been recorded.
+
+### The order, read off the binary rather than quoted
+
+`EntityMapGenerationTask::computeInternal` (`0x101622860`):
+
+```
++0x2c   generateCliffs()                     <- FIRST, before the NoiseCache exists
++0x40   NoiseProgram::getChunkNoiseCache()
++0x94   generateEntities(NoiseCache&)        <- called three times
++0xa4   generateEntities(NoiseCache&)
++0xbc   generateEntities(NoiseCache&)
++0xd0   generateDecoratives(NoiseCache&)
+```
+
+`EntityMapGenerationTask::apply` (`0x101623b48`):
+
+```
++0x6c   Chunk::Chunk(...)
++0x7c   applyCliffs(Surface&)
++0x98   applyDecoratives(Surface&, Chunk&)
++0xa4   applyEntities(Surface&)
++0xe4   Surface::onChunkGenerated(Chunk&)
+```
+
+So cliffs are decided and placed before any entity in the same chunk, in both
+phases - and `generateCliffs` runs before the chunk noise cache is even built.
+
+### `generateCliffs` has no resource input
+
+Its entire call list is `CliffGenerator::crossingsForChunk`,
+`MaybeCliffOrientation::value` and `tryToAddCliff` (plus a destructor and two
+`logAndAbortOrThrow` arms). Nothing else reaches the queue.
+
+### `applyEntities` SKIPS a colliding entity; it never destroys a cliff
+
+```
+101624458: bl   Surface::mapGeneratorWouldCollide(proto, position, direction)
+10162445c: tbnz w0, #0x0, +0x10c        <- collided: skip to the loop tail
+           ... construct entity, EntityVariationGenerator::apply, addEntityToSurface
+```
+
+`tryToAddEntity` has the same shape one stage earlier, against
+`EntityMapGenerationTask::wouldCollide`. So the only entity-versus-cliff test in
+map generation runs CLIFF -> ENTITY, which is the direction #99 measured as
+inert. Nothing in the entity stage removes a cliff.
+
+The one thing in `applyEntities` that does add cliffs is
+`CliffCraterPlacer::tryToPlaceCliffAsCrater` at its head - which is `crater-cliff`,
+already documented above as off-lattice and not the residual.

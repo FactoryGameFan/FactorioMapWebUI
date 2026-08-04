@@ -31,6 +31,40 @@
  * too (resources carry only the `resource` layer, which the cliff mask does not
  * hold).
  *
+ * **That refutation is now VERIFIED rather than asserted, by three independent
+ * routes** (`test/cliffOreActsAtDestroyStage.spec.ts`, 2.1.12 arm64 slice):
+ *
+ * - **Order.** `computeInternal` calls `generateCliffs` before it even builds
+ *   the `NoiseCache` the entity passes use; `apply` calls `applyCliffs`,
+ *   `applyDecoratives`, then `applyEntities`. Read off the binary, not quoted.
+ * - **Inputs.** `generateCliffs` calls exactly three things -
+ *   `crossingsForChunk`, `MaybeCliffOrientation::value`, `tryToAddCliff`. The
+ *   queue has no resource input at all.
+ * - **Masks, at the PROTOTYPE level rather than the type default.** `calcite`,
+ *   `tungsten-ore` and `sulfuric-acid-geyser` are all `type = "resource"` and
+ *   none overrides `collision_mask`, so all three take
+ *   `{layers={resource=true}}`; the cliff default is `{item, meltable, object,
+ *   player, water_tile, is_lower_object, is_object, cliff}`. Disjoint. This is
+ *   what also closes the CROSS-CHUNK variant of the idea - chunk N's entities
+ *   are on the surface before chunk N+1's cliffs are applied, and it still
+ *   cannot matter at any box size.
+ *
+ * And the one entity-versus-cliff test that does exist runs the other way:
+ * `applyEntities` calls `Surface::mapGeneratorWouldCollide` (`0x101624a44`) per
+ * queued entity and, on a hit, **skips that entity** - it never destroys a
+ * cliff. That is the direction #99 measured as inert.
+ *
+ * **Where the rule DOES act is measured**: at the destroy stage. The one
+ * ore-suppressed cell whose neighbour can tell destruction from non-generation
+ * (`1546,1550.5`, a geyser cell) says DESTROYED, so the effect enters at
+ * `applyCliffs`/`Surface::wouldCollide` and not at `crossingsForChunk`. n=1 -
+ * the oracle is thin here and the spec says so.
+ *
+ * **Consequence for anyone about to widen the box:** it would not be modelling a
+ * known code path, because the engine's entity collision provably is not this
+ * rule. Point 2 below already says do not tune it; this is why that is not
+ * merely caution.
+ *
  * ## Two things here are deliberately NOT the shape you might expect
  *
  * 1. **The cliff rectangle is the prototype's BASE `collision_box`, not the
