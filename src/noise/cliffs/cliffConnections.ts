@@ -67,17 +67,35 @@
  * destroyed cell can take a non-border neighbour with it, and why this is a
  * cascade rather than a filter.
  *
- * **Three conditions on that cascade are unmodelled here, deliberately.**
- * `onDestroy` reaches its neighbour loop only when all four of these hold
- * (`0x1007a8854`-`0x1007a8874`): entity flag bit 5 of `this+0x6e` CLEAR,
- * `this+0x82` set, `this+0x83` set, and `map->[0x240]` zero. Bit 5 is
- * `params[0x80] != 0` at construction and `this+0x82` is what
- * `Cliff::destroyWithoutCorrection` (`0x1007aa568`) temporarily zeroes, so both
- * are about who is doing the destroying rather than about the cliff. The port
- * models map generation, where #113 measured the cascade running - 1058 of 1058
- * at `[1500,1500]` - so all four evidently hold there. They are recorded because
- * a future probe that destroys a cliff from Lua or the editor will NOT get the
- * same behaviour, and that is exactly the probe #127 asked for.
+ * **Four conditions gate that cascade, and all four are read rather than
+ * inferred.** `onDestroy` reaches its neighbour loop only when all of these hold
+ * (`0x1007a8854`-`0x1007a8874`), and the right-hand column is what each is on
+ * the two paths that matter - `applyCliffs` and a Lua `create_entity` +
+ * `destroy`:
+ *
+ * | gate | cascade needs | map generation | Lua |
+ * | --- | --- | --- | --- |
+ * | entity flag bit 5 of `+0x6e` | clear | `params[0x80] = 0` | `params[0x80] = 0` |
+ * | `this+0x82` | set | ctor writes 1 unconditionally | same ctor |
+ * | `this+0x83` | set | `place_as_crater == nullptr` | same |
+ * | `map->[0x240]` | zero | only `Map::~Map` writes 1 | same |
+ *
+ * Bit 5 is exactly `params[0x80] != 0` at construction. `applyCliffs` zeroes it
+ * with `str wzr, [x26]` where `x26 = params + 0x80` (`0x101623d9c`), and
+ * `LuaSurface::luaCreateEntity`'s cliff arm zeroes the same byte on both of its
+ * paths (`strb wzr, [sp, #0x2a8]` at `0x1019e5ba8` and `0x1019e5c18`; that arm is
+ * identifiable by the `mov w8, #0x14` sentinel it puts in `params+0x87` before
+ * `LuaTable::getDefault<CliffOrientation>`). `map->[0x240]` is "the map is being
+ * torn down": `Map::~Map` sets it to 1 as its first act (`0x10163461c`) and
+ * `Map::resume` bails on it.
+ *
+ * **So a runtime probe reproduces map generation's cascade, and #134's warning
+ * that it might not is withdrawn.** It was a correct risk stated before the
+ * bytes were read, and reading them settles it. The one path that WOULD differ,
+ * `Cliff::destroyWithoutCorrection` (`0x1007aa568`, which zeroes `+0x82` around
+ * the destroy), is unreachable: zero direct callers under a scan of every `BL`
+ * and `B` in `__text`, and no pointer to it in any vtable. `entity.destroy()`
+ * cannot land on it by accident.
  *
  * **There is no second connection pass during map generation.**
  * `Cliff::updateAndFixConnections` (`0x1007a94d0`) looks like one and is not: a

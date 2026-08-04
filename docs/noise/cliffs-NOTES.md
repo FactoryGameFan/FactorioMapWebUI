@@ -978,11 +978,8 @@ what anyone should try next:
   connections at all** - do not attribute anything crater-shaped to these rules.
 - **`Cliff::onDestroy`'s cascade has FOUR gates, not zero** (`0x1007a8854`
   onwards): entity flag bit 5 of `+0x6e` clear, `+0x82` set, `+0x83` set, and
-  `map->[0x240]` zero. Bit 5 is `params[0x80] != 0` at construction, `+0x82` is
-  what `destroyWithoutCorrection` zeroes. Map generation evidently satisfies all
-  four (#113 measured the cascade running), but **a Lua or editor probe will
-  not necessarily** - which is a live hazard for the runtime probe #127 asked
-  for, and the reason to check the four before believing such a probe.
+  `map->[0x240]` zero. All four are now READ on both paths - see the next
+  section, which withdraws the warning this bullet used to carry.
 - **There is no second connection pass during map generation.**
   `Cliff::updateAndFixConnections` (`0x1007a94d0`) is called from exactly one
   site in the whole `__text` segment - `CliffEditor::buildCliffs`
@@ -996,6 +993,47 @@ what anyone should try next:
 - **`Cliff::getNeighbor`** (`0x1007a8c58`) accepts an entity only on an exact
   prototype-id match AND an exact position match, so a different cliff
   prototype on an adjacent cell is not a neighbour.
+
+### The four cascade gates, READ on both paths - the runtime probe is SAFE
+
+#134 recorded the four gates and warned that a Lua or editor destroy "need not"
+satisfy them, which would make #127's runtime probe vacuous. That warning was
+stated from inference - "map generation evidently satisfies all four, because
+#113 measured the cascade running" - and inference is what keeps going wrong on
+this issue. Reading the bytes settles it, and the answer is the opposite:
+
+| gate | cascade needs | `applyCliffs` | `LuaSurface::luaCreateEntity` |
+| --- | --- | --- | --- |
+| entity flag bit 5 of `+0x6e` | clear | `params[0x80] = 0` | `params[0x80] = 0` |
+| `this+0x82` | set | ctor writes 1 unconditionally | same ctor |
+| `this+0x83` | set | `place_as_crater == nullptr` | same |
+| `map->[0x240]` | zero | only `Map::~Map` writes 1 | same |
+
+- Bit 5 of `+0x6e` is exactly `params[0x80] != 0` at construction
+  (`0x1007a7abc`). `applyCliffs` builds its `EntityCreationParameters` at
+  `sp+0x20` and zeroes that byte with `str wzr, [x26]`, `x26 = params + 0x80`
+  (`0x101623d9c`). `luaCreateEntity` builds its own at `sp+0x228` and zeroes the
+  same byte on **both** of its paths (`strb wzr, [sp, #0x2a8]`, `0x1019e5ba8`
+  and `0x1019e5c18`). That arm is identifiably the cliff one: it stores the
+  sentinel `mov w8, #0x14` into `params+0x87` and then overwrites it with
+  `LuaTable::getDefault<CliffOrientation>("cliff_orientation")`.
+- `this+0x82` is written 1 by the constructor with no condition
+  (`0x1007a7b14`), so it holds for any ordinary destroy.
+- **`map->[0x240]` is "the map is being torn down".** `Map::~Map` sets it to 1
+  as its first act, before `ToDeleteList::clear` (`0x10163461c`), and
+  `Map::resume` bails out on it (`0x10163b294`). Dozens of unrelated
+  `onDestroy` handlers read the same byte. Nothing during normal play sets it.
+  (`Cliff+0x78` is the `Map`: `Entity::getGame` is `[[this+0x78]+0x490]`.)
+
+**So the probe reproduces map generation's cascade.** The one path that would
+differ, `Cliff::destroyWithoutCorrection` (`0x1007aa568`, which zeroes `+0x82`
+around the destroy), is unreachable: **zero** direct callers under a scan of
+every `BL` *and* `B` in `__text`, and no pointer to it in any vtable - only four
+in the STAB debug tables. `entity.destroy()` cannot land on it by accident.
+
+The same widened scan re-confirms #134's other caller claim, which had been made
+on `BL` alone and could have missed a tail call: `updateAndFixConnections` still
+has exactly one caller, `CliffEditor::buildCliffs`.
 
 ### The tile half reads ZERO for an ungenerated chunk, and it is border-only
 
