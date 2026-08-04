@@ -3506,3 +3506,66 @@ unfiltered difference is **39**; the real suppression is **31**.
 Every spec in #84 filters to `name === "cliff-vulcanus"` and is therefore
 correct - but that was inherited convention rather than a guarded decision. It is
 guarded now.
+
+## Four FRESH regions: the port generalises, and the residual is on CHUNK BORDERS (2026-08-03, #84)
+
+Two things were stuck at a sample size rather than at an idea, and both are
+unstuck by ~2.5s captures.
+
+`test/cliffResidualMoreRegions.spec.ts`,
+`oracle-vulcanus-cliff-entities-more-regions.seed123456.json`.
+
+### The port generalises - measured where it was never fitted
+
+| | original 3 regions | the 4 new ones |
+| --- | --- | --- |
+| raw cells | 1756 | 2789 |
+| game cliffs | 1531 | 2590 |
+| raw is a strict SUPERSET | yes | **yes, all four** |
+| destruction predicate precision | 0.971 | **0.9877** |
+| destruction predicate recall | 0.889 | **0.8090** |
+| false rejections | 6 | **2** |
+
+`[3000,3000]` is **exact** - 362 raw, 362 game, nothing to explain - and it is
+also the one region with no resource entity at all, which is what every result
+from #123 onward predicts.
+
+**The shipped accuracy figure was measured on three regions** chosen years into
+this investigation for reasons unrelated to sampling. It now has four more
+behind it.
+
+### The chunk-border enrichment, REPLICATED out of sample
+
+| | unexplained | on chunk border | base rate |
+| --- | --- | --- | --- |
+| original 3 regions | 14 | 9 (64.3%) | 45.0% |
+| **the 4 new ones** | 13 | **9 (69.2%)** | 47.2% |
+| combined | **27** | 18 (66.7%) | ~46.3% |
+
+**Read the status before the number.** The replication is 1.59 sigma on its own
+and the combined figure about 2.1 - short of decisive, and this is a LEAD rather
+than a result. What changed is not the significance but the kind of evidence:
+the border hypothesis was formed on the original 14, dismissed there as noise at
+1.45 sigma, and is here tested on 13 cells captured **afterwards**, in regions
+chosen before any of them was known. A prediction that survives fresh data is
+worth something the same 64% was worth nothing as.
+
+### Why it is worth pursuing
+
+**Chunk borders are `updateConnections`' entire domain.** It is the one rule in
+the pipeline that treats border cells differently; our port measures it firing
+**zero** times; and `applyCliffConnections` documents its model of the rule as an
+**upper bound** on how much it removes. #122 promoted the gate from inert to
+load-bearing, and #127 showed the gate cannot be scored from map-generation
+output at all.
+
+An enrichment pointing at the same rule from a third, independent direction is
+the first positive evidence that it does anything - after two sections
+establishing only that it is unobservable.
+
+### And n is 27 now
+
+That is the part that actually unblocks the next attempt. Every structural test
+on this residual - border, orientation, rim distance, anything new - just doubled
+its power. At n = 14 nothing could have been settled; at 27 the border question
+is answerable with one more capture round of the same size.
