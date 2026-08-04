@@ -1051,6 +1051,41 @@ That is a real border-only channel, because the largest cliff half-extent is
 reaching for it: an absent chunk makes the game KEEP a cliff, so its signature
 is a false rejection, not a missed destruction.
 
+### `CliffCraterPlacer::tryToPlaceCliffAsCrater` is ADD-ONLY - closed 2026-08-04 (#84)
+
+The third and last of the untouched ideas in `vulcanus-cliffs-NOTES.md`, listed
+there as "ruled out for the residual by position but never ruled out as a
+mechanism". It is the one thing in the entity stage that touches cliffs at all,
+so it deserved a direct read rather than another position argument.
+
+**It only ever adds.** Both overloads reach the same two calls and nothing else:
+
+| | |
+| --- | --- |
+| `tryToPlaceCliffAsCrater(Surface&, MapPosition const&, CliffPrototype const&, unsigned int)` | `0x10160bc34` - a thin wrapper, single `bl` to the overload below |
+| `tryToPlaceCliffAsCrater(..., CraterPlacementDefinition const&, RandomGenerator&)` | `0x10160bcac` - calls `calculateCliffSegments`, then `Surface::addEntity` (`0x1001b3f8c`) per accepted segment |
+| `CliffCraterPlacer::calculateCliffSegments` | `0x10160be6c` - calls `Surface::wouldCollide` (`0x10160c088`) and emplaces the segments that pass into a `SmallVector<Pair<MapPosition, CliffOrientation>, 16>` |
+
+Across the whole `0x10160bc34..0x10160c088` range there is **no `destroy`,
+`remove` or `erase` path of any kind** - the only other `bl`s are three
+`dyld_stub_binder` PLT entries (`operator delete` / `memmove` shape) and the
+stack-check epilogue. Its callers are `EntityMapGenerationTask::applyEntities`
+and `CliffEditor::buildCliffs`.
+
+**Why that closes it, and why the closing argument is DIRECTION rather than
+position.** The ore effect is *fewer* cliffs when ore is present - 885 against
+916 in `[1500,1500]`, so 31 cliffs must be destroyed or prevented. A function
+that can only add, and only where `wouldCollide` reports the space free, cannot
+produce that sign. The crater counts corroborate it instead of merely permitting
+it: **0 craters with resources on, 8 with them off**, so both populations move
+the *same* way under the lever, which is not what displacement looks like.
+
+The position argument (`[0,0]` and `[1500,1500]` have zero crater-cliffs; all 8
+are in `[-1200,800]`, the region with none of the worst crossing error) was
+already on record and had left the candidate alive for weeks, because it only
+says these objects are not the residual - not that this code cannot cause it.
+One call-list read settles what the position never could.
+
 ### `crater-cliff` is not on the cliff lattice - confirmed, not assumed
 
 **FFF #386 explains why it exists and corroborates both readings**

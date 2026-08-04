@@ -3626,10 +3626,18 @@ Ideas that are still untouched, for whoever picks this up:
   this bullet used to say, kept because it is the reasoning that made the idea
   worth trying: the queue is filled in the compute phase and drained in the
   apply phase, and no measurement covered what happened to it in between.
-- `CliffCraterPlacer::tryToPlaceCliffAsCrater`, which runs at the head of
+- ~~`CliffCraterPlacer::tryToPlaceCliffAsCrater`, which runs at the head of
   `applyEntities` and is the one thing in the entity stage that touches cliffs at
-  all. Ruled out for the residual by position (#84's crater-cliff note) but never
-  ruled out as a mechanism.
+  all.~~ **CLOSED 2026-08-04 - see UPDATE 15 and `cliffs-NOTES.md`.** It is
+  ADD-ONLY: no destroy, remove or erase path exists anywhere in it, so it cannot
+  produce an effect whose direction is FEWER cliffs. The bullet's own framing is
+  why this took so long - it was "ruled out for the residual by position but
+  never ruled out as a mechanism", and position is not the argument that
+  settles it. Direction is.
+
+**All three ideas on this list are now closed, and the ore effect is unchanged.**
+That is the honest state: 885 against 916 at precision 1.000, with no surviving
+mechanism. The next move is not another candidate off a list that is empty.
 
 ## `crater-cliff` moves under the lever too - a SECOND effect, and an RNG lead (2026-08-03, #84)
 
