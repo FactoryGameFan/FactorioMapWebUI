@@ -4403,3 +4403,56 @@ That row is also the control here: reproducing 23 / 17 / 2.67 is what proves bot
 models are scored by one definition of "unexplained" (a cell the game killed that
 neither our own kill set nor the game's ore lever accounts for). Without it the
 2-cell delta would mean nothing.
+
+## The border residual is a WEST-edge residual; `updateConnections` explains none (2026-08-04, #84)
+
+Three mechanisms have now failed on the chunk-border enrichment - the
+orientation-reach rival (#134), cascade double-counting (#143), and the
+cross-chunk destroy cascade (#149, 2 of 25). This stops proposing mechanisms and
+describes the 23 survivors. Zero capture -
+`test/cliffBorderResidualIsWest.spec.ts`.
+
+### 1. `updateConnections` removes ZERO of the 23
+
+It is the one engine pass that runs **exclusively on the chunk's outer ring**,
+and no audit had ever applied it - #143 excluded it deliberately as an upper
+bound. It therefore had the best prior of anything left for a border-shaped
+defect. It accounts for **none**: 23 survive the cascade alone, and the same 23
+survive cascade + `updateConnections`.
+
+### 2. The survivors are WEST
+
+17 of the 23 sit on a chunk border, 6 are interior. Splitting those 17 by edge,
+against a base rate **measured over every raw border cell in the same regions**
+rather than assumed uniform:
+
+| edge | survivors | expected | base rate | z |
+| --- | --- | --- | --- | --- |
+| **west** | **9** | 3.82 | 22.5% | **+3.01** |
+| north | 5 | 3.81 | 22.4% | +0.69 |
+| east | 2 | 4.81 | 28.3% | -1.51 |
+| south | 1 | 4.57 | 26.9% | -1.95 |
+
+**The measured base rate is what makes this a finding rather than a shape of the
+lattice**: west carries the FEWEST border cells (22.5% against east's 28.3%) and
+the MOST survivors. Four bins were scored, so the Bonferroni-corrected two-sided
+p for west is ~0.005 - still significant, and stated because scoring four bins
+and reporting the largest is exactly how a 3-sigma result turns out to be noise.
+
+This is a sharper localisation than the enrichment itself (z = 2.67): "on a
+chunk border" becomes "on the WEST edge of a chunk", which is a **directional**
+signature and so points at a mechanism with a direction.
+
+### 3. The lead, recorded as a lead
+
+`fixImpossibleCellsSweep` clears the first **clearable** edge in the order
+`L, T, R, B` - west first, north second - and an edge is clearable only if it is
+**not on the chunk's outer boundary**. West + north is 14 of the 17. It is the
+only rule in the port whose asymmetry matches the observed one, and it is already
+the named cause of Nauvis's ~6% residual.
+
+Not asserted: this measures where the survivors are, not why. Testing it needs a
+discriminator separating the sweep's edge order from anything else
+west-flavoured - and the ore recall gap independently found all six of its cells
+with the nearest resource to the WEST, so there is more than one possible source
+of a west flavour here.
