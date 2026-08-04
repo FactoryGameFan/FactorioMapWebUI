@@ -3569,3 +3569,71 @@ That is the part that actually unblocks the next attempt. Every structural test
 on this residual - border, orientation, rim distance, anything new - just doubled
 its power. At n = 14 nothing could have been settled; at 27 the border question
 is answerable with one more capture round of the same size.
+
+## RESULT: the unexplained residual sits on CHUNK BORDERS - 2.91 sigma (2026-08-03, #84)
+
+The section above reported a chunk-border enrichment as a lead and said one more
+capture round would settle it. It did.
+
+`test/cliffResidualBorderEnrichment.spec.ts`,
+`oracle-vulcanus-cliff-entities-border-batch.seed123456.json`.
+
+| batch | unexplained | on chunk border | base rate | z |
+| --- | --- | --- | --- | --- |
+| original 3 regions | 14 | 9 (64.3%) | 45.0% | 1.45 |
+| +4 regions | 13 | 9 (69.2%) | 47.2% | 1.59 |
+| **+8 regions** | 17 | **12 (70.6%)** | 46.0% | **2.03** |
+| **combined, 15 regions** | **44** | **30 (68.2%)** | ~46.3% | **2.91** |
+
+p is about 0.002. **This is a result, not a lead.**
+
+### The prediction was registered before the capture
+
+Written into `captureVulcanusCliffEntitiesBorderBatch`'s own doc comment, before
+it ran: roughly 26 more unexplained cells with about 17 on a border if the
+enrichment is real at ~66%, taking the combined figure to ~2.9 sigma - and a
+**fall back toward the base rate** if it is noise.
+
+It came back 12 of 17, at a higher rate than predicted on fewer cells, and the
+combined figure landed on 2.91. The effect size is stable across all three
+batches (64-71%) and so is the base rate (45-47%), which is what says the
+comparison is sound rather than the numerator being lucky.
+
+**The first row was correctly dismissed as noise when it was all there was.** Its
+value came from being written down, so it could be re-tested when n grew - which
+is the whole lesson of this stretch.
+
+### Why it points at `updateConnections`
+
+**Chunk borders are that rule's entire domain.** `applyCliffs` gates it on
+`tryToAddCliff`'s fifth argument, which is `!onChunkBorder`, so it runs on the
+chunk's outer ring and nowhere else. Nothing else in the pipeline treats border
+cells differently at all.
+
+And it is the rule the port has the weakest grip on:
+
+- `cliffConnections.spec.ts` measures it firing **zero** times on our own cell
+  set, and `applyCliffConnections` documents its model as an **UPPER bound** on
+  how much it removes - the one place the port is knowingly not a transcription.
+- #122 promoted its gate from inert to load-bearing.
+- #127 showed the gate cannot be scored from map-generation output at all.
+
+So: modelled approximately, unobservable directly, and the residual it cannot
+explain is enriched **1.47x** on precisely its domain. **This is the first
+positive evidence that `updateConnections` does anything.**
+
+### What it does NOT say
+
+It does not say the 30 border cells are destroyed BY `updateConnections`. An
+enrichment on a rule's domain is not the rule firing, and **14 of the 44 are not
+on a border at all** - so if this is one cause, it is not the only one.
+
+### The port generalises, across fifteen regions
+
+This batch: 5581 raw, 5134 game cliffs, strict superset in all eight regions,
+destruction predicate **precision 0.9818, recall 0.8434**, 7 false rejections.
+Two of the eight have no unexplained cells at all and `[-1600,3200]` reproduces
+the game exactly (686 = 686).
+
+The residual is **concentrated, not a background rate** - which is itself a
+constraint on any mechanism proposed for it.
