@@ -1,5 +1,36 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 15, 2026-08-04: the CRATER PLACER is ADD-ONLY - the third and last untouched idea is closed
+>
+> `CliffCraterPlacer::tryToPlaceCliffAsCrater` was the last of UPDATE 9's three
+> untouched ideas, carried there as "ruled out for the residual by position but
+> never ruled out as a mechanism". **It is add-only, so it cannot be the
+> mechanism.** Addresses and the full call lists are in `cliffs-NOTES.md`.
+>
+> Both overloads reach exactly `calculateCliffSegments` (which calls
+> `Surface::wouldCollide` and emplaces the segments that pass) and then
+> `Surface::addEntity`. Across the whole `0x10160bc34..0x10160c088` range there
+> is **no destroy, remove or erase path of any kind**.
+>
+> **The argument that settles it is DIRECTION - which is exactly what that
+> bullet's own framing was missing.** The ore effect is *fewer* cliffs when ore
+> is present, 885 against 916, so something has to destroy or prevent 31 of them.
+> A function that can only add, and only where `wouldCollide` reports the space
+> free, cannot produce that sign. The crater counts corroborate rather than
+> merely permit: **0 craters with resources on, 8 with them off**, so both
+> populations move the *same* way under the lever - not what displacement looks
+> like.
+>
+> Position arguments kept this candidate alive for weeks, because they only say
+> these objects are not the residual, never that this code cannot cause it. One
+> call-list read closed it.
+>
+> **All three of UPDATE 9's ideas are now closed** - chunk order (UPDATE 12), the
+> compute -> apply queue (UPDATE 13), and this one - **and the ore effect is
+> untouched by every one of them.** It still reproduces at precision 1.000 with
+> no surviving mechanism. Whatever comes next should not be another candidate off
+> a list that is now empty.
+>
 > ## UPDATE 14, 2026-08-04: the RUNTIME DESTROY PROBE is BUILT, and the port's cascade reproduces the game EXACTLY
 >
 > #127 asked for a runtime probe that destroys a cliff outside map generation,
@@ -97,7 +128,8 @@
 > **One of the three ideas is left:** `CliffCraterPlacer::tryToPlaceCliffAsCrater`
 > as a *mechanism* (ruled out for the residual by position, never as a
 > mechanism). The ore effect is untouched by this and still reproduces at
-> precision 1.000.
+> precision 1.000. (That one was closed the same day too - see UPDATE 15 above,
+> which leaves the list empty.)
 >
 > ## UPDATE 12, 2026-08-04: CHUNK-GENERATION ORDER is closed - both links, and the ore effect survives
 >
