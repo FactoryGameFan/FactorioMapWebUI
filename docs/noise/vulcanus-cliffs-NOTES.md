@@ -1,5 +1,44 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 9, 2026-08-03: the residual is on CHUNK BORDERS (2.91 sigma), and the ore mechanism is a CLOSED IMPOSSIBILITY
+>
+> Two results supersede the framing below. Read this before acting on any earlier
+> banner.
+>
+> **1. The unexplained residual sits on chunk borders - 30 of 44, p ~ 0.002.**
+> Measured over **15 regions**, in three batches, with the third batch's
+> prediction registered in the capture's own doc comment *before it ran*:
+>
+> | batch | unexplained | on border | base rate | z |
+> | --- | --- | --- | --- | --- |
+> | original 3 regions | 14 | 9 (64.3%) | 45.0% | 1.45 |
+> | +4 regions | 13 | 9 (69.2%) | 47.2% | 1.59 |
+> | +8 regions | 17 | 12 (70.6%) | 46.0% | 2.03 |
+> | **combined** | **44** | **30 (68.2%)** | ~46.3% | **2.91** |
+>
+> **Chunk borders are `Cliff::updateConnections`' entire domain** - the only rule
+> that treats them differently, the one place the port is knowingly not a
+> transcription (modelled as an UPPER bound), measured firing **zero** times, and
+> shown unobservable from map-gen output. This is the first positive evidence it
+> does anything, and it is where to go next. It does **not** say those 30 are
+> destroyed by it: 14 of the 44 are not on a border at all.
+>
+> **2. Every route from a resource control to a cliff is CLOSED, and the effect
+> remains.** The field (both properties), `Surface::wouldCollide` (disassembled -
+> exactly two halves, no third input), its entity half, its tile half, and a
+> structural perturbation of the settings object. Five rows, each with a
+> measurement or a data fact. The ore rule still reproduces the game at precision
+> 1.000. **Do not re-walk a closed route** - find one not on the list.
+>
+> Two corrections that matter for reading anything older: **`autoplace_controls`
+> is not an entity-only lever** (it moves 5% of the tiles; inert for cliffs, so
+> the ore results stand), and the residual population is **44 cells over 15
+> regions**, not the 25 or 14 quoted below.
+>
+> The port also generalises: strict superset in all 12 fresh regions, destruction
+> predicate precision 0.982-0.988 and recall 0.809-0.843 where it was never
+> fitted. Shipping accuracy is unchanged - recall 0.9961, precision 0.9858.
+>
 > ## UPDATE 8, 2026-08-03: 11 of the 25 are the ORE - the "far ten" was SIX ore cells and four unknowns
 >
 > **The residual with no known cause is 11 cells, not 25.** UPDATE 6's section
