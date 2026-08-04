@@ -2996,3 +2996,92 @@ Two things worth doing before another suppressor hunt, both cheap:
    (`includeGeyser: false`), not a shape question, and that is a different fix.
 2. **Re-run the lever on the other two regions**, which turns 3 undetermined
    cells into a cause and would also re-test the whole split out of sample.
+
+## The ore rule's mechanism: NOT entity collision, and it acts at the DESTROY stage (2026-08-03, #84)
+
+The section above put 11 of the 25 missed destructions on the ore rule and said
+the next move was to widen it. Before widening anything, the mechanism was worth
+one more look, because `vulcanusOreRejection.ts` has always said the rule is
+characterised rather than ported. **Do not widen the box** - the reason is below.
+
+`test/cliffOreActsAtDestroyStage.spec.ts`; the engine-side addresses and call
+lists are in `cliffs-NOTES.md`, `## applyEntities and the entity stage`.
+
+### Entity collision is excluded, now by three verified routes
+
+The file already asserted this from the call ordering. All three are now read
+off the 2.1.12 arm64 slice or the game data rather than quoted:
+
+1. **Order.** `computeInternal` calls `generateCliffs` at `+0x2c` - before it
+   even builds the `NoiseCache` that the three `generateEntities` passes use -
+   and `apply` calls `applyCliffs`, `applyDecoratives`, `applyEntities` in that
+   order. No resource exists at any point where a cliff is decided.
+2. **Inputs.** `generateCliffs`' entire call list is `crossingsForChunk`,
+   `MaybeCliffOrientation::value`, `tryToAddCliff`. The queue has no resource
+   input at all.
+3. **Masks, at the PROTOTYPE level and not the type default.** `calcite`,
+   `tungsten-ore` and `sulfuric-acid-geyser` are all `type = "resource"` in
+   `space-age/prototypes/entity/resources.lua` and **none overrides
+   `collision_mask`**, so all three take `{layers={resource=true}}` from
+   `core/lualib/collision-mask-defaults.lua`. The cliff default is `{item,
+   meltable, object, player, water_tile, is_lower_object, is_object, cliff}`.
+   Disjoint.
+
+Route 3 is the one that matters most, because it kills the variant nobody had
+written down: **cross-chunk ordering.** Chunk N's entities really are on the
+surface before chunk N+1's cliffs are applied, so "the resource was already
+there" is available as an escape - and it still cannot matter, at any box size,
+because the masks never intersect.
+
+And the one entity-versus-cliff test that exists runs the other way:
+`applyEntities` calls `Surface::mapGeneratorWouldCollide` per queued entity and
+**skips the entity** on a hit (`tbnz w0, #0x0` to the loop tail). It never
+destroys a cliff. That is the CLIFF -> ORE direction, which #99 measured as
+inert.
+
+### The stage IS measured: it is a destruction
+
+Applying #122's discriminator to the lever's 31 cells: exactly **one** has a
+neighbour that can tell destruction from non-generation, and it says
+**DESTROYED**.
+
+| cell | neighbour | the game's orientation | verdict |
+| --- | --- | --- | --- |
+| `1546,1550.5` (geyser) | `1546,1546.5` | `north-to-none` | end gone - **destroyed** |
+
+Treating it as never queued instead contradicts the game at that neighbour;
+doing the same to any of the other 30 costs nothing, which is the contrast arm
+and also the honest statement of how thin this oracle is. **n = 1.** Quote it as
+a stage localisation, not a survey.
+
+So the ore's effect enters at `applyCliffs`, where `Surface::wouldCollide`
+decides - and not at `crossingsForChunk`. Combined with the exclusions above,
+that is a sharper open question than "the mechanism is unknown": something the
+resource control changes reaches `Surface::wouldCollide` by a route that is not
+the entity half.
+
+### Why this stops the widening
+
+The box-overlap model is shaped like the resource ENTITY's rectangle, and that
+shape is real - it is what distinguishes the geyser's 1.398 half-extent from the
+ores' 0.098. But it is now established that this shape is **not** the engine's
+collision test. Widening it until the remaining 11 cells fall out would be
+fitting a shape to an unexplained effect, not modelling a code path - which is
+precisely what #88 records as having shipped a wrong model that scored
+perfectly, and what #90 had to undo.
+
+The recall gap is real and still worth closing. Close it by finding what the
+resource control actually changes, not by growing a rectangle.
+
+### What was NOT excluded
+
+- The **geyser arm** is a separate matter: `includeGeyser: false` is a MODEL gap
+  (our geyser placement rolls and misses the game's 56), not a shape question,
+  and fixing it does not require knowing the mechanism.
+- The route from `autoplace_controls` to `Surface::wouldCollide` is open. The
+  tile half of that function is the obvious next suspect precisely because the
+  entity half is now closed - which would mean a resource control changing
+  TILES, a strong and checkable claim that nothing here tests.
+- A spurious dependence through `CompiledMapGenSettings` (the lever perturbing
+  the cliff field rather than the ore suppressing it) is not excluded either,
+  though #99's spatial locality argues against it.
