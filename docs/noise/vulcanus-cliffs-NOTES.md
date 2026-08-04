@@ -1,5 +1,45 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 17, 2026-08-04: the ore recall gap is SIX cells, not thirty-one
+>
+> The direct follow-on from UPDATE 16, and another zero-capture fold
+> (`test/cliffOreRecallGap.spec.ts`). Measured against the game's **real**
+> resource entities rather than the port's footprint model, so a shortfall in the
+> rule's geometry cannot be confused with a shortfall in where the port puts the
+> ore.
+>
+> | | cells |
+> | --- | --- |
+> | the ore provably rejects | **31** |
+> | explained by base-box overlap with a real resource | **21** |
+> | additionally removed as CASCADE casualties of those 21 | **4** |
+> | still unexplained | **6** |
+>
+> **Four of the ten apparent misses were never geometry failures.** They are
+> single-ended cliffs (`X-to-none` / `none-to-X`) whose one end is trimmed when a
+> neighbour is rejected, so the cascade force-destroys them. Charging those to a
+> rejection rule's recall is counting the defect at the output instead of at the
+> rule - the #114/#115 lesson, applied to our own scorecard this time.
+>
+> **The remaining 6 are NOT near-misses, and that is the load-bearing negative.**
+> The honest measure is the factor the base box's half-extents would need to be
+> scaled by to reach the nearest resource (distance is wrong - the box is
+> asymmetric, 0.988 x 0.488): **five of the six need 1.42x to 3.28x**. No
+> plausible box correction gets there. **Do not go widening the box** - #110
+> already measured that the higher-catching variant LOSES, because a wider box
+> buys true cells at the price of false rejections elsewhere. The sixth sits at
+> 1.11x and is exactly the geyser cell the per-orientation `rotbb` box catches,
+> so the one marginal case is accounted for rather than waved at.
+>
+> **Zero over-removal is what makes the 21 trustworthy**: destroying only those
+> and cascading removes nothing the game kept. The rule remains pure precision;
+> it is recall that is short, and now by six rather than by ten or thirty-one.
+>
+> So the ore thread is down to **six cells with no resource anywhere near them**,
+> which is a different question again from the one UPDATE 16 handed over - not
+> "which cells does the box miss" but "what removes a cliff that no resource
+> touches, only when resources exist".
+
 > ## UPDATE 16, 2026-08-04: the ore effect is FULLY DECOMPOSED - rejections + cascade, and the open question is now much narrower
 >
 > With every route and every idea closed (UPDATES 12, 13, 15) the premise itself
