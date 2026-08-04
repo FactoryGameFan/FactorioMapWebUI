@@ -3227,3 +3227,61 @@ section above is still measured on `[1500,1500]` alone. A region with calcite in
 it would be the test that could actually break the rule; there is not one in the
 oracle set, and getting one means choosing a new region rather than re-running an
 existing one.
+
+## The chunk-border gate CANNOT be scored from any fixture - and why (2026-08-03, #84)
+
+#122 turned `applyCliffs`' fifth-argument test - `updateConnections` runs on the
+chunk's outer ring and nowhere else - from an inert reading into the thing its
+whole destroyed-versus-never-queued verdict rests on, and said scoring it was
+"now worth doing on its own account". This is that attempt. It comes back
+negative, and the reason is worth more than the attempt.
+
+`test/cliffConnectionConsistency.spec.ts`.
+
+### The test that ought to work
+
+A cliff end pointing at a cell that is not there is a **dangling end**. If
+`updateConnections` ran on every cell there could be no dangling end anywhere -
+trimming them is what the pass is for. If it runs only on the outer ring, one
+could survive on a NON-border cell. So the game's own output should separate the
+two readings, with no new capture at all.
+
+### It does not, because there are no dangling ends at all
+
+Over **thirteen arms** from all three Vulcanus cliff fixtures - real settings and
+the collapsed rule, resources on and off, all four regions - across 2785 border
+and 3750 interior cells judged, **zero** cells have a dangling end. Neither
+population, not one arm.
+
+The detector is not asleep: deleting one cell from each arm's set makes the same
+code report a dangling end immediately, in all thirteen.
+
+### Why - every removal mechanism PRESERVES connection consistency
+
+- A destruction runs `Cliff::onDestroy`, which trims the facing end of every
+  connected neighbour, so it cannot leave one dangling.
+- `updateConnections` trims dangling ends by definition.
+- And the crossing field never emits one - `cliffConnections.spec.ts` already
+  measured the port's own queue as connection-consistent, and this says the same
+  of the game's output.
+
+So **both readings of the gate predict exactly what the game shows.** No capture
+of map-generation OUTPUT can separate them, however many regions it covers.
+
+### What this means for #122
+
+Its conditional stands and **cannot be discharged with what is on disk** - and
+not for want of data, which is the useful part. The gate's only observable
+consequence is in a counterfactual: remove a cell the game has, and ask what its
+neighbour keeps. Map generation never produces the world that would settle it,
+because it never truncates a run without the cascade running.
+
+Anyone revisiting this needs a different KIND of evidence - the disassembly
+itself, or a runtime probe that destroys a cliff outside map generation - not
+another region. Do not capture more of the same hoping the gate falls out.
+
+### A property worth having anyway
+
+Connection consistency of the game's cliff output is now pinned across every
+capture, which nothing asserted before. Any future model that emits a dangling
+end is wrong on the game's own terms, wherever it emits one.
