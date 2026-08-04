@@ -3085,3 +3085,87 @@ resource control actually changes, not by growing a rectangle.
 - A spurious dependence through `CompiledMapGenSettings` (the lever perturbing
   the cliff field rather than the ore suppressing it) is not excluded either,
   though #99's spatial locality argues against it.
+
+## Four of the ten ore remainders are the `onDestroy` CASCADE (2026-08-03, #84)
+
+The section above closed entity collision as the ore mechanism and said not to
+widen the box. This is what to do instead, and it needed no new capture and no
+new parameter.
+
+`test/cliffOreRemainderCascade.spec.ts`.
+
+### The refutation on file was about a DIFFERENT cascade
+
+`vulcanusOreRejection.ts` records box overlap as explaining 21 of the 31 cells
+the ore suppresses, with the other ten as "run remainders" and two candidates -
+"a cascade along cliff connections **or** a wider box" - and records the cascade
+half as REFUTED.
+
+**That refutation tested #108's CROSSING-stage mechanism**: a rejection zeroes
+the cell's edge registers, a neighbour's code changes, re-test to a fixpoint.
+Its conclusion - "rejected cells do not turn neighbours rejectable" - is still
+true and is not what is being overturned.
+
+The `applyCliffs` cascade is a different thing: `Cliff::onDestroy` takes the
+facing end of every connected neighbour, and a neighbour left with **no end at
+all** is destroyed outright. It was read out of the binary in **#113, after
+#110 ran**, and nothing had re-run the remainder question against it.
+
+### Replayed entirely on the game's own data
+
+What makes this worth trusting is that no part of the port's field, ore model or
+geyser roll appears in it:
+
+- **start** from the game's `ALL resources OFF` cliff set - 892 cells, the
+  game's own orientations;
+- **destroy** the cells whose base collision box overlaps one of the **game's
+  own** resource entity positions, at the prototype half-extents the fixture
+  itself carries;
+- **compare** against the game's `resources ON` set - 861 cells.
+
+| arm | matched | wrong | surplus |
+| --- | --- | --- | --- |
+| control - destroy the lever's own 31 | **861** | **0** | **0** |
+| direct overlap only, no cascade | 856 | 5 | 10 |
+| direct overlap + `onDestroy` cascade | **859** | **2** | **6** |
+
+Direct overlap fires on **21** cells and every one is in the lever's 31 - zero
+false positives, precision 1.000, re-derived without any of our own data.
+
+**Recall on the lever's 31: 21/31 = 0.677 -> 25/31 = 0.806**, with no new
+parameter and no wider box. `missing` is 0 in both arms, so no cell the game
+kept is ever removed - which is exactly what distinguishes a mechanism from a
+bigger rectangle. A box wide enough to reach those four would also reach cells
+the game kept, and #124 established that the box is not the engine's collision
+test to begin with.
+
+### The control is load-bearing, and so is one flag
+
+The control says the ore-off world minus those 31 cells IS the ore-on world,
+orientations included. Without it none of the other rows mean anything.
+
+Getting it exact needs `noUpdateConnections: true`: **the game's dumped set is
+POST-pipeline**, so running `updateConnections` over it again double-applies the
+pass and trims ends that legitimately survived. Forget it and the control scores
+`wrong = 13` - which reads like a defect in the cascade model and is an artifact
+of the harness. Any future experiment that starts from a dumped set rather than
+from our own queue has the same hazard.
+
+### The six that remain
+
+```
+1546,1550.5  1546,1554.5  1606,1590.5  1606,1594.5  1622,1614.5  1626,1614.5
+```
+
+Two of them - `1546,1550.5` and `1546,1554.5` - are the pair attributed to the
+geyser, and the first is the one cell in this entire residual whose destruction
+is directly witnessed by the game's own orientations (#124's n=1). So the
+best-evidenced destruction in the whole investigation is still unexplained by
+any rule.
+
+### What this does NOT change
+
+Nothing shipping. The renderer rejects at the crossing stage and does not run
+`applyCliffConnections` at all - see `## The queue has a CONSUMER` for why that
+is deliberate. This is a statement about the RULE, and about which of its
+remainders now have a mechanism.
