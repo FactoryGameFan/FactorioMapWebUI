@@ -94,6 +94,21 @@
  *      "a cascade along cliff connections", and `rejectionCascades` measures it:
  *      a bit-for-bit no-op at the shipping settings, and net harmful on the
  *      collapsed rule. Rejected cells do not turn neighbours rejectable.
+ *
+ *      **That refutation is about the CROSSING-stage cascade, and it does not
+ *      cover the one in `applyCliffs`** - `Cliff::onDestroy` taking the facing
+ *      end of every connected neighbour and destroying a neighbour left with no
+ *      end at all. That mechanism was read out of the binary later, in #113, so
+ *      nothing had re-run the remainder question against it.
+ *      `test/cliffOreRemainderCascade.spec.ts` does, entirely on the game's own
+ *      data - its ore-off cliff set, its resource positions, these prototype
+ *      boxes - and it closes **four of the ten** remainders and three of the
+ *      five orientation errors, at zero cost in precision. Recall on the
+ *      lever's 31 goes 21/31 to **25/31**. Six remain.
+ *
+ *      So read the line above as "rejected cells do not turn neighbours
+ *      REJECTABLE", which is still true, and not as "the remainders are not a
+ *      cascade" - four of them are.
  *    - **The crossing STAGE explains 2 of the remainders with no tuning at all.**
  *      The predicate fires on 20 placed cells; the placement loses 22, because
  *      zeroing a rejected cell's edges leaves two neighbours with codes that no
