@@ -470,6 +470,29 @@ nondeterministic - these tests compare pixels against captured game output - so 
 retry would only hide a genuine regression. A timeout means slow; read the
 duration the reporter prints before assuming a hang.
 
+#### `unstubGlobals` + `restoreMocks` are on, and `test/mockLeakGuards.spec.ts` is why they stay on
+
+Both are set in `vite.config.ts` (and, inertly, in the worker's config) as of
+#144. `vi.restoreAllMocks()` - which a few files call in an `afterEach` - undoes
+`vi.spyOn` spies and does **not** undo `vi.stubGlobal`, so before this a stubbed
+global leaked into every later test in the same file.
+
+**The leak was real but nothing depended on it**, which is the part worth
+knowing: turning the flags on changed no existing test, and the two
+`previewPanel.spec.ts` tests that were inheriting a `URL` stub pass alone too. So
+the suite cannot tell whether these flags are set, and deleting them would be
+silent. `test/mockLeakGuards.spec.ts` is the observation that makes them
+load-bearing - two dirty/clean test PAIRS, deliberately order-dependent, each
+failing with a message naming the missing flag. Both were confirmed to
+discriminate by flipping each flag off and watching only its own pair fail.
+
+Two weak-assertion patterns were **checked and cleared**, so don't re-audit them:
+`expect(wrapper.find(sel).attributes("disabled")).toBeUndefined()` is not vacuous
+on a missing element - `@vue/test-utils` throws `Cannot call attributes on an
+empty DOMWrapper` - and `presetReset.spec.ts`'s `activePreset?.x` assertions are
+not vacuous either, because a seeded preset makes them discriminate. Both were
+settled by planting the failure, not by reading the code.
+
 ### Deploys are gated on `verify`
 
 Both deploy paths refuse to ship a broken tree. `deploy:app` runs

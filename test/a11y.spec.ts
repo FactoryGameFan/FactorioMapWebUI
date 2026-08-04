@@ -78,13 +78,19 @@ describe("document head (Lighthouse: html-has-lang, meta-description)", () => {
   it("declares a language", () => {
     // An empty lang="" counts as absent to a screen reader, which is what the
     // audit actually failed on - so assert the value, not the attribute.
+    // Asserting the SHAPE rather than truthiness (#144): `toBeTruthy()` also
+    // accepted `lang=" "` and `lang="english"`, neither of which is a language
+    // tag a screen reader can act on.
     const match = /<html[^>]*\slang="([^"]*)"/.exec(html);
-    expect(match?.[1]).toBeTruthy();
+    expect(match?.[1]).toMatch(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/);
   });
 
   it("has a non-empty meta description", () => {
     const match = /<meta\s+name="description"\s+content="([^"]*)"/.exec(html);
-    expect(match?.[1]?.trim()).toBeTruthy();
+    // A single character is "non-empty" and useless as a search snippet; the
+    // floor is deliberately low so this fails on placeholder text, not on copy
+    // edits.
+    expect(match?.[1]?.trim().length).toBeGreaterThan(20);
   });
 });
 

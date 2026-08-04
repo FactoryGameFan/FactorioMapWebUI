@@ -8,8 +8,12 @@ import TerrainTab from "../src/components/TerrainTab.vue";
 
 describe("resource icons", () => {
   it("maps every resource control to an icon asset URL", () => {
+    // Asserts the SHAPE of the value, not merely that one exists (#144). The
+    // whole point of the map is that each entry is a bundled `.png` asset URL,
+    // and `toBeTruthy()` was equally happy with `"x"` or `true` - i.e. with a
+    // key that would render a broken image.
     for (const name of controlsForCategory("resource")) {
-      expect(RESOURCE_ICONS[name], name).toBeTruthy();
+      expect(RESOURCE_ICONS[name], name).toMatch(/\.png($|\?)/);
     }
   });
 
