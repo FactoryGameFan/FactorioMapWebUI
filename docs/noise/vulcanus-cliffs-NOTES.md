@@ -20,15 +20,37 @@
 > in `cliffs-NOTES.md` and `cliffConnections.ts`). Three change what to try next:
 >
 > - **`onDestroy`'s cascade has FOUR gates**, including `map->[0x240] == 0` and an
->   entity flag set from the creation parameters. Map generation satisfies all
->   four; **a Lua or editor probe need not** - which is a hazard for exactly the
->   runtime probe #127 asked for. Check the four before believing such a probe.
+>   entity flag set from the creation parameters. All four are now READ on both
+>   paths and **the runtime probe #127 asked for is SAFE** - see UPDATE 11. The
+>   warning this bullet first carried is withdrawn.
 > - **`crater-cliff` has no connections at all.** The whole system is gated on
 >   `proto->place_as_crater == nullptr`. Nothing crater-shaped belongs to these
 >   rules.
 > - **There is no second connection pass during map generation.**
 >   `updateAndFixConnections` is called from exactly one site in the binary,
 >   `CliffEditor::buildCliffs`.
+>
+> ## UPDATE 11, 2026-08-03: the runtime probe is SAFE - all four cascade gates READ on both paths
+>
+> UPDATE 10 warned that #127's runtime probe might not reproduce map generation,
+> because `Cliff::onDestroy`'s cascade has four gates. **That warning is
+> withdrawn.** It was stated from inference, and inference is what keeps going
+> wrong on this issue; reading the bytes settles it the other way.
+>
+> | gate | cascade needs | `applyCliffs` | Lua `create_entity` |
+> | --- | --- | --- | --- |
+> | entity flag bit 5 of `+0x6e` | clear | `params[0x80] = 0` | `params[0x80] = 0` |
+> | `this+0x82` | set | ctor writes 1 unconditionally | same ctor |
+> | `this+0x83` | set | `place_as_crater == nullptr` | same |
+> | `map->[0x240]` | zero | only `Map::~Map` writes 1 | same |
+>
+> `map->[0x240]` is **"the map is being torn down"** - `Map::~Map` sets it as its
+> first act and `Map::resume` bails on it. And the one path that WOULD differ,
+> `Cliff::destroyWithoutCorrection`, is **unreachable**: zero direct callers under
+> a scan of every `BL` and `B` in `__text`, and no pointer in any vtable.
+>
+> **So the probe is unblocked and is the next thing to build.** Addresses and the
+> non-vacuity arms are in `cliffs-NOTES.md`.
 >
 > ## UPDATE 9, 2026-08-03: the residual is on CHUNK BORDERS (2.91 sigma), and the ore mechanism is a CLOSED IMPOSSIBILITY
 >
