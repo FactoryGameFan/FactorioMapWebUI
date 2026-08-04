@@ -3169,3 +3169,61 @@ Nothing shipping. The renderer rejects at the crossing stage and does not run
 `applyCliffConnections` at all - see `## The queue has a CONSUMER` for why that
 is deliberate. This is a statement about the RULE, and about which of its
 remainders now have a mechanism.
+
+## The ore lever, OUT OF SAMPLE: precision holds, and the unknown count is 14 (2026-08-03, #84)
+
+Everything the last three sections established about the ore rule was measured on
+`[1500,1500]`, because that is the only region `oracle-vulcanus-cliff-ore-direction`
+re-runs with the resources off. **A rule characterised on one region and never
+tested on another is fitted until proven otherwise**, so the lever was captured
+for the two regions the entities fixture covers and it never did.
+
+`test/cliffOreLeverOutOfSample.spec.ts`,
+`oracle-vulcanus-cliff-ore-direction-regions.seed123456.json` (a SEPARATE fixture,
+so regenerating it cannot rewrite ground truth four merged PRs depend on).
+
+| region | resources present | cliffs ON | cliffs OFF | suppressed |
+| --- | --- | --- | --- | --- |
+| `[0,0]` | 945 tungsten-ore | 283 | 283 | **0** |
+| `[-1200,800]` | 1047 coal | 387 | 387 | **0** |
+
+### Precision 1.000 survives
+
+Our predicate fires on **zero** cells in both regions. 1992 resource entities
+across two fresh regions produce no false positive, so the rule is not merely
+right on the region it was built from. This is the arm that would have caught a
+rule fitted to `[1500,1500]`, and it did not fire.
+
+It also re-confirms #110's per-control attribution - 27 calcite, 4 geyser, **0
+tungsten and coal** - at a far larger scale than the arm that produced it. Both
+of these regions happen to contain only the two resources that suppress nothing.
+
+### The unexplained population is 14, not 11
+
+#123 could only record that the lever's region did not cover `106,26.5`,
+`90,38.5` and `-1050,1022.5`, and parked them as undetermined. The lever covers
+them now and the ore suppresses nothing there, so they are not ore:
+
+| of the 25 missed destructions | count |
+| --- | --- |
+| ORE, by the lever | 11 |
+| **unknown** | **14** |
+
+Anywhere those were quoted as "11 unknown + 3 undetermined", the number is 14.
+
+### The non-vacuity check is in the fixture, not in an argument
+
+"0 suppressed" is exactly what a lever that never reached the generator prints.
+The OFF arms read back **0** resources against 945 and 1047, so the
+`autoplace_controls` override provably applied. That check is the reason the zero
+is worth anything, and it is the standing lesson from #111.
+
+### What this does NOT establish
+
+**Neither region contains calcite or a geyser**, which are the only two controls
+that suppress anything. So this is a **precision** test, not a recall test: the
+rule's positive evidence is still one region, and the cascade result from the
+section above is still measured on `[1500,1500]` alone. A region with calcite in
+it would be the test that could actually break the rule; there is not one in the
+oracle set, and getting one means choosing a new region rather than re-running an
+existing one.

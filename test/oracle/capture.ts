@@ -3874,6 +3874,115 @@ async function captureVulcanusCliffOreDirection(): Promise<void> {
 }
 
 /**
+ * **The ore lever on the OTHER TWO oracle regions - an out-of-sample test**
+ * (#84).
+ *
+ * Everything known about the ore -> cliff rule was measured on `[1500,1500]`,
+ * because that is the only region `oracle-vulcanus-cliff-ore-direction` re-runs
+ * with the resources off. Three things now rest on that single region: #123's
+ * split of the 25 missed destructions into 11 ore and 11 unknown, #125's finding
+ * that the `onDestroy` cascade closes 4 of the 10 remainders, and the claim that
+ * the box-overlap rule has precision 1.000. A rule characterised on one region
+ * and never tested on another is fitted until proven otherwise.
+ *
+ * This adds the paired ON / ALL-OFF arms for the two regions the entities
+ * fixture already covers and the lever never did:
+ *
+ * - `[0,0]` `{0,0,256,256}` - the same box as the other fixture's `blobRegion`,
+ *   but at REAL cliff settings rather than the collapsed rule, so it is a
+ *   genuine second sample rather than a re-run of the blob probe.
+ * - `[-1200,800]` `{-1200,800,-944,1056}`.
+ *
+ * It is a SEPARATE fixture rather than two more arms on the existing one so that
+ * regenerating it cannot rewrite ground truth that four merged PRs already
+ * depend on. Same seed, same protos, same `alsoResources`, so the two are
+ * directly comparable.
+ *
+ * Regenerate: `node --experimental-strip-types test/oracle/capture.ts
+ * vulcanus-cliff-ore-direction-regions`
+ */
+async function captureVulcanusCliffOreDirectionRegions(): Promise<void> {
+  const seed = 123456;
+  const OFF = { frequency: 1, size: 0, richness: 1 };
+  const ALL_OFF = {
+    tungsten_ore: OFF,
+    calcite: OFF,
+    vulcanus_coal: OFF,
+    sulfuric_acid_geyser: OFF,
+  };
+  const PROTOS = [
+    "cliff-vulcanus",
+    "crater-cliff",
+    "tungsten-ore",
+    "calcite",
+    "coal",
+    "sulfuric-acid-geyser",
+    "big-volcanic-rock",
+    "huge-volcanic-rock",
+  ];
+  const regions: { label: string; region: Region }[] = [
+    { label: "[0,0]", region: { x0: 0, y0: 0, x1: 256, y1: 256 } },
+    { label: "[-1200,800]", region: { x0: -1200, y0: 800, x1: -944, y1: 1056 } },
+  ];
+
+  const cases: unknown[] = [];
+  for (const r of regions) {
+    for (const off of [false, true]) {
+      const label = `${r.label}, ${off ? "ALL resources OFF" : "resources ON"}`;
+      const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+      try {
+        const dump = await sampleCliffEntitiesFull(r.region, {
+          workDir,
+          seed,
+          spaceAge: true,
+          planet: "vulcanus",
+          autoplaceControls: off ? ALL_OFF : undefined,
+          alsoResources: true,
+          protoNames: PROTOS,
+        });
+        cases.push({
+          label,
+          region: r.region,
+          autoplaceControls: off ? ALL_OFF : null,
+          effectiveCliffSettings: dump.cliffSettings,
+          effectiveAutoplace: dump.autoplaceControls,
+          cliffs: dump.cliffs,
+          resources: dump.resources,
+          protos: dump.protos,
+        });
+        const named = dump.cliffs as unknown as readonly { name: string }[];
+        const vulc = named.filter((c) => c.name === "cliff-vulcanus").length;
+        console.log(
+          `  ${label} -> ${String(vulc)} cliff-vulcanus, ` +
+            `${String(dump.resources?.length ?? -1)} resources`,
+        );
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. The OUT-OF-SAMPLE arm for the Vulcanus " +
+      "cliff/ore exclusion (#84): oracle-vulcanus-cliff-ore-direction only re-runs [1500,1500] " +
+      "with the resources off, so every quantity known about the ore rule - the 11/11 split of " +
+      "the missed destructions, the onDestroy cascade closing 4 of 10 remainders, and precision " +
+      "1.000 - was characterised on one region. These are the paired ON / ALL-OFF arms for the " +
+      "two regions the entities fixture covers and the lever never did, at REAL cliff settings. " +
+      "Deliberately a separate file: regenerating it cannot rewrite ground truth that merged work " +
+      "already depends on. Same seed, protos and alsoResources as the original, so the two are " +
+      "directly comparable. Regenerate: node --experimental-strip-types test/oracle/capture.ts " +
+      "vulcanus-cliff-ore-direction-regions",
+    seed,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-ore-direction-regions.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
+/**
  * **Is any placed ENTITY what suppresses the non-ore residual at `[1500,1500]`?**
  * (#84.) The lever, not a predicate.
  *
@@ -4333,6 +4442,7 @@ if (want("vulcanus-cliff-bands")) await captureVulcanusCliffBands();
 if (want("vulcanus-cliff-fine-sweep")) await captureVulcanusCliffFineSweep();
 if (want("cliff-entities")) await captureCliffEntities();
 if (want("vulcanus-cliff-ore-direction")) await captureVulcanusCliffOreDirection();
+if (want("vulcanus-cliff-ore-direction-regions")) await captureVulcanusCliffOreDirectionRegions();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();
 if (want("vulcanus-cliff-corner-fields")) await captureVulcanusCliffCornerFields();
 if (want("vulcanus-cliff-corner-fields-entity-regions"))

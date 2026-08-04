@@ -311,6 +311,10 @@
     "tree-expressions.2.1.11.json": {
       "factorioVersion": "2.1.11",
       "evidence": "the version is in the filename, and in the commit that added it"
+    },
+    "oracle-vulcanus-cliff-ore-direction-regions.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-03 by test/oracle/capture.ts vulcanus-cliff-ore-direction-regions against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The OUT-OF-SAMPLE arm for the ore -> cliff rule: oracle-vulcanus-cliff-ore-direction only re-runs [1500,1500], so every quantity known about the rule was characterised on one region. Four arms, paired ON / ALL-resources-OFF at REAL cliff settings, over the two regions the entities fixture covers and the lever never did - [0,0] {0,0,256,256} and [-1200,800] {-1200,800,-944,1056}. Each case records the autoplace controls the SURFACE reported back and dumps the cliffs, the resources and the prototype collision geometry from one generated surface, so an override that failed to apply cannot be mistaken for a term that does not matter - and the OFF arms do read back 0 resources against 945 and 1047, which is the non-vacuity check. Deliberately a separate file so regenerating it cannot rewrite ground truth that merged work depends on."
     }
   }
 }
