@@ -47,8 +47,18 @@ import { withCtxDefaults } from "../src/noise/eval/ctx";
  *
  * **Chunk borders are `Cliff::updateConnections`' entire domain.** `applyCliffs`
  * gates it on `tryToAddCliff`'s fifth argument, which is `!onChunkBorder`, so it
- * runs on the chunk's outer ring and nowhere else. It is the only rule in the
- * pipeline that treats border cells differently at all.
+ * runs on the chunk's outer ring and nowhere else.
+ *
+ * > **CORRECTION, 2026-08-03 (#84):** this paragraph used to end "It is the only
+ * > rule in the pipeline that treats border cells differently at all." That was
+ * > wrong. A cliff's collision box reaches up to 3.371 tiles and a border cell's
+ * > centre is 1.5-2.5 tiles from the chunk edge, so 16 of the 20 orientations
+ * > reach across an edge from the outer ring and none can from anywhere else -
+ * > a second border-only channel. `cliffResidualBoxCrossesChunkEdge.spec.ts`
+ * > scores it and finds it **inert**: 7 of 1407 crossing border cells are
+ * > unexplained against 14 of 2479 non-crossing, where no-information predicts
+ * > 7.6. That strengthens the conclusion below rather than weakening it - the
+ * > enrichment is orientation-BLIND, which is what a cell-index gate looks like.
  *
  * And it is exactly the rule the port has the weakest grip on:
  *
