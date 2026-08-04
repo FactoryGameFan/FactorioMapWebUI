@@ -1537,6 +1537,86 @@ Its entire call list is `CliffGenerator::crossingsForChunk`,
 `MaybeCliffOrientation::value` and `tryToAddCliff` (plus a destructor and two
 `logAndAbortOrThrow` arms). Nothing else reaches the queue.
 
+### The COMPUTE -> APPLY window cannot reach the queue - closed 2026-08-04 (#84)
+
+`vulcanus-cliffs-NOTES.md` listed "something between `generateCliffs` and
+`applyCliffs` that neither reads" as one of three untouched ideas, on the
+grounds that the queue is filled in the compute phase and drained in the apply
+phase with no measurement covering the gap. **The gap is now read, and nothing
+lives in it.** This matters more than a tidy negative, because
+`generateEntities` - where the RESOURCES are generated - runs inside that
+window, and it is the only place in the whole pipeline where the ore is
+chronologically between the two halves of the cliff queue's life.
+
+**The queue is `std::vector<CliffAddition>` at `this+0x30` / `+0x38` / `+0x40`**
+(libc++ begin / end / cap), confirmed against `tryToAddCliff`'s append:
+`ldp x23, x8, [x19, #0x38]`, `str x8, [x19, #0x38]`, and on the grow path
+`stp x8, x10, [x19, #0x30]` + `str x9, [x19, #0x40]`.
+
+**Scan 1 - who can APPEND.** Each of the task's three queues has its own
+`vector<...>::__throw_length_error`, which only the growth path reaches. A
+disassembly of the whole arm64 `__text` (11,719,853 instructions) attributing
+every reference to its enclosing function finds **exactly one** function
+referencing the `CliffAddition` one: `tryToAddCliff`. The scan is not asleep -
+run against `DecorativeAddition` it returns **two** functions, one of which is
+`generateDecoratives` itself, so a `generate*` function touching a queue is
+precisely what it can see.
+
+**Scan 2 - who can MUTATE it at all.** Scan 1 only proves who can append; a
+`clear`, an `erase` or an in-place write never calls `__throw_length_error`. The
+complementary scan is bounded and complete: Itanium mangling embeds parameter
+types, so **every** function that takes an `EntityMapGenerationTask` by value,
+reference or pointer has the class name in its mangled symbol - 36 symbols, of
+which only three are non-members (`MapPreviewGenerator::Worker::chartCliffs`,
+`chartEntities`, `countEntities`). Disassembling all of them and resolving the
+base register of every access at `+0x30/+0x38/+0x40`:
+
+| function | access | base is `this`? |
+| --- | --- | --- |
+| the four constructors | `stur q0, [x0, #0x38]`, `str x0, [x19, #0x38]` | yes - zero-init |
+| `tryToAddCliff` | the append above | yes - **the only writer** |
+| `~EntityMapGenerationTask` | `ldr x0, [x19, #0x30]` / `str x0, [x19, #0x38]` | yes - free |
+| `applyCliffs` | `ldp x22, x8, [x0, #0x30]` | yes - **the drain** |
+| `MapPreviewGenerator::Worker::chartCliffs` | `ldp x21, x25, [x1, #0x30]` | yes (`x1` is the task) - reads it |
+| `applyEntities` | `ldr x10, [x26, #0x30]` | **no** - `x26 = [x21]`, an iterator deref; a `std::string` size read |
+| `applyDecoratives` | `ldr x9, [x0, #0x40]` | **no** - `x0` comes via `[[[x21]+0x20]+0x490]+0x68` |
+| `Worker::countEntities` | `str x15, [x13, #0x30]` | **no** - `x13` is a stats accumulator (count `+0x28`, sum `+0x30`, max `+0x38`, min `+0x3c`) |
+| `Worker::computeEntities`, `start`, `stop`, `waitToFinish`, `computeTiles`, `buildArea` | various | **no** - other objects on the same offsets |
+
+**The window itself, re-read off the current build** rather than quoted from the
+older addresses above (`computeInternal` `0x101622860`, `apply` `0x101623b48`):
+
+```
+computeInternal: generateCliffs -> getChunkNoiseCache -> generateEntities x3
+                 -> generateDecoratives -> 2x operator delete -> ~NoiseCache
+apply:           Chunk::Chunk -> applyCliffs -> applyDecoratives -> applyEntities
+                 -> Surface::onChunkGenerated
+```
+
+The two unnamed stubs at `0x101622940` / `0x101622950` are `operator delete` on
+stack-held `unique_ptr`s - each is preceded by a load from a stack slot, a store
+of `xzr` into it and a null check. Not a path to the task's fields.
+
+So **every function that runs between the fill and the drain has been checked
+individually, and none of them can see the queue.** The idea is closed; do not
+re-walk it.
+
+**One new fact fell out.** `MapPreviewGenerator::Worker::chartCliffs` reads the
+queue **directly**, and the preview has no apply stage at all. That is
+independent corroboration of #113's mode-byte result: `tryToAddCliff` runs its
+collision test only in mode 2 *because* mode 2's cliffs are consumed straight
+off the queue and never get an `applyCliffs` to be rejected by.
+
+Reproduce (the universal binary defeats `objdump`'s `--arch` and
+`--start-address` flags together, so thin it first):
+
+```bash
+lipo -thin arm64 -output /tmp/factorio.arm64 "$FACTORIO_BIN"
+objdump -d /tmp/factorio.arm64 | awk '
+  /^[0-9a-f]+ </ { fn=$0; sub(/^[0-9a-f]+ </,"",fn); sub(/>:$/,"",fn); next }
+  /CliffAddition/ { print fn }' | sort -u | c++filt
+```
+
 ### `applyEntities` SKIPS a colliding entity; it never destroys a cliff
 
 ```

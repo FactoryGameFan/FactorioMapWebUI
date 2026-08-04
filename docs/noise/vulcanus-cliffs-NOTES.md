@@ -1,5 +1,47 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 13, 2026-08-04: the COMPUTE -> APPLY window is closed
+>
+> The second of UPDATE 9's three untouched ideas, and a **negative read off the
+> binary** rather than a capture. Full disassembly, addresses and the reproduce
+> command are in `cliffs-NOTES.md`; the short form:
+>
+> The queue is `std::vector<CliffAddition>` at `EntityMapGenerationTask+0x30`,
+> and the window between filling it (`generateCliffs`) and draining it
+> (`applyCliffs`) is `getChunkNoiseCache`, **`generateEntities` x3**,
+> `generateDecoratives`, two `operator delete` stubs, `~NoiseCache`, then
+> `Chunk::Chunk`. That window is where the RESOURCES are generated - the only
+> point in the whole pipeline where the ore sits chronologically between the two
+> halves of the cliff queue's life. This was the sharpest form the idea had.
+>
+> **Nothing in it can see the queue.** Two scans, the second because the first is
+> not sufficient on its own:
+>
+> - **Who can append:** a whole-`__text` scan (11,719,853 instructions) finds
+>   **exactly one** function referencing the `CliffAddition` vector's
+>   `__throw_length_error` - `tryToAddCliff`. Not vacuous: the same scan against
+>   `DecorativeAddition` returns **two**, one of them `generateDecoratives`
+>   itself.
+> - **Who can mutate it at all** - a `clear` or an in-place write never reaches
+>   `__throw_length_error`. Itanium mangling embeds parameter types, so the 36
+>   symbols carrying the class name are the **complete** set of functions that
+>   can see a task. All were disassembled and every access at `+0x30/+0x38/+0x40`
+>   had its base register resolved: writers are the constructors, `tryToAddCliff`
+>   and the destructor; readers are `applyCliffs` and
+>   `MapPreviewGenerator::Worker::chartCliffs`. Every other hit is a different
+>   object at the same offset, including three that look like the queue and are
+>   not.
+>
+> **One new fact:** `chartCliffs` reads the queue **directly**, and the preview
+> has no apply stage - independent corroboration of #113's mode-byte result,
+> since mode 2 must test collision inside `tryToAddCliff` precisely because its
+> cliffs never reach an `applyCliffs` that could reject them.
+>
+> **One of the three ideas is left:** `CliffCraterPlacer::tryToPlaceCliffAsCrater`
+> as a *mechanism* (ruled out for the residual by position, never as a
+> mechanism). The ore effect is untouched by this and still reproduces at
+> precision 1.000.
+>
 > ## UPDATE 10, 2026-08-03: the border effect is ORIENTATION-BLIND, and the connection system is decompiled
 >
 > Read with UPDATE 9, which it sharpens rather than replaces.
@@ -3530,9 +3572,13 @@ Ideas that are still untouched, for whoever picks this up:
 - Chunk-generation ORDER and the cross-chunk case, beyond the mask argument.
   Masks make the collision impossible, but nothing has looked at whether the ore
   changes which chunks get generated, or in what sequence.
-- Something between `generateCliffs` and `applyCliffs` that neither reads. The
-  queue is filled in the compute phase and drained in the apply phase, and no
-  measurement covers what happens to it in between.
+- ~~Something between `generateCliffs` and `applyCliffs` that neither reads.~~
+  **CLOSED 2026-08-04 - see UPDATE 13 and `cliffs-NOTES.md`.** The queue is
+  `vector<CliffAddition>` at `EntityMapGenerationTask+0x30`, and every function
+  that runs in that window was disassembled individually: none can see it. What
+  this bullet used to say, kept because it is the reasoning that made the idea
+  worth trying: the queue is filled in the compute phase and drained in the
+  apply phase, and no measurement covered what happened to it in between.
 - `CliffCraterPlacer::tryToPlaceCliffAsCrater`, which runs at the head of
   `applyEntities` and is the one thing in the entity stage that touches cliffs at
   all. Ruled out for the residual by position (#84's crater-cliff note) but never
