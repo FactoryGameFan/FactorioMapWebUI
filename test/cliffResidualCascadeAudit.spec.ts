@@ -64,6 +64,18 @@ import { withCtxDefaults } from "../src/noise/eval/ctx";
  * does not cascade at all today - `applyCliffConnections` exists but is used only
  * by specs.
  *
+ * **That +8 is measured against the wrong baseline, and the real figure is +2.**
+ * It scores the cascade against a POST-FILTER model - kills applied, no cascade -
+ * which is not what ships. `renderVulcanusCliffs` ships `rejectAtCrossingStage`,
+ * which zeroes a rejected cell's four edges so its neighbours lose the shared
+ * one, and that already reproduces most of the cascade. Priced against the
+ * shipping model on the error budget's own regions the gain is **+2 positions
+ * and +3 orientations** - see `test/cliffCrossChunkCascade.spec.ts`, which also
+ * finds that a cascade forbidden to cross a chunk boundary is byte-identical to
+ * what ships, so the entire gain is the CROSS-CHUNK part. Leave the number
+ * below as it stands (it is correct for the baseline it names) and read this
+ * paragraph before quoting it.
+ *
  * It is recorded rather than adopted on purpose. Adopting it changes rendered
  * ORIENTATIONS as well as positions, needs `cliffErrorBudget.spec.ts` moved in
  * lockstep (that file's own header records the day it drifted), and
