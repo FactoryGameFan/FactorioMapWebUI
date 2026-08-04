@@ -962,6 +962,57 @@ The full port, the four extracted tables and the scoring are in
 `src/noise/cliffs/cliffConnections.ts` and `test/cliffConnections.spec.ts`; the
 result is in `vulcanus-cliffs-NOTES.md`.
 
+### The connection system, decompiled whole (2026-08-03)
+
+`updateConnections` was read end to end after #132 made it the lead. Seven facts
+came out, none of which the port had modelled. They are in
+`cliffConnections.ts`' module comment with their addresses; the ones that change
+what anyone should try next:
+
+- **`Cliff` gates its ENTIRE connection system on one byte**, `this+0x83`, which
+  the constructor sets to `proto->place_as_crater == nullptr` (`cset w8, eq` on
+  `proto+0xb90`, `0x1007a7b1c`). `CliffPrototype` has exactly one optional
+  pointer property and `scaled_cliff_crater` is the only thing that sets it. The
+  byte gates `updateConnections`, `getNeighbor`, `destroyEnd`, `onDestroy`'s
+  cascade, `connectEnd` and `getConnections`. So **`crater-cliff` has no
+  connections at all** - do not attribute anything crater-shaped to these rules.
+- **`Cliff::onDestroy`'s cascade has FOUR gates, not zero** (`0x1007a8854`
+  onwards): entity flag bit 5 of `+0x6e` clear, `+0x82` set, `+0x83` set, and
+  `map->[0x240]` zero. Bit 5 is `params[0x80] != 0` at construction, `+0x82` is
+  what `destroyWithoutCorrection` zeroes. Map generation evidently satisfies all
+  four (#113 measured the cascade running), but **a Lua or editor probe will
+  not necessarily** - which is a live hazard for the runtime probe #127 asked
+  for, and the reason to check the four before believing such a probe.
+- **There is no second connection pass during map generation.**
+  `Cliff::updateAndFixConnections` (`0x1007a94d0`) is called from exactly one
+  site in the whole `__text` segment - `CliffEditor::buildCliffs`
+  (`0x100371948`), found by scanning every `BL` encoding rather than by grep. A
+  later chunk never revisits an earlier chunk's cliffs.
+- **`Cliff::destroyEnd` refuses to `forceDestroy`** when entity flag bit 4 of
+  `+0x6e` is set (`0x1007a8e40`); it returns with the orientation UNCHANGED, not
+  merely undestroyed. And after a successful shrink it re-searches its new
+  bounding box and destroys colliding non-cliff entities (`0x1007a8e9c`
+  onwards) - a side effect nothing in this repo models.
+- **`Cliff::getNeighbor`** (`0x1007a8c58`) accepts an entity only on an exact
+  prototype-id match AND an exact position match, so a different cliff
+  prototype on an adjacent cell is not a neighbour.
+
+### The tile half reads ZERO for an ungenerated chunk, and it is border-only
+
+`Surface::wouldCollide` -> `constCollideWithTile` (`0x100732eec`) ->
+`Surface::checkTileCollisions` (`0x101b579e0`), which per tile calls
+`Surface::getEffectiveTileID` (`0x10049399c`) and **skips the tile when the id
+is 0** (`tst w0, #0xffff; b.eq`). `getEffectiveTileID` returns exactly 0 when
+the chunk is absent - every range and null arm from `0x100493a60` falls to
+`mov w27, #0x0`.
+
+That is a real border-only channel, because the largest cliff half-extent is
+3.371 tiles and only the outer ring sits closer than that to a chunk edge (1.5 -
+2.5 tiles, against 5.5 - 6.5 for every interior ring). **Measured, it is inert**
+- see `test/cliffResidualBoxCrossesChunkEdge.spec.ts`. Note its direction before
+reaching for it: an absent chunk makes the game KEEP a cliff, so its signature
+is a false rejection, not a missed destruction.
+
 ### `crater-cliff` is not on the cliff lattice - confirmed, not assumed
 
 **FFF #386 explains why it exists and corroborates both readings**

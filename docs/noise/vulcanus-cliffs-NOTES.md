@@ -1,5 +1,35 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 10, 2026-08-03: the border effect is ORIENTATION-BLIND, and the connection system is decompiled
+>
+> Read with UPDATE 9, which it sharpens rather than replaces.
+>
+> **The border enrichment is orientation-blind.** UPDATE 9 said `updateConnections`
+> is "the only rule that treats border cells differently at all". It is not: a
+> cliff's collision box reaches 3.371 tiles and only the outer ring sits closer
+> than that to a chunk edge, so 16 of 20 orientations cross an edge and no
+> interior cell can. That rival was scored on data already on disk and is
+> **inert** - 7 of 1407 crossing border cells unexplained against 14 of 2479
+> non-crossing, where no-information predicts 7.6, with the losing condition
+> registered first. The enrichment survives in both halves at 2.7x the interior
+> rate. So the effect is blind to orientation, which is what a cell-index gate
+> looks like and not what a geometric reach looks like, and
+> `updateConnections` is the only border-only channel left unscored.
+>
+> **`Cliff`'s connection system is now decompiled whole** (seven facts, addresses
+> in `cliffs-NOTES.md` and `cliffConnections.ts`). Three change what to try next:
+>
+> - **`onDestroy`'s cascade has FOUR gates**, including `map->[0x240] == 0` and an
+>   entity flag set from the creation parameters. Map generation satisfies all
+>   four; **a Lua or editor probe need not** - which is a hazard for exactly the
+>   runtime probe #127 asked for. Check the four before believing such a probe.
+> - **`crater-cliff` has no connections at all.** The whole system is gated on
+>   `proto->place_as_crater == nullptr`. Nothing crater-shaped belongs to these
+>   rules.
+> - **There is no second connection pass during map generation.**
+>   `updateAndFixConnections` is called from exactly one site in the binary,
+>   `CliffEditor::buildCliffs`.
+>
 > ## UPDATE 9, 2026-08-03: the residual is on CHUNK BORDERS (2.91 sigma), and the ore mechanism is a CLOSED IMPOSSIBILITY
 >
 > Two results supersede the framing below. Read this before acting on any earlier
@@ -3676,3 +3706,90 @@ the game exactly (686 = 686).
 
 The residual is **concentrated, not a background rate** - which is itself a
 constraint on any mechanism proposed for it.
+
+## The border effect is ORIENTATION-BLIND: a rival mechanism found and REFUTED (2026-08-03, #84)
+
+The section above hands `updateConnections` the lead on one argument: chunk
+borders are its entire domain, and "nothing else in the pipeline treats border
+cells differently at all". **That clause was false**, and finding the
+counter-example is what makes the lead worth more rather than less.
+
+`test/cliffResidualBoxCrossesChunkEdge.spec.ts`. No new capture - twelve regions
+already on disk.
+
+### The rival: the collision BOX also singles out the border ring
+
+Pure arithmetic over two things already in the repo. The largest half-extent in
+`CLIFF_ORIENTATION_COLLISION_BOX` is **3.371 tiles**, and:
+
+| | distance from cell centre to the nearest chunk edge |
+| --- | --- |
+| border ring (`ix` or `iy` is 0 or 7) | 1.5 - 2.5 tiles |
+| **every** interior ring | 5.5 - 6.5 tiles |
+
+So **16 of the 20 orientations reach across a chunk edge from the outer ring and
+none of them can from anywhere else.** Asserted against the real population, not
+left as arithmetic: 1407 crossing cells, every one of them on a border.
+
+And there is a rule waiting on the far side of that edge, read out of the binary
+the same day. `applyCliffs` rejects through `Surface::wouldCollide`
+(`0x10160c088`) -> `constCollideWithTile` (`0x100732eec`) ->
+`Surface::checkTileCollisions` (`0x101b579e0`), which per tile calls
+`Surface::getEffectiveTileID` (`0x10049399c`) and **skips the tile when the id
+is 0**. `getEffectiveTileID` returns exactly 0 when the chunk is absent. So a box
+reaching into a not-yet-generated chunk reads no tile and does not collide, while
+this port reads the real tile everywhere.
+
+### The discriminator, and its losing condition, both registered first
+
+The two mechanisms differ in exactly one observable: **whether the ORIENTATION
+matters.** `updateConnections`' gate is `!onChunkBorder`, a cell-index test that
+is blind to orientation. The box mechanism fires only when the box actually
+crosses. Written down before the run: *a non-crossing border rate that is not
+lower than the crossing one refutes the box mechanism.*
+
+### Result: refuted, and not marginally
+
+| population | unexplained | rate |
+| --- | --- | --- |
+| interior | 9 / 4484 | 0.20% |
+| border, box **crosses** an edge | 7 / 1407 | **0.50%** |
+| border, box does **not** cross | 14 / 2479 | **0.56%** |
+
+Spread the 21 border cells over the two populations in proportion and the
+crossing share is **7.6**; observed **7**. The sharper predicate is not weaker
+than hoped, it is indistinguishable from no information at all - and the
+non-crossing rate is the higher of the two.
+
+The mechanism's own direction fails independently. An absent chunk makes the game
+KEEP a cliff we destroy, so its signature is a **false rejection** whose blocking
+tile lies across a chunk edge. There are 9 false rejections here and **zero** of
+them have any blocking tile on the far side of an edge. The predicate is not
+vacuous - cells with a blocking tile across an edge do exist in the population.
+
+### What this buys
+
+**The border enrichment is orientation-blind**, which is what a cell-index gate
+looks like and not what a geometric reach looks like. That is a property the
+2.91-sigma result did not have, and it was not obtainable from the border
+statistic alone. Both halves keep the 2.7x enrichment over the interior, so the
+partition had something to find and found nothing.
+
+Every border-only channel this port can name has now been scored. Only
+`updateConnections` is left unscored, and #127 already showed why: it cannot be
+scored from map-generation output at all.
+
+### Seven engine facts came out of the same read - see `cliffs-NOTES.md`
+
+The one that changes what to try next: **`Cliff::onDestroy`'s cascade has four
+gates**, including `map->[0x240] == 0` and an entity flag set from the creation
+parameters. Map generation satisfies all four - #113 measured the cascade
+running - but **a Lua or editor probe need not**, and that is precisely the
+runtime probe #127 asked for. Check the four before believing such a probe.
+
+Two more worth carrying: **`crater-cliff` has no connections at all** (the whole
+system is gated on `proto->place_as_crater == nullptr`), and
+`updateAndFixConnections` is called from exactly one site in the binary,
+`CliffEditor::buildCliffs` - so **there is no second connection pass during map
+generation**, and the "a later chunk cleans up after an earlier one" reading is
+closed.

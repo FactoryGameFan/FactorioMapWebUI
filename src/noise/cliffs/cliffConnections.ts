@@ -33,9 +33,10 @@
  * chunk there is no placement-order dependence: every cell of the chunk exists
  * by the time any of them checks its neighbours.
  *
- * `Cliff::updateConnections` (`0x1007a90d4`), reduced to the cliff arm:
+ * `Cliff::updateConnections` (`0x1007a90d4`), decompiled whole 2026-08-03:
  *
  * ```
+ * if (this->[0x83] == 0) return;                            // see the gate below
  * for side in neighborSidesForOrientation(orientation):     // the ORIGINAL orientation
  *     if chunk at position+4*dir(side) is absent or its status <= 0x31: continue
  *     n = getNeighbor(side)
@@ -43,12 +44,52 @@
  *         destroyEnd(side)
  * ```
  *
+ * The orientation the loop ITERATES is read once, before the loop; the one it
+ * COMPARES is re-read from `this+0x80` inside it (`0x1007a91e8`), so a
+ * `destroyEnd` earlier in the loop is visible to the sides after it. This module
+ * does the same, and that agreement is not accidental - it is why a cell can
+ * lose two ends in one pass.
+ *
+ * **The `this+0x83` gate is `proto->place_as_crater == nullptr`.** The
+ * constructor computes it in one instruction, `cmp x8, #0x0; cset w8, eq` on
+ * `proto + 0xb90` (`0x1007a7b1c`), and `CliffPrototype` has exactly one optional
+ * pointer-valued property, `place_as_crater`, set only by `scaled_cliff_crater`
+ * in `base/prototypes/entity/entity-util.lua:325`. The same byte gates
+ * `getNeighbor`, `destroyEnd`, `onDestroy`'s cascade, `connectEnd` and
+ * `getConnections`. So `cliff-vulcanus` runs all of it and **`crater-cliff` runs
+ * none of it** - craters are outside the connection system entirely, which is
+ * worth knowing before attributing anything crater-shaped to these rules.
+ *
  * `Cliff::destroyEnd(side)` (`0x1007a8d40`) rewrites the orientation to the one
  * with `side` replaced by `none`, and `forceDestroy()`s the cliff when that
  * leaves no end at all. `Cliff::onDestroy` (`0x1007a8770`) then calls
  * `destroyEnd(opposite(side))` on each connected neighbour - which is why a
  * destroyed cell can take a non-border neighbour with it, and why this is a
  * cascade rather than a filter.
+ *
+ * **Three conditions on that cascade are unmodelled here, deliberately.**
+ * `onDestroy` reaches its neighbour loop only when all four of these hold
+ * (`0x1007a8854`-`0x1007a8874`): entity flag bit 5 of `this+0x6e` CLEAR,
+ * `this+0x82` set, `this+0x83` set, and `map->[0x240]` zero. Bit 5 is
+ * `params[0x80] != 0` at construction and `this+0x82` is what
+ * `Cliff::destroyWithoutCorrection` (`0x1007aa568`) temporarily zeroes, so both
+ * are about who is doing the destroying rather than about the cliff. The port
+ * models map generation, where #113 measured the cascade running - 1058 of 1058
+ * at `[1500,1500]` - so all four evidently hold there. They are recorded because
+ * a future probe that destroys a cliff from Lua or the editor will NOT get the
+ * same behaviour, and that is exactly the probe #127 asked for.
+ *
+ * **There is no second connection pass during map generation.**
+ * `Cliff::updateAndFixConnections` (`0x1007a94d0`) looks like one and is not: a
+ * scan of every `BL` in `__text` finds it called from exactly one site,
+ * `CliffEditor::buildCliffs` (`0x100371948`). So a chunk generated later never
+ * revisits an earlier chunk's cliffs, and the "generation order lets a later
+ * pass clean up" reading is closed.
+ *
+ * `Cliff::getNeighbor` (`0x1007a8c58`) searches a one-tile box at the neighbour
+ * position and accepts an entity only on an exact prototype-id match
+ * (`0x1007a8ce4`) AND an exact position match (`0x1007a8cfc`). A `crater-cliff`
+ * sitting on a neighbouring cell is therefore not a neighbour.
  *
  * **None of the four tables below is a guess.** Each was extracted from the
  * arm64 slice and each agrees exactly with what the orientation NAMES say, which
