@@ -22,7 +22,7 @@ import { DEFAULT_VULCANUS_RESOURCE_CONTROLS, withCtxDefaults } from "../src/nois
  *
  * | route | closed by | evidence |
  * | --- | --- | --- |
- * | the cliff FIELD reads a resource | this file + the game's data | `cliff_elevation = cliff_elevation_from_elevation = elevation = vulcanus_elevation`, whose 47-node expression closure contains **no** resource region; and our port's raw cell set is bit-identical under every lever arm |
+ * | the cliff FIELD reads a resource | this file + the game's data | BOTH properties the cliff generator reads are clean: `cliff_elevation = cliff_elevation_from_elevation = elevation = vulcanus_elevation` (47-node closure) and `cliffiness = cliffiness_basic` (closure of 1) contain **no** resource region; and our port's raw cell set is bit-identical under every lever arm |
  * | `Surface::wouldCollide` does something else | disassembly (#128 notes) | it is exactly: per-orientation box, degenerate early-out, `constCollideWithTile`, `collideWithEntity` - both with the cliff's own mask at `proto+0x2b0`. No third input |
  * | its ENTITY half | #124 | resource masks are `{resource}` at prototype level against the cliff's eight layers - disjoint; and cliffs are computed and applied before any entity exists |
  * | its TILE half | #128 | the lever moves 841 tiles but **none** crosses the `lava`/`lava-hot` boundary, on the game's own data, with 1682 blocking tiles in the sample |

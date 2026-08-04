@@ -3396,7 +3396,7 @@ Two more routes are now closed, and the honest summary is stronger than
 
 | route | closed by | evidence |
 | --- | --- | --- |
-| the cliff FIELD reads a resource | here | `cliff_elevation = cliff_elevation_from_elevation = elevation = vulcanus_elevation`, whose **47-node** expression closure contains no resource region; and our port's raw cell set is **bit-identical** under every lever arm (2277 cells, same codes) |
+| the cliff FIELD reads a resource | here | BOTH properties the cliff generator reads are clean - `cliff_elevation = cliff_elevation_from_elevation = elevation = vulcanus_elevation` (**47-node** closure) and `cliffiness = cliffiness_basic` (closure of **1**, referencing only `x`, `y`, `cliff_richness`) contain no resource region; and our port's raw cell set is **bit-identical** under every lever arm (2277 cells, same codes) |
 | `Surface::wouldCollide` does something else | disassembly | exactly: per-orientation box from the jump table, degenerate early-out, `constCollideWithTile`, `collideWithEntity` - both with the cliff's own mask at `proto+0x2b0`. **No third input** |
 | its ENTITY half | #124 | resource masks are `{resource}` at PROTOTYPE level against the cliff's eight layers - disjoint; and cliffs are computed and applied before any entity exists |
 | its TILE half | #128 | the lever moves 841 tiles and **none** crosses the `lava`/`lava-hot` boundary, on the game's own data, with 1682 blocking tiles in the sample |
