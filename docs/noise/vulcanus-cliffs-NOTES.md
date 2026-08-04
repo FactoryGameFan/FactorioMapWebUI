@@ -3583,6 +3583,17 @@ writing down because it is the first mechanism class in this investigation that
 is not already closed - and because the alternative, that craters share the 31's
 unknown cause, is a much bigger claim needing much better evidence.
 
+> **UPDATE, 2026-08-03 (#136): the hypothesis is UNSUPPORTED - n is 1, the
+> `geyser OFF` row above is VACUOUS, and a documented mechanism explains craters
+> without it.** The eight craters are eight segments of **one ring**
+> (`crater_radius = 7`), so the effective sample size is 1. There are **zero
+> geysers in the ring's chunk**, so that control could never have discriminated
+> anything. And `LAVA TILES OFF only` - a lever with nothing to do with calcite -
+> brings back **7 craters with resources still ON**, which `crater-cliff`'s
+> explicit `water_tile` collision mask explains as a prototype-level data fact.
+> Calcite's own route stays open; entity collision and lava tiles are closed for
+> it. See the last section of this file.
+
 The craters are also **16.4 tiles** from the nearest suppressed cell at closest
 approach, against their own 2.8-tile collision box, so crater placement is not
 the 31's mechanism even before the ordering argument.
@@ -3815,3 +3826,85 @@ system is gated on `proto->place_as_crater == nullptr`), and
 `CliffEditor::buildCliffs` - so **there is no second connection pass during map
 generation**, and the "a later chunk cleans up after an earlier one" reading is
 closed.
+
+## The crater-cliff RNG hypothesis is UNSUPPORTED - n is 1 and both controls fail (2026-08-03, #84)
+
+#130 proposed a mechanism class that was new to #84: entity autoplace **rolls**,
+so removing calcite shifts the per-chunk RNG stream and moves everything drawn
+after it. It marked itself a hypothesis and said "nothing here tests it".
+
+`test/craterCliffRngHypothesis.spec.ts`. **No capture** - every fact below sits
+in fixtures already committed, one of them since #111.
+
+**The hypothesis is not refuted. The evidence for it is.**
+
+### 1. n is ONE crater, not eight
+
+The eight `crater-cliff` entities are eight segments of a **single ring** -
+centre `(1646.62, 1679.75)`, radii 4.95 to 7.00, against the prototype's own
+`crater_radius = 7`. FFF #386 describes exactly this: "a ring of special cliffs
+where sections of the ring can randomly be removed."
+
+Effective sample size **1**. #130's table invites reading it as 8.
+
+### 2. The spatial reading would have been vacuous
+
+All eight segments sit within **0.33 tiles** of a calcite entity - which looks
+decisive and is not. Their chunk `(51,52)` holds **805 calcite entities over 1024
+tiles, 78.6% coverage**. A ring landing on calcite there is expected.
+
+### 3. The `geyser OFF` control is VACUOUS
+
+#130 offers it as the arm separating calcite from resources generally. **There
+are zero geysers in the ring's chunk** - all 19 are in `(48,48)`, `(48,49)` and
+`(53,54)`. The lever works globally (removes all 19, moves `cliff-vulcanus`
+885 -> 889) and cannot touch that chunk's stream by construction.
+
+### 4. A lever unrelated to calcite also produces craters
+
+Unread in `oracle-vulcanus-cliff-suppressor-levers` since **#111**:
+
+| arm | `cliff-vulcanus` | `crater-cliff` |
+| --- | --- | --- |
+| default, resources ON | 885 | **0** |
+| resources OFF via controls | 916 | 8 |
+| **LAVA TILES OFF only** | 1053 | **7** |
+| resources OFF + LAVA TILES OFF | 1082 | **18** |
+
+**Craters appear with calcite still ON.** Every #84 spec filters to
+`name === "cliff-vulcanus"`, so the column was never looked at - the same failure
+#94 caught once already, in the same investigation.
+
+### 5. And that row is a DATA FACT, not a hypothesis
+
+`crater-cliff` overrides the default cliff mask with an explicit
+`{item, object, player, water_tile}`. On Vulcanus only `lava` and `lava-hot`
+carry `water_tile`. Lava blocks crater segments **by prototype**; row 3 needs no
+RNG at all.
+
+### Where calcite stands, and two routes closed properly
+
+Its route is still unexplained and the RNG stream is still the only unclosed
+candidate. Two others are now closed by reading rather than by assuming:
+
+- **Not entity collision.** `core/lualib/collision-mask-defaults.lua` gives
+  `resource` the mask `{resource}`, disjoint from every cliff mask including
+  `crater-cliff`'s. That is #124's prototype-level argument extended to the
+  second entity type rather than assumed to carry over.
+- **Not lava tiles.** #128 measured calcite moving **zero** blocking tiles.
+
+A third fact from the same file closes a route this session had to consider:
+the default `cliff` mask carries **`not_colliding_with_itself = true`**, so
+cliffs never collide with cliffs of their own prototype. That matters because
+`applyCliffs` adds each cliff to the surface *before* testing the next one -
+without the flag the entire run would be placement-order dependent, and 57 of
+400 adjacent orientation pairs have overlapping boxes.
+
+### Status and the real test
+
+**UNSUPPORTED, not refuted**: n = 1, no surviving control, and a competing
+documented mechanism for the phenomenon it was invented to explain. Testing it
+properly needs a lever that changes the roll count in the ring's own chunk
+without touching that chunk's tiles or lava - switching off one of the rock
+prototypes listed before `crater-cliff` in `autoplace_settings.entity` would do
+it. One capture arm, and worth having a real control before spending it.
