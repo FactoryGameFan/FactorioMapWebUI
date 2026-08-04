@@ -520,6 +520,30 @@ export function buildCliffControlLua(
     excludeFromAutoplaceCategory?: Readonly<Record<string, readonly string[]>>;
     countTileNames?: readonly string[];
     alsoEntities?: boolean;
+    /**
+     * Order the region's chunks are GENERATED in. `forward` is the row-major
+     * loop with one blocking drain that every other capture has always used.
+     * The other two split the region and call `force_generate_chunk_requests()`
+     * TWICE, so one half of the region is fully generated before any chunk of
+     * the other exists - `right-half-first` splits on x, `bottom-half-first` on
+     * y, giving two demonstrably different orders over an IDENTICAL chunk set.
+     *
+     * Two separate blocking drains are used rather than a reordered single
+     * queue because the game is free to sort or dedup a queue, which would make
+     * the perturbation a silent no-op. Nothing can reorder two drains - and
+     * {@link CliffDump.chunksAfterFirstDrain} observes the state between them,
+     * so the order change is measured rather than assumed.
+     */
+    chunkOrder?: "forward" | "right-half-first" | "bottom-half-first";
+    /**
+     * Record which chunks were generated ({@link CliffDump.chunksAtEnd}, plus
+     * {@link CliffDump.chunksAfterFirstDrain} for the two-drain orders).
+     *
+     * It also registers an `on_chunk_generated` recorder feeding
+     * {@link CliffDump.chunkSequence}. **That recorder is known to come back
+     * EMPTY** and is kept deliberately - see its comment below.
+     */
+    recordChunks?: boolean;
   } = {},
 ): string {
   const dumpFile = opts.dumpFile ?? CLIFF_DUMP_FILE;
@@ -688,19 +712,89 @@ ${names.map((n) => `    kept[${JSON.stringify(n)}] = nil`).join("\n")}
   for _, n in ipairs({${(opts.countTileNames ?? []).map((n) => JSON.stringify(n)).join(", ")}}) do
     tileCounts[n] = surface.count_tiles_filtered{ name = n, area = {{x0, y0}, {x1, y1}} }
   end`;
-  return `script.on_init(function()
+  // The `on_chunk_generated` recorder, registered at control.lua top level so
+  // it is live before the run's first chunk exists.
+  //
+  // **It comes back EMPTY, and that is the finding, not a bug.** Measured
+  // 2026-08-04: all four arms of `vulcanus-cliff-chunk-order` reported a
+  // zero-length sequence while generating 81 chunks each. Chunk generation here
+  // happens inside `on_init`, and Factorio does not dispatch events raised
+  // during it. It is kept, and dumped, so that the next person to want a
+  // generation ORDER out of this probe reads a measured zero instead of
+  // spending the run to rediscover it - and so that any future Factorio which
+  // starts dispatching them is noticed rather than assumed.
+  //
+  // What replaced it is `chunksAfterFirstDrain` below, which needs no events.
+  const chunkRecorderLua = !opts.recordChunks
+    ? ""
+    : `local chunkSeq = {}
+script.on_event(defines.events.on_chunk_generated, function(e)
+  chunkSeq[#chunkSeq + 1] = {x = e.position.x, y = e.position.y, surface = e.surface.name}
+end)
+`;
+  // `get_chunks` is documented to yield chunks that "may or may not be
+  // generated", so the `is_chunk_generated` filter is not defensive padding -
+  // without it this reports the surface's chunk BOOKKEEPING rather than what
+  // was generated, and every arm would agree for an uninteresting reason.
+  const snapshotLua = `  do
+    local snap = {}
+    for c in surface.get_chunks() do
+      if surface.is_chunk_generated({x = c.x, y = c.y}) then
+        snap[#snap + 1] = {x = c.x, y = c.y}
+      end
+    end
+    chunksAfterFirstDrain = snap
+  end`;
+  const oneDrain = (inner: string) => `  for cy = cy0, cy1 do${inner}
+  end
+  surface.force_generate_chunk_requests()`;
+  const xRange = (a: string, b: string): string => `
+    for cx = ${a}, ${b} do
+      surface.request_to_generate_chunks({x = cx * 32 + 16, y = cy * 32 + 16}, 0)
+    end`;
+  const yRange = (a: string, b: string): string => `
+  for cy = ${a}, ${b} do
+    for cx = cx0, cx1 do
+      surface.request_to_generate_chunks({x = cx * 32 + 16, y = cy * 32 + 16}, 0)
+    end
+  end
+  surface.force_generate_chunk_requests()`;
+  // Both two-drain orders generate the SAME 81 chunks; they differ only in
+  // which half exists first. Splitting on x and on y (rather than one split and
+  // the plain forward loop) is what makes the perturbation provable without
+  // assuming anything about how the game drains a single queue: each arm
+  // reports the half that existed at its midpoint, and those two halves are
+  // different sets of chunks.
+  const requestLua =
+    opts.chunkOrder === "right-half-first"
+      ? `  local cxmid = math.floor((cx0 + cx1) / 2)
+${oneDrain(xRange("cxmid + 1", "cx1"))}
+${snapshotLua}
+${oneDrain(xRange("cx0", "cxmid"))}`
+      : opts.chunkOrder === "bottom-half-first"
+        ? `  local cymid = math.floor((cy0 + cy1) / 2)
+${yRange("cymid + 1", "cy1")}
+${snapshotLua}
+${yRange("cy0", "cymid")}`
+        : oneDrain(xRange("cx0", "cx1"));
+  const chunkDumpLua = !opts.recordChunks
+    ? "  local chunkSequence, chunksAtEnd = nil, nil"
+    : `  local chunkSequence = chunkSeq
+  local chunksAtEnd = {}
+  for c in surface.get_chunks() do
+    if surface.is_chunk_generated({x = c.x, y = c.y}) then
+      chunksAtEnd[#chunksAtEnd + 1] = {x = c.x, y = c.y}
+    end
+  end`;
+  return `${chunkRecorderLua}script.on_init(function()
 ${surfaceLua}
   local x0, y0, x1, y1 = ${region.x0}, ${region.y0}, ${region.x1}, ${region.y1}
   local cx0 = math.floor(x0 / 32)
   local cy0 = math.floor(y0 / 32)
   local cx1 = math.ceil(x1 / 32) - 1
   local cy1 = math.ceil(y1 / 32) - 1
-  for cy = cy0, cy1 do
-    for cx = cx0, cx1 do
-      surface.request_to_generate_chunks({x = cx * 32 + 16, y = cy * 32 + 16}, 0)
-    end
-  end
-  surface.force_generate_chunk_requests()
+  local chunksAfterFirstDrain = nil
+${requestLua}
   local ents = surface.find_entities_filtered{ type = "${opts.entityType ?? "cliff"}", area = {{x0, y0}, {x1, y1}} }
   local cliffs = {}
   for i, e in ipairs(ents) do
@@ -730,10 +824,13 @@ ${resourceLua}
 ${entitiesLua}
 ${apSettingsLua}
 ${tileCountLua}
+${chunkDumpLua}
   helpers.write_file("${dumpFile}", helpers.table_to_json({
     cliffs = cliffs, cliffSettings = settings,
     resources = resources, protos = protos, autoplaceControls = autoplace,
     entities = entities, autoplaceSettings = apSettings, tileCounts = tileCounts,
+    chunkSequence = chunkSequence, chunksAtEnd = chunksAtEnd,
+    chunksAfterFirstDrain = chunksAfterFirstDrain,
   }), false)
   error("DUMPED-OK")
 end)
@@ -782,6 +879,33 @@ export interface CliffDump {
   >;
   /** Present only with `countTileNames`. Tile counts in the region, per name. */
   readonly tileCounts?: Record<string, number>;
+  /**
+   * Present only with `recordChunks`. Every `on_chunk_generated` of the run, in
+   * the ORDER the game raised them, tagged with the surface - a Vulcanus
+   * capture creates its own surface, so `nauvis`'s own starting chunks are in
+   * this list too and have to be filtered out before comparing anything.
+   */
+  readonly chunkSequence?: { x: number; y: number; surface: string }[];
+  /**
+   * Present only with `recordChunks`. Every GENERATED chunk of the sampled
+   * surface at dump time, from `get_chunks` + `is_chunk_generated`. This is the
+   * SET, where `chunkSequence` is the ORDER; the hypothesis under test has both
+   * halves ("which chunks get generated, or in what sequence") and one dump
+   * that answered only one of them would have to be captured twice.
+   */
+  readonly chunksAtEnd?: { x: number; y: number }[];
+  /**
+   * Present only with `recordChunks` AND a two-drain `chunkOrder`. The chunks
+   * that existed BETWEEN the two blocking drains - i.e. exactly the half the
+   * arm generated first.
+   *
+   * This is the whole reason the two-drain orders exist. `chunkSequence` cannot
+   * report an order (no events fire during `on_init`), so without an
+   * observation from inside the run, "the generation order was perturbed" would
+   * be an inference from the shape of the Lua rather than a measurement - and
+   * an arm whose perturbation is unproven cannot close anything.
+   */
+  readonly chunksAfterFirstDrain?: { x: number; y: number }[];
 }
 
 /** Parse the cliff-entity mod's dump into `{x, y}` cliff positions. */
@@ -813,6 +937,9 @@ export function parseCliffDumpFull(jsonText: string): CliffDump {
       { treat_missing_as_default: boolean; settingsCount: number }
     >;
     tileCounts?: Record<string, number>;
+    chunkSequence?: unknown;
+    chunksAtEnd?: unknown;
+    chunksAfterFirstDrain?: unknown;
   };
   return {
     cliffs: Array.isArray(parsed.cliffs) ? (parsed.cliffs as Position[]) : [],
@@ -839,6 +966,28 @@ export function parseCliffDumpFull(jsonText: string): CliffDump {
           : [],
     autoplaceSettings: parsed.autoplaceSettings,
     tileCounts: parsed.tileCounts,
+    // Same `{}`-for-empty hazard again, and here it would be actively
+    // misleading rather than merely fatal: an empty chunk list is what "the
+    // recorder never fired" looks like, and that has to read as an empty ARRAY
+    // the spec can assert on, not as an object that throws.
+    chunkSequence:
+      parsed.chunkSequence === undefined
+        ? undefined
+        : Array.isArray(parsed.chunkSequence)
+          ? (parsed.chunkSequence as { x: number; y: number; surface: string }[])
+          : [],
+    chunksAtEnd:
+      parsed.chunksAtEnd === undefined
+        ? undefined
+        : Array.isArray(parsed.chunksAtEnd)
+          ? (parsed.chunksAtEnd as { x: number; y: number }[])
+          : [],
+    chunksAfterFirstDrain:
+      parsed.chunksAfterFirstDrain === undefined
+        ? undefined
+        : Array.isArray(parsed.chunksAfterFirstDrain)
+          ? (parsed.chunksAfterFirstDrain as { x: number; y: number }[])
+          : [],
   };
 }
 
@@ -1022,6 +1171,14 @@ export interface OracleOptions {
    * standing where, rather than only that the cliffs did or did not move.
    */
   alsoEntities?: boolean;
+  /**
+   * Perturb the order the region's chunks are generated in, changing nothing
+   * else. See {@link buildCliffControlLua} for why `halves` is the one that
+   * cannot be silently undone by the game.
+   */
+  chunkOrder?: "forward" | "right-half-first" | "bottom-half-first";
+  /** Dump the generated-chunk SET (and mid-run half) alongside the entities. */
+  recordChunks?: boolean;
 }
 
 /**
@@ -1248,6 +1405,8 @@ export async function sampleCliffEntitiesFull(
       excludeFromAutoplaceCategory: opts.excludeFromAutoplaceCategory,
       countTileNames: opts.countTileNames,
       alsoEntities: opts.alsoEntities,
+      chunkOrder: opts.chunkOrder,
+      recordChunks: opts.recordChunks,
       propertyRoutes:
         opts.probeExpression === undefined
           ? undefined
