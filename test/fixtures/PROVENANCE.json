@@ -323,6 +323,10 @@
     "oracle-vulcanus-cliff-ore-richness.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "captured 2026-08-03 by test/oracle/capture.ts vulcanus-cliff-ore-richness against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. The control separating 'the ore suppresses cliffs' from 'the autoplace_controls lever perturbs something structural' (#84). control:calcite:richness appears only in vulcanus_calcite_richness - not in vulcanus_calcite_probability, which decides where the ore lands, nor in vulcanus_calcite_region, which drives the volcanic_jagged_ground_range tile - so it changes the compiled map-gen settings while leaving entity positions and tiles alone. Three arms over [1500,1500]: default, calcite richness x2, calcite richness x0.5. Each records the autoplace_controls the SURFACE read back and dumps the resources alongside the cliffs from one generated surface, so 'positions unchanged' is measured rather than argued from the Lua."
+    },
+    "oracle-vulcanus-cliff-entities-more-regions.seed123456.json": {
+      "factorioVersion": "2.1.12",
+      "evidence": "captured 2026-08-03 by test/oracle/capture.ts vulcanus-cliff-entities-more-regions against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Four MORE Vulcanus cliff-entity regions with the paired ON / ALL-resources-OFF ore lever (#84), captured to raise n: the residual's unexplained population was 14 cells and every structural test on it landed at 1.4-1.9 sigma against its base rate, which is what a partition looks like at n=14 whether or not a cause exists; and the shipped accuracy figure was measured on three regions chosen for reasons unrelated to sampling. Regions [3000,3000], [-2000,-2000], [800,-1500] and [-2600,1200], each 256x256, spread away from spawn and from each other. Each arm records the autoplace_controls and cliff_settings the SURFACE read back and dumps cliffs and resources from one generated surface, so an override that failed to apply cannot be mistaken for a term that does not matter."
     }
   }
 }

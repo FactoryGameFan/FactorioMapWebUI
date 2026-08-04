@@ -3875,6 +3875,108 @@ async function captureVulcanusCliffOreDirection(): Promise<void> {
 }
 
 /**
+ * **Four MORE cliff-entity regions, with the ore lever, to raise n** (#84).
+ *
+ * Two things are stuck at a sample size rather than at an idea.
+ *
+ * The residual's unexplained population is **14 cells**, and every structural
+ * test on it - chunk-border status, orientation, distance to the region rim -
+ * lands at 1.4 to 1.9 sigma against its base rate. At n = 14 that is what a
+ * partition looks like whether or not a cause exists, so another slice of the
+ * same fourteen cannot settle anything. More cells can.
+ *
+ * And the shipped accuracy figure - recall 0.9961, precision 0.9858 - is
+ * measured on **three** regions, all chosen years into the investigation for
+ * reasons that had nothing to do with sampling. Whether it holds elsewhere on
+ * the map has never been asked.
+ *
+ * Four regions, spread away from spawn and from each other, each with the paired
+ * ON / ALL-resources-OFF arms so the ore can be attributed the same way #123 and
+ * #126 do. Captures cost about 2.5s each.
+ *
+ * Regenerate: `node --experimental-strip-types test/oracle/capture.ts
+ * vulcanus-cliff-entities-more-regions`
+ */
+async function captureVulcanusCliffEntitiesMoreRegions(): Promise<void> {
+  const seed = 123456;
+  const OFF = { frequency: 1, size: 0, richness: 1 };
+  const ALL_OFF = {
+    tungsten_ore: OFF,
+    calcite: OFF,
+    vulcanus_coal: OFF,
+    sulfuric_acid_geyser: OFF,
+  };
+  const PROTOS = [
+    "cliff-vulcanus",
+    "crater-cliff",
+    "tungsten-ore",
+    "calcite",
+    "coal",
+    "sulfuric-acid-geyser",
+  ];
+  const regions: { label: string; region: Region }[] = [
+    { label: "[3000,3000]", region: { x0: 3000, y0: 3000, x1: 3256, y1: 3256 } },
+    { label: "[-2000,-2000]", region: { x0: -2000, y0: -2000, x1: -1744, y1: -1744 } },
+    { label: "[800,-1500]", region: { x0: 800, y0: -1500, x1: 1056, y1: -1244 } },
+    { label: "[-2600,1200]", region: { x0: -2600, y0: 1200, x1: -2344, y1: 1456 } },
+  ];
+
+  const cases: unknown[] = [];
+  for (const r of regions) {
+    for (const off of [false, true]) {
+      const label = `${r.label}, ${off ? "ALL resources OFF" : "resources ON"}`;
+      const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+      try {
+        const dump = await sampleCliffEntitiesFull(r.region, {
+          workDir,
+          seed,
+          spaceAge: true,
+          planet: "vulcanus",
+          autoplaceControls: off ? ALL_OFF : undefined,
+          alsoResources: true,
+          protoNames: PROTOS,
+        });
+        cases.push({
+          label,
+          region: r.region,
+          autoplaceControls: off ? ALL_OFF : null,
+          effectiveAutoplace: dump.autoplaceControls,
+          effectiveCliffSettings: dump.cliffSettings,
+          cliffs: dump.cliffs,
+          resources: dump.resources,
+        });
+        const named = dump.cliffs as unknown as readonly { name: string }[];
+        const vulc = named.filter((c) => c.name === "cliff-vulcanus").length;
+        console.log(
+          `  ${label} -> ${String(vulc)} cliff-vulcanus, ${String(dump.resources?.length ?? -1)} resources`,
+        );
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. Four MORE Vulcanus cliff-entity regions " +
+      "with the paired ON / ALL-resources-OFF ore lever (#84), captured to raise n. The residual's " +
+      "unexplained population was 14 cells and every structural test on it landed at 1.4-1.9 sigma " +
+      "against its base rate, which is what a partition looks like at n=14 whether or not a cause " +
+      "exists; and the shipped accuracy figure was measured on three regions chosen for reasons " +
+      "unrelated to sampling. Regions are spread away from spawn and from each other. Each arm " +
+      "records the autoplace_controls and cliff_settings the SURFACE read back and dumps cliffs and " +
+      "resources from one generated surface, so an override that failed to apply cannot be mistaken " +
+      "for a term that does not matter. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts vulcanus-cliff-entities-more-regions",
+    seed,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-entities-more-regions.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
+/**
  * **Does the LEVER itself move cliffs, independently of the ore?** (#84.)
  *
  * By #128 every route from a resource control to a cliff is closed: the cliff
@@ -4674,6 +4776,7 @@ if (want("vulcanus-cliff-ore-direction")) await captureVulcanusCliffOreDirection
 if (want("vulcanus-cliff-ore-direction-regions")) await captureVulcanusCliffOreDirectionRegions();
 if (want("vulcanus-tile-lever")) await captureVulcanusTileLever();
 if (want("vulcanus-cliff-ore-richness")) await captureVulcanusCliffOreRichness();
+if (want("vulcanus-cliff-entities-more-regions")) await captureVulcanusCliffEntitiesMoreRegions();
 if (want("vulcanus-ore-cliff-replication")) await captureVulcanusOreCliffReplication();
 if (want("vulcanus-cliff-corner-fields")) await captureVulcanusCliffCornerFields();
 if (want("vulcanus-cliff-corner-fields-entity-regions"))
