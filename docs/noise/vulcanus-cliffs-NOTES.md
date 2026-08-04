@@ -4363,3 +4363,43 @@ make with a benchmark in hand.
 The cascade's reach is bounded at **one hop** (`maxDepth` 1, `maxDist` 4 tiles =
 one grid step), so one chunk is all the halo would ever need. The reach is not
 the obstacle; the tiled cost is.
+
+## The cross-chunk cascade is NOT the border enrichment's cause - 2 of 25 (2026-08-04, #84)
+
+The candidate raised at the end of the previous section, tested directly against
+the residual on the 14 regions the enrichment is measured over. Zero capture -
+`test/cliffBorderResidualCascade.spec.ts`.
+
+| model | unexplained | on border | z |
+| --- | --- | --- | --- |
+| shipped (`rejectAtCrossingStage`, chunk-local) | 25 | 19 | **2.99** |
+| cross-chunk destroy cascade | 23 | 17 | **2.67** |
+
+**It explains 2 of the 25** - both border cells, so it does bite exactly where
+the signal lives - and leaves a residual still enriched at **z = 2.67**. A
+mechanism that explained the enrichment would drive that toward the 46.2% base
+rate. This one does not come close. **The border enrichment remains open.**
+
+At the plain surplus level the same run gives 90 -> 84, and all **6** cells the
+cascade removes are on chunk borders - #148's border-exclusivity reproduced on a
+larger fixture set (14 regions against 3).
+
+### The answer was already in committed data, and that is the lesson
+
+`cliffResidualCascadeAudit`'s published "after cascade" row - 23 unexplained, 17
+on border, z 2.67 - **already had a cross-chunk cascade in it.** That harness
+works on a flat cell map with a 64-tile halo and never restricts propagation to a
+chunk, so its post-cascade number was, unrecognised at the time, exactly the
+number that refutes the candidate. It was sitting in the repo a day before the
+candidate was proposed.
+
+What was genuinely missing was the OTHER row: nobody had ever scored the residual
+under the model that actually ships. That is the 25 / 19 / 2.99, and the 25 -> 23
+delta is the precise size of the mechanism's claim. So the test was still worth
+running - but the refutation could have been read a day earlier by asking **what
+model was the published number already computed under**.
+
+That row is also the control here: reproducing 23 / 17 / 2.67 is what proves both
+models are scored by one definition of "unexplained" (a cell the game killed that
+neither our own kill set nor the game's ore lever accounts for). Without it the
+2-cell delta would mean nothing.
