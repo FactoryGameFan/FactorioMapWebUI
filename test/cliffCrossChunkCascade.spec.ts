@@ -76,6 +76,14 @@ import { withCtxDefaults } from "../src/noise/eval/ctx";
  * the mechanism exists and is border-exclusive, which is what makes it worth
  * testing against the residual directly.
  *
+ * **That test has since been run, and this candidate LOSES.**
+ * `test/cliffBorderResidualCascade.spec.ts` scores both models on the 14 regions
+ * the enrichment is measured over: the shipped chunk-local model leaves **25**
+ * unexplained cells at z = 2.99, the cross-chunk cascade leaves **23** at
+ * z = 2.67. So the mechanism accounts for **2 of 25** - both border cells, so it
+ * does bite where the signal lives - and the enrichment survives. Real,
+ * border-exclusive, and far too small to be the cause.
+ *
  * ## Adoption, and what it costs
  *
  * Not adopted here. The gain IS the cross-chunk part, so it needs a one-chunk
