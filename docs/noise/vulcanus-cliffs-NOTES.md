@@ -4220,3 +4220,70 @@ properly needs a lever that changes the roll count in the ring's own chunk
 without touching that chunk's tiles or lava - switching off one of the rock
 prototypes listed before `crater-cliff` in `autoplace_settings.entity` would do
 it. One capture arm, and worth having a real control before spending it.
+
+## The cascade's 2 false rejections are KNOCK-ONS, not cascade defects (2026-08-04, #84)
+
+#143 priced the destruction cascade as a net **+8** shipping gain - 10 fewer
+missed cells for 2 more false rejections - and deliberately left it untaken with
+an explicit instruction: **look at the 2 new false rejections before the 10
+wins**, because #134 recorded a gate the port does not model (`Cliff::destroyEnd`
+refuses to `forceDestroy` when entity flag bit 4 of `+0x6e` is set, leaving the
+orientation UNCHANGED). This is that look. Zero capture -
+`test/cliffCascadeFalseRejections.spec.ts`.
+
+### The split that settles it
+
+Every SECONDARY removal - a cell the cascade took that nothing killed directly -
+classified by whether the game also destroyed the **root** of its chain:
+
+| root kill | removals | wrong |
+| --- | --- | --- |
+| the game destroyed it too | **27** | **0** |
+| the game KEPT it (our false rejection) | 2 | **2** |
+
+**Conditional on a correct root the cascade's precision is 1.000.** Both
+disagreements descend from a kill that was already wrong, and the two rows
+account for the entire `falseAfter - falseBefore` increment.
+
+| | cell | placed = game orientation | root | root reason | root kept by game |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `(1318, 2618.5)` | `none-to-south` | `(1318, 2622.5)` | **ore** | yes, `north-to-east` |
+| 2 | `(3134, 3002.5)` | `north-to-none` | `(3134, 2998.5)` | **lava** | yes, `east-to-south` |
+
+One ore, one lava, so this is not a single rule's precision problem. Both roots
+survive in the game carrying **the orientation we placed them at**, so neither
+was trimmed either - they were not touched at all.
+
+### What it means for #134's gate, and for adoption
+
+The gate is **UNSUPPORTED here rather than refuted** - there is simply nothing
+left in this sample for it to explain. A cascade that force-destroys every
+single-ended neighbour reproduces the game exactly, 27 times out of 27, whenever
+it is fed a correct kill.
+
+So the net-8 gain's cost is **not intrinsic**. Adopting the cascade makes the
+port worse at nothing; it makes two existing precision defects visible at two
+extra cells, and fixing either root removes its knock-on for free.
+
+### The control that nearly inverted the result
+
+Cell 2's root sits at `y = 2998.5`, **outside** its region's `y0 = 3000`. Tested
+against the region-filtered game set it reads as "the game destroyed it" - which
+would have made that cell a genuine cascade defect and halved the finding. The
+root check therefore runs against the UNFILTERED dump, which carries cliffs
+beyond the region and does contain it. Same family as the clamped comparison
+#139 hit.
+
+Note what the orientations do NOT prove: both surviving cells are single-ended,
+so "kept unchanged" is the only alternative to "destroyed" and there is no third
+state to observe. The unchanged orientation is *consistent* with the gate without
+being evidence for it. The root check is what carries the argument.
+
+### Coverage, planted rather than claimed
+
+Cascade never fires -> **fails 4**. Every trim destroys -> **fails 4** (908 false
+after, not 14). Dropping the `isCliffConnected` parity guard -> **PASSES**, and
+that is a real gap: `destroyEnd` is already a no-op on a side the orientation
+lacks, so the guard only bites on a WRONG-PARITY facing side, and no cell in
+these 14 regions has one. This spec does not cover the parity rule;
+`test/cliffConnections.spec.ts` is what pins that.

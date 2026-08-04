@@ -78,6 +78,13 @@ import { withCtxDefaults } from "../src/noise/eval/ctx";
  * when entity flag bit 4 of `+0x6e` is set, returning with the orientation
  * UNCHANGED rather than merely undestroyed.
  *
+ * **That look has since happened, and the 2 are NOT a cascade defect** - see
+ * `test/cliffCascadeFalseRejections.spec.ts`. Splitting every secondary removal
+ * by whether the game also destroyed the ROOT of its chain gives 27 correct out
+ * of 27 on correct roots, and both disagreements descend from a kill that was
+ * already wrong (one ore, one lava). So the cost priced here is not intrinsic to
+ * the cascade, and #134's gate is unsupported rather than needed.
+ *
  * ## Scope, stated because the headline number differs from the published one
  *
  * This pairs **14 regions** across three fixtures, not the 15 the published
