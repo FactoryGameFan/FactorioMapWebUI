@@ -1,5 +1,62 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 14, 2026-08-04: the RUNTIME DESTROY PROBE is BUILT, and the port's cascade reproduces the game EXACTLY
+>
+> #127 asked for a runtime probe that destroys a cliff outside map generation,
+> because the connection rules cannot be scored from map-generation output at
+> any number of regions - the game's output is always connection-consistent, so
+> there is never a dangling end for the rules to act on. #135 showed such a probe
+> is safe. **It exists now** (`test/cliffDestroyProbe.spec.ts`).
+>
+> **Result: `Cliff::onDestroy`'s cascade is confirmed, and the port's
+> `destroyEnd` model reproduces it cell for cell AND orientation for
+> orientation** - zero discrepancies across 16 targets in both a border and an
+> interior arm. Trims look exactly like the model says: `south-to-west ->
+> none-to-west`, `east-to-south -> east-to-none`.
+>
+> | arm | targets | removed | orientations changed |
+> | --- | --- | --- | --- |
+> | border, correction ON | 8 | 9 | **13** |
+> | border, correction OFF | 8 | 8 | **0** |
+> | interior, correction ON | 8 | 10 | **12** |
+> | interior, correction OFF | 8 | 8 | **0** |
+>
+> **This matters for the residual.** #114/#115 identified it as "31 destruction
+> decisions". The destruction cascade is no longer a suspect for those: it is now
+> validated against the game rather than only against the disassembly.
+>
+> Three things nearly made this a false result, all worth carrying forward:
+>
+> - **`do_cliff_correction` DEFAULTS TO FALSE.** A probe calling a bare
+>   `destroy()` gets untouched neighbours, and that null reads exactly like "the
+>   game does not cascade". Both values are captured; the OFF arms are that
+>   near-miss kept as the control.
+> - **The comparison was clamped and looked like a defect.** The first target set
+>   was picked in scan order, so all eight landed on the region's top edge and
+>   the port appeared to under-destroy by 7 cliffs. Every mismatch was an edge
+>   artifact - a cliff at `y = 1498.5` is in the dump only through bounding-box
+>   overlap while ITS neighbours are outside the dump, so the game cascades
+>   through cliffs the comparison cannot see. 48 tiles of margin: exact.
+> - **The counts would have misled.** Removals said 8 extra at the border against
+>   1 in the interior, which reads like a border-only cascade. Orientation counts
+>   say 13 and 12 - the interior cascades just as hard. A cliff is only *removed*
+>   when a trim leaves it with nothing, so removals measure how many neighbours
+>   were single-ended, not where the rule runs.
+>
+> **What this does NOT settle: `updateConnections`.** It is not reachable from
+> Lua at all (only `CliffEditor::buildCliffs` and `applyCliffs` call it), so that
+> gate is still unscored. A cheaper route was tried and failed first, and should
+> not be retried: **#137's chunk-order lever produces arms where a border chunk
+> is applied with its neighbour chunk PROVABLY ungenerated** - exactly the gate's
+> input - but on the `[1500,1500]` west seam all five cliffs carrying a west end
+> have a neighbour that `isCliffConnected` ACCEPTS, so there is still nothing to
+> drop. The counterfactual has to be constructed, and Lua cannot construct this
+> one.
+>
+> Also measured, and the reason there is no unconnected-target control arm:
+> **exactly ONE cliff of the 885 has no connected neighbour at all.** That is a
+> restatement of the connection-consistency #127 measured across thirteen arms.
+>
 > ## UPDATE 13, 2026-08-04: the COMPUTE -> APPLY window is closed
 >
 > The second of UPDATE 9's three untouched ideas, and a **negative read off the

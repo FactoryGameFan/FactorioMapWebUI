@@ -9,7 +9,7 @@
  * without anyone needing the game.
  */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -30,6 +30,24 @@ import {
   type TileSample,
 } from "./oracle.ts";
 import { TREE_SPECIES } from "../../src/noise/trees/treeCatalog.ts";
+// Only `cliffCatalog.ts` is imported from the cliff port here, and that is a
+// constraint rather than a preference: this file is executed by bare Node
+// (`--experimental-strip-types`), which does no extension resolution, and
+// `cliffConnections.ts` imports its own siblings extensionless. `cliffCatalog`
+// has no imports at all, so it is the only one that loads.
+//
+// The connection predicates are therefore RE-DERIVED inside the destroy-probe
+// capture rather than imported. That duplication is made safe by
+// `test/cliffDestroyProbe.spec.ts`, which imports the REAL `onChunkBorder` /
+// `isCliffConnected` / `connectedSides` and asserts every committed target
+// satisfies them - so a drift between the two fails a test rather than
+// silently selecting the wrong cliffs.
+import {
+  CLIFF_CELL_CENTER_X,
+  CLIFF_CELL_CENTER_Y,
+  CLIFF_GRID_SIZE,
+  CLIFF_ORIENTATION_NAMES,
+} from "../../src/noise/cliffs/cliffCatalog.ts";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 
@@ -5015,6 +5033,216 @@ async function captureVulcanusCliffChunkOrder(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} arms)`);
 }
 
+/**
+ * **The RUNTIME DESTROY PROBE (#127, #84).**
+ *
+ * #127 established that the cliff CONNECTION rules cannot be scored from map
+ * generation output at all - not for want of regions, but because the game's
+ * output is always connection-consistent, so `updateConnections` never has a
+ * droppable end to act on and both readings of its gate predict exactly what
+ * the game shows. It named the two kinds of evidence that could settle it: the
+ * disassembly, and "a runtime probe that destroys a cliff outside map
+ * generation". #134/#135 did the disassembly and showed the probe is SAFE - all
+ * four of `Cliff::onDestroy`'s cascade gates hold on the Lua path too. **This is
+ * the probe.**
+ *
+ * A second attempt at scoring it from output was made first and failed, which
+ * is worth recording so nobody repeats it: #137's chunk-order lever produces
+ * arms where a border chunk is applied with its neighbour chunk PROVABLY
+ * ungenerated, which is exactly the gate's input - but on the `[1500,1500]`
+ * west seam all five cliffs carrying a west end have a neighbour that
+ * `isCliffConnected` ACCEPTS, so there is still nothing to drop. The
+ * counterfactual has to be constructed, not found.
+ *
+ * **`do_cliff_correction` defaults to `false`**, and that is the single fact
+ * this capture is designed around. A probe that called a bare `destroy()` would
+ * find neighbours unchanged and the null would mean "the flag was off" rather
+ * than "the game does not cascade" - vacuous, and indistinguishable from a
+ * result. Every target set is therefore run BOTH ways.
+ *
+ * **Predictions, registered before the capture runs:**
+ *
+ * | arm | prediction |
+ * | --- | --- |
+ * | correction ON, connected targets | neighbours' facing ends become `none`; some may cascade away entirely |
+ * | correction OFF, same targets | **neighbours completely unchanged** - only the targets vanish |
+ * | correction ON, UNCONNECTED targets | nothing but the targets changes - the cascade has nothing to reach |
+ * | every arm | `destroyReport[i].found` and `.destroyed` both true for every target |
+ *
+ * The third row is the control that separates "the cascade ran" from "destroying
+ * anything perturbs the region", and the fourth is what stops a missed search
+ * box from reading as a destruction.
+ *
+ * Targets are chosen HERE, in TypeScript, from the committed `[1500,1500]`
+ * entity fixture and the port's own `isCliffConnected` - not in Lua - so the
+ * selection is auditable and the spec can recompute it. They are spread at least
+ * 24 tiles apart so no two cascades can interact, which would otherwise make a
+ * per-target prediction untestable.
+ */
+async function captureVulcanusCliffDestroyProbe(): Promise<void> {
+  const seed = 123456;
+  const region: Region = { x0: 1500, y0: 1500, x1: 1756, y1: 1756 };
+  const source = JSON.parse(
+    await readFile(join(FIXTURES, "oracle-vulcanus-cliff-entities.seed123456.json"), "utf8"),
+  ) as { cases: { region: Region; cliffs: { x: number; y: number; orientation: string }[] }[] };
+  const base = source.cases.find((c) => c.region.x0 === region.x0 && c.region.y0 === region.y0);
+  if (base === undefined) throw new Error("no [1500,1500] case in the cliff-entity fixture");
+
+  const CELL_SIDE_LOCAL = { north: 0, east: 1, south: 2, west: 3, none: 4 };
+  const CHUNK_CELLS = 32 / CLIFF_GRID_SIZE;
+  const ENDS: readonly (readonly [number, number])[] = CLIFF_ORIENTATION_NAMES.map((name) => {
+    const [from, to] = name.split("-to-");
+    const side = (t: string): number => CELL_SIDE_LOCAL[t as keyof typeof CELL_SIDE_LOCAL];
+    return [side(from), side(to)] as const;
+  });
+  const oppositeSideLocal = (side: number): number => [2, 3, 0, 1, 4][side] ?? 4;
+  const connectedSidesLocal = (o: number): number[] =>
+    (ENDS[o] ?? []).filter((s) => s !== CELL_SIDE_LOCAL.none);
+  const isConnectedLocal = (side: number, mine: number, theirs: number): boolean => {
+    const a = ENDS[mine];
+    const b = ENDS[theirs];
+    if (a === undefined || b === undefined) return false;
+    const opp = oppositeSideLocal(side);
+    if (a[0] === side) return b[0] !== opp && b[1] === opp;
+    return a[1] === side && b[0] === opp && b[1] !== opp;
+  };
+  const onBorderLocal = (x: number, y: number): boolean => {
+    const cx = (x - CLIFF_CELL_CENTER_X) / CLIFF_GRID_SIZE;
+    const cy = (y - CLIFF_CELL_CENTER_Y) / CLIFF_GRID_SIZE;
+    const ix = ((cx % CHUNK_CELLS) + CHUNK_CELLS) % CHUNK_CELLS;
+    const iy = ((cy % CHUNK_CELLS) + CHUNK_CELLS) % CHUNK_CELLS;
+    return ix === 0 || ix === CHUNK_CELLS - 1 || iy === 0 || iy === CHUNK_CELLS - 1;
+  };
+  const oi = (name: string): number => CLIFF_ORIENTATION_NAMES.indexOf(name);
+  const at = new Map(base.cliffs.map((c) => [`${String(c.x)},${String(c.y)}`, c]));
+  const SIDE_STEP: readonly (readonly [number, number])[] = [
+    [0, -CLIFF_GRID_SIZE],
+    [CLIFF_GRID_SIZE, 0],
+    [0, CLIFF_GRID_SIZE],
+    [-CLIFF_GRID_SIZE, 0],
+  ];
+  const connectedCount = (c: { x: number; y: number; orientation: string }): number => {
+    const mine = oi(c.orientation);
+    if (mine < 0) return 0;
+    return connectedSidesLocal(mine).filter((side) => {
+      const step = SIDE_STEP[side];
+      if (step === undefined) return false;
+      const n = at.get(`${String(c.x + step[0])},${String(c.y + step[1])}`);
+      return n !== undefined && isConnectedLocal(side, mine, oi(n.orientation));
+    }).length;
+  };
+  // **Targets must sit well INSIDE the region, and that is not tidiness.** The
+  // first run picked them in scan order, so all eight landed on the region's
+  // top edge - and every single prediction mismatch was an edge artifact. A
+  // cliff at `y = 1498.5` is in the dump only because `find_entities_filtered`
+  // selects on bounding-box overlap, but ITS neighbours at `y = 1494.5` are
+  // outside the dump entirely. The game cascades through cliffs the comparison
+  // cannot see, so the model "under-destroys" for a reason that has nothing to
+  // do with the model. 48 tiles of margin keeps a cascade's neighbourhood
+  // inside the captured world.
+  const MARGIN = 48;
+  const wellInside = (c: { x: number; y: number }): boolean =>
+    c.x >= region.x0 + MARGIN &&
+    c.x < region.x1 - MARGIN &&
+    c.y >= region.y0 + MARGIN &&
+    c.y < region.y1 - MARGIN;
+
+  /** Greedily take `n` cliffs matching `pick`, never within 24 tiles of one already taken. */
+  const spread = (
+    pick: (c: { x: number; y: number; orientation: string }) => boolean,
+    n: number,
+  ): { x: number; y: number }[] => {
+    const out: { x: number; y: number }[] = [];
+    for (const c of base.cliffs) {
+      if (!wellInside(c) || !pick(c)) continue;
+      if (out.some((o) => Math.abs(o.x - c.x) < 24 && Math.abs(o.y - c.y) < 24)) continue;
+      out.push({ x: c.x, y: c.y });
+      if (out.length === n) break;
+    }
+    return out;
+  };
+
+  const borderTargets = spread((c) => onBorderLocal(c.x, c.y) && connectedCount(c) > 0, 8);
+  const interiorTargets = spread((c) => !onBorderLocal(c.x, c.y) && connectedCount(c) > 0, 8);
+  // **There is no unconnected-target control, and that is a finding rather than
+  // an omission.** Exactly ONE cliff of the 885 has no connected neighbour at
+  // all, and it sits at the region's corner, outside the margin above - so the
+  // arm would ship with zero targets, asserting "nothing changed" vacuously.
+  // Its absence is a restatement of the connection-consistency #127 measured
+  // across thirteen arms. The correction-OFF arms carry the control role
+  // instead: same targets, same world, cascade disabled.
+  const loneCount = base.cliffs.filter((c) => connectedCount(c) === 0).length;
+  console.log(
+    `  targets: ${String(borderTargets.length)} border, ` +
+      `${String(interiorTargets.length)} interior ` +
+      `(${String(loneCount)} cliffs region-wide have NO connected neighbour)`,
+  );
+
+  const arms: { label: string; targets: { x: number; y: number }[]; correction: boolean }[] = [
+    { label: "border targets, correction ON", targets: borderTargets, correction: true },
+    { label: "border targets, correction OFF", targets: borderTargets, correction: false },
+    { label: "interior targets, correction ON", targets: interiorTargets, correction: true },
+    { label: "interior targets, correction OFF", targets: interiorTargets, correction: false },
+  ];
+
+  const cases: unknown[] = [];
+  for (const arm of arms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        destroyPositions: arm.targets,
+        cliffCorrection: arm.correction,
+      });
+      cases.push({
+        label: arm.label,
+        correction: arm.correction,
+        targets: arm.targets,
+        cliffsBefore: dump.cliffs,
+        cliffsAfter: dump.cliffsAfter,
+        destroyReport: dump.destroyReport,
+      });
+      console.log(
+        `  ${arm.label} -> ${String(dump.cliffs.length)} before, ` +
+          `${String(dump.cliffsAfter?.length ?? -1)} after, ` +
+          `${String((dump.destroyReport ?? []).filter((r) => r.destroyed).length)}/` +
+          `${String(arm.targets.length)} destroyed`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via test/oracle. The RUNTIME DESTROY PROBE #127 asked " +
+      "for (#84): it builds the world map generation never produces - a cliff run truncated so a " +
+      "neighbour's end has nothing to connect to - by destroying selected cliffs through Lua and " +
+      "reading every cliff back a second time. #127 showed the connection rules cannot be scored " +
+      "from map-generation output at any number of regions, because the game's output is always " +
+      "connection-consistent; #135 showed all four of Cliff::onDestroy's cascade gates hold on " +
+      "the Lua path, so this probe reproduces map generation's cascade. Every target set is run " +
+      "with do_cliff_correction BOTH true and false, because it DEFAULTS TO FALSE and a bare " +
+      "destroy() would give an unchanged-neighbours null that reads exactly like a result. " +
+      "Targets are chosen in TypeScript from the committed [1500,1500] entity fixture using the " +
+      "port's own isCliffConnected, spread 24+ tiles apart so no two cascades interact, and each " +
+      "arm dumps whether the cliff was FOUND and whether destroy() returned true, so a missed " +
+      "search box can never read as a destruction. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts vulcanus-cliff-destroy-probe",
+    seed,
+    region,
+    unconnectedCliffsRegionWide: loneCount,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-destroy-probe.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
+if (want("vulcanus-cliff-destroy-probe")) await captureVulcanusCliffDestroyProbe();
 if (want("vulcanus-cliff-chunk-order")) await captureVulcanusCliffChunkOrder();
 if (want("vulcanus-cliff-suppressor-levers")) await captureVulcanusCliffSuppressorLevers();
 if (want("vulcanus-cliff-bands")) await captureVulcanusCliffBands();
