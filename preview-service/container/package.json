@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/render.test.mjs",
+    "test": "node --test test/render.test.mjs test/shutdown.test.mjs",
     "test:integration": "node --test test/image.integration.test.mjs"
   }
 }
