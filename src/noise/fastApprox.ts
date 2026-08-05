@@ -1,13 +1,28 @@
 /**
  * Paul Mineiro's `fastapprox` `log2` / `exp2` / `pow`, exactly as Factorio's
- * `Math::log2` / `Math::exp2f` (read out of the 2.1.11 disassembly). The game's
- * noise machine evaluates powers and cube roots through these, so any ported noise
- * expression that takes a `pow`/`cbrt` must go through them too - matching them is
- * what closes the last ~1e-4 relative error.
+ * `Math::log2f` / `Math::exp2f`. The game's noise machine evaluates powers and cube
+ * roots through these, so any ported noise expression that takes a `pow`/`cbrt` must
+ * go through them too - matching them is what closes the last ~1e-4 relative error.
  *
  * Originally lived in `multioctaveNoise.ts` (for its RMS normalisation power); moved
  * here once the resource `spot_height`/`blob_amplitude` expressions needed the same
  * `cbrt` (see docs/noise/random-penalty-NOTES.md, the fastapprox-cbrt residual).
+ *
+ * **The rounding is per-operation, and that is the whole point of the rewrite on
+ * 2026-08-04.** The polynomial and its coefficients were right from the start, but
+ * both functions used to evaluate the whole expression in double and round to f32
+ * once at the end. The binary rounds after every `fadd`/`fmul`/`fdiv`, and the
+ * difference is worth ~1e-5 relative - invisible to every tolerance-based fixture
+ * here, and decisive for `voronoi_spot_noise` with `distance_type = 'minkowski3'`,
+ * which is compared f32-EXACT and goes 96/175 -> 175/175 with it.
+ *
+ * The constants below are therefore written as the exact f32 values of the
+ * immediates in the **2.1.12** `arm64` disassembly (`Math::log2f` at the
+ * `0x3f000000` / `0xc2f87377` / `0xbfbfbf75` / `0x3eb444f9` / `0xbfdce9a3` sequence,
+ * `Math::exp2f` at `0x42f28c51` / `0x409af5f8` / `0x41ddd2fe` / `0xbfbebc8d`), not as
+ * the decimal approximations they carried when this was read out of 2.1.11. Do not
+ * "tidy" them back into a single expression: that reintroduces the double
+ * accumulation this comment exists to prevent.
  */
 
 const f32 = Math.fround;
@@ -27,18 +42,19 @@ export function fastLog2(x: number): number {
   const bits = floatToBits(x) >>> 0;
   const y = f32(bits * 1.1920928955078125e-7); // bits * 2^-23
   const mx = bitsToFloat((bits & 0x007fffff) | 0x3f000000);
-  return f32(y - 124.22551499 - 1.498030302 * mx - 1.72587999 / (0.3520887068 + mx));
+  let acc = f32(y + -124.22551727294922);
+  acc = f32(acc + f32(mx * -1.4980303049087524));
+  return f32(acc + f32(-1.7258800268173218 / f32(mx + 0.35208871960639954)));
 }
 
 /** Paul Mineiro `fastpow2`, matching Factorio's `Math::exp2f`. */
 export function fastPow2(p: number): number {
   const clipp = p < -126 ? -126 : p;
-  const w = Math.trunc(clipp); // (int)clipp, toward zero
-  const z = f32(clipp - w + (clipp < 0 ? 1 : 0)); // fractional part, floor semantics
-  const v = f32(
-    (1 << 23) * f32(clipp + 121.2740575 + 27.7280233 / f32(4.84252568 - z) - 1.49012907 * z),
-  );
-  return bitsToFloat(v | 0);
+  const z = f32(f32(clipp - f32(Math.trunc(clipp))) + (p < 0 ? 1 : 0));
+  let acc = f32(clipp + 121.27405548095703);
+  acc = f32(acc + f32(27.728023529052734 / f32(4.842525482177734 - z)));
+  acc = f32(acc + f32(z * -1.4901291131973267));
+  return bitsToFloat(Math.trunc(acc * 8388608) | 0);
 }
 
 /** `x^p` via the fastapprox pair, as the game computes powers in noise programs. */
