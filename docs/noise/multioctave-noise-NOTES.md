@@ -173,9 +173,15 @@ The disassembly gives the structure; the oracle nails the numbers. Method:
    U, y*IS/2)` over the sample points while scanning `U`. The residual collapses
    to **0** at `scale1 = IS/2` (lacunarity confirmed), `a0 = norm`, `a1 = norm/P`
    (amplitude ratio `1/P` confirmed), and **`U = -1774.830000`** (res 2.5e-7).
-   Beware: a *narrow* `U` scan finds a false local min near -238.8 - the basis
-   field has near-collisions, so scan wide (the true `U` is IS-, seed- and
-   P-independent, which the false one is not).
+   **The advice that used to sit here was exactly backwards.** It said a *narrow*
+   scan finds "a false local min near -238.8", blamed "near-collisions" in the
+   basis field, and told you to scan wide. But `17.17 - 256 = -238.83`: that
+   "false" minimum was the TRUE value one lattice period out, and scanning wide is
+   what walked seven periods further to `-1774.83`. There were never any false
+   minima in this scan - only representatives - and the same is true of the
+   `-4864` / `-3840` pair recorded in
+   `variable-persistence-multioctave-noise-NOTES.md`, both multiples of 256.
+   **Scan NARROW and take the smallest-magnitude representative.**
 4. N = 3 confirms the offset is `k * U` (linear in k): octave 2 sits at `2U`.
 5. The P = 0.9 residual (6.7e-5 with a real `pow`) drops to ~3e-6 once the
    normalisation uses fastapprox - identifying the fastapprox normalisation.
