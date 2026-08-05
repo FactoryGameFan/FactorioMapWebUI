@@ -4,7 +4,7 @@
  *
  * Everything here is validated bit-exact at f32 against the real 2.1.12 binary:
  * `oracle-voronoi-jitter0.seed123456.json` (15 series x 175 positions at jitter
- * 0) and `oracle-voronoi-points.seed123456.json` (36 series x 175 positions at
+ * 0) and `oracle-voronoi-points.seed123456.json` (45 series x 175 positions at
  * jitter 0.6 / 0.8 / 1.0, plus an inversion lattice that recovers the point
  * positions themselves).
  *
@@ -298,14 +298,18 @@ export interface Voronoi {
  * superset - it is what both the jitter-0 and the jittered fits were measured
  * over, and it costs 25 distance evaluations instead of 9.
  *
- * **`pyramidNoise` may NOT use this**; see {@link pointsSearchRange}. It is a
- * minimum over the neighbours found, so widening the search can only lower it.
+ * `pyramidNoise` uses {@link pointsSearchRange} instead - the game's own,
+ * per-distance-type range. Not because the fixture demands it (it does not; see
+ * there), but because the pyramid is a MINIMUM over the neighbours found, so
+ * this ring's "deliberate superset" argument does not transfer to it.
  */
 const SEARCH_RING = 2;
 
 /**
  * The game's own `VoronoiNoise::getPointsSearchRange()`, which is **per distance
- * type** and which `pyramidNoise` is sensitive to.
+ * type**. Read from the binary and correct there - but **inert on every value
+ * this repo has captured**, which is stated up front so it is not mistaken for
+ * something the fixture endorsed.
  *
  * Read out of `0x101774fd4` in the 2.1.12 arm64 binary: a jump table at
  * `0x102d00a88` holding `[13, 0, 3, 8]` indexed by `DistanceType`, based at
@@ -317,6 +321,17 @@ const SEARCH_RING = 2;
  * `#0.75`. The identical sequence is inlined at the top of every `runInternal`
  * (its own table at `0x102d00a74`), and both the generated point region and the
  * `[-range, +range]` loop bounds use the result.
+ *
+ * **No branch of this function is exercised by any test, in either direction.**
+ * Measured, not assumed: forcing it to return 2 for all four types passes 95/95,
+ * and forcing it to return 1 for all four types also passes 95/95 - so all 1575
+ * jittered and 525 jitter-0 values are indifferent to it. (The harness is live;
+ * the same probe applied to {@link CHEBYSHEV_FRAME} fails 4 series.) A widened
+ * search can only LOWER a minimum, and at `jitter <= 1` every point stays inside
+ * its own cell, so a ring-2 bisector is never the nearest one - which is why the
+ * indifference is geometry rather than luck, and why it would be safe to search
+ * the wider ring unconditionally. It is kept because it is what the game does
+ * and it was free to transcribe; do not read the green suite as evidence for it.
  *
  * `cellId`, `spotNoise` and `facetNoise` do **not** consult this and are right
  * not to: `d1` and `d2` cannot change when the search widens (a ring-2 point is
@@ -375,6 +390,13 @@ type Vec2 = readonly [number, number];
  * - `p1[mnr]` is `a[mnr]` and `p2[mnr]` is `b[mnr]` by construction, but the
  *   binary re-loads them from the `p` copies, so the ray parameters are formed
  *   against those and not against `a`/`b`.
+ *
+ * One deviation that is deliberate and already checked, so nobody re-discovers
+ * it as a defect: the `Math.min`/`Math.max` pairs here stand in for the binary's
+ * `fcsel mi`/`fcsel gt`, which differ only on NaN operands and on the ordering
+ * of `+0` against `-0`. Neither input can be NaN (the points are finite), and a
+ * `+0`/`-0` disagreement cancels: the only place the choice is observable is
+ * `sepX`/`sepY`, which immediately square their result.
  */
 function bisectorDistanceL1(a: Vec2, b: Vec2, s: Vec2): number {
   const mid: [number, number] = [f32(f32(a[0] + b[0]) * 0.5), f32(f32(a[1] + b[1]) * 0.5)];
@@ -419,7 +441,9 @@ function bisectorDistanceL1(a: Vec2, b: Vec2, s: Vec2): number {
   const sq = (p: Vec2): number =>
     f32(f32(f32(p[0] - s[0]) * f32(p[0] - s[0])) + f32(f32(p[1] - s[1]) * f32(p[1] - s[1])));
   const qd = sq(q);
-  const rays = sq(r) < sq(w) ? sq(r) : sq(w);
+  const rd = sq(r);
+  const wd = sq(w);
+  const rays = rd < wd ? rd : wd;
   return f32(Math.sqrt(qd < rays ? qd : rays));
 }
 
