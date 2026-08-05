@@ -306,7 +306,11 @@ any `k`, and scaling both points scales the bisector with them. What `k` control
 is the **distance the routine then reports**, which comes back multiplied by
 `k * sqrt(2)`. A true isometry wants `k = 1/sqrt(2) = 0.70710678`.
 
-The game uses `fmov s16, #0.75000000` at `0x101772864`. And
+The game uses `fmov s16, #0.75000000` at `0x101772414`, inside
+`VoronoiNoise::runInternal<DistanceType 0>`. (Not `0x101772864` - an earlier
+version of this file cited that, and it is `fmul s26, s26, s16`, the first
+**use** of the register the `fmov` loads. Re-check with
+`objdump -d --start-address=0x101772400 --stop-address=0x101772430`.) And
 `0.75 * sqrt(2) = 1.06066... = sqrt(9/8)`, so **every chebyshev pyramid value is
 6.07% larger than the true distance to the cell boundary.**
 

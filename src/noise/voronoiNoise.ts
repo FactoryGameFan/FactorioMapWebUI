@@ -544,7 +544,9 @@ function bisectorDistanceL1(a: Vec2, b: Vec2, s: Vec2): number {
  * routine then reports: it comes back multiplied by `k * sqrt(2)`. The isometric
  * choice is therefore `k = 1/sqrt(2) = 0.70710678`.
  *
- * The game uses `fmov s16, #0.75000000` (`0x101772864`), and
+ * The game uses `fmov s16, #0.75000000` (`0x101772414`, inside
+ * `VoronoiNoise::runInternal<DistanceType 0>`; `0x101772864` is the first of the
+ * `fmul ..., s16` uses, not the definition), and
  * `0.75 * sqrt(2) = 1.06066... = sqrt(9/8)`, so every chebyshev pyramid value is
  * `sqrt(9/8)` times the true distance to the cell boundary - 6.07% too large.
  *
