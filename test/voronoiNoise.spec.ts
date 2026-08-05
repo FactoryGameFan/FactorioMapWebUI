@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-voronoi-jitter0.seed123456.json";
 import cellIdFixture from "./fixtures/oracle-voronoi-cellid.multiseed.json";
@@ -506,14 +506,100 @@ describe("the jittered field matches the game exactly", () => {
  * one-entry cache over the `d1`/`d2` search, and `memoXY` on each of the four
  * returned ops.
  *
- * These are not the correctness proof. **The 120 exact-value tests above are**:
- * every cache here hands back the identical float the first call computed, so a
- * cache that changed any value would show up as a fixture mismatch, not here.
- * What these add is that the caches are wired at all (a `makeVoronoi` that
- * forgot `memoXY` still passes every fixture test) and that the sharing across
- * distance types is legitimate.
+ * **Read which test does what before trusting this block.** Three of these five
+ * are determinism checks that compare a deterministic pure function against
+ * itself, and they pass with **all three cache layers stripped out** - that was
+ * measured, by stripping them. An earlier version of this comment claimed they
+ * establish "the caches are wired at all", which was false and is exactly the
+ * failure mode the rest of this file documents: a stated property with no
+ * measurement behind it.
+ *
+ * What each group actually gives you:
+ *
+ * - **Correctness is the 116 exact-value tests above, and only those.** Every
+ *   cache hands back the identical float the first call computed, so a cache
+ *   that changed a value shows up as a fixture mismatch. Confirmed in the other
+ *   direction too: with all three layers stripped, all 116 still pass.
+ * - **"observes the caches doing work"** is the one test that fails if a layer
+ *   is dropped. It counts calls, not values.
+ * - the remaining four are determinism / cross-field consistency, which is worth
+ *   having but is not evidence about caching.
  */
 describe("makeVoronoi caching", () => {
+  /**
+   * **The only test here that observes the caches rather than the values**, and
+   * the only one that fails if a layer is dropped. It counts CALLS, by spying on
+   * `Math.sqrt` (a live property lookup inside `distanceOf`, so the spy sees it -
+   * unlike `f32`, which is bound to `Math.fround` once at module load) and on
+   * `Map.prototype.set` for the point cache.
+   *
+   * Every expected number below was measured, and **every arm was confirmed to
+   * discriminate by removing its layer and re-running**, not by reasoning:
+   *
+   * | layer removed | `pyramid` 2nd | `facet`/`cellId` | `Map.set` |
+   * | --- | --- | --- | --- |
+   * | nothing (shipped) | 0 | 0 | 25 |
+   * | `memoXY` on the ops | **17** | 0 | 25 |
+   * | the one-entry search cache | 0 | **25 each** | 25 |
+   * | the per-cell point `Map` | 0 | 0 | **0** |
+   *
+   * Each layer moves exactly one column, which is what makes this three
+   * independent assertions rather than one. Note `pyramidNoise` is the only op
+   * that can see `memoXY` on its own: the other three sit behind the search
+   * cache, so dropping `memoXY` alone leaves them at 0.
+   */
+  it("observes the caches doing work", () => {
+    const params = {
+      seed0: 5,
+      seed1: 6,
+      gridSize: 175,
+      jitter: 0.6,
+      distanceType: "euclidean",
+    } as const;
+
+    const v = makeVoronoi(params);
+    const sqrt = vi.spyOn(Math, "sqrt");
+
+    // A cold sample walks the 5x5 SEARCH_RING block: 25 `distanceOf` calls, one
+    // `Math.sqrt` each.
+    v.spotNoise(10.5, 20.5);
+    expect(sqrt.mock.calls.length, "cold spotNoise walks the 5x5 block").toBe(25);
+
+    // memoXY on spotNoise itself.
+    sqrt.mockClear();
+    v.spotNoise(10.5, 20.5);
+    expect(sqrt.mock.calls.length, "repeat spotNoise recomputed").toBe(0);
+
+    // The one-entry search cache: two DIFFERENT memoXY slots, same search.
+    sqrt.mockClear();
+    v.facetNoise(10.5, 20.5);
+    expect(sqrt.mock.calls.length, "facetNoise re-ran the search").toBe(0);
+    sqrt.mockClear();
+    v.cellId(10.5, 20.5);
+    expect(sqrt.mock.calls.length, "cellId re-ran the search").toBe(0);
+
+    // pyramidNoise does NOT go through the search cache (it walks the game's own
+    // ring, twice), so its repeat call observes `memoXY` alone. Euclidean at
+    // jitter 0.6 has range 1: 9 argmin distances + 8 bisector normalises.
+    sqrt.mockClear();
+    v.pyramidNoise(10.5, 20.5);
+    expect(sqrt.mock.calls.length, "cold pyramidNoise").toBe(17);
+    sqrt.mockClear();
+    v.pyramidNoise(10.5, 20.5);
+    expect(sqrt.mock.calls.length, "repeat pyramidNoise recomputed - memoXY dropped?").toBe(0);
+    sqrt.mockRestore();
+
+    // The per-cell point Map. Nine samples one tile apart all land in the same
+    // 175-tile cell, so between them they touch exactly the 25 cells of one
+    // block - and each is generated once.
+    const setSpy = vi.spyOn(Map.prototype, "set");
+    const w = makeVoronoi(params);
+    setSpy.mockClear();
+    for (let i = 0; i < 9; i++) w.spotNoise(10.5 + i, 20.5 + i);
+    expect(setSpy.mock.calls.length, "point Map generated a cell more than once").toBe(25);
+    setSpy.mockRestore();
+  });
+
   it("returns identical values on repeat calls at the same position", () => {
     const v = makeVoronoi({
       seed0: 123456,
@@ -627,12 +713,16 @@ describe("makeVoronoi caching", () => {
   });
 
   /**
-   * `pyramidNoise`'s minkowski3 rejection is deliberately NOT wrapped in
-   * `memoXY`, because `memoXY` stores the coordinates before calling through: a
-   * wrapped throwing function leaves the slot claiming a position it never
-   * produced a value for, and the SECOND call at that position would return the
-   * previous position's number instead of throwing. This asserts the throw
-   * survives a repeat call, which is the observable form of that bug.
+   * `pyramidNoise`'s minkowski3 rejection must survive a REPEAT call, which is
+   * the observable form of a cache bug that is invisible on the first call: a
+   * memo that records its coordinates before calling through leaves the slot
+   * claiming a position it never produced a value for, so the second call
+   * returns the previous position's number instead of throwing.
+   *
+   * Double-guarded on purpose. `memoXY` itself was fixed on 2026-08-05 (see
+   * `test/memoXY.spec.ts`, which pins it with a dirty/clean pair), AND the throw
+   * is hoisted out of the memo here. This test would catch a regression in
+   * either.
    */
   it("keeps throwing for minkowski3 pyramid noise on repeated calls at one position", () => {
     const v = makeVoronoi({

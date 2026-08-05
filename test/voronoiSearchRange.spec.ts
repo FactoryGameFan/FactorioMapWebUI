@@ -28,7 +28,9 @@
  *   nearly equidistant, not nearer - so the pyramid sees the wider ring where
  *   nothing else does.
  *
- * The disagreements are rare (113 in a 4096x4096 tile sweep for chebyshev at
+ * The disagreements are rare (553 of 16777216 - a 4096x4096-tile window at
+ * origin (0, 0), stride 1 tile, seed0 123456 / seed1 0 / gridSize 175 - for
+ * chebyshev at
  * jitter 1), which is exactly why the existing 175-position grids never hit one.
  */
 import { describe, expect, it } from "vite-plus/test";
@@ -192,7 +194,8 @@ describe("pointsSearchRange's own table (weaker guard - see the block comment)",
  * would have chosen - would be shipping a hardcoded ring that silently stops
  * tracking the game's per-distance-type rule, and no fixture would catch it:
  * `spot`/`facet`/`cell_id` are ring-insensitive, and the pyramid disagreements
- * are rare enough (113 in a 4096x4096-tile chebyshev sweep at jitter 1) that a
+ * are rare enough (553 of 16777216 in a 4096x4096-tile chebyshev sweep at
+ * jitter 1, stride 1 tile from origin (0, 0)) that a
  * 175-position grid never lands on one. So the guard has to be structural.
  *
  * It greps `src/**` rather than asserting a type, because the field is

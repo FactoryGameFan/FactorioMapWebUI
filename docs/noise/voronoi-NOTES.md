@@ -365,8 +365,8 @@ to look:
   `cell_id` need a ring-2 point to **win** the argmin; the pyramid only needs one
   to be nearly **EQUIDISTANT**, because it minimises the distance to each pair's
   bisector, which for euclidean is `(|f|^2 - |n|^2) / (2 |f - n|)`.
-- The disagreements are rare - **113 in a 4096x4096-tile sweep** for chebyshev at
-  jitter 1 - which is why 175-position grids never hit one.
+- The disagreements are rare - see the measurement two headings down - which is
+  why 175-position grids never hit one.
 
 ### The "a wider ring can only lower a min" argument is FALSE
 
@@ -375,8 +375,26 @@ re-derived. It targets the **nearest-point** loop, where a wider ring genuinely
 cannot change the answer at `jitter <= 1`. But the pyramid's answer comes from
 its **bisector** minimum, where a ring-2 point does not have to be nearest - it
 only has to be nearly equidistant with the nearest, which puts its bisector close
-to the sample. **Chebyshev at jitter 1 shows 177 disagreeing positions in a
-4096^2 sweep.**
+to the sample.
+
+**Method, re-run 2026-08-05 with everything recorded.** Two earlier figures for
+this exact configuration were in circulation - 113 and 177 - and **neither
+carried its window, stride or seed, so neither is reproducible and both are
+retired.** They are also not each other, which is how the contradiction was
+spotted. The replacement:
+
+> `seed0 = 123456`, `seed1 = 0`, `gridSize = 175`, chebyshev, `jitter = 1`;
+> window origin `(0, 0)`, **4096 x 4096 tiles at stride 1 tile** (16777216
+> samples); `pyramidNoise` with `searchRangeOverride` 2 compared against the
+> same field with `searchRangeOverride` 1.
+>
+> **553 / 16777216 disagree** (~3.3e-5 of positions).
+
+Stride is exactly the reason the old numbers cannot be checked: the same window
+gives **145 / 4194304** at stride 2 and **39 / 1048576** at stride 4. All three
+are the same ~3.3e-5 density seen through a coarser grid, so quoting a count
+without its stride communicates almost nothing - which is the sin section 6
+corrects for the other sweep, made here too.
 
 ### The thresholds themselves are NOT behaviourally pinned
 
@@ -478,16 +496,43 @@ faster with no output change.
 
 **All three are byte-exact by construction**: each hands back the *identical*
 float or object the first call produced, never a recomputed one. **The
-correctness proof is that all 120 pre-existing exact-value tests pass unchanged**
-- a cache that changed any value is a bug, not an optimisation.
+correctness proof is that all 116 pre-existing exact-value tests pass
+unchanged** - a cache that changed any value is a bug, not an optimisation.
+Confirmed in the other direction as well: with all three layers stripped out,
+all 116 still pass.
 
-One trap, recorded because it is invisible: `memoXY` records the coordinates
-**before** calling through, so wrapping a function that throws leaves the slot
-claiming a value it never produced, and the next call at that position returns
-the *previous* position's number instead of throwing. `pyramidNoise`'s
-minkowski3 rejection is therefore hoisted out of the memo, and
-`test/voronoiNoise.spec.ts` asserts the throw survives a repeat call at a primed
-position.
+**And the caching tests are NOT that proof - three of the five are vacuous with
+respect to caching**, which was established by stripping the layers and watching
+them still pass. Only `"observes the caches doing work"` fails when a layer is
+dropped; it counts calls (`Math.sqrt` inside `distanceOf`, `Map.prototype.set`
+for the point cache) rather than comparing values, and each of its three arms was
+confirmed to move only when its own layer is removed:
+
+| layer removed | 2nd `pyramidNoise` | `facet`/`cellId` | `Map.set` |
+| --- | --- | --- | --- |
+| nothing (shipped) | 0 | 0 | 25 |
+| `memoXY` on the ops | **17** | 0 | 25 |
+| the one-entry search cache | 0 | **25 each** | 25 |
+| the per-cell point `Map` | 0 | 0 | **0** |
+
+One trap, recorded because it is invisible: `memoXY` used to record the
+coordinates **before** calling through, so wrapping a function that throws left
+the slot claiming a value it never produced, and the next call at that position
+returned the *previous* position's number instead of throwing. **The failure
+surfaces on the SECOND call, never the first.**
+
+Fixed at the primitive on 2026-08-05 rather than only at the call site:
+`src/noise/eval/memoXY.ts` now assigns the coordinates after `fn` returns, which
+is value-identical for any function that returns normally and retires the whole
+hazard class. `test/memoXY.spec.ts` pins it as a **dirty/clean pair** - the old
+ordering, inlined, returns a stale `11` where the shipped one throws - because a
+guard for a bug this quiet is otherwise indistinguishable from a test of nothing.
+`pyramidNoise`'s minkowski3 rejection is still hoisted out of the memo as well,
+so the behaviour is double-guarded.
+
+Audited at the time of the fix: `src/noise` has only three `throw` sites, and
+neither of the other two sits inside a `memoXY`-wrapped field, so no shipped code
+was ever hitting this.
 
 `searchRangeOverride` on `VoronoiParams` is a test hook that plants the wrong
 ring so the committed game values can reject it. Its "nothing that renders a map

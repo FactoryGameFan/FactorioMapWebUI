@@ -384,8 +384,11 @@ const SEARCH_RING = 2;
  *   `cell_id` need a ring-2 point to WIN the argmin; the pyramid only needs one
  *   to be nearly EQUIDISTANT, because it minimises the distance to each pair's
  *   bisector, which for euclidean is `(|f|^2 - |n|^2) / (2 |f - n|)`.
- * - The disagreements are rare - 113 in a 4096x4096-tile sweep for chebyshev at
- *   jitter 1 - which is why 175-position grids never hit one.
+ * - The disagreements are rare - **553 of 16777216** for chebyshev at jitter 1,
+ *   over a 4096x4096-tile window at origin `(0, 0)`, stride 1 tile, `seed0`
+ *   123456 / `seed1` 0 / `gridSize` 175 (re-measured 2026-08-05; the same window
+ *   reads 145 at stride 2 and 39 at stride 4, so the stride is not optional
+ *   detail). That ~3.3e-5 density is why 175-position grids never hit one.
  * - **The thresholds themselves are NOT behaviourally pinned.** A disagreement
  *   needs high jitter; sweeps at manhattan 0.5 and euclidean f32(0.66) found
  *   zero. The fixture bounds manhattan's threshold below 0.7 and euclidean's
@@ -582,8 +585,14 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
    * **Byte-exact by construction, for the same reason {@link memoXY} is:** the
    * cached object is handed back by identity, so every consumer sees the
    * *identical* f32 pair the first call computed. A cache that changed any value
-   * would be a bug, not an optimisation - which is why the 120 pre-existing
-   * exact-value tests are the correctness proof here and had to pass unchanged.
+   * would be a bug, not an optimisation - which is why the 116 pre-existing
+   * exact-value tests in `test/voronoiNoise.spec.ts` and
+   * `test/voronoiSearchRange.spec.ts` are the correctness proof here and had to
+   * pass unchanged. (116, not the 120 an earlier version of this comment said -
+   * that count folded in `test/fixtureProvenance.spec.ts`'s 4, which are about
+   * fixture bookkeeping and say nothing about these values.) Confirmed in the
+   * other direction too: with all three cache layers stripped out, all 116 still
+   * pass, which is what makes them a correctness proof rather than a cache test.
    *
    * The key packs the two cell indices into one number, so this is a
    * `Map<number, ...>` rather than a string-keyed one (no per-lookup
@@ -866,20 +875,26 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
      * refused.** An earlier comment here claimed it did not, which was the one
      * thing the next implementer must not have believed. Against the pinned
      * 2.1.12 `factorio-data`, `space-age/prototypes/planet/planet-fulgora-map-gen.lua`
-     * has two jittered pyramid call sites: `fulgora_pyramids` (:156, manhattan,
-     * `fulgora_jitter = 0.6` at :140), which feeds `fulgora_sprawl_pyramids`
-     * (:214) and `fulgora_vault_pyramids` (:221) inside the V1 elevation chain
-     * and `fulgora_pyramids_banding` (:432); and `fulgora_road_pyramids` (:422,
-     * chebyshev, `fulgora_road_jitter = 1` at :406).
+     * has two jittered pyramid call sites. **Every line number in this file
+     * cites the `name =` line of the prototype**, never the `expression =` line
+     * below it; two of these used to cite the latter, which made the same site
+     * look like two different ones. `fulgora_pyramids` (:156, manhattan,
+     * `fulgora_jitter = 0.6` at :140) feeds `fulgora_sprawl_pyramids` (:213) and
+     * `fulgora_vault_pyramids` (:220) inside the V1 elevation chain, and
+     * `fulgora_pyramids_banding` (:432); and `fulgora_road_pyramids` (:421,
+     * chebyshev, `fulgora_road_jitter = 1` at :405).
      */
     pyramidNoise:
       distanceType === "minkowski3"
-        ? // NOT wrapped in `memoXY`. That is deliberate: `memoXY` records the
-          // coordinates BEFORE calling through, so a wrapped function that
-          // throws leaves the slot claiming a value it never produced, and the
-          // next call at the same position would return the previous position's
-          // number instead of throwing. Hoisting the guard out of the memo is
-          // the fix; the branch is decided once per field, not per sample.
+        ? // NOT wrapped in `memoXY`, and the branch is decided once per field
+          // rather than per sample. This started as a workaround: `memoXY`
+          // recorded the coordinates BEFORE calling through, so a wrapped
+          // throwing function left the slot claiming a value it never produced
+          // and the SECOND call at that position returned the previous
+          // position's number. `memoXY` itself was fixed on 2026-08-05 (it now
+          // assigns after `fn` returns, guarded by `test/memoXY.spec.ts`), so
+          // this is no longer load-bearing - it is kept because hoisting a
+          // per-field constant out of a per-sample path is right anyway.
           () => {
             throw new Error(
               "voronoi_pyramid_noise does not support minkowski3 - the game's own " +

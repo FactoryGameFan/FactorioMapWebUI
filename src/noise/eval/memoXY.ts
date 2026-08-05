@@ -17,6 +17,18 @@
  * coordinate (including the off-pixel spot coordinates a region selection probes)
  * recomputes rather than returning a stale value - correctness never depends on
  * the caller staying on one pixel, only efficiency does.
+ *
+ * **The coordinates are recorded AFTER `fn` returns, and that ordering is
+ * load-bearing for any `fn` that can throw.** Recording them first - which is
+ * what this did until 2026-08-05 - leaves the slot claiming a position it never
+ * produced a value for, so the NEXT call at that same position returns the
+ * PREVIOUS position's number instead of throwing again. The failure surfaces on
+ * the second call, never the first, which is about as quiet as a bug gets.
+ * `src/noise/voronoiNoise.ts` has such an `fn` (`voronoi_pyramid_noise` rejects
+ * `minkowski3`, as the game's own expression compiler does), and the hazard was
+ * first dodged there by hoisting the throw out of the memo. Fixing it here
+ * instead retires the whole class: for a function that returns normally the two
+ * orderings are value-identical, so nothing else changes.
  */
 export function memoXY(fn: (x: number, y: number) => number): (x: number, y: number) => number {
   // NaN sentinels: NaN !== NaN, so the very first call always misses. World
@@ -26,9 +38,11 @@ export function memoXY(fn: (x: number, y: number) => number): (x: number, y: num
   let value = 0;
   return (x: number, y: number): number => {
     if (x === lastX && y === lastY) return value;
+    // `fn` first: if it throws, the slot must keep pointing at the last
+    // position that actually produced a value. See the docblock.
+    value = fn(x, y);
     lastX = x;
     lastY = y;
-    value = fn(x, y);
     return value;
   };
 }
