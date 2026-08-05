@@ -9,8 +9,9 @@ instruction-for-instruction out of the disassembly. Companion to
 All four ops - `voronoi_cell_id`, `voronoi_spot_noise`, `voronoi_facet_noise`,
 `voronoi_pyramid_noise` - across all four `distance_type`s and jitters
 `{0, 0.6, 0.8, 1}` are solved and **bit-exact at f32**. Implementation
-`src/noise/voronoiNoise.ts`; 126 tests in `test/voronoiNoise.spec.ts` and
-`test/voronoiSearchRange.spec.ts`. Fixtures:
+`src/noise/voronoiNoise.ts`; **123** tests, no skips - 101 in
+`test/voronoiNoise.spec.ts` and 22 in `test/voronoiSearchRange.spec.ts`.
+Fixtures:
 
 | fixture | what it pins |
 | --- | --- |
@@ -507,15 +508,21 @@ faster with no output change.
 
 **All three are byte-exact by construction**: each hands back the *identical*
 float or object the first call produced, never a recomputed one. **The
-correctness proof is that all 116 pre-existing exact-value tests pass
+correctness proof is that all 117 pre-existing exact-value tests pass
 unchanged** - a cache that changed any value is a bug, not an optimisation.
 Confirmed in the other direction as well: with all three layers stripped out,
-all 116 still pass.
+all 117 still pass. (117 = the 123 above minus the 6 caching tests: 95 in
+`test/voronoiNoise.spec.ts` and all 22 in `test/voronoiSearchRange.spec.ts`.
+Counted with `vp test -t "makeVoronoi caching"`, which reports
+`6 passed | 95 skipped`.)
 
-**And the caching tests are NOT that proof - three of the five are vacuous with
+**And the caching tests are NOT that proof - FIVE of the six are vacuous with
 respect to caching**, which was established by stripping the layers and watching
-them still pass. Only `"observes the caches doing work"` fails when a layer is
-dropped; it counts calls (`Math.sqrt` inside `distanceOf`, `Map.prototype.set`
+them still pass: all three layers out, and the two spec files report
+`1 failed | 122 passed`. Only `"observes the caches doing work"` fails when a
+layer is dropped. (An earlier version of this paragraph said "three of the five",
+which was wrong in both numbers and contradicted its own next sentence.) That one
+test it counts calls (`Math.sqrt` inside `distanceOf`, `Map.prototype.set`
 for the point cache) rather than comparing values, and each of its three arms was
 confirmed to move only when its own layer is removed:
 

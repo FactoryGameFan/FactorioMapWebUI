@@ -587,14 +587,19 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
    * **Byte-exact by construction, for the same reason {@link memoXY} is:** the
    * cached object is handed back by identity, so every consumer sees the
    * *identical* f32 pair the first call computed. A cache that changed any value
-   * would be a bug, not an optimisation - which is why the 116 pre-existing
-   * exact-value tests in `test/voronoiNoise.spec.ts` and
-   * `test/voronoiSearchRange.spec.ts` are the correctness proof here and had to
-   * pass unchanged. (116, not the 120 an earlier version of this comment said -
-   * that count folded in `test/fixtureProvenance.spec.ts`'s 4, which are about
-   * fixture bookkeeping and say nothing about these values.) Confirmed in the
-   * other direction too: with all three cache layers stripped out, all 116 still
-   * pass, which is what makes them a correctness proof rather than a cache test.
+   * would be a bug, not an optimisation - which is why the **117** pre-existing
+   * exact-value tests across `test/voronoiNoise.spec.ts` (95) and
+   * `test/voronoiSearchRange.spec.ts` (22) are the correctness proof here and had
+   * to pass unchanged. (117, not the 116 an earlier version of this comment said,
+   * and not the 120 the version before that. Both were arrived at by arithmetic
+   * on remembered totals; this one was counted. The two files hold 123 tests and
+   * the caching block holds 6 - `vp test -t "makeVoronoi caching"` reports
+   * `6 passed | 95 skipped` on `voronoiNoise.spec.ts` alone. Re-count, do not
+   * re-derive.) Confirmed in the
+   * other direction too: with all three cache layers stripped out the two files
+   * report `1 failed | 122 passed` - every one of the 117 still passes and only
+   * `"observes the caches doing work"` fails, which is what makes them a
+   * correctness proof rather than a cache test.
    *
    * The key packs the two cell indices into one number, so this is a
    * `Map<number, ...>` rather than a string-keyed one (no per-lookup
