@@ -123,6 +123,61 @@ describe("fastPow reproduces the game's `^` exactly", () => {
   });
 
   /**
+   * **The pre-`9b49ebb` implementation must FAIL this fixture** - which is what
+   * turns the fixture from a confirmation of the current code into an
+   * adjudication between the two.
+   *
+   * `9b49ebb` changed `fastLog2`/`fastPow2` from evaluating the whole polynomial
+   * in double and rounding once, to rounding after every operation as the binary
+   * does. It was adopted on the strength of the disassembly, because no
+   * tolerance-based fixture could resolve the ~1e-5 difference (#161). This
+   * fixture can: the two implementations disagree on ~30% of inputs and the
+   * committed positions include many of them.
+   *
+   * The old implementation is reproduced verbatim from `9b49ebb^` rather than
+   * imported, because it no longer exists in `src/`. If it ever starts passing,
+   * either the fixture has drifted onto non-discriminating positions or the
+   * per-operation rounding has been undone.
+   */
+  it("rejects the pre-9b49ebb single-rounding implementation", () => {
+    const i32 = new Int32Array(1);
+    const view = new Float32Array(i32.buffer);
+    const bitsToFloat = (b: number): number => {
+      i32[0] = b;
+      return view[0];
+    };
+    const floatToBits = (x: number): number => {
+      view[0] = x;
+      return i32[0];
+    };
+    const oldLog2 = (x: number): number => {
+      const bits = floatToBits(x) >>> 0;
+      const y = f32(bits * 1.1920928955078125e-7);
+      const mx = bitsToFloat((bits & 0x007fffff) | 0x3f000000);
+      return f32(y - 124.22551499 - 1.498030302 * mx - 1.72587999 / (0.3520887068 + mx));
+    };
+    const oldPow2 = (p: number): number => {
+      const clipp = p < -126 ? -126 : p;
+      const z = f32(clipp - Math.trunc(clipp) + (clipp < 0 ? 1 : 0));
+      const v = f32(
+        (1 << 23) * f32(clipp + 121.2740575 + 27.7280233 / f32(4.84252568 - z) - 1.49012907 * z),
+      );
+      return bitsToFloat(v | 0);
+    };
+    const oldPow = (x: number, p: number): number => oldPow2(f32(p * oldLog2(x)));
+
+    const { values } = seriesFor("2.5");
+    let wrong = 0;
+    for (const [i, x] of XS.entries()) {
+      if (f32(oldPow(x, 2.5)) !== f32(values[i])) wrong++;
+    }
+    expect(
+      wrong,
+      "the old single-rounding fastapprox should disagree with the game at many positions",
+    ).toBeGreaterThan(10);
+  });
+
+  /**
    * **An INTEGRAL exponent does not go through fastapprox at all**, and this is
    * the only place that is recorded behaviourally.
    *
