@@ -2,9 +2,22 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { renderPreview, RenderError } from "./render.mjs";
 
-// 8080 is what the Worker's container binding expects; the override exists so
-// `test/shutdown.test.mjs` can start a real server on a free port.
-const PORT = Number(process.env.PORT ?? 8080);
+/**
+ * 8080 is what the Worker's container binding expects (`defaultPort` in
+ * `preview-service/worker/src/container.ts`) and what the Dockerfile EXPOSEs.
+ *
+ * **The override is deliberately NOT called `PORT`, and that is load-bearing.**
+ * Our base image is `factoriotools/factorio`, whose own config sets
+ * `PORT=34197` - Factorio's UDP game port. Reading `process.env.PORT` here
+ * therefore binds 34197 in production, Cloudflare's runtime waits 20s for
+ * something to listen on 8080, gives up with "There has been an internal error
+ * connecting to the port", and every render 502s. That shipped on 2026-08-05
+ * and took the preview service down; see `test/shutdown.test.mjs` for the guard.
+ *
+ * A project-prefixed name cannot collide with a base image's environment. Do not
+ * "simplify" this back to `PORT`.
+ */
+const PORT = Number(process.env.FMW_CONTAINER_PORT ?? 8080);
 const FACTORIO_BIN = process.env.FACTORIO_BIN ?? "/opt/factorio/bin/x64/factorio";
 const PLANETS = new Set(["nauvis", "vulcanus", "gleba", "fulgora", "aquilo"]);
 

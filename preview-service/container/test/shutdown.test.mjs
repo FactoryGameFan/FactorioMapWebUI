@@ -38,7 +38,7 @@ const SERVER = join(dirname(fileURLToPath(import.meta.url)), "..", "server.mjs")
  */
 test("exits promptly on SIGTERM", async () => {
   const child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, PORT: "0" },
+    env: { ...process.env, FMW_CONTAINER_PORT: "0" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   try {
