@@ -696,6 +696,16 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
      *
      * `minkowski3` still throws, because the game's own expression compiler
      * refuses that pair. Its `runInternal<3>` has no pyramid path.
+     *
+     * **Fulgora needs this, at both of the distance types the old guard
+     * refused.** An earlier comment here claimed it did not, which was the one
+     * thing the next implementer must not have believed. Against the pinned
+     * 2.1.12 `factorio-data`, `space-age/prototypes/planet/planet-fulgora-map-gen.lua`
+     * has two jittered pyramid call sites: `fulgora_pyramids` (:156, manhattan,
+     * `fulgora_jitter = 0.6` at :140), which feeds `fulgora_sprawl_pyramids`
+     * (:214) and `fulgora_vault_pyramids` (:221) inside the V1 elevation chain
+     * and `fulgora_pyramids_banding` (:432); and `fulgora_road_pyramids` (:422,
+     * chebyshev, `fulgora_road_jitter = 1` at :406).
      */
     pyramidNoise: (x, y) => {
       if (distanceType === "minkowski3") {
