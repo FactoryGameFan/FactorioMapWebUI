@@ -28,6 +28,7 @@ import {
   sampleTileNames,
   sampleTileNamesFull,
   type TileSample,
+  buildVoronoiExpression,
 } from "./oracle.ts";
 import { TREE_SPECIES } from "../../src/noise/trees/treeCatalog.ts";
 // Only `cliffCatalog.ts` is imported from the cliff port here, and that is a
@@ -2595,6 +2596,125 @@ async function captureVulcanusRocks(): Promise<void> {
   const out = join(FIXTURES, "oracle-vulcanus-rocks.seed123456.json");
   await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
   console.log(`wrote ${out} (${positions.length} points)`);
+}
+
+const VORONOI_DISTANCE_TYPES = ["chebyshev", "manhattan", "euclidean", "minkowski3"] as const;
+
+const VORONOI_OPS = [
+  "voronoi_cell_id",
+  "voronoi_spot_noise",
+  "voronoi_facet_noise",
+  "voronoi_pyramid_noise",
+] as const;
+
+/**
+ * Positions for the jitter-0 voronoi capture.
+ *
+ * The first 144 are the brief's grid: `grid_size` 64 stepped by `grid_size / 6`
+ * with a 0.5 offset, which keeps every probe off an exact integer boundary where
+ * an f32 tie could flip which point wins for reasons that are not the formula.
+ *
+ * Three groups are APPENDED to it, each answering something that grid cannot:
+ *
+ * - **Exact cell centres.** At jitter 0 the cell's point IS the centre, so
+ *   `voronoi_spot_noise` must read exactly 0 there whatever the normalisation
+ *   divisor turns out to be. That is the one sanity check that separates "the
+ *   probe samples the cell we think it does" from "the formula is wrong", and
+ *   the 0.5-offset grid never lands on a centre, so without these it cannot be
+ *   run at all.
+ * - **Negative coordinates**, which the grid omits entirely. A cell lookup that
+ *   truncates toward zero instead of flooring is invisible for x >= 0 and wrong
+ *   for exactly half the map.
+ * - **Far-from-origin and off-phase points**, so a formula that happens to fit
+ *   near the origin cannot survive by accident.
+ */
+function voronoiPositions(gridSize: number): Position[] {
+  const out: Position[] = [];
+  for (let i = 0; i < 12; i++) {
+    for (let j = 0; j < 12; j++) {
+      out.push({ x: i * (gridSize / 6) + 0.5, y: j * (gridSize / 6) + 0.5 });
+    }
+  }
+  const half = gridSize / 2;
+  for (const cx of [-2, -1, 0, 1, 2]) {
+    for (const cy of [-2, -1, 0, 1, 2]) {
+      out.push({ x: cx * gridSize + half, y: cy * gridSize + half });
+    }
+  }
+  out.push(
+    { x: -0.5, y: -0.5 },
+    { x: -33.25, y: -97.75 },
+    { x: 63.5, y: 63.5 },
+    { x: 1000.5, y: -2000.25 },
+    { x: -777.75, y: 333.125 },
+    { x: 12345.75, y: 6789.125 },
+  );
+  return out;
+}
+
+/**
+ * The four `voronoi_*` ops x the four `distance_type`s at **jitter 0**, where
+ * every point sits at its cell centre and the per-cell RNG is out of the picture
+ * entirely - so all four ops reduce to pure geometry and can be fitted in closed
+ * form (`voronoi_cell_id` excepted; it is a hash of the cell and needs the RNG
+ * whatever the jitter).
+ *
+ * `spaceAge` is deliberately false: `voronoi_*` are engine builtins
+ * (`NativeNoiseFunctions`), not planet-scoped named expressions, so they resolve
+ * on the plain Nauvis surface and the DLC load is unnecessary.
+ */
+async function captureVoronoiJitter0(): Promise<void> {
+  const seed = 123456;
+  const gridSize = 64;
+  const seed1 = 1;
+  const jitter = 0;
+  const positions = voronoiPositions(gridSize);
+  const values: Record<string, number[]> = {};
+
+  for (const op of VORONOI_OPS) {
+    for (const distanceType of VORONOI_DISTANCE_TYPES) {
+      const expression = buildVoronoiExpression({
+        op,
+        x: "x",
+        y: "y",
+        seed1: String(seed1),
+        gridSize,
+        distanceType,
+        jitter,
+      });
+      const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+      try {
+        values[`${op}:${distanceType}`] = await sampleExpression(expression, positions, {
+          workDir,
+          seed,
+        });
+        console.log(`  captured ${op}:${distanceType}`);
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via the test/oracle harness. The four voronoi_* ops x the " +
+      "four distance_type values, each routed onto elevation on the default Nauvis surface, at " +
+      "JITTER 0 - where every point sits at its cell centre, so the per-cell RNG does not move any " +
+      "point and the ops reduce to pure geometry. Positions are the 12x12 half-offset grid plus " +
+      "exact cell centres (spot_noise must read 0 there), negative coordinates, and far-off-origin " +
+      "points. Regenerate: node --experimental-strip-types test/oracle/capture.ts voronoi-jitter0",
+    seed,
+    gridSize,
+    jitter,
+    seed1,
+    positions,
+    values,
+  };
+  const out = join(FIXTURES, "oracle-voronoi-jitter0.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(
+    `wrote ${out} (${String(Object.keys(values).length)} series x ${String(positions.length)} points)`,
+  );
 }
 
 if (!oracleAvailable()) {
@@ -5340,6 +5460,7 @@ async function captureVulcanusCliffDestroyProbe(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} arms)`);
 }
 
+if (want("voronoi-jitter0")) await captureVoronoiJitter0();
 if (want("vulcanus-cliff-destroy-probe")) await captureVulcanusCliffDestroyProbe();
 if (want("vulcanus-cliff-chunk-order")) await captureVulcanusCliffChunkOrder();
 if (want("vulcanus-cliff-suppressor-levers")) await captureVulcanusCliffSuppressorLevers();
