@@ -4546,3 +4546,37 @@ and the ore is now ruled out as the cause of its west signature. The west
 concentration itself stands at z = 2.6-2.9 across every sweep-order arm, on 17-24
 border cells over 14 regions - and that n has never been raised. Raising it out
 of sample is the honest next step before another mechanism hunt.
+
+## RAISING N: west REPLICATES, "west specifically" does NOT (2026-08-04, #84)
+
+The check six mechanism hunts were spent without. #150's z = 3.01 edge split and
+#151's four sweep-order arms all reuse the **same 14 regions**, so every one was
+a re-slice of one sample - the shape this repo has been burned by before. **New
+capture**: `oracle-vulcanus-cliff-entities-west-oos`, eight fresh Vulcanus
+regions with the same paired ON / ALL-resources-OFF lever, disjoint from all 15
+already in use. Spec: `test/cliffWestOutOfSample.spec.ts`.
+
+| | unexplained | on border | W | N | E | S | z(W) | z(N) | z(E) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| in sample (14 regions) | 25 | 19 | 9 | 5 | 3 | 2 | **2.60** | 0.41 | -1.21 |
+| **out of sample (8 new)** | 34 | 23 | 10 | 9 | 4 | 7 | **2.29** | **1.79** | -1.04 |
+
+**What replicates.** West is the most enriched edge again (z = 2.29) and east is
+the depleted edge in both samples. The concentration is real; it is not an
+artifact of re-slicing one sample.
+
+**What does not.** *"West specifically"*. In sample north sat at its base rate
+(z = 0.41) and west led it by more than 2 sigma; out of sample north is 1.79 and
+trails west by half a sigma. The claim that survives both samples is weaker and
+differently shaped: **the low-coordinate edges - west AND north - are enriched
+and east is depleted.**
+
+That widens the target rather than narrowing it, and it matters, because "west"
+and "west + north" point at different mechanisms. Note #151 already refuted by
+permutation the one rule whose asymmetry is literally west-then-north: the repair
+sweep's `L, T, R, B` clear order.
+
+**Cost of not doing this earlier:** #150's headline was a 4-bin split on 17 cells
+from one sample, and its Bonferroni note was the right caution about the wrong
+risk - the multiple-comparison correction survived, and it was the SAMPLE that
+did not. Raise n before slicing again.
