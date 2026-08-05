@@ -26,8 +26,11 @@
  *    one out** - see {@link makeVoronoi}. It is also the one op x distance_type
  *    pair the game refuses outright.
  *
- * `cellId` is deliberately not implemented: it is a hash of the cell and needs the
- * RNG whatever the jitter, which is Task 3's job.
+ * `cellId` is the exception: it is a hash of the cell rather than geometry, so it
+ * needs the per-cell RNG whatever the jitter. That RNG is {@link cellRandom}, and
+ * it is NOT fitted on the degenerate configuration - it is read out of the binary
+ * and validated against `oracle-voronoi-cellid.multiseed.json` (9 seed series x
+ * 256 cells, all exact), so Task 4 can build the jittered point offsets on it.
  */
 
 import { fastLog2, fastPow2 } from "./fastApprox";
@@ -38,6 +41,79 @@ const f32 = Math.fround;
 const ONE_THIRD_F32 = f32(1 / 3);
 
 export type VoronoiDistanceType = "chebyshev" | "manhattan" | "euclidean" | "minkowski3";
+
+/**
+ * Thomas Wang's 32-bit integer mix, which is the whole of the voronoi RNG.
+ *
+ * Read straight out of `NoiseOperations::VoronoiPoints::VoronoiPoints` in the
+ * 2.1.12 arm64 binary - the six constants `0x7ed55d16`, `0xc761c23c`,
+ * `0x165667b1`, `0xd3a2646c`, `0xfd7046c5`, `0xb55a4f09` appear there verbatim
+ * as immediates. This primitive is **not** taus88: none of the seeding shapes
+ * that solved `basis_noise` or `spot_noise` produce a consistent word here, and
+ * a brute-force inversion over all 2^32 taus88 seed words found no additive
+ * `(cellX, cellY)` lattice at all.
+ *
+ * Written with `| 0` at each step because the additions must wrap as `uint32`;
+ * the shifts already do.
+ */
+function wangHash(a: number): number {
+  a = (((a + 0x7ed55d16) | 0) + (a << 12)) | 0;
+  a = a ^ 0xc761c23c ^ (a >>> 19);
+  a = (((a + 0x165667b1) | 0) + (a << 5)) | 0;
+  a = (((a + 0xd3a2646c) | 0) ^ (a << 9)) | 0;
+  a = (((a + 0xfd7046c5) | 0) + (a << 3)) | 0;
+  a = a ^ 0xb55a4f09 ^ (a >>> 16);
+  return a >>> 0;
+}
+
+/** Rotate a `uint32` right by 16 - the binary's `ror w8, w8, #0x10` on the Y cell index. */
+function ror16(a: number): number {
+  return ((a >>> 16) | (a << 16)) >>> 0;
+}
+
+/**
+ * The per-cell seed word: the field seed mixed with both cell coordinates.
+ *
+ * `seed0 + seed1` is a plain 32-bit sum, confirmed in the constructor rather
+ * than inferred from a fit: `VoronoiNoise::VoronoiNoise` does
+ * `w8 = asNoiseLayerID(seed1) + (uint)seed0` and stores it at `+0x20`. A string
+ * `seed1` therefore enters as its `NoiseLayerID` (the crc32 this repo already
+ * uses elsewhere), not as a byte - so `Noise::setSeed`'s `unsigned char` second
+ * parameter, which is the hint the brief flagged, does not apply to this
+ * primitive.
+ *
+ * **The Y coordinate is rotated by 16 bits and the X coordinate is not.** That
+ * asymmetry is the only thing keeping the field from being degenerate, and the
+ * fixture shows exactly what it buys: because the two terms are XORed, cells
+ * `(0, 0)` and `(-1, -1)` collide (both reduce to the bare seed, since
+ * `ror16(0) == 0` and `ror16(~0) == ~0`), as do `(-1, 0)` and `(0, -1)` - and
+ * those two pairs are the ONLY duplicate values in each of the 9 captured
+ * series. Without the rotation every diagonal `(k, k)` would collide with them.
+ */
+function cellSeed(seed0: number, seed1: number, cellX: number, cellY: number): number {
+  const seed = (seed0 + seed1) >>> 0;
+  return (seed ^ wangHash(cellX >>> 0) ^ wangHash(ror16(cellY >>> 0))) >>> 0;
+}
+
+/**
+ * The per-cell random draw in `[0, 1)` - what `voronoi_cell_id` returns, and the
+ * value Task 4 needs for the jittered point offset.
+ *
+ * The binary draws THREE numbers per cell off the same word, as `wangHash(w)`,
+ * `wangHash(w + 1)` and `wangHash(w + 2)` - the first two are the point's x and
+ * y offset within the cell, and the third is the id. (The compiler folds the
+ * `+1` / `+2` into the hash's first addend, which is why `0x7ed56d17` and
+ * `0x7ed57d18` appear in the disassembly alongside `0x7ed55d16`.) So the id is
+ * `+ 2`, and using `+ 0` would silently hand back the x offset.
+ *
+ * The conversion is `(double)u32 * 2^-32` narrowed to f32, exactly as the binary
+ * does it (`ucvtf d0, w8` / `fmul` by `0x3df0000000000000` / `fcvt s14, d0`).
+ * Doing the multiply in f32 would round twice.
+ */
+export function cellRandom(seed0: number, seed1: number, cellX: number, cellY: number): number {
+  const w = cellSeed(seed0, seed1, cellX, cellY);
+  return f32(wangHash((w + 2) >>> 0) / 2 ** 32);
+}
 
 /** `(a * a) * a` with an f32 rounding at each step, matching the binary's two `fmul`s. */
 function cubeF32(a: number): number {
@@ -169,8 +245,13 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
   };
 
   return {
-    cellId: () => {
-      throw new Error("cellId requires the R2 hash - Task 3");
+    /**
+     * At jitter 0 the nearest point is always the containing cell's own centre,
+     * so the reported id is that cell's draw - no search needed.
+     */
+    cellId: (x, y) => {
+      const [ux, uy] = toGrid(x, y);
+      return cellRandom(p.seed0, p.seed1, Math.floor(ux), Math.floor(uy));
     },
 
     spotNoise: (x, y) => twoNearest(...toGrid(x, y))[0],

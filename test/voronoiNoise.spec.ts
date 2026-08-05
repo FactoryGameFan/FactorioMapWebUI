@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-voronoi-jitter0.seed123456.json";
-import { distanceOf, makeVoronoi, type VoronoiDistanceType } from "../src/noise/voronoiNoise";
+import cellIdFixture from "./fixtures/oracle-voronoi-cellid.multiseed.json";
+import {
+  cellRandom,
+  distanceOf,
+  makeVoronoi,
+  type VoronoiDistanceType,
+} from "../src/noise/voronoiNoise";
 
 const fx = fixture as {
   seed: number;
@@ -53,11 +59,12 @@ describe("voronoi at jitter 0 matches the game", () => {
   for (const key of Object.keys(fx.values)) {
     const [op, distanceType] = key.split(":");
 
-    // `cellId` is a hash of the cell and needs the R2 RNG whatever the jitter, so
-    // it cannot be closed by geometry. Skipped rather than faked - TASK 3 owns it.
-    const run = op === "voronoi_cell_id" ? it.skip : it;
-
-    run(`${op} / ${distanceType}`, () => {
+    // The four `voronoi_cell_id` series were skipped through Task 2 - they need
+    // the per-cell RNG, which geometry cannot close. They run now, and they are a
+    // genuinely independent check on `cellRandom`: this fixture was captured
+    // separately, at a different seed1, and at 175 scattered positions rather
+    // than at cell centres, so it also exercises the cell lookup itself.
+    it(`${op} / ${distanceType}`, () => {
       const v = makeVoronoi({
         seed0: fx.seed,
         seed1: fx.seed1,
@@ -97,11 +104,6 @@ describe("the restrictions are enforced rather than papered over", () => {
     // The other three ops are fine with minkowski3 - only pyramid is restricted.
     expect(() => v.spotNoise(10, 10)).not.toThrow();
     expect(() => v.facetNoise(10, 10)).not.toThrow();
-  });
-
-  it("cellId throws, naming Task 3", () => {
-    const v = makeVoronoi({ ...base, distanceType: "euclidean" });
-    expect(() => v.cellId(10, 10)).toThrow(/Task 3/);
   });
 
   it("makeVoronoi refuses a non-zero jitter instead of silently degrading", () => {
@@ -153,6 +155,118 @@ describe("jitter-0 invariants hold in the captured ground truth", () => {
 
     for (const dt of ["manhattan", "euclidean", "minkowski3"]) {
       expect(fx.values[`voronoi_cell_id:${dt}`]).toEqual(fx.values["voronoi_cell_id:chebyshev"]);
+    }
+  });
+});
+
+const cf = cellIdFixture as {
+  gridSize: number;
+  jitter: number;
+  cells: { cx: number; cy: number }[];
+  positions: { x: number; y: number }[];
+  series: { seed0: number; seed1: number; values: number[] }[];
+};
+
+describe("cellRandom reproduces the game's per-cell draw", () => {
+  for (const s of cf.series) {
+    it(`seed0=${String(s.seed0)} seed1=${String(s.seed1)}`, () => {
+      expect(s.values).toHaveLength(cf.cells.length);
+      cf.cells.forEach((c, i) => {
+        expect(
+          f32(cellRandom(s.seed0, s.seed1, c.cx, c.cy)),
+          `cell (${String(c.cx)}, ${String(c.cy)})`,
+        ).toBe(f32(s.values[i]));
+      });
+    });
+  }
+
+  it("covers all 9 seed series over the full 16x16 cell block", () => {
+    expect(cf.series).toHaveLength(9);
+    expect(cf.cells).toHaveLength(256);
+    // Negative cell indices are half the point of the capture - a hash that
+    // mishandled two's complement would be invisible on a 0..15 block.
+    expect(cf.cells.filter((c) => c.cx < 0 || c.cy < 0)).toHaveLength(192);
+  });
+
+  it("is not constant across cells", () => {
+    for (const s of cf.series) expect(new Set(s.values).size).toBeGreaterThan(100);
+  });
+
+  it("changes with seed0 and with seed1", () => {
+    const at = (seed0: number, seed1: number) =>
+      cf.series.find((s) => s.seed0 === seed0 && s.seed1 === seed1)!.values;
+    expect(at(123456, 0)).not.toEqual(at(1, 0));
+    expect(at(123456, 0)).not.toEqual(at(123456, 1));
+  });
+
+  /**
+   * `seed0` and `seed1` are added as one 32-bit word before anything else
+   * touches them - read out of `VoronoiNoise::VoronoiNoise`, not guessed - so
+   * `(123456, 1)` and `(123457, 0)` are the SAME field. That is a real property
+   * of the game rather than a limitation here, and pinning it means a later
+   * "fix" that separated the two seeds would fail loudly.
+   */
+  it("mixes seed0 and seed1 as a single 32-bit sum", () => {
+    for (const c of cf.cells.slice(0, 16)) {
+      expect(cellRandom(123456, 1, c.cx, c.cy)).toBe(cellRandom(123457, 0, c.cx, c.cy));
+      expect(cellRandom(0xffffffff, 1, c.cx, c.cy)).toBe(cellRandom(0, 0, c.cx, c.cy));
+    }
+  });
+
+  /**
+   * The XOR combine makes exactly two pairs of cells collide, and the fixture
+   * shows exactly two duplicate values per series - so this is the whole of the
+   * degeneracy, not a sample of it. It is also the fingerprint that identified
+   * the structure: `ror16(0) == 0` and `ror16(0xffffffff) == 0xffffffff`, so
+   * both terms cancel for `(0, 0)` and for `(-1, -1)`.
+   */
+  it("collides on exactly the two cell pairs the XOR combine forces", () => {
+    for (const s of cf.series) {
+      const byValue = new Map<number, string[]>();
+      s.values.forEach((v, i) => {
+        const c = cf.cells[i];
+        byValue.set(v, [...(byValue.get(v) ?? []), `${String(c.cx)},${String(c.cy)}`]);
+      });
+      const byName = (a: string, b: string) => a.localeCompare(b);
+      const dupes = [...byValue.values()]
+        .filter((a) => a.length > 1)
+        .map((a) => [...a].sort(byName));
+      expect(dupes.sort((a, b) => byName(a[0], b[0]))).toEqual([
+        ["-1,-1", "0,0"],
+        ["-1,0", "0,-1"],
+      ]);
+    }
+  });
+
+  /**
+   * The Y coordinate is rotated 16 bits and X is not. Without that asymmetry the
+   * combine would be `wang(cx) ^ wang(cy)`, which cancels on EVERY diagonal - so
+   * this asserts the diagonals are distinct, which is the observable difference.
+   */
+  it("does not collapse on the diagonal - the Y rotation is load-bearing", () => {
+    const s = cf.series[0];
+    const at = (cx: number, cy: number) =>
+      s.values[cf.cells.findIndex((c) => c.cx === cx && c.cy === cy)];
+    const diagonal = [-8, -5, -2, 1, 3, 6, 7].map((k) => at(k, k));
+    expect(new Set(diagonal).size).toBe(diagonal.length);
+  });
+});
+
+describe("cellId reads the containing cell's draw", () => {
+  it("agrees with cellRandom at every captured cell centre", () => {
+    for (const s of cf.series) {
+      const v = makeVoronoi({
+        seed0: s.seed0,
+        seed1: s.seed1,
+        gridSize: cf.gridSize,
+        jitter: cf.jitter,
+        distanceType: "euclidean",
+      });
+      cf.positions.forEach((p, i) => {
+        expect(f32(v.cellId(p.x, p.y)), `at (${String(p.x)}, ${String(p.y)})`).toBe(
+          f32(s.values[i]),
+        );
+      });
     }
   });
 });
