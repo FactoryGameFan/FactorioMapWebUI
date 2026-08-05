@@ -417,52 +417,84 @@ that is all the game will say. The exact values rest on the disassembly plus a
 weaker table test in `test/voronoiSearchRange.spec.ts`, which is labelled as
 weaker there.
 
-### The fixed `SEARCH_RING = 2` used by the other three ops
+### All four ops now use `getPointsSearchRange` (changed 2026-08-05)
 
-Re-measured **2026-08-05 with the window recorded**, because the previous version
-of this measurement quoted "a 1024x1024-tile sweep" and "58 of 262144", and those
-two only reconcile at an unstated stride of 2. A measurement nobody can reproduce
-is not reusable, which is the standard this repo holds.
+Until 2026-08-05 the three point ops (`d1`, `d2`, `cell_id`) walked a hardcoded
+5x5 block while only `pyramidNoise` used the per-distance-type range. **The
+binary reads the range once at the top of `runInternal` and uses it for both the
+generated point region and the `[-range, +range]` loop bounds**, so the fixed
+ring was a deviation. It is now one binding shared by all four ops.
+
+**The change was measured BEFORE it was made, and it moves no value.**
 
 > `seed0 = 123456`, `seed1 = 0`, `gridSize = 175`; window origin `(0, 0)`,
-> **512 x 512 tiles at stride 1 tile** (262144 samples); `d1`, `d2` and `cell_id`
-> captured at each `distance_type` x `jitter` in `{0.6, 0.8, 1}` with
-> `SEARCH_RING = 2`, then again with `SEARCH_RING = 1`, compared value for value.
+> **1400 x 1400 tiles at stride 1 tile** (1960000 samples); `spot`, `facet` and
+> `cell_id` compared at ring 1 against ring 2, in every configuration whose game
+> range is 1 - chebyshev at jitter 1 / 0.8 / 0.6, manhattan 0.5, euclidean 0.66,
+> minkowski3 0.75.
+>
+> **0 differences in all six**, on all three ops.
 
-- **`d1` and `cell_id` differed in NONE of the 12 configurations** - 0 / 262144,
-  twelve times.
-- **`d2` differed in exactly one**: manhattan at jitter 1, **496 / 262144**. The
-  game's range there is 2, so the fixed ring agrees with it; a hardcoded 1 would
-  have been wrong.
+So the adoption is a faithfulness change, not a bug fix. What it does buy, at the
+two Fulgora sites whose range is 1, is a search over 9 cells instead of 25 -
+measured over a 700x700 sweep at the same seed:
 
-For `d1` and `cell_id` the surplus ring is not merely unobserved, it is
-**impossible**: the own cell's point has `max(|dx|,|dy|) < 1` at any
-`jitter <= 1`, and every ring-2 point exceeds 1 on an axis, so under chebyshev a
-ring-2 point can never win. Euclidean at jitter 0.6 is bounded the same way - own
-cell within `0.8 * sqrt(2) = 1.131`, ring-2 at least `1.2`. **The genuinely
-unproved class is `d2`/facet at a distance type whose game range is 1.**
+| site | dt / jitter | ring 2 | ring 1 | speedup |
+| --- | --- | --- | --- | --- |
+| `fulgora_spots` | euclidean 0.6 | 94ms | 55ms | **1.7x** |
+| `fulgora_road_cells` | chebyshev 1 | 108ms | 46ms | **2.3x** |
+
+#### The prediction that motivated the change was REFUTED
+
+The change was proposed on the grounds that it "removes a latent wrong answer for
+chebyshev **facet** fields" - the reasoning being that the old bound ("a ring-2
+point cannot win the argmin at `jitter <= 1`") covers `d1` and `cell_id` but
+says nothing about `d2`, which only needs a ring-2 point to beat the *second*
+best. The reasoning is correct and the conclusion is still wrong: **chebyshev
+`facet` agrees at ring 1 and ring 2 at every one of those 1960000 positions.**
+
+`d2` genuinely can see the ring - manhattan at jitter 1 differs at **828 of
+1960000** in the same window - but the game's range there is 2, so the old fixed
+ring was already right at that configuration. The class the old note called
+"genuinely unproved" turns out to be empty, and it was emptied by sweeping for it
+rather than by re-deriving the bound.
+
+#### The test hook was lying about its own scope
+
+`searchRangeOverride` is documented as the hook that plants the wrong ring, and
+`test/voronoiSearchRange.spec.ts` uses it to prove the committed game values
+reject the other range. It only ever reached `pyramidNoise`. Planting a ring on a
+`facetNoise` field silently did nothing, so **the first sweep run through the
+hook returned 0 differences everywhere and looked like a clean result** - it was
+measuring nothing. That is the same vacuity trap the fixture in section 6 exists
+to close, hit again one level down.
+
+It is honoured at a single site now (`makeVoronoi`'s `searchRing`), which is what
+keeps the hook's scope and the production path from drifting apart again. The
+guard is `searchRangeOverride reaches facetNoise, not only pyramidNoise` in
+`test/voronoiSearchRange.spec.ts`, which fails on the pre-change code.
 
 ### Every Fulgora call site, and what each is exposed to
 
 From the pinned 2.1.12 `space-age/prototypes/planet/planet-fulgora-map-gen.lua`,
 each row read at its line: `fulgora_jitter = 0.6` (:140),
-`fulgora_road_jitter = 1` (:405), `fulgora_structure_jitter = 0.8` (:447).
+`fulgora_road_jitter = 1` (:405), `fulgora_structure_jitter = 0.8` (:447). Every
+op walks the range in the last column now, so there is no longer a separate
+"port ring".
 
-| expression | op | dt / jitter | game range | port ring | status |
-| --- | --- | --- | --- | --- | --- |
-| `fulgora_cells` (:145) | cell_id | manhattan 0.6 | 2 | 2 | agrees |
-| `fulgora_pyramids` (:156) | pyramid | manhattan 0.6 | 2 | 2 (per type) | correct |
-| `fulgora_spots` (:167) | spot (d1) | euclidean 0.6 | 1 | 2 | provably safe |
-| `fulgora_road_cells` (:410) | cell_id | chebyshev 1 | 1 | 2 | provably safe |
-| `fulgora_road_pyramids` (:421) | pyramid | chebyshev 1 | 1 (per type) | - | pinned by fixture |
-| `fulgora_structure_cells` (:452) | cell_id | minkowski3 0.8 | 2 | 2 | agrees |
-| `fulgora_structure_facets` (:474) | **facet (d2)** | minkowski3 0.8 | 2 | 2 | agrees |
+| expression | op | dt / jitter | range |
+| --- | --- | --- | --- |
+| `fulgora_cells` (:145) | cell_id | manhattan 0.6 | 2 |
+| `fulgora_pyramids` (:156) | pyramid | manhattan 0.6 | 2 |
+| `fulgora_spots` (:167) | spot (d1) | euclidean 0.6 | **1** |
+| `fulgora_road_cells` (:410) | cell_id | chebyshev 1 | **1** |
+| `fulgora_road_pyramids` (:421) | pyramid | chebyshev 1 | **1** |
+| `fulgora_structure_cells` (:452) | cell_id | minkowski3 0.8 | 2 |
+| `fulgora_structure_facets` (:474) | **facet (d2)** | minkowski3 0.8 | 2 |
 
-**The one `d2` site lands on game range 2**, which is the fixed ring, so it
-agrees by construction. The residual risk from pinning `SEARCH_RING` at 2 is
-therefore nil for what Fulgora ships, rather than "measured to be small". An
-earlier list here omitted `fulgora_road_cells` and both `fulgora_structure_*`,
-which is how the residual came to be described as merely measured.
+An earlier list here omitted `fulgora_road_cells` and both `fulgora_structure_*`,
+which is how the pre-change residual came to be described as merely measured
+rather than bounded.
 
 ---
 

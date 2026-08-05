@@ -286,7 +286,7 @@ export interface VoronoiParams {
   readonly jitter: number;
   readonly distanceType: VoronoiDistanceType;
   /**
-   * Force `voronoi_pyramid_noise`'s neighbour search ring, overriding
+   * Force the neighbour search ring for **every** op, overriding
    * {@link pointsSearchRange}. **Nothing that renders a map may set this.**
    *
    * It exists so `test/voronoiSearchRange.spec.ts` can plant the WRONG ring and
@@ -295,6 +295,11 @@ export interface VoronoiParams {
    * this one and would then be testing itself rather than the port - and the
    * whole point of that spec is that `pointsSearchRange` had no non-vacuous test
    * at all until it was written.
+   *
+   * Until 2026-08-05 this reached `pyramidNoise` alone, so planting a ring on a
+   * `d1`/`d2`/`cell_id` field silently did nothing - the hook was lying about
+   * its own scope. It is honoured at a single site now ({@link makeVoronoi}'s
+   * `searchRing`), which is what keeps that from recurring.
    */
   readonly searchRangeOverride?: 1 | 2;
 }
@@ -306,61 +311,6 @@ export interface Voronoi {
   readonly facetNoise: (x: number, y: number) => number;
   readonly pyramidNoise: (x: number, y: number) => number;
 }
-
-/**
- * Two rings of neighbouring cells around the sample's own cell, for the three
- * ops that reduce to the two smallest point distances.
- *
- * **A previous version of this comment claimed one ring is "provably enough for
- * `jitter <= 1`". That is false for three of the four distance types**, and it
- * is worth knowing why before it gets re-derived. The offset
- * `jitter * r + (1 - jitter) * 0.5` does keep every point inside its own cell,
- * so a ring-2 point's delta exceeds 1 grid unit on one axis - but "exceeds 1 on
- * one axis" only implies "farther than the own cell's point" under **chebyshev**,
- * where the own cell's point has `max(|dx|,|dy|) < 1` by the same argument. Under
- * manhattan, euclidean and minkowski3 the own cell's point can be as far as `2`,
- * `sqrt(2)` and `2^(1/3)`, so a ring-2 point genuinely can win. That is exactly
- * the asymmetry {@link pointsSearchRange} encodes, and exactly the bug Factorio
- * fixed in 2.1.7 (forums.factorio.com/130905).
- *
- * What justifies the fixed 2 here is measurement. **Re-run 2026-08-05 with the
- * window and stride recorded**, because the previous version of this paragraph
- * quoted "a 1024x1024-tile sweep" and "58 of 262144", and those two only
- * reconcile at an unstated stride of 2 - a stated measurement nobody can
- * reproduce is not reusable. The reproducible one:
- *
- * > `seed0 = 123456`, `seed1 = 0`, `gridSize = 175`; sample window origin
- * > `(0, 0)`, **512 x 512 tiles at stride 1 tile** (so 262144 samples);
- * > `d1` / `d2` / `cell_id` captured at each `distance_type` x `jitter` in
- * > `{0.6, 0.8, 1}` with this constant at 2, then again with it at 1, and the
- * > two files compared value for value.
- *
- * - **`d1` and `cell_id` differed in NONE of the 12 configurations** - 0 of
- *   262144 every time. The nearest point really is in the 3x3 neighbourhood.
- * - **`d2` (and so `facetNoise`) differed in exactly one**: manhattan at
- *   jitter 1, **496 of 262144**. The game's own range there is 2, so this ring
- *   agrees with it; a hardcoded 1 would have been wrong. (Manhattan at jitter
- *   0.8, which the old text claimed differed at 58, is 0 in this window. The
- *   difference is the window, not a behaviour change - which is the point about
- *   recording it.)
- *
- * **Where the game searches ONE ring and this searches two, the surplus is not
- * merely unobserved - for `d1`/`cell_id` it is impossible.** A previous version
- * hedged here and named chebyshev at jitter 1 as "the case with the least
- * margin", which points at the wrong case: the paragraph above already proves
- * chebyshev is ring-insensitive at every `jitter <= 1`, since the own cell's
- * point has `max(|dx|,|dy|) < 1` while every ring-2 point exceeds 1 on an axis.
- * Euclidean at 0.6 is bounded the same way - the own cell's point is within
- * `0.8 * sqrt(2) = 1.131` and a ring-2 point is at least `1.2`. The genuinely
- * unproved class is `d2`/facet at a distance type whose game range is 1, and the
- * Fulgora table under {@link pointsSearchRange} shows the one `d2` call site
- * lands on range 2, so nothing that ships is exposed to it.
- *
- * `pyramidNoise` uses {@link pointsSearchRange} instead, and for it the ring is
- * NOT indifferent - it minimises over each pair's bisector, not over the point
- * distances, and `test/voronoiSearchRange.spec.ts` pins that against the game.
- */
-const SEARCH_RING = 2;
 
 /**
  * The game's own `VoronoiNoise::getPointsSearchRange()`, which is **per distance
@@ -411,25 +361,35 @@ const SEARCH_RING = 2;
  * `space-age/prototypes/planet/planet-fulgora-map-gen.lua`, each row read at the
  * cited line rather than recalled: the three jitters are `fulgora_jitter = 0.6`
  * (:140), `fulgora_road_jitter = 1` (:405) and `fulgora_structure_jitter = 0.8`
- * (:447). "Game range" is what this function returns, "port ring" is what the
- * port actually walks - {@link SEARCH_RING} for the `d1`/`d2`/`cell_id` ops,
- * this function for the pyramid.
+ * (:447). Every op now walks the range this function returns, so "port ring" is
+ * no longer a separate column - it was one until 2026-08-05, when the three
+ * point ops walked a hardcoded 5x5 block instead.
  *
- * | expression | op | dt / jitter | game range | port ring | status |
- * | --- | --- | --- | --- | --- | --- |
- * | `fulgora_cells` (:145) | cell_id | manhattan 0.6 | 2 | 2 | agrees |
- * | `fulgora_pyramids` (:156) | pyramid | manhattan 0.6 | 2 | 2 (this fn) | correct |
- * | `fulgora_spots` (:167) | spot (d1) | euclidean 0.6 | 1 | 2 | provably safe |
- * | `fulgora_road_cells` (:410) | cell_id | chebyshev 1 | 1 | 2 | provably safe |
- * | `fulgora_road_pyramids` (:421) | pyramid | chebyshev 1 | 1 (this fn) | - | pinned by fixture |
- * | `fulgora_structure_cells` (:452) | cell_id | minkowski3 0.8 | 2 | 2 | agrees |
- * | `fulgora_structure_facets` (:474) | **facet (d2)** | minkowski3 0.8 | 2 | 2 | agrees |
+ * | expression | op | dt / jitter | range |
+ * | --- | --- | --- | --- |
+ * | `fulgora_cells` (:145) | cell_id | manhattan 0.6 | 2 |
+ * | `fulgora_pyramids` (:156) | pyramid | manhattan 0.6 | 2 |
+ * | `fulgora_spots` (:167) | spot (d1) | euclidean 0.6 | **1** |
+ * | `fulgora_road_cells` (:410) | cell_id | chebyshev 1 | **1** |
+ * | `fulgora_road_pyramids` (:421) | pyramid | chebyshev 1 | **1** |
+ * | `fulgora_structure_cells` (:452) | cell_id | minkowski3 0.8 | 2 |
+ * | `fulgora_structure_facets` (:474) | **facet (d2)** | minkowski3 0.8 | 2 |
  *
- * "Provably safe" is the bound in {@link SEARCH_RING}, not an observation: those
- * two are `d1`/`cell_id`, where a ring-2 point cannot win at any `jitter <= 1`.
- * **The one `d2` site lands on game range 2**, which is the fixed ring, so it
- * agrees by construction. So the residual risk from pinning `SEARCH_RING` at 2
- * is nil for what Fulgora ships, rather than merely small.
+ * **Adopting it for the point ops moved no value**, which was measured before
+ * the change rather than assumed: over a 1400x1400-tile window at stride 1 tile
+ * (1960000 positions) at `seed0` 123456 / `seed1` 0 / `gridSize` 175, `spot`,
+ * `facet` and `cell_id` are identical at ring 1 and ring 2 in **all six**
+ * configurations whose game range is 1. What it buys is faithfulness to the
+ * binary plus the two bolded range-1 rows above dropping from 25 cells searched
+ * to 9 - measured at **1.7x** (`fulgora_spots`, 94ms -> 55ms) and **2.3x**
+ * (`fulgora_road_cells`, 108ms -> 46ms) over a 700x700 sweep.
+ *
+ * It does **not** fix a wrong answer, and a note here previously predicted it
+ * would ("a latent wrong answer for chebyshev facet fields"). That prediction is
+ * refuted: chebyshev `facet` agrees at every one of those 1960000 positions. The
+ * `d2` op genuinely can see the ring - manhattan at jitter 1 differs at 828 of
+ * them - but the game's range there is 2, so the old fixed ring was already
+ * right at that configuration.
  */
 export function pointsSearchRange(dt: VoronoiDistanceType, jitter: number): 1 | 2 {
   const j = f32(jitter);
@@ -581,11 +541,23 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
   const { gridSize, distanceType } = p;
 
   /**
+   * The half-width of the cell block every op searches, from the game's own
+   * {@link pointsSearchRange} - **all four ops, not just the pyramid**.
+   *
+   * The binary reads the range once at the top of `runInternal` and uses it for
+   * both the generated point region and the `[-range, +range]` loop bounds, so
+   * one binding here mirrors one read there. `searchRangeOverride` is the test
+   * hook that plants the wrong range; it is honoured at this single site, which
+   * is what makes it reach every op rather than only `pyramidNoise`.
+   */
+  const searchRing = p.searchRangeOverride ?? pointsSearchRange(distanceType, p.jitter);
+
+  /**
    * The per-cell point cache - the whole of this function's performance story.
    *
    * A render sweeps one pixel at a time, and every sample reads a
-   * `(2*ring+1)^2` block of cells: 25 at the fixed {@link SEARCH_RING}, and the
-   * pyramid walks its own block twice (once for the argmin, once for the
+   * `(2*ring+1)^2` block of cells - 9 or 25 depending on {@link searchRing} -
+   * and the pyramid walks its own block twice (once for the argmin, once for the
    * bisector minimum). At `gridSize = 175` a whole 175x175-tile cell is the same
    * cell for 30,625 consecutive samples, so the same six Wang mixes are redone
    * tens of thousands of times per cell without this.
@@ -700,8 +672,8 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
     let d2 = Infinity;
     let bx = cx;
     let by = cy;
-    for (let a = -SEARCH_RING; a <= SEARCH_RING; a++) {
-      for (let b = -SEARCH_RING; b <= SEARCH_RING; b++) {
+    for (let a = -searchRing; a <= searchRing; a++) {
+      for (let b = -searchRing; b <= searchRing; b++) {
         // At jitter 0 every offset is exactly 0.5, so this reduces to the cell
         // centre with no special case - confirmed rather than assumed, since
         // `spot_noise` reads exactly 0 (not merely small) at all 25 of the
@@ -777,7 +749,6 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
    * sample-relative form.
    */
   const pyramid = (ux: number, uy: number): number => {
-    const ring = p.searchRangeOverride ?? pointsSearchRange(distanceType, p.jitter);
     const cx = Math.floor(ux);
     const cy = Math.floor(uy);
     const sfx = f32(ux - cx);
@@ -787,14 +758,14 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
       return [deltaTo(sfx, a, o.x), deltaTo(sfy, b, o.y)];
     };
 
-    // The nearest point, over the game's own search range rather than
-    // SEARCH_RING - the two always agree on WHICH point is nearest, but the
-    // range also bounds the neighbour loop below, where it changes the answer.
+    // The nearest point. Finding it is ring-insensitive - every ring agrees on
+    // WHICH point is nearest - but the same range also bounds the neighbour loop
+    // below, where it does change the answer.
     let d1 = Infinity;
     let na = 0;
     let nb = 0;
-    for (let a = -ring; a <= ring; a++) {
-      for (let b = -ring; b <= ring; b++) {
+    for (let a = -searchRing; a <= searchRing; a++) {
+      for (let b = -searchRing; b <= searchRing; b++) {
         const [dx, dy] = deltaAt(a, b);
         const d = distanceOf(distanceType, dx, dy);
         if (d < d1) {
@@ -812,8 +783,8 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
     const sample: Vec2 = chebyshev ? toChebyshevFrame(sfx, sfy) : [sfx, sfy];
 
     let best = Infinity;
-    for (let a = -ring; a <= ring; a++) {
-      for (let b = -ring; b <= ring; b++) {
+    for (let a = -searchRing; a <= searchRing; a++) {
+      for (let b = -searchRing; b <= searchRing; b++) {
         if (a === na && b === nb) continue;
         const far = deltaAt(a, b);
         let v: number;

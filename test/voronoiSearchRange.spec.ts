@@ -125,6 +125,129 @@ describe("voronoi_pyramid_noise at positions where the search range is observabl
 });
 
 /**
+ * **`d1` / `d2` / `cell_id` use the game's range too, not a fixed 25-cell ring.**
+ *
+ * The binary applies `getPointsSearchRange()` to the nearest-point loop as well
+ * as the pyramid's - the range is read once at the top of `runInternal` and
+ * bounds both. This port walked a hardcoded 5x5 for the three point ops, which
+ * was justified at the time by "a wider ring can only lower a min, and a ring-2
+ * point cannot win the argmin at jitter <= 1".
+ *
+ * **That justification is sound for `d1`/`cell_id` and was never true of `d2`.**
+ * A ring-2 point does not have to win the argmin to change `d2`; it only has to
+ * beat the *second* best. Measured on this fixture's own configuration
+ * (`seed0` 123456, `seed1` 0, `gridSize` 175), manhattan at jitter 1 over a
+ * 1400x1400-tile window at stride 1 tile: **828 of 1960000 positions** have a
+ * different `facetNoise` at ring 1 than at ring 2. `spotNoise` and `cellId`
+ * differ at **0**, exactly as the old argument predicted.
+ *
+ * The first test below is what fails before the fix, and it fails for a reason
+ * worth naming: `searchRangeOverride` is documented as the hook that "plants the
+ * wrong search range", but it only ever reached `pyramidNoise`. Planting ring 1
+ * on a `facetNoise` field silently did nothing, so the hook was lying about its
+ * own scope.
+ */
+describe("the point search honours the game's range, not a fixed ring", () => {
+  /** Positions from the sweep described above, where ring 1 and ring 2 disagree. */
+  const MANHATTAN_J1_FACET_DIFFERS = [
+    { x: 0, y: 324 },
+    { x: 0, y: 330 },
+    { x: 0, y: 335 },
+  ];
+
+  /**
+   * The sweep's own configuration, spelled out rather than borrowed from `fx` -
+   * the fixture above is `seed1 = 1` / `gridSize = 64`, and these positions were
+   * measured at `seed1 = 0` / `gridSize = 175`. Keying them to `fx` made both
+   * tests below pass vacuously (ring 1 and ring 2 simply agree at (0,324) in the
+   * fixture's configuration), which is exactly the failure this comment prevents.
+   */
+  const SWEEP = { seed0: 123456, seed1: 0, gridSize: 175 } as const;
+
+  const manhattanJ1 = (searchRangeOverride?: 1 | 2): ReturnType<typeof makeVoronoi> =>
+    makeVoronoi({
+      ...SWEEP,
+      jitter: 1,
+      distanceType: "manhattan",
+      searchRangeOverride,
+    });
+
+  it("searchRangeOverride reaches facetNoise, not only pyramidNoise", () => {
+    const ring1 = manhattanJ1(1);
+    const ring2 = manhattanJ1(2);
+    for (const p of MANHATTAN_J1_FACET_DIFFERS) {
+      expect(
+        f32(ring1.facetNoise(p.x, p.y)),
+        `facetNoise at (${String(p.x)},${String(p.y)}) must differ between rings`,
+      ).not.toBe(f32(ring2.facetNoise(p.x, p.y)));
+    }
+  });
+
+  /**
+   * The substantive assertion: unprompted, the field walks the ring
+   * `pointsSearchRange` names. Manhattan at jitter 1 wants 2, so the default
+   * must equal the ring-2 field and differ from the ring-1 field.
+   */
+  it("defaults to the game's range for facetNoise", () => {
+    const dflt = manhattanJ1();
+    const ring1 = manhattanJ1(1);
+    const ring2 = manhattanJ1(2);
+    expect(pointsSearchRange("manhattan", 1)).toBe(2);
+    for (const p of MANHATTAN_J1_FACET_DIFFERS) {
+      expect(f32(dflt.facetNoise(p.x, p.y))).toBe(f32(ring2.facetNoise(p.x, p.y)));
+      expect(f32(dflt.facetNoise(p.x, p.y))).not.toBe(f32(ring1.facetNoise(p.x, p.y)));
+    }
+  });
+
+  /**
+   * **The preservation guard.** Narrowing 25 cells to 9 wherever the game's range
+   * is 1 must not move a single value - that is what makes this change safe to
+   * take without recapturing every voronoi fixture.
+   *
+   * Measured over a 1400x1400-tile window at stride 1 tile (1960000 positions)
+   * per configuration, at `seed0` 123456 / `seed1` 0 / `gridSize` 175: `spot`,
+   * `facet` and `cell_id` are **identical at ring 1 and ring 2 in all six**
+   * range-1 configurations. This test re-runs a 120x120 corner of that sweep, so
+   * it is a regression guard rather than the original evidence.
+   *
+   * Note this REFUTES the reason the change was originally proposed - "it removes
+   * a latent wrong answer for chebyshev facet fields". There is no such wrong
+   * answer to remove: chebyshev facet agrees at every one of those 1960000
+   * positions. What the change actually buys is faithfulness to the binary and a
+   * 1.7x-2.3x speedup at Fulgora's two range-1 sites.
+   */
+  it("moves no value where the game's range is 1", () => {
+    const RANGE_1_CASES = [
+      { distanceType: "chebyshev", jitter: 1 },
+      { distanceType: "chebyshev", jitter: 0.6 },
+      { distanceType: "manhattan", jitter: 0.5 },
+      { distanceType: "euclidean", jitter: 0.66 },
+      { distanceType: "minkowski3", jitter: 0.75 },
+    ] as const;
+    for (const c of RANGE_1_CASES) {
+      expect(pointsSearchRange(c.distanceType, c.jitter)).toBe(1);
+      const mk = (searchRangeOverride: 1 | 2): ReturnType<typeof makeVoronoi> =>
+        makeVoronoi({
+          ...SWEEP,
+          jitter: c.jitter,
+          distanceType: c.distanceType,
+          searchRangeOverride,
+        });
+      const narrow = mk(1);
+      const wide = mk(2);
+      for (let x = 0; x < 120; x++) {
+        for (let y = 0; y < 120; y++) {
+          const where = `${c.distanceType} j=${String(c.jitter)} @(${String(x)},${String(y)})`;
+          expect(f32(narrow.spotNoise(x, y)), where).toBe(f32(wide.spotNoise(x, y)));
+          expect(f32(narrow.facetNoise(x, y)), where).toBe(f32(wide.facetNoise(x, y)));
+          expect(narrow.cellId(x, y), where).toBe(wide.cellId(x, y));
+        }
+      }
+    }
+  });
+});
+
+/**
  * **The WEAKER guard, and it is labelled weak deliberately.**
  *
  * The three thresholds cannot be pinned behaviourally. A ring-1/ring-2

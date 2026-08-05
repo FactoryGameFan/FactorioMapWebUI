@@ -568,10 +568,17 @@ describe("makeVoronoi caching", () => {
     const v = makeVoronoi(params);
     const sqrt = vi.spyOn(Math, "sqrt");
 
-    // A cold sample walks the 5x5 SEARCH_RING block: 25 `distanceOf` calls, one
-    // `Math.sqrt` each.
+    // A cold sample walks the block `pointsSearchRange` names. Euclidean at
+    // jitter 0.6 has game range 1, so that is the 3x3 block: 9 `distanceOf`
+    // calls, one `Math.sqrt` each.
+    //
+    // **This read 25 until 2026-08-05**, when the point ops stopped walking a
+    // hardcoded 5x5 and took the game's range like the pyramid always had. The
+    // count is the only place in the suite where that switch is directly
+    // observable - every committed VALUE is identical either way - so if it ever
+    // reads 25 again for a range-1 configuration, the change has been reverted.
     v.spotNoise(10.5, 20.5);
-    expect(sqrt.mock.calls.length, "cold spotNoise walks the 5x5 block").toBe(25);
+    expect(sqrt.mock.calls.length, "cold spotNoise walks the game's ring").toBe(9);
 
     // memoXY on spotNoise itself.
     sqrt.mockClear();
@@ -598,13 +605,13 @@ describe("makeVoronoi caching", () => {
     sqrt.mockRestore();
 
     // The per-cell point Map. Nine samples one tile apart all land in the same
-    // 175-tile cell, so between them they touch exactly the 25 cells of one
-    // block - and each is generated once.
+    // 175-tile cell, so between them they touch exactly the 9 cells of one
+    // range-1 block - and each is generated once.
     const setSpy = vi.spyOn(Map.prototype, "set");
     const w = makeVoronoi(params);
     setSpy.mockClear();
     for (let i = 0; i < 9; i++) w.spotNoise(10.5 + i, 20.5 + i);
-    expect(setSpy.mock.calls.length, "point Map generated a cell more than once").toBe(25);
+    expect(setSpy.mock.calls.length, "point Map generated a cell more than once").toBe(9);
     setSpy.mockRestore();
   });
 
