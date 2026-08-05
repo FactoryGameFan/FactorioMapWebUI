@@ -426,6 +426,17 @@ describe("pointForCell recovers the jittered point positions", () => {
  *
  * `voronoi_pyramid_noise` is excluded and that exclusion is asserted rather than
  * implicit - see the block below, and {@link makeVoronoi}'s `pyramidNoise`.
+ *
+ * **These tests are NOT blind to point placement, and that was measured rather
+ * than assumed.** The obvious vacuity probe - hardcoding the public
+ * `pointForCell` to return the cell centre - fails only the six apex tests
+ * above, because `search` calls the private `pointOffsetInCell` and never routes
+ * through `pointForCell`. That reads like weak coverage and is an artifact of
+ * where the probe was planted. Forcing `pointOffsetInCell` itself to return
+ * `{ x: 0.5, y: 0.5 }` - i.e. un-jittering the field the search actually uses -
+ * fails **42 of the 86 tests in this file**, which is every one of the 36 series
+ * below plus the six apex tests. So the exact-value suite discriminates point
+ * placement directly.
  */
 describe("the jittered field matches the game exactly", () => {
   for (const key of Object.keys(pf.ops)) {

@@ -15,7 +15,8 @@
  * and both are recorded at their sites rather than here:
  *
  * - the sample-to-point delta has to be rebased on the sample's own cell (the
- *   absolute form is off by one ulp on 466 of 4200 samples), and
+ *   best absolute form is off by exactly one ulp on 466 of 4200 samples - see
+ *   `deltaTo` in {@link makeVoronoi} for the scores of each variant), and
  * - `voronoi_pyramid_noise`'s jitter-0 formula is the unit-square edge distance
  *   and is simply wrong once the cells are not squares - 0 of 175 at every
  *   jitter x distance_type captured. It throws rather than approximating.
@@ -335,14 +336,27 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
    * 1017725ac: fabd  s28, s28, s23 ; |that - sampleFrac|
    * ```
    *
-   * Forming the same delta from ABSOLUTE coordinates (`ux - (cell + frac)`) is
-   * algebraically identical and differs in the last ulp, because `cell + frac`
-   * at a cell index of ~11 has an f32 spacing of 2^-20 while the rebased form
-   * never adds a large number to a small one. Measured over this fixture's 4200
-   * spot and facet samples: the absolute form scores **3734/4200**, the rebased
-   * form **4200/4200**. All the misses are exactly one ulp, which is precisely
-   * the size of error that gets mistaken for an accumulation artifact and
-   * papered over.
+   * Forming the same delta from ABSOLUTE coordinates is algebraically identical
+   * and differs in the last ulp, because `cell + frac` at a cell index of ~11
+   * has an f32 spacing of 2^-20 while the rebased form never adds a large number
+   * to a small one.
+   *
+   * Measured over this fixture's 4200 spot and facet samples. The exact
+   * expressions, because the two absolute variants do NOT score the same and a
+   * bare "the absolute form" is not reproducible:
+   *
+   * | delta expression | score |
+   * | --- | --- |
+   * | `f32(ux - (cell + frac))` - inner sum left as a double | 3734/4200 |
+   * | `f32(ux - f32(cell + frac))` - inner sum rounded to f32 | 2921/4200 |
+   * | `f32(f32(frac + relIndex) - f32(ux - cell))` - what the binary does | **4200/4200** |
+   *
+   * The first is what this port did before the disassembly was read, and all 466
+   * of its misses are exactly one ulp - precisely the size of error that gets
+   * mistaken for an accumulation artifact and papered over. Two more orderings
+   * (`f32(f32(ux - cell) - frac)` and its negation) also scored 3734, so no
+   * amount of re-ordering the absolute form reaches the answer; the rebasing is
+   * the thing that matters.
    *
    * The point itself is unchanged either way - `cell_id` was already 175/175 on
    * all 12 of its series under the absolute form, because a one-ulp shift almost
@@ -454,9 +468,15 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
      * fraction, and many different underlying algorithms collapse to identical
      * numbers. Reproducing jitter 0 exactly is therefore no evidence at all about
      * jitter > 0; the real algorithm is the clamped point-to-segment distance
-     * described above. {@link makeVoronoi}'s `jitter !== 0` throw is what keeps
-     * this from being reused where it has not been validated - that guard exists
-     * for this reason, not as defensive padding.
+     * described above. **That prediction was then confirmed** - see the
+     * `jitter !== 0` throw in the body below, which is what keeps this from being
+     * reused where it has not been validated.
+     *
+     * The guard used to live on {@link makeVoronoi} and cover the whole field.
+     * Moving it here was the point of R3: `cellId`, `spotNoise` and `facetNoise`
+     * are now validated bit-exact at jitter 0.6 / 0.8 / 1.0, so a field-wide
+     * throw would refuse configurations that are known good. This op alone is
+     * still unvalidated there.
      */
     pyramidNoise: (x, y) => {
       if (distanceType === "minkowski3") {
@@ -483,10 +503,29 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
       //
       // It throws instead of returning the square's answer because a
       // half-cell-wrong number that still looks like a plausible pyramid is
-      // precisely the failure mode the whole exercise exists to avoid. Solving
-      // it needs the real clamped point-to-segment distance over the cell's
-      // actual polygon, which is its own rung of work and is not needed by
-      // Fulgora (`fulgora_cells` and `fulgora_spots` use facet and spot noise).
+      // precisely the failure mode the whole exercise exists to avoid.
+      //
+      // **FULGORA NEEDS THIS. It is deferred, not optional.** An earlier version
+      // of this comment claimed Fulgora did not need it. That was wrong, and it
+      // was wrong about the one thing the next implementer must not get wrong.
+      // Checked against the pinned 2.1.12 `factorio-data`,
+      // `space-age/prototypes/planet/planet-fulgora-map-gen.lua` has TWO
+      // JITTERED pyramid call sites:
+      //
+      // - `fulgora_pyramids` (:156) - `distance_type = 'manhattan'`,
+      //   `jitter = fulgora_jitter`, and `fulgora_jitter = 0.6` (:140). It feeds
+      //   `fulgora_sprawl_pyramids` (:214) and `fulgora_vault_pyramids` (:221),
+      //   both inside the V1 elevation chain, and `fulgora_pyramids_banding`
+      //   (:432).
+      // - `fulgora_road_pyramids` (:422) - `distance_type = 'chebyshev'`,
+      //   `grid_size = fulgora_grid / 3`, `jitter = fulgora_road_jitter`, and
+      //   `fulgora_road_jitter = 1` (:406).
+      //
+      // So this is a hard blocker for Fulgora elevation, at BOTH distance types
+      // the guard refuses and at both extremes of the jitter range. It needs the
+      // real clamped point-to-segment distance over the cell's actual polygon,
+      // which is its own rung of work - deferred, with a loud guard, rather than
+      // approximated.
       if (p.jitter !== 0) {
         throw new Error(
           `voronoi_pyramid_noise is validated at jitter 0 only (got ${String(p.jitter)}); ` +
