@@ -1342,6 +1342,37 @@ export async function sampleExpression(
   return parseDump(jsonText).values;
 }
 
+/** The four voronoi noise ops. Names match the game's expression names. */
+export type VoronoiOp =
+  | "voronoi_cell_id"
+  | "voronoi_spot_noise"
+  | "voronoi_facet_noise"
+  | "voronoi_pyramid_noise";
+
+/** `distance_type` enum: chebyshev 0, manhattan 1, euclidean 2, minkowski3 3. */
+export type VoronoiDistanceTypeName = "chebyshev" | "manhattan" | "euclidean" | "minkowski3";
+
+export interface VoronoiProbe {
+  readonly op: VoronoiOp;
+  /** Verbatim Lua for the x argument, e.g. "x" or "x + 87.5". */
+  readonly x: string;
+  /** Verbatim Lua for the y argument. */
+  readonly y: string;
+  /** Verbatim Lua for seed1 - a quoted NoiseLayerID string, or a number. */
+  readonly seed1: string;
+  readonly gridSize: number;
+  readonly distanceType: VoronoiDistanceTypeName;
+  readonly jitter: number;
+}
+
+/** Build the noise-expression source for one voronoi probe. */
+export function buildVoronoiExpression(p: VoronoiProbe): string {
+  return (
+    `${p.op}{x = ${p.x}, y = ${p.y}, seed0 = map_seed, seed1 = ${p.seed1}, ` +
+    `grid_size = ${p.gridSize}, distance_type = '${p.distanceType}', jitter = ${p.jitter}}`
+  );
+}
+
 /** A tile-name oracle result: the ACTUAL floored position `get_tile` was called at, plus its name. */
 export interface TileSample {
   readonly x: number;

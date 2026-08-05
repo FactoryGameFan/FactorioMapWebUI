@@ -31,6 +31,31 @@ function relErr(port: number, game: number): number {
 // Before the f32/fastCbrt work the absolute error was ~3 units and the relative
 // worst was 4.8e-2 (exact Math.cbrt); see docs/noise/random-penalty-NOTES.md
 // "Composition inside spot selection" and the fastapprox-cbrt residual.
+//
+// **2026-08-04: `fastApprox`'s log2/exp2 became bit-exact (per-operation f32
+// rounding instead of one rounding at the end), and it moved these numbers - in
+// BOTH directions.** Values change on 4093-4105 of the 4105 points in every case,
+// so nothing here is untouched. Measured, before -> after:
+//
+//   iron-ore/123456     abs 0.6898 -> 0.8159    rel 4.875e-4 -> 1.276e-4
+//   uranium-ore/123456  abs 0.3788 -> 0.4790    rel 7.103e-5 -> 8.302e-5
+//   iron-ore/777771     abs 0.6860 -> 0.8096    rel 8.849e-3 -> 1.273e-4
+//   uranium-ore/777771  abs 0.6135 -> 0.4755    rel 4.090e-4 -> 7.562e-5
+//
+// Relative error improves sharply (iron/777771 by 70x, which is what dominated
+// REL_TOL's headroom), but **worst-ABSOLUTE regresses on three of the four
+// cases**, cutting the ABS_TOL margin from 0.31 to 0.18. That is not a defect:
+// the new rounding is what the binary does, and it is required for
+// `voronoi_spot_noise` x `minkowski3`, which is compared f32-EXACT. But it means
+// ABS_TOL is now the binding tolerance here and has less room than the prose
+// above implies - so do not read "within ~0.7 units EVERYWHERE" as current.
+//
+// These tolerances CANNOT police that change, and that is the point worth
+// keeping: at 1.0 absolute and 1e-2 relative they cannot resolve a ~1e-5 shift in
+// either direction. A green run of this file is not evidence that a numerics
+// change was neutral. The f32-exact guards are `test/voronoiNoise.spec.ts` and
+// `test/voronoiSearchRange.spec.ts` (both compare with `toBe` after `f32`, no
+// tolerance) - go there to police a numerics change, not here.
 const ABS_TOL = 1.0;
 const REL_TOL = 1e-2;
 

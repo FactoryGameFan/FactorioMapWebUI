@@ -10,6 +10,7 @@ import {
   buildDataLua,
   buildFactorioArgs,
   buildMapGenSettings,
+  buildVoronoiExpression,
   DUMP_FILE,
   oracleAvailable,
   parseDump,
@@ -256,4 +257,38 @@ describe("oracle integration (gated on a local Factorio install)", () => {
     },
     30_000,
   );
+});
+
+describe("buildVoronoiExpression", () => {
+  it("emits a voronoi call with every parameter, distance_type quoted", () => {
+    const expr = buildVoronoiExpression({
+      op: "voronoi_cell_id",
+      x: "x",
+      y: "y",
+      seed1: "'fulgora_cells'",
+      gridSize: 175,
+      distanceType: "manhattan",
+      jitter: 0.6,
+    });
+    expect(expr).toContain("voronoi_cell_id{");
+    expect(expr).toContain("seed0 = map_seed");
+    expect(expr).toContain("seed1 = 'fulgora_cells'");
+    expect(expr).toContain("grid_size = 175");
+    expect(expr).toContain("distance_type = 'manhattan'");
+    expect(expr).toContain("jitter = 0.6");
+  });
+
+  it("passes x and y through verbatim so offset inputs can be probed", () => {
+    const expr = buildVoronoiExpression({
+      op: "voronoi_spot_noise",
+      x: "x + 87.5",
+      y: "y + 87.5",
+      seed1: "1",
+      gridSize: 64,
+      distanceType: "euclidean",
+      jitter: 0,
+    });
+    expect(expr).toContain("x = x + 87.5");
+    expect(expr).toContain("y = y + 87.5");
+  });
 });

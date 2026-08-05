@@ -28,6 +28,7 @@ import {
   sampleTileNames,
   sampleTileNamesFull,
   type TileSample,
+  buildVoronoiExpression,
 } from "./oracle.ts";
 import { TREE_SPECIES } from "../../src/noise/trees/treeCatalog.ts";
 // Only `cliffCatalog.ts` is imported from the cliff port here, and that is a
@@ -2595,6 +2596,613 @@ async function captureVulcanusRocks(): Promise<void> {
   const out = join(FIXTURES, "oracle-vulcanus-rocks.seed123456.json");
   await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
   console.log(`wrote ${out} (${positions.length} points)`);
+}
+
+const VORONOI_DISTANCE_TYPES = ["chebyshev", "manhattan", "euclidean", "minkowski3"] as const;
+
+const VORONOI_OPS = [
+  "voronoi_cell_id",
+  "voronoi_spot_noise",
+  "voronoi_facet_noise",
+  "voronoi_pyramid_noise",
+] as const;
+
+/**
+ * Snap a coordinate to Factorio's `MapPosition` fixed point (1/256 of a tile,
+ * FLOORED), which is what the oracle path does to it whether we ask or not.
+ *
+ * **This is a property of the harness, not of any noise expression, and it is a
+ * silent one.** A Lua position handed to `calculate_tile_properties` is
+ * converted to a `MapPosition` on the way in, so a sample nominally at
+ * `x = 11.166666666666666` is actually taken at `11.1640625` (`= 2858 / 256`).
+ * The error is ~4e-3 tiles: far too small to look like a wrong formula, far too
+ * large to be f32 noise, and therefore exactly the kind of discrepancy that gets
+ * absorbed into a fudged constant instead of being recognised.
+ *
+ * It bit this capture directly. The brief's grid steps by `grid_size / 6` =
+ * 10.666..., which is not representable in 1/256, and fitting `spot_noise`
+ * against the NOMINAL positions scored 79/175 with residuals around 4e-5 -
+ * wrong, but plausibly-wrong. Snapping first took chebyshev and manhattan to
+ * 175/175 with no change to the model at all.
+ *
+ * Snapping here rather than compensating downstream keeps the fixture honest:
+ * its `positions` are then exactly where the game sampled, and nothing that
+ * reads it has to know this function exists.
+ */
+function snapToMapPosition(t: number): number {
+  return Math.floor(t * 256) / 256;
+}
+
+/**
+ * Positions for the jitter-0 voronoi capture.
+ *
+ * The first 144 are the brief's grid: `grid_size` 64 stepped by `grid_size / 6`
+ * with a 0.5 offset, which keeps every probe off an exact integer boundary where
+ * an f32 tie could flip which point wins for reasons that are not the formula.
+ *
+ * Three groups are APPENDED to it, each answering something that grid cannot:
+ *
+ * - **Exact cell centres.** At jitter 0 the cell's point IS the centre, so
+ *   `voronoi_spot_noise` must read exactly 0 there whatever the normalisation
+ *   divisor turns out to be. That is the one sanity check that separates "the
+ *   probe samples the cell we think it does" from "the formula is wrong", and
+ *   the 0.5-offset grid never lands on a centre, so without these it cannot be
+ *   run at all.
+ * - **Negative coordinates**, which the grid omits entirely. A cell lookup that
+ *   truncates toward zero instead of flooring is invisible for x >= 0 and wrong
+ *   for exactly half the map.
+ * - **Far-from-origin and off-phase points**, so a formula that happens to fit
+ *   near the origin cannot survive by accident.
+ */
+function voronoiPositions(gridSize: number): Position[] {
+  const out: Position[] = [];
+  for (let i = 0; i < 12; i++) {
+    for (let j = 0; j < 12; j++) {
+      out.push({
+        x: snapToMapPosition(i * (gridSize / 6) + 0.5),
+        y: snapToMapPosition(j * (gridSize / 6) + 0.5),
+      });
+    }
+  }
+  const half = gridSize / 2;
+  for (const cx of [-2, -1, 0, 1, 2]) {
+    for (const cy of [-2, -1, 0, 1, 2]) {
+      out.push({ x: cx * gridSize + half, y: cy * gridSize + half });
+    }
+  }
+  out.push(
+    { x: -0.5, y: -0.5 },
+    { x: -33.25, y: -97.75 },
+    { x: 63.5, y: 63.5 },
+    { x: 1000.5, y: -2000.25 },
+    { x: -777.75, y: 333.125 },
+    { x: 12345.75, y: 6789.125 },
+  );
+  return out;
+}
+
+/**
+ * The four `voronoi_*` ops x the four `distance_type`s at **jitter 0**, where
+ * every point sits at its cell centre and the per-cell RNG is out of the picture
+ * entirely - so all four ops reduce to pure geometry and can be fitted in closed
+ * form (`voronoi_cell_id` excepted; it is a hash of the cell and needs the RNG
+ * whatever the jitter).
+ *
+ * `spaceAge` is deliberately false: `voronoi_*` are engine builtins
+ * (`NativeNoiseFunctions`), not planet-scoped named expressions, so they resolve
+ * on the plain Nauvis surface and the DLC load is unnecessary.
+ */
+async function captureVoronoiJitter0(): Promise<void> {
+  const seed = 123456;
+  const gridSize = 64;
+  const seed1 = 1;
+  const jitter = 0;
+  const positions = voronoiPositions(gridSize);
+  const values: Record<string, number[]> = {};
+
+  for (const op of VORONOI_OPS) {
+    for (const distanceType of VORONOI_DISTANCE_TYPES) {
+      // **15 series, not 16.** The game's own noise-expression COMPILER rejects
+      // this one pair outright - "Voronoi pyramid noise with Minkowski3 distance
+      // is not supported" - so there is no ground truth to capture and the run
+      // dies before sampling. Measured across all 16 pairs against the 2.1.12
+      // binary; the other 15 compile. The API docs agree in a way that is easy
+      // to read past: `voronoi_pyramid_noise`'s "Available values for
+      // distance_type" list has three entries where every other voronoi op has
+      // four. `pyramidNoise` in the port throws for this pair for the same
+      // reason.
+      if (op === "voronoi_pyramid_noise" && distanceType === "minkowski3") continue;
+      const expression = buildVoronoiExpression({
+        op,
+        x: "x",
+        y: "y",
+        seed1: String(seed1),
+        gridSize,
+        distanceType,
+        jitter,
+      });
+      const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+      try {
+        values[`${op}:${distanceType}`] = await sampleExpression(expression, positions, {
+          workDir,
+          seed,
+        });
+        console.log(`  captured ${op}:${distanceType}`);
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via the test/oracle harness. The four voronoi_* ops x the " +
+      "four distance_type values, each routed onto elevation on the default Nauvis surface, at " +
+      "JITTER 0 - where every point sits at its cell centre, so the per-cell RNG does not move any " +
+      "point and the ops reduce to pure geometry. Positions are the 12x12 half-offset grid plus " +
+      "exact cell centres (spot_noise must read 0 there), negative coordinates, and far-off-origin " +
+      "points. Regenerate: node --experimental-strip-types test/oracle/capture.ts voronoi-jitter0",
+    seed,
+    gridSize,
+    jitter,
+    seed1,
+    positions,
+    values,
+  };
+  const out = join(FIXTURES, "oracle-voronoi-jitter0.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(
+    `wrote ${out} (${String(Object.keys(values).length)} series x ${String(positions.length)} points)`,
+  );
+}
+
+/**
+ * `voronoi_cell_id` at the CENTRE of every cell in a 16x16 cell block, across
+ * three `seed0` (the map seed) x three `seed1`.
+ *
+ * `cell_id` is the per-cell RNG exposed directly as a float, so this is the
+ * cheapest possible view of the hash: one value per cell, no geometry, no
+ * boundary ambiguity. `distance_type` is irrelevant to it - the jitter-0 fixture
+ * asserts all four agree value-for-value - so only `chebyshev` is sampled.
+ *
+ * Two properties of the position set are deliberate:
+ *
+ * - **Cell indices span -8..7, not 0..15.** Negative indices are what
+ *   distinguish a hash that treats the cell coordinate as a two's-complement
+ *   `u32` from one that does anything else, and half the map has them.
+ * - **Every position is an exact integer** (`cx * 64 + 32`), so the 1/256
+ *   `MapPosition` floor that {@link snapToMapPosition} exists for cannot bite:
+ *   the game samples exactly where we asked, including for negative x/y where
+ *   floor-vs-truncate would otherwise be live.
+ */
+async function captureVoronoiCellId(): Promise<void> {
+  const gridSize = 64;
+  const jitter = 0;
+  const cells: { cx: number; cy: number }[] = [];
+  for (let cx = -8; cx < 8; cx++) {
+    for (let cy = -8; cy < 8; cy++) cells.push({ cx, cy });
+  }
+  const positions: Position[] = cells.map(({ cx, cy }) => ({
+    x: cx * gridSize + gridSize / 2,
+    y: cy * gridSize + gridSize / 2,
+  }));
+
+  const series: { seed0: number; seed1: number; values: number[] }[] = [];
+  for (const seed0 of [123456, 1, 4294967295]) {
+    for (const seed1 of [0, 1, 137]) {
+      const expression = buildVoronoiExpression({
+        op: "voronoi_cell_id",
+        x: "x",
+        y: "y",
+        seed1: String(seed1),
+        gridSize,
+        distanceType: "chebyshev",
+        jitter,
+      });
+      const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+      try {
+        const values = await sampleExpression(expression, positions, { workDir, seed: seed0 });
+        series.push({ seed0, seed1, values });
+        console.log(`  captured seed0=${seed0} seed1=${seed1}`);
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via the test/oracle harness. voronoi_cell_id routed onto " +
+      "elevation on the default Nauvis surface, sampled at the CENTRE of every cell in a 16x16 " +
+      "cell block (cell indices -8..7, so negative cell coordinates are covered), for 3 seed0 x 3 " +
+      "seed1 at grid_size 64, jitter 0. cell_id is the per-cell RNG as a float, so this is the hash " +
+      "with no geometry in the way; distance_type does not enter it (the jitter-0 fixture asserts " +
+      "all four agree). Regenerate: node --experimental-strip-types test/oracle/capture.ts voronoi-cellid",
+    gridSize,
+    jitter,
+    cells,
+    positions,
+    series,
+  };
+  const out = join(FIXTURES, "oracle-voronoi-cellid.multiseed.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(
+    `wrote ${out} (${String(series.length)} series x ${String(positions.length)} values)`,
+  );
+}
+
+/**
+ * Assert a coordinate is EXACTLY representable as a `MapPosition` (a multiple of
+ * 1/256 of a tile), and return it unchanged.
+ *
+ * This is the alternative taken to {@link snapToMapPosition} for the jittered
+ * point capture, and the choice was deliberate. `snapToMapPosition` uses
+ * `Math.floor`, and every negative probe committed so far happened to be exactly
+ * representable - so floor and truncate-toward-zero are indistinguishable in all
+ * existing data, and this capture's lattice would have been the first place the
+ * difference could bite.
+ *
+ * Rather than pick a rounding rule that no fixture can discriminate, or plumb an
+ * echo-back of the position the game used (which `sampleTileNames` does, but
+ * `calculate_tile_properties` gives no such channel - the mod echoes the
+ * positions it was HANDED), the lattice is built entirely from multiples of 1/2
+ * a tile. Those are exact in 1/256 whatever their sign, so no rounding rule
+ * applies at all and the question is removed rather than answered.
+ *
+ * This assertion is what keeps that property from silently lapsing: change the
+ * spacing to something like `gridSize / 6` and the capture dies here instead of
+ * quietly sampling ~4e-3 tiles away from where the fixture claims.
+ */
+function assertRepresentable(t: number): number {
+  if (!Number.isInteger(t * 256)) {
+    throw new Error(
+      `position ${String(t)} is not a multiple of 1/256 and would be silently ` +
+        "floored to a MapPosition by the game - see assertRepresentable",
+    );
+  }
+  return t;
+}
+
+/**
+ * **R3: where a cell's point actually sits once `jitter > 0`** - the
+ * configuration Fulgora uses (0.6, 0.8 and 1.0).
+ *
+ * Two independent readouts, in one fixture, because they answer different
+ * questions and neither alone is enough:
+ *
+ * **`series` - the inversion lattice.** `voronoi_spot_noise` is a cone whose
+ * apex sits ON the point, so its minimum over a lattice recovers the point's
+ * position directly, with no model in the loop. The lattice is the 64x64 TILE
+ * CENTRES of one whole cell (`cellX`, `cellY`), so it is prediction-free: at
+ * jitter 1 the point may be anywhere in the cell, and a lattice placed around a
+ * predicted position would only ever confirm the prediction it was built from.
+ *
+ * `cellIds` is captured alongside at the same positions and is **not
+ * redundant.** `spot_noise` is the distance to the nearest point of ANY cell, so
+ * a neighbour's point sitting just outside the boundary can own lattice points
+ * inside this cell and win the global argmin - at which case the recovered
+ * "apex" would be a different cell's point entirely. `voronoi_cell_id` says
+ * which point won at each lattice position, so the argmin can be restricted to
+ * the positions this cell actually owns. That filter comes from the game, not
+ * from the port.
+ *
+ * **`ops` - the exact-f32 acceptance set.** Locating a point to within half a
+ * tile is not acceptance; the bar for this repo is bit-exact agreement. So the
+ * jitter-0 fixture's own 15 op x distance_type series are re-captured at each of
+ * the three jitters, over the same 175 positions, giving 45 series the port must
+ * reproduce exactly.
+ *
+ * That set is also the **first configuration that can discriminate Task 2's
+ * pyramid formulas.** At jitter 0 every cell is a congruent unit square and many
+ * different algorithms collapse to identical numbers; with the points scattered
+ * they do not. `voronoi_pyramid_noise` is included at all three distance types
+ * it supports for exactly that reason.
+ */
+async function captureVoronoiPoints(): Promise<void> {
+  const seed = 123456;
+  const gridSize = 64;
+  const seed1 = 1;
+  const jitters = [0.6, 0.8, 1] as const;
+  const latticeDistanceTypes = ["manhattan", "euclidean"] as const;
+  // Fulgora's own two ops are manhattan and euclidean, and the load-bearing
+  // question is whether they can share one point field, so those are the two the
+  // lattice inverts. The cell is an arbitrary interior one; nothing about it is
+  // special, and in particular it is NOT one of the two colliding pairs
+  // ((0,0)/(-1,-1) and (-1,0)/(0,-1)) whose shared word would make a
+  // point-position claim about "this cell" ambiguous.
+  const cellX = 3;
+  const cellY = 5;
+
+  const lattice: Position[] = [];
+  for (let i = 0; i < 64; i++) {
+    for (let j = 0; j < 64; j++) {
+      lattice.push({
+        x: assertRepresentable(cellX * gridSize + i + 0.5),
+        y: assertRepresentable(cellY * gridSize + j + 0.5),
+      });
+    }
+  }
+
+  const series: {
+    jitter: number;
+    distanceType: string;
+    cellX: number;
+    cellY: number;
+    lattice: Position[];
+    values: number[];
+    cellIds: number[];
+  }[] = [];
+
+  for (const jitter of jitters) {
+    for (const distanceType of latticeDistanceTypes) {
+      const sample = async (op: (typeof VORONOI_OPS)[number]): Promise<number[]> => {
+        const expression = buildVoronoiExpression({
+          op,
+          x: "x",
+          y: "y",
+          seed1: String(seed1),
+          gridSize,
+          distanceType,
+          jitter,
+        });
+        const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+        try {
+          return await sampleExpression(expression, lattice, { workDir, seed });
+        } finally {
+          await rm(workDir, { recursive: true, force: true });
+        }
+      };
+      const values = await sample("voronoi_spot_noise");
+      const cellIds = await sample("voronoi_cell_id");
+      series.push({ jitter, distanceType, cellX, cellY, lattice, values, cellIds });
+      console.log(`  captured lattice jitter=${String(jitter)} ${distanceType}`);
+    }
+  }
+
+  const opPositions = voronoiPositions(gridSize);
+  const ops: Record<string, number[]> = {};
+  for (const jitter of jitters) {
+    for (const op of VORONOI_OPS) {
+      for (const distanceType of VORONOI_DISTANCE_TYPES) {
+        // Same 15-of-16 exclusion as the jitter-0 capture: the game's expression
+        // compiler rejects pyramid x minkowski3 outright, so there is no ground
+        // truth to take and the run dies before sampling.
+        if (op === "voronoi_pyramid_noise" && distanceType === "minkowski3") continue;
+        const expression = buildVoronoiExpression({
+          op,
+          x: "x",
+          y: "y",
+          seed1: String(seed1),
+          gridSize,
+          distanceType,
+          jitter,
+        });
+        const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+        try {
+          ops[`${op}:${distanceType}:${String(jitter)}`] = await sampleExpression(
+            expression,
+            opPositions,
+            { workDir, seed },
+          );
+          console.log(`  captured ${op}:${distanceType} jitter=${String(jitter)}`);
+        } finally {
+          await rm(workDir, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via the test/oracle harness, for JITTERED voronoi point " +
+      "placement (jitter 0.6 / 0.8 / 1.0 at grid_size 64, seed0 123456, seed1 1). `series` is the " +
+      "inversion lattice: voronoi_spot_noise plus voronoi_cell_id over the 64x64 tile centres of " +
+      "cell (3,5), under manhattan and euclidean - spot_noise's cone apex sits ON the point, so its " +
+      "minimum over the lattice IS the point, and cell_id says which cell owns each lattice position " +
+      "so a neighbour's point cannot be mistaken for this one. `ops` is the exact-f32 acceptance " +
+      "set: the same 15 op x distance_type series and 175 positions as the jitter-0 fixture, " +
+      "re-captured at each jitter. Every lattice coordinate is a multiple of 1/2 a tile and so is " +
+      "exact in the 1/256 MapPosition grid whatever its sign. " +
+      "Regenerate: node --experimental-strip-types test/oracle/capture.ts voronoi-points",
+    seed,
+    seed1,
+    gridSize,
+    series,
+    opPositions,
+    ops,
+  };
+  const out = join(FIXTURES, "oracle-voronoi-points.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(
+    `wrote ${out} (${String(series.length)} lattice series x ${String(lattice.length)} points, ` +
+      `${String(Object.keys(ops).length)} op series x ${String(opPositions.length)} points)`,
+  );
+}
+
+/**
+ * **The positions where `VoronoiNoise::getPointsSearchRange()` is OBSERVABLE** -
+ * the only fixture in the repo that can tell a 3x3 neighbour search from a 5x5
+ * one.
+ *
+ * The other two voronoi fixtures cannot, and that was measured rather than
+ * assumed: forcing the port's search range to 2 for all four distance types
+ * passes all 95 voronoi tests, and forcing it to 1 also passes all 95. So 2100
+ * committed values are indifferent to a function that Factorio changed the
+ * behaviour of in 2.1.7 (forums.factorio.com/130905 - before that the ops missed
+ * the true nearest point at high jitter). This fixture exists to end that.
+ *
+ * **Only `voronoi_pyramid_noise` can discriminate**, and its second loop is why.
+ * `spot`/`facet`/`cell_id` reduce to the two smallest point distances, and a
+ * ring-2 point is more than a grid unit away on one axis, so it essentially
+ * never displaces them. The pyramid's second loop instead minimises the distance
+ * to the BISECTOR of the nearest point and each other point - and for euclidean
+ * that is `(|f|^2 - |n|^2) / (2 |f - n|)`, which is small whenever `|f| ~= |n|`
+ * however far `f`'s cell index is. A ring-2 point only has to be nearly
+ * equidistant, not nearer, so the pyramid sees the wider ring where nothing else
+ * does.
+ *
+ * The five configurations below were chosen so that BOTH branches of the
+ * function are pinned, in both directions:
+ *
+ * - **chebyshev at jitter 1** is the `1` branch. The jump table pins chebyshev
+ *   at 1 whatever the jitter, and there is a clean proof of why: the own cell's
+ *   point has `max(|dx|,|dy|) < 1` while every ring-2 point has `> 1`, so under
+ *   L-infinity the nearest point is always in the sample's own cell. The pyramid
+ *   still notices the ring, so these positions read the game's ring-1 answer.
+ *   **This is exactly Fulgora's `fulgora_road_pyramids` configuration**
+ *   (chebyshev, `fulgora_road_jitter = 1`).
+ * - **manhattan / euclidean at jitter 1** are the `2` branch.
+ * - **manhattan at 0.7 and euclidean at 0.9** are the LOWEST jitters found to
+ *   discriminate at all, so they are what bounds each threshold from above
+ *   (manhattan's must be below 0.7, euclidean's below 0.9). The thresholds
+ *   themselves - 0.5, f32(0.66), 0.75 - cannot be pinned behaviourally: a
+ *   ring-1/ring-2 disagreement needs high jitter, and a 4096x4096 tile sweep at
+ *   manhattan 0.5 and euclidean 0.66 found zero disagreements. That gap is what
+ *   `test/voronoiSearchRange.spec.ts`'s weaker table test covers.
+ *
+ * Positions are hand-picked from a sweep of the port with the ring forced to 1
+ * and to 2, keeping only samples where the two answers differ by more than 2%
+ * and thinning by a stride so they are not all one cluster. Picking them from
+ * the port is fine and does not beg the question: the port chooses only WHERE to
+ * look, and the game alone says which of the two answers is right.
+ */
+async function captureVoronoiSearchRange(): Promise<void> {
+  const seed = 123456;
+  const gridSize = 64;
+  const seed1 = 1;
+
+  const configs: {
+    distanceType: (typeof VORONOI_DISTANCE_TYPES)[number];
+    jitter: number;
+    expectedRange: 1 | 2;
+    positions: Position[];
+  }[] = [
+    {
+      distanceType: "chebyshev",
+      jitter: 1,
+      expectedRange: 1,
+      positions: [
+        { x: 1727.5, y: -1017.5 },
+        { x: 1726.5, y: -1017.5 },
+        { x: 767.5, y: -508.5 },
+        { x: 512.5, y: 1280.5 },
+        { x: -382.5, y: 1593.5 },
+        { x: -1855.5, y: -1578.5 },
+        { x: -127.5, y: -639.5 },
+        { x: -126.5, y: -637.5 },
+      ],
+    },
+    {
+      distanceType: "manhattan",
+      jitter: 1,
+      expectedRange: 2,
+      positions: [
+        { x: -833.5, y: -1023.5 },
+        { x: -825.5, y: -1022.5 },
+        { x: -818.5, y: -1021.5 },
+        { x: -812.5, y: -1020.5 },
+        { x: -803.5, y: -1019.5 },
+        { x: -825.5, y: -1017.5 },
+        { x: -813.5, y: -1016.5 },
+        { x: -834.5, y: -1012.5 },
+        { x: -819.5, y: -1011.5 },
+        { x: -824.5, y: -1007.5 },
+        { x: -267.5, y: -963.5 },
+      ],
+    },
+    {
+      distanceType: "manhattan",
+      jitter: 0.7,
+      expectedRange: 2,
+      positions: [
+        { x: -256.5, y: -943.5 },
+        { x: -876.5, y: -840.5 },
+        { x: -869.5, y: -838.5 },
+        { x: -881.5, y: -835.5 },
+        { x: -877.5, y: -833.5 },
+        { x: -254.5, y: 172.5 },
+      ],
+    },
+    {
+      distanceType: "euclidean",
+      jitter: 1,
+      expectedRange: 2,
+      positions: [
+        { x: 1471.5, y: -2035.5 },
+        { x: -1207.5, y: -1991.5 },
+        { x: -1212.5, y: -1987.5 },
+        { x: -1139.5, y: -1855.5 },
+        { x: 1090.5, y: -1791.5 },
+        { x: -1280.5, y: -1743.5 },
+        { x: 739.5, y: -1660.5 },
+        { x: -1865.5, y: -1471.5 },
+        { x: 513.5, y: -1416.5 },
+        { x: -1664.5, y: -1382.5 },
+        { x: -198.5, y: -1150.5 },
+      ],
+    },
+    {
+      distanceType: "euclidean",
+      jitter: 0.9,
+      expectedRange: 2,
+      positions: [{ x: 701.5, y: -835.5 }],
+    },
+  ];
+
+  const series: {
+    distanceType: string;
+    jitter: number;
+    expectedRange: 1 | 2;
+    positions: Position[];
+    values: number[];
+  }[] = [];
+
+  for (const c of configs) {
+    for (const pos of c.positions) {
+      assertRepresentable(pos.x);
+      assertRepresentable(pos.y);
+    }
+    const expression = buildVoronoiExpression({
+      op: "voronoi_pyramid_noise",
+      x: "x",
+      y: "y",
+      seed1: String(seed1),
+      gridSize,
+      distanceType: c.distanceType,
+      jitter: c.jitter,
+    });
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const values = await sampleExpression(expression, c.positions, { workDir, seed });
+      series.push({ ...c, values });
+      console.log(`  captured ${c.distanceType} jitter=${String(c.jitter)}`);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via the test/oracle harness. voronoi_pyramid_noise at the " +
+      "positions where the game's own VoronoiNoise::getPointsSearchRange() is OBSERVABLE - i.e. " +
+      "where searching a 3x3 ring of cells and searching a 5x5 ring give different answers. The " +
+      "other two voronoi fixtures are indifferent to that function in both directions (forcing the " +
+      "port to 1, and to 2, each passes all 95 voronoi tests), and Factorio changed this behaviour " +
+      "in 2.1.7 (forums.factorio.com/130905), so without these positions a version skew would be " +
+      "silent. chebyshev jitter 1 pins the table's chebyshev entry at 1 - and is Fulgora's " +
+      "fulgora_road_pyramids configuration; manhattan/euclidean jitter 1 pin the '> threshold ? 2' " +
+      "branch; manhattan 0.7 and euclidean 0.9 are the lowest jitters found to discriminate at all " +
+      "and so bound those thresholds from above. Every coordinate is a multiple of 1/2 a tile and " +
+      "so exact in the 1/256 MapPosition grid. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts voronoi-search-range",
+    seed,
+    seed1,
+    gridSize,
+    series,
+  };
+  const out = join(FIXTURES, "oracle-voronoi-search-range.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(series.length)} series)`);
 }
 
 if (!oracleAvailable()) {
@@ -5340,6 +5948,10 @@ async function captureVulcanusCliffDestroyProbe(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} arms)`);
 }
 
+if (want("voronoi-search-range")) await captureVoronoiSearchRange();
+if (want("voronoi-jitter0")) await captureVoronoiJitter0();
+if (want("voronoi-cellid")) await captureVoronoiCellId();
+if (want("voronoi-points")) await captureVoronoiPoints();
 if (want("vulcanus-cliff-destroy-probe")) await captureVulcanusCliffDestroyProbe();
 if (want("vulcanus-cliff-chunk-order")) await captureVulcanusCliffChunkOrder();
 if (want("vulcanus-cliff-suppressor-levers")) await captureVulcanusCliffSuppressorLevers();

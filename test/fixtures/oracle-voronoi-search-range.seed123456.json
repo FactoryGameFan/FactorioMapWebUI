@@ -1,0 +1,238 @@
+{
+  "_comment": "Ground truth from Factorio 2.1.12 via the test/oracle harness. voronoi_pyramid_noise at the positions where the game's own VoronoiNoise::getPointsSearchRange() is OBSERVABLE - i.e. where searching a 3x3 ring of cells and searching a 5x5 ring give different answers. The other two voronoi fixtures are indifferent to that function in both directions (forcing the port to 1, and to 2, each passes all 95 voronoi tests), and Factorio changed this behaviour in 2.1.7 (forums.factorio.com/130905), so without these positions a version skew would be silent. chebyshev jitter 1 pins the table's chebyshev entry at 1 - and is Fulgora's fulgora_road_pyramids configuration; manhattan/euclidean jitter 1 pin the '> threshold ? 2' branch; manhattan 0.7 and euclidean 0.9 are the lowest jitters found to discriminate at all and so bound those thresholds from above. Every coordinate is a multiple of 1/2 a tile and so exact in the 1/256 MapPosition grid. Regenerate: node --experimental-strip-types test/oracle/capture.ts voronoi-search-range",
+  "seed": 123456,
+  "seed1": 1,
+  "gridSize": 64,
+  "series": [
+    {
+      "distanceType": "chebyshev",
+      "jitter": 1,
+      "expectedRange": 1,
+      "positions": [
+        {
+          "x": 1727.5,
+          "y": -1017.5
+        },
+        {
+          "x": 1726.5,
+          "y": -1017.5
+        },
+        {
+          "x": 767.5,
+          "y": -508.5
+        },
+        {
+          "x": 512.5,
+          "y": 1280.5
+        },
+        {
+          "x": -382.5,
+          "y": 1593.5
+        },
+        {
+          "x": -1855.5,
+          "y": -1578.5
+        },
+        {
+          "x": -127.5,
+          "y": -639.5
+        },
+        {
+          "x": -126.5,
+          "y": -637.5
+        }
+      ],
+      "values": [
+        0.5306305289268494,
+        0.5385082960128784,
+        0.30660301446914673,
+        0.39770084619522095,
+        0.48853886127471924,
+        0.3811396062374115,
+        0.494190514087677,
+        0.5088810324668884
+      ]
+    },
+    {
+      "distanceType": "manhattan",
+      "jitter": 1,
+      "expectedRange": 2,
+      "positions": [
+        {
+          "x": -833.5,
+          "y": -1023.5
+        },
+        {
+          "x": -825.5,
+          "y": -1022.5
+        },
+        {
+          "x": -818.5,
+          "y": -1021.5
+        },
+        {
+          "x": -812.5,
+          "y": -1020.5
+        },
+        {
+          "x": -803.5,
+          "y": -1019.5
+        },
+        {
+          "x": -825.5,
+          "y": -1017.5
+        },
+        {
+          "x": -813.5,
+          "y": -1016.5
+        },
+        {
+          "x": -834.5,
+          "y": -1012.5
+        },
+        {
+          "x": -819.5,
+          "y": -1011.5
+        },
+        {
+          "x": -824.5,
+          "y": -1007.5
+        },
+        {
+          "x": -267.5,
+          "y": -963.5
+        }
+      ],
+      "values": [
+        0.15889909863471985,
+        0.08155929297208786,
+        0.015268033370375633,
+        0.0017250478267669678,
+        0.0612957626581192,
+        0.13680200278759003,
+        0.06077495217323303,
+        0.291481614112854,
+        0.14923399686813354,
+        0.2411828637123108,
+        0.2525049149990082
+      ]
+    },
+    {
+      "distanceType": "manhattan",
+      "jitter": 0.7,
+      "expectedRange": 2,
+      "positions": [
+        {
+          "x": -256.5,
+          "y": -943.5
+        },
+        {
+          "x": -876.5,
+          "y": -840.5
+        },
+        {
+          "x": -869.5,
+          "y": -838.5
+        },
+        {
+          "x": -881.5,
+          "y": -835.5
+        },
+        {
+          "x": -877.5,
+          "y": -833.5
+        },
+        {
+          "x": -254.5,
+          "y": 172.5
+        }
+      ],
+      "values": [
+        0.10130464285612106,
+        0.4017549753189087,
+        0.41056883335113525,
+        0.3144700527191162,
+        0.2916765511035919,
+        0.17854413390159607
+      ]
+    },
+    {
+      "distanceType": "euclidean",
+      "jitter": 1,
+      "expectedRange": 2,
+      "positions": [
+        {
+          "x": 1471.5,
+          "y": -2035.5
+        },
+        {
+          "x": -1207.5,
+          "y": -1991.5
+        },
+        {
+          "x": -1212.5,
+          "y": -1987.5
+        },
+        {
+          "x": -1139.5,
+          "y": -1855.5
+        },
+        {
+          "x": 1090.5,
+          "y": -1791.5
+        },
+        {
+          "x": -1280.5,
+          "y": -1743.5
+        },
+        {
+          "x": 739.5,
+          "y": -1660.5
+        },
+        {
+          "x": -1865.5,
+          "y": -1471.5
+        },
+        {
+          "x": 513.5,
+          "y": -1416.5
+        },
+        {
+          "x": -1664.5,
+          "y": -1382.5
+        },
+        {
+          "x": -198.5,
+          "y": -1150.5
+        }
+      ],
+      "values": [
+        0.39640355110168457,
+        0.44624683260917664,
+        0.4095412492752075,
+        0.3600117862224579,
+        0.22555555403232574,
+        0.1543547809123993,
+        0.4218496084213257,
+        0.2250155210494995,
+        0.21389959752559662,
+        0.2072751820087433,
+        0.23387973010540009
+      ]
+    },
+    {
+      "distanceType": "euclidean",
+      "jitter": 0.9,
+      "expectedRange": 2,
+      "positions": [
+        {
+          "x": 701.5,
+          "y": -835.5
+        }
+      ],
+      "values": [
+        0.11913129687309265
+      ]
+    }
+  ]
+}
