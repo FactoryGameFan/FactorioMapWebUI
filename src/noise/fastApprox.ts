@@ -66,11 +66,26 @@ export function fastPow(x: number, p: number): number {
   return fastPow2(f32(p * fastLog2(x)));
 }
 
+/** f32(1/3) - bit pattern `0x3eaaaaab`, the exact multiplier the binary uses. */
+const ONE_THIRD_F32 = f32(1 / 3);
+
 /**
  * `x^(1/3)` via the fastapprox pair - the cube root the game's noise machine uses in
  * `regular_spot_height_typical` / `regular_blob_amplitude` / `starting_blob_amplitude`
  * (and the spot-selection cone radius). `x` must be > 0 (all resource quantities are).
+ *
+ * **The exponent is `f32(1/3)`, not the double `1/3`, and that is worth 3.0% of all
+ * inputs** (issue #163). The game reaches this through `Math::powSafe(float, float)` -
+ * both parameters are `float`, and the multiply by the exponent is `fmul s0, s0, s1`
+ * at single precision - so `0.3333333333333333` never appears; `0.3333333432674408`
+ * does. Passing the double was wrong on ~3.0% of inputs, by up to 7.8e-3 absolute.
+ *
+ * Settled against the game, not just the disassembly: at the 24 positions in
+ * `oracle-fastpow.seed123456.json` chosen because the two candidates differ, the
+ * double scores **0/24** and this scores **24/24**. `test/fastApprox.spec.ts`
+ * compares all 123 positions f32-exact and carries a guard that fails if a double
+ * exponent ever starts agreeing.
  */
 export function fastCbrt(x: number): number {
-  return fastPow(x, 1 / 3);
+  return fastPow(x, ONE_THIRD_F32);
 }

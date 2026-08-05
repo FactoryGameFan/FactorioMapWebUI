@@ -1719,6 +1719,115 @@ async function captureSeedVars(): Promise<void> {
  * Vulcanus surface ({ spaceAge: true, planet: "vulcanus" }) so
  * `x_from_start`/`y_from_start` resolve per Task 2's `== x, y` finding.
  */
+/**
+ * The noise machine's `^` operator, sampled f32-EXACT - the ground truth for
+ * `src/noise/fastApprox.ts`, which had none.
+ *
+ * **Why this exists (issues #161, #162, #163).** `fastApprox` is consumed by the
+ * resource `spot_height` / `blob_amplitude` chain and by the multioctave RMS
+ * normalisation, and every fixture over those compares with a TOLERANCE wide
+ * enough to hide a 1e-5 shift. That is how a double-accumulation bug survived a
+ * year, and it is why neither of the two open questions about the file could be
+ * answered from the suite. This probe removes the chain entirely and samples the
+ * operator on its own, where an exact comparison is possible.
+ *
+ * **What `^` compiles to, read from the 2.1.12 binary.** A non-integral exponent
+ * becomes `NoiseOperations::BinaryOperation<22, &NoiseOperations::Functions::pow>`,
+ * and `Functions::pow` (`0x10176d234`) is a single instruction - an unconditional
+ * `b` to `Math::powSafe(float, float)` (`0x102955a88`), which inlines fastapprox
+ * `log2` and multiplies by the exponent at single precision (`fmul s0, s0, s1`).
+ * An INTEGRAL exponent takes a different path entirely: `powSafe` round-trips it
+ * through `fcvtzs`/`scvtf` and, when it survives, uses exponentiation by squaring
+ * and never touches fastapprox. Hence the `2` series below - it pins a path our
+ * port must NOT route through `fastPow`.
+ *
+ * **The positions are chosen adversarially, which is the whole point.** A plain
+ * grid does not discriminate: 12 evenly spaced points scored 12/12 for both
+ * candidate exponents, and only `Math.cbrt` (0/12) failed. Two hand-picked sets
+ * are therefore included, each listing positions where two rival implementations
+ * are known to differ, so a wrong one cannot score full marks:
+ *
+ * - `CBRT_EXPONENT_SPLIT` - where `fastPow(x, 1/3)` with a DOUBLE `1/3` differs
+ *   from `f32(1/3)`. Measured verdict: the double scores **0/24**, `f32(1/3)`
+ *   scores **24/24**. That settled #163 against the game rather than against the
+ *   disassembly alone.
+ * - `ROUNDING_SPLIT` - where the pre-`9b49ebb` single-rounding `fastApprox`
+ *   differs from the per-operation rounding that replaced it. The two disagree on
+ *   ~30% of inputs, so these are easy to find and brutal to fail.
+ *
+ * The arithmetic spread is kept as well, so the fixture is not composed purely of
+ * pathological points.
+ */
+async function captureFastPow(): Promise<void> {
+  const seed = 123456;
+
+  /**
+   * Positions where a double `1/3` and `f32(1/3)` give different f32 results.
+   * Found by sweeping `x = 1.5, 2.5, ...` and keeping the first 24 disagreements;
+   * ~3.0% of that range disagrees, so a plain grid usually misses them all.
+   */
+  const CBRT_EXPONENT_SPLIT = [
+    23.5, 47.5, 73.5, 85.5, 114.5, 210.5, 395.5, 573.5, 591.5, 672.5, 674.5, 677.5, 696.5, 752.5,
+    879.5, 883.5, 983.5, 1008.5, 1080.5, 1083.5, 1159.5, 1199.5, 1219.5, 1249.5,
+  ];
+
+  /** Positions where single-rounding and per-operation-rounding fastapprox differ. */
+  const ROUNDING_SPLIT = [
+    3.5, 5.5, 6.5, 7.5, 15.5, 20.5, 21.5, 22.5, 25.5, 26.5, 32.5, 38.5, 39.5, 43.5, 45.5, 1.5, 2.5,
+    10.5, 12.5, 19.5, 27.5, 28.5, 30.5, 36.5, 37.5, 41.5, 4.5, 8.5, 9.5, 11.5, 13.5, 16.5, 17.5,
+    18.5,
+  ];
+
+  /** A plain spread across four decades, so the set is not all pathological. */
+  const spread: number[] = [];
+  for (let k = 0; k < 40; k++) spread.push(1.5 + k * 37);
+  for (const m of [211, 1553, 9377]) for (let k = 0; k < 10; k++) spread.push(1.5 + k * m);
+
+  const xs = [...new Set([...CBRT_EXPONENT_SPLIT, ...ROUNDING_SPLIT, ...spread])].sort(
+    (a, b) => a - b,
+  );
+  const positions: Position[] = xs.map((x) => ({ x, y: 0.5 }));
+
+  const EXPONENTS = [
+    { label: "1/3", expression: "(1/3)", note: "the shipping cube root - fastCbrt" },
+    { label: "0.5", expression: "0.5", note: "non-integral < 1" },
+    { label: "2.5", expression: "2.5", note: "non-integral > 1" },
+    { label: "2", expression: "2", note: "INTEGRAL - powSafe uses exact squaring, not fastapprox" },
+  ];
+
+  const series: { exponent: string; note: string; expression: string; values: number[] }[] = [];
+  for (const e of EXPONENTS) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const expression = `x ^ ${e.expression}`;
+      const values = await sampleExpression(expression, positions, { workDir, seed });
+      series.push({ exponent: e.label, note: e.note, expression, values });
+      console.log(`  captured x ^ ${e.label} (${String(positions.length)} positions)`);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 (build 87038) via the test/oracle harness. The noise " +
+      "machine's `^` operator sampled directly, as `x ^ <exponent>` routed onto elevation, so " +
+      "fastApprox can be compared f32-EXACT instead of through a tolerance on a downstream " +
+      "chain. Non-integral exponents reach Math::powSafe -> fastapprox log2/exp2; the `2` " +
+      "series takes powSafe's integral fast path (exponentiation by squaring) and must NOT be " +
+      "reproduced with fastPow. Positions are deliberately adversarial - they include points " +
+      "where a double 1/3 differs from f32(1/3), and points where single-rounding fastapprox " +
+      "differs from per-operation rounding. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts fastpow",
+    seed0: seed,
+    positions: positions.map((p) => ({ x: p.x, y: p.y })),
+    series,
+  };
+  const out = join(FIXTURES, "oracle-fastpow.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(series.length)} series x ${String(positions.length)})`);
+}
+
 async function captureStartingSpotAtAngle(): Promise<void> {
   const seed = 123456;
   const planet = "vulcanus";
@@ -3228,6 +3337,7 @@ if (want("temperature")) await captureTemperature();
 if (want("aux")) await captureAux();
 if (want("moisture")) await captureMoisture();
 if (want("expression-in-range")) await captureExpressionInRange();
+if (want("fastpow")) await captureFastPow();
 if (want("random-penalty")) await captureRandomPenalty();
 if (want("resource-regular")) await captureResourceRegular();
 if (want("resource-starting")) await captureResourceStarting();
