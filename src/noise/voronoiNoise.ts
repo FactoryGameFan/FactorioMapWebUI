@@ -110,9 +110,33 @@ function cellSeed(seed0: number, seed1: number, cellX: number, cellY: number): n
  * does it (`ucvtf d0, w8` / `fmul` by `0x3df0000000000000` / `fcvt s14, d0`).
  * Doing the multiply in f32 would round twice.
  */
-export function cellRandom(seed0: number, seed1: number, cellX: number, cellY: number): number {
+/**
+ * Which of the three draws off a cell's word to take.
+ *
+ * The draw index is a parameter rather than three copies of the decode because
+ * the Wang mix must exist in exactly one place - Task 4 needs draws 0 and 1 for
+ * the point offset while `voronoi_cell_id` needs draw 2, and a second transcription
+ * of six magic constants is precisely the kind of divergence that renders a
+ * plausible-but-wrong Fulgora.
+ */
+export type CellDraw = 0 | 1 | 2;
+
+/** Draw 0: the point's x offset within its cell. */
+export const CELL_DRAW_OFFSET_X: CellDraw = 0;
+/** Draw 1: the point's y offset within its cell. */
+export const CELL_DRAW_OFFSET_Y: CellDraw = 1;
+/** Draw 2: the value `voronoi_cell_id` reports. The default, for compatibility. */
+export const CELL_DRAW_ID: CellDraw = 2;
+
+export function cellRandom(
+  seed0: number,
+  seed1: number,
+  cellX: number,
+  cellY: number,
+  draw: CellDraw = CELL_DRAW_ID,
+): number {
   const w = cellSeed(seed0, seed1, cellX, cellY);
-  return f32(wangHash((w + 2) >>> 0) / 2 ** 32);
+  return f32(wangHash((w + draw) >>> 0) / 2 ** 32);
 }
 
 /** `(a * a) * a` with an f32 rounding at each step, matching the binary's two `fmul`s. */
