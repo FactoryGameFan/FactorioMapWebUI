@@ -758,16 +758,48 @@ before changing it:
   decrements its inflight-request counter when a proxied response body finishes
   piping. Dropping a response without reading it - which the 502 path used to do
   - leaves the counter above zero, `isActivityExpired()` returns false forever,
-    and the instance never sleeps. That cost ~$28/month for weeks. Any new code
-    path that discards a container response **must drain it first**; the guard is
-    in `preview-service/worker/test/worker.spec.ts`.
+    and the instance never sleeps. Any new code path that discards a container
+    response **must drain it first**; the guard is in
+    `preview-service/worker/test/worker.spec.ts`.
+
+  **That drain fix did not, on its own, stop the container being awake 24/7, and
+  a note here used to imply it had.** Billing says the instance ran at 100% every
+  full day from 2026-07-20 through 2026-08-03 - 95.6, 96.2, 98.2, 96.3, 96.0,
+  96.8, 95.6, 97.0, 95.3, 96.1, 95.7, 96.3, 99.0 GiB-hours/day against the 96.0
+  a 4 GiB instance bills for a whole day - including the five days _after_ the
+  drain fix deployed on 2026-07-29. So the ~$28/month was still being paid; the
+  2026-08-03 downsize to `basic` cut it ~4x rather than ending it. The sufficient
+  explanation is the SIGTERM bug in the bullet below, which was present
+  throughout. Keep the drain guard - the hazard is real - but do not credit it
+  with the bill.
+
+- **The container ignored SIGTERM, so it never stopped at all** (#120). Node runs
+  as **PID 1** under the Dockerfile's exec-form `ENTRYPOINT`, and Linux gives PID
+  1 no default signal dispositions. `@cloudflare/containers` stops an idle
+  instance by sending SIGTERM and **never escalating to SIGKILL**, so with no
+  handler the stop request was silently discarded and the instance only ever went
+  away when a deploy replaced the placement. The handler and its regression test
+  live in `preview-service/container/server.mjs` and `test/shutdown.test.mjs`.
+
 - **To check what is actually running, read the billing metrics, not
   `wrangler containers instances`.** That command reported `state: running` with
   an 80-minute-old `created` timestamp during an hour when allocation was zero -
   it describes the placement, not whether you are paying. The
   `containersUsageAdaptiveGroups` GraphQL dataset is the truth, and the
-  disk-to-memory ratio identifies the live instance type: **2.0** = `standard-1`
-  (4 GiB / 8 GB), **4.0** = `basic` (1 GiB / 4 GB). See #120 for the idle tail.
+  disk-to-memory ratio identifies the live instance type. Read it in **bytes**
+  and the ratio is `1.86` = `standard-1` (4 GiB / 8 GB) and `3.73` = `basic`
+  (1 GiB / 4 GB); the **2.0** and **4.0** this note used to quote are those same
+  two numbers expressed in the mixed GiB/GB units the dashboard shows.
+
+- **That dataset BACKFILLS, and a bucket that has not landed yet is
+  indistinguishable from sleep.** This is not hypothetical: #120 read the
+  5-minute buckets ~14 minutes after a test render, found nothing past 22:45Z,
+  and published an "~8.5 minute" idle tail. Re-read once settled, that same
+  window has **every** bucket present and the placement it woke stayed allocated
+  for **29.3 hours straight - 352 of 352 buckets, no gaps** - on a total of
+  **5** worker requests. The tail was never 8.5 minutes; there was no tail.
+  Wait at least an hour before reading absence as sleep, and confirm with
+  `placementId` continuity rather than bucket presence alone.
 
 `wrangler` is not global - drive it through the workspace:
 `pnpm --filter @fmw/preview-worker exec wrangler <cmd>`.
