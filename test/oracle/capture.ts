@@ -2673,6 +2673,16 @@ async function captureVoronoiJitter0(): Promise<void> {
 
   for (const op of VORONOI_OPS) {
     for (const distanceType of VORONOI_DISTANCE_TYPES) {
+      // **15 series, not 16.** The game's own noise-expression COMPILER rejects
+      // this one pair outright - "Voronoi pyramid noise with Minkowski3 distance
+      // is not supported" - so there is no ground truth to capture and the run
+      // dies before sampling. Measured across all 16 pairs against the 2.1.12
+      // binary; the other 15 compile. The API docs agree in a way that is easy
+      // to read past: `voronoi_pyramid_noise`'s "Available values for
+      // distance_type" list has three entries where every other voronoi op has
+      // four. `pyramidNoise` in the port throws for this pair for the same
+      // reason.
+      if (op === "voronoi_pyramid_noise" && distanceType === "minkowski3") continue;
       const expression = buildVoronoiExpression({
         op,
         x: "x",
