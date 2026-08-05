@@ -49,6 +49,7 @@
  * `oracle-voronoi-cellid.multiseed.json` (9 seed series x 256 cells, all exact).
  */
 
+import { memoXY } from "./eval/memoXY";
 import { fastLog2, fastPow2 } from "./fastApprox";
 
 const f32 = Math.fround;
@@ -527,6 +528,39 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
   const { gridSize, distanceType } = p;
 
   /**
+   * The per-cell point cache - the whole of this function's performance story.
+   *
+   * A render sweeps one pixel at a time, and every sample reads a
+   * `(2*ring+1)^2` block of cells: 25 at the fixed {@link SEARCH_RING}, and the
+   * pyramid walks its own block twice (once for the argmin, once for the
+   * bisector minimum). At `gridSize = 175` a whole 175x175-tile cell is the same
+   * cell for 30,625 consecutive samples, so the same six Wang mixes are redone
+   * tens of thousands of times per cell without this.
+   *
+   * **Byte-exact by construction, for the same reason {@link memoXY} is:** the
+   * cached object is handed back by identity, so every consumer sees the
+   * *identical* f32 pair the first call computed. A cache that changed any value
+   * would be a bug, not an optimisation - which is why the 120 pre-existing
+   * exact-value tests are the correctness proof here and had to pass unchanged.
+   *
+   * The key packs the two cell indices into one number, so this is a
+   * `Map<number, ...>` rather than a string-keyed one (no per-lookup
+   * concatenation on the hot path). `& 0xffff` means cells 65536 apart on an axis
+   * collide; at the largest grid this repo uses that is 2^16 * 175 = 11.5M tiles,
+   * far outside any map, and Factorio's own world is +/-1M tiles.
+   */
+  const pointCache = new Map<number, { x: number; y: number }>();
+  const offsetAt = (cellX: number, cellY: number): { x: number; y: number } => {
+    const key = (cellX & 0xffff) * 0x10000 + (cellY & 0xffff);
+    let pt = pointCache.get(key);
+    if (pt === undefined) {
+      pt = pointOffsetInCell(p.seed0, p.seed1, p.jitter, cellX, cellY);
+      pointCache.set(key, pt);
+    }
+    return pt;
+  };
+
+  /**
    * The normalisation divisor. Measured, not assumed: the ratio of the distance
    * in tiles to the value the game reports is 64.0 at `grid_size = 64` across all
    * four distance types, so it is `gridSize` - not half of it, not the cell
@@ -608,7 +642,7 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
         // centre with no special case - confirmed rather than assumed, since
         // `spot_noise` reads exactly 0 (not merely small) at all 25 of the
         // jitter-0 fixture's exact cell centres, for every distance type.
-        const o = pointOffsetInCell(p.seed0, p.seed1, p.jitter, cx + a, cy + b);
+        const o = offsetAt(cx + a, cy + b);
         const d = distanceOf(distanceType, deltaTo(sfx, a, o.x), deltaTo(sfy, b, o.y));
         if (d < d1) {
           d2 = d1;
@@ -621,6 +655,32 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
       }
     }
     return { d1, d2, cellX: bx, cellY: by };
+  };
+
+  /**
+   * A one-entry cache over {@link search}, the object-valued analogue of
+   * {@link memoXY} - and it is what {@link memoXY} on the three ops cannot do.
+   *
+   * `cellId`, `spotNoise` and `facetNoise` are three separate expressions in the
+   * Fulgora tree that read the SAME field at the SAME pixel (`fulgora_cells` and
+   * `fulgora_spots` share a point set; `fulgora_structure_cells` and
+   * `fulgora_structure_facets` are the `cell_id`/`d2` pair off one field). Each
+   * has its own `memoXY` slot, so without this the 25-cell search runs three
+   * times per pixel. The result is returned by identity, so all three see the
+   * identical floats.
+   */
+  let lastUx = NaN;
+  let lastUy = NaN;
+  let lastSearch: { d1: number; d2: number; cellX: number; cellY: number } | undefined;
+  const searchAt = (
+    ux: number,
+    uy: number,
+  ): { d1: number; d2: number; cellX: number; cellY: number } => {
+    if (ux === lastUx && uy === lastUy && lastSearch !== undefined) return lastSearch;
+    lastUx = ux;
+    lastUy = uy;
+    lastSearch = search(ux, uy);
+    return lastSearch;
   };
 
   /**
@@ -659,7 +719,7 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
     const sfx = f32(ux - cx);
     const sfy = f32(uy - cy);
     const deltaAt = (a: number, b: number): Vec2 => {
-      const o = pointOffsetInCell(p.seed0, p.seed1, p.jitter, cx + a, cy + b);
+      const o = offsetAt(cx + a, cy + b);
       return [deltaTo(sfx, a, o.x), deltaTo(sfy, b, o.y)];
     };
 
@@ -723,17 +783,17 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
      * `Math.floor(ux)` directly with no search. That shortcut is exactly the kind
      * of degeneracy the jitter-0 rung could not discriminate.
      */
-    cellId: (x, y) => {
-      const s = search(...toGrid(x, y));
+    cellId: memoXY((x, y) => {
+      const s = searchAt(...toGrid(x, y));
       return cellRandom(p.seed0, p.seed1, s.cellX, s.cellY);
-    },
+    }),
 
-    spotNoise: (x, y) => search(...toGrid(x, y)).d1,
+    spotNoise: memoXY((x, y) => searchAt(...toGrid(x, y)).d1),
 
-    facetNoise: (x, y) => {
-      const s = search(...toGrid(x, y));
+    facetNoise: memoXY((x, y) => {
+      const s = searchAt(...toGrid(x, y));
       return f32(s.d2 - s.d1);
-    },
+    }),
 
     /**
      * "Like facet noise but the gradient is uniform and represents the distance
@@ -770,15 +830,21 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
      * and `fulgora_pyramids_banding` (:432); and `fulgora_road_pyramids` (:422,
      * chebyshev, `fulgora_road_jitter = 1` at :406).
      */
-    pyramidNoise: (x, y) => {
-      if (distanceType === "minkowski3") {
-        throw new Error(
-          "voronoi_pyramid_noise does not support minkowski3 - the game's own " +
-            'expression compiler rejects it: "Voronoi pyramid noise with ' +
-            'Minkowski3 distance is not supported".',
-        );
-      }
-      return pyramid(...toGrid(x, y));
-    },
+    pyramidNoise:
+      distanceType === "minkowski3"
+        ? // NOT wrapped in `memoXY`. That is deliberate: `memoXY` records the
+          // coordinates BEFORE calling through, so a wrapped function that
+          // throws leaves the slot claiming a value it never produced, and the
+          // next call at the same position would return the previous position's
+          // number instead of throwing. Hoisting the guard out of the memo is
+          // the fix; the branch is decided once per field, not per sample.
+          () => {
+            throw new Error(
+              "voronoi_pyramid_noise does not support minkowski3 - the game's own " +
+                'expression compiler rejects it: "Voronoi pyramid noise with ' +
+                'Minkowski3 distance is not supported".',
+            );
+          }
+        : memoXY((x, y) => pyramid(...toGrid(x, y))),
   };
 }
