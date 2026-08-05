@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-multioctave.seed123456.json";
+import { basisNoise, basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
 import {
   fastLog2,
   fastPow2,
@@ -21,41 +22,131 @@ describe("fastapprox helpers reproduce Factorio's Math::log2 / Math::exp2f", () 
 describe("multioctaveNoise reproduces the game", () => {
   // Ground truth: test/fixtures/oracle-multioctave.seed123456.json, captured via
   // the oracle harness. Regenerate with test/oracle/capture.ts.
-  it("matches multioctave_noise across octaves / persistence / scales / seeds", () => {
-    // Two domains. Within a realistic preview window the match is ~3e-5; at
-    // extreme coordinates it loosens to ~1e-4. The residual is the game's f32
-    // pipeline: the per-octave x offset pushes each octave's coordinate large, and
-    // the game rounds it to f32 before sampling basis while we evaluate in f64 - a
-    // divergence that grows with |coordinate|. This is the fastapprox/f32 floor the
-    // roadmap treats as invisible, not a modelling error (power-of-two persistence
-    // like 0.5, where the normalization is exact, sits near the basis floor).
-    let worstNear = 0;
-    let worstNearLabel = "";
-    let worstFar = 0;
+  const params = (c: (typeof fixture.cases)[number]): MultioctaveParams => ({
+    seed0: fixture.seed0,
+    seed1: c.seed1,
+    octaves: c.octaves,
+    persistence: c.persistence,
+    inputScale: c.inputScale,
+    outputScale: c.outputScale,
+  });
+
+  /** Worst absolute error of an evaluator over the whole fixture, and where. */
+  function sweep(evaluate: (x: number, y: number, p: MultioctaveParams) => number): {
+    worst: number;
+    label: string;
+  } {
+    let worst = 0;
+    let label = "";
     for (const c of fixture.cases) {
+      const p = params(c);
       for (let i = 0; i < fixture.positions.length; i++) {
-        const p = fixture.positions[i];
-        const got = multioctaveNoise(p.x, p.y, {
-          seed0: fixture.seed0,
-          seed1: c.seed1,
-          octaves: c.octaves,
-          persistence: c.persistence,
-          inputScale: c.inputScale,
-          outputScale: c.outputScale,
-        });
-        const err = Math.abs(got - c.values[i]);
-        if (Math.abs(p.x) < 3000 && Math.abs(p.y) < 3000) {
-          if (err > worstNear) {
-            worstNear = err;
-            worstNearLabel = `octaves=${c.octaves} p=${c.persistence} seed1=${c.seed1} @(${p.x},${p.y})`;
-          }
-        } else {
-          worstFar = Math.max(worstFar, err);
+        const pos = fixture.positions[i];
+        const err = Math.abs(evaluate(pos.x, pos.y, p) - c.values[i]);
+        if (err > worst) {
+          worst = err;
+          label = `octaves=${c.octaves} p=${c.persistence} seed1=${c.seed1} @(${pos.x},${pos.y})`;
         }
       }
     }
-    expect(worstNear, `worst near-field at ${worstNearLabel}`).toBeLessThan(5e-5);
-    expect(worstFar, "worst far-field").toBeLessThan(2e-4);
+    return { worst, label };
+  }
+
+  it("matches multioctave_noise across octaves / persistence / scales / seeds", () => {
+    // One domain, not two. This used to carry separate near-field (5e-5) and
+    // far-field (2e-4) tolerances, because the shipped per-octave x offset was an
+    // alias 100x too large and its f32 error therefore grew with |coordinate|.
+    // With the true +17.17 the error no longer depends on distance at all: the
+    // fixture's extreme point (12345.75, 6789.125) is no worse than the origin.
+    const { worst, label } = sweep((x, y, p) => multioctaveNoise(x, y, p));
+    expect(worst, `worst at ${label}`).toBeLessThan(1e-6);
+  });
+
+  it("agrees with the prebuilt-closure form bit for bit", () => {
+    for (const c of fixture.cases) {
+      const p = params(c);
+      const closure = makeMultioctaveNoise(p);
+      for (const pos of fixture.positions) {
+        expect(closure(pos.x, pos.y)).toBe(multioctaveNoise(pos.x, pos.y, p));
+      }
+    }
+  });
+
+  // Guard: without this the tolerance above could be met by a model that is wrong
+  // in a way the fixture cannot see. Both defects the fix addresses must still be
+  // detectable, and - the point of the finding - NEITHER fix works alone.
+  describe("the pre-fix models are still rejected", () => {
+    const f32 = Math.fround;
+
+    /** The old f64 composition, parameterised on the octave offset. */
+    function legacyF64(x: number, y: number, p: MultioctaveParams, offset: number): number {
+      const invP = 1 / p.persistence;
+      const invP2 = 1 / (p.persistence * p.persistence);
+      const norm =
+        p.persistence === 1
+          ? 1 / Math.sqrt(p.octaves)
+          : Math.sqrt((invP2 - 1) / (fastPow2(fastLog2(invP2) * p.octaves) - 1));
+      let sum = 0;
+      let scale = p.inputScale;
+      let amp = norm;
+      for (let k = 0; k < p.octaves; k++) {
+        sum += amp * basisNoise(x * scale + k * offset, y * scale, tablesFor(p));
+        scale *= 0.5;
+        amp *= invP;
+      }
+      return p.outputScale * sum;
+    }
+
+    /** The current f32 op order, but with the aliased offset restored. */
+    function f32WithAliasedOffset(x: number, y: number, p: MultioctaveParams): number {
+      const n = Math.ceil(p.octaves);
+      const invP = f32(1 / p.persistence);
+      const invP2 = f32(invP * invP);
+      const pow = f32(fastPow2(f32(fastLog2(invP2) * f32(n))));
+      let amp =
+        invP === 1
+          ? f32(p.outputScale / Math.sqrt(n))
+          : f32(Math.sqrt(f32(f32(invP2 - 1) / f32(pow - 1))) * p.outputScale);
+      let scale = f32(p.inputScale);
+      let out = 0;
+      for (let k = 0; k < n; k++) {
+        const xk = f32(k * -1774.83 + f32(x * scale));
+        out = f32(out + f32(amp * basisNoise(xk, f32(y * scale), tablesFor(p))));
+        scale = f32(scale * 0.5);
+        amp = f32(invP * amp);
+      }
+      return out;
+    }
+
+    const cache = new Map<string, ReturnType<typeof basisNoiseTablesFromSeed>>();
+    function tablesFor(p: MultioctaveParams) {
+      const key = `${p.seed0}/${p.seed1}`;
+      let t = cache.get(key);
+      if (!t) {
+        t = basisNoiseTablesFromSeed(p.seed0, p.seed1);
+        cache.set(key, t);
+      }
+      return t;
+    }
+
+    it("rejects the shipped f64 model (aliased offset -1774.83)", () => {
+      // ~1.2e-4: the alias' f32 quantisation, which used to be called an
+      // irreducible floor.
+      expect(sweep((x, y, p) => legacyF64(x, y, p, -1774.83)).worst).toBeGreaterThan(1e-5);
+    });
+
+    it("rejects f32 arithmetic while the offset is still aliased", () => {
+      // ~1.4e-3 - WORSE than the f64 model it replaces. This is why five earlier
+      // attempts at "reproduce the game's f32 order" all regressed.
+      expect(sweep(f32WithAliasedOffset).worst).toBeGreaterThan(1e-4);
+    });
+
+    it("rejects the true offset while the arithmetic is still f64", () => {
+      // The constant alone changes nothing: +17.17 and -1774.83 differ by 7 basis
+      // periods, so in f64 they are the same field. Fixing one without the other
+      // is not an improvement, it is a no-op.
+      expect(sweep((x, y, p) => legacyF64(x, y, p, 17.17)).worst).toBeGreaterThan(1e-5);
+    });
   });
 });
 

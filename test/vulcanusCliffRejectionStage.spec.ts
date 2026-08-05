@@ -53,7 +53,7 @@ import { withCtxDefaults } from "../src/noise/eval/ctx";
  * **What this does NOT establish.** It fixes the STAGE, not the PREDICATE. It
  * says nothing about whether `wouldCollide` itself is what removes the crossings
  * or whether the game simply never computed them there - the two are
- * indistinguishable from entity output, and the residual below (693 wrong
+ * indistinguishable from entity output, and the residual below (691 wrong
  * orientations still, down from 1,235) says the predicate is still incomplete.
  * "The crossing is absent" is what is measured; "the rejection removed it" is the
  * model the port implements for it.
@@ -238,9 +238,9 @@ describe("the stage at which the Vulcanus cliff rejections act", () => {
       }
     }
 
-    expect(dropped).toBe(1235);
-    expect(droppedAgainstAbsent).toBe(1233);
-    expect(agreed).toBe(36103);
+    expect(dropped).toBe(1233);
+    expect(droppedAgainstAbsent).toBe(1231);
+    expect(agreed).toBe(36107);
     expect(agreedAgainstAbsent).toBe(0);
   }, 300000);
 
@@ -275,8 +275,8 @@ describe("the stage at which the Vulcanus cliff rejections act", () => {
     const post = score("post");
     const crossing = score("crossing");
 
-    expect(post).toEqual({ matched: 18130, wrong: 1235, surplus: 1366, missing: 85 });
-    expect(crossing).toEqual({ matched: 18654, wrong: 693, surplus: 1200, missing: 103 });
+    expect(post).toEqual({ matched: 18133, wrong: 1233, surplus: 1365, missing: 84 });
+    expect(crossing).toEqual({ matched: 18657, wrong: 691, surplus: 1199, missing: 102 });
     // Every headline moves the right way, and the one that does not is named.
     expect(crossing.wrong).toBeLessThan(post.wrong);
     expect(crossing.surplus).toBeLessThan(post.surplus);

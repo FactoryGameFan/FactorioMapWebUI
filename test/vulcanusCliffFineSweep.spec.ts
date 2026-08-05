@@ -42,13 +42,18 @@ import { withCtxDefaults } from "../src/noise/eval/ctx";
  * and so can delete a crossing but never invent one, and the rejections are
  * post-filters that never touch the edge registers.
  *
- * The verdict: **the port's grid-4 field is right.** 996 of 998 two-sided
+ * The verdict: **the port's grid-4 field is right.** 997 of 998 two-sided
  * brackets contain it, at a mean bracket width of 5.72, in the worst region -
- * and the two exceptions miss by **6.7e-4**, i.e. the port's value sits
+ * and the one exception misses by **2.6e-5**, i.e. the port's value sits
  * essentially exactly ON a swept level, where `crossesCliff`'s strict test
  * yields no crossing and so no observation. That is the bracket's open endpoint,
  * not a field error. At the disputed-edge corners specifically, every bracketed
  * one contains the port's value.
+ *
+ * (Was 996 of 998 missing by 6.7e-4 until the `multioctave_noise` octave-offset
+ * fix; that primitive feeds `cliff_elevation`, so tightening it by 164x moved one
+ * borderline corner inside its bracket and shrank the remaining miss 26x. The
+ * conclusion was already right - this only sharpens it.)
  *
  * So the field is exonerated by direct measurement, and #84's residual is
  * somewhere else. What the sweep also shows is where to look: the corners
@@ -192,17 +197,17 @@ describe("the game's grid-4 cliff elevation, measured per corner", () => {
 
   /**
    * **The headline, and the correction.** The port's grid-4 field lands inside
-   * the game's own bracket at 996 of 998 corners, in the region where the
+   * the game's own bracket at 997 of 998 corners, in the region where the
    * placement disagrees most. The field is not the defect.
    *
-   * The two that fall outside miss by **6.7e-4** - the port's value lands on
+   * The one that falls outside misses by **2.6e-5** - the port's value lands on
    * the bracket's endpoint to within float noise. The interval is open because
    * `crossesCliff` tests `dA < 0 && dB > 0` strictly, so a corner sitting on the
    * level produces no crossing and therefore no observation. That is the
    * convention, not an error: at 4e-4 of a 5-unit bracket there is no room for
    * it to be anything else.
    */
-  it("the port's field is inside the game's own bracket at 996 of 998 corners", () => {
+  it("the port's field is inside the game's own bracket at 997 of 998 corners", () => {
     const bounds = reconstruct();
     let both = 0;
     let inside = 0;
@@ -218,7 +223,7 @@ describe("the game's grid-4 cliff elevation, measured per corner", () => {
       else worstMiss = Math.max(worstMiss, port >= b.hi ? port - b.hi : b.lo - port);
     }
     expect(both).toBe(998);
-    expect(inside).toBe(996);
+    expect(inside).toBe(997);
     expect(worstMiss).toBeLessThan(0.01);
     // The brackets are tight enough for that to mean something: at the sweep's
     // step of 5, a field wrong by more than a few units could not hide.
@@ -283,7 +288,7 @@ describe("the game's grid-4 cliff elevation, measured per corner", () => {
    * measured right, the smoothing off, the gate a constant and the repair shown
    * not to touch these cells, that asymmetry is the whole of #84's residual.
    */
-  it("the game's code is the port's minus edges, 1231 of 1235 times", () => {
+  it("the game's code is the port's minus edges, 1231 of 1233 times", () => {
     let disputed = 0;
     let subset = 0;
     for (const c of sweep.cases) {
@@ -298,7 +303,7 @@ describe("the game's grid-4 cliff elevation, measured per corner", () => {
         if (theirs.every((t, i) => t === mine[i] || t === 0)) subset++;
       }
     }
-    expect(disputed).toBe(1235);
+    expect(disputed).toBe(1233);
     expect(subset).toBe(1231);
   }, 300000);
 });
