@@ -2,6 +2,12 @@
  * Factorio's `voronoi_*` noise primitives - all four ops, for any `jitter` in
  * `[0, 1]`.
  *
+ * **Full RE record: `docs/noise/voronoi-NOTES.md`** - the disassembly addresses,
+ * the models that were tried and refuted, and the method behind every number
+ * quoted below. This file carries the findings at their sites; that one carries
+ * how they were established. Companions: `docs/noise/basis-noise-NOTES.md`,
+ * `docs/noise/spot-noise-NOTES.md`.
+ *
  * Everything here is validated bit-exact at f32 against the real 2.1.12 binary:
  * `oracle-voronoi-jitter0.seed123456.json` (15 series x 175 positions at jitter
  * 0) and `oracle-voronoi-points.seed123456.json` (45 series x 175 positions at
