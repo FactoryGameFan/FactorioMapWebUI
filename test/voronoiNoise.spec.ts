@@ -642,15 +642,20 @@ describe("makeVoronoi caching", () => {
    * position - **whatever point wins in each**, and only because all three
    * minimise over the same points.
    *
-   * **Non-vacuous, and measured rather than asserted:** the same sweep with one
-   * field's `seed1` changed to 999 - a different point set, everything else
-   * identical - violates the ordering at **30036 of 40000** positions. And
-   * `minkowski3` is deliberately absent even though `|v|_inf <= |v|_3 <= |v|_2`
-   * is true in exact arithmetic: its cube root goes through the game's
-   * fastapprox pair (~1e-5 relative), which breaks the ordering at near-ties on
-   * 1927 of those 40000 positions. That is the port faithfully reproducing the
-   * game, not a defect - which is why the invariant is stated over the three
-   * exactly-computed metrics only.
+   * **Non-vacuous, and measured rather than asserted** - on a DIFFERENT window
+   * from the disagreement table above, which is why the denominator changes:
+   * a 200 x 200 grid, stride 6.5 tiles, origin `(-650, -650)`, everything else
+   * the same. Over those 40000 positions, changing one field's `seed1` to 999 -
+   * a different point set, nothing else touched - violates the ordering at
+   * **30036**. And `minkowski3` is deliberately absent even though
+   * `|v|_inf <= |v|_3 <= |v|_2` is true in exact arithmetic: its cube root goes
+   * through the game's fastapprox pair (~1e-5 relative), which breaks the
+   * ordering at near-ties on **1927** of the same 40000. That is the port
+   * faithfully reproducing the game, not a defect - which is why the invariant
+   * is stated over the three exactly-computed metrics only.
+   *
+   * (On the 400 x 400 stride-3.25 grid the table above uses, the same two probes
+   * give 120066 and 7868 of 160000.)
    */
   it("fields sharing seed/grid/jitter minimise over one point set (metric ordering)", () => {
     // fulgora_cells (manhattan) and fulgora_spots (euclidean) share a point set.

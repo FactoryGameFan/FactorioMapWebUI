@@ -200,10 +200,17 @@ each**. Its non-vacuity is measured, not asserted: changing one field's `seed1`
 to 999 - a different point set, everything else identical - violates the ordering
 at **30036 of 40000** positions.
 
+**That 40000 is a DIFFERENT window from the 160000 above**, and the difference is
+not cosmetic - a count you cannot reproduce is the defect section 6 of this file
+exists to correct. The 30036 and the 1927 below come from a **200 x 200 grid,
+stride 6.5 tiles, origin `(-650, -650)`**, same `gridSize` 175 / `jitter` 0.6 /
+`seed0` 7 / `seed1` 11. On the 400 x 400 stride-3.25 grid the table above uses,
+the same two probes give **120066** and **7868** of 160000.
+
 `minkowski3` is deliberately excluded from that chain even though
 `|v|_inf <= |v|_3 <= |v|_2` holds exactly, because its fastapprox cube root
-breaks the ordering at near-ties on **1927 of 40000** positions. That is the port
-faithfully reproducing the game.
+breaks the ordering at near-ties on **1927 of 40000** positions (same 200 x 200
+window). That is the port faithfully reproducing the game.
 
 ---
 
