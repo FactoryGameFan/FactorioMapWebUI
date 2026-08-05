@@ -1,3 +1,5 @@
+const f32 = Math.fround;
+
 /**
  * The native Factorio `expression_in_range(peak_multiplier, peak_maximum,
  * expr_1..N, from_1..N, to_1..N)` builtin, reverse-engineered from the headless
@@ -5,10 +7,22 @@
  * system to make a tile probable only inside an N-dimensional box of climate
  * values, with a linear falloff outside.
  *
- * Derived formula (worst residual ~9.5e-7 across the full oracle sweep):
+ * Derived formula:
  *
  *   m      = min over all dims i of min(value_i - from_i, to_i - value_i)
  *   result = min(peak_maximum, peak_multiplier * m)
+ *
+ * **Every step is rounded to f32, and that makes this EXACT** (issue #162). The
+ * arithmetic used to run in f64 and rounded once at the end, which left a worst
+ * residual of ~9.5e-7 that the spec accepted under an `8e-3` floor - a ceiling
+ * ~8400x looser than the actual error, so it endorsed almost anything. The noise
+ * machine evaluates in f32 registers; reproducing that takes the residual to
+ * **exactly 0 on all 404 committed oracle samples** (three sweeps, 121 + 121 +
+ * 162), where the f64 form matched only 285 of them.
+ *
+ * This is the same class of fix as `fastApprox`'s per-operation rounding: the
+ * formula was right all along and the precision of the intermediate steps was
+ * the whole error. Do not "simplify" these `f32` calls away.
  *
  * Per dimension, `min(value - from, to - value)` is the signed distance to the
  * nearer edge of `[from, to]`: positive inside, zero on an edge, negative outside.
@@ -30,8 +44,11 @@ export function expressionInRange(
 ): number {
   let m = Infinity;
   for (let i = 0; i < values.length; i++) {
-    const edgeDistance = Math.min(values[i] - froms[i], tos[i] - values[i]);
+    const v = f32(values[i]);
+    const edgeDistance = Math.min(f32(v - f32(froms[i])), f32(f32(tos[i]) - v));
     if (edgeDistance < m) m = edgeDistance;
   }
-  return Math.min(peakMaximum, peakMultiplier * m);
+  // peakMaximum stays unrounded: it is `Infinity` at sand-1's call site, and
+  // Math.fround(Infinity) is Infinity, but leaving it alone keeps that obvious.
+  return Math.min(peakMaximum, f32(f32(peakMultiplier) * m));
 }

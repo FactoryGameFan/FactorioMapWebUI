@@ -52,7 +52,13 @@ describe("expressionInRangeBase", () => {
   it("falls off linearly with slope 20 just outside an edge (unclamped, negative)", () => {
     // aux=0.6 is 0.1 past the aux_to=0.5 edge; moisture stays centered (inside).
     // m = min(edgeDist_aux, edgeDist_moisture) = min(-0.1, 0.5) = -0.1 -> 20 * -0.1 = -2.
-    expect(expressionInRangeBase(0.6, 0, -0.5, -0.5, 0.5, 0.5)).toBeCloseTo(-2, 10);
+    //
+    // Precision 6, not 10: `expressionInRange` rounds every step to f32 (#162), and
+    // `0.5 - 0.6` is not representable there, so this returns -2.000000476837158.
+    // The exact decimal is the wrong target for an f32 computation - see the note
+    // in `expressionInRange.spec.ts`. Bit-exactness lives in that file's oracle
+    // sweeps, which are exactly 0; this one guards the slope and the sign.
+    expect(expressionInRangeBase(0.6, 0, -0.5, -0.5, 0.5, 0.5)).toBeCloseTo(-2, 6);
   });
 });
 
