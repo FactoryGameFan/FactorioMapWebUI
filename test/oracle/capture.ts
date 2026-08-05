@@ -2608,6 +2608,32 @@ const VORONOI_OPS = [
 ] as const;
 
 /**
+ * Snap a coordinate to Factorio's `MapPosition` fixed point (1/256 of a tile,
+ * FLOORED), which is what the oracle path does to it whether we ask or not.
+ *
+ * **This is a property of the harness, not of any noise expression, and it is a
+ * silent one.** A Lua position handed to `calculate_tile_properties` is
+ * converted to a `MapPosition` on the way in, so a sample nominally at
+ * `x = 11.166666666666666` is actually taken at `11.1640625` (`= 2858 / 256`).
+ * The error is ~4e-3 tiles: far too small to look like a wrong formula, far too
+ * large to be f32 noise, and therefore exactly the kind of discrepancy that gets
+ * absorbed into a fudged constant instead of being recognised.
+ *
+ * It bit this capture directly. The brief's grid steps by `grid_size / 6` =
+ * 10.666..., which is not representable in 1/256, and fitting `spot_noise`
+ * against the NOMINAL positions scored 79/175 with residuals around 4e-5 -
+ * wrong, but plausibly-wrong. Snapping first took chebyshev and manhattan to
+ * 175/175 with no change to the model at all.
+ *
+ * Snapping here rather than compensating downstream keeps the fixture honest:
+ * its `positions` are then exactly where the game sampled, and nothing that
+ * reads it has to know this function exists.
+ */
+function snapToMapPosition(t: number): number {
+  return Math.floor(t * 256) / 256;
+}
+
+/**
  * Positions for the jitter-0 voronoi capture.
  *
  * The first 144 are the brief's grid: `grid_size` 64 stepped by `grid_size / 6`
@@ -2632,7 +2658,10 @@ function voronoiPositions(gridSize: number): Position[] {
   const out: Position[] = [];
   for (let i = 0; i < 12; i++) {
     for (let j = 0; j < 12; j++) {
-      out.push({ x: i * (gridSize / 6) + 0.5, y: j * (gridSize / 6) + 0.5 });
+      out.push({
+        x: snapToMapPosition(i * (gridSize / 6) + 0.5),
+        y: snapToMapPosition(j * (gridSize / 6) + 0.5),
+      });
     }
   }
   const half = gridSize / 2;
