@@ -1,11 +1,24 @@
 /**
- * Factorio's `voronoi_*` noise primitives, **at `jitter = 0` only**.
+ * Factorio's `voronoi_*` noise primitives, for any `jitter` in `[0, 1]` -
+ * `voronoi_pyramid_noise` excepted, which is still jitter 0 only (see below).
  *
- * At jitter 0 every cell's point sits exactly at the cell centre, so the per-cell
- * RNG cannot move it and all four ops reduce to pure geometry. That is what makes
- * this rung portable without the hash: everything here is fitted against
- * `test/fixtures/oracle-voronoi-jitter0.seed123456.json`, captured from the real
- * 2.1.12 binary, and matches it exactly at f32 on all 175 sampled positions.
+ * Everything here is validated bit-exact at f32 against the real 2.1.12 binary:
+ * `oracle-voronoi-jitter0.seed123456.json` (15 series x 175 positions at jitter
+ * 0) and `oracle-voronoi-points.seed123456.json` (36 series x 175 positions at
+ * jitter 0.6 / 0.8 / 1.0, plus an inversion lattice that recovers the point
+ * positions themselves).
+ *
+ * **The jitter-0 rung is DEGENERATE and turning jitter on is what discriminates.**
+ * At jitter 0 every cell is a congruent unit square, so many different underlying
+ * algorithms collapse onto identical numbers - reproducing it exactly is no
+ * evidence at all about jitter > 0. Two things came out of actually testing it,
+ * and both are recorded at their sites rather than here:
+ *
+ * - the sample-to-point delta has to be rebased on the sample's own cell (the
+ *   absolute form is off by one ulp on 466 of 4200 samples), and
+ * - `voronoi_pyramid_noise`'s jitter-0 formula is the unit-square edge distance
+ *   and is simply wrong once the cells are not squares - 0 of 175 at every
+ *   jitter x distance_type captured. It throws rather than approximating.
  *
  * Three things about this file are measurements rather than readings of the docs,
  * and each would be easy to get plausibly wrong:
@@ -26,11 +39,10 @@
  *    one out** - see {@link makeVoronoi}. It is also the one op x distance_type
  *    pair the game refuses outright.
  *
- * `cellId` is the exception: it is a hash of the cell rather than geometry, so it
- * needs the per-cell RNG whatever the jitter. That RNG is {@link cellRandom}, and
- * it is NOT fitted on the degenerate configuration - it is read out of the binary
- * and validated against `oracle-voronoi-cellid.multiseed.json` (9 seed series x
- * 256 cells, all exact), so Task 4 can build the jittered point offsets on it.
+ * Nothing in this file is fitted on the degenerate configuration. The per-cell
+ * RNG ({@link cellRandom}) and the point offset ({@link pointForCell}) are both
+ * read out of the binary and then confirmed against the game - the RNG against
+ * `oracle-voronoi-cellid.multiseed.json` (9 seed series x 256 cells, all exact).
  */
 
 import { fastLog2, fastPow2 } from "./fastApprox";
@@ -96,21 +108,6 @@ function cellSeed(seed0: number, seed1: number, cellX: number, cellY: number): n
 }
 
 /**
- * The per-cell random draw in `[0, 1)` - what `voronoi_cell_id` returns, and the
- * value Task 4 needs for the jittered point offset.
- *
- * The binary draws THREE numbers per cell off the same word, as `wangHash(w)`,
- * `wangHash(w + 1)` and `wangHash(w + 2)` - the first two are the point's x and
- * y offset within the cell, and the third is the id. (The compiler folds the
- * `+1` / `+2` into the hash's first addend, which is why `0x7ed56d17` and
- * `0x7ed57d18` appear in the disassembly alongside `0x7ed55d16`.) So the id is
- * `+ 2`, and using `+ 0` would silently hand back the x offset.
- *
- * The conversion is `(double)u32 * 2^-32` narrowed to f32, exactly as the binary
- * does it (`ucvtf d0, w8` / `fmul` by `0x3df0000000000000` / `fcvt s14, d0`).
- * Doing the multiply in f32 would round twice.
- */
-/**
  * Which of the three draws off a cell's word to take.
  *
  * The draw index is a parameter rather than three copies of the decode because
@@ -128,6 +125,21 @@ export const CELL_DRAW_OFFSET_Y: CellDraw = 1;
 /** Draw 2: the value `voronoi_cell_id` reports. The default, for compatibility. */
 export const CELL_DRAW_ID: CellDraw = 2;
 
+/**
+ * The per-cell random draw in `[0, 1)` - the value `voronoi_cell_id` returns and
+ * the two the jittered point offset is built from.
+ *
+ * The binary draws THREE numbers per cell off the same word, as `wangHash(w)`,
+ * `wangHash(w + 1)` and `wangHash(w + 2)` - the first two are the point's x and
+ * y offset within the cell, and the third is the id. (The compiler folds the
+ * `+1` / `+2` into the hash's first addend, which is why `0x7ed56d17` and
+ * `0x7ed57d18` appear in the disassembly alongside `0x7ed55d16`.) So the id is
+ * `+ 2`, and using `+ 0` would silently hand back the x offset.
+ *
+ * The conversion is `(double)u32 * 2^-32` narrowed to f32, exactly as the binary
+ * does it (`ucvtf d0, w8` / `fmul` by `0x3df0000000000000` / `fcvt s14, d0`).
+ * Doing the multiply in f32 would round twice.
+ */
 export function cellRandom(
   seed0: number,
   seed1: number,
