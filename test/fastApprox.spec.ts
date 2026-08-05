@@ -138,6 +138,19 @@ describe("fastPow reproduces the game's `^` exactly", () => {
    * imported, because it no longer exists in `src/`. If it ever starts passing,
    * either the fixture has drifted onto non-discriminating positions or the
    * per-operation rounding has been undone.
+   *
+   * **It runs on both fastapprox series, and supplies the CORRECT exponent in
+   * each.** That separation is the point: with `f32(1/3)` handed to it, the only
+   * thing left for the `1/3` series to reject is the rounding, so this guard
+   * cannot be satisfied by the exponent fix that landed alongside it. The two
+   * failure modes are pinned independently. Measured margins: the old
+   * implementation misses **71 of 123** on `2.5` and **50 of 123** on `1/3`.
+   *
+   * **`0.5` is deliberately excluded, and not by oversight.** The game computes
+   * that series with an exact `sqrt`, so *every* fastapprox implementation fails
+   * it - old and new alike. A guard there would pass regardless of what the
+   * rounding did, which is exactly the kind of assertion that looks like
+   * coverage and proves nothing.
    */
   it("rejects the pre-9b49ebb single-rounding implementation", () => {
     const i32 = new Int32Array(1);
@@ -166,15 +179,22 @@ describe("fastPow reproduces the game's `^` exactly", () => {
     };
     const oldPow = (x: number, p: number): number => oldPow2(f32(p * oldLog2(x)));
 
-    const { values } = seriesFor("2.5");
-    let wrong = 0;
-    for (const [i, x] of XS.entries()) {
-      if (f32(oldPow(x, 2.5)) !== f32(values[i])) wrong++;
+    // Each fastapprox series, with the exponent the game actually uses, so the
+    // only thing under test here is the rounding.
+    for (const [exponent, p] of [
+      ["2.5", 2.5],
+      ["1/3", f32(1 / 3)],
+    ] as const) {
+      const { values } = seriesFor(exponent);
+      let wrong = 0;
+      for (const [i, x] of XS.entries()) {
+        if (f32(oldPow(x, p)) !== f32(values[i])) wrong++;
+      }
+      expect(
+        wrong,
+        `x ^ ${exponent}: the old single-rounding fastapprox should disagree with the game at many positions`,
+      ).toBeGreaterThan(10);
     }
-    expect(
-      wrong,
-      "the old single-rounding fastapprox should disagree with the game at many positions",
-    ).toBeGreaterThan(10);
   });
 
   /**
