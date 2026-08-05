@@ -109,30 +109,24 @@ describe("the restrictions are enforced rather than papered over", () => {
   });
 
   /**
-   * The jitter guard MOVED in R3; it did not go away.
+   * The jitter guard is GONE, and that is the end of a two-step.
    *
-   * `makeVoronoi` used to throw for any non-zero jitter. `cellId`, `spotNoise`
-   * and `facetNoise` are now validated bit-exact at jitter 0.6 / 0.8 / 1.0
-   * (36 series x 175 positions, all exact), so the field-wide guard would now be
-   * refusing configurations that are known good.
-   *
-   * `pyramidNoise` is the exception and keeps a guard of its own - see
-   * {@link makeVoronoi}'s `pyramidNoise`. Its jitter-0 formula is the distance to
-   * the nearest edge of a UNIT SQUARE, which is simply not what a jittered cell
-   * looks like, and it scores **0 of 175** against the game at every jitter and
-   * every distance type. Leaving it un-guarded would hand back a number that is
-   * wrong by up to half the cell.
+   * `makeVoronoi` used to throw for any non-zero jitter; R3 moved that guard
+   * onto `pyramidNoise` alone, because `cellId`, `spotNoise` and `facetNoise`
+   * were validated bit-exact at jitter 0.6 / 0.8 / 1.0 while the pyramid's
+   * jitter-0 formula scored 0 of 175 there. Task 4b derived the real algorithm
+   * from the disassembly, so all four ops are now exact at every captured
+   * jitter and nothing is refused but `minkowski3`.
    */
-  it("makeVoronoi accepts a jittered field, but pyramidNoise alone still refuses", () => {
+  it("every op works on a jittered field now, pyramidNoise included", () => {
     const jittered = makeVoronoi({ ...base, jitter: 0.6, distanceType: "euclidean" });
     expect(() => jittered.spotNoise(10, 10)).not.toThrow();
     expect(() => jittered.facetNoise(10, 10)).not.toThrow();
     expect(() => jittered.cellId(10, 10)).not.toThrow();
-    expect(() => jittered.pyramidNoise(10, 10)).toThrow(/jitter 0/);
-    // ...and it is still available at jitter 0, where it IS validated.
+    expect(() => jittered.pyramidNoise(10, 10)).not.toThrow();
     expect(() =>
-      makeVoronoi({ ...base, distanceType: "euclidean" }).pyramidNoise(10, 10),
-    ).not.toThrow();
+      makeVoronoi({ ...base, jitter: 1, distanceType: "minkowski3" }).pyramidNoise(10, 10),
+    ).toThrow(/Minkowski3 distance is not supported/);
   });
 });
 
@@ -468,29 +462,28 @@ describe("the jittered field matches the game exactly", () => {
   });
 
   /**
-   * **R3 finding, pinned so it cannot be forgotten or silently "fixed".**
+   * **Task 4b: the nine jittered pyramid series, exact at f32.**
    *
-   * `voronoi_pyramid_noise`'s jitter-0 formula is the distance to the nearest
-   * edge of the UNIT SQUARE. That is what a Voronoi cell is only when every
-   * point sits at its centre; with the points scattered the cells are general
-   * convex polygons and the square is not even an approximation. Measured
-   * against the game it matches ZERO of 175 positions at every one of the nine
-   * captured jitter x distance_type combinations, with errors up to about half a
-   * cell.
+   * These are the series Task 4 measured at **0 of 175** under the jitter-0
+   * formula (the distance to the nearest edge of the unit square), with errors
+   * up to about half a cell. The port now derives from the disassembly - the
+   * minimum over the neighbourhood of the Euclidean distance to each pair's
+   * bisector - and matches all 175 positions on every one.
    *
-   * This is exactly the hazard the jitter-0 rung was warned about: that
-   * configuration is degenerate, several different algorithms collapse onto the
-   * same numbers there, and reproducing it exactly says nothing about jitter > 0.
-   * Three of the four ops came through unchanged. This one did not.
-   *
-   * The test asserts the port REFUSES rather than that it is wrong by some
-   * amount - a tolerance here would be an invitation to widen it.
+   * The three jitter-0 pyramid series in the block above still pass unchanged,
+   * which is a free regression check: that fixture was captured independently
+   * and a formula right here and wrong there would not be the answer.
    */
-  it("pyramidNoise is refused at jitter > 0, because its jitter-0 formula is wrong there", () => {
+  it("covers all three jitters x three distance types for pyramid noise", () => {
     const pyramidKeys = Object.keys(pf.ops).filter((k) => k.startsWith("voronoi_pyramid_noise"));
     expect(pyramidKeys).toHaveLength(3 * 3);
-    for (const key of pyramidKeys) {
-      const [, distanceType, jitter] = key.split(":");
+    expect(pyramidKeys.some((k) => k.includes("minkowski3"))).toBe(false);
+  });
+
+  for (const key of Object.keys(pf.ops)) {
+    if (!key.startsWith("voronoi_pyramid_noise")) continue;
+    const [, distanceType, jitter] = key.split(":");
+    it(`voronoi_pyramid_noise / ${distanceType} / jitter ${jitter}`, () => {
       const v = makeVoronoi({
         seed0: pf.seed,
         seed1: pf.seed1,
@@ -498,7 +491,12 @@ describe("the jittered field matches the game exactly", () => {
         jitter: Number(jitter),
         distanceType: distanceType as VoronoiDistanceType,
       });
-      expect(() => v.pyramidNoise(pf.opPositions[0].x, pf.opPositions[0].y)).toThrow(/jitter 0/);
-    }
-  });
+      const expected = pf.ops[key];
+      pf.opPositions.forEach((p, i) => {
+        expect(f32(v.pyramidNoise(p.x, p.y)), `at (${String(p.x)}, ${String(p.y)})`).toBe(
+          f32(expected[i]),
+        );
+      });
+    });
+  }
 });

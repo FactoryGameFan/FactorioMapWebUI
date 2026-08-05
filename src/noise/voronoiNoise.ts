@@ -1,6 +1,6 @@
 /**
- * Factorio's `voronoi_*` noise primitives, for any `jitter` in `[0, 1]` -
- * `voronoi_pyramid_noise` excepted, which is still jitter 0 only (see below).
+ * Factorio's `voronoi_*` noise primitives - all four ops, for any `jitter` in
+ * `[0, 1]`.
  *
  * Everything here is validated bit-exact at f32 against the real 2.1.12 binary:
  * `oracle-voronoi-jitter0.seed123456.json` (15 series x 175 positions at jitter
@@ -17,9 +17,10 @@
  * - the sample-to-point delta has to be rebased on the sample's own cell (the
  *   best absolute form is off by exactly one ulp on 466 of 4200 samples - see
  *   `deltaTo` in {@link makeVoronoi} for the scores of each variant), and
- * - `voronoi_pyramid_noise`'s jitter-0 formula is the unit-square edge distance
- *   and is simply wrong once the cells are not squares - 0 of 175 at every
- *   jitter x distance_type captured. It throws rather than approximating.
+ * - `voronoi_pyramid_noise`'s jitter-0 formula was the unit-square edge distance,
+ *   which is simply wrong once the cells are not squares - 0 of 175 at every
+ *   jitter x distance_type captured. It was replaced wholesale by a reading of
+ *   `runInternal<0..2>`; see `pyramid` in {@link makeVoronoi}.
  *
  * Three things about this file are measurements rather than readings of the docs,
  * and each would be easy to get plausibly wrong:
@@ -37,8 +38,10 @@
  *    An exact cube root scores 25/175. This costs ~1e-5 relative accuracy, which
  *    is a deliberate property of the game and not an approximation introduced here.
  * 3. **`voronoi_pyramid_noise` differs per distance type, and chebyshev is the odd
- *    one out** - see {@link makeVoronoi}. It is also the one op x distance_type
- *    pair the game refuses outright.
+ *    one out** - by one hardcoded `0.75` where an isometry wants `1/sqrt(2)`; see
+ *    {@link CHEBYSHEV_FRAME}. It is also the one op whose answer depends on the
+ *    per-distance-type search range ({@link pointsSearchRange}), and the one op x
+ *    distance_type pair the game refuses outright.
  *
  * Nothing in this file is fitted on the degenerate configuration. The per-cell
  * RNG ({@link cellRandom}) and the point offset ({@link pointForCell}) are both
@@ -294,8 +297,160 @@ export interface Voronoi {
  * nearest two are always in the 3x3 neighbourhood. Two rings is a deliberate
  * superset - it is what both the jitter-0 and the jittered fits were measured
  * over, and it costs 25 distance evaluations instead of 9.
+ *
+ * **`pyramidNoise` may NOT use this**; see {@link pointsSearchRange}. It is a
+ * minimum over the neighbours found, so widening the search can only lower it.
  */
 const SEARCH_RING = 2;
+
+/**
+ * The game's own `VoronoiNoise::getPointsSearchRange()`, which is **per distance
+ * type** and which `pyramidNoise` is sensitive to.
+ *
+ * Read out of `0x101774fd4` in the 2.1.12 arm64 binary: a jump table at
+ * `0x102d00a88` holding `[13, 0, 3, 8]` indexed by `DistanceType`, based at
+ * `0x101775008`. Entry 0 (chebyshev) branches straight past the compare to the
+ * epilogue with `w0` still holding the `mov w0, #1` from before the table, so
+ * chebyshev is **pinned at 1**; the other three fall into
+ * `fcmp jitter, <threshold>` / `csinc w0, #2, wzr, gt`, i.e. `> threshold ? 2 : 1`.
+ * The thresholds are the immediates `#0.5`, `0x3f28f5c3` (= `f32(0.66)`) and
+ * `#0.75`. The identical sequence is inlined at the top of every `runInternal`
+ * (its own table at `0x102d00a74`), and both the generated point region and the
+ * `[-range, +range]` loop bounds use the result.
+ *
+ * `cellId`, `spotNoise` and `facetNoise` do **not** consult this and are right
+ * not to: `d1` and `d2` cannot change when the search widens (a ring-2 point is
+ * always more than a grid unit away on one axis), and the fixed
+ * {@link SEARCH_RING} of 2 they use scores 4200/4200 on those three ops across
+ * all three captured jitters, including the configurations where the game
+ * itself searched only one ring.
+ */
+function pointsSearchRange(dt: VoronoiDistanceType, jitter: number): 1 | 2 {
+  const j = f32(jitter);
+  switch (dt) {
+    case "chebyshev":
+      return 1;
+    case "manhattan":
+      return j > 0.5 ? 2 : 1;
+    case "euclidean":
+      return j > f32(0.66) ? 2 : 1;
+    case "minkowski3":
+      return j > 0.75 ? 2 : 1;
+  }
+}
+
+/** A point in the sample's grid-unit frame, as the binary's `Vector2f` pairs. */
+type Vec2 = readonly [number, number];
+
+/**
+ * The Euclidean distance from `s` to the **L1 bisector** of `a` and `b` - the
+ * whole of `NoiseOperations::VoronoiNoise::computePyramidNoiseManhattan`
+ * (`0x1017758b8`), transcribed instruction for instruction.
+ *
+ * The name is about which metric's *bisector* is built, not which metric the
+ * answer is in: the returned number is a plain `fsqrt` of a squared Euclidean
+ * distance. Under L1 the set of points equidistant from `a` and `b` is a
+ * polyline - a 45-degree segment flanked by two axis-parallel rays - and the
+ * routine builds all three pieces and takes the nearest.
+ *
+ * Reading the layout: the binary picks a MAJOR axis (the one with the larger
+ * separation, x winning ties) with `cset w8, eq` / `cset w9, ne` and then
+ * addresses every vector through `bfi x, w8/w9, #2, #1`. `w9` is the major
+ * index and `w8` the minor, so this is written as `maj` / `mnr` index math
+ * rather than as x/y, which is what makes the two axes provably symmetric.
+ *
+ * - `p1` and `p2` are the ends of the diagonal segment: each is `a` (resp. `b`)
+ *   with its major component replaced by `mid[maj] +/- half the minor
+ *   separation`. Checked against the closed form: for `a = (0,0)`,
+ *   `b = (dx, dy)` with `dx > |dy| > 0`, the L1 bisector is
+ *   `x = (dx + dy)/2 - y` over `y` in `[0, dy]`, whose ends are exactly these.
+ * - `q` is the clamped foot on that segment, `r` and `t` the clamped feet on the
+ *   two rays, which run along the MINOR axis in direction `sgn`.
+ *
+ * Two f32 details that a tidier rewrite would lose:
+ *
+ * - the clamps are `fmaxnm`/`fminnm`, which return the non-NaN operand. A
+ *   degenerate segment gives `0/0 = NaN` for `t`, and `fmaxnm(NaN, 0)` is `0` -
+ *   so the NaN checks here are the binary's behaviour, not defensive padding.
+ * - `p1[mnr]` is `a[mnr]` and `p2[mnr]` is `b[mnr]` by construction, but the
+ *   binary re-loads them from the `p` copies, so the ray parameters are formed
+ *   against those and not against `a`/`b`.
+ */
+function bisectorDistanceL1(a: Vec2, b: Vec2, s: Vec2): number {
+  const mid: [number, number] = [f32(f32(a[0] + b[0]) * 0.5), f32(f32(a[1] + b[1]) * 0.5)];
+  const hi: [number, number] = [Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+  const sepX = f32(Math.min(a[0], b[0]) - hi[0]);
+  const sepY = f32(Math.min(a[1], b[1]) - hi[1]);
+  // `fcsel s1, s0, s1, gt` then `cset w8, eq`: x is major on a tie.
+  const maj = f32(sepY * sepY) > f32(sepX * sepX) ? 1 : 0;
+  const mnr = 1 - maj;
+
+  // `fcmp s2, s3` compares b[maj] against a[maj], and its flags drive BOTH the
+  // sign chosen for p1 and (still live, 44 bytes later) the one for p2.
+  const rising = b[maj] > a[maj];
+  const h1 = f32(Math.abs(f32(a[mnr] - mid[mnr])));
+  const h2 = f32(Math.abs(f32(b[mnr] - mid[mnr])));
+  const p1: [number, number] = [a[0], a[1]];
+  p1[maj] = f32(mid[maj] + (rising ? h1 : -h1));
+  const p2: [number, number] = [b[0], b[1]];
+  p2[maj] = f32(mid[maj] + (rising ? -h2 : h2));
+
+  // `fcsel s6, 1.0, -1.0, eq` on `a[mnr] == max(a[mnr], b[mnr])`.
+  const sgn = a[mnr] === hi[mnr] ? 1 : -1;
+  const ray: [number, number] = [0, 0];
+  ray[mnr] = sgn;
+
+  const dx = f32(p2[0] - p1[0]);
+  const dy = f32(p2[1] - p1[1]);
+  const dot = f32(f32(dx * f32(s[0] - p1[0])) + f32(dy * f32(s[1] - p1[1])));
+  const len2 = f32(f32(dx * dx) + f32(dy * dy));
+  const raw = f32(dot / len2);
+  const t = Number.isNaN(raw) ? 0 : f32(Math.min(Math.max(raw, 0), 1));
+  const q: Vec2 = [f32(p1[0] + f32(dx * t)), f32(p1[1] + f32(dy * t))];
+
+  const uRaw = f32(sgn * f32(s[mnr] - p1[mnr]));
+  const u = Number.isNaN(uRaw) ? 0 : Math.max(uRaw, 0);
+  const r: Vec2 = [f32(p1[0] + f32(ray[0] * u)), f32(p1[1] + f32(ray[1] * u))];
+
+  const vRaw = f32(-f32(sgn * f32(s[mnr] - p2[mnr])));
+  const v = Number.isNaN(vRaw) ? 0 : Math.max(vRaw, 0);
+  const w: Vec2 = [f32(p2[0] - f32(ray[0] * v)), f32(p2[1] - f32(ray[1] * v))];
+
+  const sq = (p: Vec2): number =>
+    f32(f32(f32(p[0] - s[0]) * f32(p[0] - s[0])) + f32(f32(p[1] - s[1]) * f32(p[1] - s[1])));
+  const qd = sq(q);
+  const rays = sq(r) < sq(w) ? sq(r) : sq(w);
+  return f32(Math.sqrt(qd < rays ? qd : rays));
+}
+
+/**
+ * The 45-degree map `runInternal<0>` puts chebyshev through before handing the
+ * pair to {@link bisectorDistanceL1} - **and the constant is `0.75`, not `0.5`.**
+ *
+ * L-infinity becomes L1 under a 45-degree rotation, so mapping the points this
+ * way and then building an L1 bisector is the right construction, and the
+ * bisector itself does not care what `k` is - the matrix `[[k, k], [-k, k]]` is
+ * `k * sqrt(2)` times a rotation for any `k`, and scaling both points scales the
+ * bisector with them. What `k` does control is the Euclidean distance the
+ * routine then reports: it comes back multiplied by `k * sqrt(2)`. The isometric
+ * choice is therefore `k = 1/sqrt(2) = 0.70710678`.
+ *
+ * The game uses `fmov s16, #0.75000000` (`0x101772864`), and
+ * `0.75 * sqrt(2) = 1.06066... = sqrt(9/8)`, so every chebyshev pyramid value is
+ * `sqrt(9/8)` times the true distance to the cell boundary - 6.07% too large.
+ *
+ * **That is the whole explanation of chebyshev's `sqrt(9/8)` factor**, which
+ * Task 2 measured at jitter 0 and attributed to a clamp biting at a segment
+ * endpoint. The number was right and the mechanism was not: it is one hardcoded
+ * immediate, it applies at every jitter, and nothing about it is geometry.
+ */
+const CHEBYSHEV_FRAME = 0.75;
+
+function toChebyshevFrame(x: number, y: number): Vec2 {
+  const kx = f32(x * CHEBYSHEV_FRAME);
+  const ky = f32(y * CHEBYSHEV_FRAME);
+  return [f32(kx + ky), f32(ky - kx)];
+}
 
 /**
  * Build the four ops for a voronoi field, at any `jitter` in `[0, 1]`.
@@ -406,14 +561,94 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
   };
 
   /**
-   * Distance from the sample to the nearest edge of its own cell, in grid units.
-   * At jitter 0 every cell is the unit square, so this is the smallest of the
-   * four in-cell fractional offsets.
+   * The pyramid value: the distance from the sample to the nearest cell
+   * boundary, as the **minimum over every neighbour except the nearest** of the
+   * distance to that pair's bisector.
+   *
+   * This is a second loop in the binary, after the `d1`/`d2` loop, seeded with
+   * `FLT_MAX` (`mov w8, #0x7f7fffff`) and reduced with `fcsel ... mi`. Skipping
+   * the nearest point is not an optimisation - a zero-separation pair has a
+   * degenerate bisector and would pin the minimum at 0 everywhere.
+   *
+   * The two shapes:
+   *
+   * - **euclidean** (`runInternal<2>`, `0x101773d64`) has a closed form, because
+   *   a Euclidean bisector is a straight line: `dot(midpoint, normalize(b - a))`
+   *   with both points taken relative to the sample. The zero-length guard on
+   *   the normalise is the binary's (`fcmp #0.0` on both components before the
+   *   `fdiv`s), not padding.
+   * - **manhattan and chebyshev** inline {@link bisectorDistanceL1}, chebyshev
+   *   after {@link toChebyshevFrame}.
+   *
+   * One thing here looks like it must be a mistake and is not: manhattan and
+   * chebyshev pass the points as `sampleFrac - delta`, the point **reflected
+   * through the sample**, with the sample itself as the third argument
+   * (`fsub s24, s24, s22` then `fsub s24, s22, s24`, `0x1017732bc`). A point
+   * reflection about `s` is an isometry fixing `s`, so the distance is
+   * mathematically unchanged - but it is not unchanged at f32, so it is
+   * reproduced literally rather than simplified to the euclidean path's
+   * sample-relative form.
    */
-  const edgeDistance = (ux: number, uy: number): number => {
-    const a = f32(ux - Math.floor(ux));
-    const b = f32(uy - Math.floor(uy));
-    return f32(Math.min(a, f32(1 - a), b, f32(1 - b)));
+  const pyramid = (ux: number, uy: number): number => {
+    const ring = pointsSearchRange(distanceType, p.jitter);
+    const cx = Math.floor(ux);
+    const cy = Math.floor(uy);
+    const sfx = f32(ux - cx);
+    const sfy = f32(uy - cy);
+    const deltaAt = (a: number, b: number): Vec2 => {
+      const o = pointOffsetInCell(p.seed0, p.seed1, p.jitter, cx + a, cy + b);
+      return [deltaTo(sfx, a, o.x), deltaTo(sfy, b, o.y)];
+    };
+
+    // The nearest point, over the game's own search range rather than
+    // SEARCH_RING - the two always agree on WHICH point is nearest, but the
+    // range also bounds the neighbour loop below, where it changes the answer.
+    let d1 = Infinity;
+    let na = 0;
+    let nb = 0;
+    for (let a = -ring; a <= ring; a++) {
+      for (let b = -ring; b <= ring; b++) {
+        const [dx, dy] = deltaAt(a, b);
+        const d = distanceOf(distanceType, dx, dy);
+        if (d < d1) {
+          d1 = d;
+          na = a;
+          nb = b;
+        }
+      }
+    }
+    const near = deltaAt(na, nb);
+
+    const reflect = (d: Vec2): Vec2 => [f32(sfx - d[0]), f32(sfy - d[1])];
+    const chebyshev = distanceType === "chebyshev";
+    const anchor = chebyshev ? toChebyshevFrame(...reflect(near)) : reflect(near);
+    const sample: Vec2 = chebyshev ? toChebyshevFrame(sfx, sfy) : [sfx, sfy];
+
+    let best = Infinity;
+    for (let a = -ring; a <= ring; a++) {
+      for (let b = -ring; b <= ring; b++) {
+        if (a === na && b === nb) continue;
+        const far = deltaAt(a, b);
+        let v: number;
+        if (distanceType === "euclidean") {
+          let nx = f32(far[0] - near[0]);
+          let ny = f32(far[1] - near[1]);
+          if (nx !== 0 || ny !== 0) {
+            const len = f32(Math.sqrt(f32(f32(nx * nx) + f32(ny * ny))));
+            nx = f32(nx / len);
+            ny = f32(ny / len);
+          }
+          const mx = f32(f32(near[0] + far[0]) * 0.5);
+          const my = f32(f32(near[1] + far[1]) * 0.5);
+          v = f32(f32(my * ny) + f32(mx * nx));
+        } else {
+          const other = chebyshev ? toChebyshevFrame(...reflect(far)) : reflect(far);
+          v = bisectorDistanceL1(anchor, other, sample);
+        }
+        if (v < best) best = v;
+      }
+    }
+    return best;
   };
 
   return {
@@ -441,42 +676,26 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
      * "Like facet noise but the gradient is uniform and represents the distance
      * to the closest edge."
      *
-     * **This genuinely differs per distance type, and it is CHEBYSHEV that is the
-     * odd one out** - not manhattan, despite `computePyramidNoiseManhattan` being
-     * the only per-type symbol in the binary. Manhattan and euclidean both return
-     * the plain edge distance; chebyshev returns `sqrt(9/8)` times it, 6.07%
-     * more.
+     * Which is exactly what it is: the Euclidean distance from the sample to the
+     * nearest **cell boundary**, taken as the minimum over every neighbouring
+     * point of the distance to that pair's bisector under `distance_type`. The
+     * whole of it is {@link pyramid}, read out of `runInternal<0..2>` in the
+     * 2.1.12 binary rather than fitted - which matters, because the jitter-0
+     * configuration this used to be fitted on is degenerate and the fitted
+     * formula (the distance to the nearest edge of the UNIT SQUARE) scored **0
+     * of 175** at every one of the nine captured jitter x distance_type
+     * combinations, with errors up to about half a cell.
      *
-     * That factor is an artifact of the game's construction rather than geometry.
-     * Under the Chebyshev metric with points at cell centres the Voronoi cells are
-     * exactly the grid squares, so the true distance to the nearest edge is the
-     * edge distance on the nose. The binary computes the pyramid as a
-     * **point-to-segment** distance - project onto the edge, clamp the parameter
-     * to [0, 1], then `fsqrt` the Euclidean distance to the result - and for
-     * chebyshev the clamp bites, so the distance is taken to a segment ENDPOINT.
-     * The output shows it: the values are exactly the hypotenuse of `edge` and
-     * `edge / (2 * sqrt(2))`, which is where `sqrt(1 + 1/8)` comes from.
+     * **Chebyshev really is the odd one out, and it is one immediate.** Task 2
+     * measured `sqrt(9/8) * edge` at jitter 0 and put it down to a clamp biting
+     * at a segment endpoint. The number was right; the mechanism was not. The
+     * `sqrt(9/8)` is `0.75 * sqrt(2)`, and the `0.75` is a literal `fmov s16,
+     * #0.75000000` in the 45-degree map chebyshev goes through - see
+     * {@link CHEBYSHEV_FRAME}. It applies at every jitter, and there is no
+     * geometry in it at all.
      *
-     * It is written as a square root and not as a multiply by 1.06066 because
-     * that distinction is measurable: multiplying by the f32 nearest constant
-     * matches only 102 of 175 sampled positions, while the square root matches
-     * all 175.
-     *
-     * **These formulas are fitted on a DEGENERATE configuration and must not be
-     * extrapolated.** At jitter 0 every cell is a congruent unit square, so `d1`,
-     * `d2`, the cell edges and `edge` are all rigid functions of the in-cell
-     * fraction, and many different underlying algorithms collapse to identical
-     * numbers. Reproducing jitter 0 exactly is therefore no evidence at all about
-     * jitter > 0; the real algorithm is the clamped point-to-segment distance
-     * described above. **That prediction was then confirmed** - see the
-     * `jitter !== 0` throw in the body below, which is what keeps this from being
-     * reused where it has not been validated.
-     *
-     * The guard used to live on {@link makeVoronoi} and cover the whole field.
-     * Moving it here was the point of R3: `cellId`, `spotNoise` and `facetNoise`
-     * are now validated bit-exact at jitter 0.6 / 0.8 / 1.0, so a field-wide
-     * throw would refuse configurations that are known good. This op alone is
-     * still unvalidated there.
+     * `minkowski3` still throws, because the game's own expression compiler
+     * refuses that pair. Its `runInternal<3>` has no pyramid path.
      */
     pyramidNoise: (x, y) => {
       if (distanceType === "minkowski3") {
@@ -486,56 +705,7 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
             'Minkowski3 distance is not supported".',
         );
       }
-      // **R3 finding: this formula is WRONG for jitter > 0, and measurably so.**
-      // `edgeDistance` is the distance to the nearest edge of the UNIT SQUARE,
-      // which is what a cell is only when every point sits at its centre. With
-      // the points scattered the cells are general convex polygons and the
-      // square is not even an approximation: scored against the game it is
-      // **0 of 175** at every one of the nine jitter x distance_type
-      // combinations captured, with errors up to 0.49 in grid units - about half
-      // a cell.
-      //
-      // That is exactly the outcome this file's header warned about: the
-      // jitter-0 rung is degenerate, several different algorithms collapse onto
-      // the same numbers there, and reproducing it exactly is no evidence at all
-      // about jitter > 0. The other three ops came through unchanged; this one
-      // did not, and it is a real finding rather than a rounding problem.
-      //
-      // It throws instead of returning the square's answer because a
-      // half-cell-wrong number that still looks like a plausible pyramid is
-      // precisely the failure mode the whole exercise exists to avoid.
-      //
-      // **FULGORA NEEDS THIS. It is deferred, not optional.** An earlier version
-      // of this comment claimed Fulgora did not need it. That was wrong, and it
-      // was wrong about the one thing the next implementer must not get wrong.
-      // Checked against the pinned 2.1.12 `factorio-data`,
-      // `space-age/prototypes/planet/planet-fulgora-map-gen.lua` has TWO
-      // JITTERED pyramid call sites:
-      //
-      // - `fulgora_pyramids` (:156) - `distance_type = 'manhattan'`,
-      //   `jitter = fulgora_jitter`, and `fulgora_jitter = 0.6` (:140). It feeds
-      //   `fulgora_sprawl_pyramids` (:214) and `fulgora_vault_pyramids` (:221),
-      //   both inside the V1 elevation chain, and `fulgora_pyramids_banding`
-      //   (:432).
-      // - `fulgora_road_pyramids` (:422) - `distance_type = 'chebyshev'`,
-      //   `grid_size = fulgora_grid / 3`, `jitter = fulgora_road_jitter`, and
-      //   `fulgora_road_jitter = 1` (:406).
-      //
-      // So this is a hard blocker for Fulgora elevation, at BOTH distance types
-      // the guard refuses and at both extremes of the jitter range. It needs the
-      // real clamped point-to-segment distance over the cell's actual polygon,
-      // which is its own rung of work - deferred, with a loud guard, rather than
-      // approximated.
-      if (p.jitter !== 0) {
-        throw new Error(
-          `voronoi_pyramid_noise is validated at jitter 0 only (got ${String(p.jitter)}); ` +
-            "its unit-square edge distance scores 0/175 against the game at every " +
-            "jitter > 0 captured - see the comment here before using it.",
-        );
-      }
-      const e = edgeDistance(...toGrid(x, y));
-      if (distanceType !== "chebyshev") return e;
-      return f32(Math.sqrt(f32(1.125 * f32(e * e))));
+      return pyramid(...toGrid(x, y));
     },
   };
 }
