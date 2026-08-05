@@ -44,7 +44,10 @@ function runServer(env) {
       if (child.exitCode === null) child.kill("SIGKILL");
       resolve(value);
     };
-    const timer = setTimeout(() => reject(new Error(`server never settled; output was: ${out}`)), 10_000);
+    const timer = setTimeout(
+      () => reject(new Error(`server never settled; output was: ${out}`)),
+      10_000,
+    );
     const onData = (b) => {
       out += String(b);
       if (out.includes("listening") || out.includes("EADDRINUSE")) {
