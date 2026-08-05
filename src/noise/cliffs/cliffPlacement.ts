@@ -165,6 +165,14 @@ export interface CliffBands {
    * default; `test/cliffOreCascade.spec.ts` is what decides it.
    */
   readonly rejectionCascades?: boolean;
+  /**
+   * EXPERIMENTAL (#84): permute the order `fixImpossibleCellsSweep` tries edges
+   * in. **Not the game's rule** - the engine is `L, T, R, B`, which is the
+   * default - and provided only so a spec can test whether the WEST-edge
+   * concentration of the residual is caused by that order. See
+   * `SWEEP_EDGE_ORDER_LTRB`.
+   */
+  readonly sweepEdgeOrder?: readonly number[];
 }
 
 /** Cells per chunk axis: a 32-tile chunk over the 4-tile placement grid. */
@@ -208,7 +216,23 @@ function cellCode(l: number, r: number, t: number, b: number): number {
  * ported. An earlier note in cliffs-NOTES.md described this pass as zeroing the
  * whole chunk border; it does not, and it does not run at all here.
  */
-export function fixImpossibleCellsSweep(v: Int8Array, h: Int8Array, w: number, hh: number): void {
+/**
+ * The order the sweep tries edges in, as indices `0 = L (west)`, `1 = T
+ * (north)`, `2 = R (east)`, `3 = B (south)`. The engine's order is `L, T, R, B`
+ * and that is the default; **a permutation is not the game's rule** and exists
+ * only so `test/cliffSweepOrderLever.spec.ts` can ask whether the west-edge
+ * concentration of #84's residual MOVES with it. A residual that relocates when
+ * the order is permuted is caused by the order; one that does not is not.
+ */
+export const SWEEP_EDGE_ORDER_LTRB: readonly number[] = [0, 1, 2, 3];
+
+export function fixImpossibleCellsSweep(
+  v: Int8Array,
+  h: Int8Array,
+  w: number,
+  hh: number,
+  order: readonly number[] = SWEEP_EDGE_ORDER_LTRB,
+): void {
   const vIndex = (cx: number, cy: number): number => cy * (w + 1) + cx;
   const hIndex = (cx: number, cy: number): number => cy * w + cx;
 
@@ -261,11 +285,22 @@ export function fixImpossibleCellsSweep(v: Int8Array, h: Int8Array, w: number, h
           // the 20 placing codes has one or two crossings, so a count of 3 or 4
           // can never be legal. Checking the table directly is equivalent.
           if (code === 0 || isCliffPlaced(code)) break;
-          if (v[li] !== 0 && cx !== 0) v[li] = 0;
-          else if (h[ti] !== 0 && cy !== 0) h[ti] = 0;
-          else if (v[ri] !== 0 && cx < w - 1) v[ri] = 0;
-          else if (h[bi] !== 0 && cy < hh - 1) h[bi] = 0;
-          else {
+          // `order` is `L, T, R, B` unless a spec is permuting it - see the
+          // parameter's own note. The guards are unchanged and stay bound to
+          // their own edge: an edge is clearable only when it is not on the
+          // chunk's outer boundary, which is what makes the CHOICE ORDER
+          // observable at all (a west-edge cell is denied its first choice).
+          let cleared = false;
+          for (const e of order) {
+            if (e === 0 && v[li] !== 0 && cx !== 0) v[li] = 0;
+            else if (e === 1 && h[ti] !== 0 && cy !== 0) h[ti] = 0;
+            else if (e === 2 && v[ri] !== 0 && cx < w - 1) v[ri] = 0;
+            else if (e === 3 && h[bi] !== 0 && cy < hh - 1) h[bi] = 0;
+            else continue;
+            cleared = true;
+            break;
+          }
+          if (!cleared) {
             stuck = true;
             break;
           }
@@ -514,7 +549,7 @@ export function makeCliffPlacementFromFields(
               }
             }
 
-            fixImpossibleCellsSweep(v, hEdges, n, n);
+            fixImpossibleCellsSweep(v, hEdges, n, n, bands.sweepEdgeOrder);
 
             if (bands.rejectAtCrossingStage === true) {
               // Collect first, then clear: a cell's rejection is decided from

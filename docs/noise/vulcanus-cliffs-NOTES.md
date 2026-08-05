@@ -4456,3 +4456,51 @@ discriminator separating the sweep's edge order from anything else
 west-flavoured - and the ore recall gap independently found all six of its cells
 with the nearest resource to the WEST, so there is more than one possible source
 of a west flavour here.
+
+## The WEST residual is NOT the repair sweep's edge order (2026-08-04, #84)
+
+#150's one lead, tested and refuted. `fixImpossibleCellsSweep` clears the first
+**clearable** edge in the order `L, T, R, B` - west first, north second - and an
+edge is clearable only when it is not on the chunk's outer boundary, so a
+west-edge cell is denied its first choice. That is an asymmetry of exactly the
+observed shape. It is not the cause. Zero capture -
+`test/cliffSweepOrderLever.spec.ts`, via a new `sweepEdgeOrder` lever in
+`cliffPlacement.ts` (default `L, T, R, B`, so shipping behaviour is unchanged -
+all 1574 tests pass on the refactor).
+
+**The discriminator is RELOCATION, not shrinkage.** If the clear order caused the
+concentration, permuting it should move the excess to whichever edge is tried
+first. "Does the error get smaller" would not do - almost any perturbation
+achieves that by accident.
+
+| order | unexplained | on border | W | N | E | S | z(west) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `L, T, R, B` (engine) | 25 | 19 | 9 | 5 | 3 | 2 | **2.60** |
+| `R, B, L, T` | 75 | 24 | 11 | 7 | 4 | 3 | **2.74** |
+| `T, L, B, R` | 46 | 22 | 10 | 5 | 5 | 3 | **2.58** |
+| `B, R, T, L` (west LAST) | 76 | 23 | 11 | 7 | 3 | 3 | **2.91** |
+
+**West is the enriched edge in every arm, and STRONGEST in the arm that tries
+west last.** Refuted.
+
+**And the lever is not inert** - that is the trap this shape of test falls into,
+where a null result means the knob was never connected. Permuting drives the
+unexplained count from 25 to 76, so the sweep's order matters enormously to the
+placement. It simply does not matter to *where* the residual sits.
+
+Scoping note: these arms score the SHIPPED model, so the control is #149's 25
+unexplained / 19 on border, not #150's 23 / 17, which is the cascade model's row.
+West is 9 in both, which is the overlap saying they look at the same cells.
+
+### Where that leaves the west signature
+
+Mechanisms ruled out for the chunk-border residual now number five: the
+orientation-reach rival (#134), cascade double-counting (#143), the cross-chunk
+destroy cascade (#149), `updateConnections` (#150), and the sweep's edge order
+here. The west concentration itself stands at z = 2.6-2.9 across every arm, which
+makes it robust to the one placement lever that could plausibly have produced it.
+
+The remaining west-flavoured observation in this investigation is the ore recall
+gap's six cells, all with their nearest resource to the WEST. Whether the two are
+one phenomenon is untested and is the cheapest next question - if the nine west
+survivors correlate with resource proximity, two open threads collapse into one.
