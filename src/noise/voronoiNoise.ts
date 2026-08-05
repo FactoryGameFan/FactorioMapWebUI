@@ -278,6 +278,18 @@ export interface VoronoiParams {
   readonly gridSize: number;
   readonly jitter: number;
   readonly distanceType: VoronoiDistanceType;
+  /**
+   * Force `voronoi_pyramid_noise`'s neighbour search ring, overriding
+   * {@link pointsSearchRange}. **Nothing that renders a map may set this.**
+   *
+   * It exists so `test/voronoiSearchRange.spec.ts` can plant the WRONG ring and
+   * watch the committed game values reject it. Without a hook the alternative is
+   * a second copy of the pyramid loop inside the spec, which could drift from
+   * this one and would then be testing itself rather than the port - and the
+   * whole point of that spec is that `pointsSearchRange` had no non-vacuous test
+   * at all until it was written.
+   */
+  readonly searchRangeOverride?: 1 | 2;
 }
 
 /** The four ops of one voronoi field, each sampled at a world position in tiles. */
@@ -289,27 +301,47 @@ export interface Voronoi {
 }
 
 /**
- * Two rings of neighbouring cells around the sample's own cell.
+ * Two rings of neighbouring cells around the sample's own cell, for the three
+ * ops that reduce to the two smallest point distances.
  *
- * One ring is provably enough for `jitter <= 1`: the offset
- * `jitter * r + (1 - jitter) * 0.5` with `r` in `[0, 1)` stays inside `[0, 1)`
- * for any jitter in `[0, 1]`, so every point lies within its own cell and the
- * nearest two are always in the 3x3 neighbourhood. Two rings is a deliberate
- * superset - it is what both the jitter-0 and the jittered fits were measured
- * over, and it costs 25 distance evaluations instead of 9.
+ * **A previous version of this comment claimed one ring is "provably enough for
+ * `jitter <= 1`". That is false for three of the four distance types**, and it
+ * is worth knowing why before it gets re-derived. The offset
+ * `jitter * r + (1 - jitter) * 0.5` does keep every point inside its own cell,
+ * so a ring-2 point's delta exceeds 1 grid unit on one axis - but "exceeds 1 on
+ * one axis" only implies "farther than the own cell's point" under **chebyshev**,
+ * where the own cell's point has `max(|dx|,|dy|) < 1` by the same argument. Under
+ * manhattan, euclidean and minkowski3 the own cell's point can be as far as `2`,
+ * `sqrt(2)` and `2^(1/3)`, so a ring-2 point genuinely can win. That is exactly
+ * the asymmetry {@link pointsSearchRange} encodes, and exactly the bug Factorio
+ * fixed in 2.1.7 (forums.factorio.com/130905).
  *
- * `pyramidNoise` uses {@link pointsSearchRange} instead - the game's own,
- * per-distance-type range. Not because the fixture demands it (it does not; see
- * there), but because the pyramid is a MINIMUM over the neighbours found, so
- * this ring's "deliberate superset" argument does not transfer to it.
+ * What justifies the fixed 2 here is measurement, over a 1024x1024-tile sweep at
+ * each distance type x jitter in `{0.6, 0.8, 1}`, comparing this ring against a
+ * ring of 1:
+ *
+ * - **`d1` and `cell_id` never differed**, in any of the 12 configurations. The
+ *   nearest point really is in the 3x3 neighbourhood in practice.
+ * - **`d2` (and so `facetNoise`) DID differ** - manhattan at jitter 0.8 (58 of
+ *   262144 samples) and at jitter 1 (306). The game's own range is 2 at both, so
+ *   this ring agrees with it there; a hardcoded 1 would have been wrong.
+ * - In the configurations where the game searches only ONE ring while this
+ *   searches two - chebyshev at every jitter, and the other three below their
+ *   thresholds - the sweep found **zero** differences in `d1` or `d2`. That is
+ *   measured rather than proved, and chebyshev at jitter 1 is the case with the
+ *   least margin, so it is the one to re-probe if these three ops ever disagree
+ *   with the game.
+ *
+ * `pyramidNoise` uses {@link pointsSearchRange} instead, and for it the ring is
+ * NOT indifferent - it minimises over each pair's bisector, not over the point
+ * distances, and `test/voronoiSearchRange.spec.ts` pins that against the game.
  */
 const SEARCH_RING = 2;
 
 /**
  * The game's own `VoronoiNoise::getPointsSearchRange()`, which is **per distance
- * type**. Read from the binary and correct there - but **inert on every value
- * this repo has captured**, which is stated up front so it is not mistaken for
- * something the fixture endorsed.
+ * type**. Read from the binary, and now confirmed against the game in both
+ * directions by `test/voronoiSearchRange.spec.ts`.
  *
  * Read out of `0x101774fd4` in the 2.1.12 arm64 binary: a jump table at
  * `0x102d00a88` holding `[13, 0, 3, 8]` indexed by `DistanceType`, based at
@@ -322,25 +354,32 @@ const SEARCH_RING = 2;
  * (its own table at `0x102d00a74`), and both the generated point region and the
  * `[-range, +range]` loop bounds use the result.
  *
- * **No branch of this function is exercised by any test, in either direction.**
- * Measured, not assumed: forcing it to return 2 for all four types passes 95/95,
- * and forcing it to return 1 for all four types also passes 95/95 - so all 1575
- * jittered and 525 jitter-0 values are indifferent to it. (The harness is live;
- * the same probe applied to {@link CHEBYSHEV_FRAME} fails 4 series.) A widened
- * search can only LOWER a minimum, and at `jitter <= 1` every point stays inside
- * its own cell, so a ring-2 bisector is never the nearest one - which is why the
- * indifference is geometry rather than luck, and why it would be safe to search
- * the wider ring unconditionally. It is kept because it is what the game does
- * and it was free to transcribe; do not read the green suite as evidence for it.
+ * **It was inert until 2026-08-05, and finding the positions where it is not was
+ * a task of its own.** Forcing it to 2 for all four distance types passed 95/95
+ * voronoi tests, and forcing it to 1 also passed 95/95: all 2100 committed
+ * values were indifferent to it, in both directions. `oracle-voronoi-search-
+ * range.seed123456.json` is the fixture that ends that, and the whole argument
+ * for where to look lives in its capture function and in
+ * `test/voronoiSearchRange.spec.ts`. The short version:
  *
- * `cellId`, `spotNoise` and `facetNoise` do **not** consult this and are right
- * not to: `d1` and `d2` cannot change when the search widens (a ring-2 point is
- * always more than a grid unit away on one axis), and the fixed
- * {@link SEARCH_RING} of 2 they use scores 4200/4200 on those three ops across
- * all three captured jitters, including the configurations where the game
- * itself searched only one ring.
+ * - Only `voronoi_pyramid_noise` can see the ring at all. `spot`/`facet`/
+ *   `cell_id` need a ring-2 point to WIN the argmin; the pyramid only needs one
+ *   to be nearly EQUIDISTANT, because it minimises the distance to each pair's
+ *   bisector, which for euclidean is `(|f|^2 - |n|^2) / (2 |f - n|)`.
+ * - The disagreements are rare - 113 in a 4096x4096-tile sweep for chebyshev at
+ *   jitter 1 - which is why 175-position grids never hit one.
+ * - **The thresholds themselves are NOT behaviourally pinned.** A disagreement
+ *   needs high jitter; sweeps at manhattan 0.5 and euclidean f32(0.66) found
+ *   zero. The fixture bounds manhattan's threshold below 0.7 and euclidean's
+ *   below 0.9, and that is all the game will say. The exact values `0.5` /
+ *   `f32(0.66)` / `0.75` rest on the disassembly plus the weaker table test in
+ *   that spec - which is labelled as weaker there.
+ *
+ * Do not "simplify" this to a constant. Searching two rings unconditionally
+ * changes `voronoi_pyramid_noise` for chebyshev, which is Fulgora's
+ * `fulgora_road_pyramids`.
  */
-function pointsSearchRange(dt: VoronoiDistanceType, jitter: number): 1 | 2 {
+export function pointsSearchRange(dt: VoronoiDistanceType, jitter: number): 1 | 2 {
   const j = f32(jitter);
   switch (dt) {
     case "chebyshev":
@@ -614,7 +653,7 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
    * sample-relative form.
    */
   const pyramid = (ux: number, uy: number): number => {
-    const ring = pointsSearchRange(distanceType, p.jitter);
+    const ring = p.searchRangeOverride ?? pointsSearchRange(distanceType, p.jitter);
     const cx = Math.floor(ux);
     const cy = Math.floor(uy);
     const sfx = f32(ux - cx);

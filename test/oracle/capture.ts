@@ -3019,6 +3019,192 @@ async function captureVoronoiPoints(): Promise<void> {
   );
 }
 
+/**
+ * **The positions where `VoronoiNoise::getPointsSearchRange()` is OBSERVABLE** -
+ * the only fixture in the repo that can tell a 3x3 neighbour search from a 5x5
+ * one.
+ *
+ * The other two voronoi fixtures cannot, and that was measured rather than
+ * assumed: forcing the port's search range to 2 for all four distance types
+ * passes all 95 voronoi tests, and forcing it to 1 also passes all 95. So 2100
+ * committed values are indifferent to a function that Factorio changed the
+ * behaviour of in 2.1.7 (forums.factorio.com/130905 - before that the ops missed
+ * the true nearest point at high jitter). This fixture exists to end that.
+ *
+ * **Only `voronoi_pyramid_noise` can discriminate**, and its second loop is why.
+ * `spot`/`facet`/`cell_id` reduce to the two smallest point distances, and a
+ * ring-2 point is more than a grid unit away on one axis, so it essentially
+ * never displaces them. The pyramid's second loop instead minimises the distance
+ * to the BISECTOR of the nearest point and each other point - and for euclidean
+ * that is `(|f|^2 - |n|^2) / (2 |f - n|)`, which is small whenever `|f| ~= |n|`
+ * however far `f`'s cell index is. A ring-2 point only has to be nearly
+ * equidistant, not nearer, so the pyramid sees the wider ring where nothing else
+ * does.
+ *
+ * The five configurations below were chosen so that BOTH branches of the
+ * function are pinned, in both directions:
+ *
+ * - **chebyshev at jitter 1** is the `1` branch. The jump table pins chebyshev
+ *   at 1 whatever the jitter, and there is a clean proof of why: the own cell's
+ *   point has `max(|dx|,|dy|) < 1` while every ring-2 point has `> 1`, so under
+ *   L-infinity the nearest point is always in the sample's own cell. The pyramid
+ *   still notices the ring, so these positions read the game's ring-1 answer.
+ *   **This is exactly Fulgora's `fulgora_road_pyramids` configuration**
+ *   (chebyshev, `fulgora_road_jitter = 1`).
+ * - **manhattan / euclidean at jitter 1** are the `2` branch.
+ * - **manhattan at 0.7 and euclidean at 0.9** are the LOWEST jitters found to
+ *   discriminate at all, so they are what bounds each threshold from above
+ *   (manhattan's must be below 0.7, euclidean's below 0.9). The thresholds
+ *   themselves - 0.5, f32(0.66), 0.75 - cannot be pinned behaviourally: a
+ *   ring-1/ring-2 disagreement needs high jitter, and a 4096x4096 tile sweep at
+ *   manhattan 0.5 and euclidean 0.66 found zero disagreements. That gap is what
+ *   `test/voronoiSearchRange.spec.ts`'s weaker table test covers.
+ *
+ * Positions are hand-picked from a sweep of the port with the ring forced to 1
+ * and to 2, keeping only samples where the two answers differ by more than 2%
+ * and thinning by a stride so they are not all one cluster. Picking them from
+ * the port is fine and does not beg the question: the port chooses only WHERE to
+ * look, and the game alone says which of the two answers is right.
+ */
+async function captureVoronoiSearchRange(): Promise<void> {
+  const seed = 123456;
+  const gridSize = 64;
+  const seed1 = 1;
+
+  const configs: {
+    distanceType: (typeof VORONOI_DISTANCE_TYPES)[number];
+    jitter: number;
+    expectedRange: 1 | 2;
+    positions: Position[];
+  }[] = [
+    {
+      distanceType: "chebyshev",
+      jitter: 1,
+      expectedRange: 1,
+      positions: [
+        { x: 1727.5, y: -1017.5 },
+        { x: 1726.5, y: -1017.5 },
+        { x: 767.5, y: -508.5 },
+        { x: 512.5, y: 1280.5 },
+        { x: -382.5, y: 1593.5 },
+        { x: -1855.5, y: -1578.5 },
+        { x: -127.5, y: -639.5 },
+        { x: -126.5, y: -637.5 },
+      ],
+    },
+    {
+      distanceType: "manhattan",
+      jitter: 1,
+      expectedRange: 2,
+      positions: [
+        { x: -833.5, y: -1023.5 },
+        { x: -825.5, y: -1022.5 },
+        { x: -818.5, y: -1021.5 },
+        { x: -812.5, y: -1020.5 },
+        { x: -803.5, y: -1019.5 },
+        { x: -825.5, y: -1017.5 },
+        { x: -813.5, y: -1016.5 },
+        { x: -834.5, y: -1012.5 },
+        { x: -819.5, y: -1011.5 },
+        { x: -824.5, y: -1007.5 },
+        { x: -267.5, y: -963.5 },
+      ],
+    },
+    {
+      distanceType: "manhattan",
+      jitter: 0.7,
+      expectedRange: 2,
+      positions: [
+        { x: -256.5, y: -943.5 },
+        { x: -876.5, y: -840.5 },
+        { x: -869.5, y: -838.5 },
+        { x: -881.5, y: -835.5 },
+        { x: -877.5, y: -833.5 },
+        { x: -254.5, y: 172.5 },
+      ],
+    },
+    {
+      distanceType: "euclidean",
+      jitter: 1,
+      expectedRange: 2,
+      positions: [
+        { x: 1471.5, y: -2035.5 },
+        { x: -1207.5, y: -1991.5 },
+        { x: -1212.5, y: -1987.5 },
+        { x: -1139.5, y: -1855.5 },
+        { x: 1090.5, y: -1791.5 },
+        { x: -1280.5, y: -1743.5 },
+        { x: 739.5, y: -1660.5 },
+        { x: -1865.5, y: -1471.5 },
+        { x: 513.5, y: -1416.5 },
+        { x: -1664.5, y: -1382.5 },
+        { x: -198.5, y: -1150.5 },
+      ],
+    },
+    {
+      distanceType: "euclidean",
+      jitter: 0.9,
+      expectedRange: 2,
+      positions: [{ x: 701.5, y: -835.5 }],
+    },
+  ];
+
+  const series: {
+    distanceType: string;
+    jitter: number;
+    expectedRange: 1 | 2;
+    positions: Position[];
+    values: number[];
+  }[] = [];
+
+  for (const c of configs) {
+    for (const pos of c.positions) {
+      assertRepresentable(pos.x);
+      assertRepresentable(pos.y);
+    }
+    const expression = buildVoronoiExpression({
+      op: "voronoi_pyramid_noise",
+      x: "x",
+      y: "y",
+      seed1: String(seed1),
+      gridSize,
+      distanceType: c.distanceType,
+      jitter: c.jitter,
+    });
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const values = await sampleExpression(expression, c.positions, { workDir, seed });
+      series.push({ ...c, values });
+      console.log(`  captured ${c.distanceType} jitter=${String(c.jitter)}`);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via the test/oracle harness. voronoi_pyramid_noise at the " +
+      "positions where the game's own VoronoiNoise::getPointsSearchRange() is OBSERVABLE - i.e. " +
+      "where searching a 3x3 ring of cells and searching a 5x5 ring give different answers. The " +
+      "other two voronoi fixtures are indifferent to that function in both directions (forcing the " +
+      "port to 1, and to 2, each passes all 95 voronoi tests), and Factorio changed this behaviour " +
+      "in 2.1.7 (forums.factorio.com/130905), so without these positions a version skew would be " +
+      "silent. chebyshev jitter 1 pins the table's chebyshev entry at 1 - and is Fulgora's " +
+      "fulgora_road_pyramids configuration; manhattan/euclidean jitter 1 pin the '> threshold ? 2' " +
+      "branch; manhattan 0.7 and euclidean 0.9 are the lowest jitters found to discriminate at all " +
+      "and so bound those thresholds from above. Every coordinate is a multiple of 1/2 a tile and " +
+      "so exact in the 1/256 MapPosition grid. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts voronoi-search-range",
+    seed,
+    seed1,
+    gridSize,
+    series,
+  };
+  const out = join(FIXTURES, "oracle-voronoi-search-range.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(series.length)} series)`);
+}
+
 if (!oracleAvailable()) {
   console.error("No Factorio binary found (set FACTORIO_BIN). Cannot capture fixtures.");
   process.exit(1);
@@ -5762,6 +5948,7 @@ async function captureVulcanusCliffDestroyProbe(): Promise<void> {
   console.log(`wrote ${out} (${String(cases.length)} arms)`);
 }
 
+if (want("voronoi-search-range")) await captureVoronoiSearchRange();
 if (want("voronoi-jitter0")) await captureVoronoiJitter0();
 if (want("voronoi-cellid")) await captureVoronoiCellId();
 if (want("voronoi-points")) await captureVoronoiPoints();
