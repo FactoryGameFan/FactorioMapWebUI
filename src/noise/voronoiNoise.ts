@@ -139,6 +139,82 @@ export function cellRandom(
   return f32(wangHash((w + draw) >>> 0) / 2 ** 32);
 }
 
+/**
+ * Where a cell's point actually sits, in **world tiles**.
+ *
+ * Read out of `NoiseOperations::VoronoiPoints::VoronoiPoints` in the 2.1.12
+ * arm64 binary rather than fitted. Draws 0 and 1 come off the cell's word (see
+ * {@link cellRandom}) and are turned into an in-cell offset by a single 2-lane
+ * sequence - one lane per axis, so x and y are handled identically:
+ *
+ * ```
+ * fmul.2s  v1, v1, v0[0]   ; * jitter
+ * fsub     s0, s11, s0     ; s11 = 1.0   (fmov s11, #1.00000000)
+ * fmul     s0, s0, s12     ; s12 = 0.5   (fmov s12, #0.50000000)
+ * fadd.2s  v13, v1, v0     ; jitter * r + (1 - jitter) * 0.5
+ * ```
+ *
+ * Two details are load-bearing and neither is guessable from the docs:
+ *
+ * - **`jitter` is narrowed to f32 first.** The prototype field is written by
+ *   `ldr d0, [x20, #0x88]` / `fcvt s0, d0` / `str s0, [x19, #0x28]`, so a Lua
+ *   `jitter = 0.6` is stored as `f32(0.6)` and every arithmetic step below is
+ *   f32. Carrying the double through instead is wrong in the last ulp, which is
+ *   exactly the size of error that gets absorbed into a fudge factor.
+ * - **The constructor stores the in-cell FRACTION only** (`str d13, [x22]`, two
+ *   f32, followed by the id at `+0x8`); the cell index is added by the consumer.
+ *   The offset is therefore in grid units, and this function scales it by
+ *   `gridSize` to return tiles.
+ *
+ * At `jitter === 0` this collapses to exactly `0.5`, independently confirming
+ * the cell-centre premise the jitter-0 rung was built on.
+ *
+ * **Point placement does NOT depend on `distance_type`, and that is settled
+ * structurally, not by a fit.** `VoronoiPoints`' constructor is handed the whole
+ * `VoronoiNoise` and loads exactly three fields from it across its entire 1508
+ * bytes: `+0x20` (seed, `ldr w9`), `+0x24` (grid size, `ldr h0`) and `+0x28`
+ * (jitter, `ldr s0`). `distance_type` is a byte at `+0x26` - written by
+ * `VoronoiNoise`'s own constructor as `bl parseDistanceType` / `strb w0, [x19,
+ * #0x26]` - and is never read by the point generator at all. The fixture agrees:
+ * the inverted apexes are identical under manhattan and euclidean at every
+ * jitter. So one point field can be shared across ops that differ only in
+ * distance type, which is what Fulgora's `fulgora_cells` (manhattan) and
+ * `fulgora_spots` (euclidean) do.
+ */
+export function pointForCell(
+  seed0: number,
+  seed1: number,
+  gridSize: number,
+  jitter: number,
+  cellX: number,
+  cellY: number,
+): { x: number; y: number } {
+  const o = pointOffsetInCell(seed0, seed1, jitter, cellX, cellY);
+  return { x: cellX * gridSize + gridSize * o.x, y: cellY * gridSize + gridSize * o.y };
+}
+
+/**
+ * The in-cell fraction {@link pointForCell} is built from, in **grid units** -
+ * literally the pair of f32s the constructor stores.
+ *
+ * Everything downstream works in grid units (see this file's header, point 1),
+ * so the search loop adds this to an integer cell index directly rather than
+ * going out to tiles and back.
+ */
+function pointOffsetInCell(
+  seed0: number,
+  seed1: number,
+  jitter: number,
+  cellX: number,
+  cellY: number,
+): { x: number; y: number } {
+  const j = f32(jitter);
+  const base = f32(f32(1 - j) * 0.5);
+  const offset = (draw: CellDraw): number =>
+    f32(f32(j * cellRandom(seed0, seed1, cellX, cellY, draw)) + base);
+  return { x: offset(CELL_DRAW_OFFSET_X), y: offset(CELL_DRAW_OFFSET_Y) };
+}
+
 /** `(a * a) * a` with an f32 rounding at each step, matching the binary's two `fmul`s. */
 function cubeF32(a: number): number {
   return f32(f32(a * a) * a);
@@ -179,7 +255,7 @@ export function distanceOf(dt: VoronoiDistanceType, dx: number, dy: number): num
   }
 }
 
-/** Parameters of one voronoi field. `jitter` must be 0 - see {@link makeVoronoi}. */
+/** Parameters of one voronoi field. */
 export interface VoronoiParams {
   readonly seed0: number;
   readonly seed1: number;
@@ -199,28 +275,24 @@ export interface Voronoi {
 /**
  * Two rings of neighbouring cells around the sample's own cell.
  *
- * One ring is provably enough at jitter 0 (the points are a regular lattice), so
- * this is a deliberate superset: it is what the fit was measured over, and it
- * keeps the search from being the thing that has to change first when Task 4
- * turns jitter on.
+ * One ring is provably enough for `jitter <= 1`: the offset
+ * `jitter * r + (1 - jitter) * 0.5` with `r` in `[0, 1)` stays inside `[0, 1)`
+ * for any jitter in `[0, 1]`, so every point lies within its own cell and the
+ * nearest two are always in the 3x3 neighbourhood. Two rings is a deliberate
+ * superset - it is what both the jitter-0 and the jittered fits were measured
+ * over, and it costs 25 distance evaluations instead of 9.
  */
 const SEARCH_RING = 2;
 
 /**
- * Build the four ops for a voronoi field **at jitter 0**.
+ * Build the four ops for a voronoi field, at any `jitter` in `[0, 1]`.
  *
- * Throws for any other jitter rather than returning cell-centre values that would
- * be wrong by an unbounded amount: a silently-degraded field would render a
- * plausible Fulgora that passes its own tests, which is the failure this whole
- * exercise exists to avoid.
+ * This threw for `jitter !== 0` until R3. The guard is gone because the jittered
+ * path is now validated the same way the jitter-0 path was - bit-exact f32
+ * against the game, over `oracle-voronoi-points.seed123456.json`'s 45 series -
+ * and not merely because the point formula is known.
  */
 export function makeVoronoi(p: VoronoiParams): Voronoi {
-  if (p.jitter !== 0) {
-    throw new Error(
-      `makeVoronoi supports jitter 0 only (got ${String(p.jitter)}); ` +
-        "a jittered field needs the per-cell RNG - Task 4.",
-    );
-  }
   const { gridSize, distanceType } = p;
 
   /**
@@ -234,27 +306,77 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
   /** The sample position in grid units, where the cell lattice has unit spacing. */
   const toGrid = (x: number, y: number): [number, number] => [f32(x / divisor), f32(y / divisor)];
 
-  /** The two smallest distances to a lattice point, in grid units, ascending. */
-  const twoNearest = (ux: number, uy: number): [number, number] => {
+  /**
+   * The sample-to-point delta in grid units, **rebased on the sample's own
+   * cell** - and that rebasing is load-bearing at f32, not a tidy-up.
+   *
+   * `runInternal<0>` computes the sample's in-cell fraction ONCE, then forms
+   * each neighbour's delta from that fraction and the neighbour's RELATIVE index:
+   *
+   * ```
+   * 101772528: scvtf s25, w30      ; (float) the sample's own cell index
+   * 10177252c: fsub  s23, s23, s25 ; sampleFrac = ux - cellIndex
+   * ...
+   * 101772598: scvtf s27, w12      ; (float) the neighbour's RELATIVE index
+   * 1017725a0: ldp   s28, s29, [x21] ; the neighbour's stored in-cell fraction
+   * 1017725a4: fadd  s28, s28, s1  ; frac + relative index
+   * 1017725ac: fabd  s28, s28, s23 ; |that - sampleFrac|
+   * ```
+   *
+   * Forming the same delta from ABSOLUTE coordinates (`ux - (cell + frac)`) is
+   * algebraically identical and differs in the last ulp, because `cell + frac`
+   * at a cell index of ~11 has an f32 spacing of 2^-20 while the rebased form
+   * never adds a large number to a small one. Measured over this fixture's 4200
+   * spot and facet samples: the absolute form scores **3734/4200**, the rebased
+   * form **4200/4200**. All the misses are exactly one ulp, which is precisely
+   * the size of error that gets mistaken for an accumulation artifact and
+   * papered over.
+   *
+   * The point itself is unchanged either way - `cell_id` was already 175/175 on
+   * all 12 of its series under the absolute form, because a one-ulp shift almost
+   * never changes WHICH point is nearest. So the exact-value test is what caught
+   * this; an argmin test never could have.
+   */
+  const deltaTo = (sampleFrac: number, rel: number, offset: number): number =>
+    f32(f32(offset + rel) - sampleFrac);
+
+  /**
+   * The two smallest distances to a cell point, in grid units, ascending, plus
+   * the nearest point's cell - `cell_id` reports the cell that OWNS the sample,
+   * which at jitter > 0 need not be the containing cell, so the argmin has to
+   * come out of the same search rather than a second one that could disagree.
+   */
+  const search = (
+    ux: number,
+    uy: number,
+  ): { d1: number; d2: number; cellX: number; cellY: number } => {
     const cx = Math.floor(ux);
     const cy = Math.floor(uy);
+    const sfx = f32(ux - cx);
+    const sfy = f32(uy - cy);
     let d1 = Infinity;
     let d2 = Infinity;
-    for (let a = cx - SEARCH_RING; a <= cx + SEARCH_RING; a++) {
-      for (let b = cy - SEARCH_RING; b <= cy + SEARCH_RING; b++) {
-        // At jitter 0 the cell's point IS its centre. Confirmed rather than
-        // assumed: spot_noise reads exactly 0 (not merely small) at all 25 of
-        // the fixture's exact cell centres, for every distance type.
-        const d = distanceOf(distanceType, f32(ux - (a + 0.5)), f32(uy - (b + 0.5)));
+    let bx = cx;
+    let by = cy;
+    for (let a = -SEARCH_RING; a <= SEARCH_RING; a++) {
+      for (let b = -SEARCH_RING; b <= SEARCH_RING; b++) {
+        // At jitter 0 every offset is exactly 0.5, so this reduces to the cell
+        // centre with no special case - confirmed rather than assumed, since
+        // `spot_noise` reads exactly 0 (not merely small) at all 25 of the
+        // jitter-0 fixture's exact cell centres, for every distance type.
+        const o = pointOffsetInCell(p.seed0, p.seed1, p.jitter, cx + a, cy + b);
+        const d = distanceOf(distanceType, deltaTo(sfx, a, o.x), deltaTo(sfy, b, o.y));
         if (d < d1) {
           d2 = d1;
           d1 = d;
+          bx = cx + a;
+          by = cy + b;
         } else if (d < d2) {
           d2 = d;
         }
       }
     }
-    return [d1, d2];
+    return { d1, d2, cellX: bx, cellY: by };
   };
 
   /**
@@ -270,19 +392,23 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
 
   return {
     /**
-     * At jitter 0 the nearest point is always the containing cell's own centre,
-     * so the reported id is that cell's draw - no search needed.
+     * The draw of whichever cell OWNS the sample - the cell whose point is
+     * nearest, which at jitter > 0 need not be the containing cell.
+     *
+     * At jitter 0 the two always coincide, which is why this used to read
+     * `Math.floor(ux)` directly with no search. That shortcut is exactly the kind
+     * of degeneracy the jitter-0 rung could not discriminate.
      */
     cellId: (x, y) => {
-      const [ux, uy] = toGrid(x, y);
-      return cellRandom(p.seed0, p.seed1, Math.floor(ux), Math.floor(uy));
+      const s = search(...toGrid(x, y));
+      return cellRandom(p.seed0, p.seed1, s.cellX, s.cellY);
     },
 
-    spotNoise: (x, y) => twoNearest(...toGrid(x, y))[0],
+    spotNoise: (x, y) => search(...toGrid(x, y)).d1,
 
     facetNoise: (x, y) => {
-      const [d1, d2] = twoNearest(...toGrid(x, y));
-      return f32(d2 - d1);
+      const s = search(...toGrid(x, y));
+      return f32(s.d2 - s.d1);
     },
 
     /**
@@ -326,6 +452,34 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
           "voronoi_pyramid_noise does not support minkowski3 - the game's own " +
             'expression compiler rejects it: "Voronoi pyramid noise with ' +
             'Minkowski3 distance is not supported".',
+        );
+      }
+      // **R3 finding: this formula is WRONG for jitter > 0, and measurably so.**
+      // `edgeDistance` is the distance to the nearest edge of the UNIT SQUARE,
+      // which is what a cell is only when every point sits at its centre. With
+      // the points scattered the cells are general convex polygons and the
+      // square is not even an approximation: scored against the game it is
+      // **0 of 175** at every one of the nine jitter x distance_type
+      // combinations captured, with errors up to 0.49 in grid units - about half
+      // a cell.
+      //
+      // That is exactly the outcome this file's header warned about: the
+      // jitter-0 rung is degenerate, several different algorithms collapse onto
+      // the same numbers there, and reproducing it exactly is no evidence at all
+      // about jitter > 0. The other three ops came through unchanged; this one
+      // did not, and it is a real finding rather than a rounding problem.
+      //
+      // It throws instead of returning the square's answer because a
+      // half-cell-wrong number that still looks like a plausible pyramid is
+      // precisely the failure mode the whole exercise exists to avoid. Solving
+      // it needs the real clamped point-to-segment distance over the cell's
+      // actual polygon, which is its own rung of work and is not needed by
+      // Fulgora (`fulgora_cells` and `fulgora_spots` use facet and spot noise).
+      if (p.jitter !== 0) {
+        throw new Error(
+          `voronoi_pyramid_noise is validated at jitter 0 only (got ${String(p.jitter)}); ` +
+            "its unit-square edge distance scores 0/175 against the game at every " +
+            "jitter > 0 captured - see the comment here before using it.",
         );
       }
       const e = edgeDistance(...toGrid(x, y));

@@ -2831,6 +2831,194 @@ async function captureVoronoiCellId(): Promise<void> {
   );
 }
 
+/**
+ * Assert a coordinate is EXACTLY representable as a `MapPosition` (a multiple of
+ * 1/256 of a tile), and return it unchanged.
+ *
+ * This is the alternative taken to {@link snapToMapPosition} for the jittered
+ * point capture, and the choice was deliberate. `snapToMapPosition` uses
+ * `Math.floor`, and every negative probe committed so far happened to be exactly
+ * representable - so floor and truncate-toward-zero are indistinguishable in all
+ * existing data, and this capture's lattice would have been the first place the
+ * difference could bite.
+ *
+ * Rather than pick a rounding rule that no fixture can discriminate, or plumb an
+ * echo-back of the position the game used (which `sampleTileNames` does, but
+ * `calculate_tile_properties` gives no such channel - the mod echoes the
+ * positions it was HANDED), the lattice is built entirely from multiples of 1/2
+ * a tile. Those are exact in 1/256 whatever their sign, so no rounding rule
+ * applies at all and the question is removed rather than answered.
+ *
+ * This assertion is what keeps that property from silently lapsing: change the
+ * spacing to something like `gridSize / 6` and the capture dies here instead of
+ * quietly sampling ~4e-3 tiles away from where the fixture claims.
+ */
+function assertRepresentable(t: number): number {
+  if (!Number.isInteger(t * 256)) {
+    throw new Error(
+      `position ${String(t)} is not a multiple of 1/256 and would be silently ` +
+        "floored to a MapPosition by the game - see assertRepresentable",
+    );
+  }
+  return t;
+}
+
+/**
+ * **R3: where a cell's point actually sits once `jitter > 0`** - the
+ * configuration Fulgora uses (0.6, 0.8 and 1.0).
+ *
+ * Two independent readouts, in one fixture, because they answer different
+ * questions and neither alone is enough:
+ *
+ * **`series` - the inversion lattice.** `voronoi_spot_noise` is a cone whose
+ * apex sits ON the point, so its minimum over a lattice recovers the point's
+ * position directly, with no model in the loop. The lattice is the 64x64 TILE
+ * CENTRES of one whole cell (`cellX`, `cellY`), so it is prediction-free: at
+ * jitter 1 the point may be anywhere in the cell, and a lattice placed around a
+ * predicted position would only ever confirm the prediction it was built from.
+ *
+ * `cellIds` is captured alongside at the same positions and is **not
+ * redundant.** `spot_noise` is the distance to the nearest point of ANY cell, so
+ * a neighbour's point sitting just outside the boundary can own lattice points
+ * inside this cell and win the global argmin - at which case the recovered
+ * "apex" would be a different cell's point entirely. `voronoi_cell_id` says
+ * which point won at each lattice position, so the argmin can be restricted to
+ * the positions this cell actually owns. That filter comes from the game, not
+ * from the port.
+ *
+ * **`ops` - the exact-f32 acceptance set.** Locating a point to within half a
+ * tile is not acceptance; the bar for this repo is bit-exact agreement. So the
+ * jitter-0 fixture's own 15 op x distance_type series are re-captured at each of
+ * the three jitters, over the same 175 positions, giving 45 series the port must
+ * reproduce exactly.
+ *
+ * That set is also the **first configuration that can discriminate Task 2's
+ * pyramid formulas.** At jitter 0 every cell is a congruent unit square and many
+ * different algorithms collapse to identical numbers; with the points scattered
+ * they do not. `voronoi_pyramid_noise` is included at all three distance types
+ * it supports for exactly that reason.
+ */
+async function captureVoronoiPoints(): Promise<void> {
+  const seed = 123456;
+  const gridSize = 64;
+  const seed1 = 1;
+  const jitters = [0.6, 0.8, 1] as const;
+  const latticeDistanceTypes = ["manhattan", "euclidean"] as const;
+  // Fulgora's own two ops are manhattan and euclidean, and the load-bearing
+  // question is whether they can share one point field, so those are the two the
+  // lattice inverts. The cell is an arbitrary interior one; nothing about it is
+  // special, and in particular it is NOT one of the two colliding pairs
+  // ((0,0)/(-1,-1) and (-1,0)/(0,-1)) whose shared word would make a
+  // point-position claim about "this cell" ambiguous.
+  const cellX = 3;
+  const cellY = 5;
+
+  const lattice: Position[] = [];
+  for (let i = 0; i < 64; i++) {
+    for (let j = 0; j < 64; j++) {
+      lattice.push({
+        x: assertRepresentable(cellX * gridSize + i + 0.5),
+        y: assertRepresentable(cellY * gridSize + j + 0.5),
+      });
+    }
+  }
+
+  const series: {
+    jitter: number;
+    distanceType: string;
+    cellX: number;
+    cellY: number;
+    lattice: Position[];
+    values: number[];
+    cellIds: number[];
+  }[] = [];
+
+  for (const jitter of jitters) {
+    for (const distanceType of latticeDistanceTypes) {
+      const sample = async (op: (typeof VORONOI_OPS)[number]): Promise<number[]> => {
+        const expression = buildVoronoiExpression({
+          op,
+          x: "x",
+          y: "y",
+          seed1: String(seed1),
+          gridSize,
+          distanceType,
+          jitter,
+        });
+        const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+        try {
+          return await sampleExpression(expression, lattice, { workDir, seed });
+        } finally {
+          await rm(workDir, { recursive: true, force: true });
+        }
+      };
+      const values = await sample("voronoi_spot_noise");
+      const cellIds = await sample("voronoi_cell_id");
+      series.push({ jitter, distanceType, cellX, cellY, lattice, values, cellIds });
+      console.log(`  captured lattice jitter=${String(jitter)} ${distanceType}`);
+    }
+  }
+
+  const opPositions = voronoiPositions(gridSize);
+  const ops: Record<string, number[]> = {};
+  for (const jitter of jitters) {
+    for (const op of VORONOI_OPS) {
+      for (const distanceType of VORONOI_DISTANCE_TYPES) {
+        // Same 15-of-16 exclusion as the jitter-0 capture: the game's expression
+        // compiler rejects pyramid x minkowski3 outright, so there is no ground
+        // truth to take and the run dies before sampling.
+        if (op === "voronoi_pyramid_noise" && distanceType === "minkowski3") continue;
+        const expression = buildVoronoiExpression({
+          op,
+          x: "x",
+          y: "y",
+          seed1: String(seed1),
+          gridSize,
+          distanceType,
+          jitter,
+        });
+        const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+        try {
+          ops[`${op}:${distanceType}:${String(jitter)}`] = await sampleExpression(
+            expression,
+            opPositions,
+            { workDir, seed },
+          );
+          console.log(`  captured ${op}:${distanceType} jitter=${String(jitter)}`);
+        } finally {
+          await rm(workDir, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via the test/oracle harness, for JITTERED voronoi point " +
+      "placement (jitter 0.6 / 0.8 / 1.0 at grid_size 64, seed0 123456, seed1 1). `series` is the " +
+      "inversion lattice: voronoi_spot_noise plus voronoi_cell_id over the 64x64 tile centres of " +
+      "cell (3,5), under manhattan and euclidean - spot_noise's cone apex sits ON the point, so its " +
+      "minimum over the lattice IS the point, and cell_id says which cell owns each lattice position " +
+      "so a neighbour's point cannot be mistaken for this one. `ops` is the exact-f32 acceptance " +
+      "set: the same 15 op x distance_type series and 175 positions as the jitter-0 fixture, " +
+      "re-captured at each jitter. Every lattice coordinate is a multiple of 1/2 a tile and so is " +
+      "exact in the 1/256 MapPosition grid whatever its sign. " +
+      "Regenerate: node --experimental-strip-types test/oracle/capture.ts voronoi-points",
+    seed,
+    seed1,
+    gridSize,
+    series,
+    opPositions,
+    ops,
+  };
+  const out = join(FIXTURES, "oracle-voronoi-points.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(
+    `wrote ${out} (${String(series.length)} lattice series x ${String(lattice.length)} points, ` +
+      `${String(Object.keys(ops).length)} op series x ${String(opPositions.length)} points)`,
+  );
+}
+
 if (!oracleAvailable()) {
   console.error("No Factorio binary found (set FACTORIO_BIN). Cannot capture fixtures.");
   process.exit(1);
@@ -5576,6 +5764,7 @@ async function captureVulcanusCliffDestroyProbe(): Promise<void> {
 
 if (want("voronoi-jitter0")) await captureVoronoiJitter0();
 if (want("voronoi-cellid")) await captureVoronoiCellId();
+if (want("voronoi-points")) await captureVoronoiPoints();
 if (want("vulcanus-cliff-destroy-probe")) await captureVulcanusCliffDestroyProbe();
 if (want("vulcanus-cliff-chunk-order")) await captureVulcanusCliffChunkOrder();
 if (want("vulcanus-cliff-suppressor-levers")) await captureVulcanusCliffSuppressorLevers();

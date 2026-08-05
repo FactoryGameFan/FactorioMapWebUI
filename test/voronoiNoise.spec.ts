@@ -106,10 +106,31 @@ describe("the restrictions are enforced rather than papered over", () => {
     expect(() => v.facetNoise(10, 10)).not.toThrow();
   });
 
-  it("makeVoronoi refuses a non-zero jitter instead of silently degrading", () => {
-    expect(() => makeVoronoi({ ...base, jitter: 0.5, distanceType: "euclidean" })).toThrow(
-      /jitter 0 only/,
-    );
+  /**
+   * The jitter guard MOVED in R3; it did not go away.
+   *
+   * `makeVoronoi` used to throw for any non-zero jitter. `cellId`, `spotNoise`
+   * and `facetNoise` are now validated bit-exact at jitter 0.6 / 0.8 / 1.0
+   * (36 series x 175 positions, all exact), so the field-wide guard would now be
+   * refusing configurations that are known good.
+   *
+   * `pyramidNoise` is the exception and keeps a guard of its own - see
+   * {@link makeVoronoi}'s `pyramidNoise`. Its jitter-0 formula is the distance to
+   * the nearest edge of a UNIT SQUARE, which is simply not what a jittered cell
+   * looks like, and it scores **0 of 175** against the game at every jitter and
+   * every distance type. Leaving it un-guarded would hand back a number that is
+   * wrong by up to half the cell.
+   */
+  it("makeVoronoi accepts a jittered field, but pyramidNoise alone still refuses", () => {
+    const jittered = makeVoronoi({ ...base, jitter: 0.6, distanceType: "euclidean" });
+    expect(() => jittered.spotNoise(10, 10)).not.toThrow();
+    expect(() => jittered.facetNoise(10, 10)).not.toThrow();
+    expect(() => jittered.cellId(10, 10)).not.toThrow();
+    expect(() => jittered.pyramidNoise(10, 10)).toThrow(/jitter 0/);
+    // ...and it is still available at jitter 0, where it IS validated.
+    expect(() =>
+      makeVoronoi({ ...base, distanceType: "euclidean" }).pyramidNoise(10, 10),
+    ).not.toThrow();
   });
 });
 
