@@ -316,9 +316,9 @@ describe("what suppresses the cliffs the port still over-places", () => {
       }
     }
 
-    expect(tally.matched).toEqual({ n: 18654, rock: 1312, shut: 8588 });
-    expect(tally.surplus).toEqual({ n: 1200, rock: 127, shut: 617 });
-    expect(tally.wrong).toEqual({ n: 693, rock: 35, shut: 311 });
+    expect(tally.matched).toEqual({ n: 18657, rock: 1312, shut: 8591 });
+    expect(tally.surplus).toEqual({ n: 1199, rock: 127, shut: 616 });
+    expect(tally.wrong).toEqual({ n: 691, rock: 35, shut: 309 });
 
     const rate = (b: { n: number; rock: number }): number => b.rock / b.n;
     // Refuted BY the base rate, not by a bare count: the wrong-code population

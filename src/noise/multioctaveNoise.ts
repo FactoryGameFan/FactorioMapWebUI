@@ -7,8 +7,11 @@
  *
  * The shape:
  *
- *   multioctave(x, y) = output_scale * norm * SUM_{k=0}^{N-1} (1/P)^k *
- *                       basis( x*IS*(1/2)^k + k*OCTAVE_OFFSET_X , y*IS*(1/2)^k )
+ *   multioctave(x, y) = SUM_{k=0}^{N-1} amp_k *
+ *                       basis( f32(k*OCTAVE_OFFSET_X + f32(x*IS_k)) , f32(y*IS_k) )
+ *
+ *   IS_0  = input_scale,  IS_{k+1} = f32(IS_k * 1/2)
+ *   amp_0 = output_scale * norm,  amp_{k+1} = f32(amp_k / P)
  *
  * i.e. N octaves of `basis_noise` sharing ONE (seed0, seed1): each octave halves
  * the input scale (lacunarity 1/2), scales amplitude by 1/persistence, and shifts
@@ -17,11 +20,15 @@
  * game's noise programs). The whole sum is RMS-normalised by `norm` so its
  * variance is ~1 regardless of octave count / persistence.
  *
- * Verified against the game to ~1e-5 across octaves 1..6, persistence 0.45..0.9,
- * varied input/output scales and seeds. The residual is the game's own fastapprox
- * floor: the normalisation uses Factorio's approximate `log2`/`exp2` (Paul
- * Mineiro fastapprox), replicated here as {@link fastLog2} / {@link fastPow2}; with
- * a real `pow` the error would be ~1e-4 for non-power-of-two persistence.
+ * **The arithmetic is f32, and the octave offset is small.** Both matter and they
+ * only pay off together - see {@link OCTAVE_OFFSET_X} and
+ * docs/noise/multioctave-noise-NOTES.md. Worst error against the committed oracle
+ * is 7.2e-7 over 266 samples; the remainder is {@link basisNoise}'s own f64
+ * evaluation, not this composition (a single octave already carries it).
+ *
+ * The normalisation uses Factorio's approximate `log2`/`exp2` (Paul Mineiro
+ * fastapprox), replicated here as {@link fastLog2} / {@link fastPow2}; with a real
+ * `pow` the error would be ~1e-4 for non-power-of-two persistence.
  *
  * NOT wired into the app. Building block for a client-side map preview.
  */
@@ -30,7 +37,7 @@ import { basisNoise, basisNoiseTablesFromSeed, type BasisNoiseTables } from "./b
 // The fastapprox log2/exp2/pow primitives moved to ./fastApprox (the resource
 // spot-height/blob-amplitude expressions need the same fast cbrt); re-exported here
 // for the existing importers and tests.
-import { fastLog2, fastPow, fastPow2 } from "./fastApprox";
+import { fastLog2, fastPow2 } from "./fastApprox";
 
 export { fastLog2, fastPow2 };
 
@@ -39,11 +46,36 @@ const LACUNARITY = 0.5;
 
 /**
  * Per-octave x shift in noise space, added as `k * OCTAVE_OFFSET_X` for octave k.
- * Measured constant for the plain primitive (input-scale-, seed- and
- * persistence-independent to the noise floor). The `quick`/`variable_persistence`
- * variants derive this from their `offset_x` parameter instead - not yet mapped.
+ * The literal double immediate in `Noise::fastVectorMultioctaveNoise`
+ * (`0x40312b851eb851ec`), which is exactly `17.17`.
+ *
+ * **This used to be `-1774.83`, and the difference is the whole bug.** The basis
+ * lattice has period 256 on each axis, and `17.17 - 1774.83 == -1792 == -7*256`,
+ * so the two are the *same field value* - a wide oracle fit cannot tell them
+ * apart, and it landed on the alias. In f64 they are interchangeable (measured:
+ * bit-identical over the whole fixture). In f32 they are not remotely: by octave
+ * 5 the aliased coordinate is ~-8874, where a f32 ulp is 1.1e-3, against 2.0e-6
+ * for the true +85.85. Since the game rounds each octave's x to f32, the alias
+ * capped the achievable accuracy at ~1e-4 - which the notes recorded as an
+ * irreducible "f32 floor" and it never was one.
+ *
+ * That is also why reproducing the game's f32 op order kept making things *worse*
+ * (five variants, 12x-27x): with the alias in place, rounding to f32 is exactly
+ * the wrong move. The two fixes only pay off together.
+ *
+ * The `quick`/`variable_persistence` variants take an `offset_x` parameter with
+ * different semantics - see their own notes. NOTE `variablePersistenceMultioctaveNoise`
+ * carries a fitted `-7936 == -31*256`, which is an alias of 0 and so is very
+ * likely the same defect; it is untouched here and tracked separately.
  */
-const OCTAVE_OFFSET_X = -1774.83;
+const OCTAVE_OFFSET_X = 17.17;
+
+/**
+ * Upper clamp on the fractional-octave frequency boost. The binary compares the
+ * widened result against the double `1.99999` and substitutes the f32 nearest
+ * `1.99999` (`0x3FFFFFAC`) when it is not below; the lower clamp is a plain 1.0.
+ */
+const FRAC_OCTAVE_MAX = Math.fround(1.99999);
 
 export interface MultioctaveParams {
   /** Map seed. */
@@ -60,17 +92,88 @@ export interface MultioctaveParams {
   readonly outputScale: number;
 }
 
+const f32 = Math.fround;
+
 /**
- * The RMS normalisation factor `sqrt( ((1/P)^2 - 1) / ((1/P)^(2N) - 1) )`, with the
- * `(1/P^2)^N` term via the game's fastapprox `pow`. The game evaluates this branch
- * for EVERY octave count (including N = 1, where it is ~1 but carries the fastapprox
- * wobble - so the shortcut `return 1` would be measurably wrong). For P = 1 the
- * ratio is 0/0 and the game instead uses `1/sqrt(N)`.
+ * The per-octave input scales and amplitudes, derived exactly as
+ * `Noise::fastVectorMultioctaveNoise` derives them before its octave loop.
+ *
+ * Three details are read off the arm64 rather than inferred:
+ *
+ * - **The octave count is `ceil(octaves)`** (`frintp`), and a fractional octave
+ *   count multiplies the *input scale* - not the amplitude - by
+ *   `clamp(fastPow2(ceil(N) - N), 1, 2)`. Inert for integral `octaves`, which is
+ *   all the oracle fixture covers; implemented because the binary does it.
+ * - **The RMS ratio is computed in f32, but its `sqrt` and the `output_scale`
+ *   multiply are done in f64** and rounded once (`fcvt d0,s0; fsqrt d0; fmul d0,d1;
+ *   fcvt s10,d0`). Doing the whole thing in one precision is wrong either way.
+ * - **`output_scale` is folded into the starting amplitude**, not applied to the
+ *   finished sum - so it takes part in the f32 amplitude chain.
+ *
+ * The game branches on `1/P`, not on `P`: `1/P == 1` takes the `1/sqrt(N)` branch
+ * (the ratio would be 0/0), and `1/P == 0` skips normalisation entirely.
  */
-function normalization(persistence: number, octaves: number): number {
-  if (persistence === 1) return 1 / Math.sqrt(octaves);
-  const invP2 = 1 / (persistence * persistence);
-  return Math.sqrt((invP2 - 1) / (fastPow(invP2, octaves) - 1));
+function octaveTerms(params: MultioctaveParams): {
+  n: number;
+  scales: number[];
+  amps: number[];
+} {
+  const { octaves, persistence, inputScale, outputScale } = params;
+  const n = Math.ceil(octaves);
+  const invP = f32(1 / persistence);
+
+  let amp: number;
+  if (invP === 1) {
+    amp = f32(outputScale / Math.sqrt(n));
+  } else if (invP !== 0) {
+    const invP2 = f32(invP * invP);
+    const pow = f32(fastPow2(f32(fastLog2(invP2) * f32(n))));
+    const ratio = f32(f32(invP2 - 1) / f32(pow - 1));
+    amp = f32(Math.sqrt(ratio) * outputScale);
+  } else {
+    amp = f32(outputScale);
+  }
+
+  // A fractional octave count boosts the base frequency; exactly 1 when integral.
+  const frac = Math.min(Math.max(f32(fastPow2(f32(n - octaves))), 1), FRAC_OCTAVE_MAX);
+  let scale = f32(f32(inputScale) * frac);
+
+  const scales: number[] = [];
+  const amps: number[] = [];
+  for (let k = 0; k < n; k++) {
+    scales.push(scale);
+    amps.push(amp);
+    scale = f32(scale * LACUNARITY);
+    amp = f32(invP * amp);
+  }
+  return { n, scales, amps };
+}
+
+/**
+ * Sum the octaves in the game's order: each octave's contribution is rounded to
+ * f32 and added to an f32 running total (`out[i] = out[i] + amp*basis(...)` in
+ * `Noise::noise`'s vector kernel), never accumulated in f64 and rounded at the end.
+ *
+ * The x coordinate is the one place f64 appears inside the loop, and it is
+ * deliberate: the offset is `(double)k * 17.17` added to the *widened* f32 product
+ * `f32(x*scale)`, with the sum narrowed back to f32.
+ */
+function sumOctaves(
+  x: number,
+  y: number,
+  n: number,
+  scales: number[],
+  amps: number[],
+  tables: BasisNoiseTables,
+): number {
+  let out = 0;
+  for (let k = 0; k < n; k++) {
+    const scale = scales[k];
+    const xk = f32(k * OCTAVE_OFFSET_X + f32(x * scale));
+    const yk = f32(y * scale);
+    out = f32(out + f32(amps[k] * basisNoise(xk, yk, tables)));
+  }
+  return out;
 }
 
 /**
@@ -84,50 +187,20 @@ export function multioctaveNoise(
   params: MultioctaveParams,
   tables: BasisNoiseTables = basisNoiseTablesFromSeed(params.seed0, params.seed1),
 ): number {
-  const { octaves, persistence, inputScale, outputScale } = params;
-  const invP = 1 / persistence;
-  const norm = normalization(persistence, octaves);
-
-  let sum = 0;
-  let scale = inputScale;
-  let amp = norm;
-  for (let k = 0; k < octaves; k++) {
-    sum += amp * basisNoise(x * scale + k * OCTAVE_OFFSET_X, y * scale, tables);
-    scale *= LACUNARITY;
-    amp *= invP;
-  }
-  return outputScale * sum;
+  const { n, scales, amps } = octaveTerms(params);
+  return sumOctaves(x, y, n, scales, amps, tables);
 }
 
 /**
  * Build a closure that evaluates `multioctave_noise` for a fixed parameter set,
  * with the basis tables, the RMS normalisation, and the per-octave input scales /
  * amplitudes derived once up front (the common case for rendering a grid at one
- * seed). Returns `(x, y) => number`, numerically identical to {@link multioctaveNoise}.
+ * seed). Returns `(x, y) => number`, numerically identical to {@link multioctaveNoise}
+ * - both route through the same {@link octaveTerms} / {@link sumOctaves} pair so they
+ * cannot drift apart.
  */
 export function makeMultioctaveNoise(params: MultioctaveParams): (x: number, y: number) => number {
-  const { seed0, seed1, octaves, persistence, inputScale, outputScale } = params;
-  const tables = basisNoiseTablesFromSeed(seed0, seed1);
-  const norm = normalization(persistence, octaves);
-  const invP = 1 / persistence;
-
-  const octaveScale: number[] = [];
-  const octaveAmp: number[] = [];
-  let scale = inputScale;
-  let amp = norm;
-  for (let k = 0; k < octaves; k++) {
-    octaveScale.push(scale);
-    octaveAmp.push(amp);
-    scale *= LACUNARITY;
-    amp *= invP;
-  }
-
-  return (x: number, y: number): number => {
-    let sum = 0;
-    for (let k = 0; k < octaves; k++) {
-      const s = octaveScale[k];
-      sum += octaveAmp[k] * basisNoise(x * s + k * OCTAVE_OFFSET_X, y * s, tables);
-    }
-    return outputScale * sum;
-  };
+  const tables = basisNoiseTablesFromSeed(params.seed0, params.seed1);
+  const { n, scales, amps } = octaveTerms(params);
+  return (x: number, y: number): number => sumOctaves(x, y, n, scales, amps, tables);
 }

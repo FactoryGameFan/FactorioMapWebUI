@@ -228,8 +228,8 @@ describe("the ore rule's remainder, and whether it cascades", () => {
       return { matched, wrong, surplus, missing };
     };
 
-    expect(collapsed(false)).toEqual({ matched: 18654, wrong: 693, surplus: 1200, missing: 103 });
-    expect(collapsed(true)).toEqual({ matched: 18640, wrong: 700, surplus: 1196, missing: 110 });
+    expect(collapsed(false)).toEqual({ matched: 18657, wrong: 691, surplus: 1199, missing: 102 });
+    expect(collapsed(true)).toEqual({ matched: 18643, wrong: 698, surplus: 1195, missing: 109 });
   }, 900000);
 
   /**

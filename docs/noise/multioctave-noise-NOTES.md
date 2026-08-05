@@ -1,9 +1,11 @@
 # multioctave_noise - reverse-engineering notes
 
-Source: Factorio 2.1.11 (build 86962), cracked two ways at once - by
+Source: originally Factorio 2.1.11 (build 86962), cracked two ways at once - by
 disassembling `Noise::multioctaveNoise` in the non-stripped shipped Mach-O (the
 same binary that gave up `basis_noise` and `spot_noise`), and by fitting the
-output of the committed oracle (`test/oracle/`). Reference implementation:
+output of the committed oracle (`test/oracle/`). **Re-read 2026-08-05 against
+2.1.12 (build 87038), which corrected the octave offset, the entry point and the
+precision** - see the update banner below. Reference implementation:
 `src/noise/multioctaveNoise.ts`. Fixture:
 `test/fixtures/oracle-multioctave.seed123456.json`. Test:
 `test/multioctaveNoise.spec.ts`. Companion to `basis-noise-NOTES.md` /
@@ -17,16 +19,25 @@ same core - see "Still open" below.
 ## The result
 
 ```
-multioctave(x, y) = output_scale * norm * SUM_{k=0}^{N-1} (1/P)^k *
-                    basis( x*IS*(1/2)^k + k*OFFSET , y*IS*(1/2)^k )
+multioctave(x, y) = SUM_{k=0}^{N-1} amp_k * basis( f32(k*OFFSET + f32(x*IS_k)) , f32(y*IS_k) )
 
-  N       = octaves
+  N       = ceil(octaves)
   P       = persistence
-  IS      = input_scale          (noise units per world tile, finest octave)
-  OFFSET  = -1774.83             (per-octave x shift in NOISE space; see below)
-  norm    = sqrt( ((1/P)^2 - 1) / ( fastpow((1/P)^2, N) - 1 ) )
+  IS_0    = input_scale          (noise units per world tile, finest octave)
+  IS_k+1  = f32(IS_k * 1/2)
+  OFFSET  = 17.17                (per-octave x shift in NOISE space; see below)
+  amp_0   = f32( sqrt(f32ratio) * output_scale )   -- sqrt and the multiply in f64
+  amp_k+1 = f32(amp_k * (1/P))
+  f32ratio= f32( ((1/P)^2 - 1) / ( fastpow((1/P)^2, N) - 1 ) )    -- all f32
   basis   = basis_noise with tables from (seed0, seed1)  [basis-noise-NOTES.md]
+
+and the sum itself accumulates in f32: out = f32(out + f32(amp_k * basis(...))).
 ```
+
+**Updated 2026-08-05: `OFFSET` was `-1774.83` here and the arithmetic was f64.
+Both were wrong, and they were wrong in a way that hid each other** - see "The
+octave offset was an alias" below. Worst error against the committed oracle went
+`1.170e-4 -> 7.153e-7` (164x), and f32-exact samples `12/266 -> 62/266`.
 
 So: **N octaves of `basis_noise` that all share ONE `(seed0, seed1)`**. Each
 octave halves the input scale (lacunarity 1/2), multiplies amplitude by `1/P`, and
@@ -36,38 +47,83 @@ decorrelating same-seed octaves - it is the "'x' variables are shifted to avoid
 concrete. The sum is RMS-normalised by `norm` so its variance stays ~1 across
 octave counts and persistence.
 
-Verified to ~3e-5 in a realistic preview window (grows to ~1e-4 at extreme
-coordinates - the f32 floor, see below), across octaves 1..6, persistence
-0.45..0.9, varied input/output scales and three seeds.
+Verified to **7.2e-7 worst over all 266 oracle samples**, across octaves 1..6,
+persistence 0.45..0.9, varied input/output scales and three seeds - and the error
+no longer depends on distance from the origin, which is the tell that the old
+"grows at extreme coordinates" behaviour was the aliased offset and not a floor.
+The 7.2e-7 that remains is **`basisNoise`'s own f64 evaluation, not this
+composition**: a single octave already carries it (2.4e-7, 10/38 exact at
+`octaves = 1`), so there is nothing left to find here. See "What is left".
+
+## FIVE entry points, and the oracle does not use the one first disassembled
+
+`nm` turns up five multioctave symbols, not one, and the difference is not
+cosmetic - it is the reason a correct-looking disassembly produced a wrong
+constant. `NoiseOperations::MultioctaveNoise::run(NoiseCache&)` is what a compiled
+noise program executes, and it dispatches three ways:
+
+| condition | callee |
+| --- | --- |
+| `Noise::vectorMultioctaveNoiseImplementationId != 0` | **`Noise::fastVectorMultioctaveNoise`** (tail call) |
+| that global is 0 | scalar `Noise::multioctaveNoise(float,float,...)`, once per point |
+| a size precheck at `run+100` passes | scalar `Noise::multioctaveNoise`, once for the whole request |
+
+That global is a runtime-selected implementation id, non-zero on arm64, so **the
+vector routine is the live path and the scalar overload is a fallback.** The
+original notes read the scalar overload. This is the same trap recorded in
+`variable-persistence-multioctave-noise-NOTES.md` ("the norm branch in the
+`float const*` overload is a different entry point; the register `run` path the
+oracle uses has none") - two for two, so on any future op in this family, **find
+which entry point `::run` dispatches to before reading a loop.**
 
 ## Why these pieces (the disassembly)
 
-`Noise::multioctaveNoise(float x, float y, uint seed0, uint seed1, float, float,
-float, float, float persistence, NoiseScratch&, float*)` is a single tight loop
-(`w24` = octave count, decremented per iteration) that calls `Noise::noise` (one
-`basis` octave) each pass. Read straight off the arm64:
+Read off `Noise::fastVectorMultioctaveNoise` (arm64, 2.1.12 build 87038). It is
+an octave loop (`w28` counts up to `w27` = `ceil(octaves)`) wrapping an inner
+per-point loop that fills two scratch arrays with the octave's coordinates, then
+one call to the vector `Noise::noise(count, xs, ys, scale, amp, xOff, yOff, ...)`
+per octave:
 
-- **Same seed every octave.** `seed0` (x22) and `seed1` (x21) are loaded once and
-  passed unchanged into every `Noise::noise` call. Octaves decorrelate purely
-  through the coordinate change, not through re-seeding.
+- **Same seed every octave.** The seed-bearing `Noise` object (`x23`) is passed
+  unchanged into every `Noise::noise` call. Octaves decorrelate purely through the
+  coordinate change, not through re-seeding.
 - **Lacunarity 1/2.** The per-octave input-scale register is multiplied by `0.5`
-  each pass (`fmov s0,#0.5 ; fmul s12,s12,s0`).
+  each pass (`fmov s14,#0.5 ; fmul s11,s11,s14`), **in f32**.
 - **Amplitude `*= 1/P`.** The amplitude register is multiplied by `1/persistence`
-  each pass (`s13 = 1/P`, `fmul s9,s13,s9`). `1/P` is an exact reciprocal.
-- **Per-octave x offset.** The x fed to `Noise::noise` is
-  `scaledX + (k * C) / param6`, computed in double then `fcvt`-ed to f32, where
-  `k` is the loop counter (starts 0, so octave 0 is unshifted) and `C` is the
-  double constant `0x40312b8551ec1eb8 = 17.17000305`. For the plain op's default
-  `param6` this works out to a fixed **-1774.83 per octave**, independent of
-  input_scale, seed and persistence (all confirmed by fitting - see below). y is
-  never shifted.
-- **The normalisation.** Reached whenever `P != 1` (so for *every* octave count,
-  including N = 1): `sqrt( ((1/P)^2 - 1) / ( exp2(log2((1/P)^2) * N) - 1 ) )`,
-  times `output_scale`. The `(1/P^2)^N` power is done with the game's approximate
-  `Math::log2` / `Math::exp2f` (Paul Mineiro fastapprox), so `norm` is not exactly
-  1 even at N = 1 - it carries a fastapprox wobble that a `return 1` shortcut would
-  get measurably wrong. For `P == 1` the ratio is 0/0 and the game instead uses
-  `1/sqrt(N)`.
+  each pass (`s13 = 1/P`, `fmul s10,s13,s10`), **in f32**. `1/P` is an exact
+  f32 reciprocal (`fdiv s13, #1.0, s12`).
+- **`output_scale` is folded into the STARTING amplitude**, not applied to the
+  finished sum - so it rides the f32 amplitude chain rather than scaling a
+  completed f64 total.
+- **The sum accumulates in f32, one octave at a time.** `run` `bzero`s the output
+  buffer, and the vector `Noise::noise` ends each point with
+  `ldr s25,[x5] ; fadd s24,s25,s24 ; str s24,[x5],#4` - i.e.
+  `out[i] = out[i] + f32(amp * basis)`. There is no f64 accumulator.
+- **A fractional octave count is legal**, and it scales the *frequency*, not the
+  amplitude: `N = ceil(octaves)` (`frintp`) and the base input scale is multiplied
+  by `clamp(fastExp2(N - octaves), 1.0, f32(1.99999))`. Exactly 1 for integral
+  `octaves`, which is all the fixture covers; ported because the binary does it.
+- **Per-octave x offset.** The x fed to `Noise::noise` is `k*C + f32(scaledX)`,
+  where the add is done in double and `fcvt`-ed back to f32, `k` is the loop
+  counter (starts 0, so octave 0 is unshifted), and `C` is the double immediate
+  `0x40312b851eb851ec`, **which is exactly `17.17`**. There is no division by any
+  parameter - the earlier reading of this line ("`(k*C)/param6`, C =
+  `0x40312b8551ec1eb8` = 17.17000305") had the two `movk` halves transposed, which
+  is what made the constant look like an ugly 8-digit number instead of a round
+  decimal, and there is no `fdiv` in the loop at all. y is never shifted.
+- **The normalisation, and its MIXED precision.** The branch is on `1/P`, not on
+  `P`: `1/P == 1` takes a `1/sqrt(N)` path, `1/P == 0` skips normalisation
+  entirely, and everything else computes
+  `sqrt( ((1/P)^2 - 1) / ( exp2(log2((1/P)^2) * N) - 1 ) )` times `output_scale`.
+  It is reached for *every* octave count including N = 1, where it is ~1 but
+  carries a fastapprox wobble that a `return 1` shortcut would get measurably
+  wrong. **The ratio is computed entirely in f32, then widened: `fcvt d0,s0 ;
+  fsqrt d0 ; fmul d0,d1 ; fcvt s10,d0`** - so the `sqrt` and the `output_scale`
+  multiply happen in f64 and the result is rounded once. Doing the whole
+  expression in one precision is wrong in either direction. The `1/sqrt(N)` branch
+  is likewise `(double)output_scale / sqrt((double)N)` narrowed to f32.
+  The `(1/P^2)^N` power is done with the game's approximate `Math::log2` /
+  `Math::exp2f` (Paul Mineiro fastapprox).
 
 `Math::log2` and `Math::exp2f` disassemble to textbook Mineiro `fastlog2` /
 `fastpow2`; reproduced as `fastLog2` / `fastPow2` in `src/noise/fastApprox.ts`.
@@ -130,35 +186,113 @@ The disassembly gives the structure; the oracle nails the numbers. Method:
 | output_scale linear | ratio at os=3 | 3.00000 |
 | lacunarity = 1/2 | N=2 free fit residual | 0 at scale1=IS/2 |
 | amplitude ratio = 1/P | fitted a1/a0 | 2.0000 at P=0.5 |
-| offset = k*(-1774.83), IS-independent | fit U at IS in {0.0625,0.125,0.25} | -1774.83 all, res ~3e-7 |
+| offset = k*U, IS-independent | fit U at IS in {0.0625,0.125,0.25} | -1774.83 all, res ~3e-7 - **an ALIAS of 17.17, see below** |
 | norm uses fastapprox pow | P=0.9 residual real vs fast pow | 6.7e-5 -> 2.9e-6 (pre-`9b49ebb`, see above) |
-| full model | 6 configs x realistic points | < 5e-5 |
+| full model | 6 configs x realistic points | < 5e-5 (now 7.2e-7 over all 266) |
 
-## The f32 floor
+## The octave offset was an ALIAS, and that is the whole bug
 
-The remaining error is not a modelling gap, it is precision. The game computes
-each octave's coordinate and rounds it to f32 before sampling basis; we evaluate
-in f64. Because the per-octave offset (`k * -1774.83`, up to ~-8900 at 6 octaves)
-makes the coordinate large, a f64-vs-f32 coordinate difference of ~1e-4 tiles can
-land in a different basis lattice cell and change the value by ~1e-4. In a
-realistic preview window this stays ~3e-5; only at extreme coordinates
-(thousands of tiles out) does it reach ~1e-4. Naively `fround`-ing the composed
-coordinate makes it *worse* (the game's exact f32 op order differs), so it is left
-in f64 - correct to the noise floor where a preview actually samples. Bit-exactness
-is explicitly not the goal (see the roadmap).
+**This section replaces "The f32 floor", which said the residual was irreducible.
+It was not; it was self-inflicted.**
 
-## The offset_x parameter (plain op default = -1774.83)
+The fit in step 3 above is not wrong, it is *degenerate*. The basis lattice has
+period **256** on each axis, so any two offsets differing by a multiple of 256
+name the same field. And
 
-The per-octave x shift is `k * 17.17000305 / offset_x`, and the plain op's fixed
--1774.83 is just its default `offset_x`. Confirmed from the disassembly (the
-`0x40312b8551ec1eb8 = 17.17000305` double, divided by the offset_x register). NOTE
-the two relatives split on offset semantics:
+```
+17.17 - (-1774.83) = 1792 = 7 * 256
+```
 
-- **plain / variable_persistence**: per-octave shift `k * 17.17000305 / offset_x`
-  (offset_x large -> tiny shift). Same `fdiv`-by-offset_x in both cores.
-- **quick_multioctave_noise**: `offset_x` is instead a single world-space translation
-  `(x + offset_x) * scale`, applied identically to every octave; quick decorrelates
-  octaves by re-seeding, not by an x shift. See `quick-multioctave-noise-NOTES.md`.
+exactly. The wide scan the note recommends found the alias seven periods out
+instead of the real constant. In f64 the two are interchangeable - measured
+directly, `OFF = +17.17` and `OFF = -1774.83` give **bit-identical output on all
+266 oracle samples**. So nothing about the old model was detectably wrong.
+
+In **f32** they are not remotely interchangeable, because the game rounds each
+octave's x to f32:
+
+| k | true `k*17.17` | its f32 ulp | aliased `k*-1774.83` | its f32 ulp |
+| --- | --- | --- | --- | --- |
+| 1 | 17.17 | 2.0e-6 | -1774.83 | 2.1e-4 |
+| 3 | 51.51 | 6.1e-6 | -5324.49 | 6.4e-4 |
+| 5 | 85.85 | 1.0e-5 | -8874.15 | 1.1e-3 |
+
+A ~1e-3 quantisation of a lattice coordinate is a ~1e-3 perturbation of the
+field. **That is the "~1e-4 floor" the old section described, and the reason it
+"grew at extreme coordinates" - both were properties of the alias, not of the
+game.**
+
+### Why five earlier f32 attempts all made it worse
+
+This is the part worth remembering. With the alias in place, moving toward the
+game's real arithmetic is *actively harmful*: f64 was accidentally compensating
+for a coordinate that was 100x too large by carrying 100x more precision than the
+game does. Measured, against the same fixture:
+
+| variant | worst | f32-exact |
+| --- | --- | --- |
+| f64, alias (the old shipped code) | 1.170e-4 | 12/266 |
+| f64, true offset | 1.170e-4 | 12/266 |
+| f32 op order, alias | 1.427e-3 | 10/266 |
+| **f32 op order, true offset** | **7.153e-7** | **62/266** |
+
+Neither fix does anything alone - one is a literal no-op, the other is a 12x
+regression - and together they are 164x. Four earlier variants (f32 per term, f32
+accumulation, `fcvt` the sum once, f32 scale chain) all sit in that third row's
+band for the same reason, and were correctly recorded as failures of the
+*hypothesis they were testing* while the actual defect sat in a constant nobody
+was varying.
+
+**The general lesson: a fitted constant that is degenerate under a periodicity is
+only determined modulo that period, and the alias you happen to land on is
+invisible until something else in the pipeline becomes precision-sensitive.**
+Before trusting a fit, check whether the model has a period, and prefer the
+representative of smallest magnitude - it is the one the original author is
+likely to have typed, and the one that survives f32.
+
+`variablePersistenceMultioctaveNoise` carries a fitted per-octave shift of
+**`-7936`, which is `-31 * 256`** - an alias of 0. That is the same signature and
+it is very likely the same defect; it is untouched by this change and worth
+checking next.
+
+## What is left (7.2e-7), and it is not this file's problem
+
+The residual after the fix does **not** come from the composition. Decomposed
+per case, `octaves = 1` already carries 2.4e-7 with only 10/38 samples f32-exact -
+and at `octaves = 1, P = 0.5` the normalisation is exactly 1, so that case reduces
+to a single `basisNoise` call. `src/noise/basisNoise.ts` evaluates in f64
+throughout (no `Math.fround` anywhere) and its own header admits a "~2e-7 noise
+floor"; the game's vector `Noise::noise` computes the same kernel in f32 NEON,
+two lattice corners per 2-lane vector with a final `faddp`, and folds the
+gradient magnitude into the stored gradient table.
+
+So closing the last 7.2e-7 is a `basis_noise` job, not a `multioctave_noise` one.
+See `basis-noise-NOTES.md`.
+
+## The op's offset_x / offset_y parameters are NOT the per-octave shift
+
+**This section previously said the per-octave shift was `k * 17.17000305 /
+offset_x` and that `-1774.83` was the plain op's default `offset_x`. Both halves
+are wrong** - there is no `fdiv` anywhere in `fastVectorMultioctaveNoise`, and the
+per-octave shift is the bare constant `k * 17.17`.
+
+The op does have `offset_x` / `offset_y` parameters, but they are something else:
+`run` loads them from the operation's constant block and passes them straight
+through to the vector `Noise::noise`, which applies them per point as
+`(coord + offset) * input_scale` - a **single world-space translation applied
+identically to every octave**, not a per-octave shift. They are 0 for every call
+the fixture exercises, which is why the fit never saw them.
+
+That makes the family consistent rather than split:
+
+- **plain**: `offset_x`/`offset_y` are a world-space translation; per-octave
+  decorrelation is the fixed `k * 17.17` noise-space shift.
+- **quick_multioctave_noise**: `offset_x` is likewise a world-space translation
+  `(x + offset_x) * scale`; quick decorrelates octaves by re-seeding, not by an x
+  shift. See `quick-multioctave-noise-NOTES.md`.
+- **variable_persistence**: world-space translation plus a fixed per-octave noise
+  shift recorded as `k * (-7936)` - see the alias warning above, since
+  `-7936 = -31 * 256`.
 
 ## Done since: quick_multioctave_noise
 

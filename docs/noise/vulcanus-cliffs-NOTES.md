@@ -2465,6 +2465,17 @@ never touch the edge registers.
 | disputed-edge corner slots with a bracket | 26 of 72 |
 | of those, containing the port's value | **26 of 26** |
 
+> **Updated 2026-08-05 - these five figures MOVED, all in the port's favour.**
+> `multioctave_noise` fed `cliff_elevation` through an octave offset that was an
+> alias 100x too large to survive f32 (see `multioctave-noise-NOTES.md`); fixing
+> it tightened that primitive 164x and nudged a handful of borderline cells.
+> Inside-the-bracket **996 -> 997 of 998**, worst miss **6.7e-4 -> 2.6e-5**,
+> disputed cells **1235 -> 1233** (subset still 1231), edges-against-absent
+> **1233 -> 1231**, agreed edges **36103 -> 36107**. The conclusions in this
+> section are unchanged - the field was already exonerated and is now slightly
+> more so. The live numbers are in the specs; these tables are the 2026-08-02/03
+> measurement as taken.
+
 So the field is exonerated **by direct measurement** rather than by scoring, and
 this also independently re-confirms the `(i*4, j*4)` corner lattice: a wrong
 sampling site could not put 996 of 998 values inside 5-unit brackets.
@@ -2519,6 +2530,9 @@ at which the port applies both Vulcanus cliff rejections.
 | ... sitting against a cell the game did not emit | **1233** |
 | edges both sides agree on (in region) | **36103** |
 | ... sitting against a cell the game did not emit | **0** |
+
+> **Updated 2026-08-05:** the multioctave octave-offset fix moved these to
+> 1233 / 1231 / 36107 / 0. The dichotomy - and the zero - are unchanged.
 
 Zero, not "fewer". A cell's edge register is the same array slot as its
 neighbour's (#103), so this says the game's absences take their crossings with
