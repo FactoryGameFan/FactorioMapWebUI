@@ -4504,3 +4504,45 @@ The remaining west-flavoured observation in this investigation is the ore recall
 gap's six cells, all with their nearest resource to the WEST. Whether the two are
 one phenomenon is untested and is the cheapest next question - if the nine west
 survivors correlate with resource proximity, two open threads collapse into one.
+
+## The two WEST observations are INDEPENDENT (2026-08-04, #84)
+
+#150 localised the border residual to the west chunk edge; #142 separately found
+all six ore-recall cells with their nearest resource to the WEST. If those were
+one phenomenon two open threads would collapse into one. **They are not.** Zero
+capture - `test/cliffWestOreCorrelation.spec.ts`, scored against the game's own
+dumped resource entities rather than the port's model.
+
+| | within 32 tiles of a resource | nearest resource lies WEST |
+| --- | --- | --- |
+| base (8,393 raw cells) | 21.3% | 47.1% |
+| west-edge survivors (9) | 2 of 9 | **44.4%** |
+| other survivors (15) | 3 of 15 | 60.0% |
+
+West-edge survivors are no closer to resources than the other survivors, and
+their nearest resource points west slightly **less** often than the base rate.
+Whatever produces the west-edge concentration, it is not the ore.
+
+### A signal that looks real at 3 sigma and is not
+
+At a 64-tile radius the survivors do look resource-proximate: 70.8% against a
+40.2% base, **z = 3.06**. Two things kill it, and both are worth keeping because
+this shape recurs:
+
+- **The scale is wrong for a cell-level cause.** Nothing at 16 tiles (z = 0.81)
+  or 32 (z = -0.05). An effect absent at short range and present only at 64 tiles
+  is describing a REGION, not a cell.
+- **n_eff is ~9, not 24.** The 24 survivors sit in **9** regions and the
+  within-64 outcome is nearly all-or-nothing per region - four regions have ALL
+  their survivors inside 64 tiles, two have NONE. The cells are not independent
+  draws, so the binomial z over 24 of them is inflated. Same failure the ore/cliff
+  "100x below chance" claim made, and it is now asserted in the spec so it cannot
+  be rediscovered and believed.
+
+### Where #84 stands
+
+Five mechanisms ruled out for the border residual (#134, #143, #149, #150, #151),
+and the ore is now ruled out as the cause of its west signature. The west
+concentration itself stands at z = 2.6-2.9 across every sweep-order arm, on 17-24
+border cells over 14 regions - and that n has never been raised. Raising it out
+of sample is the honest next step before another mechanism hunt.
