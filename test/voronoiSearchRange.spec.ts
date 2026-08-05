@@ -182,3 +182,55 @@ describe("pointsSearchRange's own table (weaker guard - see the block comment)",
     expect(pointsSearchRange("euclidean", 0.66)).toBe(1);
   });
 });
+
+/**
+ * `searchRangeOverride` is a TEST HOOK, and its "nothing that renders a map may
+ * set this" was documentation only until this spec.
+ *
+ * It plants the WRONG neighbour ring so the committed game values can reject it.
+ * A field builder that set it - even to the value {@link pointsSearchRange}
+ * would have chosen - would be shipping a hardcoded ring that silently stops
+ * tracking the game's per-distance-type rule, and no fixture would catch it:
+ * `spot`/`facet`/`cell_id` are ring-insensitive, and the pyramid disagreements
+ * are rare enough (113 in a 4096x4096-tile chebyshev sweep at jitter 1) that a
+ * 175-position grid never lands on one. So the guard has to be structural.
+ *
+ * It greps `src/**` rather than asserting a type, because the field is
+ * deliberately part of the public `VoronoiParams` - making it non-optional or
+ * moving it behind a symbol would complicate the one caller that legitimately
+ * needs it (this file).
+ */
+describe("searchRangeOverride is confined to tests", () => {
+  it("is not set anywhere under src/", async () => {
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    // `resolve` is relative to the Vitest root, which is the repo root.
+    const root = resolve("src");
+    const files: string[] = [];
+    const walk = (dir: string, rel: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(`${dir}/${e.name}`, `${rel}${e.name}/`);
+        else files.push(`${rel}${e.name}`);
+      }
+    };
+    walk(root, "");
+
+    const hits = files.filter((f) =>
+      readFileSync(`${root}/${f}`, "utf8").includes("searchRangeOverride"),
+    );
+
+    // The declaration in voronoiNoise.ts is the only permitted occurrence, and
+    // it is a declaration, never an assignment.
+    const offenders = hits.filter((f) => f !== "noise/voronoiNoise.ts");
+    expect(
+      offenders,
+      `searchRangeOverride referenced outside its declaration:\n${offenders.join("\n")}`,
+    ).toEqual([]);
+
+    // Non-vacuous twice over: the walk must have seen a real tree, and the
+    // identifier must actually be findable by this method. A typo in either
+    // would otherwise make an empty `offenders` mean nothing.
+    expect(files.length).toBeGreaterThan(50);
+    expect(hits).toEqual(["noise/voronoiNoise.ts"]);
+  });
+});

@@ -500,3 +500,151 @@ describe("the jittered field matches the game exactly", () => {
     });
   }
 });
+
+/**
+ * The caching layers inside {@link makeVoronoi} - a per-cell point `Map`, a
+ * one-entry cache over the `d1`/`d2` search, and `memoXY` on each of the four
+ * returned ops.
+ *
+ * These are not the correctness proof. **The 120 exact-value tests above are**:
+ * every cache here hands back the identical float the first call computed, so a
+ * cache that changed any value would show up as a fixture mismatch, not here.
+ * What these add is that the caches are wired at all (a `makeVoronoi` that
+ * forgot `memoXY` still passes every fixture test) and that the sharing across
+ * distance types is legitimate.
+ */
+describe("makeVoronoi caching", () => {
+  it("returns identical values on repeat calls at the same position", () => {
+    const v = makeVoronoi({
+      seed0: 123456,
+      seed1: 1,
+      gridSize: 175,
+      jitter: 0.6,
+      distanceType: "manhattan",
+    });
+    expect(v.pyramidNoise(500.5, -320.25)).toBe(v.pyramidNoise(500.5, -320.25));
+  });
+
+  /**
+   * Fields sharing `seed`/`grid_size`/`jitter` minimise over the SAME point set,
+   * which is what makes sharing one point cache legitimate. This asserts it
+   * behaviourally, through the one consequence that survives at f32.
+   *
+   * **`cellId` does NOT agree across distance types, and the obvious test that
+   * says it does is wrong.** The task brief specified exactly that assertion -
+   * 50 positions, manhattan against euclidean at jitter 0.6 - and it fails at
+   * two of them (i = 25 and i = 29). Point PLACEMENT is distance-type-blind
+   * (`VoronoiPoints`' constructor loads only `+0x20` seed, `+0x24` grid size and
+   * `+0x28` jitter, and never touches the `distance_type` byte at `+0x26` - see
+   * {@link pointForCell}), but which point is NEAREST is chosen under the
+   * metric, and the metrics disagree near a boundary. Measured over a
+   * 400x400 sample grid, stride 3.25 tiles, origin (-650, -650), `gridSize` 175,
+   * `jitter` 0.6, `seed0` 7 / `seed1` 11:
+   *
+   * | pair | `cellId` disagreements |
+   * | --- | --- |
+   * | manhattan vs euclidean | 10933 / 160000 = 6.83% |
+   * | manhattan vs chebyshev | 20915 / 160000 = 13.07% |
+   * | euclidean vs minkowski3 | 4250 / 160000 = 2.66% |
+   *
+   * So a Fulgora expression cannot substitute one `cell_id` for another; only
+   * the cached POINTS are shared.
+   *
+   * What IS true of a shared point set is a metric ordering. For any single
+   * vector `|v|_inf <= |v|_2 <= |v|_1`, and `min` preserves it, so
+   * `spotNoise` must satisfy `chebyshev <= euclidean <= manhattan` at every
+   * position - **whatever point wins in each**, and only because all three
+   * minimise over the same points.
+   *
+   * **Non-vacuous, and measured rather than asserted:** the same sweep with one
+   * field's `seed1` changed to 999 - a different point set, everything else
+   * identical - violates the ordering at **30036 of 40000** positions. And
+   * `minkowski3` is deliberately absent even though `|v|_inf <= |v|_3 <= |v|_2`
+   * is true in exact arithmetic: its cube root goes through the game's
+   * fastapprox pair (~1e-5 relative), which breaks the ordering at near-ties on
+   * 1927 of those 40000 positions. That is the port faithfully reproducing the
+   * game, not a defect - which is why the invariant is stated over the three
+   * exactly-computed metrics only.
+   */
+  it("fields sharing seed/grid/jitter minimise over one point set (metric ordering)", () => {
+    // fulgora_cells (manhattan) and fulgora_spots (euclidean) share a point set.
+    const mk = (distanceType: VoronoiDistanceType): ReturnType<typeof makeVoronoi> =>
+      makeVoronoi({ seed0: 7, seed1: 11, gridSize: 175, jitter: 0.6, distanceType });
+    const cheb = mk("chebyshev");
+    const eucl = mk("euclidean");
+    const manh = mk("manhattan");
+    for (let i = 0; i < 60; i++) {
+      const x = i * 37.5 + 0.5;
+      const y = i * -21.25 + 0.5;
+      const c = cheb.spotNoise(x, y);
+      const e = eucl.spotNoise(x, y);
+      const m = manh.spotNoise(x, y);
+      expect(c, `chebyshev <= euclidean at (${String(x)}, ${String(y)})`).toBeLessThanOrEqual(e);
+      expect(e, `euclidean <= manhattan at (${String(x)}, ${String(y)})`).toBeLessThanOrEqual(m);
+    }
+  });
+
+  it("a fresh field with the same parameters reproduces the same values", () => {
+    const p = {
+      seed0: 99,
+      seed1: 3,
+      gridSize: 64,
+      jitter: 1,
+      distanceType: "chebyshev",
+    } as const;
+    expect(makeVoronoi(p).facetNoise(12.5, 88.5)).toBe(makeVoronoi(p).facetNoise(12.5, 88.5));
+  });
+
+  /**
+   * The cache must not be a stale-value hazard when the caller MOVES. `memoXY`
+   * keys on exact `===` of both coordinates, and the point `Map` is keyed on the
+   * cell index, so this walks a line that crosses many cells and re-reads every
+   * position in a second, interleaved pass. If either layer were keyed too
+   * loosely, the second pass would disagree with the first.
+   */
+  it("survives an interleaved re-read after moving across many cells", () => {
+    const v = makeVoronoi({
+      seed0: 4242,
+      seed1: 0,
+      gridSize: 175,
+      jitter: 0.8,
+      distanceType: "minkowski3",
+    });
+    const xs: number[] = [];
+    const ys: number[] = [];
+    const first: number[] = [];
+    for (let i = 0; i < 120; i++) {
+      const x = i * 61.5 - 1000.25;
+      const y = i * -43.75 + 512.5;
+      xs.push(x);
+      ys.push(y);
+      first.push(v.facetNoise(x, y));
+    }
+    // Re-read in reverse, so no position benefits from being the last one seen.
+    for (let i = 119; i >= 0; i--) {
+      expect(v.facetNoise(xs[i], ys[i]), `at (${String(xs[i])}, ${String(ys[i])})`).toBe(first[i]);
+    }
+  });
+
+  /**
+   * `pyramidNoise`'s minkowski3 rejection is deliberately NOT wrapped in
+   * `memoXY`, because `memoXY` stores the coordinates before calling through: a
+   * wrapped throwing function leaves the slot claiming a position it never
+   * produced a value for, and the SECOND call at that position would return the
+   * previous position's number instead of throwing. This asserts the throw
+   * survives a repeat call, which is the observable form of that bug.
+   */
+  it("keeps throwing for minkowski3 pyramid noise on repeated calls at one position", () => {
+    const v = makeVoronoi({
+      seed0: 1,
+      seed1: 2,
+      gridSize: 175,
+      jitter: 0.8,
+      distanceType: "minkowski3",
+    });
+    // Prime every memo slot with a real value at this exact position first.
+    expect(Number.isFinite(v.facetNoise(31.5, 77.5))).toBe(true);
+    expect(() => v.pyramidNoise(31.5, 77.5)).toThrow(/Minkowski3 distance is not supported/);
+    expect(() => v.pyramidNoise(31.5, 77.5)).toThrow(/Minkowski3 distance is not supported/);
+  });
+});
