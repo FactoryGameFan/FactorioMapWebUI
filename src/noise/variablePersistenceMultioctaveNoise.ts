@@ -15,18 +15,20 @@
  *
  * The shape:
  *
- *   varPers(x, y) = output_scale * 2^N * SUM_{k=0}^{N-1} p^(N-1-k) *
- *                   basis( (x + offset_x)*S_k + k*OCTAVE_SHIFT , y*S_k ;
- *                          tables(seed0, seed1) )
+ *   varPers(x, y) = f32( gain * HORNER_{k=0..N-1} basis( f32(f32(x + offset_x)*S_k) ,
+ *                                                        f32(y*S_k) ) )
  *
- *     S_k = input_scale * 0.5^(k+1)      (finest octave scale = input_scale/2)
- *     p   = persistence at this tile
- *     N   = octaves
+ *     S_0   = f32(input_scale * 0.5)     (finest octave scale = input_scale/2)
+ *     S_k+1 = f32(S_k * 0.5)
+ *     gain  = output_scale * 2^N
+ *     p     = persistence at this tile
+ *     N     = octaves
  *
  * i.e. N octaves of `basis_noise` sharing ONE (seed0, seed1) - each octave halves
  * the input scale (lacunarity 1/2) and is weighted by a power of the per-tile
  * persistence, combined in Horner order (finest octave gets the smallest weight
- * p^(N-1), coarsest gets 1). Three things distinguish it from the relatives:
+ * p^(N-1), coarsest gets 1), with every step rounded to f32. Two things
+ * distinguish it from the relatives:
  *
  * 1. **No RMS normalisation.** It is the raw weighted sum times a `2^N` gain. The
  *    `amplitude_corrected_multioctave_noise` Lua wrapper is what normalises, by
@@ -35,29 +37,44 @@
  *    is a *different* entry point; the register `run` path the game evaluates via
  *    `calculate_tile_properties` has none.)
  * 2. **`offset_x` is a single world-space x translation** `(x + offset_x)*scale`,
- *    applied identically to every octave - like `quick_multioctave_noise`, NOT the
- *    plain op's per-octave `k*17.17/offset_x` noise-space shift.
- * 3. **Octaves decorrelate by a fixed per-octave x shift** `k*OCTAVE_SHIFT` in noise
- *    space (the game's "'x' variables are shifted to avoid 'fractal similarity'"),
- *    NOT by re-seeding - the seed is shared across octaves.
+ *    applied identically to every octave - like `quick_multioctave_noise`.
  *
- * Verified against the game to the basis floor (~1e-7) for small coordinates,
- * loosening where a large `offset_x` / far world point pushes the noise-space
- * coordinate to thousands of tiles (the documented f32 floor; see
- * basis-noise-NOTES.md). NOT wired into the app - a building block for a
- * client-side map preview.
+ * **There is NO per-octave x shift.** This file used to carry a fitted
+ * `k*(-7936)`; `::run`'s octave loop reloads the x/y offsets from the same two
+ * constant slots every iteration and has no counter-scaled term at all. See the
+ * comment on the removal below - the fitted value was an alias of zero.
+ *
+ * Verified against the game at **1.1e-5 worst over all 266 oracle samples**, and
+ * that residual is `basisNoise`'s own f32 floor amplified by this op's gain, not a
+ * modelling gap: `worst/gain` is 1.2e-7 to 2.4e-7 - one to two f32 ulps - in every
+ * one of the seven cases, including the two with `offset_x` of 5000 and 40000.
+ * NOT wired into the app - a building block for a client-side map preview.
  */
 
 import { basisNoise, basisNoiseTablesFromSeed, type BasisNoiseTables } from "./basisNoise";
 
 /**
- * Fixed per-octave x shift in noise space, added as `k*OCTAVE_SHIFT` for octave k.
- * Measured constant (=-0x1F00), independent of seed, input_scale, offset_x and
- * persistence to the noise floor. It is what decorrelates the same-seed octaves.
- * (A narrow offset scan finds false minima near -4864 / -3840; the true value only
- * holds up under a wide, input-scale-independent fit - see the notes.)
+ * `OCTAVE_SHIFT` is GONE, and its absence is the fix.
+ *
+ * It was `-7936`, fitted as "independent of seed, input_scale, offset_x and
+ * persistence to the noise floor". The fit was not measuring a shift - it was
+ * measuring nothing. The basis lattice has period 256 per axis, and
+ * `-7936 == -31 * 256`, so it names the same field as a shift of **zero**. The
+ * old comment's own "false minima near -4864 / -3840" are `-19*256` and `-15*256`
+ * - every candidate the scan surfaced was a multiple of 256, which is what a
+ * completely flat fit direction looks like from the inside.
+ *
+ * `VariablePersistenceMultioctaveNoise::run`'s octave loop settles it: it reloads
+ * the x and y offsets from the same two constant slots (`+0xa2c`, `+0xa30`) on
+ * every iteration and contains no counter-scaled term. There is no per-octave
+ * shift; octaves decorrelate through lacunarity alone.
+ *
+ * In f64 removing it changes nothing (measured: identical worst and identical
+ * f32-exact count). In f32 it is the difference between **3.6e-1 and 1.1e-5** -
+ * a shift of -7936*5 lands where an f32 ulp is ~3.9e-3. Same defect and same
+ * pairing as the plain op's `-1774.83`; see docs/noise/multioctave-noise-NOTES.md.
  */
-const OCTAVE_SHIFT = -7936;
+const f32 = Math.fround;
 
 export interface VariablePersistenceMultioctaveParams {
   /** Map seed (basis seed word). */
@@ -94,13 +111,13 @@ export function variablePersistenceMultioctaveNoise(
   const { octaves, inputScale, outputScale, offsetX } = params;
 
   let acc = 0;
-  let scale = inputScale * 0.5; // octave 0 = input_scale / 2
+  let scale = f32(f32(inputScale) * 0.5); // octave 0 = input_scale / 2
   for (let k = 0; k < octaves; k++) {
-    acc += basisNoise((x + offsetX) * scale + k * OCTAVE_SHIFT, y * scale, tables);
-    if (k < octaves - 1) acc *= persistence;
-    scale *= 0.5;
+    acc = f32(acc + basisNoise(f32(f32(x + offsetX) * scale), f32(y * scale), tables));
+    if (k < octaves - 1) acc = f32(acc * persistence);
+    scale = f32(scale * 0.5);
   }
-  return outputScale * 2 ** octaves * acc;
+  return f32(acc * f32(outputScale * 2 ** octaves));
 }
 
 /**
@@ -114,23 +131,23 @@ export function makeVariablePersistenceMultioctaveNoise(
 ): (x: number, y: number, persistence: number) => number {
   const { seed0, seed1, octaves, inputScale, outputScale, offsetX } = params;
   const tables = basisNoiseTablesFromSeed(seed0, seed1);
-  const gain = outputScale * 2 ** octaves;
+  const gain = f32(outputScale * 2 ** octaves);
 
   const octaveScale: number[] = [];
-  let scale = inputScale * 0.5;
+  let scale = f32(f32(inputScale) * 0.5);
   for (let k = 0; k < octaves; k++) {
     octaveScale.push(scale);
-    scale *= 0.5;
+    scale = f32(scale * 0.5);
   }
 
   return (x: number, y: number, persistence: number): number => {
     let acc = 0;
     for (let k = 0; k < octaves; k++) {
       const s = octaveScale[k];
-      acc += basisNoise((x + offsetX) * s + k * OCTAVE_SHIFT, y * s, tables);
-      if (k < octaves - 1) acc *= persistence;
+      acc = f32(acc + basisNoise(f32(f32(x + offsetX) * s), f32(y * s), tables));
+      if (k < octaves - 1) acc = f32(acc * persistence);
     }
-    return gain * acc;
+    return f32(acc * gain);
   };
 }
 

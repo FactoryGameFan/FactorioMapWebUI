@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-variable-persistence-multioctave.seed123456.json";
+import { basisNoise, basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
 import {
   makeVariablePersistenceMultioctaveNoise,
   variablePersistenceMultioctaveNoise,
@@ -26,21 +27,24 @@ function paramsFor(seed0: number, c: VarPersCase) {
   };
 }
 
-/**
- * The largest absolute noise-space x-coordinate any octave samples, i.e.
- * max_k |(x + offset_x)*input_scale*0.5^(k+1) + k*(-7936)|. Beyond a few hundred
- * noise units the game's f32 coordinate pipeline diverges from our f64 (the
- * documented f32 floor) - the coarse octaves' fixed per-octave shift and a large
- * offset_x both push into that regime.
- */
-function maxNoiseX(c: VarPersCase, x: number): number {
-  let m = 0;
-  let scale = c.inputScale * 0.5;
-  for (let k = 0; k < c.octaves; k++) {
-    m = Math.max(m, Math.abs((x + c.offsetX) * scale + k * -7936));
-    scale *= 0.5;
+/** Worst absolute error of an evaluator over the whole fixture, and where. */
+function sweep(evaluate: (x: number, y: number, persistence: number, c: VarPersCase) => number): {
+  worst: number;
+  label: string;
+} {
+  let worst = 0;
+  let label = "";
+  for (const c of fixture.cases as VarPersCase[]) {
+    for (let i = 0; i < fixture.positions.length; i++) {
+      const p = fixture.positions[i];
+      const err = Math.abs(evaluate(p.x, p.y, fixture.persistenceField[i], c) - c.values[i]);
+      if (err > worst) {
+        worst = err;
+        label = `octaves=${c.octaves} offset=${c.offsetX} seed1=${c.seed1} @(${p.x},${p.y})`;
+      }
+    }
   }
-  return m;
+  return { worst, label };
 }
 
 describe("variablePersistenceMultioctaveNoise reproduces the game", () => {
@@ -49,31 +53,92 @@ describe("variablePersistenceMultioctaveNoise reproduces the game", () => {
   // persistence expression (routed onto elevation), fed back in as the model's
   // per-tile p. Regenerate with test/oracle/capture.ts.
   it("matches variable_persistence_multioctave_noise across octaves / scales / offset / seeds", () => {
-    let worstNear = 0;
-    let worstNearLabel = "";
-    let worstFar = 0;
+    // One domain, not two. This used to split near-field from far-field on a
+    // `maxNoiseX(...) < 500` threshold computed from the fitted `k*(-7936)` shift,
+    // with a 100x looser far tolerance. Both the shift and the split are gone: the
+    // shift was an alias of zero, and with it removed the two cases carrying
+    // offset_x of 5000 and 40000 are no worse than the ones at the origin.
+    const { worst, label } = sweep((x, y, p, c) =>
+      variablePersistenceMultioctaveNoise(x, y, p, paramsFor(fixture.seed0, c)),
+    );
+    expect(worst, `worst at ${label}`).toBeLessThan(2e-5);
+  });
+
+  /**
+   * The residual is `basisNoise`'s f32 floor multiplied by this op's `2^N *
+   * output_scale` gain, not a modelling gap - so the meaningful bound is relative
+   * to that gain, and it is one to two f32 ulps in every case. Asserting this
+   * rather than only the absolute worst is what keeps a future regression that
+   * scales with gain from hiding inside a loose absolute tolerance.
+   */
+  it("the residual is the basis floor times the gain, at 1-2 f32 ulps per case", () => {
     for (const c of fixture.cases as VarPersCase[]) {
       const params = paramsFor(fixture.seed0, c);
+      const gain = c.outputScale * 2 ** c.octaves;
+      let worst = 0;
       for (let i = 0; i < fixture.positions.length; i++) {
         const p = fixture.positions[i];
-        const persistence = fixture.persistenceField[i];
-        const got = variablePersistenceMultioctaveNoise(p.x, p.y, persistence, params);
-        const err = Math.abs(got - c.values[i]);
-        if (maxNoiseX(c, p.x) < 500) {
-          if (err > worstNear) {
-            worstNear = err;
-            worstNearLabel = `octaves=${c.octaves} offset=${c.offsetX} seed1=${c.seed1} @(${p.x},${p.y})`;
-          }
-        } else {
-          worstFar = Math.max(worstFar, err);
-        }
+        const got = variablePersistenceMultioctaveNoise(
+          p.x,
+          p.y,
+          fixture.persistenceField[i],
+          params,
+        );
+        worst = Math.max(worst, Math.abs(got - c.values[i]));
       }
+      expect(
+        worst / gain,
+        `octaves=${c.octaves} offset=${c.offsetX} seed1=${c.seed1} (gain ${gain})`,
+      ).toBeLessThan(3e-7);
     }
-    // Near-field sits at the basis floor; far-field is the same f32 coordinate floor
-    // the plain/quick multioctave ops document, reached here by the coarse octaves'
-    // k*(-7936) shift and the large climate-scale offset_x (40000) times the 2^N gain.
-    expect(worstNear, `worst near-field at ${worstNearLabel}`).toBeLessThan(5e-5);
-    expect(worstFar, "worst far-field").toBeLessThan(5e-3);
+  });
+
+  // Guard: the tolerance above must not be reachable by the pre-fix models. As with
+  // the plain op, NEITHER half of the fix does anything on its own.
+  describe("the pre-fix models are still rejected", () => {
+    const f = Math.fround;
+
+    /** The old f64 model, parameterised on the octave shift. */
+    function legacyF64(x: number, y: number, p: number, c: VarPersCase, shift: number): number {
+      const tables = basisNoiseTablesFromSeed(fixture.seed0, c.seed1);
+      let acc = 0;
+      let scale = c.inputScale * 0.5;
+      for (let k = 0; k < c.octaves; k++) {
+        acc += basisNoise((x + c.offsetX) * scale + k * shift, y * scale, tables);
+        if (k < c.octaves - 1) acc *= p;
+        scale *= 0.5;
+      }
+      return c.outputScale * 2 ** c.octaves * acc;
+    }
+
+    /** The current f32 op order with the aliased shift restored. */
+    function f32WithShift(x: number, y: number, p: number, c: VarPersCase): number {
+      const tables = basisNoiseTablesFromSeed(fixture.seed0, c.seed1);
+      let acc = 0;
+      let scale = f(f(c.inputScale) * 0.5);
+      for (let k = 0; k < c.octaves; k++) {
+        acc = f(acc + basisNoise(f(k * -7936 + f(f(x + c.offsetX) * scale)), f(y * scale), tables));
+        if (k < c.octaves - 1) acc = f(acc * p);
+        scale = f(scale * 0.5);
+      }
+      return f(acc * f(c.outputScale * 2 ** c.octaves));
+    }
+
+    it("rejects the shipped f64 model (aliased shift -7936)", () => {
+      expect(sweep((x, y, p, c) => legacyF64(x, y, p, c, -7936)).worst).toBeGreaterThan(1e-4);
+    });
+
+    it("rejects f32 arithmetic while the shift is still aliased", () => {
+      // ~3.6e-1 - four orders of magnitude WORSE than the f64 model it replaces,
+      // because k*(-7936) at octave 5 lands where an f32 ulp is ~3.9e-3.
+      expect(sweep(f32WithShift).worst).toBeGreaterThan(1e-2);
+    });
+
+    it("rejects removing the shift while the arithmetic is still f64", () => {
+      // A literal no-op: -7936 is -31*256 and the basis lattice has period 256, so
+      // in f64 the shifted and unshifted models are the same field.
+      expect(sweep((x, y, p, c) => legacyF64(x, y, p, c, 0)).worst).toBeGreaterThan(1e-4);
+    });
   });
 
   it("makeVariablePersistenceMultioctaveNoise (prebuilt tables) agrees with the direct form", () => {
