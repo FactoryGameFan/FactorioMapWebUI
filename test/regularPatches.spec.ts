@@ -53,7 +53,9 @@ function relErr(port: number, game: number): number {
 // These tolerances CANNOT police that change, and that is the point worth
 // keeping: at 1.0 absolute and 1e-2 relative they cannot resolve a ~1e-5 shift in
 // either direction. A green run of this file is not evidence that a numerics
-// change was neutral. `test/voronoiNoise.spec.ts` is the only f32-exact guard.
+// change was neutral. The f32-exact guards are `test/voronoiNoise.spec.ts` and
+// `test/voronoiSearchRange.spec.ts` (both compare with `toBe` after `f32`, no
+// tolerance) - go there to police a numerics change, not here.
 const ABS_TOL = 1.0;
 const REL_TOL = 1e-2;
 

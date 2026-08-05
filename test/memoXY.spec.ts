@@ -41,8 +41,9 @@ describe("memoXY", () => {
    * `dirty` below is the old implementation, inlined. It is here so the test can
    * demonstrate that the two orderings actually differ - without it, `clean`
    * passing would be consistent with the guard testing nothing. Confirmed to
-   * discriminate: `dirty` returns 10 on the second call at (2, 2) where `clean`
-   * throws.
+   * discriminate: `dirty` returns **11** on the second call at (2, 2) - the value
+   * from (1, 1), which is the whole point - where `clean` throws. That is what
+   * the `dirty` arm asserts below.
    */
   describe("a throwing fn must keep throwing on the second call at that position", () => {
     const throwsAtTwo = (): ((x: number, y: number) => number) => {

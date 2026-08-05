@@ -90,7 +90,11 @@ describe("voronoi_pyramid_noise at positions where the search range is observabl
      * answers differ there by more than 2%, so planting the OTHER ring must fail
      * at EVERY position - not merely somewhere. If a future change makes this
      * pass, the ring has stopped mattering at these positions and the fixture
-     * above has quietly become another 40 values that endorse nothing.
+     * above has quietly become another 37 values that endorse nothing. (37 is
+     * the whole fixture, not the 40 an earlier version of this comment said: its
+     * 5 series hold 8, 11, 6, 11 and 1 positions. The single-position euclidean
+     * jitter-0.9 series is worth knowing about - one position is the thinnest a
+     * "fails at EVERY position" guard can get.)
      */
     it(`rejects the other search range at every position - ${label}`, () => {
       const wrong = s.expectedRange === 1 ? 2 : 1;

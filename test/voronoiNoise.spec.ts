@@ -314,14 +314,22 @@ const pf = pointsFixture as {
  * it to lattice resolution - here half a tile in each axis, the lattice being
  * the 64x64 tile centres of one whole cell.
  *
- * **The `cellIds` filter is what makes that true, and it is not a nicety.**
- * `spot_noise` is the distance to the nearest point of ANY cell, so a
- * neighbour's point sitting just outside the boundary can own lattice positions
- * inside this cell and win the unrestricted argmin - in which case the recovered
- * "apex" would be a different cell's point and the test would be measuring the
- * wrong thing while still passing or failing for plausible-looking reasons. The
- * game's own `cell_id` says which point won where, so the argmin runs only over
- * the positions this cell actually owns.
+ * **The `cellIds` filter is correct by construction, and on this fixture it is
+ * currently INERT.** `spot_noise` is the distance to the nearest point of ANY
+ * cell, so in general a neighbour's point sitting just outside the boundary can
+ * own lattice positions inside this cell and win the unrestricted argmin - the
+ * recovered "apex" would then be a different cell's point, and the test would be
+ * measuring the wrong thing while still passing or failing for plausible-looking
+ * reasons. The game's own `cell_id` says which point won where, so the argmin
+ * runs only over the positions this cell actually owns.
+ *
+ * But that hazard does not bite here, and saying so is the honest form: the
+ * filter discards **27.3% to 42.7%** of the 4096 lattice positions depending on
+ * jitter, and the filtered argmin equals the unfiltered argmin in **all 6
+ * series**. It is kept because the argument above is about `spot_noise`'s
+ * definition rather than about this capture - a different lattice, cell or jitter
+ * could separate them - not because it is doing work today. Do not cite it as
+ * load-bearing.
  */
 function apexOf(s: (typeof pf.series)[number]): { x: number; y: number } {
   const owner = cellRandom(pf.seed, pf.seed1, s.cellX, s.cellY);
@@ -724,10 +732,16 @@ describe("makeVoronoi caching", () => {
    * claiming a position it never produced a value for, so the second call
    * returns the previous position's number instead of throwing.
    *
-   * Double-guarded on purpose. `memoXY` itself was fixed on 2026-08-05 (see
-   * `test/memoXY.spec.ts`, which pins it with a dirty/clean pair), AND the throw
-   * is hoisted out of the memo here. This test would catch a regression in
-   * either.
+   * **This test guards the HOIST only, not `memoXY`** - measured, not assumed.
+   * Reverting `memoXY` to the old record-coordinates-first ordering leaves all
+   * 101 tests in this file passing, including this one, because the minkowski3
+   * throw is NOT wrapped in a memo (see `makeVoronoi`'s `pyramidNoise`); the only
+   * thing that goes red is `test/memoXY.spec.ts`.
+   *
+   * So the two guards are disjoint rather than redundant: `test/memoXY.spec.ts`
+   * pins the primitive with a dirty/clean pair, and this pins that the throw
+   * stays outside it. An earlier version of this comment claimed it would catch a
+   * regression in either, which the revert-and-run above refutes.
    */
   it("keeps throwing for minkowski3 pyramid noise on repeated calls at one position", () => {
     const v = makeVoronoi({
