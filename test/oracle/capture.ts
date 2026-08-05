@@ -2756,6 +2756,81 @@ async function captureVoronoiJitter0(): Promise<void> {
   );
 }
 
+/**
+ * `voronoi_cell_id` at the CENTRE of every cell in a 16x16 cell block, across
+ * three `seed0` (the map seed) x three `seed1`.
+ *
+ * `cell_id` is the per-cell RNG exposed directly as a float, so this is the
+ * cheapest possible view of the hash: one value per cell, no geometry, no
+ * boundary ambiguity. `distance_type` is irrelevant to it - the jitter-0 fixture
+ * asserts all four agree value-for-value - so only `chebyshev` is sampled.
+ *
+ * Two properties of the position set are deliberate:
+ *
+ * - **Cell indices span -8..7, not 0..15.** Negative indices are what
+ *   distinguish a hash that treats the cell coordinate as a two's-complement
+ *   `u32` from one that does anything else, and half the map has them.
+ * - **Every position is an exact integer** (`cx * 64 + 32`), so the 1/256
+ *   `MapPosition` floor that {@link snapToMapPosition} exists for cannot bite:
+ *   the game samples exactly where we asked, including for negative x/y where
+ *   floor-vs-truncate would otherwise be live.
+ */
+async function captureVoronoiCellId(): Promise<void> {
+  const gridSize = 64;
+  const jitter = 0;
+  const cells: { cx: number; cy: number }[] = [];
+  for (let cx = -8; cx < 8; cx++) {
+    for (let cy = -8; cy < 8; cy++) cells.push({ cx, cy });
+  }
+  const positions: Position[] = cells.map(({ cx, cy }) => ({
+    x: cx * gridSize + gridSize / 2,
+    y: cy * gridSize + gridSize / 2,
+  }));
+
+  const series: { seed0: number; seed1: number; values: number[] }[] = [];
+  for (const seed0 of [123456, 1, 4294967295]) {
+    for (const seed1 of [0, 1, 137]) {
+      const expression = buildVoronoiExpression({
+        op: "voronoi_cell_id",
+        x: "x",
+        y: "y",
+        seed1: String(seed1),
+        gridSize,
+        distanceType: "chebyshev",
+        jitter,
+      });
+      const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+      try {
+        const values = await sampleExpression(expression, positions, { workDir, seed: seed0 });
+        series.push({ seed0, seed1, values });
+        console.log(`  captured seed0=${seed0} seed1=${seed1}`);
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.12 via the test/oracle harness. voronoi_cell_id routed onto " +
+      "elevation on the default Nauvis surface, sampled at the CENTRE of every cell in a 16x16 " +
+      "cell block (cell indices -8..7, so negative cell coordinates are covered), for 3 seed0 x 3 " +
+      "seed1 at grid_size 64, jitter 0. cell_id is the per-cell RNG as a float, so this is the hash " +
+      "with no geometry in the way; distance_type does not enter it (the jitter-0 fixture asserts " +
+      "all four agree). Regenerate: node --experimental-strip-types test/oracle/capture.ts voronoi-cellid",
+    gridSize,
+    jitter,
+    cells,
+    positions,
+    series,
+  };
+  const out = join(FIXTURES, "oracle-voronoi-cellid.multiseed.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(
+    `wrote ${out} (${String(series.length)} series x ${String(positions.length)} values)`,
+  );
+}
+
 if (!oracleAvailable()) {
   console.error("No Factorio binary found (set FACTORIO_BIN). Cannot capture fixtures.");
   process.exit(1);
@@ -5500,6 +5575,7 @@ async function captureVulcanusCliffDestroyProbe(): Promise<void> {
 }
 
 if (want("voronoi-jitter0")) await captureVoronoiJitter0();
+if (want("voronoi-cellid")) await captureVoronoiCellId();
 if (want("vulcanus-cliff-destroy-probe")) await captureVulcanusCliffDestroyProbe();
 if (want("vulcanus-cliff-chunk-order")) await captureVulcanusCliffChunkOrder();
 if (want("vulcanus-cliff-suppressor-levers")) await captureVulcanusCliffSuppressorLevers();
