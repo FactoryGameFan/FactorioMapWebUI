@@ -2,10 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-voronoi-jitter0.seed123456.json";
 import cellIdFixture from "./fixtures/oracle-voronoi-cellid.multiseed.json";
+import pointsFixture from "./fixtures/oracle-voronoi-points.seed123456.json";
 import {
   cellRandom,
   distanceOf,
   makeVoronoi,
+  pointForCell,
   type VoronoiDistanceType,
 } from "../src/noise/voronoiNoise";
 
@@ -288,6 +290,204 @@ describe("cellId reads the containing cell's draw", () => {
           f32(s.values[i]),
         );
       });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3: jittered point placement.
+// ---------------------------------------------------------------------------
+
+const pf = pointsFixture as {
+  seed: number;
+  seed1: number;
+  gridSize: number;
+  series: {
+    jitter: number;
+    distanceType: string;
+    cellX: number;
+    cellY: number;
+    lattice: { x: number; y: number }[];
+    values: number[];
+    cellIds: number[];
+  }[];
+  opPositions: { x: number; y: number }[];
+  ops: Record<string, number[]>;
+};
+
+/**
+ * The apex of `spot_noise`'s cone IS the point, so the lattice minimum recovers
+ * it to lattice resolution - here half a tile in each axis, the lattice being
+ * the 64x64 tile centres of one whole cell.
+ *
+ * **The `cellIds` filter is what makes that true, and it is not a nicety.**
+ * `spot_noise` is the distance to the nearest point of ANY cell, so a
+ * neighbour's point sitting just outside the boundary can own lattice positions
+ * inside this cell and win the unrestricted argmin - in which case the recovered
+ * "apex" would be a different cell's point and the test would be measuring the
+ * wrong thing while still passing or failing for plausible-looking reasons. The
+ * game's own `cell_id` says which point won where, so the argmin runs only over
+ * the positions this cell actually owns.
+ */
+function apexOf(s: (typeof pf.series)[number]): { x: number; y: number } {
+  const owner = cellRandom(pf.seed, pf.seed1, s.cellX, s.cellY);
+  let best = -1;
+  for (let i = 0; i < s.values.length; i++) {
+    if (f32(s.cellIds[i]) !== owner) continue;
+    if (best < 0 || s.values[i] < s.values[best]) best = i;
+  }
+  // A negative `best` would mean the cell owns NO lattice position, which cannot
+  // happen (its own point is inside it) and would make the assertions below
+  // vacuous by throwing on `undefined` instead of comparing anything.
+  expect(
+    best,
+    `${s.distanceType} jitter ${String(s.jitter)} owns no lattice position`,
+  ).toBeGreaterThanOrEqual(0);
+  return s.lattice[best];
+}
+
+describe("pointForCell recovers the jittered point positions", () => {
+  for (const s of pf.series) {
+    it(`jitter ${String(s.jitter)} / ${s.distanceType} - point within half a lattice step`, () => {
+      const got = pointForCell(pf.seed, pf.seed1, pf.gridSize, s.jitter, s.cellX, s.cellY);
+      const apex = apexOf(s);
+      expect(Math.abs(got.x - apex.x)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(got.y - apex.y)).toBeLessThanOrEqual(0.5);
+    });
+  }
+
+  /**
+   * **The load-bearing test.** Fulgora's `fulgora_cells` (manhattan) and
+   * `fulgora_spots` (euclidean) pass identical seed / grid_size / jitter and are
+   * meant to share one point field; if placement varied by distance type that
+   * cache would have to be keyed by it.
+   *
+   * The empirical half is here. The structural half is stronger and lives in
+   * {@link pointForCell}'s docblock: `VoronoiPoints`' constructor loads exactly
+   * three fields from the `VoronoiNoise` it is handed - seed at +0x20, grid size
+   * at +0x24, jitter at +0x28 - and `distance_type` is a byte at +0x26 that it
+   * never reads. The point generator cannot see the distance type.
+   */
+  it("point placement does NOT depend on distance_type", () => {
+    for (const jitter of [0.6, 0.8, 1]) {
+      const m = pf.series.find((s) => s.distanceType === "manhattan" && s.jitter === jitter);
+      const e = pf.series.find((s) => s.distanceType === "euclidean" && s.jitter === jitter);
+      expect(m, `no manhattan series at jitter ${String(jitter)}`).toBeDefined();
+      expect(e, `no euclidean series at jitter ${String(jitter)}`).toBeDefined();
+      expect(m!.cellX).toBe(e!.cellX);
+      expect(m!.cellY).toBe(e!.cellY);
+      // Not "within a tolerance" - the recovered apexes are the SAME lattice
+      // position, which is the strongest statement this instrument can make.
+      expect(apexOf(m!)).toEqual(apexOf(e!));
+    }
+  });
+
+  it("jitter 0 puts the point exactly at the cell centre", () => {
+    const p = pointForCell(pf.seed, pf.seed1, pf.gridSize, 0, 3, 5);
+    expect(p.x).toBe(3 * pf.gridSize + pf.gridSize / 2);
+    expect(p.y).toBe(5 * pf.gridSize + pf.gridSize / 2);
+  });
+
+  /**
+   * The 1/256 `MapPosition` grid cannot have displaced any probe in this
+   * fixture, because every lattice coordinate is a multiple of 1/2 a tile.
+   *
+   * That is the reason this capture does NOT use `snapToMapPosition`: that
+   * helper floors, and every negative probe committed before this one happened
+   * to be exactly representable, so floor and truncate-toward-zero are
+   * indistinguishable in all existing data. Rather than commit to a rounding
+   * rule no fixture can discriminate, the lattice avoids needing one - and this
+   * asserts the property rather than trusting the capture to have kept it.
+   */
+  it("every lattice position is exactly representable as a MapPosition", () => {
+    let checked = 0;
+    for (const s of pf.series) {
+      for (const p of s.lattice) {
+        expect(Number.isInteger(p.x * 256)).toBe(true);
+        expect(Number.isInteger(p.y * 256)).toBe(true);
+        checked++;
+      }
+    }
+    // Exact, not `> 0`: 6 series x 64 x 64.
+    expect(checked).toBe(6 * 64 * 64);
+    // ...and the lattice must actually straddle the cell, or "within half a
+    // lattice step" would be trivially satisfiable by a lattice one point wide.
+    const xs = new Set(pf.series[0].lattice.map((p) => p.x));
+    const ys = new Set(pf.series[0].lattice.map((p) => p.y));
+    expect(xs.size).toBe(64);
+    expect(ys.size).toBe(64);
+  });
+});
+
+/**
+ * The real acceptance bar: bit-exact f32 agreement with the game on every
+ * captured series, which is what "locating the point to within half a tile"
+ * emphatically is not.
+ *
+ * `voronoi_pyramid_noise` is excluded and that exclusion is asserted rather than
+ * implicit - see the block below, and {@link makeVoronoi}'s `pyramidNoise`.
+ */
+describe("the jittered field matches the game exactly", () => {
+  for (const key of Object.keys(pf.ops)) {
+    const [op, distanceType, jitter] = key.split(":");
+    if (op === "voronoi_pyramid_noise") continue;
+    it(`${op} / ${distanceType} / jitter ${jitter}`, () => {
+      const v = makeVoronoi({
+        seed0: pf.seed,
+        seed1: pf.seed1,
+        gridSize: pf.gridSize,
+        jitter: Number(jitter),
+        distanceType: distanceType as VoronoiDistanceType,
+      });
+      const call = {
+        voronoi_cell_id: v.cellId,
+        voronoi_spot_noise: v.spotNoise,
+        voronoi_facet_noise: v.facetNoise,
+      }[op]!;
+      const expected = pf.ops[key];
+      pf.opPositions.forEach((p, i) => {
+        expect(f32(call(p.x, p.y)), `at (${String(p.x)}, ${String(p.y)})`).toBe(f32(expected[i]));
+      });
+    });
+  }
+
+  it("covers all three jitters x four distance types for each of the three ported ops", () => {
+    const covered = Object.keys(pf.ops).filter((k) => !k.startsWith("voronoi_pyramid_noise"));
+    expect(covered).toHaveLength(3 * 3 * 4);
+  });
+
+  /**
+   * **R3 finding, pinned so it cannot be forgotten or silently "fixed".**
+   *
+   * `voronoi_pyramid_noise`'s jitter-0 formula is the distance to the nearest
+   * edge of the UNIT SQUARE. That is what a Voronoi cell is only when every
+   * point sits at its centre; with the points scattered the cells are general
+   * convex polygons and the square is not even an approximation. Measured
+   * against the game it matches ZERO of 175 positions at every one of the nine
+   * captured jitter x distance_type combinations, with errors up to about half a
+   * cell.
+   *
+   * This is exactly the hazard the jitter-0 rung was warned about: that
+   * configuration is degenerate, several different algorithms collapse onto the
+   * same numbers there, and reproducing it exactly says nothing about jitter > 0.
+   * Three of the four ops came through unchanged. This one did not.
+   *
+   * The test asserts the port REFUSES rather than that it is wrong by some
+   * amount - a tolerance here would be an invitation to widen it.
+   */
+  it("pyramidNoise is refused at jitter > 0, because its jitter-0 formula is wrong there", () => {
+    const pyramidKeys = Object.keys(pf.ops).filter((k) => k.startsWith("voronoi_pyramid_noise"));
+    expect(pyramidKeys).toHaveLength(3 * 3);
+    for (const key of pyramidKeys) {
+      const [, distanceType, jitter] = key.split(":");
+      const v = makeVoronoi({
+        seed0: pf.seed,
+        seed1: pf.seed1,
+        gridSize: pf.gridSize,
+        jitter: Number(jitter),
+        distanceType: distanceType as VoronoiDistanceType,
+      });
+      expect(() => v.pyramidNoise(pf.opPositions[0].x, pf.opPositions[0].y)).toThrow(/jitter 0/);
     }
   });
 });
