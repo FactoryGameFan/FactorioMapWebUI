@@ -136,6 +136,27 @@ patch interiors, up to ~9e-3 only at cone-edge / basement zero-crossings (the sa
 floor M1 elevation_lakes = 7.4e-3 and Island = 6.66e-3 documented). `test/regularPatches.spec.ts`
 is now **un-skipped**, asserting `worstAbs < 1.0 && worstRel < 1e-2`.
 
+**Update 2026-08-05: `fastApprox.ts` changed under those numbers.** Commit
+`9b49ebb` (2026-08-04) rewrote `fastLog2` / `fastPow2` to round after every
+`fadd`/`fmul`/`fdiv` as the binary does, rather than evaluating the polynomial in
+double and rounding to f32 once at the end. The coefficients were already right;
+only the rounding was wrong. `fastCbrt` therefore moves by ~1e-5 relative, and
+the `< 0.7 units everywhere` above no longer holds - that commit measured the same
+four cases before and after, and worst-**absolute** REGRESSES to 0.8159 / 0.4790 /
+0.8096 / 0.4755 (worst-relative improves sharply, by ~70x on iron/777771; the
+full table is in `test/regularPatches.spec.ts`). That is not a defect:
+the new rounding is what the binary does. But `ABS_TOL` is now the binding
+tolerance in `test/regularPatches.spec.ts`, with margin 0.18 rather than 0.31, and
+those tolerances cannot police a ~1e-5 numerics shift in either direction - a
+green run of that file is not evidence a change here was neutral. The detail sits
+in the comment at the top of `test/regularPatches.spec.ts`; the driver was
+`voronoi_spot_noise` x `minkowski3` (`docs/noise/voronoi-NOTES.md`), which is
+compared f32-exact and went 96/175 -> 175/175.
+
+`fastCbrt` still passes a **double** `1/3` into `fastPow`, where the binary does
+a single-precision multiply by `0x3eaaaaab`. Deliberately left alone in that
+commit and tracked as a follow-up; it is pre-existing, not introduced by it.
+
 ## The noise-evaluation path (crude oil) - the batch extent DOES NOT MATTER for density (2026-07-27, Task 8)
 
 The section above pins the batch for the **spot-selection** path. Crude oil needs the

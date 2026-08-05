@@ -1,8 +1,12 @@
 /**
  * Paul Mineiro's `fastapprox` `log2` / `exp2` / `pow`, exactly as Factorio's
- * `Math::log2f` / `Math::exp2f`. The game's noise machine evaluates powers and cube
- * roots through these, so any ported noise expression that takes a `pow`/`cbrt` must
- * go through them too - matching them is what closes the last ~1e-4 relative error.
+ * `Math::log2` / `Math::exp2f`. (`Math::log2`, not `Math::log2f` - the symbols are
+ * `__ZN4Math4log2Ef` and `__ZN4Math5exp2fEf`, so only exp2 carries the `f`. This
+ * header briefly said `log2f`; nothing named that exists in the binary.)
+ *
+ * The game's noise machine evaluates powers and cube roots through these, so any
+ * ported noise expression that takes a `pow`/`cbrt` must go through them too -
+ * matching them is what closes the last ~1e-4 relative error.
  *
  * Originally lived in `multioctaveNoise.ts` (for its RMS normalisation power); moved
  * here once the resource `spot_height`/`blob_amplitude` expressions needed the same
@@ -17,7 +21,7 @@
  * which is compared f32-EXACT and goes 96/175 -> 175/175 with it.
  *
  * The constants below are therefore written as the exact f32 values of the
- * immediates in the **2.1.12** `arm64` disassembly (`Math::log2f` at the
+ * immediates in the **2.1.12** `arm64` disassembly (`Math::log2` at the
  * `0x3f000000` / `0xc2f87377` / `0xbfbfbf75` / `0x3eb444f9` / `0xbfdce9a3` sequence,
  * `Math::exp2f` at `0x42f28c51` / `0x409af5f8` / `0x41ddd2fe` / `0xbfbebc8d`), not as
  * the decimal approximations they carried when this was read out of 2.1.11. Do not

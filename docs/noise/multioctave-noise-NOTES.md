@@ -70,12 +70,39 @@ float, float, float persistence, NoiseScratch&, float*)` is a single tight loop
   `1/sqrt(N)`.
 
 `Math::log2` and `Math::exp2f` disassemble to textbook Mineiro `fastlog2` /
-`fastpow2` (constants `-124.22551`, `-1.4980303`, `-1.7258799`, `0.35208874` and
-`121.2740575`, `27.7280233`, `4.84252568`, `-1.49012907`); reproduced as
-`fastLog2` / `fastPow2` in the implementation. Matching them is what closes the
-last ~1e-4 for non-power-of-two persistence - with a real `pow` the normalisation
-is off by ~1e-4 (for `P = 1/2`, `(1/P)^2 = 4` is a power of two and fastapprox is
-near-exact, which is why P = 0.5 sits at the basis floor).
+`fastpow2`; reproduced as `fastLog2` / `fastPow2` in `src/noise/fastApprox.ts`.
+Matching them is what closes the last ~1e-4 for non-power-of-two persistence -
+with a real `pow` the normalisation is off by ~1e-4 (for `P = 1/2`, `(1/P)^2 = 4`
+is a power of two and fastapprox is near-exact, which is why P = 0.5 sits at the
+basis floor).
+
+**Updated 2026-08-05, and the constants below CHANGED.** This paragraph used to
+list them as the decimals read out of the 2.1.11 disassembly - `-124.22551`,
+`-1.4980303`, `-1.7258799`, `0.35208874`, `121.2740575`, `27.7280233`,
+`4.84252568`, `-1.49012907`. Commit `9b49ebb` (2026-08-04) rewrote both functions
+to round after every `fadd`/`fmul`/`fdiv` as the binary does, instead of
+evaluating the polynomial in double and rounding once at the end, and wrote the
+coefficients as the **exact f32 values** of the 2.1.12 arm64 immediates:
+
+| | `fastLog2` | `fastPow2` |
+| --- | --- | --- |
+| | `-124.22551727294922` | `121.27405548095703` |
+| | `-1.4980303049087524` | `27.728023529052734` |
+| | `-1.7258800268173218` | `4.842525482177734` |
+| | `0.35208871960639954` | `-1.4901291131973267` |
+
+The polynomial and its coefficients were already right; only the rounding was
+wrong. It is worth ~1e-5 relative, which no tolerance-based fixture here can
+resolve - it was forced by `voronoi_spot_noise` x `minkowski3`, the first thing
+in the repo compared f32-EXACT (96/175 -> 175/175). See
+`src/noise/fastApprox.ts`, which carries the immediate encodings, and
+`docs/noise/voronoi-NOTES.md`.
+
+**So the `norm uses fastapprox pow` row in the results table below predates that
+change** - its `6.7e-5 -> 2.9e-6` was measured against the old
+double-accumulating implementation and has not been re-run. It still supports the
+claim it was made for (the normalisation goes through fastapprox rather than a
+real `pow`, a ~20x effect); it is not a current measurement of the residual.
 
 ## How the constants were pinned (oracle fitting)
 
@@ -104,7 +131,7 @@ The disassembly gives the structure; the oracle nails the numbers. Method:
 | lacunarity = 1/2 | N=2 free fit residual | 0 at scale1=IS/2 |
 | amplitude ratio = 1/P | fitted a1/a0 | 2.0000 at P=0.5 |
 | offset = k*(-1774.83), IS-independent | fit U at IS in {0.0625,0.125,0.25} | -1774.83 all, res ~3e-7 |
-| norm uses fastapprox pow | P=0.9 residual real vs fast pow | 6.7e-5 -> 2.9e-6 |
+| norm uses fastapprox pow | P=0.9 residual real vs fast pow | 6.7e-5 -> 2.9e-6 (pre-`9b49ebb`, see above) |
 | full model | 6 configs x realistic points | < 5e-5 |
 
 ## The f32 floor
