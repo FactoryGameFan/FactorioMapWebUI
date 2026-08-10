@@ -181,6 +181,22 @@ matters, set it explicitly.
 - `pnpm run check:vue` - `vue-tsc --noEmit`, the type-check of `<script setup>`
   bodies in the 22 `.vue` files (~2.1s). Nothing else checks them.
 - `pnpm vp build` - production build
+
+**`vp dev` is exercised by NOTHING - not `verify`, not CI.** The `build` job
+covers `vp build`, and the test shards cover `vp test`, but the dev server has
+no automated coverage at all, while both `dev` and `preview:app` depend on it.
+That gap has teeth on a vite-plus bump specifically: 0.2.8 changed bare `vp dev`
+at a monorepo **root** to resolve a target package, with non-interactive runs
+listing candidates and exiting 1 rather than serving. This repo is a monorepo
+root, so that is a plausible break with a green CI. It did **not** break (checked
+by hand on the PR branch: serves normally, no package picker, `/version.json`
+answers on the chosen port), but nothing in the gate would have said so. Check it
+by hand on any vite-plus bump:
+
+```bash
+pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or exit 1
+```
+
 - `pnpm run verify:lint` - `vp check` + `check:vue`. Exists so CI can run the
   static phases without the app suite; `verify` composes it rather than
   repeating the commands, so there is still one definition of each phase.
@@ -377,13 +393,15 @@ _previous_ advisory and had since stopped being true. Any package held with
 `enabled: false` needs re-checking against the advisory database by hand; read
 the comment on the override before concluding a red audit is the known one.
 
-**That group's `prBodyNotes` has its ordering backwards, and should be fixed.**
-It says to regenerate the worker types _after merging_. It has to happen
-**before**: `types:check` runs inside `preview:test`, which runs inside the
-required `verify` check, so a stale `workerd` stamp means the PR cannot merge at
-all. The regen is a precondition, not a follow-up. This is not hypothetical - it
-is why #97 sat red. The command, with the formatter pass that is **not**
-optional:
+**That group's `prBodyNotes` says to regenerate the worker types BEFORE merging,
+and that ordering is the whole point.** It used to say _after_, which this file
+flagged as a bug to fix; the config was corrected and the note now reads
+correctly - confirmed on 2026-08-10 when #169 hit exactly this. The regen is a
+precondition, not a follow-up: `types:check` runs inside `preview:test`, which
+runs inside the required `verify` check, so a stale `workerd` stamp means the PR
+cannot merge at all. This is not hypothetical - it is why #97 sat red, and why
+#169 arrived red a year later with the fix named in its own PR body. The
+command, with the formatter pass that is **not** optional:
 
 ```bash
 pnpm --filter @fmw/preview-worker exec wrangler types && pnpm vp check --fix
