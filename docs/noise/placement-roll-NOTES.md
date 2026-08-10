@@ -44,12 +44,47 @@ place the entity if U < probability
   0, 1)` field this app already computes in `regularPatches.ts` / `resourcePatches.ts`.
 - Disasm: `generateEntities` `+1104..+1188`. `fcmp d0(U), d13(prob); b.pl <retry>`
   (`b.pl` = U >= prob -> skip), else fall through to `generateEntityOnTile`.
-- **Retry count** (issue #22, item 5)**:** the roll sits in a `for attempt in 0..proto->mapGenData[0x28]`
-  loop (`+1032`, `+1088`). Each iteration draws one `U` and places when `U < prob`,
-  so a tile can consume a *variable* number of draws and (in principle) place more
-  than once. For single-tile resources this count is expected to be 1 (pin it
-  against `find_entities` before trusting), but it is NOT structurally guaranteed to
-  be 1 for every entity type - which matters because...
+- **Retry count** (issue #22, item 5) - **PINNED 2026-08-10, and it is 1 for
+  everything this port places.** The roll sits in a
+  `for attempt in 0..proto->mapGenData[0x28]` loop (`+1032`, `+1088`). Each
+  iteration draws one `U` and places when `U < prob`, so a tile can consume a
+  *variable* number of draws and (in principle) place more than once. It was never
+  structurally guaranteed to be 1. What it is:
+
+  **`mapGenData[0x28]` is `AutoplaceSpecification::placement_density`.** Read out of
+  the binary rather than inferred, in `AutoplaceSpecification`'s `PropertyTree`
+  constructor (`0x10160e5ec`, 2.1.14) at `+956..+980`:
+
+  ```
+  +960:  add x1, x1, #0xca2      ; "placement_density"
+  +968:  mov w2, #0x11           ; = 17 = strlen("placement_density")
+  +972:  mov w3, #0x1            ; = the DEFAULT
+  +976:  bl  getDefault<unsigned int>()   ; PropertyTree.hpp:395
+  +980:  str w0, [x19, #0x28]    ; <- the field the loop reads
+  ```
+
+  The prototype docs agree independently: `AutoplaceSpecification.placement_density
+  :: uint32`, default `1`, "For entities and decoratives, how many times to attempt
+  to place on each tile. Probability and collisions are taken into account each
+  attempt."
+
+  **No entity prototype sets it.** All 32 occurrences in `factorio-data` are
+  `decorative/` files - 29 at `2`, 2 at `5` (both Vulcanus), 1 at `1` - and that
+  holds at **both 2.1.12 and 2.1.14** (`git grep placement_density <tag>`, zero hits
+  outside `/decorative`). So every prototype this port places (resources, trees,
+  rocks, spawners) takes the binary's default of **1**, and the one-roll-per-tile
+  assumption is exact, not an approximation.
+
+  Two things that follow, and are the reason this is worth writing down rather than
+  deleting:
+
+  - **The zero case skips the tile.** `+1032` is `cbz w9, <+988>`, so
+    `placement_density = 0` means the tile is never rolled at all.
+  - **A successful placement does NOT end the loop.** `+1216` branches back to the
+    `+1088` increment, not out. So at density > 1 a tile really can place more than
+    once, and it consumes one draw per attempt either way - which matters for the
+    stipple stream below the moment anything here renders **decoratives**, where 2
+    and 5 are the live values.
 
 ## The RNG - taus88, per-chunk stream, NOT a per-tile hash
 
@@ -260,7 +295,10 @@ To reproduce resource stipple faithfully we would need, per chunk:
    rocks, ...), to run arbitration and consume the right draws;
 3. exact-order taus88 streaming including the 2 data-dependent jitter draws per
    placement; and
-4. the per-entity retry count semantics (`proto->mapGenData[0x28]`).
+4. ~~the per-entity retry count semantics (`proto->mapGenData[0x28]`).~~
+   **Closed 2026-08-10** - it is `AutoplaceSpecification::placement_density`,
+   default 1, and no entity prototype overrides it. See "The roll" above. This
+   removes item 4 from the list; items 1-3 are unchanged.
 
 That is multiple sessions and pulls in un-ported systems. Per the spike's charter
 (Eric, 2026-07-20: "if the RNG resists as multi-session batch semantics, stop and
@@ -366,8 +404,13 @@ successor to issue #9 (which closed when the five overlays landed).
 
 Tile-exact positions, per-tile prototype identity (falsified for Vulcanus rocks -
 the game's population is ~28% huge where max-probability arbitration predicts 0%),
-and richness. The retry-count semantics (`proto->mapGenData[0x28]`) are still
-unpinned; every overlay here assumes one roll per tile.
+and richness. The retry-count semantics (`proto->mapGenData[0x28]`) **are pinned as
+of 2026-08-10** and cost nothing: the field is
+`AutoplaceSpecification::placement_density`, its default is 1, and no entity
+prototype in `factorio-data` overrides it at 2.1.12 or 2.1.14. Every overlay here
+assumes one roll per tile, and that is now known-correct rather than assumed. It
+would stop being correct for **decoratives**, which do set it (2, and 5 on
+Vulcanus) - none are rendered here.
 
 ## The oil `random_probability` follow-up - DONE 2026-07-27 (Task 8)
 
