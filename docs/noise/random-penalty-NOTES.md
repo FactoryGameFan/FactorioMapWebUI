@@ -153,9 +153,18 @@ in the comment at the top of `test/regularPatches.spec.ts`; the driver was
 `voronoi_spot_noise` x `minkowski3` (`docs/noise/voronoi-NOTES.md`), which is
 compared f32-exact and went 96/175 -> 175/175.
 
-`fastCbrt` still passes a **double** `1/3` into `fastPow`, where the binary does
-a single-precision multiply by `0x3eaaaaab`. Deliberately left alone in that
-commit and tracked as a follow-up; it is pre-existing, not introduced by it.
+~~`fastCbrt` still passes a **double** `1/3` into `fastPow`, where the binary
+does a single-precision multiply by `0x3eaaaaab`. Deliberately left alone in that
+commit and tracked as a follow-up; it is pre-existing, not introduced by it.~~
+
+**Closed 2026-08-05 by `b2fced7` (#163 / PR #164)**, one day after the paragraph
+above was written. `fastCbrt` now passes `ONE_THIRD_F32`, and the change came
+with the exact oracle `fastApprox` had never had: `test/fixtures/oracle-fastpow.seed123456.json`
+samples the noise machine's `^` operator directly, so this is compared f32-exact
+rather than through a tolerance on a downstream chain. The two exponents scored
+0/24 against 24/24 on the adversarial positions. Noted here because this file is
+where the follow-up was recorded, and a "tracked as a follow-up" line that
+outlives its fix reads exactly like an open item.
 
 ## The noise-evaluation path (crude oil) - the batch extent DOES NOT MATTER for density (2026-07-27, Task 8)
 

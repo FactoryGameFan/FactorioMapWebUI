@@ -21,12 +21,36 @@
 # PR forever, so the aggregating job below MUST keep the id `verify`. Renaming
 # it needs a ruleset PUT in the same change - see CLAUDE.md on the two-step.
 #
-# WHY 3 SHARDS, MEASURED NOT GUESSED: vitest splits by FILE, so a single file
-# is an unsplittable floor. `test/previewAgreement.spec.ts` is 67s of the 68s
-# local suite (~200s on a runner). Ideal-split time is CI_test/N, so N=3 is
-# where that first drops below the floor - and N=4+ buys literally nothing
-# until that file is split into its three independent tests. Raise N only
-# after splitting it, and re-measure rather than assuming.
+# WHY 4 SHARDS, MEASURED ON CI (issue #119, 2026-08-10). This said 3 until then,
+# on the reasoning that `test/previewAgreement.spec.ts` was "67s of the 68s local
+# suite" and therefore an unsplittable floor that N=4+ could not beat. Both
+# halves of that are now false, and the second one was never measurable locally:
+# a dev box has 12 cores, a runner has 4, so locally the CPU term is absorbed and
+# only the file floor is visible.
+#
+# One run, all four arms concurrently on the same runner pool (18 jobs), so the
+# comparison is within-run rather than against a different hour. Slowest shard is
+# what the gate waits on:
+#
+#   N=3   test-step walls 452 / 356 / 102          slowest job  488s
+#   N=4                   306 / 291 / 291 / 72     slowest job  333s   <- adopted
+#   N=5                   311 / 213 / 174 / 74 / 67            343s
+#   N=6                   314 / 224 / 162 / 140 / 61 / 51      344s
+#
+# N=4 is -155s of gate wall (-32%) for +76 runner-seconds (+7.6%), NOT the +33%
+# the local numbers predicted - total CPU is flat and only ~28s of per-job setup
+# is added. N=5 and N=6 do not improve on N=4 at all (+5s, +8s: noise), so 4 is
+# the point of diminishing return.
+#
+# The plateau at ~310s is NOT the previewAgreement file. That was checked rather
+# than assumed: the slowest N=6 shard (33 files, 314s) does not contain it - the
+# same shard run locally lists cliffOreCascade / vulcanusCliffBands /
+# cliffCollisionResidualShape as its heavy files. The premise expired because the
+# suite grew 171 -> 201 files through the #84 cliff work: previewAgreement is now
+# 72.9s of 503s of total per-file wall (14.5%), and TEN files exceed 20s. So
+# splitting that one file is no longer the lever it was; the binding shard is
+# whichever one vitest's hash-split happens to load with several heavy files.
+# Re-measure before raising N again - and re-measure on CI, not locally.
 #
 # The production build runs too, in the separate `build` job below - see its
 # own comment for why it is not a phase inside `verify`.
@@ -73,8 +97,10 @@ permissions:
 
 jobs:
   # Everything in `verify` that is NOT the app test suite: `vp check`,
-  # `check:vue`, and `preview:test`. ~24s on a runner, so it finishes long
-  # before any shard and costs nothing to run as its own job.
+  # `check:vue`, and `preview:test`. 55-80s of job wall over the last six runs
+  # (this said "~24s" and was never re-measured; ~28s of that is checkout +
+  # install, which every job here pays). Still finishes long before any shard,
+  # so it costs nothing to run as its own job.
   static:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -98,15 +124,16 @@ jobs:
   # already measured as a dead end on one box (see CLAUDE.md).
   tests:
     runs-on: ubuntu-latest
-    # A shard is ~1/3 of a ~9-minute suite. 15 minutes stays a hang detector.
+    # The slowest shard measures ~5m30s (see the shard table above). 15 minutes
+    # stays a hang detector rather than a budget.
     timeout-minutes: 15
     strategy:
       # One failing shard must not cancel the others: a red `verify` should say
       # everything that is broken, not just whichever shard tripped first.
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3]
-        shardTotal: [3]
+        shardIndex: [1, 2, 3, 4]
+        shardTotal: [4]
     steps:
       # Third-party actions are pinned to a full commit SHA, never a moving tag.
       # The trailing comment names the release each SHA is, and Renovate updates
@@ -120,7 +147,7 @@ jobs:
       # store path by running pnpm, so pnpm has to be on PATH already.
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
-      # `.node-version` (26.5.0) is the single source of truth for the Node
+      # `.node-version` (26.7.0) is the single source of truth for the Node
       # version, and this is its first real consumer - the file went from
       # documentation to machinery when this workflow landed. `engines.node`
       # stays a permissive floor and is deliberately NOT what CI runs.

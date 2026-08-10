@@ -203,7 +203,7 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
 - `pnpm run verify:static` - `verify:lint` + `preview:test`. Everything in
   `verify` that is **not** the app suite. This is the `static` CI job.
 - `pnpm run verify:shard` - bare `vp test`, for CI's sharded matrix. Takes a
-  passthrough arg: `pnpm run verify:shard -- --shard=1/3`. The `--` is
+  passthrough arg: `pnpm run verify:shard -- --shard=1/4`. The `--` is
   required.
 - `pnpm run require:docker` - preflight that fails loudly when no container
   runtime is reachable, naming the start command for whichever one you have
@@ -270,13 +270,16 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
     correctly, but `vp test --merge-reports` does not merge, it **re-runs**: a
     57-file shard's blob came back reporting 114 files. Vite+ is not bare vitest
     on this path. That is why the sharded CI job uploads no artifacts.
-  - **The wall clock is set by the slowest FILE, not by total CPU.** The suite
-    is 497s of CPU in 68s of wall (~7.5x on 12 cores), and
-    `test/previewAgreement.spec.ts` alone is **67s** of that 68s. Removing it
-    drops the suite to 52.76s. So splitting the top files is the only local
-    lever, and it is worth ~2s because the throughput bound (~66s) binds almost
-    as hard. `environment: "node"` by default is worth ~3s more (only ~30 of 164
-    spec files touch `document`/`window`). Neither is worth the churn; see #119.
+  - **The wall clock was set by the slowest FILE, not by total CPU** - true on
+    2026-08-03 at 171 files (497s of CPU in 68s of wall on 12 cores, with
+    `test/previewAgreement.spec.ts` alone 67s of that 68s), and **no longer
+    true**. Re-measured 2026-08-10 at 201 files: total per-file wall is 503s and
+    previewAgreement is **72.9s of it (14.5%)**, with ten files over 20s. The
+    #84 cliff work added the rest. `environment: "node"` by default was worth
+    ~3s (only ~30 of 164 spec files touch `document`/`window`) and has not been
+    re-measured since. See #119 for the CI consequence: the single-file floor is
+    what made N=4 look pointless, and once it stopped dominating, N=4 became a
+    32% cut of the gate.
 
 - `pnpm refs:sync` - pin `factorioLuaAPI/` + `~/GitHub/factorio-data` to the
   installed binary's version (`--check` reports drift only; `--fixtures` reports
@@ -302,11 +305,14 @@ Four jobs now run in parallel:
 | job               | what                                                               |
 | ----------------- | ------------------------------------------------------------------ |
 | `static`          | `pnpm run verify:static` - `vp check`, `check:vue`, `preview:test` |
-| `tests (1..3, 3)` | `pnpm run verify:shard -- --shard=N/3` - the app suite             |
+| `tests (1..4, 4)` | `pnpm run verify:shard -- --shard=N/4` - the app suite             |
 | `verify`          | the required check: asserts every job above succeeded              |
 | `build`           | `pnpm vp build`, unchanged (issue #61)                             |
 
-Measured result: **9m03s -> 4m36s.**
+Measured result: **9m03s -> 4m36s** at the time (2026-08-03, N=3, 171 spec
+files). Do not read that as the current number: the suite has since grown to 201
+files, which put N=3 back up to ~8m and is why the shard count moved to 4 - see
+the shard table below.
 
 **The anti-drift rule still holds, by a different mechanism.** The point of
 "verbatim" was that there is exactly one definition of "this repo is
@@ -327,14 +333,44 @@ and `verify:shard` all composing the same `verify:lint`. Do not inline
   mergeable. `if: ${{ !cancelled() }}` rather than `always()` is also
   deliberate: a superseded push should stay cancelled, not become a failure.
 
-**Why three shards and not four**, measured rather than guessed: vitest splits
-by **file**, so one file is an unsplittable floor, and
-`test/previewAgreement.spec.ts` is 67s of the 68s local suite. Slowest-shard
-wall - which is what the gate waits on - is 55.7s at N=3 and 53.5s at N=4, i.e.
-inside run-to-run noise, for 33% more runner minutes. Raise it only after
-splitting that file into its three independent tests, and re-measure. Issue #119
-tracks re-measuring this **on CI**, because a 12-core dev box cannot separate
-the file floor from the CPU bound and a 4-core runner may answer differently.
+**Why FOUR shards and not three, and why local measurement said the opposite**
+(#119, settled on CI 2026-08-10). This section used to argue for three, on the
+grounds that `test/previewAgreement.spec.ts` was 67s of the 68s local suite and
+therefore an unsplittable floor no shard count could beat. Local slowest-shard
+wall was 55.7s at N=3 against 53.5s at N=4 - inside noise, for 33% more runner
+minutes. That measurement was correct and its conclusion did not transfer: a dev
+box has 12 cores and a runner has 4, so locally the CPU term is absorbed and only
+the file floor is left visible.
+
+One CI run, all four arms concurrently on the same runner pool (18 jobs), so the
+comparison is within-run rather than against a different hour:
+
+| N   | test-step walls (s)           | slowest job | runner-s |
+| --- | ----------------------------- | ----------- | -------- |
+| 3   | 452 / 356 / 102               | 488s        | 995      |
+| 4   | 306 / 291 / 291 / 72          | **333s**    | 1071     |
+| 5   | 311 / 213 / 174 / 74 / 67     | 343s        | 989      |
+| 6   | 314 / 224 / 162 / 140 / 61/51 | 344s        | 1119     |
+
+N=4 is **-155s of gate wall (-32%)** for **+7.6% runner-seconds**, not the +33%
+the local numbers implied - total CPU is flat across arms and the only thing an
+extra job adds is ~28s of checkout+install. N=5 and N=6 do not improve on N=4
+(+5s and +8s, noise), so 4 is the point of diminishing return.
+
+**The floor is no longer that one file, and the old premise expired rather than
+being wrong.** The slowest N=6 shard (33 files, 314s) does **not contain**
+`previewAgreement.spec.ts` - checked by running that exact shard locally, not
+inferred. The suite grew **171 -> 201 spec files** through the #84 cliff work,
+and `previewAgreement.spec.ts` is now **72.9s of 503s** of total per-file wall
+(14.5%), with **ten** files over 20s (`vulcanusCliffRejectionStage` 52.1s,
+`vulcanusStackCache` 47.8s, `cliffOreCascade` 30.1s, `entityDensity` 29.9s,
+`vulcanusCliffBands` 28.4s, ...). So "split previewAgreement into its three
+tests" is no longer the prerequisite for further sharding gain that #119
+assumed; the binding shard is whichever one vitest's hash-split loads with
+several heavy files, and **balance**, not count, is the remaining lever. Nobody
+should raise N again without re-measuring **on CI** - and note this whole
+paragraph has a shelf life, because it is a statement about the suite's current
+file-weight distribution.
 
 A second job, **`build`**, runs `pnpm vp build` in parallel (issue #61). `verify`
 is check + type-check + tests and none of them build, so a change could pass all
@@ -457,7 +493,7 @@ Two settings whose reasoning is not guessable from the outside:
 Three things here are load-bearing and easy to break by "tidying":
 
 - **`verify` is now a gate job that does no work.** Since the CI sharding above,
-  the check by that name only asserts that `static` and the three `tests` shards
+  the check by that name only asserts that `static` and the four `tests` shards
   passed. It looks deletable and is not: the ruleset matches required checks by
   **name**, so renaming or removing that job makes the required `verify` never
   appear, which blocks every PR permanently.
