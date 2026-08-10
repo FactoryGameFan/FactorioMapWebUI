@@ -138,7 +138,7 @@ the scripts and CI use and so the one that stays verified; just don't expect a
 bare `vp` to fail, and don't "fix" a working command on the strength of this
 note.
 
-Node **26.5.0** (`.node-version`) is what the repo is developed and verified on.
+Node **26.7.0** (`.node-version`) is what the repo is developed and verified on.
 `engines.node` stays a permissive floor (`>=24.18.0`) rather than matching the
 pin - older versions are simply untested, not known-broken.
 
@@ -364,6 +364,18 @@ is disabled outright, `pako` carries a 14-day age and a pointer at the
 byte-exactness invariant, `wrangler` + `@cloudflare/vitest-pool-workers` are
 grouped because pool-workers hard-pins wrangler, and the `brace-expansion`
 override and `engines.node` floor are both marked as deliberate rather than stale.
+
+**`enabled: false` disables SECURITY updates too, and `brace-expansion` proved
+it.** That rule exists to stop Renovate proposing the 5.x spike, but it also
+means no bot PR can ever arrive for the 2.x branch - including a CVE fix. On
+2026-08-10 the pin was sitting at 2.1.3 against **GHSA-rgw5-rvv9-x895**
+(published 2026-08-03), whose whole subject is _bypassing_ the CVE-2026-14257
+mitigation 2.1.3 was pinned for; 2.1.4 had been available since 2026-07-30.
+Nothing was going to surface that, because the note in `pnpm-workspace.yaml`
+said a red `pnpm audit` line was the expected state - which had been true of the
+_previous_ advisory and had since stopped being true. Any package held with
+`enabled: false` needs re-checking against the advisory database by hand; read
+the comment on the override before concluding a red audit is the known one.
 
 **That group's `prBodyNotes` has its ordering backwards, and should be fixed.**
 It says to regenerate the worker types _after merging_. It has to happen
