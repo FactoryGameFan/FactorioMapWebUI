@@ -11,6 +11,7 @@
     "perf": "FMW_PERF=1 vp test test/render-cost.perf.spec.ts && cat perf-result.txt",
     "check": "vp check --fix",
     "check:vue": "vue-tsc --noEmit",
+    "types:sync": "pnpm --filter @fmw/preview-worker exec wrangler types && pnpm vp check --fix",
     "refs:sync": "bash scripts/sync-factorio-refs.sh",
     "verify:deploy": "node scripts/verify-deploy.ts",
     "verify:lint": "vp check && pnpm run check:vue",

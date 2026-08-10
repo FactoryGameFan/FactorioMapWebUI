@@ -145,7 +145,7 @@ and Workers Paid ($5/mo, required for Containers):
 ```
 pnpm --filter @fmw/preview-worker exec wrangler r2 bucket create fmw-preview-cache
 # fill REPLACE_WITH_APP_ORIGIN in preview-service/worker/wrangler.jsonc, then:
-pnpm --filter @fmw/preview-worker exec wrangler types
+pnpm run types:sync   # wrangler types + the formatter pass; never run the first alone
 pnpm preview:deploy
 # set VITE_PREVIEW_SERVICE_URL and fill REPLACE_WITH_WORKER_ORIGIN in public/_headers
 pnpm vp build
