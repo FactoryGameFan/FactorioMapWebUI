@@ -400,11 +400,12 @@ correctly - confirmed on 2026-08-10 when #169 hit exactly this. The regen is a
 precondition, not a follow-up: `types:check` runs inside `preview:test`, which
 runs inside the required `verify` check, so a stale `workerd` stamp means the PR
 cannot merge at all. This is not hypothetical - it is why #97 sat red, and why
-#169 arrived red a year later with the fix named in its own PR body. The
-command, with the formatter pass that is **not** optional:
+#169 arrived red a year later with the fix named in its own PR body. The fix is
+one script, which exists precisely so the formatter pass cannot be forgotten
+(#177):
 
 ```bash
-pnpm --filter @fmw/preview-worker exec wrangler types && pnpm vp check --fix
+pnpm run types:sync
 ```
 
 One interaction is worth knowing before touching that file. The workspace's
@@ -841,11 +842,14 @@ type error, so both `vp check` and the worker tests pass with a wrong value in
 it. `wrangler types --check` now gates the worker's `test` and `deploy` scripts,
 so `pnpm preview:test` fails loudly on drift.
 
-- Regenerate with
-  `pnpm --filter @fmw/preview-worker exec wrangler types && pnpm vp check --fix`.
-  The formatter pass is **not optional** - wrangler emits tabs/unwrapped types
-  and the repo formats to 2-space/wrapped, so a raw regen shows a whole-file
-  whitespace diff that hides the real change.
+- Regenerate with **`pnpm run types:sync`**, which is
+  `wrangler types && vp check --fix` in one step. Use the script rather than the
+  bare `wrangler types`: the formatter pass is **not optional** - wrangler emits
+  tabs/unwrapped types and the repo formats to 2-space/wrapped, so a raw regen
+  shows a whole-file whitespace diff that hides the real change. Measured on
+  #169: raw regen = 25,411 lines changed, after the formatter = **1**. Bundling
+  them is the whole point of #177; do not "simplify" the script back to one
+  command.
 - **`--check` compares two things, and the second one surprises people.** It
   checks the config against the hash in the generated file's header, AND the
   **`workerd` version** stamped on the line below it. Both halves were observed
