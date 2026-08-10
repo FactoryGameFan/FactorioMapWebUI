@@ -2,7 +2,8 @@
 
 **Status: run.** Written 2026-07-26 so the question survives the session it came
 from; the data-governed half was run 2026-07-28 and the noise primitives on
-2026-07-29. See Conclusions.
+2026-07-29. Re-run against the **2.1.14** binary on 2026-08-10 - see "Re-run
+2026-08-10" at the bottom. See Conclusions.
 
 ## The question
 
@@ -309,3 +310,43 @@ procedure told you to do *first* and almost as an aside - verify the format tag 
 which found a shipped, user-facing bug that no fixture staleness would ever have
 revealed. Version-skew audits are worth running even when the fixtures turn out
 fine.
+
+## Re-run 2026-08-10: the binary reached 2.1.14, and the data half clears again
+
+Steam moved the binary to **2.1.14** on 2026-08-10 (mtime 14:29), so
+`pnpm refs:sync --check` reports drift against `factorio-data` and the API docs,
+both pinned at 2.1.12. The data-governed half of this audit was re-run **without
+repinning anything**, because the question only needs the tags:
+
+```bash
+git -C ~/GitHub/factorio-data fetch --tags -q origin
+git -C ~/GitHub/factorio-data diff --stat 2.1.12 2.1.14 -- \
+  core/prototypes/noise-programs.lua core/prototypes/noise-functions.lua \
+  base/prototypes/noise-expressions.lua core/lualib/resource-autoplace.lua \
+  base/prototypes/entity/resources.lua base/prototypes/entity/trees.lua \
+  base/prototypes/entity/enemies.lua
+```
+
+**Result: one file changed, and its change is inert for map generation.**
+Everything else in that set is byte-identical 2.1.12 -> 2.1.14.
+`base/prototypes/entity/enemies.lua` is 8 insertions / 8 deletions, and every one
+of the 16 lines is a `buildable_entities` list - which governs enemy **expansion**
+(what a unit may build once the game is running), not autoplace. Nothing named
+`autoplace`, `map_generator_bounding_box` or `probability_expression` is touched;
+`grep -iE '^[+-].*(autoplace|map_generator_bounding_box|probability_expression)'`
+over that diff returns nothing.
+
+So **no fixture needs re-capturing for the 2.1.14 bump**, by the same rule this
+document already sets out. That is the third consecutive time the answer has been
+zero, which is worth saying plainly: the data half of this audit is cheap and keeps
+coming back clean, and the expensive half - the noise primitives, which no data diff
+can ever clear - has not been re-sampled against 2.1.14. Only `oracle-basis` carries
+a standing re-sample guard.
+
+**The useful part was again a side effect, not the fixtures.** The tag diff was run
+while pinning `AutoplaceSpecification::placement_density` for #22 item 5, and its
+value there was proving that the "no entity sets `placement_density`" result holds
+at 2.1.14 and not merely at the 2.1.12 the local checkout happens to sit on. Reading
+the reference material at a version the binary has moved past is the exact failure
+this document exists to prevent; `git grep <pattern> <tag>` answers it without
+touching the checkout.
