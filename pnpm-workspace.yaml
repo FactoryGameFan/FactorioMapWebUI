@@ -5,6 +5,7 @@ allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+minimumReleaseAge: 4320
 overrides:
   # brace-expansion has had TWO DoS advisories ten days apart, and the 2.x
   # branch needs 2.1.4 to clear both.
