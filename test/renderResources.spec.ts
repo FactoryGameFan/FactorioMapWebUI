@@ -111,7 +111,12 @@ describe("renderResources", () => {
 
     it("forwards segmentationMultiplier/waterLevel/startingLakePositions into makeResourceResolver", async () => {
       const resolverFactory = vi.fn(() => () => null);
-      vi.doMock("../src/noise/resources/resolveResource", () => ({
+      // A PARTIAL mock: `renderResources` also imports `comparePriority` from this
+      // module (it shares the resolver's own priority rule to protect crude oil's
+      // marks - see renderResourcesPaintOrder.spec.ts), so replacing the whole
+      // module leaves that import undefined and the render throws.
+      vi.doMock("../src/noise/resources/resolveResource", async (importOriginal) => ({
+        ...(await importOriginal<typeof import("../src/noise/resources/resolveResource")>()),
         makeResourceResolver: resolverFactory,
       }));
       vi.resetModules();

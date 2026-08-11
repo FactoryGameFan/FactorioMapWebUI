@@ -17,19 +17,39 @@
  *   as solid ore: 1234 tiles in `[0,0]-[512,512]` where the game has **8** oil
  *   wells. See `makeNauvisOilPlacement`.
  *
- * **Paint order: oil marks first, then the thresholded resources over the top.**
- * Oil's autoplace order is "c", so the four solids must win a shared pixel, and
- * painting them last reproduces that without a colour test. The one inversion
- * this introduces is against uranium, which is also "c" but sorts *after* oil
- * (`patchSetIndex` 5 vs 4), so a uranium patch covering an oil well would hide it
- * where the game would show the well. Measured rather than waved away: over
- * `[-2048,-2048]-[2048,2048]` at seed 123456 the two footprints cover 39869 and
- * 10733 tiles and share **0** of them, so the inversion is unreachable there. It
- * is a latent ordering bug, not a visible one - tracked as issue #22, item 3.
- * Recorded rather than guarded
- * against, because a per-pixel guard would cost every pixel to fix a case that
- * does not occur - but this is a seed-specific zero, not a theorem, so a guard
- * becomes the right call the moment a counterexample turns up.
+ * **Paint order: oil marks first, then the thresholded resources over the top,
+ * except where oil outranks the winner.** Oil's autoplace order is "c", so the
+ * four solids ("b") must win a shared pixel, and painting them last reproduces
+ * that without a colour test. Uranium is the exception: it is also "c" but sorts
+ * *after* oil (`patchSetIndex` 5 vs 4), so an unguarded overwrite hides a well the
+ * game would show. `oilMark` records the pixels pass 1 painted and pass 2 declines
+ * to overwrite them when {@link comparePriority} puts oil first - the same
+ * comparison the resolver itself sorts by, rather than a second copy of the rule.
+ *
+ * **This guard was added because the "it never happens" premise was measured and
+ * refuted** (#22 item 3, 2026-08-10). The zero it rested on - over
+ * `[-2048,-2048]-[2048,2048]` at seed 123456 the oil and uranium footprints cover
+ * 39869 and 10733 tiles and share **0** - reproduces exactly, and is a property of
+ * that seed, not of the geometry:
+ *
+ * | sweep (default controls) | result |
+ * | --- | --- |
+ * | 256 windows of 4096^2 (4.3e9 tiles), 128 seeds near spawn + 128 far field | 5 windows (2.0%) have overlapping footprints, 2 of them in the same `[-2048, 2048)^2` box |
+ * | 1024 windows of 4096^2 (1.7e10 tiles), 290,335 oil wells | **7 wells overwritten, 5 of them completely** (seeds 2980111949, 847539870, 1748438780) |
+ *
+ * So at default controls a hidden well is a ~1-in-41,000 event, and it is *not*
+ * rare once the map-gen sliders move: at 600% frequency and size - a setting the
+ * game itself offers - seed 123456 hides two wells inside `[-1024, 1024)^2` alone.
+ * `test/renderResourcesPaintOrder.spec.ts` pins one case of each.
+ *
+ * The cost objection this comment used to record ("a per-pixel guard would cost
+ * every pixel") does not apply to the guard that landed: `oilMark` is allocated
+ * lazily on the first oil hit, so a window with no oil pays nothing, and the test
+ * is one `Uint8Array` read on the pixels where a resource already won. Measured
+ * rather than argued, on a 512x512-pixel render at 4 tiles/px (median of 9, two
+ * interleaved rounds): **1928 / 1961 ms with the guard stripped out against
+ * 1937 / 1862 ms with it in**. The sign flips between rounds, so the cost is
+ * below this render's run-to-run noise - do not quote a percentage from it.
  *
  * Resources collide with water, so ore is never placed on a water tile. The
  * threshold pass skips any pixel the terrain drew as water/deepwater (which also
@@ -48,7 +68,11 @@ import {
 import type { PlacementCollisionBox } from "../placement/placementRoll";
 import { RESOURCE_CATALOG } from "../resources/resourceCatalog";
 import { makeResourcePatches } from "../resources/resourcePatches";
-import { makeResourceResolver, type ResourceControlLevers } from "../resources/resolveResource";
+import {
+  comparePriority,
+  makeResourceResolver,
+  type ResourceControlLevers,
+} from "../resources/resolveResource";
 import { makeTileResolver } from "../tiles/resolve";
 import { paintMark } from "./renderCliffs";
 
@@ -303,6 +327,11 @@ export function renderResources(base: ImageData, opts: RenderResourcesOptions): 
   // is 2.8 x 2.8 tiles and the game puts down single digits of them per 512x512
   // region, so a lone pixel disappears - the same reasoning the geyser and the
   // spawners use for the same mark. See the module comment for the paint order.
+  //
+  // `oilMark` flags the pixels this pass painted so pass 2 can leave the ones oil
+  // outranks alone. Allocated on the first hit, so the common no-oil window pays
+  // nothing at all.
+  let oilMark: Uint8Array | null = null;
   const oil = RESOURCE_CATALOG.find((p) => p.placement === "roll");
   if (oil !== undefined && (opts.controls[oil.controlName]?.size ?? 1) > 0) {
     const placed = makeNauvisOilPlacement({
@@ -327,10 +356,18 @@ export function renderResources(base: ImageData, opts: RenderResourcesOptions): 
       for (let px = pxStart; px < pxEnd; px++) {
         const wx = originX + px * tpp;
         if (!placed(wx, wy)) continue;
-        paintMark(base, px, py, oil.mapColor, PLACEMENT_MARK_RADIUS_PX);
+        oilMark ??= new Uint8Array(width * height);
+        paintMark(base, px, py, oil.mapColor, PLACEMENT_MARK_RADIUS_PX, undefined, oilMark);
       }
     }
   }
+
+  // The catalog entries a painted oil mark survives: those oil is drawn in
+  // preference to. Uranium alone today - the four solids outrank oil and must keep
+  // overwriting it. Six comparisons once per render, not per pixel.
+  const oilOutranks = new Set(
+    oil === undefined ? [] : RESOURCE_CATALOG.filter((p) => comparePriority(oil, p) < 0),
+  );
 
   // Pass 2: the thresholded resources, over the top - see the module comment on
   // paint order.
@@ -343,6 +380,9 @@ export function renderResources(base: ImageData, opts: RenderResourcesOptions): 
       const wx = originX + px * tpp;
       const winner = resolve(wx, wy);
       if (!winner) continue;
+      // The guard, reached only on a pixel a resource already won: an oil mark is
+      // not overwritten by a resource that sorts after oil.
+      if (oilMark !== null && oilMark[py * width + px] === 1 && oilOutranks.has(winner)) continue;
       base.data[o] = winner.mapColor[0];
       base.data[o + 1] = winner.mapColor[1];
       base.data[o + 2] = winner.mapColor[2];
