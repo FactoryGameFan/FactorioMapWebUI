@@ -158,17 +158,52 @@ Always follow any `add` with a bare `pnpm install`: `add` relinks only its own
 workspace and leaves sibling workspaces' symlinks dangling. Only the full
 install prints `Scope: all 3 workspace projects`.
 
-**The 24-hour release-age guard is real but invisible to `pnpm config`.**
-`pnpm config get minimumReleaseAge` reports `undefined`, which reads like "no
-policy here" - it only reports what is _explicitly_ set, and nothing in this
-repo or `~/.npmrc` sets it. The value comes from pnpm 11's own defaults table,
-`"minimum-release-age": 24 * 60, // 1 day` (read out of pnpm 11.17.0's shipped
-code, 2026-07-29). So a package published less than a day ago will not install
-without pnpm writing a `minimumReleaseAgeExclude` bypass into
-`pnpm-workspace.yaml` - which is the thing to watch for in a diff. Don't
-conclude the guard is off because `config get` came back empty, and don't rely
-on it silently either: a pnpm 12 could change the default, so if it ever
-matters, set it explicitly.
+**The 24-hour release-age guard is now DECLARED, and setting it explicitly buys
+a second guard that the identical default value does not.** `pnpm-workspace.yaml`
+carries `minimumReleaseAge: 1440` as of 2026-08-11 (#184), so
+`pnpm config get minimumReleaseAge` answers `1440` rather than the `undefined`
+it used to - which used to read like "no policy here" while pnpm's own defaults
+table (`"minimum-release-age": 24 * 60, // 1 day`) was quietly enforcing one.
+
+1440 minutes _is_ that default, so the number changed nothing. What changed is
+that an **explicit** value turns on a whole-lockfile verification pass on every
+install. Measured on one tree, pnpm 11.18.0:
+
+| `minimumReleaseAge`    | `pnpm install --frozen-lockfile` prints                 |
+| ---------------------- | ------------------------------------------------------- |
+| unset (the default)    | nothing - no verification runs at all                   |
+| `1440` (= the default) | `✓ Lockfile passes supply-chain policies (399 entries)` |
+| `4320` (3 days)        | `✗ Lockfile failed supply-chain policy check`           |
+
+Unset, the age is checked only at **resolution**; a lockfile resolved elsewhere
+with the guard bypassed installs here without a murmur. Set, all 399 entries are
+re-checked every install.
+
+**Do not raise it above 1440.** That verification is retroactive, and #184
+proposed 4320, which failed all seven CI jobs on a single entry:
+`@speed-highlight/core@1.2.24`, pulled in transitively by
+`wrangler > miniflare > youch` when #169 landed on 2026-08-10 and it was ~1.2
+days old - legal under the floor it was resolved under, illegal under 3 days,
+for the two days until it aged out. At 1440 that window cannot open, because
+pnpm's resolver already refuses anything under 24h, so no lockfile it produces
+can fail its own verification. Anything higher re-opens a gap between what the
+resolver accepts and what the verifier demands. Two further traps are recorded
+in the comment on the setting itself: pnpm's suggested remedy
+(`pnpm clean --lockfile && pnpm install`) is a 357-line full re-resolution, i.e.
+the `lockFileMaintenance` operation Renovate pins off here; and
+`vulnerabilityAlerts.minimumReleaseAge: "25 hours"` in `.github/renovate.json5`
+is derived from pnpm's 24h floor and breaks silently if the floor moves.
+
+The longer 3-day soak lives in the Renovate config instead, where it gates what
+gets **proposed** rather than re-judging what is already pinned.
+
+On the `minimumReleaseAgeExclude` bypass this file warns about elsewhere: on
+11.18.0, non-interactively, pnpm now **hard-fails** with
+`ERR_PNPM_NO_MATURE_MATCHING_VERSION` and writes nothing - both for a plain
+install and for `pnpm add pkg@<too-fresh>` (measured 2026-08-11). Interactive
+TTY behaviour was not tested and the `vue-tsc@3.3.8` bypass was real when it
+happened, so keep watching diffs for that block rather than assuming it is
+fixed upstream.
 
 - `pnpm install` - install deps
 - `pnpm vp dev` - dev server

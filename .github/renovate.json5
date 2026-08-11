@@ -20,16 +20,28 @@
 // PRs are wanted; what is not wanted is anything MERGING unread - see `automerge`.
 //
 // THE pnpm INTERACTION, which is the subtle part.
-// This workspace relies on pnpm 11's built-in release-age cooldown - there is no
-// `minimumReleaseAge` line in pnpm-workspace.yaml, the guard is a pnpm default.
-// When pnpm is asked to install something newer than that cooldown allows it
-// does not fail; it writes a `minimumReleaseAgeExclude:` bypass into
+// pnpm-workspace.yaml declares `minimumReleaseAge: 1440`, which is pnpm 11's
+// own default value stated explicitly (added 2026-08-11, #184 - read the long
+// comment there before changing it, especially before RAISING it). So this
+// repo's floor is 24 hours at the pnpm layer and 3 days here, and the two
+// layers do different jobs: pnpm re-judges what is already PINNED, on every
+// install, while this value gates what gets PROPOSED. A longer soak belongs
+// here, because raising pnpm's floor retroactively invalidates lockfile
+// entries that were legal when they were resolved - which is exactly how #184
+// turned all seven CI jobs red.
+// When pnpm is asked to install something newer than the cooldown allows it
+// historically did not fail; it wrote a `minimumReleaseAgeExclude:` bypass into
 // pnpm-workspace.yaml, which is how `vue-tsc@3.3.8` once silently waived the
 // guard. A dependency bot is a machine for producing exactly that situation.
-// So `minimumReleaseAge` is declared HERE, explicitly, at a value comfortably
-// above pnpm's default: Renovate must never open a PR for a release pnpm would
-// want a bypass for. Declaring it also means a future pnpm changing its default
-// cannot move this repo's floor silently.
+// That may no longer be how pnpm responds - on 11.18.0, non-interactively, both
+// `pnpm add pkg@<too-fresh>` and a plain install hard-fail with
+// ERR_PNPM_NO_MATURE_MATCHING_VERSION and write nothing (measured 2026-08-11;
+// interactive TTY behaviour was NOT tested, and the vue-tsc case was real when
+// it happened). Treat the bypass as still possible rather than fixed upstream.
+// So `minimumReleaseAge` is declared HERE too, at a value comfortably above
+// pnpm's: Renovate must never open a PR for a release pnpm would want a bypass
+// for. Declaring it also means a future pnpm changing its default cannot move
+// this repo's floor silently.
 // If `minimumReleaseAgeExclude:` ever appears in a Renovate PR's diff, that PR
 // is wrong - do not merge it, fix the age rule instead.
 {
@@ -87,6 +99,12 @@
   // bypass into pnpm-workspace.yaml, so a same-day security PR would reintroduce
   // precisely the hazard the top-of-file comment exists to prevent. 25 hours
   // clears pnpm's floor with an hour to spare and drops 3 days to ~1.
+  //
+  // "pnpm's floor" is `minimumReleaseAge` in pnpm-workspace.yaml, and this 25 is
+  // derived from it, not chosen independently. THE TWO MOVE TOGETHER: raise that
+  // floor to 3 days and this value silently stops working - every security PR
+  // would then be pinned to a release pnpm refuses to install, which is the
+  // opposite of what this whole block is for.
   vulnerabilityAlerts: {
     schedule: [],
     minimumReleaseAge: "25 hours",
