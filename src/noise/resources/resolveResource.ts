@@ -53,6 +53,19 @@ const STARTING_SKIP_SPAN = 4;
 const orderRank = (o: "b" | "c"): number => (o === "b" ? 0 : 1);
 
 /**
+ * Draw priority between two resources: negative when `a` is drawn in preference to
+ * `b` (autoplace `order` "b" before "c", then lower `patchSetIndex`).
+ *
+ * Exported because `renderResources` needs the *same* rule for a resource this
+ * resolver deliberately does not hold - crude oil is painted in its own pass, and
+ * whether the threshold pass may overwrite an oil mark is exactly this comparison.
+ * Two copies of the rule is how the oil-vs-uranium inversion of #22 item 3 got in.
+ */
+export function comparePriority(a: ResourceParams, b: ResourceParams): number {
+  return orderRank(a.order) - orderRank(b.order) || a.patchSetIndex - b.patchSetIndex;
+}
+
+/**
  * The order-priority winner among the resources present (`probability >= 0.5`) at a
  * tile: "b" before "c", then lower `patchSetIndex`. Returns `null` if none present.
  * Pure - the field evaluation lives in {@link makeResourceResolver}.
@@ -60,13 +73,7 @@ const orderRank = (o: "b" | "c"): number => (o === "b" ? 0 : 1);
 export function pickWinner(present: readonly ResourceParams[]): ResourceParams | null {
   let best: ResourceParams | null = null;
   for (const p of present) {
-    if (
-      best === null ||
-      orderRank(p.order) < orderRank(best.order) ||
-      (orderRank(p.order) === orderRank(best.order) && p.patchSetIndex < best.patchSetIndex)
-    ) {
-      best = p;
-    }
+    if (best === null || comparePriority(p, best) < 0) best = p;
   }
   return best;
 }
@@ -113,11 +120,7 @@ export function makeResourceResolver(
   }
   // Evaluate in priority order so the first present resource is the winner - no need
   // to build the full `present` list per tile.
-  fields.sort(
-    (a, b) =>
-      orderRank(a.params.order) - orderRank(b.params.order) ||
-      a.params.patchSetIndex - b.params.patchSetIndex,
-  );
+  fields.sort((a, b) => comparePriority(a.params, b.params));
 
   return (x, y) => {
     for (const f of fields) {

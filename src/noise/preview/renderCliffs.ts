@@ -74,6 +74,13 @@ export interface RenderCliffsOptions {
  * Paint one square mark centred on a pixel, clipped to the image. Shared by the
  * cliff painter and the placement-roll overlays; `skipPixel` is re-checked per
  * painted pixel so a thickened mark still respects an exclusion (e.g. water).
+ *
+ * `mark`, when given, gets a 1 at the `width`-strided index of every pixel this
+ * call actually painted. `renderResources` uses it to protect crude oil's marks
+ * from the resources oil outranks (#22 item 3). It is an out-parameter rather
+ * than a second loop in the caller because the answer must agree with this
+ * function's *clipping and skipping* exactly, and a copy of that geometry is
+ * precisely the kind of thing that silently drifts.
  */
 export function paintMark(
   base: ImageData,
@@ -82,6 +89,7 @@ export function paintMark(
   color: readonly [number, number, number],
   radius: number,
   skipPixel?: (r: number, g: number, b: number) => boolean,
+  mark?: Uint8Array,
 ): void {
   const { width, height } = base;
   for (let dy = -radius; dy <= radius; dy++) {
@@ -96,6 +104,7 @@ export function paintMark(
       base.data[o + 1] = color[1];
       base.data[o + 2] = color[2];
       base.data[o + 3] = 255;
+      if (mark !== undefined) mark[y * width + x] = 1;
     }
   }
 }
