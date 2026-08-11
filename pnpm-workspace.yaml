@@ -5,6 +5,53 @@ allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+# 1440 minutes is EXACTLY pnpm 11's own default, so this line changes no
+# number. What it changes is the ENFORCEMENT MODEL, and that is the whole
+# reason it is here: an EXPLICIT minimumReleaseAge turns on a whole-lockfile
+# verification pass that the built-in default never runs. Measured 2026-08-11
+# on pnpm 11.18.0, same tree, three runs of `pnpm install --frozen-lockfile`:
+#
+#   unset (the default)        no verification line at all
+#   --config...=1440           OK Lockfile passes supply-chain policies (399 entries)
+#   --config...=4320           X  Lockfile failed supply-chain policy check
+#
+# So without this line pnpm checks release age only at RESOLUTION time, and a
+# lockfile that was resolved somewhere with the guard bypassed installs here
+# without complaint. With it, all 399 entries are re-checked on every install,
+# which is precisely the "someone committed a lockfile that bypassed the policy
+# locally" case pnpm's own error text names. It also pins the floor against a
+# future pnpm changing its default silently.
+#
+# DO NOT RAISE THIS ABOVE 1440 without reading the following. It was 4320
+# (3 days) in the PR that added it, #184, and that made all seven CI jobs fail:
+# the verification pass is RETROACTIVE, and this repo's lockfile contained
+# `@speed-highlight/core@1.2.24` (published 2026-08-09, transitively via
+# wrangler > miniflare > youch, landed by #169 on 2026-08-10 when it was ~1.2
+# days old). Legal under the 24h floor it was resolved under, illegal under 3
+# days, for the 2 days until it aged out. At 1440 that window cannot exist:
+# pnpm's resolver already refuses anything younger than 24h, so no lockfile it
+# produces can fail its own 24h verification. Any higher value re-opens a gap
+# between what the resolver accepts and what the verifier demands.
+#
+# Two escape routes that look reasonable and are not:
+#   - pnpm's own suggested fix, `pnpm clean --lockfile && pnpm install`, is a
+#     full re-resolution. Measured on #184's branch: 357 changed lines, dragging
+#     rolldown 1.1.5 > 1.2.3, @oxc-project/types 0.139.0 > 0.143.0, obug
+#     2.1.3 > 2.1.4 and all 15 rolldown platform bindings. That is
+#     `lockFileMaintenance`, which .github/renovate.json5 pins OFF because
+#     transitive re-resolution is what triggered the TS2321 pathology in
+#     vite.config.ts. Do not run it to clear an age violation.
+#   - Raising the floor also breaks the security path. renovate.json5 sets
+#     `vulnerabilityAlerts.minimumReleaseAge: "25 hours"` specifically to clear
+#     pnpm's 24h floor with an hour to spare; at 4320 that value is inoperative
+#     and every CVE fix waits 3 days. The two numbers are coupled - move one
+#     and you must move the other.
+#
+# Renovate still enforces 3 days for everything it proposes (see the top of
+# .github/renovate.json5). That is the layer where a longer soak belongs,
+# because it gates what gets PROPOSED rather than re-judging what is already
+# pinned. This line is the backstop for a hand-run `pnpm add`.
+minimumReleaseAge: 1440
 overrides:
   # brace-expansion has had TWO DoS advisories ten days apart, and the 2.x
   # branch needs 2.1.4 to clear both.
