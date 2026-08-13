@@ -6,18 +6,18 @@
 
 **Architecture:** A planet-agnostic `voronoiNoise.ts` primitive is cracked first, oracle-first, against the real game via `sampleExpression()`. Three `fulgora*` expression modules then transcribe the ~44-node elevation DAG on top of it, every node `memoXY`-wrapped. A tile catalog resolves the four oil-ocean tiles by argmax and a renderer paints three colours.
 
-**Tech Stack:** TypeScript, Vue 3 + Pinia (untouched here), Vite+ (`pnpm vp`), Vitest-compatible specs, Factorio 2.1.12 headless as the oracle.
+**Tech Stack:** TypeScript, Vue 3 + Pinia (untouched here), Vite+ (`pnpm vp`), Vitest-compatible specs, Factorio headless as the oracle - **2.1.14** from Task 7 on (this plan was written against 2.1.12; Steam moved the binary on 2026-08-13).
 
 **Spec:** `docs/superpowers/specs/2026-08-04-fulgora-elevation-preview-design.md`
 
 ## Global Constraints
 
-- **Factorio version is 2.1.12.** Run `pnpm refs:sync --check` before trusting any reading from `~/GitHub/factorio-data` or `factorioLuaAPI/`. It must report `-> in sync`.
+- **Factorio version is 2.1.14** (was 2.1.12 when this plan was written). Run `pnpm refs:sync --check` before trusting any reading from `~/GitHub/factorio-data` or `factorioLuaAPI/`. **`-> in sync` is not enough - read the version it PRINTS**, because it pins to whatever the Steam binary currently is, not to what this plan assumed. The Fulgora map-gen Lua is byte-identical 2.1.12 -> 2.1.14 (empty `git diff` over `space-age/prototypes/planet/`, `noise-programs.lua`, `noise-functions.lua`, `base/prototypes/noise-expressions.lua`), so Tasks 1-6's findings carry over unchanged; only the fixture provenance moves.
 - **Port the 2.1.7-FIXED voronoi search range**, not the pre-2.1.7 3x3 neighbourhood. Fulgora runs jitter 0.6 / 0.8 / 1.0, where the two differ.
 - **Fulgora's surface seed is `(mapSeed + crc32("fulgora")) >>> 0`** - use `surfaceSeedForPlanet("fulgora", mapSeed)` from `src/model/planetSurfaceSeed.ts`. Never pass a raw map seed to a Fulgora field.
 - **Every field-DAG node is wrapped in `memoXY`** from `src/noise/eval/memoXY.ts`.
 - **Acceptance is f32.** Compare with `Math.fround`. The Voronoi primitive is exact arithmetic - no `fastapprox` floor applies to it.
-- **Every new fixture needs a `test/fixtures/PROVENANCE.json` entry** (version `2.1.12`, evidence `stated`) or `test/fixtureProvenance.spec.ts` fails.
+- **Every new fixture needs a `test/fixtures/PROVENANCE.json` entry** (version `2.1.14` for anything captured from Task 7 on, evidence `stated`) or `test/fixtureProvenance.spec.ts` fails. Landing a 2.1.14 fixture also trips `test/factorioTarget.spec.ts` until `FACTORIO_TARGET_VERSION` is bumped in the same commit - that is the guard working, not a break.
 - **Never edit a fixture or an expected value to make a test pass.** A mismatch is a real finding.
 - **Use hyphens (`-`), never em or en dashes,** in every file this plan creates.
 - Run commands through pnpm: `pnpm vp test`, `pnpm vp check --fix`, `pnpm run verify`. A root dependency needs `pnpm add -w` followed by a bare `pnpm install`.
@@ -899,7 +899,7 @@ git commit -m "feat(noise): makeVoronoi factory with shared per-cell point cache
 
 Source: `~/GitHub/factorio-data/space-age/prototypes/planet/planet-fulgora-map-gen.lua:22-124`.
 
-- [ ] **Step 1: Capture the fixture**
+- [x] **Step 1: Capture the fixture**
 
 Add `captureFulgoraShared` sampling these named expressions through the
 Space-Age Fulgora surface - note `spaceAge: true, planet: "fulgora"`:
@@ -916,7 +916,7 @@ Run: `node --experimental-strip-types test/oracle/capture.ts fulgora-shared`
 
 Add the PROVENANCE entry.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `test/fulgoraExpressions.spec.ts` with a fixture-driven loop asserting
 `Math.fround(ours(x, y))` equals `Math.fround(expected[i])` for each field.
@@ -941,12 +941,12 @@ If that second assertion fails against the game, **change the implementation to
 match the game, not the test's expectation** - and record the answer in
 `docs/noise/fulgora-elevation-NOTES.md`.
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `pnpm vp test test/fulgoraExpressions.spec.ts`
 Expected: FAIL - the module does not exist.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Transcribe lines 22-124 of the Lua. Every field goes through `memoXY`. The
 multioctave calls, verbatim from the Lua:
@@ -968,12 +968,12 @@ matching how `vulcanusBiomes.ts:257` calls it.
 Use `crc32` from `src/codec/crc32.ts` for string `seed1` values, as
 `nauvisShared.ts` does.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pnpm vp test test/fulgoraExpressions.spec.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/noise/expressions/fulgoraShared.ts test/fulgoraExpressions.spec.ts \

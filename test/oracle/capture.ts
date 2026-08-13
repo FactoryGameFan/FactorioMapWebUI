@@ -3319,10 +3319,116 @@ if (!oracleAvailable()) {
   process.exit(1);
 }
 
+/**
+ * Fulgora's shared layer: the grid constant, the wobble fields that distort the
+ * Voronoi input, the offset/distorted coordinates, and the two starting cones.
+ *
+ * Positions deliberately span BOTH scales, because these fields disagree at
+ * different ones: the starting cones are only non-zero within a couple of grid
+ * cells of spawn, while the wobble fields need far-field samples to exercise
+ * octaves the near grid never reaches. A near-only capture would let a wrong
+ * `input_scale` pass, and a far-only one would never evaluate a cone at all.
+ */
+async function captureFulgoraShared(): Promise<void> {
+  const seed = 123456;
+  const planet = "fulgora";
+  const positions: Position[] = [];
+
+  /**
+   * Snap to a quarter tile. Factorio stores a MapPosition as 1/256-tile
+   * fixed-point, so a coordinate that is not a multiple of 1/256 is sampled by
+   * the game at a DIFFERENT point than the port evaluates - and the difference
+   * shows up as a residual that looks like a porting bug. Measured: an
+   * unsnapped ring position put `fulgora_ox` (literally `x + grid/2`) out by
+   * exactly 1/256. Quarter tiles are exact in that grid with room to spare.
+   */
+  const q = (v: number): number => Math.round(v * 4) / 4;
+
+  // Near field: a 7x7 sweep across one 175-tile grid cell, offset off the
+  // integer lattice so nothing lands on a cell boundary by accident.
+  for (let gy = 0; gy < 7; gy++) {
+    for (let gx = 0; gx < 7; gx++) {
+      positions.push({ x: gx * 29 - 87 + 0.5, y: gy * 29 - 87 + 0.25 });
+    }
+  }
+  // Far field: rings well past any starting cone, out to where the Voronoi
+  // grid has tiled many times.
+  for (const r of [400, 900, 1800, 3300, 7000, 15000]) {
+    for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4;
+      positions.push({ x: q(r * Math.cos(a) + 0.5), y: q(r * Math.sin(a) + 0.25) });
+    }
+  }
+  // A few odds and ends, including the exact origin.
+  positions.push({ x: 0, y: 0 });
+  positions.push({ x: 87.5, y: -87.5 });
+  positions.push({ x: 12345.75, y: 6789.25 });
+  positions.push({ x: -4321.25, y: -8765.75 });
+
+  const sample = async (expression: string): Promise<number[]> => {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      return await sampleExpression(expression, positions, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet,
+      });
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  };
+
+  const NAMES = [
+    "fulgora_grid",
+    "fulgora_wobble_influence",
+    "fulgora_wobble_mask",
+    "fulgora_wobble_x",
+    "fulgora_wobble_y",
+    "fulgora_ox",
+    "fulgora_oy",
+    "fulgora_wx",
+    "fulgora_wy",
+    "fulgora_starting_cone",
+    "fulgora_starting_vault_cone",
+    "fulgora_starting_mask",
+    "fulgora_starting_vault_mask",
+  ] as const;
+
+  const fields: Record<string, number[]> = {};
+  for (const name of NAMES) {
+    fields[name] = await sample(name);
+    console.log(`  captured ${name}`);
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 (Space Age enabled) via the test/oracle harness: " +
+      "Fulgora's shared layer (grid, wobble influence/mask/x/y, ox/oy/wx/wy, the two starting " +
+      "cones and their masks), each routed onto elevation against a real Fulgora surface " +
+      "(game.planets['fulgora'].create_surface()). Positions span one grid cell near spawn AND " +
+      "six far-field rings, because the cones are only non-zero near spawn while the wobble " +
+      "octaves are only exercised far out. Every coordinate is a multiple of a QUARTER TILE and " +
+      "therefore exact in Factorio's 1/256 MapPosition grid - an earlier unsnapped capture put " +
+      "fulgora_ox (literally x + grid/2) out by exactly 1/256, which reads as a porting bug and " +
+      "is not one. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts fulgora-shared",
+    seed0: seed,
+    planet,
+    positions,
+    ...fields,
+  };
+  const out = join(FIXTURES, "oracle-fulgora-shared.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(positions.length)} positions)`);
+}
+
 // Optional CLI filter: names on argv restrict which fixtures regenerate (so a new
 // capture need not re-run the others). No args = capture everything.
 const only = process.argv.slice(2);
 const want = (name: string) => only.length === 0 || only.includes(name);
+
+if (want("fulgora-shared")) await captureFulgoraShared();
 
 if (want("basis")) await captureBasis();
 if (want("multioctave")) await captureMultioctave();

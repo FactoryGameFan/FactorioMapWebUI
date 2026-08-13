@@ -60,9 +60,27 @@ export function cos(x: number): number {
  *
  * `s = 1` (the default, un-adjusted slider position) lands at the midpoint of
  * `[lo, hi]`; `s = 6` lands at `hi`. Used by `moisture_nauvis`'s starting-area
- * bias term (`starting_area_moisture_size` -> `startingBiasChange`); reused by
- * any other climate/terrain lever built on the same slider convention.
+ * bias term (`starting_area_moisture_size` -> `startingBiasChange`) and by
+ * `fulgora_grid`; reused by any other lever built on the same slider convention.
+ *
+ * **Evaluated with per-operation f32 rounding, and that is measured, not
+ * stylistic.** `fulgora_grid` is `175 - slider_to_linear(freq, -50, 50)`, and
+ * the game was sampled at five slider positions on a real Fulgora surface
+ * (2.1.14, seed 123456). An f64 chain rounded once at the end misses at
+ * `s = 3` by exactly one f32 ulp (144.34263610839844 against the game's
+ * 144.3426513671875); rounding every operation matches all five EXACTLY.
+ *
+ * Only `s = 3` can see it: the other probes (0.5, 1, 2) have power-of-two
+ * numerators, and at `s = 6` the ratio is exactly 1 whatever `log2(6)` is - so
+ * a four-point sweep that skipped 3 would have "confirmed" the f64 form.
+ *
+ * `log2` here stays EXACT (`Math.log2`). The fastapprox variant was tried and
+ * is refuted: it misses all five, including breaking the exact 175 at the
+ * default `s = 1` (it gives 175.00005). `slider_to_linear` is evaluated on the
+ * prototype side, not by the noise machine, so `Math::log2` never enters it.
  */
 export function sliderToLinear(s: number, lo: number, hi: number): number {
-  return lo + 0.5 * (hi - lo) * (1 + log2(s) / log2(6));
+  const f = Math.fround;
+  const ratio = f(f(log2(s)) / f(log2(6)));
+  return f(lo + f(f(0.5 * f(hi - lo)) * f(1 + ratio)));
 }
