@@ -348,17 +348,18 @@ Expected: 22 `captured ...` lines and a fixture of 101 positions. If any express
 
 - [ ] **Step 3: Add the provenance entry**
 
-In `test/fixtures/PROVENANCE.json`, insert in place beside the other Fulgora entries:
+In `test/fixtures/PROVENANCE.json`, insert in place inside the top-level **`fixtures`** object, beside the other four Fulgora entries. Do not re-sort the file.
+
+The schema is exactly two keys - `factorioVersion` (a semver string, or the literal `unknown`) and `evidence` (non-empty prose, **not** an enum). `test/fixtureProvenance.spec.ts:55-60` is what enforces that. An entry with a third key, or with `evidence` set to a single word like `"stated"`, is wrong: the word grades confidence in the surrounding sentence, it is not the value.
 
 ```json
 "oracle-fulgora-ruins.seed123456.json": {
   "factorioVersion": "2.1.14",
-  "evidence": "stated",
-  "note": "Captured by test/oracle/capture.ts fulgora-ruins against a real Fulgora surface."
+  "evidence": "captured <YYYY-MM-DD> via test/oracle/capture.ts fulgora-ruins against a real Fulgora surface (game.planets['fulgora'].create_surface()) on the installed 2.1.14 binary, which pnpm refs:sync --check reported in sync at capture time. Positions are identical to oracle-fulgora-shared/cells/elevation.seed123456.json, so all four line up index-for-index. 22 named expressions: the three masks, the road and structure layer including its intermediate paving stages, and the ruins layer with its four tile_ruin outputs."
 }
 ```
 
-Match the exact key names the neighbouring entries use rather than these; read one first.
+Fill in the real capture date. Read the `oracle-fulgora-shared.seed123456.json` entry first and match its level of detail - these strings explain what a later reader would otherwise have to re-derive.
 
 - [ ] **Step 4: Write the failing mask test**
 
