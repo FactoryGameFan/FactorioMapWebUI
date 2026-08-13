@@ -538,7 +538,36 @@ function toChebyshevFrame(x: number, y: number): Vec2 {
  * and not merely because the point formula is known.
  */
 export function makeVoronoi(p: VoronoiParams): Voronoi {
-  const { gridSize, distanceType } = p;
+  const { distanceType } = p;
+
+  /**
+   * **`grid_size` is a 16-bit UNSIGNED INTEGER, so a fractional argument is
+   * TRUNCATED** - and that is measured against the game, not read off the type.
+   *
+   * It went untested for a long time because nothing exercised it: every
+   * committed voronoi fixture uses an integral grid (175, 64), where truncation
+   * is a no-op. Fulgora is what made it reachable - `fulgora_grid` is
+   * `175 - slider_to_linear(control:fulgora_islands:frequency, -50, 50)`, which
+   * is a genuine float anywhere except the two slider endpoints.
+   *
+   * Probe (`gridSizeProbe` in `oracle-fulgora-cells.seed123456.json`, 101
+   * positions): `voronoi_cell_id` at a fractional `grid_size` of
+   * 155.65736389160156 - what `fulgora_grid` really is at islands frequency 2 -
+   * against the two integers it sits between.
+   *
+   * | comparison | agreement |
+   * | --- | --- |
+   * | fractional == **truncated (155)** | **101/101** |
+   * | fractional == rounded (156) | 91/101 |
+   * | truncated == rounded | 91/101 |
+   *
+   * The 10 positions where 155 and 156 disagree are what make this a
+   * measurement: had all three agreed, the probe would say nothing.
+   *
+   * Truncating HERE rather than at the Fulgora call site is deliberate - it is
+   * a property of the primitive's parameter type, so every caller gets it.
+   */
+  const gridSize = Math.trunc(p.gridSize);
 
   /**
    * The half-width of the cell block every op searches, from the game's own
