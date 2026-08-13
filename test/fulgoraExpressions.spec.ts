@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-fulgora-shared.seed123456.json";
+import cellsFixture from "./fixtures/oracle-fulgora-cells.seed123456.json";
 import { makeFulgoraShared } from "../src/noise/expressions/fulgoraShared";
+import { makeFulgoraCells } from "../src/noise/expressions/fulgoraCells";
+import { makeVoronoi } from "../src/noise/voronoiNoise";
 
 /**
  * Fulgora's shared layer, checked against the game.
@@ -196,5 +199,173 @@ describe("fulgora_grid across the frequency slider", () => {
     for (let i = 1; i < grids.length; i++) {
       expect(grids[i] as number).toBeLessThan(grids[i - 1] as number);
     }
+  });
+});
+
+/**
+ * Fulgora's Voronoi layer and the island classification built on it.
+ * Source: `planet-fulgora-map-gen.lua:126-205`.
+ *
+ * Fixture positions are IDENTICAL to the shared-layer fixture, so the two line
+ * up index-for-index.
+ */
+describe("makeFulgoraCells", () => {
+  const ctx = { seed0: cellsFixture.seed0 };
+  const shared = makeFulgoraShared(ctx);
+  const cells = makeFulgoraCells(shared, ctx);
+  const positions = cellsFixture.positions;
+
+  const check = (fn: (x: number, y: number) => number, want: number[], bound: number): void => {
+    let worst = 0;
+    let worstAt = -1;
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i] as { x: number; y: number };
+      const d = Math.abs(Math.fround(fn(p.x, p.y)) - Math.fround(want[i] as number));
+      if (d > worst) {
+        worst = d;
+        worstAt = i;
+      }
+    }
+    expect(
+      worst,
+      `worst residual ${worst.toExponential(3)} at position ${String(worstAt)}`,
+    ).toBeLessThanOrEqual(bound);
+  };
+
+  it("shares its position set with the shared-layer fixture", () => {
+    // The two fixtures are compared field-against-field elsewhere; if they ever
+    // drift apart, every such comparison silently becomes meaningless.
+    expect(positions).toEqual(fixture.positions);
+  });
+
+  it("matches fulgora_cells", () => {
+    // EXACT, and that is a real check rather than a lucky one: cell_id is what
+    // every island class is derived from, so an error here would reclassify
+    // whole islands rather than shade them.
+    check(cells.cells, cellsFixture.fulgora_cells, 0);
+  });
+
+  /**
+   * `pyramids` and `spots` carry a small residual where `cells` does not, and
+   * the split is the interesting part rather than the sizes.
+   *
+   * All three read the same distorted coordinates, which arrive from the shared
+   * layer already carrying its `basisNoise` f64-vs-f32 floor (`wx`/`wy` worst
+   * 1.53e-5). `cells` is a DISCRETE lookup - it returns which cell won, so a
+   * coordinate error that small almost never changes the answer, and it comes
+   * back f32-EXACT. `pyramids` and `spots` are continuous, so the same input
+   * error passes straight through to the output.
+   *
+   * Measured worst over the 101 positions: pyramids 7.11e-6, spots 7.54e-6 -
+   * both below the 1.53e-5 they inherit, as a contraction should be. Nothing
+   * here is new error introduced by this layer.
+   */
+  it("matches fulgora_pyramids", () => {
+    check(cells.pyramids, cellsFixture.fulgora_pyramids, 1e-5);
+  });
+
+  it("matches fulgora_spots and fulgora_spots_inv", () => {
+    check(cells.spots, cellsFixture.fulgora_spots, 1e-5);
+    check(cells.spotsInv, cellsFixture.fulgora_spots_inv, 1e-5);
+  });
+
+  it("matches the four island classes", () => {
+    check(cells.blanks, cellsFixture.fulgora_blanks, 0);
+    check(cells.mesa, cellsFixture.fulgora_mesa, 0);
+    check(cells.sprawl, cellsFixture.fulgora_sprawl, 0);
+    check(cells.vaults, cellsFixture.fulgora_vaults, 0);
+  });
+
+  it("matches fulgora_vaults_and_starting_vault", () => {
+    check(cells.vaultsAndStartingVault, cellsFixture.fulgora_vaults_and_starting_vault, 0);
+  });
+
+  it("blanks / sprawl / mesa / vaults partition every position", () => {
+    for (const p of positions as { x: number; y: number }[]) {
+      const sum =
+        cells.blanks(p.x, p.y) +
+        cells.sprawl(p.x, p.y) +
+        cells.mesa(p.x, p.y) +
+        cells.vaults(p.x, p.y);
+      expect(Math.fround(sum), `partition at (${String(p.x)}, ${String(p.y)})`).toBe(1);
+    }
+  });
+
+  it("populates all four classes, so the partition test is not vacuous", () => {
+    // A classification that returned "blanks" everywhere would also sum to 1.
+    const count = (f: (x: number, y: number) => number) =>
+      (positions as { x: number; y: number }[]).filter((p) => f(p.x, p.y) === 1).length;
+    for (const [name, f] of [
+      ["blanks", cells.blanks],
+      ["sprawl", cells.sprawl],
+      ["mesa", cells.mesa],
+      ["vaults", cells.vaults],
+    ] as const) {
+      expect(count(f), `${name} never occurs in the fixture`).toBeGreaterThan(0);
+    }
+  });
+
+  it("cells and pyramids move together with the seed", () => {
+    const a = makeFulgoraCells(makeFulgoraShared({ seed0: 1 }), { seed0: 1 });
+    const b = makeFulgoraCells(makeFulgoraShared({ seed0: 2 }), { seed0: 2 });
+    expect(a.cells(500.5, 500.5)).not.toBe(b.cells(500.5, 500.5));
+    expect(a.pyramids(500.5, 500.5)).not.toBe(b.pyramids(500.5, 500.5));
+  });
+});
+
+/**
+ * The plan left this open at Task 7 and it is answerable here: the Voronoi
+ * primitive documents `grid_size` as a 16-bit UNSIGNED INTEGER, but
+ * `fulgora_grid` is a genuine float away from the two slider endpoints. Does
+ * the CALL truncate it?
+ *
+ * **Measured: yes, it truncates.** `voronoi_cell_id` sampled at a fractional
+ * grid_size of 155.65736389160156 (what `fulgora_grid` really is at islands
+ * frequency 2) against the two integers it sits between, 101 positions:
+ *
+ * | comparison | agreement |
+ * | --- | --- |
+ * | fractional == **truncated (155)** | **101/101** |
+ * | fractional == rounded (156) | 91/101 |
+ * | truncated == rounded | 91/101 |
+ *
+ * The 10 positions where 155 and 156 disagree are what make this a measurement
+ * rather than a coincidence - had all three agreed, the probe would say nothing.
+ *
+ * The default grid is exactly 175, so this changes NO default render. It
+ * matters the moment the islands frequency slider moves off 1.
+ */
+describe("voronoi grid_size is truncated to an integer", () => {
+  const probe = cellsFixture.gridSizeProbe;
+
+  it("the probe discriminates - 155 and 156 are genuinely different fields", () => {
+    const differing = probe.truncated.filter((v, i) => v !== probe.rounded[i]).length;
+    expect(differing).toBeGreaterThan(0);
+  });
+
+  it("a fractional grid_size behaves exactly like its truncation", () => {
+    expect(probe.fractional).toEqual(probe.truncated);
+  });
+
+  it("makeVoronoi truncates gridSize, matching the game", () => {
+    const params = {
+      seed0: cellsFixture.seed0,
+      seed1: 12345,
+      jitter: 0.6,
+      distanceType: "manhattan",
+    } as const;
+    const fractional = makeVoronoi({ ...params, gridSize: probe.fractionalGridSize });
+    const truncated = makeVoronoi({ ...params, gridSize: probe.truncatedGridSize });
+    const rounded = makeVoronoi({ ...params, gridSize: probe.roundedGridSize });
+
+    let sameAsTruncated = 0;
+    let sameAsRounded = 0;
+    for (const p of cellsFixture.positions as { x: number; y: number }[]) {
+      if (fractional.cellId(p.x, p.y) === truncated.cellId(p.x, p.y)) sameAsTruncated++;
+      if (fractional.cellId(p.x, p.y) === rounded.cellId(p.x, p.y)) sameAsRounded++;
+    }
+    const n = cellsFixture.positions.length;
+    expect(sameAsTruncated, "fractional should equal truncated everywhere").toBe(n);
+    expect(sameAsRounded, "fractional should NOT equal rounded everywhere").toBeLessThan(n);
   });
 });

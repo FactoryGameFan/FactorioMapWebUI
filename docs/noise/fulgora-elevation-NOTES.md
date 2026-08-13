@@ -42,9 +42,9 @@ It is integral only at the two slider **endpoints**, where `log2(s)/log2(6)` is
 exactly 0 and 1. That is a property of those positions, not of the expression.
 So `fulgora_grid` is a genuine float and the port keeps it one.
 
-Whether the **Voronoi call** then truncates it to a u16 is a different question,
-about `grid_size` rather than about this expression, and it belongs to the cell
-layer (Task 8). It is **open**. Do not assume the answer from this row.
+Whether the **Voronoi call** then truncates it to a u16 was a different question,
+about `grid_size` rather than about this expression. **Answered in Task 8 below:
+it truncates.**
 
 ### `slider_to_linear` is f32 per-operation, and only `s = 3` can prove it
 
@@ -135,3 +135,82 @@ hardcoded the way `nauvisShared.ts` does it:
 | `fulgora_wobble_y` | 1609373499 (0x5FED173B) |
 
 `fulgora_wobble_influence` uses a numeric `seed1 = 1`, not a string.
+
+
+---
+
+## Task 8: the Voronoi layer (`fulgoraCells.ts`)
+
+Lua lines 126-205. Fixture: `test/fixtures/oracle-fulgora-cells.seed123456.json`,
+the **same 101 positions** as the shared-layer fixture (the spec asserts that, so
+the two cannot drift apart and quietly invalidate every cross-comparison).
+
+### `grid_size` IS truncated to an integer - Task 7's open question, closed
+
+The Voronoi primitive documents `grid_size` as a 16-bit **unsigned integer**, but
+`fulgora_grid` is a genuine float away from the two slider endpoints. The default
+grid is exactly 175, so **the default settings cannot answer this** - the probe
+passes a fractional `grid_size` literal instead.
+
+`voronoi_cell_id` at `grid_size = 155.65736389160156` (what `fulgora_grid` really
+is at islands frequency 2) against the two integers it sits between, 101
+positions:
+
+| comparison | agreement |
+| --- | --- |
+| fractional == **truncated (155)** | **101/101** |
+| fractional == rounded (156) | 91/101 |
+| truncated == rounded | 91/101 |
+
+**The third row is what makes this a measurement.** 155 and 156 are genuinely
+different fields, disagreeing at 10 of 101 positions - had all three agreed, the
+probe would have shown nothing and "it truncates" would have been unfounded.
+
+`Math.trunc` now lives in `makeVoronoi`, not at the Fulgora call site: it is a
+property of the primitive's parameter type, so every caller gets it. This changes
+**no** existing behaviour - every committed voronoi fixture uses an integral grid
+(175, 64), where truncation is a no-op, which is exactly why it went untested for
+so long. It changes results the moment the islands frequency slider leaves 1.
+
+### Agreement with the game, per field
+
+| field | worst | note |
+| --- | --- | --- |
+| `cells` | **0** | exact |
+| `blanks`, `mesa`, `sprawl`, `vaults` | **0** | exact |
+| `vaultsAndStartingVault` | **0** | exact |
+| `pyramids` | 7.11e-6 | |
+| `spots`, `spotsInv` | 7.54e-6 | |
+
+**The split between exact and not is the informative part.** All of these read
+the same distorted coordinates, which arrive from the shared layer already
+carrying its `basisNoise` floor (`wx`/`wy` worst 1.53e-5). `cells` is a
+**discrete** lookup - it reports which cell won - so a coordinate error that
+small almost never changes the answer, and it comes back exact. `pyramids` and
+`spots` are continuous, so the same input error passes through. Both land BELOW
+the 1.53e-5 they inherit, as a contraction should; neither layer introduces new
+error.
+
+`cells` being exact matters more than its neighbours: every island class is
+derived from it by threshold, so an error there would **reclassify whole
+islands** rather than shade them.
+
+### One instance serves `cells` and `pyramids`
+
+They are the same Voronoi field read through two ops - identical seed, grid,
+distance type and jitter - so they share one `makeVoronoi` and therefore one
+per-cell point cache. `spots` needs its own because the distance type differs
+(euclidean, not manhattan), and note it is also sampled at **different
+coordinates**: `ox + wobbleX/2`, half the distortion `wx` applies. The moats sit
+slightly off the islands they belong to.
+
+### Seed constant
+
+| string | value |
+| --- | --- |
+| `fulgora_cells` | 1512814397 (0x5A2BB73D) |
+
+All three Voronoi calls use it - `pyramids` and `spots` deliberately share
+`cells`' seed so they describe the same tiling. **Compute it, do not guess it:**
+the first draft of `fulgoraCells.ts` carried a hand-invented constant, which
+would have produced a plausible, entirely wrong map.

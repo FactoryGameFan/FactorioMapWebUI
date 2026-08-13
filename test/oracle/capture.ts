@@ -3329,19 +3329,25 @@ if (!oracleAvailable()) {
  * octaves the near grid never reaches. A near-only capture would let a wrong
  * `input_scale` pass, and a far-only one would never evaluate a cone at all.
  */
-async function captureFulgoraShared(): Promise<void> {
-  const seed = 123456;
-  const planet = "fulgora";
+/**
+ * The position set every Fulgora capture shares, so the fixtures line up
+ * index-for-index and a field from one can be compared against a field from
+ * another without re-deriving anything.
+ *
+ * Two scales on purpose. The starting cones are non-zero only within a couple
+ * of grid cells of spawn; the wobble octaves are only exercised far out. A
+ * near-only capture lets a wrong `input_scale` pass, and a far-only one never
+ * evaluates a cone at all.
+ *
+ * **Every coordinate is a multiple of a quarter tile**, and that is load-bearing
+ * rather than tidy. Factorio stores a MapPosition as 1/256-tile fixed point, so
+ * a coordinate that is not a multiple of 1/256 is sampled by the game at a
+ * DIFFERENT point than the port evaluates. Measured: an unsnapped ring position
+ * put `fulgora_ox` - literally `x + grid/2` - out by exactly 1/256, which reads
+ * as a porting bug and is not one.
+ */
+function fulgoraCapturePositions(): Position[] {
   const positions: Position[] = [];
-
-  /**
-   * Snap to a quarter tile. Factorio stores a MapPosition as 1/256-tile
-   * fixed-point, so a coordinate that is not a multiple of 1/256 is sampled by
-   * the game at a DIFFERENT point than the port evaluates - and the difference
-   * shows up as a residual that looks like a porting bug. Measured: an
-   * unsnapped ring position put `fulgora_ox` (literally `x + grid/2`) out by
-   * exactly 1/256. Quarter tiles are exact in that grid with room to spare.
-   */
   const q = (v: number): number => Math.round(v * 4) / 4;
 
   // Near field: a 7x7 sweep across one 175-tile grid cell, offset off the
@@ -3364,20 +3370,29 @@ async function captureFulgoraShared(): Promise<void> {
   positions.push({ x: 87.5, y: -87.5 });
   positions.push({ x: 12345.75, y: 6789.25 });
   positions.push({ x: -4321.25, y: -8765.75 });
+  return positions;
+}
 
-  const sample = async (expression: string): Promise<number[]> => {
-    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
-    try {
-      return await sampleExpression(expression, positions, {
-        workDir,
-        seed,
-        spaceAge: true,
-        planet,
-      });
-    } finally {
-      await rm(workDir, { recursive: true, force: true });
-    }
-  };
+/** Sample one named expression on a real Fulgora surface. */
+async function sampleFulgora(expression: string, positions: readonly Position[], seed: number) {
+  const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+  try {
+    return await sampleExpression(expression, positions, {
+      workDir,
+      seed,
+      spaceAge: true,
+      planet: "fulgora",
+    });
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
+
+async function captureFulgoraShared(): Promise<void> {
+  const seed = 123456;
+  const planet = "fulgora";
+  const positions = fulgoraCapturePositions();
+  const sample = (expression: string) => sampleFulgora(expression, positions, seed);
 
   const NAMES = [
     "fulgora_grid",
@@ -3428,7 +3443,93 @@ async function captureFulgoraShared(): Promise<void> {
 const only = process.argv.slice(2);
 const want = (name: string) => only.length === 0 || only.includes(name);
 
+/**
+ * Fulgora's Voronoi layer and the island classification built on it.
+ *
+ * Also answers an open question from the plan that nothing else can: the
+ * Voronoi primitive documents `grid_size` as a 16-bit UNSIGNED INTEGER, but
+ * `fulgora_grid` is a genuine float away from the two slider endpoints (see
+ * docs/noise/fulgora-elevation-NOTES.md). So does the CALL truncate it?
+ *
+ * At the default frequency `fulgora_grid` is exactly 175, which cannot
+ * discriminate - so the probe passes a FRACTIONAL grid_size literal instead and
+ * compares it against the two integers it sits between. Whichever the game
+ * agrees with is the answer, and it needs no autoplace-control plumbing (which
+ * `sampleExpression` has no way to apply to a planet surface anyway).
+ */
+async function captureFulgoraCells(): Promise<void> {
+  const seed = 123456;
+  const planet = "fulgora";
+  const positions = fulgoraCapturePositions();
+  const sample = (expression: string) => sampleFulgora(expression, positions, seed);
+
+  const NAMES = [
+    "fulgora_cells",
+    "fulgora_pyramids",
+    "fulgora_spots",
+    "fulgora_spots_inv",
+    "fulgora_blanks",
+    "fulgora_mesa",
+    "fulgora_sprawl",
+    "fulgora_vaults",
+    "fulgora_vaults_and_starting_vault",
+  ] as const;
+
+  const fields: Record<string, number[]> = {};
+  for (const name of NAMES) {
+    fields[name] = await sample(name);
+    console.log(`  captured ${name}`);
+  }
+
+  // The grid_size truncation probe. 155.65736389160156 is what fulgora_grid
+  // really is at islands frequency 2; 155 and 156 are the integers a truncating
+  // or rounding call would use. Same seeds/jitter/distance as fulgora_cells so
+  // only grid_size varies.
+  const FRACTIONAL_GRID = 155.65736389160156;
+  const gridProbe: Record<string, number[]> = {};
+  for (const [label, gridSize] of [
+    ["fractional", String(FRACTIONAL_GRID)],
+    ["truncated", "155"],
+    ["rounded", "156"],
+  ] as const) {
+    gridProbe[label] = await sample(
+      `voronoi_cell_id{x = fulgora_wx, y = fulgora_wy, seed0 = map_seed, ` +
+        `seed1 = 'fulgora_cells', grid_size = ${gridSize}, ` +
+        `distance_type = 'manhattan', jitter = 0.6}`,
+    );
+    console.log(`  captured grid probe: ${label} (grid_size = ${gridSize})`);
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 (Space Age enabled) via the test/oracle harness: " +
+      "Fulgora's Voronoi layer (cells / pyramids / spots / spots_inv) and the island " +
+      "classification built on it (blanks / mesa / sprawl / vaults / " +
+      "vaults_and_starting_vault), against a real Fulgora surface. Positions are IDENTICAL to " +
+      "oracle-fulgora-shared.seed123456.json, so the two fixtures line up index-for-index. " +
+      "gridSizeProbe answers whether the voronoi call truncates grid_size to a u16: it samples " +
+      "voronoi_cell_id at a FRACTIONAL grid_size (155.65736389160156, which is what fulgora_grid " +
+      "really is at islands frequency 2) against the two integers it sits between. The default " +
+      "grid of exactly 175 cannot discriminate, which is why the probe uses a literal. " +
+      "Regenerate: node --experimental-strip-types test/oracle/capture.ts fulgora-cells",
+    seed0: seed,
+    planet,
+    positions,
+    ...fields,
+    gridSizeProbe: {
+      fractionalGridSize: FRACTIONAL_GRID,
+      truncatedGridSize: 155,
+      roundedGridSize: 156,
+      ...gridProbe,
+    },
+  };
+  const out = join(FIXTURES, "oracle-fulgora-cells.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(positions.length)} positions)`);
+}
+
 if (want("fulgora-shared")) await captureFulgoraShared();
+if (want("fulgora-cells")) await captureFulgoraCells();
 
 if (want("basis")) await captureBasis();
 if (want("multioctave")) await captureMultioctave();

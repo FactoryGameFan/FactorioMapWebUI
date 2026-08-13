@@ -999,7 +999,7 @@ git commit -m "feat(noise): port fulgora grid, wobble and starting-cone fields"
 
 Source: Lua lines 126-205.
 
-- [ ] **Step 1: Capture the fixture**
+- [x] **Step 1: Capture the fixture**
 
 Sample `fulgora_cells`, `fulgora_pyramids`, `fulgora_spots`, `fulgora_blanks`,
 `fulgora_mesa`, `fulgora_sprawl`, `fulgora_vaults`,
@@ -1010,7 +1010,7 @@ Run: `node --experimental-strip-types test/oracle/capture.ts fulgora-cells`
 
 Add the PROVENANCE entry.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Extend the fixture loop in `test/fulgoraExpressions.spec.ts`, and add the
 structural assertions the classification must satisfy:
@@ -1031,12 +1031,12 @@ it("cells and pyramids share one point field - both change together with seed", 
 });
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `pnpm vp test test/fulgoraExpressions.spec.ts -t fulgoraCells`
 Expected: FAIL.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Three Voronoi fields, parameters verbatim from the Lua:
 
@@ -1055,12 +1055,12 @@ Classification: `blanks = cells < 0.33`, `mesa = cells > 0.75`,
 `vaultsAndStartingVault = max(vaults, startingVaultMask)`. Comparisons yield
 1 or 0, matching the engine's boolean-to-number convention.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pnpm vp test test/fulgoraExpressions.spec.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/noise/expressions/fulgoraCells.ts test/fulgoraExpressions.spec.ts \
