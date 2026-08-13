@@ -4,7 +4,7 @@
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "FACTORIO_VERSION": "2.1.12",
+    "FACTORIO_VERSION": "2.1.14",
     "MONTHLY_RENDER_BUDGET": "5000",
     "ALLOWED_ORIGIN": "https://map.factorygamefan.com",
   },

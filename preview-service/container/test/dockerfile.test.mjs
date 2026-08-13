@@ -103,3 +103,33 @@ test("the pinned digest really is that tag's digest", async (t) => {
       `Either the publisher re-pushed the tag, or the pin is not the version it claims.`,
   );
 });
+
+test("the worker's FACTORIO_VERSION matches the image the container actually runs", () => {
+  // A THIRD place names the Factorio version, and it is the one that bites
+  // silently. `FACTORIO_VERSION` in the worker's vars goes into the R2 cache
+  // key (`cacheKey({...req, factorioVersion})`), so it is what separates
+  // renders made by different games.
+  //
+  // Bumping the image WITHOUT bumping this does not fail anything: previews
+  // still render, and the new game's output is simply stored under the old
+  // game's key, next to - and indistinguishable from - PNGs the previous image
+  // produced. The cache then serves a mix of two Factorio versions forever,
+  // because nothing ever invalidates the stale entries.
+  //
+  // Measured, not hypothetical: this is exactly what happened deploying the
+  // 2.1.14 container on 2026-08-13 (#187 follow-up).
+  const [, , tag] = /^FROM\s+(\S+?):(\S+?)@sha256:[0-9a-f]{64}\s*$/.exec(fromLine());
+
+  const wranglerPath = join(here, "..", "..", "worker", "wrangler.jsonc");
+  const wrangler = readFileSync(wranglerPath, "utf8");
+  const declared = /"FACTORIO_VERSION"\s*:\s*"([^"]+)"/.exec(wrangler);
+  assert.ok(declared, `no FACTORIO_VERSION in ${wranglerPath}`);
+
+  assert.equal(
+    declared[1],
+    tag,
+    `the container runs Factorio ${tag} but the worker's FACTORIO_VERSION says ` +
+      `${declared[1]}.\nThat variable is part of the R2 cache key, so a mismatch ` +
+      `mixes two games' renders under one key. Bump it and run \`pnpm run types:sync\`.`,
+  );
+});
