@@ -2,12 +2,49 @@ import { describe, expect, it } from "vite-plus/test";
 import { decodeExchangeString, encodeExchangeString } from "../src/codec/mapExchangeString";
 import { presetFromDecoded, presetToEncodable } from "../src/model/convert";
 import fixtures from "./fixtures/builtin-presets.json";
+import fixture214 from "./fixtures/map-exchange-2.1.14.strings.json";
 
 const presets = fixtures.presets as Record<string, string>;
 
 function roundTrip(preset: ReturnType<typeof presetFromDecoded>): string {
   return encodeExchangeString(presetToEncodable(preset));
 }
+
+/**
+ * The user-facing path for the 2.1.14 import fix: paste a string from the
+ * current game, get a Preset, export it again.
+ *
+ * The tail layout is version-dependent from 2.1.14 on, and this bridge stores
+ * the tail as opaque base64 (`opaqueTailB64`) - so it has to carry the format
+ * version with it or the re-read picks the wrong schema. `Preset.formatVersion`
+ * is what carries it; these tests are what stop that being silently dropped.
+ */
+describe("2.1.14 presets survive the Preset bridge", () => {
+  it("round-trips every 2.1.14 capture byte-exact through Preset and back", () => {
+    for (const [label, original] of Object.entries(fixture214.strings)) {
+      const preset = presetFromDecoded("x", decodeExchangeString(original));
+      expect(preset.formatVersion.join("."), `${label} formatVersion`).toBe("2.1.14.1");
+      expect(roundTrip(preset), `${label} re-encode`).toBe(original);
+    }
+  });
+
+  it("keeps the 2.1.14-only field readable after the opaque-tail hop", () => {
+    // opaqueTailB64 is written by tailToBytes and re-read by bytesToTail. If
+    // either used the wrong schema the field would vanish or land misaligned.
+    const original = fixture214.strings["default-seed123456"];
+    const preset = presetFromDecoded("x", decodeExchangeString(original));
+    const tail = decodeExchangeString(roundTrip(preset)).tail;
+    expect(tail["enemyExpansion.buildBaseUnitDispatchCooldown"]).toBe(1800);
+  });
+
+  it("still round-trips a 2.1.9.3 builtin through the same bridge", () => {
+    // The older schema must keep working through the version-aware bridge.
+    const original = presets["Default"] as string;
+    const preset = presetFromDecoded("x", decodeExchangeString(original));
+    expect(preset.formatVersion.join(".")).toBe("2.1.9.3");
+    expect(roundTrip(preset)).toBe(original);
+  });
+});
 
 describe("presetToEncodable enemy overlay", () => {
   it("re-encodes an unedited Default byte-identically (overlay is a no-op)", () => {

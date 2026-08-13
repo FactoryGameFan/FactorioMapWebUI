@@ -26,7 +26,7 @@ export function presetFromDecoded(name: string, decoded: DecodedExchange, builti
     areaToGenerateAtStart: structuredClone(decoded.mid.areaToGenerateAtStart),
     startingPoints: structuredClone(decoded.mid.startingPoints),
     propertyExpressionNames: structuredClone(decoded.propertyExpressionNames),
-    opaqueTailB64: bytesToBase64(tailToBytes(decoded.tail)),
+    opaqueTailB64: bytesToBase64(tailToBytes(decoded.tail, decoded.version)),
     cliffSettings: cliff,
     mapSettings,
     formatVersion: [...decoded.version],
@@ -46,7 +46,7 @@ export function presetToEncodable(preset: Preset): EncodableExchange {
   // opaqueTailB64 carries every tail byte; overlay only the editable
   // MapSettings sections back onto it (byte-exact for unedited presets, since
   // the overlaid values equal the decoded ones).
-  const tail = bytesToTail(base64ToBytes(preset.opaqueTailB64));
+  const tail = bytesToTail(base64ToBytes(preset.opaqueTailB64), preset.formatVersion);
   writeMapSettingsToTail(tail, preset.mapSettings);
   return {
     version: preset.formatVersion,

@@ -219,7 +219,7 @@ describe("decodeExchangeString", () => {
     // property_expression_names count and the tail. Corrupt the sentinel there.
     const decoded = decodeExchangeString(readFileSync(startingPointFixtures[0][1], "utf8").trim());
     const body = decoded.payload.slice(0, -4);
-    const spBlockStart = body.length - tailToBytes(decoded.tail).length - 1 - 11;
+    const spBlockStart = body.length - tailToBytes(decoded.tail, decoded.version).length - 1 - 11;
     body[spBlockStart + 1] = 0x00; // sentinel low byte: 0x7fff -> 0x7f00
     const crc = crc32(body);
     const tampered = new Uint8Array(body.length + 4);
