@@ -487,6 +487,51 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       skipping it is why Vulcanus needed no `VoronoiNoise` port). Fulgora/Aquilo
       DO build terrain on Voronoi, so they will force that primitive.
 
+      **Fulgora V1 (terrain) - DONE 2026-08-13** (#27, PRs #164, #186, #189,
+      #190, #192, #193). Land / oil-ocean-shallow / oil-ocean-deep, rendered
+      through `renderFulgoraTerrain`. Fulgora is the planet that forced the
+      `VoronoiNoise` primitive the line above predicted: the map IS a Voronoi
+      tiling and every island is one cell, sliced into four classes by cell id.
+
+      **Agreement: 5050/5057 on land-vs-ocean and 2785/2796 on shallow-vs-deep,
+      against real `surface.get_tile` names** - the first Fulgora fixture that
+      reports what the game placed rather than what an expression evaluated to.
+      Every expression in the chain matches the game at its own `basisNoise`
+      floor; `fulgora_elevation` is 7.6e-5 absolute, 8e-7 relative.
+
+      **Perf: ~3.91 us/px** at 1024x1024, tpp 1 (min of 3, same harness as the
+      rows above). The implementation plan estimated ~12 us/px, so this is **3x
+      better than estimated** and the cheapest planet in the table - against
+      Nauvis terrain ~8.02, Vulcanus terrain ~14.94 and Vulcanus resources
+      ~21.46. No profiling or optimisation was needed. The reason is structural
+      rather than lucky: Fulgora resolves a 3-way class from one expression
+      chain, where Nauvis and Vulcanus each run a 19-to-21-tile argmax per pixel.
+
+      Two defects worth carrying forward, both recorded in
+      `docs/noise/fulgora-elevation-NOTES.md`:
+
+      - **Noise primitives were being fed f64 coordinates** where the game uses
+        f32. Fixed inside `sumOctaves` and `makeVoronoi`'s `toGrid`, worth up to
+        331x on a single field. A measured no-op for every earlier caller,
+        because they all pass raw world coordinates, which are already exactly
+        representable; Fulgora is the first caller to pass a derived one.
+        Remaining primitives tracked in #191.
+      - **A NaN probability must LOSE an autoplace argmax, not poison it.**
+        `water_base` returns `-inf` and tiles multiply it by a factor that is
+        often 0, so `0 * -inf` NaNs are routine and `Math.max` let one tile veto
+        all twelve. Worth 211 of the first 218 mismatches. This is a general
+        trap for any planet's tile catalog.
+
+      Deferred for Fulgora: the eight LAND tiles are not resolved against each
+      other (the ocean tiles dominate the argmax wherever they are placeable, so
+      only the land/ocean split is decided) - which means no road/ruin paving,
+      walls, conduit, machinery, `fulgoran-dust` or dunes/sand distinction. Also
+      deferred: scrap resources, cliffs, and the island finder. The remaining 18
+      tile mismatches are boundary-exclusive and are NOT reachable by any model
+      of the four ocean expressions - the game places water where its own
+      expressions score it unplaceable - so they need the post-argmax transition
+      pass reverse-engineered, not a constant re-fitted.
+
 ## Milestone 5 - integration
 
 - [ ] A `previewMap(preset, {width, height, scale}) -> ImageData` entry point.

@@ -1403,33 +1403,33 @@ git commit -m "feat(preview): render Fulgora terrain and wire the planet dispatc
 - Create: `docs/noise/fulgora-elevation-NOTES.md`
 - Modify: `docs/noise/client-preview-ROADMAP.md`
 
-- [ ] **Step 1: Measure per-pixel cost**
+- [x] **Step 1: Measure per-pixel cost**
 
 Time a 1024x1024 render at `tilesPerPixel` 1 and divide. The spec's estimate is
 **~12 us/px, ~2 s tiled** - explicitly an estimate, so **record the measurement
 whether or not it agrees**, and if it disagrees say so rather than quietly
 restating the estimate.
 
-- [ ] **Step 2: If it is far slower, profile before optimising**
+- [x] **Step 2: If it is far slower, profile before optimising**
 
 The Vulcanus lesson is that the visibly-expensive machinery was not the
 bottleneck - an un-memoized DAG was, at ~81% of a CPU profile in raw
 `basisNoise`. Check `memoXY` coverage first; the chain has ~31 `basis_noise`
 octaves per pixel and no node should evaluate twice.
 
-- [ ] **Step 3: Write the notes**
+- [x] **Step 3: Write the notes**
 
 Create `docs/noise/fulgora-elevation-NOTES.md`. For every finding, state **how it
 was measured**. Include the grid-size integrality answer from Task 7, the
 per-pixel timing, and the count of `get_tile` mismatches from Task 10 (`0`, or
 the coordinates if not).
 
-- [ ] **Step 4: Update the roadmap**
+- [x] **Step 4: Update the roadmap**
 
 Mark Fulgora V1 in `docs/noise/client-preview-ROADMAP.md`, and record what is
 deferred: road/ruin tiles, `fulgoran-dust`, scrap, cliffs, and the island finder.
 
-- [ ] **Step 5: Final verification**
+- [x] **Step 5: Final verification**
 
 Run: `pnpm run verify`
 Expected: exit 0. Paste the output.
@@ -1437,7 +1437,7 @@ Expected: exit 0. Paste the output.
 Run: `pnpm refs:sync --check`
 Expected: `-> in sync` - confirms nothing was ported against a drifted reference.
 
-- [ ] **Step 6: Commit and open the PR**
+- [x] **Step 6: Commit and open the PR**
 
 ```bash
 git add docs/noise/fulgora-elevation-NOTES.md docs/noise/client-preview-ROADMAP.md
