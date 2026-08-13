@@ -3623,9 +3623,102 @@ async function captureFulgoraElevation(): Promise<void> {
   console.log(`wrote ${out} (${String(positions.length)} positions)`);
 }
 
+/**
+ * The tile the GAME actually placed on Fulgora - `surface.get_tile(x, y).name`
+ * after real chunk generation, which no `sampleExpression` can report.
+ *
+ * Two samples on purpose, and neither alone is enough:
+ *
+ * - A contiguous **256x256 block** at stride 4, centred on a coastline. This is
+ *   what tests the land/ocean boundary, which is the whole point - a resolver
+ *   can be right in the middle of an island and in the middle of the ocean
+ *   while getting every shore wrong. The centre was chosen by asking the PORT
+ *   for the 256x256 block nearest a 50/50 oil-mask split (it lands at
+ *   (-1500, 1000), 0.500), so the game is being asked about the hardest terrain
+ *   rather than a convenient patch. That the block really is mixed is then
+ *   asserted from the GAME's own names, not from the port's choice.
+ * - A **coarse 12000-tile grid** at stride 400. The block spans about 1.5
+ *   Voronoi cells, so on its own it exercises only a couple of islands; the
+ *   grid crosses many, and its ~74% ocean fraction is close to the map's own.
+ *
+ * `oil-ocean-shallow` / `-shallow-2` and `oil-ocean-deep` / `-deep-2` are pairs
+ * that share a map colour, so the resolver only has to get shallow-versus-deep
+ * right, not which variant of each.
+ */
+async function captureFulgoraTiles(): Promise<void> {
+  const seed = 123456;
+  const planet = "fulgora";
+
+  const BLOCK = { x: -1500, y: 1000, half: 128, stride: 4 };
+  const positions: Position[] = [];
+  const seen = new Set<string>();
+  const push = (x: number, y: number): void => {
+    const k = `${String(x)},${String(y)}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    // Sample the tile's own integer coordinate; `sampleTileNames` echoes the
+    // floored `get_tile` input back, so the fixture records what was asked.
+    positions.push({ x: x + 0.5, y: y + 0.5 });
+  };
+  for (let dy = -BLOCK.half; dy < BLOCK.half; dy += BLOCK.stride) {
+    for (let dx = -BLOCK.half; dx < BLOCK.half; dx += BLOCK.stride) {
+      push(BLOCK.x + dx, BLOCK.y + dy);
+    }
+  }
+  const COARSE = { reach: 6000, stride: 400 };
+  for (let y = -COARSE.reach; y <= COARSE.reach; y += COARSE.stride) {
+    for (let x = -COARSE.reach; x <= COARSE.reach; x += COARSE.stride) {
+      push(x, y);
+    }
+  }
+
+  const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+  try {
+    const samples: TileSample[] = await sampleTileNames(positions, {
+      workDir,
+      seed,
+      spaceAge: true,
+      planet,
+    });
+    const fixture = {
+      _comment:
+        "Ground truth from Factorio 2.1.14 (Space Age enabled) via the test/oracle harness: " +
+        "surface.get_tile(x, y).name on a real Fulgora surface " +
+        "(game.planets['fulgora'].create_surface(), seed 123456) after real chunk generation - " +
+        "the tile the game actually PLACED, which sampleExpression cannot report. Two samples: " +
+        "a contiguous 256x256 block at stride 4 centred on (-1500, 1000), which the port " +
+        "identified as the nearest-to-50/50 land/ocean block and which is therefore where the " +
+        "coastline is; plus a coarse stride-400 grid out to +/-6000 tiles, because the block " +
+        "spans only ~1.5 Voronoi cells while the grid crosses many. positions are the mod's " +
+        "ECHOED floored get_tile input. Regenerate: node --experimental-strip-types " +
+        "test/oracle/capture.ts fulgora-tiles",
+      seed0: seed,
+      planet,
+      block: BLOCK,
+      coarse: COARSE,
+      positions: samples.map((s) => ({ x: s.x, y: s.y })),
+      tileNames: samples.map((s) => s.name),
+    };
+    const out = join(FIXTURES, "oracle-fulgora-tiles.seed123456.json");
+    await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+    const counts = new Map<string, number>();
+    for (const n of fixture.tileNames) counts.set(n, (counts.get(n) ?? 0) + 1);
+    console.log(
+      `wrote ${out} (${String(positions.length)} points)\n  ` +
+        [...counts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([n, c]) => `${n}=${String(c)}`)
+          .join(", "),
+    );
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
+
 if (want("fulgora-shared")) await captureFulgoraShared();
 if (want("fulgora-cells")) await captureFulgoraCells();
 if (want("fulgora-elevation")) await captureFulgoraElevation();
+if (want("fulgora-tiles")) await captureFulgoraTiles();
 
 if (want("basis")) await captureBasis();
 if (want("multioctave")) await captureMultioctave();
