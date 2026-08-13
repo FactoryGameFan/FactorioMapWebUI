@@ -628,28 +628,28 @@ describe("renderFulgoraTerrain is stable", () => {
       seed0: 123456,
       originX: -64,
       originY: -64,
-      hashes: { 1: "eb312806", 8: "b9f0b2e2" },
+      hashes: { 1: "eb312806", 8: "df976957" },
     },
     {
       name: "far field",
       seed0: 123456,
       originX: 6000,
       originY: -4000,
-      hashes: { 1: "8577e6aa", 8: "32c0f70a" },
+      hashes: { 1: "8577e6aa", 8: "50277b5f" },
     },
     {
       name: "off origin",
       seed0: 123456,
       originX: -1524,
       originY: 976,
-      hashes: { 1: "156859be", 8: "0cb8c823" },
+      hashes: { 1: "156859be", 8: "14cb5c16" },
     },
     {
       name: "second seed",
       seed0: 987654,
       originX: -64,
       originY: -64,
-      hashes: { 1: "84f3a789", 8: "d139c583" },
+      hashes: { 1: "84f3a789", 8: "c9aa4f56" },
     },
   ];
 

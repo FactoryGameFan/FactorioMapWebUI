@@ -1,4 +1,4 @@
-import { type FulgoraSurface, makeFulgoraSurfaceResolver } from "../tiles/fulgoraCatalog";
+import { type FulgoraTile, makeFulgoraTileResolver } from "../tiles/fulgoraCatalog";
 import type { FulgoraCtx } from "../expressions/fulgoraShared";
 
 export interface RenderFulgoraTerrainOptions {
@@ -26,14 +26,22 @@ export interface RenderFulgoraTerrainOptions {
  * which variant of each. The scaled triple is written out here in the form the
  * Lua uses so it stays checkable against the source.
  *
- * `land` is `fulgoran-sand`'s own colour. Fulgora's eight land tiles are not
- * resolved against each other yet (see `fulgoraCatalog.ts` - the ocean tiles
- * dominate the argmax wherever they are placeable, so only the land/ocean split
- * is decided). Using a real land tile's colour rather than an invented one means
- * a later pass can introduce the full land argmax without the palette jumping.
+ * Three of Fulgora's eight land tiles are resolved against each other as of
+ * this task (`fulgoran-dunes`, `fulgoran-sand`, `fulgoran-rock` - see
+ * `fulgoraCatalog.ts`); the remaining five need the road and ruins layer
+ * before they can be modelled. The ocean tiles still dominate the argmax
+ * wherever they are placeable, so the land argmax only runs once none of them
+ * are.
+ *
+ * **The three-way land argmax is only 94.6% accurate against `get_tile`, and
+ * the gap is an open finding, not a rounding error** - see the "OPEN FINDING"
+ * paragraph on `makeFulgoraTileResolver` in `fulgoraCatalog.ts` before trusting
+ * a rendered land pixel.
  */
-const COLORS: Record<FulgoraSurface, readonly [number, number, number]> = {
-  land: [118, 68, 56],
+const COLORS: Record<FulgoraTile, readonly [number, number, number]> = {
+  "fulgoran-dunes": [125, 71, 59],
+  "fulgoran-sand": [118, 68, 56],
+  "fulgoran-rock": [131, 85, 66],
   shallow: [74, 42, 43],
   deep: [Math.round(49 * 1.15), Math.round(31 * 1.15), Math.round(35 * 1.15)],
 };
@@ -59,7 +67,7 @@ export function renderFulgoraTerrain(opts: RenderFulgoraTerrainOptions): ImageDa
   const originY = opts.originY ?? 0;
   const tpp = opts.tilesPerPixel ?? 1;
 
-  const resolve = makeFulgoraSurfaceResolver({ seed0, ...opts.ctx });
+  const resolve = makeFulgoraTileResolver({ seed0, ...opts.ctx });
   const data = new Uint8ClampedArray(width * height * 4);
 
   for (let py = 0; py < height; py++) {
