@@ -1086,7 +1086,7 @@ git commit -m "feat(noise): port fulgora voronoi cells, pyramids, spots and isla
 
 Source: Lua lines 206-336, plus `fulgora_dunes` (513) and `fulgora_scrap_medium` (371).
 
-- [ ] **Step 1: Capture the fixture**
+- [x] **Step 1: Capture the fixture**
 
 Sample every name above (game names: `fulgora_basis`, `fulgora_basis_oil`,
 `fulgora_rock`, `fulgora_dunes`, `fulgora_scrap_medium`, `fulgora_natural`,
@@ -1100,7 +1100,7 @@ Run: `node --experimental-strip-types test/oracle/capture.ts fulgora-elevation`
 
 Add the PROVENANCE entry.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Extend the fixture loop, and add:
 
@@ -1120,12 +1120,12 @@ it("oil_mask is exactly mix_spots < 0", () => {
 });
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `pnpm vp test test/fulgoraExpressions.spec.ts -t fulgoraElevation`
 Expected: FAIL.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Transcribe the chain. Constants: `artificialCap = 0.25`, `coastline = 80`,
 `coastlineDrop = 20`.
@@ -1164,12 +1164,12 @@ elevation          = preElevation + ((sandBasins > 0) - 0.5) * 20
 `fulgora_sprawl_mask` or `fulgora_artificial_mask` - nothing in this chain reads
 them (verified in the spec); they belong to the deferred tile layer.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pnpm vp test test/fulgoraExpressions.spec.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/noise/expressions/fulgoraElevation.ts test/fulgoraExpressions.spec.ts \

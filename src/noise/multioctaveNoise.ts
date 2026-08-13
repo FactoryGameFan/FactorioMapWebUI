@@ -157,6 +157,32 @@ function octaveTerms(params: MultioctaveParams): {
  * The x coordinate is the one place f64 appears inside the loop, and it is
  * deliberate: the offset is `(double)k * 17.17` added to the *widened* f32 product
  * `f32(x*scale)`, with the sum narrowed back to f32.
+ *
+ * **The INCOMING coordinates are narrowed to f32 first, and that is measured.**
+ * The noise machine passes f32 values between expressions, so whatever computed
+ * `(x, y)` handed this call an f32; narrowing here is what makes the port
+ * evaluate the same point the game did rather than a nearby one.
+ *
+ * It went unnoticed for as long as it did because every caller before Fulgora
+ * passed a RAW WORLD COORDINATE, and those are already exactly representable in
+ * f32 (an integer or quarter tile below 2^24), so the narrowing is a no-op on
+ * them - confirmed rather than assumed: `oracle-multioctave.seed123456.json`
+ * reports the identical 7.153e-7 worst residual with and without it, and the
+ * whole suite is unchanged. Fulgora is the first caller to pass a DERIVED
+ * coordinate (`fulgora_wx = x + grid/2 + wobble_x * wobble_mask`), which lands
+ * off the f32 grid, and there the difference is large:
+ *
+ * | field | f64 coordinate | f32 coordinate |
+ * | --- | --- | --- |
+ * | `fulgora_basis` | 6.94e-6 | **2.09e-7** |
+ * | `fulgora_basis_oil` | 2.37e-4 | **7.15e-7** |
+ *
+ * `fulgora_basis_oil` is the clearest case: its coordinate reaches ~15000,
+ * where an f32 ulp is 9.8e-4, so an f64 coordinate can sit half an ulp from the
+ * game's and that error is then amplified by the octave scales. Both fields
+ * land on the `basisNoise` f64-vs-f32 floor once narrowed, and the worst
+ * residual moves from the FAR field to the near field - the signature of
+ * removing a magnitude-dependent error rather than of a lucky fit.
  */
 function sumOctaves(
   x: number,
@@ -166,11 +192,13 @@ function sumOctaves(
   amps: number[],
   tables: BasisNoiseTables,
 ): number {
+  const xf = f32(x);
+  const yf = f32(y);
   let out = 0;
   for (let k = 0; k < n; k++) {
     const scale = scales[k];
-    const xk = f32(k * OCTAVE_OFFSET_X + f32(x * scale));
-    const yk = f32(y * scale);
+    const xk = f32(k * OCTAVE_OFFSET_X + f32(xf * scale));
+    const yk = f32(yf * scale);
     out = f32(out + f32(amps[k] * basisNoise(xk, yk, tables)));
   }
   return out;
