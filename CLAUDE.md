@@ -718,12 +718,45 @@ Consequences that constrain any change here:
   to strip them. That dependency, its patch, and both of its `vite.config.ts`
   build-warning suppressions are gone.
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
-  known-good list (`2.1.9.3`, `2.1.12.2`), never a range - the schemas here are
-  empirical, so accepting an unseen format would decode a changed layout into
-  plausible wrong values. A version joins the list only with a fixture proving a
-  real string of it round-trips byte-exact (`test/mapExchangeVersions.spec.ts`).
-  This was a live bug: the app rejected every string from Factorio 2.1.12 until
-  2026-07-28. The UI now advertises the target so the next drift is visible.
+  known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`), never a range - the
+  schemas here are empirical, so accepting an unseen format would decode a
+  changed layout into plausible wrong values. A version joins the list only with
+  a fixture proving a real string of it round-trips byte-exact
+  (`test/mapExchangeVersions.spec.ts`). This has now been a live bug **twice**:
+  the app rejected every string from Factorio 2.1.12 until 2026-07-28, and every
+  string from 2.1.14 until 2026-08-13. Both were found by a version audit rather
+  than by a user, and both times the game had moved under a Steam auto-update.
+  The UI advertises the target so the next drift is visible, and
+  `test/factorioTarget.spec.ts` fails the build if `FACTORIO_TARGET_VERSION`
+  disagrees with the newest fixture provenance - it is what forced the bump when
+  the 2.1.14 fixture landed, so do not hand-maintain that constant.
+
+- **The tail schema is VERSION-DEPENDENT as of 2.1.14, and that is new.** It was
+  one constant for the format's whole history until `map-settings.lua` gained
+  `enemy_expansion.build_base_unit_dispatch_cooldown` (`30 * 60` ticks) between
+  2.1.12 and 2.1.14. It serializes in section order, so it lands after
+  `max_expansion_cooldown` and **before `unit_group`** - it shifts every section
+  after it rather than appending harmlessly at the end. `tailSchemaFor(version)`
+  in `src/codec/mapExchangeString.ts` picks the layout, matched on the **exact**
+  tag for the same reason `SUPPORTED_VERSIONS` is a list rather than a floor.
+
+  Two consequences worth knowing before touching this:
+  - **A wrong schema choice is loud, not subtle** - decoding a 2.1.14 string
+    with the older layout over-reads the payload end and throws
+    `payload truncated: read of 8 bytes at offset 706 ...`. That is luck, not
+    design; a future added field could land somewhere that decodes silently
+    wrong instead, so do not treat a clean throw as the expected symptom.
+  - **`Preset` must carry `formatVersion` through the bridge.** `convert.ts`
+    stores the tail as opaque base64, so `tailToBytes`/`bytesToTail` both take a
+    version. Dropping it silently corrupts a 2.1.14 import on export;
+    `test/convert.spec.ts` plants exactly that and fails.
+
+  The layout was confirmed against the game's own
+  `helpers.parse_map_exchange_string`, not just against our own re-encode: all
+  81 tail fields agree, and `opaqueTail` decodes to length 0. **Export was never
+  broken** in either incident - 2.1.14 still accepts the `2.1.9.3` strings this
+  app emits, so only import was affected both times.
+
 - `src/codec/fieldSchema.ts` (`readFields`/`writeFields`) drives the typed
   binary layout; `binaryReader`/`binaryWriter`/`crc32`/`base64` are the
   primitives.

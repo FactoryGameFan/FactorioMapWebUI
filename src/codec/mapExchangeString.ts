@@ -230,14 +230,21 @@ function writeStartingPoints(writer: BinaryWriter, points: MapPosition[]): void 
  *   (seeds, autoplace controls, water/cliffs/starting_area, peaceful/no_enemies)
  *   round-trip byte-exact. Only the tag moved.
  *
- * Note the two directions are not symmetric, and only one was broken: 2.1.12
- * accepts a `2.1.9.3` string fine (verified through the game's own
- * `helpers.parse_map_exchange_string`), so EXPORT was never affected - the app's
- * output stayed loadable throughout. Import was the broken half.
+ * - `2.1.14.1` - what Factorio 2.1.14 emits. Added 2026-08-13, found the same
+ *   way and with the same symptom: the app rejected every string from the
+ *   shipping game. Unlike 2.1.12, **the payload moved too** - see
+ *   `TAIL_2114_ONLY_FIELD` below.
+ *
+ * Note the two directions are not symmetric, and only one was ever broken:
+ * 2.1.12 accepts a `2.1.9.3` string fine, and 2.1.14 accepts one too (both
+ * verified through the game's own `helpers.parse_map_exchange_string`), so
+ * EXPORT was never affected - the app's output stayed loadable throughout.
+ * Import was the broken half, twice.
  */
 export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 9, 3],
   [2, 1, 12, 2],
+  [2, 1, 14, 1],
 ];
 
 /** Human-readable list for UI and error messages, e.g. "2.1.9.3, 2.1.12.2". */
@@ -398,27 +405,63 @@ export const TAIL_SCHEMA: Schema = [
 // Fields of TAIL_SCHEMA excluding the trailing dynamic "opaqueTail".
 const TAIL_FIXED_SCHEMA: Schema = TAIL_SCHEMA.filter((f) => f.name !== "opaqueTail");
 
-function readTail(reader: BinaryReader): TailBlock {
-  const out = readFields(reader, TAIL_FIXED_SCHEMA) as TailBlock;
+/**
+ * `enemy_expansion.build_base_unit_dispatch_cooldown`, added to
+ * `base/prototypes/map-settings.lua` between 2.1.12 and 2.1.14 (default
+ * `30 * 60` ticks). It serializes in section order, so it sits immediately
+ * after `max_expansion_cooldown` and BEFORE `unit_group` - it shifts every
+ * section after it rather than appending harmlessly at the end.
+ *
+ * This is the first field that exists in one format version and not another,
+ * which is why the tail schema is selected per version instead of being a
+ * single constant. Decoding a 2.1.14 string with the older schema does not
+ * merely misread: it over-reads the payload end and throws.
+ */
+const TAIL_2114_ONLY_FIELD = "enemyExpansion.buildBaseUnitDispatchCooldown";
+const TAIL_2114_ANCHOR = "enemyExpansion.maxExpansionCooldown";
+
+const TAIL_FIXED_SCHEMA_2114: Schema = TAIL_FIXED_SCHEMA.flatMap((f) =>
+  f.name === TAIL_2114_ANCHOR
+    ? [f, { name: TAIL_2114_ONLY_FIELD, type: { optional: "u32" } } as Schema[number]]
+    : [f],
+);
+
+/**
+ * The tail layout for a given format version. Matched on the exact tag, not a
+ * `>=` range, for the same reason `SUPPORTED_VERSIONS` is a known-good list
+ * rather than a floor: these schemas are empirical, so an unseen version must
+ * be rejected outright rather than decoded on a guess.
+ */
+function tailSchemaFor(version: FormatVersion): Schema {
+  const is2114 = version[0] === 2 && version[1] === 1 && version[2] === 14 && version[3] === 1;
+  return is2114 ? TAIL_FIXED_SCHEMA_2114 : TAIL_FIXED_SCHEMA;
+}
+
+function readTail(reader: BinaryReader, version: FormatVersion): TailBlock {
+  const out = readFields(reader, tailSchemaFor(version)) as TailBlock;
   out["opaqueTail"] = reader.remaining();
   return out;
 }
 
-function writeTail(writer: BinaryWriter, tail: TailBlock): void {
-  writeFields(writer, TAIL_FIXED_SCHEMA, tail as Record<string, FieldValue>);
+function writeTail(writer: BinaryWriter, tail: TailBlock, version: FormatVersion): void {
+  writeFields(writer, tailSchemaFor(version), tail as Record<string, FieldValue>);
   writer.writeBytes(tail["opaqueTail"] as Uint8Array);
 }
 
-/** Bytes for the full tail (fixed prefix + opaque remainder), for the Preset-model interim bridge. */
-export function tailToBytes(tail: TailBlock): Uint8Array {
+/**
+ * Bytes for the full tail (fixed prefix + opaque remainder), for the
+ * Preset-model interim bridge. `version` selects the layout - a Preset carries
+ * its own `formatVersion`, so a 2.1.14 import stays 2.1.14 through the bridge.
+ */
+export function tailToBytes(tail: TailBlock, version: FormatVersion): Uint8Array {
   const writer = new BinaryWriter();
-  writeTail(writer, tail);
+  writeTail(writer, tail, version);
   return writer.toBytes();
 }
 
 /** The inverse of tailToBytes, for the Preset-model interim bridge. */
-export function bytesToTail(bytes: Uint8Array): TailBlock {
-  return readTail(new BinaryReader(bytes));
+export function bytesToTail(bytes: Uint8Array, version: FormatVersion): TailBlock {
+  return readTail(new BinaryReader(bytes), version);
 }
 
 export function decodeExchangeString(input: string): DecodedExchange {
@@ -504,7 +547,7 @@ export function decodeExchangeString(input: string): DecodedExchange {
       propertyExpressionNames[key] = reader.readString();
     }
 
-    const tail = readTail(reader);
+    const tail = readTail(reader, version);
 
     return {
       version,
@@ -570,7 +613,7 @@ export function encodePayload(input: EncodableExchange): Uint8Array {
     w.writeString(input.propertyExpressionNames[key] as string);
   }
 
-  writeTail(w, input.tail);
+  writeTail(w, input.tail, input.version);
 
   const body = w.toBytes();
   const payload = new Uint8Array(body.length + 4);
