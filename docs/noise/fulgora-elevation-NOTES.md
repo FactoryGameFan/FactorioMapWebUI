@@ -466,3 +466,70 @@ a convenient interior - plus a **coarse stride-400 grid** to +/-6000 tiles,
 because the block spans only ~1.5 Voronoi cells while the grid crosses many.
 That the block really is mixed is asserted from the GAME's names, so the port's
 role in choosing it cannot make the check vacuous.
+
+---
+
+## Task 11: the render and the planet dispatch
+
+`renderFulgoraTerrain` sweeps the pixel grid through `makeFulgoraSurfaceResolver`
+and paints each pixel's map colour. Colours are taken from
+`space-age/prototypes/tile/tiles-fulgora.lua`, not picked by eye:
+`oil-ocean-shallow` and `-shallow-2` both declare `{74, 42, 43}`, and
+`oil-ocean-deep` and `-deep-2` both declare `{49*1.15, 31*1.15, 35*1.15}` -
+which is the source of the claim that each pair shares a colour, so the resolver
+never has to decide which variant of a pair won. Land uses `fulgoran-sand`'s own
+colour, so a later pass that resolves Fulgora's eight land tiles against each
+other can land without the palette jumping.
+
+### The surface seed is the one defect no fixture can catch
+
+Every Fulgora fixture here is captured through a harness that sets `mgs.seed` on
+the created surface EXPLICITLY, so inside those runs `map_seed` simply IS the
+map seed and `surfaceSeedForPlanet` is bypassed. **A renderer that passed the
+raw map seed straight through would agree with every fixture in this directory
+and still draw the wrong planet for a real user.** That is not hypothetical - it
+is exactly the Vulcanus surface-seed bug, which passed every internal check for
+weeks because the fixture and the code agreed with each other while both
+disagreed with the game. `test/fulgoraSurfaceSeed.spec.ts` renders the same
+window at the derived seed and at the raw map seed and requires the two to
+differ.
+
+### A plant that PASSED found the real gap
+
+Three plants were run against the render. Two failed the right tests
+immediately: hardcoding the seed inside the renderer fails the surface-seed
+guard and two hash pins, and giving `deep` the shallow colour fails all four
+hash pins.
+
+The third - replacing `req.fulgoraIslandControls` with hardcoded neutral values
+in the request dispatch - **passed everything**. Every render test called
+`renderFulgoraTerrain` directly, so nothing exercised the request layer, and
+both levers default to the one value that hides its own implementation
+(frequency 1 makes the Voronoi grid exactly 175, so its truncation is a no-op;
+size 1 makes `slider_rescale(size, 2)` exactly 1, so `fulgora_natural`'s scaling
+term vanishes). A lever that silently does nothing is precisely what the request
+layer can hide.
+
+`test/fulgoraSurfaceSeed.spec.ts` now covers the dispatch: each lever is moved
+OFF its default and required to change the image, omitting them is required to
+equal passing the neutral pair, and the re-run plant fails both. **A plant that
+passes is a coverage finding, not a clean bill of health.**
+
+### The render was checked against the game's own tiles, not by eye
+
+At 4 tiles/px the render looks mottled at a ~10-tile scale rather than showing
+the big smooth islands Fulgora is known for, which reads as wrong. It is not.
+Painting the 64x64 captured block from the GAME's own `get_tile` names beside
+the port's resolution of the same points makes the two visually
+indistinguishable - as the measured 99.86% agreement says they should be. The
+fine structure is Fulgora's real coastline at that zoom, and the eyeball
+impression was the thing that was wrong.
+
+### Overlay fallback
+
+Fulgora has no overlay ports at all - not resources, not cliffs, not rocks - so
+every terrain-family view resolves to plain Fulgora terrain, the same fallback
+the Vulcanus branch applies to the overlays it lacks. A view that asks for an
+overlay this planet has no port for gets the terrain, never a Nauvis field
+composited onto another planet's colours. The panel gates the toggles to match,
+so no control is offered that would silently do nothing.

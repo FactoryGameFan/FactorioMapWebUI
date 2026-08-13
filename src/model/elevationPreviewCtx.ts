@@ -69,6 +69,17 @@ export interface ElevationPreviewCtx {
    */
   rockControls: { readonly frequency: number; readonly size: number };
   /**
+   * The `fulgora_islands` autoplace control's frequency/size - consumed only
+   * when the selected planet is Fulgora. Defaults to `{ frequency: 1, size: 1 }`.
+   *
+   * Read from the preset even though a default preset never sets it, because
+   * both levers default to the one value that hides its own implementation:
+   * frequency 1 makes the Voronoi grid exactly 175 (so its truncation to a u16
+   * is a no-op) and size 1 makes `slider_rescale(size, 2)` exactly 1 (so
+   * `fulgora_natural`'s scaling term vanishes).
+   */
+  fulgoraIslandControls: { readonly frequency: number; readonly size: number };
+  /**
    * Non-seed free variables for renderElevation/renderTerrain
    * (Omit<..., "seed0">-compatible). The climate fields (aux/moisture
    * frequency+bias, starting-area moisture) are consumed only by
@@ -121,6 +132,7 @@ export function elevationCtxFromPreset(preset: Preset): ElevationPreviewCtx {
   const cc = preset.autoplaceControls[CLIFF_CONTROL_NAME];
   const tc = preset.autoplaceControls.trees;
   const rk = preset.autoplaceControls.rocks;
+  const fi = preset.autoplaceControls.fulgora_islands;
   return {
     supported,
     mapType,
@@ -138,6 +150,9 @@ export function elevationCtxFromPreset(preset: Preset): ElevationPreviewCtx {
     },
     treeControls: tc ? { frequency: tc.frequency, size: tc.size } : { frequency: 1, size: 1 },
     rockControls: rk ? { frequency: rk.frequency, size: rk.size } : { frequency: 1, size: 1 },
+    fulgoraIslandControls: fi
+      ? { frequency: fi.frequency, size: fi.size }
+      : { frequency: 1, size: 1 },
     ctx: {
       waterLevel: 10 * Math.log2(size),
       segmentationMultiplier: water?.frequency ?? 1,
