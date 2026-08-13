@@ -49,14 +49,14 @@ const preview = computed(() =>
 // - without this guard they would silently fall through `runRenderRequest`'s
 // dispatch to the Nauvis terrain renderer and render mislabeled Nauvis colors.
 const supported = computed(() => {
-  if (planet.value === "vulcanus") return true;
+  if (planet.value === "vulcanus" || planet.value === "fulgora") return true;
   if (planet.value !== "nauvis") return false;
   return preview.value?.supported ?? false;
 });
 /** The "not available yet" message's subject: the planet when THAT is why
  * client preview is unsupported, else the preset's own map-type label. */
 const unsupportedLabel = computed(() =>
-  planet.value !== "nauvis" && planet.value !== "vulcanus"
+  planet.value !== "nauvis" && planet.value !== "vulcanus" && planet.value !== "fulgora"
     ? PLANET_LABELS[planet.value]
     : (preview.value?.mapTypeLabel ?? "this map type"),
 );
@@ -70,6 +70,9 @@ const unsupportedLabel = computed(() =>
 // be Nauvis (neither has a Vulcanus port - runRenderRequest skips them for
 // `planet: "vulcanus"` regardless of `view`, so leaving them enabled there
 // would offer a control that silently does nothing).
+// Fulgora (Task 11) has a terrain renderer and NO overlay ports at all, so it
+// joins `terrainAvailable` only - every other toggle stays off for it, matching
+// how runRenderRequest falls back to plain terrain for a view it cannot honour.
 // Three views gate more broadly, because each has a Vulcanus port:
 //   Terrain   -> renderVulcanusTerrain (V1)
 //   Resources -> renderVulcanusResources (V2)
@@ -85,9 +88,11 @@ const view = ref<
   "elevation" | "terrain" | "resources" | "enemies" | "cliffs" | "trees" | "rocks" | "all"
 >("all");
 const nauvisMapType = computed(() => preview.value?.mapType === "nauvis");
-const nauvisOverlaysAvailable = computed(() => planet.value !== "vulcanus" && nauvisMapType.value);
+const nauvisOverlaysAvailable = computed(
+  () => planet.value !== "vulcanus" && planet.value !== "fulgora" && nauvisMapType.value,
+);
 const terrainAvailable = computed(
-  () => nauvisOverlaysAvailable.value || planet.value === "vulcanus",
+  () => nauvisOverlaysAvailable.value || planet.value === "vulcanus" || planet.value === "fulgora",
 );
 // Resources (V2) and Cliffs (V3) both have Vulcanus ports, so they gate more
 // broadly than enemies/trees/rocks: Nauvis-with-Nauvis-map-type, OR Vulcanus.
@@ -191,6 +196,7 @@ async function generate() {
         cliffSettings: info.cliffSettings,
         treeControls: info.treeControls,
         rockControls: info.rockControls,
+        fulgoraIslandControls: info.fulgoraIslandControls,
       },
       (tile) => {
         g.putImageData(

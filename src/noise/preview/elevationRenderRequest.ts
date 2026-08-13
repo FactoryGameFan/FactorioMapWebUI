@@ -19,6 +19,7 @@ import { makeVulcanusStack } from "../tiles/vulcanusCatalog";
 import { renderVulcanusResources } from "./renderVulcanusResources";
 import { renderVulcanusRocks } from "./renderVulcanusRocks";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
+import { renderFulgoraTerrain } from "./renderFulgoraTerrain";
 
 /** A render job posted to the worker. `id` tags the response for staleness. */
 export interface ElevationRenderRequest {
@@ -92,6 +93,20 @@ export interface ElevationRenderRequest {
    * and `view: "resources"`. Defaults to all-neutral.
    */
   vulcanusResourceControls?: VulcanusResourceControls;
+  /**
+   * The `fulgora_islands` autoplace control's frequency/size
+   * (`control:fulgora_islands:*`) - consumed only when `planet: "fulgora"`.
+   * Defaults to `{ frequency: 1, size: 1 }`, the game's own neutral position.
+   *
+   * Both levers are worth threading even though each is a single number,
+   * because each defaults to the ONE value that hides its own implementation:
+   * at frequency 1 the Voronoi `grid_size` is exactly 175, so its truncation to
+   * a u16 is a no-op, and at size 1 `slider_rescale(size, 2)` is exactly 1, so
+   * `fulgora_natural`'s scaling term vanishes. A render that ignored these
+   * would look correct at every default and be wrong the moment either slider
+   * moved.
+   */
+  fulgoraIslandControls?: { readonly frequency?: number; readonly size?: number };
   /**
    * Escape hatch for `test/vulcanusStackCache.spec.ts`, which has to render the
    * same request BOTH ways to prove the shared cached stack is byte-identical
@@ -351,6 +366,27 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
           sharedStack: stack,
         });
       }
+      return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
+    }
+    if (planet === "fulgora") {
+      // Fulgora has NO overlay ports at all yet - not resources, not cliffs,
+      // not rocks - so every terrain-family view resolves to plain Fulgora
+      // terrain. That is the same fallback the Vulcanus branch above applies to
+      // the overlays it lacks: a view that asks for an overlay this planet has
+      // no port for gets the terrain, never a Nauvis field composited onto
+      // another planet's colours.
+      image = renderFulgoraTerrain({
+        seed0: req.seed0,
+        width: req.width,
+        height: req.height,
+        originX: req.originX,
+        originY: req.originY,
+        tilesPerPixel: req.tilesPerPixel,
+        ctx: {
+          islandsFrequency: req.fulgoraIslandControls?.frequency,
+          islandsSize: req.fulgoraIslandControls?.size,
+        },
+      });
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
     }
     image = renderTerrain({

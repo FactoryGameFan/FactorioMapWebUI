@@ -7,6 +7,7 @@ import { makeFulgoraShared } from "../src/noise/expressions/fulgoraShared";
 import { makeFulgoraCells } from "../src/noise/expressions/fulgoraCells";
 import { makeFulgoraElevation } from "../src/noise/expressions/fulgoraElevation";
 import { makeVoronoi } from "../src/noise/voronoiNoise";
+import { renderFulgoraTerrain } from "../src/noise/preview/renderFulgoraTerrain";
 import { sliderRescale } from "../src/noise/eval/math";
 
 /**
@@ -586,5 +587,119 @@ describe("makeFulgoraElevation", () => {
       const d = elevation.elevation(p.x, p.y) - elevation.preElevation(p.x, p.y);
       expect(Math.abs(d), `at (${String(p.x)}, ${String(p.y)})`).toBeCloseTo(10, 9);
     }
+  });
+});
+
+/**
+ * Hash-pinning over the rendered image.
+ *
+ * The per-field specs above compare against the game, which is the real check.
+ * This one catches a different failure: a change anywhere in the chain that
+ * moves the picture without moving any field far enough to break its bound -
+ * a reordered `max`, a lost `memoXY`, a palette edit, an off-by-one in the
+ * pixel sweep. None of those are visible to a residual test.
+ *
+ * Four windows, each at two scales. `tilesPerPixel: 1` walks contiguous tiles
+ * and so exercises the memo caches the way a real render does; `8` steps past
+ * them and lands on a completely different set of Voronoi cells. The far-field
+ * window matters on its own because that is where the f32 coordinate narrowing
+ * bites (see `sumOctaves`), and the second seed is what would catch a constant
+ * accidentally hardcoded from the fixture seed.
+ *
+ * A changed hash is NOT automatically a bug - it is a prompt to say which
+ * change caused it. Re-pin deliberately, never to make the suite green.
+ */
+describe("renderFulgoraTerrain is stable", () => {
+  const hash = (img: ImageData): string => {
+    let h = 2166136261;
+    for (let i = 0; i < img.data.length; i++) h = Math.imul(h ^ (img.data[i] as number), 16777619);
+    return (h >>> 0).toString(16).padStart(8, "0");
+  };
+
+  const WINDOWS: ReadonlyArray<{
+    name: string;
+    seed0: number;
+    originX: number;
+    originY: number;
+    hashes: Readonly<Record<number, string>>;
+  }> = [
+    {
+      name: "near spawn",
+      seed0: 123456,
+      originX: -64,
+      originY: -64,
+      hashes: { 1: "eb312806", 8: "b9f0b2e2" },
+    },
+    {
+      name: "far field",
+      seed0: 123456,
+      originX: 6000,
+      originY: -4000,
+      hashes: { 1: "8577e6aa", 8: "32c0f70a" },
+    },
+    {
+      name: "off origin",
+      seed0: 123456,
+      originX: -1524,
+      originY: 976,
+      hashes: { 1: "156859be", 8: "0cb8c823" },
+    },
+    {
+      name: "second seed",
+      seed0: 987654,
+      originX: -64,
+      originY: -64,
+      hashes: { 1: "84f3a789", 8: "d139c583" },
+    },
+  ];
+
+  it.each(WINDOWS)("$name renders a stable image", ({ seed0, originX, originY, hashes }) => {
+    for (const tilesPerPixel of [1, 8] as const) {
+      const img = renderFulgoraTerrain({
+        seed0,
+        width: 32,
+        height: 32,
+        originX,
+        originY,
+        tilesPerPixel,
+      });
+      expect(img.width).toBe(32);
+      expect(hash(img), `tilesPerPixel ${String(tilesPerPixel)}`).toBe(hashes[tilesPerPixel]);
+    }
+  });
+
+  it("the windows are not all the same picture", () => {
+    // Four identical hashes would pin nothing. Renders that differ prove each
+    // window is actually reaching different terrain.
+    const seen = new Set(
+      WINDOWS.map((w) =>
+        hash(
+          renderFulgoraTerrain({
+            seed0: w.seed0,
+            width: 32,
+            height: 32,
+            originX: w.originX,
+            originY: w.originY,
+            tilesPerPixel: 8,
+          }),
+        ),
+      ),
+    );
+    expect(seen.size).toBe(WINDOWS.length);
+  });
+
+  it("tilesPerPixel 1 and 8 disagree, so both scales are real", () => {
+    const at = (tilesPerPixel: number) =>
+      hash(
+        renderFulgoraTerrain({
+          seed0: 123456,
+          width: 32,
+          height: 32,
+          originX: -64,
+          originY: -64,
+          tilesPerPixel,
+        }),
+      );
+    expect(at(1)).not.toBe(at(8));
   });
 });

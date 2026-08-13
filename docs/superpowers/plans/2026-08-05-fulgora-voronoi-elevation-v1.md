@@ -1311,7 +1311,7 @@ git commit -m "feat(noise): fulgora oil-ocean argmax, 100% get_tile agreement"
 - Consumes: `makeFulgoraSurfaceResolver`, `FulgoraSurface` (Task 10), `surfaceSeedForPlanet` (`src/model/planetSurfaceSeed.ts`).
 - Produces: `renderFulgoraTerrain(opts: RenderFulgoraTerrainOptions): ImageData`, mirroring `renderVulcanusTerrain`'s option shape (`seed0`, `width`, `height`, `originX?`, `originY?`, `tilesPerPixel?`, `ctx?`).
 
-- [ ] **Step 1: Write the failing surface-seed guard**
+- [x] **Step 1: Write the failing surface-seed guard**
 
 Create `test/fulgoraSurfaceSeed.spec.ts`:
 
@@ -1343,12 +1343,12 @@ describe("fulgora surface seed", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm vp test test/fulgoraSurfaceSeed.spec.ts`
 Expected: FAIL - `renderFulgoraTerrain` does not exist.
 
-- [ ] **Step 3: Implement the renderer**
+- [x] **Step 3: Implement the renderer**
 
 Mirror `src/noise/preview/renderVulcanusTerrain.ts`. Build one resolver per
 render and sweep:
@@ -1363,7 +1363,7 @@ const COLORS: Record<FulgoraSurface, [number, number, number]> = {
 };
 ```
 
-- [ ] **Step 4: Wire the dispatch**
+- [x] **Step 4: Wire the dispatch**
 
 In `src/noise/preview/elevationRenderRequest.ts`, add a Fulgora branch alongside
 the Vulcanus one so `view: "terrain"` reaches `renderFulgoraTerrain`, with the
@@ -1374,19 +1374,19 @@ when a planet lacks that overlay. Thread `control:fulgora_islands:frequency` and
 Add a dev-mode grayscale `fulgora_elevation` view, gated the same way the
 existing dev views are.
 
-- [ ] **Step 5: Add a render regression test**
+- [x] **Step 5: Add a render regression test**
 
 Append to `test/fulgoraExpressions.spec.ts` a hash-pinning test over four
 windows - near-spawn, far field, off-origin, and a second seed - at
 `tilesPerPixel` 1 and 8, so any accidental change to the chain shows up as a
 changed hash rather than silently.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `pnpm run verify`
 Expected: exit 0. Report the actual output; do not claim a pass without it.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/noise/preview/renderFulgoraTerrain.ts src/noise/preview/elevationRenderRequest.ts \
