@@ -533,3 +533,39 @@ the Vulcanus branch applies to the overlays it lacks. A view that asks for an
 overlay this planet has no port for gets the terrain, never a Nauvis field
 composited onto another planet's colours. The panel gates the toggles to match,
 so no control is offered that would silently do nothing.
+
+---
+
+## Task 12: measured render cost
+
+**~3.91 us/px**, at 1024x1024 and `tilesPerPixel` 1, min of 3 interleaved
+iterations through `test/render-cost.perf.spec.ts`'s existing harness (seed
+123456, origin (-512, -512)) - so it is comparable with the rows already
+recorded there rather than being a fresh one-off measurement.
+
+**The implementation plan estimated ~12 us/px. The measurement disagrees, and
+favourably**: Fulgora is roughly 3x cheaper than estimated and the cheapest
+planet in the table.
+
+| render | us/px |
+| --- | --- |
+| **fulgora terrain (the only Fulgora view)** | **3.91** |
+| nauvis terrain | 8.02 |
+| vulcanus terrain | 14.94 |
+| vulcanus resources (the default Vulcanus view) | 21.46 |
+
+The reason is structural, not luck. Nauvis and Vulcanus each run a 19-to-21-tile
+argmax per pixel over a catalog whose members are separate expression trees;
+Fulgora resolves a 3-way class from ONE chain, and its four ocean probabilities
+share every field they read. The chain's ~31 `basis_noise` octaves per pixel are
+the whole cost.
+
+Two things follow. **No profiling or optimisation was done, because the
+prerequisite for doing any was not met** - the Vulcanus lesson (an un-memoized
+DAG at ~81% of a CPU profile) prompted a `memoXY` audit, and every node in
+`fulgoraShared`, `fulgoraCells` and `fulgoraElevation` is already wrapped. And a
+512x512 preview costs about **1.0 s untiled**, so the existing 64-tile worker
+pool has ample headroom; nothing here needs the tiling budget the plan reserved.
+
+The row is now permanent in the perf spec rather than a number in this file, so
+a future regression shows up in `pnpm perf` alongside the other planets.

@@ -227,6 +227,15 @@ blockIt("nauvis")(
     const vulcanusResources = b.add("vulcanus resources (default Vulcanus view)", () =>
       runRenderRequest({ ...base, planet: "vulcanus", view: "resources" }),
     );
+    // Fulgora V1 (#27). Terrain is the ONLY view it has - no overlay has a
+    // Fulgora port - so this single row is the whole planet's cost, unlike
+    // Vulcanus where the default view is the pricier `resources`. Every pixel
+    // runs the full elevation chain: ~31 basis_noise octaves plus three voronoi
+    // searches, with no early-out, because deciding a pixel is ocean IS the
+    // computation.
+    const fulgoraTerrain = b.add("fulgora terrain (the only Fulgora view)", () =>
+      runRenderRequest({ ...base, planet: "fulgora", view: "terrain" }),
+    );
 
     const terrainCtx = {
       seed0: SEED,
@@ -288,6 +297,7 @@ blockIt("nauvis")(
           trees,
           vulcanusTerrain,
           vulcanusResources,
+          fulgoraTerrain,
           all,
         ].map(row),
         "",
@@ -297,6 +307,7 @@ blockIt("nauvis")(
         `nauvis terrain:     ~${usPx(terrain)} us/px`,
         `vulcanus terrain:   ~${usPx(vulcanusTerrain)} us/px (terrain-only, NOT the default Vulcanus view)`,
         `vulcanus resources: ~${usPx(vulcanusResources)} us/px (the default Vulcanus view - double field-stack cost)`,
+        `fulgora terrain:    ~${usPx(fulgoraTerrain)} us/px (the only Fulgora view)`,
         "",
       ].join("\n"),
     );
