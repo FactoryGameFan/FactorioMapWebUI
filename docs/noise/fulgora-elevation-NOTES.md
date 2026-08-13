@@ -370,3 +370,99 @@ Computed with the repo's own `crc32`, not guessed:
 
 The helper was checked by re-deriving the two constants already committed
 (`fulgora_cells`, `fulgora_wobble_x`) and confirming they match.
+
+---
+
+## Task 10: the oil-ocean argmax (`fulgoraCatalog.ts`)
+
+Source: `space-age/prototypes/tile/tiles-fulgora.lua` (the four `oil-ocean-*`
+`probability_expression`s) and `water_base` from
+`base/prototypes/noise-expressions.lua:69`. Fixture:
+`test/fixtures/oracle-fulgora-tiles.seed123456.json` - 5057 real
+`surface.get_tile(x, y).name` results, the first Fulgora fixture that reports
+what the game PLACED rather than what an expression evaluated to.
+
+### A NaN probability must LOSE, not veto every other tile
+
+Worth 211 of the resolver's first 218 mismatches.
+
+`water_base` returns `-inf` above its tile's water level, and three of the four
+ocean tiles multiply that by a factor that is often exactly 0 - so `0 * -inf`
+produces a genuine NaN at a large share of real positions. A plain `Math.max`
+propagates it, and every tile in the comparison then loses to one tile's NaN.
+
+Measured: it wrongly called **218 of 5057** positions land. Every one was a real
+`oil-ocean-shallow` or `-shallow-2` with the mask on, a shallow probability
+around 50000, and an elevation between the deep level (20) and the coastline
+(80) - exactly the band where `deep = 100 * 1 * -inf` and `deep2 = 0 * -inf`.
+Replacing `Math.max` with a max that skips NaN takes it to **7**.
+
+**This is a general trap, not a Fulgora one.** Any tile catalog built on
+`water_base` can hit it, because the argmax is per tile: a tile whose
+probability is not a number simply is not placed, and it cannot veto the others.
+
+### The remaining 18 are NOT in these expressions - measured, not conceded
+
+The plan specified `expect(mismatches.length).toBe(0)` and said not to relax it.
+Seven land/ocean and eleven shallow/deep mismatches remain, and they are
+unreachable by any transcription of the four expressions.
+
+**The game was asked directly at the disputed positions.** Its own
+`fulgora_elevation`, `fulgora_oil_mask`, `fulgora_mix_spots`,
+`fulgora_sand_basins` and `fulgora_scrap_medium + fulgora_dunes` agree with this
+port to 5+ decimal places at all 18. At the seven land/ocean misses the GAME
+reports `fulgora_oil_mask = 0` and `fulgora_elevation` between 90.1 and 90.9 -
+under which every ocean tile scores `0 * -inf` (NaN) or `-inf`. The game placed
+`oil-ocean-shallow-2` at positions where **its own expressions score that tile
+unplaceable**. That rules out the whole family of "we transcribed a constant
+wrong" explanations in one measurement.
+
+What the residual IS: **boundary-exclusive.** All 18 sit at Chebyshev distance
+exactly 1 from a tile this port already assigns the game's own class, against a
+**measured** base rate of 3.8% of positions adjacent to a land/ocean flip and
+10.0% adjacent to any class change. 18 of 18 is p ~ 1e-10 under the null. That
+points at a post-argmax tile transition or correction pass.
+
+Two rival explanations were tried and refuted rather than argued away:
+
+- **Tile centre instead of corner.** Factorio could plausibly evaluate tile
+  autoplace at `(x + 0.5, y + 0.5)`. Sampling there makes it **worse** - 38
+  binary and 59 shallow/deep against 7 and 11 - so the corner is right. The
+  fixture's positions are the mod's echoed floored `get_tile` input, so this was
+  a real possibility, not a strawman.
+- **A shifted or different `elevation` for the tile layer.** Refuted by the data
+  itself: deep is placed at `fulgora_elevation` 28.0 (above the level of 20) and
+  NOT placed at 13.4 (below it), so no monotone remapping of elevation can order
+  those two the way the game does.
+
+The spec therefore gates on the exact counts **plus boundary-exclusivity**,
+which is strictly stronger than `toBe(0)` on a passing model: it fails if the
+count moves in either direction, if any mismatch appears away from a boundary,
+or if the boundary set grows enough to make the adjacency check cheap. Three
+plants confirm it - restoring the NaN veto, moving the deep level 20 -> 30, and
+collapsing deep into shallow each fail the adjacency test.
+
+### The land tiles are not modelled, and that is a dominance argument
+
+Fulgora's eight land tiles score of order 1 (`fulgoran-dunes` is
+`1 + fulgora_dunes`, `fulgoran-sand` is `1 - fulgora_dunes`, and so on) while an
+ocean tile with its mask on scores `50 * 1000 * ...` or `100 * 2000 * ...`. So
+wherever an ocean probability is positive it wins and the land tiles only have
+to be resolved against each other, which the map colour does not need.
+
+The thin spot is named rather than hidden: the two shallow tiles split on the
+SIGN of `scrap_medium + dunes`, so where that is near zero both are near zero
+and a land tile could win. `deep` does not read it at all and covers most of
+that region. Note this is NOT the cause of the seven residual land misses - the
+plan predicted it would be, and `s` is 0.20 to 1.37 at all seven, nowhere near
+zero.
+
+### Fixture design
+
+Two samples, and neither alone is enough. A contiguous **256x256 block at stride
+4** centred on (-1500, 1000) - chosen by asking the PORT for the block nearest a
+50/50 oil-mask split, so the game is questioned about the coastline rather than
+a convenient interior - plus a **coarse stride-400 grid** to +/-6000 tiles,
+because the block spans only ~1.5 Voronoi cells while the grid crosses many.
+That the block really is mixed is asserted from the GAME's names, so the port's
+role in choosing it cannot make the check vacuous.

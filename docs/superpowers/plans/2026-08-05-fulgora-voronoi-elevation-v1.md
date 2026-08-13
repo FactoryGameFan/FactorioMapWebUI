@@ -1193,7 +1193,7 @@ git commit -m "feat(noise): port the fulgora_elevation chain, oracle-validated t
 - Consumes: `FulgoraElevation` (Task 9).
 - Produces: `type FulgoraSurface = "land" | "shallow" | "deep"` and `makeFulgoraSurfaceResolver(ctx): (x: number, y: number) => FulgoraSurface`. Task 11 consumes both.
 
-- [ ] **Step 1: Capture real tile names**
+- [x] **Step 1: Capture real tile names**
 
 Use the existing `sampleTileNames` path (see `test/oracle/capture.ts`'s cliff
 entries for the pattern) over a Fulgora region at seed 123456 - a 256x256 tile
@@ -1204,7 +1204,7 @@ Run: `node --experimental-strip-types test/oracle/capture.ts fulgora-tiles`
 
 Add the PROVENANCE entry.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `test/fulgoraAgreement.spec.ts` - **its own file**, per the Global
 Constraints, because `test/previewAgreement.spec.ts` is already the suite's
@@ -1248,12 +1248,12 @@ describe("fulgora land/ocean binary agrees with the game", () => {
 The `mismatches.slice(0, 10)` assertion before the count exists so a failure
 **names the first offending coordinates** instead of printing only a number.
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `pnpm vp test test/fulgoraAgreement.spec.ts`
 Expected: FAIL - the module does not exist.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 ```ts
 /** water_base(max, influence) from base/prototypes/noise-expressions.lua:69. */
@@ -1278,7 +1278,7 @@ otherwise `"deep"` if `max(deep, deep2) > max(shallow, shallow2)` else
 `deep2`, so the pair distinction never reaches the palette - only the
 shallow-versus-deep comparison does.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pnpm vp test test/fulgoraAgreement.spec.ts`
 Expected: PASS, 0 mismatches.
@@ -1287,7 +1287,7 @@ Expected: PASS, 0 mismatches.
 printed and check them against the `|scrapMedium + dunes| ~ 0` thin spot the spec
 flags - that is the one place the dominance argument was known to be weak.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/noise/tiles/fulgoraCatalog.ts test/fulgoraAgreement.spec.ts \
