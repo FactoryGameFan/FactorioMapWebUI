@@ -945,8 +945,9 @@ describe("fulgora land argmax over all eight tiles", () => {
     expect(scoped.length).toBe(2261);
   });
 
-  it("picks the game's tile at every land position", () => {
-    expect(wrong.length, `first few: ${JSON.stringify(wrong.slice(0, 5))}`).toBe(0);
+  // MEASURE first, then pin the exact number - see the gate note below.
+  it("picks the game's tile at every land position bar the known residual", () => {
+    expect(wrong.length, `first few: ${JSON.stringify(wrong.slice(0, 5))}`).toBe(/* measured */ 0);
   });
 
   /**
@@ -964,7 +965,15 @@ describe("fulgora land argmax over all eight tiles", () => {
 });
 ```
 
-**Do not relax `toBe(0)` if mismatches appear.** V1's residual turned out to be a real finding about the game's post-argmax pass, and it was only findable because the assertion stayed at the number the model predicted. If misses appear, ask the game directly at those positions with `sampleFulgora` before touching any constant.
+**The gate is an EXACT measured count, not zero, and this is settled rather than open.** Task 1 established - against the game's own expression compiler, not by inference - that the tile the game places is not always the argmax of the declared probability expressions. At (-1628, 872) the game scores `fulgoran-rock` 2.2537 above `fulgoran-dunes` 1.6149 and then places `fulgoran-dunes`. The three-tile subset therefore lands at 783/828 (45 mismatches), and no transcription of those formulas can close it.
+
+So follow `test/fulgoraAgreement.spec.ts`'s established pattern, which Task 1 already applied to `test/fulgoraLandTiles.spec.ts`:
+
+1. Run it once, read the real number, and pin it exactly with `toBe(<n>)`. Never a `toBeLessThan` bound - an exact count fails in both directions, and a bound silently absorbs a future regression.
+2. Keep the structural test Task 1 added, updated for the widened scope: the residual must stay boundary-concentrated, asserted against the separately measured base rate so it cannot become a cheap test.
+3. Record in the spec header what the number is, when it was measured, and that the mechanism is the same open question as the ocean residual's post-argmax pass.
+
+**Do not change any expression, constant or formula to move that number.** A larger residual than Task 1's 45 is expected simply because the scope widens from 828 to 2261 positions and five more tiles compete. What would be a real finding is the residual ceasing to be boundary-concentrated, or a mismatch pair that Task 1 did not already see - either means a transcription error in Tasks 3 or 4, and the way to localise it is `sampleFulgora` at the disputed positions, not a tuned constant.
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -1109,6 +1118,7 @@ Append to `docs/noise/fulgora-elevation-NOTES.md`, in that file's established st
 - The measured per-field residuals from Tasks 3 and 4, as the table the specs now carry.
 - What the game's `%` operator does on a negative left operand, and which position settled it.
 - The land argmax agreement number over 2261 positions, and the confusion pairs if any survive.
+- **The headline finding, stated as its own entry: the placed tile is not always the argmax of the declared probability expressions.** Give the worked counter-example with the game's own numbers ((-1628, 872): rock 2.2537, dunes 1.6149, `get_tile` = dunes), the boundary statistic with its computed p-value, and the sub-tile offset table that refutes a sampling-alignment cause. Say plainly that the mechanism is unknown and that it is the same open question as the ocean residual, so a later reader does not re-derive the refutations.
 - The new render cost, and the land-versus-ocean split if Step 2 applied.
 
 - [ ] **Step 4: Update the ROADMAP**
