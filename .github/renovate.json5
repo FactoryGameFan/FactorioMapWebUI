@@ -230,5 +230,25 @@
         "If `vp check` starts reporting `TS2321: Excessive stack depth comparing types ... 'UserConfig'`, that is the known vite.config.ts comparison-depth pathology, not a real type error - see the type-checking section of CLAUDE.md for the `vue() as Plugin` cast that collapses it.",
       ],
     },
+    {
+      // The Factorio base image for the preview container. This is not an
+      // ordinary dependency: it is the GAME, and it decides what every
+      // server-rendered preview looks like.
+      //
+      // It is listed here mainly so the prerequisites travel with the proposal.
+      // The mechanism bug that made a version jump look like a digest bump is
+      // fixed in the Dockerfile itself (#182): the `FROM` now carries the tag as
+      // well as the digest, so Renovate tracks THAT tag rather than defaulting
+      // to `latest`, and a version change can only arrive as a visible version
+      // change. `preview-service/container/test/dockerfile.test.mjs` fails if
+      // the tag is ever dropped again.
+      matchDatasources: ["docker"],
+      matchPackageNames: ["factoriotools/factorio"],
+      prBodyNotes: [
+        "**A digest re-pin of the SAME tag is routine. A tag change is not** - it changes the game that renders every server-side preview, and the app advertises a Factorio version of its own (`FACTORIO_TARGET_VERSION`) that would then disagree with the container.",
+        "Before merging a tag change: (1) update the `RUN factorio --version | grep -q` assertion in the same commit - `dockerfile.test.mjs` fails if the two disagree; (2) build the image, which no CI job does (#183) - `pnpm --filter @fmw/preview-container run test:integration` builds it and renders both a Nauvis and a non-Nauvis preview; (3) run `pnpm refs:sync --check` and `pnpm refs:sync --fixtures` to see which oracle fixtures now predate the game.",
+        "Note the local Factorio binary is what `refs:sync` pins to, and Steam moves it without asking - so the container and the dev machine can drift apart in either direction. Check which one actually moved before assuming the container is stale.",
+      ],
+    },
   ],
 }

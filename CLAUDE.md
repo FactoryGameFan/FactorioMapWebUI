@@ -882,6 +882,31 @@ A separate pnpm workspace (`worker/` Cloudflare Worker + `container/`
 digest-pinned Factorio headless image). Opt-in and the app's only outbound call;
 the editor is fully functional offline without it.
 
+**The base image `FROM` carries a TAG as well as a digest, and dropping the tag
+is a real bug** (#182, fixed 2026-08-13). With a bare digest, Renovate's docker
+manager defaults to `latest` - so it stops tracking the pinned version entirely
+and starts offering "digest updates" that are version jumps. That happened: a
+proposal reading `update factoriotools/factorio docker digest to fb7a13c` was
+Factorio **2.1.14** against a pin that meant 2.1.12, and the only thing between
+it and production was the `RUN factorio --version | grep -q` line inside the
+image - which runs at **build** time, and nothing in CI builds the image (#183).
+
+The pin is now `factoriotools/factorio:2.1.14@sha256:fb7a13c...`, so Renovate
+tracks that tag and a version change can only arrive looking like one.
+`preview-service/container/test/dockerfile.test.mjs` runs in `preview:test`
+(needs no Docker) and asserts three things: the `FROM` has **both** a tag and a
+digest, the tag agrees with the version assertion below it, and - when the
+registry is reachable - the digest really is that tag's. The registry check
+**skips** on a network error rather than failing, so it cannot redden an offline
+machine; a reachable registry that disagrees is a genuine failure.
+
+Two things it deliberately does not do: it does not build the image (that is
+`pnpm --filter @fmw/preview-container run test:integration`, which needs Docker
+and takes ~17s), and it cannot tell you the container and your local Factorio
+have drifted apart. **`refs:sync` pins to the local Steam binary and the
+container pins to a registry tag; either can move independently**, so check
+which one actually changed before assuming the container is stale.
+
 **The container's sizing is a measured cost decision, not a default** (#116).
 Memory bills on **provisioned** size for the whole time an instance is awake, so
 `instance_type` is the dominant cost lever - it was `standard-1` (4 GiB) while
