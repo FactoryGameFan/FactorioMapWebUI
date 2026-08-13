@@ -2,9 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-fulgora-shared.seed123456.json";
 import cellsFixture from "./fixtures/oracle-fulgora-cells.seed123456.json";
+import elevationFixture from "./fixtures/oracle-fulgora-elevation.seed123456.json";
 import { makeFulgoraShared } from "../src/noise/expressions/fulgoraShared";
 import { makeFulgoraCells } from "../src/noise/expressions/fulgoraCells";
+import { makeFulgoraElevation } from "../src/noise/expressions/fulgoraElevation";
 import { makeVoronoi } from "../src/noise/voronoiNoise";
+import { sliderRescale } from "../src/noise/eval/math";
 
 /**
  * Fulgora's shared layer, checked against the game.
@@ -247,26 +250,28 @@ describe("makeFulgoraCells", () => {
 
   /**
    * `pyramids` and `spots` carry a small residual where `cells` does not, and
-   * the split is the interesting part rather than the sizes.
+   * the split is the interesting part rather than the sizes. All three read the
+   * same distorted coordinates. `cells` is a DISCRETE lookup - it returns which
+   * cell won, so a sub-ulp coordinate error almost never changes the answer,
+   * and it comes back f32-EXACT. `pyramids` and `spots` are continuous, so the
+   * same input error passes straight through.
    *
-   * All three read the same distorted coordinates, which arrive from the shared
-   * layer already carrying its `basisNoise` f64-vs-f32 floor (`wx`/`wy` worst
-   * 1.53e-5). `cells` is a DISCRETE lookup - it returns which cell won, so a
-   * coordinate error that small almost never changes the answer, and it comes
-   * back f32-EXACT. `pyramids` and `spots` are continuous, so the same input
-   * error passes straight through to the output.
+   * Measured worst over the 101 positions: **1.19e-7 each, a single f32 ulp.**
    *
-   * Measured worst over the 101 positions: pyramids 7.11e-6, spots 7.54e-6 -
-   * both below the 1.53e-5 they inherit, as a contraction should be. Nothing
-   * here is new error introduced by this layer.
+   * These bounds were 1e-5 when Task 8 landed, against a measured 7.11e-6 and
+   * 7.54e-6, and the 60x improvement is not a change to this layer at all - it
+   * is `makeVoronoi` narrowing its incoming coordinates to f32, which is what
+   * the game does. Fulgora is the first caller to hand a voronoi op a DERIVED
+   * coordinate rather than a raw world position, so it is the first place the
+   * difference was observable. See the comment on `toGrid`.
    */
   it("matches fulgora_pyramids", () => {
-    check(cells.pyramids, cellsFixture.fulgora_pyramids, 1e-5);
+    check(cells.pyramids, cellsFixture.fulgora_pyramids, 2e-7);
   });
 
   it("matches fulgora_spots and fulgora_spots_inv", () => {
-    check(cells.spots, cellsFixture.fulgora_spots, 1e-5);
-    check(cells.spotsInv, cellsFixture.fulgora_spots_inv, 1e-5);
+    check(cells.spots, cellsFixture.fulgora_spots, 2e-7);
+    check(cells.spotsInv, cellsFixture.fulgora_spots_inv, 2e-7);
   });
 
   it("matches the four island classes", () => {
@@ -367,5 +372,219 @@ describe("voronoi grid_size is truncated to an integer", () => {
     const n = cellsFixture.positions.length;
     expect(sameAsTruncated, "fractional should equal truncated everywhere").toBe(n);
     expect(sameAsRounded, "fractional should NOT equal rounded everywhere").toBeLessThan(n);
+  });
+});
+
+/**
+ * `slider_rescale(s, n) = 2^(log2(s)/log2(6)*log2(n))`
+ * (`core/prototypes/noise-functions.lua:16`). `fulgora_natural` reads it as
+ * `slider_rescale(control:fulgora_islands:size, 2)`.
+ *
+ * **The 101 captured positions cannot test this at all**, which is the reason
+ * the fixture carries a separate probe. The default islands size slider is 1,
+ * and `slider_rescale(1, n)` is `2^0 = 1` exactly for every `n` - so at default
+ * settings the term is a multiply by one and any implementation whatsoever
+ * would pass. Same trap as `grid_size` in the cells fixture: the default is the
+ * one input that cannot discriminate.
+ *
+ * The probe passes literal slider values instead. Measured against the game
+ * (2.1.14, `slider_rescale(s, 2)` at s = 0.5, 1, 2, 3, 4, 5, 6):
+ *
+ * | evaluation order | exact matches |
+ * | --- | --- |
+ * | **f32 per operation** | **7/7** |
+ * | f64 throughout, one final round | 5/7 (misses 0.5 and 5 by 1 ulp) |
+ * | fastapprox `pow` (the noise machine's `^`) | 1/7 |
+ *
+ * Two things follow, and neither was assumable. `slider_rescale` is **exact**
+ * math, not the noise machine's fastapprox `^` - so like `slider_to_linear` it
+ * is resolved on the prototype side. And it needs the same **per-operation f32
+ * rounding** `slider_to_linear` needed.
+ *
+ * Note which values discriminate: s = 1 and s = 6 are blind by construction
+ * (the exponent is exactly 0 and exactly 1), and s = 2, 3 and 4 happen to agree
+ * between the f64 and f32 forms as well. Only **0.5 and 5** separate them, so
+ * the sweep that settled `slider_to_linear` - 0.5, 1, 2, 3, 6 - would have
+ * caught this on a single row.
+ */
+describe("slider_rescale", () => {
+  const probe = elevationFixture.sliderRescaleProbe as Record<string, number>;
+
+  it.each(Object.entries(probe))("matches the game at slider %s", (s, want) => {
+    expect(Math.fround(sliderRescale(Number(s), 2))).toBe(Math.fround(want));
+  });
+
+  it("is exactly 1 at the default slider, and that is why the probe exists", () => {
+    // Pins the reason this block cannot be folded into the position sweep.
+    expect(sliderRescale(1, 2)).toBe(1);
+    expect(probe["1"]).toBe(1);
+  });
+
+  it("the probe discriminates - not every candidate passes it", () => {
+    // An f64 chain rounded once at the end. If this ever stops failing, the
+    // probe has lost its power and the f32 rounding above is untested.
+    const f64Form = (s: number, n: number) =>
+      Math.fround(Math.pow(2, (Math.log2(s) / Math.log2(6)) * Math.log2(n)));
+    const misses = Object.entries(probe)
+      .filter(([s, want]) => f64Form(Number(s), 2) !== Math.fround(want))
+      .map(([s]) => Number(s))
+      .sort((a, b) => a - b);
+    expect(misses).toEqual([0.5, 5]);
+  });
+});
+
+/**
+ * Fulgora's elevation mix chain.
+ * Source: `planet-fulgora-map-gen.lua:206-336`, plus `fulgora_dunes` (513),
+ * `fulgora_rock` (523) and `fulgora_scrap_medium` (371).
+ *
+ * Fixture positions are IDENTICAL to the shared and cells fixtures.
+ *
+ * `fulgora_natural_mask`, `fulgora_natural_and_mesa_mask`, `fulgora_sprawl_mask`
+ * and `fulgora_artificial_mask` are defined in the middle of this same Lua
+ * block and are deliberately NOT ported. That they are not needed is not an
+ * assumption - `fulgora_elevation` here reproduces the game's own value to
+ * 7.6e-5 without them, which it could not do if the chain read them.
+ */
+describe("makeFulgoraElevation", () => {
+  const ctx = { seed0: elevationFixture.seed0 };
+  const shared = makeFulgoraShared(ctx);
+  const cells = makeFulgoraCells(shared, ctx);
+  const elevation = makeFulgoraElevation(shared, cells, ctx);
+  const positions = elevationFixture.positions;
+
+  /**
+   * Compare at f32, with `bound` the measured worst for that field plus modest
+   * headroom - never a blanket tolerance, so a regression in one field cannot
+   * hide behind another's slack. Measured worst over the 101 positions:
+   *
+   * | field | worst | bound |
+   * | --- | --- | --- |
+   * | `oilMask` | **0** | 0 |
+   * | `sprawlPyramids`, `mixPyramids` | 2.98e-8 | 1e-7 |
+   * | `basis` | 2.09e-7 | 3e-7 |
+   * | `rock`, `scrapMedium` | 2.38e-7 | 4e-7 |
+   * | `dunes` | 2.68e-7 | 4e-7 |
+   * | `mixNatural` | 3.87e-7 | 6e-7 |
+   * | `vaultPyramids`, `vaultPyramidsAndStart` | 4.02e-7 | 6e-7 |
+   * | `natural` | 4.77e-7 | 7e-7 |
+   * | `basisOil` | 7.15e-7 | 1e-6 |
+   * | `moats`, `mixMoats`, `mixSpots` | 1.19e-6 | 2e-6 |
+   * | `mixOil`, `sandBasins` | 1.22e-6 | 2e-6 |
+   * | `vaultSpots` | 5.06e-6 | 7e-6 |
+   * | `preElevation`, `elevation` | 7.63e-5 | 1e-4 |
+   *
+   * **Every one of these is the port's `basisNoise` floor, carried through the
+   * chain's own gains** - nothing here is a Fulgora-specific error. The two
+   * apparent outliers are both arithmetic on that floor rather than new error:
+   * `vaultSpots` applies a `-10 + 11.5 * ...` remap, so it multiplies its input
+   * residual by 11.5, and `elevation` is `sandBasins * 60 + 80`, so 1.22e-6
+   * becomes 7.3e-5. In relative terms `elevation` is the most accurate field in
+   * the table, at 8e-7 of its own magnitude.
+   *
+   * `oilMask` being **exact** is the load-bearing row. It is a discrete
+   * comparison, so a residual there would mean an upstream error had grown
+   * enough to flip a sign - reclassifying land as ocean rather than shading it.
+   */
+  const check = (fn: (x: number, y: number) => number, want: number[], bound: number): void => {
+    let worst = 0;
+    let worstAt = -1;
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i] as { x: number; y: number };
+      const d = Math.abs(Math.fround(fn(p.x, p.y)) - Math.fround(want[i] as number));
+      if (d > worst) {
+        worst = d;
+        worstAt = i;
+      }
+    }
+    expect(
+      worst,
+      `worst residual ${worst.toExponential(3)} at position ${String(worstAt)} ` +
+        `(${String((positions[worstAt] as { x: number; y: number } | undefined)?.x)}, ` +
+        `${String((positions[worstAt] as { x: number; y: number } | undefined)?.y)})`,
+    ).toBeLessThanOrEqual(bound);
+  };
+
+  it("shares its position set with the shared-layer fixture", () => {
+    expect(positions).toEqual(fixture.positions);
+  });
+
+  it("matches the five multioctave sources", () => {
+    check(elevation.basis, elevationFixture.fulgora_basis, 3e-7);
+    check(elevation.basisOil, elevationFixture.fulgora_basis_oil, 1e-6);
+    check(elevation.rock, elevationFixture.fulgora_rock, 4e-7);
+    check(elevation.dunes, elevationFixture.fulgora_dunes, 4e-7);
+    check(elevation.scrapMedium, elevationFixture.fulgora_scrap_medium, 4e-7);
+  });
+
+  it("matches fulgora_natural", () => {
+    check(elevation.natural, elevationFixture.fulgora_natural, 7e-7);
+  });
+
+  it("matches the pyramid terms", () => {
+    check(elevation.sprawlPyramids, elevationFixture.fulgora_sprawl_pyramids, 1e-7);
+    check(elevation.vaultPyramids, elevationFixture.fulgora_vault_pyramids, 6e-7);
+    check(elevation.vaultPyramidsAndStart, elevationFixture.fulgora_vault_pyramids_and_start, 6e-7);
+    check(elevation.mixPyramids, elevationFixture.fulgora_mix_pyramids, 1e-7);
+  });
+
+  it("matches fulgora_moats", () => {
+    check(elevation.moats, elevationFixture.fulgora_moats, 2e-6);
+  });
+
+  it("matches the mix chain", () => {
+    check(elevation.mixNatural, elevationFixture.fulgora_mix_natural, 6e-7);
+    check(elevation.mixMoats, elevationFixture.fulgora_mix_moats, 2e-6);
+    // 11.5x its input residual, by the `-10 + 11.5 * max(...)` remap - the one
+    // step in the chain with a gain worth naming.
+    check(elevation.vaultSpots, elevationFixture.fulgora_vault_spots, 7e-6);
+    check(elevation.mixSpots, elevationFixture.fulgora_mix_spots, 2e-6);
+  });
+
+  it("matches fulgora_oil_mask", () => {
+    // Discrete, so it should be EXACT. If it ever is not, an upstream residual
+    // has grown large enough to flip a sign at some position - which reclassifies
+    // land as ocean rather than shading it, and is a real defect, not a rounding
+    // tolerance to widen.
+    check(elevation.oilMask, elevationFixture.fulgora_oil_mask, 0);
+  });
+
+  it("matches fulgora_mix_oil and fulgora_sand_basins", () => {
+    check(elevation.mixOil, elevationFixture.fulgora_mix_oil, 2e-6);
+    check(elevation.sandBasins, elevationFixture.fulgora_sand_basins, 2e-6);
+  });
+
+  it("matches fulgora_pre_elevation and fulgora_elevation", () => {
+    // 60x sand_basins, so 1.22e-6 there arrives as 7.6e-5 here. Relative to a
+    // field that runs 70-150, this is the most accurate row in the fixture.
+    check(elevation.preElevation, elevationFixture.fulgora_pre_elevation, 1e-4);
+    check(elevation.elevation, elevationFixture.fulgora_elevation, 1e-4);
+  });
+
+  it("elevation straddles the coastline - the fixture is not all land or all ocean", () => {
+    const vals = (positions as { x: number; y: number }[]).map((p) =>
+      elevation.elevation(p.x, p.y),
+    );
+    expect(vals.some((v) => v > 80)).toBe(true);
+    expect(vals.some((v) => v <= 80)).toBe(true);
+  });
+
+  it("oil_mask is exactly mix_spots < 0", () => {
+    for (const p of positions as { x: number; y: number }[]) {
+      expect(elevation.oilMask(p.x, p.y)).toBe(elevation.mixSpots(p.x, p.y) < 0 ? 1 : 0);
+    }
+  });
+
+  it("oil_mask takes both values in the fixture, so the check is not vacuous", () => {
+    expect(new Set(elevationFixture.fulgora_oil_mask).size).toBe(2);
+  });
+
+  it("elevation is pre_elevation plus or minus half the coastline drop", () => {
+    // The final step adds ((sand_basins > 0) - 0.5) * 20, so the two differ by
+    // exactly +10 or -10 everywhere - never by anything else.
+    for (const p of positions as { x: number; y: number }[]) {
+      const d = elevation.elevation(p.x, p.y) - elevation.preElevation(p.x, p.y);
+      expect(Math.abs(d), `at (${String(p.x)}, ${String(p.y)})`).toBeCloseTo(10, 9);
+    }
   });
 });

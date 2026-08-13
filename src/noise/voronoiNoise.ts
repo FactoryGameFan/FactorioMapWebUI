@@ -633,8 +633,38 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
    */
   const divisor = gridSize;
 
-  /** The sample position in grid units, where the cell lattice has unit spacing. */
-  const toGrid = (x: number, y: number): [number, number] => [f32(x / divisor), f32(y / divisor)];
+  /**
+   * The sample position in grid units, where the cell lattice has unit spacing.
+   *
+   * **The incoming coordinates are narrowed to f32 first**, for the same reason
+   * `multioctaveNoise`'s `sumOctaves` does it: the noise machine passes f32
+   * values between expressions, so whatever computed `(x, y)` handed this call
+   * an f32, and narrowing here is what makes the port sample the same point the
+   * game did. This is the single entry point for all four ops, so one narrowing
+   * covers `cellId`, `spotNoise`, `facetNoise` and `pyramidNoise`.
+   *
+   * It is a no-op for a raw world coordinate - an integer or quarter tile below
+   * 2^24 is already exactly representable - which is why every voronoi fixture
+   * committed before Fulgora is unaffected. Fulgora is the first caller to pass
+   * a DERIVED coordinate (`fulgora_wx`, and `ox + wobble_x/2` for the spots),
+   * and there it matters:
+   *
+   * | field | f64 coordinate | f32 coordinate |
+   * | --- | --- | --- |
+   * | `fulgora_pyramids` | 7.11e-6 | **1.19e-7** |
+   * | `fulgora_spots` | 7.54e-6 | **1.19e-7** |
+   * | `fulgora_cells` | exact | exact |
+   *
+   * Both continuous ops land on a single f32 ulp. `cell_id` was exact either
+   * way, and that is the expected asymmetry rather than a reason to doubt the
+   * change: it is a discrete argmin, so a sub-ulp coordinate shift almost never
+   * changes WHICH point is nearest - the same reason the absolute-vs-rebased
+   * delta above needed an exact-value test to catch.
+   */
+  const toGrid = (x: number, y: number): [number, number] => [
+    f32(f32(x) / divisor),
+    f32(f32(y) / divisor),
+  ];
 
   /**
    * The sample-to-point delta in grid units, **rebased on the sample's own

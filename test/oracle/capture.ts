@@ -3528,8 +3528,104 @@ async function captureFulgoraCells(): Promise<void> {
   console.log(`wrote ${out} (${String(positions.length)} positions)`);
 }
 
+/**
+ * Fulgora's elevation mix chain - the 20 named expressions between the Voronoi
+ * layer and `fulgora_elevation` itself.
+ *
+ * `fulgora_vault_pyramids_and_start` and `fulgora_pre_elevation` are captured
+ * even though they are internal to the chain. They are cheap and they localise
+ * a fault: without them, a transcription error in either one only ever shows up
+ * blended into `moats` or `elevation`, several steps downstream of its cause.
+ *
+ * The `sliderRescaleProbe` is here for the same reason the cells fixture
+ * carries a `gridSizeProbe`. `fulgora_natural` multiplies by
+ * `slider_rescale(control:fulgora_islands:size, 2)`, and at the DEFAULT size
+ * slider of 1 that is `2^0 = 1` exactly - so the 101 captured positions cannot
+ * say anything about how the game evaluates the function. The probe passes
+ * literal slider values instead, and deliberately includes 0.5, 2, 3, 4 and 5:
+ * at s = 1 and s = 6 the exponent is exactly 0 and exactly 1, so those two rows
+ * are blind by construction and would "confirm" any implementation at all.
+ */
+async function captureFulgoraElevation(): Promise<void> {
+  const seed = 123456;
+  const planet = "fulgora";
+  const positions = fulgoraCapturePositions();
+  const sample = (expression: string) => sampleFulgora(expression, positions, seed);
+
+  const NAMES = [
+    // The five multioctave sources.
+    "fulgora_basis",
+    "fulgora_basis_oil",
+    "fulgora_rock",
+    "fulgora_dunes",
+    "fulgora_scrap_medium",
+    // The mix chain, in dependency order.
+    "fulgora_natural",
+    "fulgora_sprawl_pyramids",
+    "fulgora_vault_pyramids",
+    "fulgora_vault_pyramids_and_start",
+    "fulgora_moats",
+    "fulgora_mix_pyramids",
+    "fulgora_mix_natural",
+    "fulgora_mix_moats",
+    "fulgora_vault_spots",
+    "fulgora_mix_spots",
+    "fulgora_oil_mask",
+    "fulgora_mix_oil",
+    "fulgora_sand_basins",
+    "fulgora_pre_elevation",
+    "fulgora_elevation",
+  ] as const;
+
+  const fields: Record<string, number[]> = {};
+  for (const name of NAMES) {
+    fields[name] = await sample(name);
+    console.log(`  captured ${name}`);
+  }
+
+  // slider_rescale(s, 2) = 2^(log2(s)/log2(6)*log2(2)). One position is enough -
+  // it does not depend on x or y - but the harness samples a list, so take the
+  // first value and assert the rest agree.
+  const SLIDERS = [0.5, 1, 2, 3, 4, 5, 6] as const;
+  const oneProbePosition = positions.slice(0, 3);
+  const sliderRescale: Record<string, number> = {};
+  for (const s of SLIDERS) {
+    const values = await sampleFulgora(`slider_rescale(${String(s)}, 2)`, oneProbePosition, seed);
+    const first = values[0] as number;
+    if (values.some((v) => v !== first)) {
+      throw new Error(`slider_rescale(${String(s)}, 2) varied with position: ${values.join(", ")}`);
+    }
+    sliderRescale[String(s)] = first;
+    console.log(`  captured slider_rescale(${String(s)}, 2) = ${String(first)}`);
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 (Space Age enabled) via the test/oracle harness: " +
+      "Fulgora's elevation mix chain - the five multioctave sources (basis, basis_oil, rock, " +
+      "dunes, scrap_medium) and every named expression from fulgora_natural through " +
+      "fulgora_elevation, against a real Fulgora surface. Positions are IDENTICAL to " +
+      "oracle-fulgora-shared.seed123456.json and oracle-fulgora-cells.seed123456.json, so all " +
+      "three fixtures line up index-for-index. vault_pyramids_and_start and pre_elevation are " +
+      "internal to the chain and captured anyway, so a transcription error in either localises " +
+      "instead of surfacing blended into elevation. sliderRescaleProbe samples " +
+      "slider_rescale(s, 2) at literal slider values because the DEFAULT islands size of 1 " +
+      "makes it exactly 1 - the captured positions cannot discriminate any implementation of " +
+      "it. Regenerate: node --experimental-strip-types test/oracle/capture.ts fulgora-elevation",
+    seed0: seed,
+    planet,
+    positions,
+    ...fields,
+    sliderRescaleProbe: sliderRescale,
+  };
+  const out = join(FIXTURES, "oracle-fulgora-elevation.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(positions.length)} positions)`);
+}
+
 if (want("fulgora-shared")) await captureFulgoraShared();
 if (want("fulgora-cells")) await captureFulgoraCells();
+if (want("fulgora-elevation")) await captureFulgoraElevation();
 
 if (want("basis")) await captureBasis();
 if (want("multioctave")) await captureMultioctave();
