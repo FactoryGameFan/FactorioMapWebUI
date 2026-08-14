@@ -635,16 +635,16 @@ Worst |diff| at f32 over the 101 fixture positions:
 | `tileRuinConduit` | 4.172e-7 | 6e-7 |
 | `tileRuinPaving`, `tileRuinWalls` | 4.768e-7 | 7e-7 |
 
-Fourteen of the twenty fields are bit-exact by construction: the three masks
+Twelve of the twenty-two fields are bit-exact by construction: the three masks
 are comparisons/`max`/`min` over 0-or-1 booleans, `roadCells`/`structureCells`
 are Voronoi cell IDs, `roadPyramids` is sampled at the raw undistorted
 `(x, y)` so it never inherits the wobble-distortion error the rest of the
 chain carries, and `structureFacets` plus the five `roadPaving*`/`roadDust`
 fields built from comparisons of it are exact once `structureFacets` itself is
-(see below). A non-zero residual on any of these fourteen would mean a
-rounding error grew large enough to flip a comparison, not slack to widen. The
-rest carry the port's known `basisNoise` floor, scaled by each expression's
-own composition.
+(see below). A non-zero residual on any of these twelve would mean a rounding
+error had grown large enough to flip a comparison or to move a Voronoi cell
+boundary - never slack to widen. The rest carry the port's known `basisNoise`
+floor, scaled by each expression's own composition.
 
 ### Two f32 findings that needed OPPOSITE fixes
 
@@ -768,8 +768,8 @@ rules the second one out.
 ### The confusion pairs, so a regression arrives already localised
 
 A bare count would pass with every miss piled onto one tile. The largest
-pairs (game tile -> this port's tile, of 22 distinct pairs total, full list in
-`test/fulgoraLandTiles.spec.ts`):
+pairs (game tile -> this port's tile, of 23 distinct pairs total, summing to
+all 124 mismatches - full list in `test/fulgoraLandTiles.spec.ts`):
 
 | pair | count |
 | --- | --- |
