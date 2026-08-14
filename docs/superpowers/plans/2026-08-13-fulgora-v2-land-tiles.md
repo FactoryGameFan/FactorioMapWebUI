@@ -1075,6 +1075,21 @@ const COLORS: Record<FulgoraTile, readonly [number, number, number]> = {
 
 Update the header comment: the "eight land tiles are not resolved against each other yet" paragraph is now false and must go.
 
+- [ ] **Step 4b: Add a LAND-centred hash window, because none of the existing four sees land at `tilesPerPixel: 1`**
+
+Measured during Task 1's review, by counting colours in each rendered window rather than by reading the spec:
+
+| window | `tpp: 1` | `tpp: 8` |
+| --- | --- | --- |
+| near spawn | deep 969, shallow 55 - **no land** | deep 329, shallow 547, dunes 43, rock 74, sand 31 |
+| far field | deep 915, shallow 109 - **no land** | deep 319, shallow 357, dunes 117, rock 158, sand 73 |
+| off origin | deep 941, shallow 83 - **no land** | deep 369, shallow 334, dunes 125, rock 140, sand 56 |
+| second seed | deep 118, shallow 906 - **no land** | deep 313, shallow 502, dunes 83, rock 82, sand 44 |
+
+All four `tpp: 1` windows are **100% ocean**. That scale is the one a real render uses, so after this task eight land colours would ship with zero coverage at the scale that matters, and a land regression could only be caught at `tpp: 8`, which steps past the memo caches and lands on a different set of Voronoi cells.
+
+Add a fifth window to `WINDOWS` in `test/fulgoraExpressions.spec.ts` centred on land. Pick its origin by measurement, not by guess: sweep candidate origins with the resolver and choose one whose 32x32 `tpp: 1` footprint contains at least four distinct land tiles, then pin both its hashes. Say in a comment how the origin was chosen and what it contains, so a later reader does not think it was arbitrary.
+
 - [ ] **Step 5: Run the land spec, then the whole Fulgora set**
 
 ```bash
