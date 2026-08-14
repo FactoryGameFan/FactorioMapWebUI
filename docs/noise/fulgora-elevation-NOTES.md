@@ -1086,3 +1086,80 @@ not one this task closes. What is established: it runs after the raw per-tile
 argmax, it is boundary-concentrated (Task 14), and a tile-centre sampling
 offset is refuted as its cause (Task 14). Reverse-engineering the post-argmax
 pass itself is future work.
+
+---
+
+## Task 16: all eight land probabilities are now checked against the game
+
+Before this, four of the eight land tiles had **no bound-checked row at all**.
+`fulgoran-paving`, `-walls`, `-conduit` and `-machinery` each declare a bare
+`fulgora_tile_ruin_*` name, so the game reports the value directly and Task 13
+already bounded it. The other four write their arithmetic out in
+`tiles-fulgora.lua` and name nothing, so the only thing standing behind their
+transcription was the argmax's winner - and that argmax carries the 5.5%
+residual of Task 14. An unexplained residual cannot clear a formula.
+
+The fix was to sample the **verbatim expression strings** through the game.
+`sampleFulgora` registers whatever string it is given as a `noise-expression`
+prototype, so a composite works exactly as a name does - the game parses and
+evaluates it, and nothing is reconstructed on this side.
+
+`oracle-fulgora-ruins.seed123456.json` now carries 26 fields rather than 22.
+Measured worst over its 101 positions:
+
+| tile | worst | bound |
+| --- | --- | --- |
+| `fulgoran-dunes` (`1 + fulgora_dunes`) | 3.58e-7 | 5e-7 |
+| `fulgoran-sand` (`1 - fulgora_dunes`) | 3.58e-7 | 5e-7 |
+| `fulgoran-dust` | 8.05e-7 | 1e-6 |
+| `fulgoran-rock` | 6.80e-6 | 9e-6 |
+
+**`fulgoran-rock` is 19x its siblings and that is its own coefficients, not a
+defect.** It reads `0.8 + fulgora_rock * 2 - max(0, fulgora_mix_oil) * 6`, and
+`mixOil`'s own measured worst is 1.22e-6, so the `* 6` term alone predicts
+`7.3e-6`; the measured 6.80e-6 sits just under that ceiling. The ratio was
+checked against the input rather than absorbed into a wider bound - which is
+the mistake Task 13's table records being made on this same branch, where
+widening hid a real 24x-40x defect.
+
+`dunes` and `sand` land above `fulgora_dunes`' own 2.68e-7 only because
+`1 +/- dunes` moves the magnitude to ~1.6-2.0, where one f32 ULP is 1.19e-7.
+
+### What the new rows buy that the argmax could not
+
+Measured by planting errors, not argued:
+
+| planted defect | composite rows | `fulgoraLandTiles` + `fulgoraAgreement` |
+| --- | --- | --- |
+| drop the third argument of `dust`'s `max` | **FAIL**, residual 1.708 | FAIL (276 mismatches, not 124) |
+| `0.9` -> `0.90001` in `dust` | **FAIL**, residual 1.073e-5 vs a 1e-6 bound | **PASS** - 124, 7 and 11 all unchanged |
+
+The second row is the point. An error large enough to matter to the formula but
+too small to flip any argmax winner was previously invisible to the whole
+suite. It is not invisible now.
+
+### Two structural checks on the capture itself
+
+- **`dunes + sand == 2` exactly, at 101 of 101 positions, worst deviation 0.**
+  This is a property of the GAME's own two rows, so it proves the capture
+  really routed two different expressions - a copy-paste of one string into
+  both slots could not produce it - and it pins the sign, since swapping the
+  two rows would leave every other assertion in the block passing.
+- **All four rows have 101 distinct values**, so none of the bounds above is
+  passing against a flat line.
+
+### The recapture re-validated the 22 existing fields
+
+Regenerating the fixture reproduced all 22 original fields **bit-identically**,
+checked field-by-field against the committed values rather than assumed. So
+this is a fresh 2.1.14 confirmation of the whole ruins fixture, not only an
+addition to it.
+
+### Consequence for Task 15's open finding
+
+Every one of the eight land `probability_expression`s is now bound-checked
+against the game's own evaluation. That removes the last place a transcription
+error could have been hiding, and it means Task 14's 124 mismatches and Task
+15's counter-examples cannot be explained by this port getting a formula wrong.
+The post-argmax mechanism remains unknown, but the search space is smaller:
+it is not in the expressions.

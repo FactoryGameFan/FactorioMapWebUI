@@ -10,6 +10,7 @@ import { makeFulgoraElevation } from "../src/noise/expressions/fulgoraElevation"
 import { makeFulgoraMasks } from "../src/noise/expressions/fulgoraMasks";
 import { makeFulgoraRoads } from "../src/noise/expressions/fulgoraRoads";
 import { makeFulgoraRuins } from "../src/noise/expressions/fulgoraRuins";
+import { makeFulgoraLandProbabilities } from "../src/noise/tiles/fulgoraCatalog";
 import { makeVoronoi } from "../src/noise/voronoiNoise";
 import { renderFulgoraTerrain } from "../src/noise/preview/renderFulgoraTerrain";
 import { sliderRescale } from "../src/noise/eval/math";
@@ -962,5 +963,98 @@ describe("makeFulgoraRuins", () => {
       (_v: number, i: number) => ruinsFixture.fulgora_artificial_mask[i] === 0,
     );
     expect(new Set(off).size).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * The four COMPOSITE land-tile probabilities, checked against the game.
+ *
+ * **Why these four needed their own rows.** Eight land tiles compete in the
+ * argmax. Four of them (`fulgoran-paving`, `-walls`, `-conduit`, `-machinery`)
+ * declare a bare `fulgora_tile_ruin_*` name, so the game reports their
+ * probability directly and the block above already bounds it. The other four
+ * write the arithmetic out in `tiles-fulgora.lua` and name nothing, so until
+ * now the ONLY thing standing behind their transcription was the argmax's
+ * winner - and that argmax carries a 5.5% residual nobody has explained (124
+ * of 2261 land positions, `test/fulgoraLandTiles.spec.ts`). An unexplained
+ * residual cannot clear a formula. These rows close that gap by sampling the
+ * verbatim expression strings through the game and comparing the port's own
+ * `landProbabilitiesFrom` against them.
+ *
+ * Measured worst over the 101 positions:
+ *
+ * | tile | expression | worst | bound |
+ * | --- | --- | --- | --- |
+ * | `fulgoran-dunes` | `1 + fulgora_dunes` | 3.58e-7 | 5e-7 |
+ * | `fulgoran-sand` | `1 - fulgora_dunes` | 3.58e-7 | 5e-7 |
+ * | `fulgoran-dust` | `scrap_medium + max(0, natural, 2*mesa*pyramids)*2 - 0.9 + rock + road_dust*sprawl` | 8.05e-7 | 1e-6 |
+ * | `fulgoran-rock` | `0.8 + fulgora_rock * 2 - max(0, fulgora_mix_oil) * 6` | 6.80e-6 | 9e-6 |
+ *
+ * **`fulgoran-rock` is 19x its siblings, and that is its own coefficients, not
+ * a defect - the arithmetic is checked, not asserted.** It multiplies
+ * `fulgora_mix_oil` by **6**, and `mixOil`'s own measured worst is 1.22e-6
+ * (see the `makeFulgoraElevation` table above), so that term alone predicts
+ * `6 x 1.22e-6 = 7.3e-6`; the `fulgora_rock * 2` term adds at most
+ * `2 x 2.38e-7`. The measured 6.80e-6 sits just under that ceiling, which is
+ * what a chain carrying its inputs' `basisNoise` floor through its own gains
+ * looks like. If this row ever needs a bound above ~9e-6 the thing to check is
+ * `mixOil`, not this expression - and read the `makeFulgoraRuins` table above
+ * first, where widening a bound instead of asking that question hid a real
+ * 24x-40x defect on this same branch.
+ *
+ * `dunes` and `sand` land above `fulgora_dunes`' own 2.68e-7 for a duller
+ * reason: `1 +/- dunes` shifts the magnitude to ~1.6-2.0, where one f32 ULP is
+ * 1.19e-7, so the result is a couple of ULPs at the new magnitude.
+ */
+describe("the four composite land-tile probabilities", () => {
+  const landProbabilities = makeFulgoraLandProbabilities({ seed0: ruinsFixture.seed0 });
+
+  // Index into LAND_ORDER in `src/noise/tiles/fulgoraCatalog.ts`. Only the four
+  // composites are checked here; 4-7 are the tile_ruin fields above.
+  const at =
+    (index: number) =>
+    (x: number, y: number): number =>
+      landProbabilities(x, y)[index] as number;
+
+  it("matches the game on all four", () => {
+    checkRuins(at(0), ruinsFixture.fulgoran_dust_probability, 1e-6);
+    checkRuins(at(1), ruinsFixture.fulgoran_dunes_probability, 5e-7);
+    checkRuins(at(2), ruinsFixture.fulgoran_sand_probability, 5e-7);
+    checkRuins(at(3), ruinsFixture.fulgoran_rock_probability, 9e-6);
+  });
+
+  /**
+   * The capture routed four separate expressions, and this is what proves it
+   * rather than assuming it. `fulgoran-dunes` is `1 + fulgora_dunes` and
+   * `fulgoran-sand` is `1 - fulgora_dunes`, so the GAME's own two rows must
+   * sum to exactly 2 at every position. They do - 101 of 101, worst deviation
+   * 0 - which no copy-paste of one expression into both slots could produce.
+   * It also pins the sign: swapping the two rows would leave every other
+   * assertion in this block passing.
+   */
+  it("the game's dunes and sand rows sum to exactly 2", () => {
+    const dunes = ruinsFixture.fulgoran_dunes_probability;
+    const sand = ruinsFixture.fulgoran_sand_probability;
+    for (let i = 0; i < dunes.length; i++) {
+      const sum = Math.fround(Math.fround(dunes[i] as number) + Math.fround(sand[i] as number));
+      expect(sum, `dunes + sand at position ${String(i)}`).toBe(2);
+    }
+  });
+
+  /**
+   * A constant row would make every bound above pass for the wrong reason -
+   * the mask-gated fields in the block above are exactly where that risk is
+   * real. All four of these vary at every position, so none of them is being
+   * checked against a flat line.
+   */
+  it("no row is constant", () => {
+    for (const [name, row] of [
+      ["dust", ruinsFixture.fulgoran_dust_probability],
+      ["dunes", ruinsFixture.fulgoran_dunes_probability],
+      ["sand", ruinsFixture.fulgoran_sand_probability],
+      ["rock", ruinsFixture.fulgoran_rock_probability],
+    ] as const) {
+      expect(new Set(row).size, `${name} distinct values`).toBe(row.length);
+    }
   });
 });

@@ -25,11 +25,11 @@
  * against the game rather than argued: `test/fulgoraAgreement.spec.ts` compares
  * 5057 real `get_tile` results, 2796 of them ocean.
  */
-import { makeFulgoraCells } from "../expressions/fulgoraCells";
-import { makeFulgoraElevation } from "../expressions/fulgoraElevation";
+import { makeFulgoraCells, type FulgoraCells } from "../expressions/fulgoraCells";
+import { makeFulgoraElevation, type FulgoraElevation } from "../expressions/fulgoraElevation";
 import { makeFulgoraMasks } from "../expressions/fulgoraMasks";
-import { makeFulgoraRoads } from "../expressions/fulgoraRoads";
-import { makeFulgoraRuins } from "../expressions/fulgoraRuins";
+import { makeFulgoraRoads, type FulgoraRoads } from "../expressions/fulgoraRoads";
+import { makeFulgoraRuins, type FulgoraRuins } from "../expressions/fulgoraRuins";
 import { makeFulgoraShared, type FulgoraCtx } from "../expressions/fulgoraShared";
 
 /**
@@ -111,6 +111,72 @@ function bestProbability(...values: number[]): number {
 }
 
 /**
+ * The eight land `probability_expression`s, evaluated in {@link LAND_ORDER}.
+ *
+ * Split out of the resolver so the oracle spec can bound-check the values
+ * themselves rather than only the argmax's winner. That distinction matters:
+ * four of the eight (`fulgoran-walls`, `-conduit`, `-machinery`, `-paving`)
+ * are bare named expressions the game reports directly, but the other four are
+ * COMPOSITES - arithmetic over several named expressions, written out in
+ * `tiles-fulgora.lua` and transcribed here. A composite can be mis-transcribed
+ * (a `max` arity, an operator precedence, a sign) in a way that still produces
+ * a plausible argmax, so the argmax alone is not a check on it.
+ *
+ * `test/fulgoraExpressions.spec.ts` compares all four composites against the
+ * game's own evaluation of the same expression strings. Keep this the ONLY
+ * place the formulas are written - a copy in the spec would be checking the
+ * copy, not the port.
+ */
+function landProbabilitiesFrom(
+  cells: FulgoraCells,
+  chain: FulgoraElevation,
+  roads: FulgoraRoads,
+  ruins: FulgoraRuins,
+): (x: number, y: number) => number[] {
+  return (x: number, y: number): number[] => {
+    // `fulgoran-dust` reads `max(0, natural, 2 * mesa * pyramids)` - a THREE
+    // argument max, not `max(0, natural)` times something.
+    const dust =
+      chain.scrapMedium(x, y) +
+      Math.max(0, chain.natural(x, y), 2 * cells.mesa(x, y) * cells.pyramids(x, y)) * 2 -
+      0.9 +
+      chain.rock(x, y) +
+      roads.roadDust(x, y) * cells.sprawl(x, y);
+
+    const dunesField = chain.dunes(x, y);
+    return [
+      dust,
+      1 + dunesField,
+      1 - dunesField,
+      0.8 + chain.rock(x, y) * 2 - Math.max(0, chain.mixOil(x, y)) * 6,
+      ruins.tileRuinPaving(x, y),
+      ruins.tileRuinWalls(x, y),
+      ruins.tileRuinConduit(x, y),
+      ruins.tileRuinMachinery(x, y),
+    ];
+  };
+}
+
+/**
+ * The eight land probabilities at a position, in {@link LAND_ORDER}, built from
+ * their own layer stack.
+ *
+ * For tests and analysis only - the renderer goes through
+ * {@link makeFulgoraTileResolver}, which shares one layer stack (and therefore
+ * one set of memo caches) between the ocean branch and this. Constructing both
+ * against the same `ctx` is correct but evaluates each field twice.
+ */
+export function makeFulgoraLandProbabilities(ctx: FulgoraCtx): (x: number, y: number) => number[] {
+  const shared = makeFulgoraShared(ctx);
+  const cells = makeFulgoraCells(shared, ctx);
+  const chain = makeFulgoraElevation(shared, cells, ctx);
+  const masks = makeFulgoraMasks(shared, cells, chain);
+  const roads = makeFulgoraRoads(shared, cells, ctx);
+  const ruins = makeFulgoraRuins(cells, masks, roads, ctx);
+  return landProbabilitiesFrom(cells, chain, roads, ruins);
+}
+
+/**
  * Resolve a Fulgora world position to a tile: `shallow`, `deep`, or one of the
  * eight land tiles, argmaxed against each other.
  *
@@ -135,6 +201,7 @@ export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number)
   const masks = makeFulgoraMasks(shared, cells, chain);
   const roads = makeFulgoraRoads(shared, cells, ctx);
   const ruins = makeFulgoraRuins(cells, masks, roads, ctx);
+  const landProbabilities = landProbabilitiesFrom(cells, chain, roads, ruins);
 
   // Not `memoXY`-wrapped, unlike every field below it: that helper is typed for
   // numbers, and there is nothing to gain here anyway - every expensive read
@@ -175,26 +242,7 @@ export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number)
     // below rather than taking this branch.
     if (bestOcean > 0) return bestDeep > bestShallow ? "deep" : "shallow";
 
-    // `fulgoran-dust` reads `max(0, natural, 2 * mesa * pyramids)` - a THREE
-    // argument max, not `max(0, natural)` times something.
-    const dust =
-      chain.scrapMedium(x, y) +
-      Math.max(0, chain.natural(x, y), 2 * cells.mesa(x, y) * cells.pyramids(x, y)) * 2 -
-      0.9 +
-      chain.rock(x, y) +
-      roads.roadDust(x, y) * cells.sprawl(x, y);
-
-    const dunesField = chain.dunes(x, y);
-    const probabilities = [
-      dust,
-      1 + dunesField,
-      1 - dunesField,
-      0.8 + chain.rock(x, y) * 2 - Math.max(0, chain.mixOil(x, y)) * 6,
-      ruins.tileRuinPaving(x, y),
-      ruins.tileRuinWalls(x, y),
-      ruins.tileRuinConduit(x, y),
-      ruins.tileRuinMachinery(x, y),
-    ];
+    const probabilities = landProbabilities(x, y);
 
     // A manual loop rather than `bestProbability(...probabilities)`: this
     // needs the winning INDEX, not just the winning value, so it can look the
