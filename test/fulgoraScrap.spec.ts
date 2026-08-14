@@ -24,6 +24,12 @@ describe("Fulgora scrap probability", () => {
     // Bound sized from the measurement, not chosen to fit. Do not widen it: the
     // repo has twice had a real bug hidden behind a widened bound.
     //
+    // This is also what makes the port itself non-vacuous, not the term
+    // checks below: it calls scrap.probability at every position, including
+    // indices 46 and 53 - the only two where the expression is nonzero (see
+    // the next test) - so a stub that always returned 0 would fail HERE,
+    // with relative error 1.0 at each of those two indices.
+    //
     // This 101-point fixture CANNOT catch a one-unit drift in the COASTLINE
     // constant below: only 2 of 101 positions are nonzero (index 46 and 53),
     // and neither position's elevation falls in the (90, 91] band a
@@ -39,14 +45,17 @@ describe("Fulgora scrap probability", () => {
   });
 
   it("both additive terms are exercised, so agreement is not agreement on one branch of the +", () => {
-    // fulgora_scrap_probability has exactly 2 of 101 nonzero entries, which on
-    // its own is close to a tautology. The property that actually matters is
-    // that BOTH terms of `struct_term + vault_term` fire somewhere in the
-    // sample: a port that dropped one term entirely, or a stub that always
-    // returned 0, could still pass a loose nonzero-count check by luck on the
-    // surviving term. Measured: struct_term is nonzero only at index 53
+    // This test never calls scrap.probability - it reads the fixture's own
+    // diagnostic rows, so it cannot discriminate the PORT (that is test 1's
+    // job, and it does: see the comment there). What this guards is the
+    // FIXTURE: fulgora_scrap_probability has exactly 2 of 101 nonzero
+    // entries, so a future re-capture that silently landed all zeros - a
+    // dead RNG seed, a wrong surface, a broken sampling harness - would still
+    // let test 1 pass vacuously (0 against 0 everywhere). Asserting each
+    // additive term has its own nonzero witness makes that failure mode
+    // visible here instead. Measured: struct_term is nonzero only at index 53
     // (1.292399525642395) and vault_term is nonzero only at index 46 (10) -
-    // disjoint positions, so each branch has its own witness.
+    // disjoint positions, so each branch of the `+` has its own witness.
     const structTerm = fixture.fulgora_scrap_struct_term as number[];
     const vaultTerm = fixture.fulgora_scrap_vault_term as number[];
     expect(structTerm.filter((v) => v > 0).length).toBeGreaterThan(0);

@@ -49,8 +49,22 @@ export function makeFulgoraScrap(
   const size = controls.size ?? 1;
 
   // Both cuts are loop-invariant: they depend only on the sliders.
-  const cellsCut = Math.min(f32(0.1 * frequency), f32(0.05 + f32(0.05 * frequency)));
-  const spotsCut = f32(1.2 + f32(0.4 * sliderToLinear(size, -1, 1)));
+  //
+  // 0.1, 0.05, 1.2 and 0.4 have no exact f32 form, so each is narrowed BEFORE
+  // it multiplies anything - `f32.ts`'s case 2 ("narrow the CONSTANT"), the
+  // same rule `fulgoraRoads.ts:121` applies to its own inexact 0.8
+  // (`structure.cellId(x, y * f32(0.8))`). Narrowing the product instead
+  // rounds at f64 literal precision first and can land on a different f32.
+  //
+  // This rests on the documented rule, not on a fixture measurement: the two
+  // forms are IDENTICAL at frequency = size = 1, which is the only setting
+  // `oracle-fulgora-scrap.seed123456.json` covers (`scrap_control_frequency`
+  // and `scrap_control_size` are both 1 for every position), so no fixture
+  // here can discriminate between them. Off the default slider, they can
+  // differ: at frequency = 4/3, product-first gives 0.11666666716337204
+  // against constant-first's 0.11666667461395264 - one ULP apart.
+  const cellsCut = Math.min(f32(f32(0.1) * frequency), f32(f32(0.05) + f32(f32(0.05) * frequency)));
+  const spotsCut = f32(f32(1.2) + f32(f32(0.4) * sliderToLinear(size, -1, 1)));
   const enabled = size > 0 ? 1 : 0;
 
   const probability = memoXY((x: number, y: number) => {
