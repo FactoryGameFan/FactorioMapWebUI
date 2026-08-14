@@ -3624,6 +3624,77 @@ async function captureFulgoraElevation(): Promise<void> {
 }
 
 /**
+ * Fulgora's road, structure and ruins layer - everything the eight land tiles
+ * read that the elevation chain does not.
+ *
+ * Positions are `fulgoraCapturePositions()`, identical to the shared, cells and
+ * elevation fixtures, so all four line up index for index.
+ *
+ * Two fields here are captured because the port cannot settle them by reading:
+ * `fulgora_pyramids_banding` and `fulgora_spots_banding` are the noise
+ * machine's `%` operator, whose behaviour on a negative left operand is not
+ * stated anywhere in the docs. The fixture decides it.
+ */
+async function captureFulgoraRuins(): Promise<void> {
+  const seed = 123456;
+  const planet = "fulgora";
+  const positions = fulgoraCapturePositions();
+  const sample = (expression: string) => sampleFulgora(expression, positions, seed);
+
+  const NAMES = [
+    // The masks.
+    "fulgora_natural_mask",
+    "fulgora_natural_and_mesa_mask",
+    "fulgora_artificial_mask",
+    // The road and structure layer, in dependency order.
+    "fulgora_road_cells",
+    "fulgora_road_pyramids",
+    "fulgora_pyramids_banding",
+    "fulgora_spots_prebanding",
+    "fulgora_spots_banding",
+    "fulgora_structure_cells",
+    "fulgora_structure_subnoise",
+    "fulgora_structure_facets",
+    "fulgora_road_paving_thin",
+    "fulgora_road_paving_2",
+    "fulgora_road_paving_2b",
+    "fulgora_road_paving_2c",
+    "fulgora_road_dust",
+    // The ruins layer.
+    "fulgora_ruins_walls",
+    "fulgora_ruins_paving",
+    "fulgora_tile_ruin_paving",
+    "fulgora_tile_ruin_walls",
+    "fulgora_tile_ruin_conduit",
+    "fulgora_tile_ruin_machinery",
+  ] as const;
+
+  const fields: Record<string, number[]> = {};
+  for (const name of NAMES) {
+    fields[name] = await sample(name);
+    console.log(`  captured ${name}`);
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 (Space Age enabled) via the test/oracle harness: " +
+      "Fulgora's mask, road/structure and ruins layer - the 22 named expressions the eight " +
+      "land tiles read that the elevation chain does not. Positions are IDENTICAL to " +
+      "oracle-fulgora-shared/cells/elevation.seed123456.json, so all four line up " +
+      "index-for-index. The intermediate paving stages (2, 2b, 2c) are captured as well as " +
+      "the four tile_ruin outputs so a transcription error localises instead of surfacing " +
+      "blended. Regenerate: node --experimental-strip-types test/oracle/capture.ts fulgora-ruins",
+    seed0: seed,
+    planet,
+    positions,
+    ...fields,
+  };
+  const out = join(FIXTURES, "oracle-fulgora-ruins.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(positions.length)} positions)`);
+}
+
+/**
  * The tile the GAME actually placed on Fulgora - `surface.get_tile(x, y).name`
  * after real chunk generation, which no `sampleExpression` can report.
  *
@@ -3718,6 +3789,7 @@ async function captureFulgoraTiles(): Promise<void> {
 if (want("fulgora-shared")) await captureFulgoraShared();
 if (want("fulgora-cells")) await captureFulgoraCells();
 if (want("fulgora-elevation")) await captureFulgoraElevation();
+if (want("fulgora-ruins")) await captureFulgoraRuins();
 if (want("fulgora-tiles")) await captureFulgoraTiles();
 
 if (want("basis")) await captureBasis();
