@@ -638,14 +638,25 @@ describe("makeFulgoraElevation", () => {
  * accidentally hardcoded from the fixture seed.
  *
  * **The first four windows are 100% ocean at `tilesPerPixel: 1`** - measured
- * by counting colours in each rendered window, not assumed from the hashes:
+ * by counting colours in each rendered window, not assumed from the hashes.
+ * The `tpp: 8` column is the POST-Task-5 breakdown (all eight land tiles);
+ * before this task's eight-way argmax, the same four windows' `tpp: 8` pixels
+ * split across only `dunes`/`rock`/`sand` (e.g. near spawn was dunes 43, rock
+ * 74, sand 31 - the same 148 land pixels, previously argmaxed over three
+ * tiles instead of eight), which is why re-pinning those hashes when the
+ * palette widened was expected rather than a bug:
  *
  * | window | `tpp: 1` | `tpp: 8` |
  * | --- | --- | --- |
- * | near spawn | deep 969, shallow 55 - no land | deep 329, shallow 547, dunes 43, rock 74, sand 31 |
- * | far field | deep 915, shallow 109 - no land | deep 319, shallow 357, dunes 117, rock 158, sand 73 |
- * | off origin | deep 941, shallow 83 - no land | deep 369, shallow 334, dunes 125, rock 140, sand 56 |
- * | second seed | deep 118, shallow 906 - no land | deep 313, shallow 502, dunes 83, rock 82, sand 44 |
+ * | near spawn | deep 969, shallow 55 - no land | deep 329, shallow 547, rock 53, paving 25, dunes 22, sand 19, machinery 10, walls 8, dust 6, conduit 5 |
+ * | far field | deep 915, shallow 109 - no land | deep 319, shallow 357, rock 100, paving 66, walls 56, dunes 48, sand 29, conduit 25, machinery 15, dust 9 |
+ * | off origin | deep 941, shallow 83 - no land | deep 369, shallow 334, paving 86, rock 74, walls 37, dunes 34, dust 29, sand 23, conduit 23, machinery 15 |
+ * | second seed | deep 118, shallow 906 - no land | deep 313, shallow 502, rock 49, paving 40, dunes 30, dust 28, sand 23, walls 22, machinery 11, conduit 6 |
+ *
+ * The ocean halves (`deep`/`shallow` counts) are UNCHANGED from the pre-Task-5
+ * measurement in all four windows - a second, independent confirmation
+ * (alongside `fulgoraAgreement.spec.ts`'s pinned 7-and-11) that the land
+ * argmax did not move the land/ocean boundary.
  *
  * That is the scale a real render actually uses, so the fifth window
  * (`land core`) exists to give the eight land colours coverage at `tpp: 1`

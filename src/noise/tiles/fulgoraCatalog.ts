@@ -136,9 +136,8 @@ function bestProbability(...values: number[]): number {
  * validated 100%) and the ocean argmax above. A rival explanation - the game
  * samples tile autoplace at the tile CENTRE rather than the corner - was
  * tested and refuted: every offset from -0.5 to 0.5 scores worse than the
- * corner on both land accuracy and land/ocean misses (see the three-tile
- * table this file used to carry, now in git history at the commit that added
- * the eight-way argmax).
+ * corner on both land accuracy and land/ocean misses (see the offset table in
+ * the header comment of `test/fulgoraLandTiles.spec.ts`).
  *
  * Widening to all eight tiles over all 2261 land positions made the residual
  * bigger, which is the expected direction: five more tiles compete, so there

@@ -23,6 +23,21 @@ import { makeFulgoraTileResolver } from "../src/noise/tiles/fulgoraCatalog";
  * three-tile subset landed at 783/828 (45 mismatches, 94.6%) for exactly this
  * reason.
  *
+ * A rival explanation for the three-tile residual - that the game samples
+ * tile autoplace at the tile CENTRE rather than the corner this port (and
+ * every Fulgora fixture) uses - was tested and refuted. `fulgora_rock`
+ * (input_scale 1/3) and `fulgora_dunes` (1/6) are the finest fields in the
+ * whole elevation chain, so a half-tile shift was a plausible way to flip a
+ * close three-way call. Measured across the 828-position three-tile fixture,
+ * it is not - every offset scores worse than the corner on BOTH metrics:
+ *
+ * | corner offset | land accuracy | land/ocean misses |
+ * | --- | --- | --- |
+ * | 0 (corner) | 783/828 (94.6%) | 18 (best) |
+ * | 0.25 | 755/828 (91.2%) | 54 |
+ * | 0.5 (centre) | 716/828 (86.5%) | 97 |
+ * | -0.5 | 732/828 (88.4%) | 109 |
+ *
  * **Measured (2026-08-13, against `test/fixtures/oracle-fulgora-tiles.seed123456.json`,
  * 2261 land positions): 124 mismatches, 2137 correct (94.5% agreement).**
  * Widening from three tiles to eight, and from 828 to 2261 positions, made the
@@ -30,7 +45,8 @@ import { makeFulgoraTileResolver } from "../src/noise/tiles/fulgoraCatalog";
  * compete and there are more chances for the same post-argmax mechanism to
  * fire - while the AGGREGATE agreement rate barely moved (94.6% -> 94.5%).
  *
- * Broken down by which tile the game placed (matched / total):
+ * Broken down by which tile the game placed (matched / total, descending by
+ * rate):
  *
  * | game tile | matched | total | rate |
  * | --- | --- | --- | --- |
@@ -39,8 +55,8 @@ import { makeFulgoraTileResolver } from "../src/noise/tiles/fulgoraCatalog";
  * | `fulgoran-machinery` | 108 | 108 | 100% |
  * | `fulgoran-rock` | 478 | 493 | 97.0% |
  * | `fulgoran-paving` | 663 | 685 | 96.8% |
- * | `fulgoran-sand` | 98 | 116 | 84.5% |
  * | `fulgoran-dust` | 201 | 224 | 89.7% |
+ * | `fulgoran-sand` | 98 | 116 | 84.5% |
  * | `fulgoran-dunes` | 173 | 219 | 79.0% |
  *
  * `fulgoran-walls`, `fulgoran-conduit` and `fulgoran-machinery` - the three
@@ -48,13 +64,41 @@ import { makeFulgoraTileResolver } from "../src/noise/tiles/fulgoraCatalog";
  * check against `get_tile` until now (`tileRuinConduit` and
  * `tileRuinMachinery` in particular were only exercised at 9 of 101 positions
  * in `fulgoraExpressions.spec.ts`, an accepted coverage gap this task exists to
- * close) - are matched EXACTLY at all 524 combined positions where the game
- * placed one of them. That is strong out-of-sample evidence the road/ruins
- * transcription in Tasks 3 and 4 is correct, not a coincidence: an indexing or
- * scale error in any of those three formulas would show up as a lopsided
- * confusion pair, and none appears (see the pairs test below - there is no
- * `"fulgoran-walls -> ..."`, `"fulgoran-conduit -> ..."` or
- * `"fulgoran-machinery -> ..."` entry at all).
+ * close) - have 100% RECALL: every position where the game placed one of them
+ * is matched. Recall alone is not the whole picture - it is exactly what a
+ * uniformly-too-large probability produces (it keeps every true cell winning
+ * while stealing a ring of neighbours), and precision is measurably lower:
+ *
+ * | tile | game | ours | net | recall | precision |
+ * | --- | --- | --- | --- | --- | --- |
+ * | `fulgoran-walls` | 269 | 300 | +31 | 100.0% | 89.7% |
+ * | `fulgoran-conduit` | 147 | 159 | +12 | 100.0% | 92.5% |
+ * | `fulgoran-machinery` | 108 | 115 | +7 | 100.0% | 93.9% |
+ *
+ * (`ours` and `net` count every position where THIS resolver names that tile,
+ * whether or not the game agrees - derivable from the pinned confusion pairs
+ * below: e.g. walls' +31 is the sum of every `"... -> fulgoran-walls"` pair.)
+ *
+ * The inflated-probability hypothesis was checked against the game directly
+ * rather than argued from recall, which cannot distinguish it. `fulgora_tile_ruin_walls`
+ * is a named expression, so the game was asked for it directly at all four
+ * `fulgoran-dunes -> fulgoran-walls` mismatches (2.1.14, seed 123456):
+ *
+ * | position | `fulgora_tile_ruin_walls` (game) | `1 + fulgora_dunes` (game) | game places |
+ * | --- | --- | --- | --- |
+ * | (-1420, 892) | 1.868947 | 1.523166 | `fulgoran-dunes` |
+ * | (-1404, 920) | 1.552315 | 1.476634 | `fulgoran-dunes` |
+ * | (-1428, 1032) | 1.453150 | 1.332996 | `fulgoran-dunes` |
+ * | (-1420, 1044) | 1.526603 | 1.210111 | `fulgoran-dunes` |
+ *
+ * The game's OWN walls expression outscores its OWN dunes expression at all
+ * four, yet `get_tile` is `fulgoran-dunes` anyway - the same post-argmax
+ * mechanism Task 1 found for rock/dunes, now demonstrated on this task's own
+ * residual, on a ruins tile. And the margins the game reports here (0.3458,
+ * 0.0757, 0.1202, 0.3165) match this port's own margins at those same four
+ * positions to four decimal places - which refutes the inflated-probability
+ * hypothesis directly: if `tileRuinWalls` were uniformly too large, this
+ * port's margin would exceed the game's, and it does not.
  *
  * `fulgoran-dunes` is the worst-matching tile (79.0%), which is consistent with
  * the mechanism rather than evidence of a new one: `fulgoran-dust`'s formula
@@ -120,12 +164,12 @@ describe("fulgora land argmax over all eight tiles", () => {
    * `sand` there, and a wider argmax can only replace a winning tile with a
    * HIGHER-scoring one, never resurrect the tile that was already losing; both
    * positions now lose to a still-higher-scoring third tile instead (see
-   * `fulgoran-sand -> fulgoran-walls` / `-> fulgoran-rock` below). No pair
-   * here is a tile confused with one it never bordered in the three-tile
-   * fixture, and - the strongest evidence against a Task 3/4 transcription
-   * error - `fulgoran-walls`, `fulgoran-conduit` and `fulgoran-machinery`
-   * never appear as the GAME side of any pair at all: every position where the
-   * game placed one of those three is matched exactly.
+   * `fulgoran-sand -> fulgoran-walls` / `-> fulgoran-rock` below).
+   * `fulgoran-walls`, `fulgoran-conduit` and `fulgoran-machinery` never appear
+   * as the GAME side of any pair - every position where the game placed one of
+   * those three is matched. That is recall, not the whole picture: see the
+   * header comment for the precision figures and the game-measured margin
+   * check that actually rules out an inflated ruins formula.
    */
   it("reports the confusion pairs when it fails", () => {
     const pairs = new Map<string, number>();

@@ -32,13 +32,17 @@ export interface RenderFulgoraTerrainOptions {
  * still dominate the argmax wherever they are placeable, so the land argmax
  * only runs once none of them are.
  *
- * **The eight-way land argmax is 94.5% accurate against `get_tile`, measured
- * over all 2261 land positions in the fixture** (2137/2261 - see the "OPEN
- * FINDING" paragraph on `makeFulgoraTileResolver` in `fulgoraCatalog.ts` and
+ * **The eight-way land argmax is 94.5% accurate against `get_tile` at
+ * positions where the game placed a land tile**, measured over all 2261 such
+ * positions in the fixture (2137/2261 - see the "OPEN FINDING" paragraph on
+ * `makeFulgoraTileResolver` in `fulgoraCatalog.ts` and
  * `test/fulgoraLandTiles.spec.ts` for the full breakdown; the gap is an open
- * finding, not a rounding error). Unlike the three-way palette this replaces,
- * that accuracy figure now IS the accuracy of a rendered land pixel - there is
- * no tile left that this palette cannot produce.
+ * finding, not a rounding error). That denominator excludes the other
+ * direction: `fulgoraAgreement.spec.ts` pins exactly 7 positions where the
+ * game placed OCEAN and this resolver names a land tile, which is not
+ * reachable by any palette fix here - see that spec for why. Unlike the
+ * three-way palette this replaces, there is at least no longer a tile the
+ * game placed that this palette cannot produce at all.
  */
 const COLORS: Record<FulgoraTile, readonly [number, number, number]> = {
   "fulgoran-dust": [112, 65, 50],
