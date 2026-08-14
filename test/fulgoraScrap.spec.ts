@@ -23,15 +23,38 @@ describe("Fulgora scrap probability", () => {
     }
     // Bound sized from the measurement, not chosen to fit. Do not widen it: the
     // repo has twice had a real bug hidden behind a widened bound.
+    //
+    // This 101-point fixture CANNOT catch a one-unit drift in the COASTLINE
+    // constant below: only 2 of 101 positions are nonzero (index 46 and 53),
+    // and neither position's elevation falls in the (90, 91] band a
+    // COASTLINE 80 -> 81 change would move. Measured directly: planting
+    // COASTLINE = 81 leaves the worst relative error unchanged at this
+    // fixture's precision. Planting COASTLINE = 200 does move it, to a worst
+    // relative error of 1.0 - so the elevation gate is read by this
+    // composition, just not resolved at one-unit granularity by this sample.
+    // The elevation gate's real guards are this file's own ocean test below
+    // (10,000+ ocean tiles, every one required to read exactly 0) and Task
+    // 6's footprint comparison against the game's own preview.
     expect(worst, `worst at index ${String(worstAt)}`).toBeLessThan(1e-5);
   });
 
-  it("the sample spans the range, so agreement is not agreement on zeros", () => {
+  it("both additive terms are exercised, so agreement is not agreement on one branch of the +", () => {
+    // fulgora_scrap_probability has exactly 2 of 101 nonzero entries, which on
+    // its own is close to a tautology. The property that actually matters is
+    // that BOTH terms of `struct_term + vault_term` fire somewhere in the
+    // sample: a port that dropped one term entirely, or a stub that always
+    // returned 0, could still pass a loose nonzero-count check by luck on the
+    // surviving term. Measured: struct_term is nonzero only at index 53
+    // (1.292399525642395) and vault_term is nonzero only at index 46 (10) -
+    // disjoint positions, so each branch has its own witness.
+    const structTerm = fixture.fulgora_scrap_struct_term as number[];
+    const vaultTerm = fixture.fulgora_scrap_vault_term as number[];
+    expect(structTerm.filter((v) => v > 0).length).toBeGreaterThan(0);
+    expect(vaultTerm.filter((v) => v > 0).length).toBeGreaterThan(0);
+
+    // The cap: min(struct_term + vault_term, 0.5) reaches its ceiling at
+    // index 53 (struct_term 1.29 alone already exceeds 0.5).
     const want = fixture.fulgora_scrap_probability as number[];
-    // test/fixtures/PROVENANCE.json documents this fixture as "2 of 101
-    // nonzero" at capture time - the field is sparse by construction (scrap
-    // rolls a small chance per tile), so the bound is 1, not a larger count.
-    expect(want.filter((v) => v > 0).length).toBeGreaterThan(1);
     expect(want.filter((v) => v >= 0.4999).length).toBeGreaterThan(0);
   });
 
