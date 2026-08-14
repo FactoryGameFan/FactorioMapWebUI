@@ -113,16 +113,29 @@ describe("Fulgora scrap placement density", () => {
   });
 
   /**
-   * The finding as a REGRESSION TEST, not just a comment. The model's own
-   * expectation inside {@link SUPPRESSED_CHUNK} is large - real placement
-   * mass, not a region the expression already reads as empty - while the
-   * fixture (a real `find_entities_filtered{type='resource'}` capture) shows
-   * exactly 0 there. Measured: expectation 140.2, actual 0.
+   * The finding as a REGRESSION TEST, not just a comment, split across the two
+   * layers the finding actually spans.
    *
-   * If a future change ports whatever mechanism causes this and the game
-   * starts placing scrap in this chunk again, THIS TEST is the one that will
-   * fail - at which point `SUPPRESSED_CHUNK` and the two tests above that
-   * skip it need to be updated (or removed) to match the newly-ported rule.
+   * The PROBABILITY half records what the diagnostic established: the game's
+   * own expression reads the capped 0.5 in this chunk, and so does this port -
+   * the model's summed expectation is large (measured 140.2), which is real
+   * placement mass, not a region the expression already reads as empty - while
+   * the fixture (a real `find_entities_filtered{type='resource'}` capture)
+   * shows exactly 0 entities there. That alone is diagnostic, not a tripwire:
+   * the suppression sits DOWNSTREAM of probability, so this half would keep
+   * passing even after someone ported the real mechanism.
+   *
+   * The PLACEMENT half is the actual tripwire. `makeFulgoraScrapPlacement`
+   * has no gate for this chunk today, so it currently paints phantom scrap
+   * there - measured 162 tiles placed inside the 1,024-tile chunk on this
+   * fixture's seed (expectation 140.2; roll noise on one draw explains the
+   * gap). That count is asserted only "substantially above zero" rather than
+   * pinned tight, because the salt is a single arbitrary draw. If a future
+   * change ports the suppression mechanism as a gate inside
+   * `makeFulgoraScrapPlacement` (or a sibling it composes), that gate will
+   * drive this count toward 0 and THIS assertion is the one that fails -
+   * which is the intended signal to update or remove `SUPPRESSED_CHUNK` and
+   * the two density tests above that skip it.
    */
   it("the suppressed chunk stays suppressed: large expectation, zero real placement", () => {
     const scrap = makeFulgoraScrap(stack);
@@ -135,6 +148,13 @@ describe("Fulgora scrap placement density", () => {
     const region0 = cases[0];
     const actualInChunk = region0.resources.filter((r) => inSuppressedChunk(r.x, r.y)).length;
     expect(actualInChunk).toBe(0);
+
+    const placed = makeFulgoraScrapPlacement(stack);
+    let placedInChunk = 0;
+    for (let y = SUPPRESSED_CHUNK.y0; y < SUPPRESSED_CHUNK.y1; y++)
+      for (let x = SUPPRESSED_CHUNK.x0; x < SUPPRESSED_CHUNK.x1; x++)
+        if (placed(x, y)) placedInChunk++;
+    expect(placedInChunk).toBeGreaterThan(50);
   });
 
   /**
