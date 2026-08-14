@@ -3676,17 +3676,56 @@ async function captureFulgoraRuins(): Promise<void> {
     "fulgora_tile_ruin_machinery",
   ] as const;
 
+  /**
+   * The four land tiles whose `probability_expression` is a COMPOSITE rather
+   * than a bare named expression, keyed by the fixture field they become.
+   *
+   * **Copied verbatim from `tiles-fulgora.lua`** (`fulgoran-dust` line 293,
+   * `-dunes` 330, `-sand` 367, `-rock` 404) - do not tidy the spacing, since
+   * the point of sampling them is that the GAME parses this exact string.
+   *
+   * Why these four and not all eight: the other four land tiles
+   * (`fulgoran-paving`, `-walls`, `-conduit`, `-machinery`) declare a bare
+   * `fulgora_tile_ruin_*` name, which is already captured above as a named
+   * expression. These four have no name of their own, so before this they were
+   * the only Fulgora expressions in the port with no bound-checked row - the
+   * argmax's winner was the only thing standing behind them, and an argmax
+   * carrying a 5.5% unexplained residual cannot clear a formula. See
+   * `landProbabilitiesFrom` in `src/noise/tiles/fulgoraCatalog.ts` for the
+   * transcription these check.
+   *
+   * `sampleFulgora` registers whatever string it is given as a new
+   * `noise-expression` prototype, so an arbitrary composite works exactly the
+   * same way a name does - the game does the parsing and the evaluating.
+   */
+  const COMPOSITE_PROBABILITIES = [
+    [
+      "fulgoran_dust_probability",
+      "fulgora_scrap_medium + max(0, fulgora_natural, 2 * fulgora_mesa * fulgora_pyramids) * 2 - 0.9 + fulgora_rock + fulgora_road_dust * fulgora_sprawl",
+    ],
+    ["fulgoran_dunes_probability", "1 + fulgora_dunes"],
+    ["fulgoran_sand_probability", "1 - fulgora_dunes"],
+    ["fulgoran_rock_probability", "0.8 + fulgora_rock * 2 - max(0, fulgora_mix_oil) * 6"],
+  ] as const;
+
   const fields: Record<string, number[]> = {};
   for (const name of NAMES) {
     fields[name] = await sample(name);
     console.log(`  captured ${name}`);
+  }
+  for (const [key, expression] of COMPOSITE_PROBABILITIES) {
+    fields[key] = await sample(expression);
+    console.log(`  captured ${key}`);
   }
 
   const fixture = {
     _comment:
       "Ground truth from Factorio 2.1.14 (Space Age enabled) via the test/oracle harness: " +
       "Fulgora's mask, road/structure and ruins layer - the 22 named expressions the eight " +
-      "land tiles read that the elevation chain does not. Positions are IDENTICAL to " +
+      "land tiles read that the elevation chain does not - plus the four COMPOSITE " +
+      "probability_expressions (fulgoran_dust/dunes/sand/rock_probability), sampled as the " +
+      "verbatim expression strings from tiles-fulgora.lua because those four tiles declare " +
+      "no named expression of their own. Positions are IDENTICAL to " +
       "oracle-fulgora-shared/cells/elevation.seed123456.json, so all four line up " +
       "index-for-index. The intermediate paving stages (2, 2b, 2c) are captured as well as " +
       "the four tile_ruin outputs so a transcription error localises instead of surfacing " +
