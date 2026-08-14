@@ -538,34 +538,336 @@ so no control is offered that would silently do nothing.
 
 ## Task 12: measured render cost
 
-**~3.91 us/px**, at 1024x1024 and `tilesPerPixel` 1, min of 3 interleaved
-iterations through `test/render-cost.perf.spec.ts`'s existing harness (seed
-123456, origin (-512, -512)) - so it is comparable with the rows already
-recorded there rather than being a fresh one-off measurement.
+**V1 (land/ocean split only): ~3.91 us/px (4104 ms min-of-3). V2 (this task,
+full eight-way land argmax): ~4.78 us/px (5015 ms min-of-3)** - both at
+1024x1024 and `tilesPerPixel` 1, min of 3 interleaved iterations through
+`test/render-cost.perf.spec.ts`'s existing harness (seed 123456, origin
+(-512, -512)), so the two numbers are directly comparable.
 
-**The implementation plan estimated ~12 us/px. The measurement disagrees, and
-favourably**: Fulgora is roughly 3x cheaper than estimated and the cheapest
-planet in the table.
+**Re-measured 2026-08-13 after Task 14's eight-way land argmax landed, all
+four rows from the same run so the table is internally comparable** (do not
+diff it against the historical 8.02/14.94/21.46 recorded here previously -
+this file's own header warns that absolute ms drifts a few percent between
+processes, and comparing across two different table snapshots would repeat
+exactly the mistake it warns about):
 
 | render | us/px |
 | --- | --- |
-| **fulgora terrain (the only Fulgora view)** | **3.91** |
-| nauvis terrain | 8.02 |
-| vulcanus terrain | 14.94 |
-| vulcanus resources (the default Vulcanus view) | 21.46 |
+| **fulgora terrain (the only Fulgora view)** | **4.78** |
+| nauvis terrain | 7.58 |
+| vulcanus terrain | 13.82 |
+| vulcanus resources (the default Vulcanus view) | 20.23 |
 
-The reason is structural, not luck. Nauvis and Vulcanus each run a 19-to-21-tile
-argmax per pixel over a catalog whose members are separate expression trees;
-Fulgora resolves a 3-way class from ONE chain, and its four ocean probabilities
-share every field they read. The chain's ~31 `basis_noise` octaves per pixel are
-the whole cost.
+Fulgora rose **22%** (3.91 -> 4.78 us/px) and is still the cheapest planet in
+the table. The rise is real signal, not run-to-run noise: 22% is far past the
+few-percent drift this harness's own header documents between processes.
 
-Two things follow. **No profiling or optimisation was done, because the
-prerequisite for doing any was not met** - the Vulcanus lesson (an un-memoized
-DAG at ~81% of a CPU profile) prompted a `memoXY` audit, and every node in
-`fulgoraShared`, `fulgoraCells` and `fulgoraElevation` is already wrapped. And a
-512x512 preview costs about **1.0 s untiled**, so the existing 64-tile worker
-pool has ample headroom; nothing here needs the tiling budget the plan reserved.
+**Why it rose, and why not more.** V1's land branch read three scalars
+(`dunes`, `rock`, `mixOil`) and argmaxed them. V2 additionally evaluates
+`roadDust`, `mesa`, `pyramids`, `sprawl` and the four `tileRuin*` fields (which
+themselves pull in the whole masks/roads/ruins chain - two more Voronoi
+tilings and one more multioctave field) at every LAND pixel. Land is about 45%
+of positions (2261 of 5057 in the `oracle-fulgora-tiles` fixture). The ocean
+early-out (`if (bestOcean > 0) return ...`) is unchanged, so the other ~55% of
+pixels pay nothing extra for any of this - which is why the whole-image
+average rose 22% rather than several-fold: over half the image never reaches
+the new code at all.
+
+**Step 2 (the brief's land-only-window gate) is a no-op, recorded as one
+rather than skipped.** The brief calls for a separate land-only measurement
+only if terrain crosses ~12 us/px or rises over 3x. At 4.78 us/px and a 1.22x
+rise, this measurement clears neither gate, so the single whole-image average
+above is sufficient and no land-only window was separately benchmarked. (A
+land-centred origin with zero ocean pixels at `tpp: 1` is on record for future
+use if a later change does cross the gate: `(-5872, 3088)`, documented in
+`test/fulgoraExpressions.spec.ts`'s hash-window comment.)
+
+The implementation plan estimated ~12 us/px for Fulgora terrain; even after
+V2's land argmax the measurement is still **~2.5x cheaper than estimated** -
+down from V1's ~3x margin, as expected now that the land side does more work,
+but nowhere near erasing it.
+
+The reason Fulgora stays cheapest is structural, not luck. Nauvis and Vulcanus
+each run a 19-to-21-tile argmax per pixel over a catalog whose members are
+separate expression trees; Fulgora resolves a 3-way ocean class from one
+shared chain, with the land argmax now paid only on the ~45% of pixels that
+reach it. The chain's ~31 `basis_noise` octaves per pixel were already the
+whole V1 cost, and remain most of the V2 cost too.
+
+**No profiling or optimisation was done for V2, for the same reason as V1: the
+prerequisite was not met.** A 22% rise is well inside what this port's
+`memoXY` discipline already absorbs, and nothing here crosses a regression
+gate that would justify a profiling pass - every node in `fulgoraRoads`,
+`fulgoraRuins` and `fulgoraMasks` is wrapped the same way `fulgoraShared`,
+`fulgoraCells` and `fulgoraElevation` were for V1. A 512x512 preview now costs
+about **1.25 s untiled** (computed from the measured us/px, not separately
+timed), against V1's ~1.0 s - still ample headroom under the existing 64-tile
+worker pool.
 
 The row is now permanent in the perf spec rather than a number in this file, so
 a future regression shows up in `pnpm perf` alongside the other planets.
+
+---
+
+## Task 13: the road, structure and ruins layer (`fulgoraRoads.ts`, `fulgoraRuins.ts`, `fulgoraMasks.ts`)
+
+Lua lines 250-292 (masks), 403-512 (road/structure), 383-402 + 539-578 (ruins).
+Fixture: `test/fixtures/oracle-fulgora-ruins.seed123456.json`, the **same 101
+positions** as the shared/cells/elevation fixtures. Spec:
+`test/fulgoraExpressions.spec.ts`.
+
+### Agreement with the game, per field
+
+Worst |diff| at f32 over the 101 fixture positions:
+
+| field | worst | bound |
+| --- | --- | --- |
+| `naturalMask`, `naturalAndMesaMask`, `artificialMask` | **0** | 0 |
+| `roadCells`, `structureCells`, `roadPyramids`, `structureFacets` | **0** | 0 |
+| `roadPavingThin`, `roadPaving2`, `roadPaving2b`, `roadPaving2c`, `roadDust` | **0** | 0 |
+| `structureSubnoise` | 2.980e-7 | 4e-7 |
+| `pyramidsBanding` | 9.54e-7 | 1.5e-6 |
+| `spotsPrebanding` | 3.58e-6 | 5e-6 |
+| `spotsBanding` | 3.64e-6 | 5e-6 |
+| `ruinsPaving` | 2.384e-7 | 4e-7 |
+| `ruinsWalls` | 3.874e-7 | 6e-7 |
+| `tileRuinMachinery` | 3.800e-7 | 6e-7 |
+| `tileRuinConduit` | 4.172e-7 | 6e-7 |
+| `tileRuinPaving`, `tileRuinWalls` | 4.768e-7 | 7e-7 |
+
+Fourteen of the twenty fields are bit-exact by construction: the three masks
+are comparisons/`max`/`min` over 0-or-1 booleans, `roadCells`/`structureCells`
+are Voronoi cell IDs, `roadPyramids` is sampled at the raw undistorted
+`(x, y)` so it never inherits the wobble-distortion error the rest of the
+chain carries, and `structureFacets` plus the five `roadPaving*`/`roadDust`
+fields built from comparisons of it are exact once `structureFacets` itself is
+(see below). A non-zero residual on any of these fourteen would mean a
+rounding error grew large enough to flip a comparison, not slack to widen. The
+rest carry the port's known `basisNoise` floor, scaled by each expression's
+own composition.
+
+### Two f32 findings that needed OPPOSITE fixes
+
+The noise machine evaluates its program f32 per operation, and this port hit
+that twice in the road/structure layer, with two different symptoms and two
+different remedies - conflating them would have fixed one and silently left
+the other broken.
+
+- **`structure_subnoise` samples at `x + 10000 * structure_cells`.** Computing
+  the product in f64 and narrowing only where the coordinate crosses into
+  `sumOctaves` measured 3.910e-5 - an order of magnitude above every sibling
+  field. Narrowing the PRODUCT itself (`x + f32(10000 * structureCells(x,
+  y))`) instead of the sum drops it to 2.980e-7, a **131x** improvement.
+  Narrowing only the sum (what `sumOctaves`'s own #190 narrowing already does)
+  leaves it at 3.910e-5 - no help.
+- **`structure_cells` and `structure_facets` sample at `y * 0.8`.** Here
+  narrowing the product (`f32(y * 0.8)`) buys **nothing** - still 7.629e-6.
+  The defect is the constant itself: the engine's `0.8` literal is the f32
+  value 0.80000001192092895508, and JavaScript's `0.8` literal is the f64
+  value 0.80000000000000004441 - two different numbers. Narrowing the
+  CONSTANT (`y * f32(0.8)`) instead of the product gives exactly **0**.
+  Downstream, because `structureFacets` feeds `roadPaving2`/`2b`/`2c`/
+  `roadDust` and all four `tileRuin*` fields, this one fix moved
+  `tileRuinWalls` from 1.903e-5 to 4.768e-7 (**40x**), `tileRuinConduit` from
+  9.95e-6 to 4.172e-7 (**24x**), and `tileRuinMachinery` from 1.21e-5 to
+  3.800e-7 (**32x**) - none of which touch `structureSubnoise` or its own
+  narrowing at all.
+
+Same-looking symptom (an f32-sized residual on a field reading a scaled
+coordinate), opposite fix (narrow the product vs. narrow the constant) - so
+the next person chasing an f32 residual here should isolate which term is
+wrong before reaching for whichever fix worked last time.
+
+A residual landing at exactly 0 across all 101 positions is what confirms a
+mechanism, not "it got smaller": `structureFacets` moving from 7.629e-6 to 0
+is the same kind of evidence as `oilMask` and `cells` being exact elsewhere in
+this file - a hypothesis that only shrinks a residual is still a hypothesis.
+
+### The `%` sign convention - checked the OPERAND, not the modulo result; open at these 101 positions
+
+`pyramidsBanding` is `(fulgora_pyramids * 8) % 1` and `spotsBanding` is
+`spotsPrebanding % 1` - both JS `%`, whose sign follows the dividend the way
+C's `fmod` does, unlike a flooring modulo (whose sign follows the divisor and
+is never negative for a positive divisor). Which convention the game's engine
+actually implements only matters if the LEFT operand can be negative; if it
+can't, both conventions agree and the question is moot for that data.
+
+**The operand is what has to be checked, not the modulo's output.** A modulo
+result staying inside `[0, 1)` is consistent with either convention when the
+operand is non-negative, but it is ALSO consistent with a flooring modulo fed
+a negative operand - a flooring mod never leaves `[0, 1)` regardless of the
+operand's sign, so an output-only check cannot rule that case out. Only the
+pre-modulo value settles it.
+
+Read directly:
+
+- `fulgora_pyramids` in `test/fixtures/oracle-fulgora-cells.seed123456.json`
+  (the same 101 positions): minimum 0.002752, so `* 8` gives a minimum of
+  **0.02202** - strictly positive.
+- `fulgora_spots_prebanding` in the ruins fixture, which IS the pre-modulo
+  operand for `spotsBanding` directly: minimum **0.70791** - strictly
+  positive.
+
+So the `%` sign question **does not arise at these 101 positions** - not
+because it was tested and passed, but because the operand it would depend on
+never went negative in this sample. It stays an open question for the wider
+map, not a settled one.
+
+This corrects the method an earlier pass used: `fulgoraExpressions.spec.ts`'s
+`makeFulgoraRoads` block states the question "did not arise" because
+`fulgora_spots_prebanding` / `fulgora_pyramids_banding` "never go negative
+(checked directly)" - but `fulgora_pyramids_banding` is the fixture's
+POST-modulo result, not `pyramidsBanding`'s actual operand (`fulgora_pyramids
+* 8`, which lives in a different fixture entirely and was never read by that
+check). Checking a result array is not the same measurement as checking the
+value that feeds the modulo, for the reason above, and this file exists
+specifically so that drift doesn't stand unremarked - see the file header.
+
+---
+
+## Task 14: the eight-way land argmax
+
+Fixture: `test/fixtures/oracle-fulgora-tiles.seed123456.json`, 5057 real
+`surface.get_tile(x, y).name` results, 2261 of them land. Spec:
+`test/fulgoraLandTiles.spec.ts`.
+
+### 124 of 2261 land positions disagree (94.5%)
+
+Measured by resolving all eight land tiles' `probability_expression`s against
+each other (`makeFulgoraTileResolver`) and comparing to the game's own
+`get_tile` name at every land position in the fixture: **124 mismatches, 2137
+correct.** `fulgoraAgreement.spec.ts`'s land/ocean and shallow/deep counts are
+unchanged at exactly 7 and 11 mismatches (of 5057 and 2796 respectively), so
+this layer did not move the land/ocean boundary - it only changed which of the
+eight tiles a land pixel gets painted.
+
+Per game tile (matched / total):
+
+| game tile | matched | total | rate |
+| --- | --- | --- | --- |
+| `fulgoran-walls` | 269 | 269 | 100.0% |
+| `fulgoran-conduit` | 147 | 147 | 100.0% |
+| `fulgoran-machinery` | 108 | 108 | 100.0% |
+| `fulgoran-rock` | 478 | 493 | 97.0% |
+| `fulgoran-paving` | 663 | 685 | 96.8% |
+| `fulgoran-dust` | 201 | 224 | 89.7% |
+| `fulgoran-sand` | 98 | 116 | 84.5% |
+| `fulgoran-dunes` | 173 | 219 | 79.0% |
+
+**Recall alone cannot clear a formula, and precision is what shows why.**
+`fulgoran-walls`, `-conduit` and `-machinery` all recall 100%, which reads as a
+clean result - but this port also names them at more positions than the game
+does (300, 159 and 115 respectively against the game's 269, 147, 108), so
+precision is 89.7%, 92.5% and 93.9%. Perfect recall with under-100% precision
+is exactly the signature a uniformly-too-large probability would leave (it
+keeps winning every position the game agrees on while also stealing a ring of
+neighbours) - so recall by itself cannot distinguish "the formula is right"
+from "the formula scores too high." See Task 15 for the check that actually
+rules the second one out.
+
+### The confusion pairs, so a regression arrives already localised
+
+A bare count would pass with every miss piled onto one tile. The largest
+pairs (game tile -> this port's tile, of 22 distinct pairs total, full list in
+`test/fulgoraLandTiles.spec.ts`):
+
+| pair | count |
+| --- | --- |
+| `fulgoran-dunes -> fulgoran-rock` | 25 |
+| `fulgoran-sand -> fulgoran-rock` | 12 |
+| `fulgoran-dunes -> fulgoran-walls` | 11 |
+| `fulgoran-paving -> fulgoran-rock` | 11 |
+| `fulgoran-dust -> fulgoran-rock` | 7 |
+| `fulgoran-dust -> fulgoran-sand` | 6 |
+| `fulgoran-dunes -> fulgoran-conduit` | 6 |
+| `fulgoran-paving -> fulgoran-walls` | 6 |
+| `fulgoran-rock -> fulgoran-walls` | 6 |
+
+Every one of the three-tile argmax's confusion pairs (`dunes -> rock`, `sand ->
+rock`, `rock -> dunes`, `dunes -> sand`) reappears here alongside new pairs
+among the five tiles the three-tile argmax could not see at all.
+`fulgoran-walls`, `-conduit` and `-machinery` never appear as the GAME side of
+any pair - consistent with their 100% recall above.
+
+### The mismatches are boundary-exclusive, at a stronger signal than V1's
+
+121 of the 124 mismatches (97.6%) are Chebyshev-1 adjacent to a position this
+resolver already classifies the way the game does, against a separately
+measured base rate of 67.0% (1515/2261) for that same adjacency among all
+scoped positions. `P(X >= 121 | n = 124, p = 0.6701) = 1.07e-17` (z is about
+7.24, computed from that n and p) - a stronger signal than either the ocean
+argmax's ~1e-10 or the three-tile argmax's 4.6e-12, because here both the
+count and the fraction rose together as the tile count widened from three to
+eight.
+
+### The sub-tile sampling offset is refuted, again
+
+A rival explanation - that the game samples tile autoplace at the tile centre
+rather than the corner this port (and every Fulgora fixture) uses - was tested
+across the whole 828-position three-tile fixture and loses on both metrics at
+every offset tried:
+
+| corner offset | land accuracy | land/ocean misses |
+| --- | --- | --- |
+| 0 (corner) | 783/828 (94.6%) | 18 (best) |
+| +0.25 | 755/828 (91.2%) | 54 |
+| +0.5 (centre) | 716/828 (86.5%) | 97 |
+| -0.5 | 732/828 (88.4%) | 109 |
+
+The corner wins on both the land argmax and the land/ocean split, at every
+offset tried, so this is not a sampling-alignment defect. Recorded here so
+nobody re-derives it a third time.
+
+**This is the same open question as the ocean residual's 18 boundary-exclusive
+mismatches** (Task 10 above) - something runs after the raw per-tile argmax,
+at a land/ocean or land/land boundary, and this port does not model it. The
+mechanism is unknown.
+
+---
+
+## Task 15: the placed tile is not always the argmax of the declared probability expressions
+
+**Headline finding.** Two independent counter-examples establish that
+highest-value-wins over the `probability_expression`s, transcribed verbatim
+from `tiles-fulgora.lua`, is not the whole selection rule - and neither is a
+port defect, because both were checked against the game's own evaluation of
+its own formulas, not inferred from this port's arithmetic.
+
+**1. The three-tile case (Task 1).** At `(-1628, 872)` the game's own
+`fulgoran-rock` formula scores **2.2537**, above `fulgoran-dunes`'s **1.6149**
+- and `get_tile` there is `fulgoran-dunes` anyway. Those two scores were
+reconstructed by sampling the named sub-expressions (`fulgora_rock`,
+`fulgora_dunes`, `fulgora_mix_oil`) directly from a live Fulgora surface and
+applying the tile formula, not inferred.
+
+**2. The ruins case (Task 14), stronger because it needs no reconstruction.**
+`fulgora_tile_ruin_walls` is itself a NAMED expression, so the game reports it
+directly - no formula has to be applied on this port's side at all. Sampled at
+all four `fulgoran-dunes -> fulgoran-walls` mismatches, 2.1.14, seed 123456:
+
+| position | `fulgora_tile_ruin_walls` (game) | `1 + fulgora_dunes` (game) | game places |
+| --- | --- | --- | --- |
+| (-1420, 892) | 1.868947 | 1.523166 | `fulgoran-dunes` |
+| (-1404, 920) | 1.552315 | 1.476634 | `fulgoran-dunes` |
+| (-1428, 1032) | 1.453150 | 1.332996 | `fulgoran-dunes` |
+| (-1420, 1044) | 1.526603 | 1.210111 | `fulgoran-dunes` |
+
+The game's own walls expression outscores its own dunes expression at all four
+positions, and `get_tile` is `fulgoran-dunes` at all four anyway.
+
+**This directly refutes the inflated-probability hypothesis that Task 14's
+precision numbers could only raise, not settle.** The margins the game reports
+here - 0.3458, 0.0757, 0.1202, 0.3165 - match this port's own margins at those
+same four positions to four decimal places. If `tileRuinWalls` were uniformly
+too large (the mechanism that would explain walls' 89.7% precision on its
+own), this port's margin would exceed the game's; it does not. So the
+over-placement Task 14 measured is not this port scoring `tileRuinWalls` too
+high - the same post-argmax mechanism is at work here as in the three-tile
+case, on a completely different tile pair.
+
+**The mechanism is unknown, and it is the same open question the ocean
+residual and the three-tile residual already raised** - not a new defect and
+not one this task closes. What is established: it runs after the raw per-tile
+argmax, it is boundary-concentrated (Task 14), and a tile-centre sampling
+offset is refuted as its cause (Task 14). Reverse-engineering the post-argmax
+pass itself is future work.

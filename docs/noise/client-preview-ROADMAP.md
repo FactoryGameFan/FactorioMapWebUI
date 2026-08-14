@@ -522,15 +522,52 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
         all twelve. Worth 211 of the first 218 mismatches. This is a general
         trap for any planet's tile catalog.
 
-      Deferred for Fulgora: the eight LAND tiles are not resolved against each
-      other (the ocean tiles dominate the argmax wherever they are placeable, so
-      only the land/ocean split is decided) - which means no road/ruin paving,
-      walls, conduit, machinery, `fulgoran-dust` or dunes/sand distinction. Also
-      deferred: scrap resources, cliffs, and the island finder. The remaining 18
-      tile mismatches are boundary-exclusive and are NOT reachable by any model
-      of the four ocean expressions - the game places water where its own
-      expressions score it unplaceable - so they need the post-argmax transition
-      pass reverse-engineered, not a constant re-fitted.
+      **Fulgora V2 (land tiles) - DONE 2026-08-13** (#27, PRs #195, #196). The
+      eight land tiles (`fulgoran-dust`, `-dunes`, `-sand`, `-rock`, `-paving`,
+      `-walls`, `-conduit`, `-machinery`) are now resolved against each other
+      in an eight-way argmax, built on a new road/structure layer
+      (`fulgoraRoads.ts`, two more Voronoi tilings) and a ruins layer
+      (`fulgoraRuins.ts`, `fulgoraMasks.ts`). `renderFulgoraTerrain` paints all
+      eight; the ocean side from V1 is unchanged.
+
+      **Agreement: 2137/2261 land positions (94.5%)**, against the same
+      `oracle-fulgora-tiles` fixture V1 used; the land/ocean and shallow/deep
+      counts stay unchanged at 7 and 11 mismatches, so this layer did not move
+      the boundary V1 already found. `fulgoran-walls`, `-conduit` and
+      `-machinery` recall 100% but precision only 89.7%-93.9% (they over-place
+      by a margin, not by a wrong shape); `fulgoran-dunes` is the
+      worst-matching tile at 79.0%. Full per-tile table and confusion pairs:
+      `docs/noise/fulgora-elevation-NOTES.md`.
+
+      **Headline finding, confirmed a second and stronger way: the placed tile
+      is not always the argmax of the declared probability expressions.**
+      `fulgora_tile_ruin_walls` is itself a named expression, so the game was
+      asked for it directly at four `fulgoran-dunes -> fulgoran-walls`
+      mismatches - the game's own walls formula outscores its own dunes
+      formula at all four, and `get_tile` is `fulgoran-dunes` anyway, with
+      margins that match this port's own to four decimal places (which rules
+      out an inflated `tileRuinWalls` formula as the cause). 121 of the 124
+      mismatches are Chebyshev-1 adjacent to a position already classified the
+      game's way (base rate 67.0%, `p = 1.07e-17`) - the same open,
+      unexplained post-argmax mechanism as V1's 18-mismatch residual below,
+      not a new defect. A sub-tile centre-sampling offset was tested again at
+      this wider scope and refuted again.
+
+      **Perf: ~4.78 us/px (was 3.91 for V1), +22%**, still the cheapest planet
+      rendered - the new road/structure/ruins fields are paid only on the
+      ~45% of pixels that reach past the ocean early-out. Full before/after
+      table: `docs/noise/fulgora-elevation-NOTES.md`.
+
+      Deferred for Fulgora: scrap resources, cliffs, and the island finder.
+      Two residuals remain open, and as far as anything measured so far can
+      tell they are the SAME unexplained post-argmax mechanism rather than two
+      defects: the original 18 land/ocean and shallow/deep tile mismatches are
+      boundary-exclusive and are NOT reachable by any model of the four ocean
+      expressions - the game places water where its own expressions score it
+      unplaceable - and the eight-land-tile argmax's 124 mismatches are also
+      boundary-exclusive and are not explained by a sampling offset or an
+      inflated formula either. Both need the post-argmax transition pass
+      reverse-engineered, not a constant re-fitted.
 
 ## Milestone 5 - integration
 
