@@ -124,10 +124,12 @@ export interface CliffBands {
    *
    * **Deliberately opaque.** This module is planet-agnostic - the corner
    * lattice, `crossesCliff` and the orientation table are engine behaviour - and
-   * the one rule that currently uses this hook is not engine behaviour at all
-   * but a characterised empirical one (Vulcanus's ORE -> CLIFF suppression, see
-   * `vulcanusOreRejection.ts`). Keeping it a bare predicate is what stops a
-   * planet-specific and mechanism-open rule from leaking into the shared core.
+   * the one rule that currently uses this hook is planet-specific and only
+   * partly explained (Vulcanus's ORE -> CLIFF suppression, see
+   * `vulcanusOreRejection.ts` - the mechanism is
+   * `ResourceEntityPrototype::cliff_removal_probability`, but the geometry it
+   * removes with is still an empirical fit). Keeping it a bare predicate is what
+   * stops such a rule from leaking into the shared core.
    *
    * It runs at the same site as `tileCollides` rather than as a filter over
    * `placedCells`' return value so that the model the specs score is the model

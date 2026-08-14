@@ -61,12 +61,20 @@ import { withCtxDefaults } from "../src/noise/eval/ctx";
  * surface before chunk N+1's cliffs are applied, and it still cannot matter).
  *
  * **The consequence that matters for #84.** The box-overlap model in
- * `vulcanusOreRejection.ts` is a characterised empirical rule that does not
- * correspond to the engine's collision test. Widening its box until the
- * remaining cells fall out would not be modelling a known code path; it would be
- * fitting a shape to an unexplained effect, which is exactly what #88 records as
- * having shipped a wrong model that scored perfectly. The recall gap is real and
- * worth closing - but not that way.
+ * `vulcanusOreRejection.ts` does not correspond to the engine's collision test.
+ * Widening its box until the remaining cells fall out would not be modelling a
+ * known code path; it would be fitting a shape to an effect whose geometry is
+ * still unknown, which is exactly what #88 records as having shipped a wrong
+ * model that scored perfectly. The recall gap is real and worth closing - but
+ * not that way.
+ *
+ * **Update 2026-08-14: the effect now has a name, and it predicts this
+ * result.** `ResourceEntityPrototype::cliff_removal_probability` (default 1.0)
+ * is the mechanism - see `cliffRemovalProbability.spec.ts`. A field that
+ * *removes* cliffs can only act on cliffs that already exist, so "destroyed
+ * rather than never queued" is what it predicts, and this spec's thin n=1
+ * result stops standing on its own. It does not name the geometry, so the
+ * warning above about widening the box is unchanged.
  */
 
 const INPUT = { seed0: 123456, startingPositions: [{ x: 0, y: 0 }] };

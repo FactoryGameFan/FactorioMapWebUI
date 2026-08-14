@@ -2125,9 +2125,9 @@ the best-scoring collision model was the wrong one.
   cliffs for it.** Higher `correct` is exactly the trap: recall is the half that
   must not be traded. Note this means the ore rule and the lava rejection use
   *different* cliff rectangles - the base `collision_box` and the per-orientation
-  one respectively - which is only defensible because the ore mechanism is open
-  and the base box is the shape it was measured with. If the mechanism is ever
-  found, revisit this first.
+  one respectively - which is defensible because the base box is the shape the
+  rule was measured with, and because naming the mechanism (below) did not name
+  its geometry. Revisit this first if the geometry is ever found.
 
 ### What is NOT claimed
 
@@ -2135,10 +2135,42 @@ the best-scoring collision model was the wrong one.
 until they fall out: 10 are #99's run remainders and 1 is the cell our ore model
 misses. `test/cliffOreRejection.spec.ts` pins that 11 so the gap stays tracked.
 
-The **mechanism is still open**. This ships a characterised empirical rule -
-one-way, additive, local, box-shaped - and the disassembly still says cliffs are
-computed and placed before any resource entity exists, so whatever the engine is
-really doing, it is not the collision test this models.
+The **mechanism is SOLVED as of 2026-08-14**, and the note here used to say it
+was open. It is `ResourceEntityPrototype::cliff_removal_probability`, a
+documented field that defaults to **1.0** and that no shipped prototype
+overrides - so it is invisible from the data and can only be seen by changing
+it. `test/cliffRemovalProbability.spec.ts` holds the arms:
+
+| arm | blob cells | cliff-vulcanus | resources | field |
+| --- | --- | --- | --- | --- |
+| control | 0 / 10 | 335 | 945 | 1 |
+| field = 0 | **10 / 10** | 345 | **945** | 0 |
+| resources OFF | 10 / 10 | 345 | 0 | 1 |
+
+The middle arm is the whole result: all 945 resource entities stay exactly where
+the control has them and the cliffs come back anyway, so no account resting on
+the ore's mere PRESENCE survives. It is indistinguishable from the
+resources-OFF arm, and 345 - 335 is exactly the ten blob cells, so the field
+accounts for the effect entirely rather than partly.
+
+**A prototype lever is a different instrument from a surface lever**, and that
+is why five issues of `autoplace_controls` work could not reach this. A surface
+setting can only add or remove the ore; a prototype field can leave it in place
+and change one thing about it. `OracleOptions.extraDataLua` exists for that now,
+and writes `data-final-fixes.lua` rather than `data.lua`, because the probe mod
+declares no dependencies and may otherwise load before `space-age`.
+
+**Nothing in the port changes.** At 1.0 the removal is unconditional, so the
+box-overlap rejection is correct as written. Two things do change: the
+disassembly finding below (cliffs are computed and placed before any resource
+entity exists, so this is not the engine's collision test) stops being a dead
+end and becomes the reason the effect had to be a *removal*; and the thin n=1
+destroy-stage result gains outside support, since a field that removes cliffs
+can only act on cliffs that already exist.
+
+**Still open: the geometry.** Which rectangle the engine removes with is not
+settled by naming the field, so the base-`collision_box` choice above remains an
+empirical fit and the box still must not be tuned.
 
 ### Where it lives
 

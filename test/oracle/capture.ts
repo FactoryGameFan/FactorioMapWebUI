@@ -5125,6 +5125,138 @@ async function captureVulcanusCliffOreDirection(): Promise<void> {
 }
 
 /**
+ * **The MECHANISM behind the ore -> cliff exclusion, which every arm before
+ * this one could only characterise.**
+ *
+ * `oracle-vulcanus-cliff-ore-direction` settled the direction by switching the
+ * resources OFF. That answers "which way does it run" and cannot answer "how",
+ * because removing the ore removes everything about the ore at once. The
+ * distinguishing lever is a PROTOTYPE field: leave all 945 resource entities
+ * exactly where the control has them and change one property of them.
+ *
+ * `ResourceEntityPrototype::cliff_removal_probability` defaults to **1.0**, and
+ * no shipped prototype overrides it - grepped across `base/`, `core/`,
+ * `space-age/`, `quality/` and `elevated-rails/`. So it is invisible from the
+ * data alone and can only be seen by changing it.
+ *
+ * A prototype field cannot be reached by a surface setting the way
+ * `autoplace_controls` and `cliff_settings` can: it is read at map-gen from the
+ * loaded prototype. That is what {@link OracleOptions.extraDataLua} exists for,
+ * and why it writes `data-final-fixes.lua` rather than `data.lua` - this probe
+ * mod declares no dependencies, so Factorio may load it before `space-age` and
+ * an override written at the data stage would silently edit nothing.
+ *
+ * Each arm reads the field back off the RUNNING GAME through `protos`, so an
+ * override that failed to apply cannot be mistaken for a field that does not
+ * matter. That read-back is the whole reason this is an arm rather than a hope.
+ */
+async function captureVulcanusCliffRemovalProbability(): Promise<void> {
+  const seed = 123456;
+  const blobRegion: Region = { x0: 0, y0: 0, x1: 256, y1: 256 };
+  const ONE_BAND = 1000000;
+  // Identical to `vulcanus-cliff-ore-direction`'s blob arms, so the two
+  // fixtures are directly comparable rather than nearly comparable.
+  const COLLAPSED = {
+    cliff_smoothing: 0,
+    cliff_elevation_interval: ONE_BAND,
+    cliff_elevation_0: 70,
+    richness: 4,
+  };
+  const OFF = { frequency: 1, size: 0, richness: 1 };
+  const ALL_OFF = {
+    tungsten_ore: OFF,
+    calcite: OFF,
+    vulcanus_coal: OFF,
+    sulfuric_acid_geyser: OFF,
+  };
+  const PROTOS = ["cliff-vulcanus", "tungsten-ore", "calcite", "coal", "sulfuric-acid-geyser"];
+  const ZERO_REMOVAL = `
+-- Leave every resource exactly where it is and zero ONE prototype field.
+for _, proto in pairs(data.raw.resource) do
+  proto.cliff_removal_probability = 0
+end
+`;
+
+  const arms: {
+    label: string;
+    autoplaceControls?: Record<string, { frequency: number; size: number; richness: number }>;
+    extraDataLua?: string;
+  }[] = [
+    { label: "blob COLLAPSED, resources ON, cliff_removal_probability at its 1.0 default" },
+    {
+      label: "blob COLLAPSED, resources ON, cliff_removal_probability = 0",
+      extraDataLua: ZERO_REMOVAL,
+    },
+    { label: "blob COLLAPSED, ALL resources OFF", autoplaceControls: ALL_OFF },
+  ];
+
+  const cases: unknown[] = [];
+  for (const arm of arms) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(blobRegion, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "vulcanus",
+        cliffSettings: COLLAPSED,
+        autoplaceControls: arm.autoplaceControls,
+        alsoResources: true,
+        protoNames: PROTOS,
+        extraDataLua: arm.extraDataLua,
+      });
+      cases.push({
+        label: arm.label,
+        region: blobRegion,
+        cliffSettings: COLLAPSED,
+        autoplaceControls: arm.autoplaceControls ?? null,
+        zeroedCliffRemovalProbability: arm.extraDataLua !== undefined,
+        effectiveCliffSettings: dump.cliffSettings,
+        effectiveAutoplace: dump.autoplaceControls,
+        cliffs: dump.cliffs,
+        resources: dump.resources,
+        protos: dump.protos,
+      });
+      const named = dump.cliffs as unknown as readonly { name: string }[];
+      const vulc = named.filter((c) => c.name === "cliff-vulcanus").length;
+      console.log(
+        `  ${arm.label} -> ${String(vulc)} cliff-vulcanus, ` +
+          `${String(dump.resources?.length ?? -1)} resources, ` +
+          `tungsten cliff_removal_probability=${String(
+            dump.protos?.["tungsten-ore"]?.cliff_removal_probability,
+          )}`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 via test/oracle. Names the MECHANISM of the Vulcanus " +
+      "cliff/ore exclusion (#84, #24), which oracle-vulcanus-cliff-ore-direction could only give " +
+      "a direction for. The distinguishing arm leaves every one of the 945 resource entities " +
+      "exactly where the control has them and sets ONE prototype field, " +
+      "ResourceEntityPrototype::cliff_removal_probability, to 0 - a change no surface setting can " +
+      "make, because a prototype field is read at map-gen from the loaded prototype. The cliffs " +
+      "come back anyway, and that arm is indistinguishable from the resources-OFF arm. The field " +
+      "defaults to 1.0 and no shipped prototype overrides it, which is why the port's " +
+      "unconditional box-overlap rejection is correct as written: the BEHAVIOUR does not change, " +
+      "the explanation does. Every arm reads the field back off the running game in `protos`, so " +
+      "an override that failed to apply cannot be mistaken for a term that does not matter. " +
+      "Sampled on a create_surface() surface whose seed is FORCED to `seed`, like every other " +
+      "Vulcanus oracle fixture. Regenerate: node --experimental-strip-types " +
+      "test/oracle/capture.ts vulcanus-cliff-removal-probability",
+    seed,
+    blobRegion,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-cliff-removal-probability.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} arms)`);
+}
+
+/**
  * **Eight more regions, to make the CHUNK-BORDER question decisive** (#84).
  *
  * The unexplained residual is enriched on chunk borders: 9 of 14 on the original
@@ -6583,6 +6715,7 @@ if (want("vulcanus-cliff-bands")) await captureVulcanusCliffBands();
 if (want("vulcanus-cliff-fine-sweep")) await captureVulcanusCliffFineSweep();
 if (want("cliff-entities")) await captureCliffEntities();
 if (want("vulcanus-cliff-ore-direction")) await captureVulcanusCliffOreDirection();
+if (want("vulcanus-cliff-removal-probability")) await captureVulcanusCliffRemovalProbability();
 if (want("vulcanus-cliff-ore-direction-regions")) await captureVulcanusCliffOreDirectionRegions();
 if (want("vulcanus-tile-lever")) await captureVulcanusTileLever();
 if (want("vulcanus-cliff-ore-richness")) await captureVulcanusCliffOreRichness();
