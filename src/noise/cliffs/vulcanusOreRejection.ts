@@ -20,9 +20,42 @@
  *   half-extent is 1.398 against the ores' 0.098: a point-at-tile-centre test
  *   explains the calcite cells and cannot explain the geyser ones.
  *
- * **NOT established: the mechanism.** This is a characterised empirical rule,
- * not a port of a known engine path, and the difference matters enough to state
- * at the top of the file. The obvious candidate is refuted:
+ * **ESTABLISHED 2026-08-14: the mechanism is
+ * `ResourceEntityPrototype::cliff_removal_probability`.** It defaults to
+ * **1.0**, and no shipped prototype overrides it - grepped across `base/`,
+ * `core/`, `space-age/`, `quality/` and `elevated-rails/` - so it is invisible
+ * from the data alone and can only be seen by changing it.
+ *
+ * Settled by a lever, and specifically by a PROTOTYPE lever rather than a
+ * surface one (`test/cliffRemovalProbability.spec.ts`). Switching the resources
+ * off, which is how #99 fixed the direction, removes everything about the ore
+ * at once and so can never say how. Zeroing one field instead leaves all 945
+ * resource entities exactly where the control has them:
+ *
+ * | arm | blob cells | cliff-vulcanus | resources | field |
+ * | --- | --- | --- | --- | --- |
+ * | control | 0 / 10 | 335 | 945 | 1 |
+ * | field = 0 | **10 / 10** | 345 | **945** | 0 |
+ * | resources OFF | 10 / 10 | 345 | 0 | 1 |
+ *
+ * The zeroed arm is indistinguishable from the no-resources arm, and 345 - 335
+ * is exactly the ten blob cells, so the field accounts for the effect entirely
+ * rather than partly. Each arm reads the field back off the running game, so an
+ * override that failed to apply cannot be mistaken for a term that does not
+ * matter.
+ *
+ * **No code changes, and that is the point of recording it.** At 1.0 the
+ * removal is unconditional, so the box-overlap rejection below is correct
+ * exactly as written. What changes is that its SHAPE is explained rather than
+ * fitted - a placed resource destroys the cliffs it collides with - and that
+ * the refutation below stops being a dead end and becomes the reason the effect
+ * had to be a removal at all.
+ *
+ * **Still NOT established: the geometry the engine removes with.** The base
+ * `collision_box` in point 1 below remains an empirical fit rather than a read
+ * of the code path, and naming the field licenses no tuning of it.
+ *
+ * The rival candidate was refuted before any of this, and stays refuted:
  * `EntityMapGenerationTask::computeInternal` (`0x101622860`) calls
  * `generateCliffs` at `+44` and `generateEntities` at `+148`, and `apply`
  * (`0x101623b48`) calls `applyCliffs` at `+124` and `applyEntities` at `+164`,
@@ -58,7 +91,10 @@
  * ore-suppressed cell whose neighbour can tell destruction from non-generation
  * (`1546,1550.5`, a geyser cell) says DESTROYED, so the effect enters at
  * `applyCliffs`/`Surface::wouldCollide` and not at `crossingsForChunk`. n=1 -
- * the oracle is thin here and the spec says so.
+ * the oracle is thin here and the spec says so. **That thin result is now
+ * corroborated by something other than itself:** a field literally named
+ * `cliff_removal_probability` can only act on a cliff that already exists, so
+ * "destroyed rather than never queued" is what the mechanism predicts.
  *
  * **Consequence for anyone about to widen the box:** it would not be modelling a
  * known code path, because the engine's entity collision provably is not this
@@ -72,8 +108,9 @@
  *    (`CLIFF_ORIENTATION_COLLISION_BOX`). Those are materially different shapes
  *    - the base box is `+/-0.988 x +/-0.488`, while orientation 4's rotbb is
  *    `[-3.5,-3,4.5,3]`. The base box is the one the rule was measured with, and
- *    since the mechanism is open there is nothing that says the ore rule should
- *    reuse the collision path's shape. `test/cliffOreRejection.spec.ts` scores
+ *    naming the mechanism does not settle its geometry - a removal test need not
+ *    reuse the collision path's shape, and nothing yet says which shape it does
+ *    use. `test/cliffOreRejection.spec.ts` scores
  *    BOTH so the choice is a recorded measurement rather than an assumption -
  *    which is the lesson #88/#90 already paid for, where the best-scoring
  *    collision model was the wrong one because it absorbed an unrelated defect.

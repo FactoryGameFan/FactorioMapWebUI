@@ -690,6 +690,11 @@ ${names.map((n) => `    kept[${JSON.stringify(n)}] = nil`).join("\n")}
           lx = p.collision_box.left_top.x, ly = p.collision_box.left_top.y,
           rx = p.collision_box.right_bottom.x, ry = p.collision_box.right_bottom.y,
         } or nil,
+        -- Read BACK off the running game, so an extraDataLua prototype
+        -- override has to prove it applied instead of being assumed. A resource
+        -- arm that cannot show the field it changed is not an arm.
+        cliff_removal_probability = p.cliff_removal_probability,
+        map_grid = p.map_grid,
       }
     end
   end
@@ -915,6 +920,15 @@ export interface DumpedProto {
   readonly type: string;
   readonly layers: string[];
   readonly box?: { lx: number; ly: number; rx: number; ry: number };
+  /**
+   * `ResourceEntityPrototype::cliff_removal_probability`, read back off the
+   * running game. Defaults to 1.0 and no shipped prototype overrides it, so a
+   * value other than 1 means an {@link OracleOptions.extraDataLua} override
+   * applied - which is the only thing that makes such an arm non-vacuous.
+   */
+  readonly cliff_removal_probability?: number;
+  /** `ResourceEntityPrototype::map_grid`. Defaults to true; only fluid and vent resources set it false. */
+  readonly map_grid?: boolean;
 }
 
 /** The cliff probe's full dump: the entities plus the settings that produced them. */
@@ -1236,6 +1250,18 @@ export interface OracleOptions {
   /** Entity prototypes whose collision box and mask layers to dump. Needs {@link alsoResources}. */
   protoNames?: readonly string[];
   /**
+   * Extra data-stage Lua appended to the probe mod's `data.lua`, for overriding
+   * PROTOTYPE fields that no runtime setting can reach.
+   *
+   * `autoplaceControls` and `cliffSettings` are surface settings, so they can be
+   * changed at `on_init`. A prototype field cannot: it is read at map-gen from
+   * the loaded prototype, so the only lever is the data stage. That is the
+   * difference between "switch the ore off" and "leave the ore exactly where it
+   * is and change one property of it", and only the second can separate a
+   * resource's PRESENCE from a specific behaviour of it.
+   */
+  extraDataLua?: string;
+  /**
    * `map_gen_settings.autoplace_settings` categories (`"entity"`, `"tile"`,
    * `"decorative"`) to switch off wholesale - `treat_missing_as_default = false`
    * with no settings, so nothing in the category is placed.
@@ -1551,6 +1577,15 @@ export async function sampleCliffEntitiesFull(
   // control script rather than a second mod.
   if (opts.probeExpression !== undefined)
     await writeFile(join(modFilesDir, "data.lua"), buildDataLua(opts.probeExpression));
+  // `extraDataLua` goes in data-final-fixes.lua, NOT data.lua, and the
+  // difference is load order rather than taste. This mod declares no
+  // dependencies, so Factorio is free to run its `data.lua` before
+  // `space-age`'s - at which point `data.raw.resource["tungsten-ore"]` does not
+  // exist yet and an override would silently do nothing.
+  // `data-final-fixes.lua` runs after every mod's data and data-updates stages,
+  // so the prototype is always there to edit.
+  if (opts.extraDataLua !== undefined)
+    await writeFile(join(modFilesDir, "data-final-fixes.lua"), opts.extraDataLua);
   await writeFile(
     join(modDir, "mod-list.json"),
     JSON.stringify(
