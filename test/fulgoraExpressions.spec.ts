@@ -15,31 +15,55 @@ import { renderFulgoraTerrain } from "../src/noise/preview/renderFulgoraTerrain"
 import { sliderRescale } from "../src/noise/eval/math";
 
 /**
- * Shared by every describe block that reads `oracle-fulgora-ruins.seed123456.json`
- * (masks here; Tasks 3 and 4 add the road/structure and ruins layers on top of
- * the same fixture). Module scope on purpose - the existing `check` helpers
- * above are each trapped inside their own `describe` and are not reachable from
- * anywhere else, and this one needs to be reachable from more than one.
+ * Build the bound-checked comparator for one fixture's position list.
+ *
+ * Every `describe` block below compares the same way: walk the fixture's
+ * positions, evaluate the ported field, and assert the WORST absolute residual
+ * against the game's value stays within that field's own bound. Only the
+ * position list differs, so it is the only parameter.
+ *
+ * **Compare at f32.** Both sides are narrowed with `Math.fround` first. The
+ * game reports f32 values and this port evaluates in f32, so an f64 comparison
+ * would be measuring JavaScript's extra precision rather than the port.
+ *
+ * **`bound` is the measured worst residual for that one field, with modest
+ * headroom - never a blanket tolerance.** Each caller passes its own, so a
+ * regression in one field cannot hide behind another field's slack, and a
+ * field that should be exact is bounded at 0 rather than at "small". Widening
+ * a bound to make a test pass has hidden a real defect twice on this port; see
+ * `src/noise/eval/f32.ts` for both cases and what to check instead.
+ *
+ * The failure message names the worst position AND its coordinates, so a red
+ * test points at a place on the map you can sample directly.
  */
-const checkRuins = (fn: (x: number, y: number) => number, want: number[], bound: number): void => {
-  let worst = 0;
-  let worstAt = -1;
-  for (let i = 0; i < ruinsFixture.positions.length; i++) {
-    const p = ruinsFixture.positions[i] as { x: number; y: number };
-    const got = Math.fround(fn(p.x, p.y));
-    const d = Math.abs(got - Math.fround(want[i] as number));
-    if (d > worst) {
-      worst = d;
-      worstAt = i;
+const makeCheck =
+  (positions: readonly { x: number; y: number }[]) =>
+  (fn: (x: number, y: number) => number, want: number[], bound: number): void => {
+    let worst = 0;
+    let worstAt = -1;
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i] as { x: number; y: number };
+      const d = Math.abs(Math.fround(fn(p.x, p.y)) - Math.fround(want[i] as number));
+      if (d > worst) {
+        worst = d;
+        worstAt = i;
+      }
     }
-  }
-  expect(
-    worst,
-    `worst residual ${worst.toExponential(3)} at position ${String(worstAt)} ` +
-      `(${String((ruinsFixture.positions[worstAt] as { x: number; y: number } | undefined)?.x)}, ` +
-      `${String((ruinsFixture.positions[worstAt] as { x: number; y: number } | undefined)?.y)})`,
-  ).toBeLessThanOrEqual(bound);
-};
+    const at = positions[worstAt] as { x: number; y: number } | undefined;
+    expect(
+      worst,
+      `worst residual ${worst.toExponential(3)} at position ${String(worstAt)} ` +
+        `(${String(at?.x)}, ${String(at?.y)})`,
+    ).toBeLessThanOrEqual(bound);
+  };
+
+/**
+ * Shared by every describe block that reads `oracle-fulgora-ruins.seed123456.json`
+ * (the masks, the road/structure layer and the ruins layer all sample the same
+ * fixture). Module scope because more than one block needs it; the per-block
+ * comparators below are built from the same factory and stay local.
+ */
+const checkRuins = makeCheck(ruinsFixture.positions);
 
 /**
  * Fulgora's shared layer, checked against the game.
@@ -58,10 +82,8 @@ describe("makeFulgoraShared", () => {
   const positions = fixture.positions;
 
   /**
-   * Compare at f32. `bound` is the measured worst residual for that field with
-   * modest headroom, NOT a blanket tolerance - each is set from what that field
-   * actually achieves, so a regression in one cannot hide behind another's
-   * slack. Measured worst, 101 positions:
+   * See `makeCheck` for how the comparison works and what a `bound` means.
+   * Measured worst, 101 positions:
    *
    * | field | worst | bound |
    * | --- | --- | --- |
@@ -86,25 +108,7 @@ describe("makeFulgoraShared", () => {
    * coordinates. They were NOT exact until the capture snapped its positions to
    * a quarter tile; unsnapped, they were out by exactly 1/256.
    */
-  const check = (fn: (x: number, y: number) => number, want: number[], bound: number): void => {
-    let worst = 0;
-    let worstAt = -1;
-    for (let i = 0; i < positions.length; i++) {
-      const p = positions[i] as { x: number; y: number };
-      const got = Math.fround(fn(p.x, p.y));
-      const d = Math.abs(got - Math.fround(want[i] as number));
-      if (d > worst) {
-        worst = d;
-        worstAt = i;
-      }
-    }
-    expect(
-      worst,
-      `worst residual ${worst.toExponential(3)} at position ${String(worstAt)} ` +
-        `(${String((positions[worstAt] as { x: number; y: number } | undefined)?.x)}, ` +
-        `${String((positions[worstAt] as { x: number; y: number } | undefined)?.y)})`,
-    ).toBeLessThanOrEqual(bound);
-  };
+  const check = makeCheck(positions);
 
   it("fulgora_grid is a constant 175 at the default frequency", () => {
     // Sampled per-position by the oracle, so this also proves it does not vary
@@ -250,22 +254,7 @@ describe("makeFulgoraCells", () => {
   const cells = makeFulgoraCells(shared, ctx);
   const positions = cellsFixture.positions;
 
-  const check = (fn: (x: number, y: number) => number, want: number[], bound: number): void => {
-    let worst = 0;
-    let worstAt = -1;
-    for (let i = 0; i < positions.length; i++) {
-      const p = positions[i] as { x: number; y: number };
-      const d = Math.abs(Math.fround(fn(p.x, p.y)) - Math.fround(want[i] as number));
-      if (d > worst) {
-        worst = d;
-        worstAt = i;
-      }
-    }
-    expect(
-      worst,
-      `worst residual ${worst.toExponential(3)} at position ${String(worstAt)}`,
-    ).toBeLessThanOrEqual(bound);
-  };
+  const check = makeCheck(positions);
 
   it("shares its position set with the shared-layer fixture", () => {
     // The two fixtures are compared field-against-field elsewhere; if they ever
@@ -518,24 +507,7 @@ describe("makeFulgoraElevation", () => {
    * comparison, so a residual there would mean an upstream error had grown
    * enough to flip a sign - reclassifying land as ocean rather than shading it.
    */
-  const check = (fn: (x: number, y: number) => number, want: number[], bound: number): void => {
-    let worst = 0;
-    let worstAt = -1;
-    for (let i = 0; i < positions.length; i++) {
-      const p = positions[i] as { x: number; y: number };
-      const d = Math.abs(Math.fround(fn(p.x, p.y)) - Math.fround(want[i] as number));
-      if (d > worst) {
-        worst = d;
-        worstAt = i;
-      }
-    }
-    expect(
-      worst,
-      `worst residual ${worst.toExponential(3)} at position ${String(worstAt)} ` +
-        `(${String((positions[worstAt] as { x: number; y: number } | undefined)?.x)}, ` +
-        `${String((positions[worstAt] as { x: number; y: number } | undefined)?.y)})`,
-    ).toBeLessThanOrEqual(bound);
-  };
+  const check = makeCheck(positions);
 
   it("shares its position set with the shared-layer fixture", () => {
     expect(positions).toEqual(fixture.positions);

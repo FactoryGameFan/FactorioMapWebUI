@@ -16,6 +16,7 @@
  * 2. Richness is not ported at all - the preview renders placement, not yield.
  */
 import type { EvalCtx } from "../eval/ctx";
+import { f32 } from "../eval/f32";
 import { clamp, max, min } from "../eval/math";
 import { memoXY } from "../eval/memoXY";
 import { sliderRescale } from "../eval/sliderRescale";
@@ -79,8 +80,6 @@ const MAX_SPOT_BASEMENT_RADIUS = 128;
  * their own separate streams, which is harmless precisely because the streams differ.
  */
 const SKIP_SPAN = 3;
-
-const f32 = Math.fround;
 
 export function makeVulcanusResources(
   ctx: EvalCtx,

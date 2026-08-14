@@ -679,6 +679,15 @@ This layer is where the real effort and the ongoing maintenance sit: the trees
 are large, interdependent, reference the `control:*` constants, and differ across
 game versions and base-vs-Space-Age.
 
+**Before porting a new planet, read `src/noise/eval/f32.ts`.** The game's noise
+machine evaluates its program in f32, one operation at a time, and JavaScript
+does not. That gap is the single largest source of residuals this port has hit.
+The module's header carries the rule, both worked examples, and the reason the
+two need opposite fixes - narrowing the product in one case and narrowing the
+constant in the other. It also says why widening a spec's bound is the wrong
+response to a residual: doing that has hidden a real defect twice here, once
+worth 131x and once worth 40x.
+
 ## Settings wiring (layer 4)
 
 The app already models the levers in `Preset`

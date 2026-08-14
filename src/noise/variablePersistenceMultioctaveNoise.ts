@@ -52,9 +52,14 @@
  */
 
 import { basisNoise, basisNoiseTablesFromSeed, type BasisNoiseTables } from "./basisNoise";
+import { f32 } from "./eval/f32";
 
-/**
+/*
  * `OCTAVE_SHIFT` is GONE, and its absence is the fix.
+ *
+ * A plain block comment, not a `/**` one: it documents a constant that no
+ * longer exists, so binding it to whatever declaration happens to follow would
+ * be wrong. The module header above points here.
  *
  * It was `-7936`, fitted as "independent of seed, input_scale, offset_x and
  * persistence to the noise floor". The fit was not measuring a shift - it was
@@ -74,7 +79,6 @@ import { basisNoise, basisNoiseTablesFromSeed, type BasisNoiseTables } from "./b
  * a shift of -7936*5 lands where an f32 ulp is ~3.9e-3. Same defect and same
  * pairing as the plain op's `-1774.83`; see docs/noise/multioctave-noise-NOTES.md.
  */
-const f32 = Math.fround;
 
 export interface VariablePersistenceMultioctaveParams {
   /** Map seed (basis seed word). */

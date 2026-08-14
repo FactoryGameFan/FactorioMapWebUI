@@ -1,4 +1,4 @@
-const f32 = Math.fround;
+import { f32 } from "../eval/f32";
 
 /**
  * The native Factorio `expression_in_range(peak_multiplier, peak_maximum,

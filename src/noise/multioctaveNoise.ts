@@ -34,6 +34,7 @@
  */
 
 import { basisNoise, basisNoiseTablesFromSeed, type BasisNoiseTables } from "./basisNoise";
+import { f32 } from "./eval/f32";
 // The fastapprox log2/exp2/pow primitives moved to ./fastApprox (the resource
 // spot-height/blob-amplitude expressions need the same fast cbrt); re-exported here
 // for the existing importers and tests.
@@ -91,8 +92,6 @@ export interface MultioctaveParams {
   /** Overall output multiplier. */
   readonly outputScale: number;
 }
-
-const f32 = Math.fround;
 
 /**
  * The per-octave input scales and amplitudes, derived exactly as

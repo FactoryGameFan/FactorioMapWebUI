@@ -30,6 +30,7 @@
  */
 import { basisNoise, basisNoiseTablesFromSeed, type BasisNoiseTables } from "../basisNoise";
 import { distanceFromNearestPoint, type Point } from "../distanceFromNearestPoint";
+import { f32 } from "../eval/f32";
 import { makeElevationNauvis } from "../expressions/elevationNauvis";
 import { fastCbrt } from "../fastApprox";
 import { selectSpots, type SelectedSpot } from "../spotSelection";
@@ -71,7 +72,6 @@ export interface StartingPatches {
   field(x: number, y: number): number;
 }
 
-const f32 = Math.fround;
 /** region index for a coordinate (regions centred on multiples of STARTING_REGION_SIZE). */
 const regionIndex = (c: number): number =>
   Math.floor((c + STARTING_REGION_SIZE / 2) / STARTING_REGION_SIZE);
