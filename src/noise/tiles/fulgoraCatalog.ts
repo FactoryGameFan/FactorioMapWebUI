@@ -158,6 +158,35 @@ function landProbabilitiesFrom(
 }
 
 /**
+ * The Fulgora field DAG, built once.
+ *
+ * Three call sites used to build their own copy - the tile resolver, the land
+ * probabilities and (from Task 3) the scrap field. `memoXY` is a SINGLE-ENTRY
+ * cache, so separate copies share nothing at all and each pays for the whole
+ * tree. This mirrors `VulcanusStack` in `vulcanusCatalog.ts`, which exists for
+ * the same measured reason.
+ */
+export interface FulgoraStack {
+  readonly ctx: FulgoraCtx;
+  readonly shared: ReturnType<typeof makeFulgoraShared>;
+  readonly cells: ReturnType<typeof makeFulgoraCells>;
+  readonly chain: ReturnType<typeof makeFulgoraElevation>;
+  readonly masks: ReturnType<typeof makeFulgoraMasks>;
+  readonly roads: ReturnType<typeof makeFulgoraRoads>;
+  readonly ruins: ReturnType<typeof makeFulgoraRuins>;
+}
+
+export function makeFulgoraStack(ctx: FulgoraCtx): FulgoraStack {
+  const shared = makeFulgoraShared(ctx);
+  const cells = makeFulgoraCells(shared, ctx);
+  const chain = makeFulgoraElevation(shared, cells, ctx);
+  const masks = makeFulgoraMasks(shared, cells, chain);
+  const roads = makeFulgoraRoads(shared, cells, ctx);
+  const ruins = makeFulgoraRuins(cells, masks, roads, ctx);
+  return { ctx, shared, cells, chain, masks, roads, ruins };
+}
+
+/**
  * The eight land probabilities at a position, in {@link LAND_ORDER}, built from
  * their own layer stack.
  *
@@ -167,23 +196,15 @@ function landProbabilitiesFrom(
  * against the same `ctx` is correct but evaluates each field twice.
  */
 export function makeFulgoraLandProbabilities(ctx: FulgoraCtx): (x: number, y: number) => number[] {
-  const shared = makeFulgoraShared(ctx);
-  const cells = makeFulgoraCells(shared, ctx);
-  const chain = makeFulgoraElevation(shared, cells, ctx);
-  const masks = makeFulgoraMasks(shared, cells, chain);
-  const roads = makeFulgoraRoads(shared, cells, ctx);
-  const ruins = makeFulgoraRuins(cells, masks, roads, ctx);
+  const stack = makeFulgoraStack(ctx);
+  const { cells, chain, roads, ruins } = stack;
   return landProbabilitiesFrom(cells, chain, roads, ruins);
 }
 
 /**
- * Resolve a Fulgora world position to a tile: `shallow`, `deep`, or one of the
- * eight land tiles, argmaxed against each other.
- *
- * `ctx.seed0` is `map_seed` as the noise program sees it - the FULGORA SURFACE
- * seed, so derive it with `surfaceSeedForPlanet("fulgora", mapSeed)` before
- * constructing. The oracle harness sets the surface seed explicitly, which is
- * why the spec passes its fixture seed raw.
+ * The per-position body of the tile resolver, shared between
+ * {@link makeFulgoraTileResolver} and {@link makeFulgoraTileResolverFrom} so
+ * both paths run byte-identical code.
  *
  * **OPEN FINDING: highest-value-wins over these `probability_expression`s,
  * transcribed verbatim from `tiles-fulgora.lua`, is demonstrably not the whole
@@ -194,15 +215,10 @@ export function makeFulgoraLandProbabilities(ctx: FulgoraCtx): (x: number, y: nu
  * the refuted rival explanations (a sub-tile centre-sampling offset, an
  * inflated probability formula).
  */
-export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number) => FulgoraTile {
-  const shared = makeFulgoraShared(ctx);
-  const cells = makeFulgoraCells(shared, ctx);
-  const chain = makeFulgoraElevation(shared, cells, ctx);
-  const masks = makeFulgoraMasks(shared, cells, chain);
-  const roads = makeFulgoraRoads(shared, cells, ctx);
-  const ruins = makeFulgoraRuins(cells, masks, roads, ctx);
-  const landProbabilities = landProbabilitiesFrom(cells, chain, roads, ruins);
-
+function resolveFrom(
+  chain: FulgoraElevation,
+  landProbabilities: (x: number, y: number) => number[],
+): (x: number, y: number) => FulgoraTile {
   // Not `memoXY`-wrapped, unlike every field below it: that helper is typed for
   // numbers, and there is nothing to gain here anyway - every expensive read
   // this function makes is already memoized inside the chain.
@@ -267,4 +283,26 @@ export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number)
     }
     return LAND_ORDER[bestIndex] as FulgoraTile;
   };
+}
+
+/**
+ * Resolve a Fulgora world position to a tile: `shallow`, `deep`, or one of the
+ * eight land tiles, argmaxed against each other.
+ *
+ * `ctx.seed0` is `map_seed` as the noise program sees it - the FULGORA SURFACE
+ * seed, so derive it with `surfaceSeedForPlanet("fulgora", mapSeed)` before
+ * constructing. The oracle harness sets the surface seed explicitly, which is
+ * why the spec passes its fixture seed raw.
+ */
+export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number) => FulgoraTile {
+  return makeFulgoraTileResolverFrom(makeFulgoraStack(ctx));
+}
+
+/** As {@link makeFulgoraTileResolver}, but over a stack the caller already built. */
+export function makeFulgoraTileResolverFrom(
+  stack: FulgoraStack,
+): (x: number, y: number) => FulgoraTile {
+  const { cells, chain, roads, ruins } = stack;
+  const landProbabilities = landProbabilitiesFrom(cells, chain, roads, ruins);
+  return resolveFrom(chain, landProbabilities);
 }

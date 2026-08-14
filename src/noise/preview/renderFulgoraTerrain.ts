@@ -1,7 +1,14 @@
-import { type FulgoraTile, makeFulgoraTileResolver } from "../tiles/fulgoraCatalog";
+import {
+  type FulgoraStack,
+  type FulgoraTile,
+  makeFulgoraTileResolver,
+  makeFulgoraTileResolverFrom,
+} from "../tiles/fulgoraCatalog";
 import type { FulgoraCtx } from "../expressions/fulgoraShared";
 
 export interface RenderFulgoraTerrainOptions {
+  /** Shared field DAG - see `RenderVulcanusTerrainOptions.stack`. */
+  readonly stack?: FulgoraStack;
   /** Map seed as the noise program sees it - the FULGORA SURFACE seed. */
   readonly seed0: number;
   /** Output pixel dimensions. */
@@ -78,7 +85,10 @@ export function renderFulgoraTerrain(opts: RenderFulgoraTerrainOptions): ImageDa
   const originY = opts.originY ?? 0;
   const tpp = opts.tilesPerPixel ?? 1;
 
-  const resolve = makeFulgoraTileResolver({ seed0, ...opts.ctx });
+  const resolve =
+    opts.stack === undefined
+      ? makeFulgoraTileResolver({ seed0, ...opts.ctx })
+      : makeFulgoraTileResolverFrom(opts.stack);
   const data = new Uint8ClampedArray(width * height * 4);
 
   for (let py = 0; py < height; py++) {
