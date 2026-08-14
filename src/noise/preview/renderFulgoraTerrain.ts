@@ -1,4 +1,4 @@
-import { type FulgoraSurface, makeFulgoraSurfaceResolver } from "../tiles/fulgoraCatalog";
+import { type FulgoraTile, makeFulgoraTileResolver } from "../tiles/fulgoraCatalog";
 import type { FulgoraCtx } from "../expressions/fulgoraShared";
 
 export interface RenderFulgoraTerrainOptions {
@@ -26,14 +26,27 @@ export interface RenderFulgoraTerrainOptions {
  * which variant of each. The scaled triple is written out here in the form the
  * Lua uses so it stays checkable against the source.
  *
- * `land` is `fulgoran-sand`'s own colour. Fulgora's eight land tiles are not
- * resolved against each other yet (see `fulgoraCatalog.ts` - the ocean tiles
- * dominate the argmax wherever they are placeable, so only the land/ocean split
- * is decided). Using a real land tile's colour rather than an invented one means
- * a later pass can introduce the full land argmax without the palette jumping.
+ * Three of Fulgora's eight land tiles are resolved against each other as of
+ * this task (`fulgoran-dunes`, `fulgoran-sand`, `fulgoran-rock` - see
+ * `fulgoraCatalog.ts`); the remaining five need the road and ruins layer
+ * before they can be modelled. The ocean tiles still dominate the argmax
+ * wherever they are placeable, so the land argmax only runs once none of them
+ * are.
+ *
+ * **The three-way land argmax is 94.6% accurate against `get_tile` only at
+ * the positions where the game placed one of these three tiles** (783/828 -
+ * see the "OPEN FINDING" paragraph on `makeFulgoraTileResolver` in
+ * `fulgoraCatalog.ts`, and the gap is an open finding, not a rounding error).
+ * This file paints ALL 2261 land positions in the fixture, and at the other
+ * 1433 the game placed one of the five tiles this palette cannot yet produce
+ * (the road/ruins layer), so a rendered land PIXEL matches `get_tile` at only
+ * 783/2261 = **34.6%** - the unqualified 94.6% figure is not the accuracy of
+ * this render. Task 5 is what closes that gap.
  */
-const COLORS: Record<FulgoraSurface, readonly [number, number, number]> = {
-  land: [118, 68, 56],
+const COLORS: Record<FulgoraTile, readonly [number, number, number]> = {
+  "fulgoran-dunes": [125, 71, 59],
+  "fulgoran-sand": [118, 68, 56],
+  "fulgoran-rock": [131, 85, 66],
   shallow: [74, 42, 43],
   deep: [Math.round(49 * 1.15), Math.round(31 * 1.15), Math.round(35 * 1.15)],
 };
@@ -59,7 +72,7 @@ export function renderFulgoraTerrain(opts: RenderFulgoraTerrainOptions): ImageDa
   const originY = opts.originY ?? 0;
   const tpp = opts.tilesPerPixel ?? 1;
 
-  const resolve = makeFulgoraSurfaceResolver({ seed0, ...opts.ctx });
+  const resolve = makeFulgoraTileResolver({ seed0, ...opts.ctx });
   const data = new Uint8ClampedArray(width * height * 4);
 
   for (let py = 0; py < height; py++) {

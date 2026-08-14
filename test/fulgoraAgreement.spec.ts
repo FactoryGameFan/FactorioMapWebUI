@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import tilesFixture from "./fixtures/oracle-fulgora-tiles.seed123456.json";
-import { makeFulgoraSurfaceResolver, type FulgoraSurface } from "../src/noise/tiles/fulgoraCatalog";
+import { type FulgoraTile, makeFulgoraTileResolver } from "../src/noise/tiles/fulgoraCatalog";
 
 /**
  * Does the port put land and oil ocean where the GAME puts them?
@@ -59,25 +59,32 @@ const OCEAN_TILES = new Set([
   "oil-ocean-deep-2",
 ]);
 
+type Surface = "land" | "shallow" | "deep";
+
 /** The class the game's tile name implies. The `-2` variants share a map colour. */
-function gameClass(name: string): FulgoraSurface {
+function gameClass(name: string): Surface {
   if (name.startsWith("oil-ocean-deep")) return "deep";
   if (OCEAN_TILES.has(name)) return "shallow";
   return "land";
+}
+
+/** The class OUR tile name implies. Every non-ocean member is land. */
+function ourClass(tile: FulgoraTile): Surface {
+  return tile === "shallow" || tile === "deep" ? tile : "land";
 }
 
 describe("fulgora land/ocean binary agrees with the game", () => {
   const ctx = { seed0: tilesFixture.seed0 };
   const positions = tilesFixture.positions as { x: number; y: number }[];
   const names = tilesFixture.tileNames;
-  const resolve = makeFulgoraSurfaceResolver(ctx);
+  const resolve = makeFulgoraTileResolver(ctx);
 
   /** Every position where our class disagrees with the game's, by comparator. */
-  const disagreements = (same: (ours: FulgoraSurface, game: FulgoraSurface) => boolean) => {
-    const out: { x: number; y: number; ours: FulgoraSurface; game: string }[] = [];
+  const disagreements = (same: (ours: Surface, game: Surface) => boolean) => {
+    const out: { x: number; y: number; ours: Surface; game: string }[] = [];
     for (let i = 0; i < positions.length; i++) {
       const p = positions[i] as { x: number; y: number };
-      const ours = resolve(p.x, p.y);
+      const ours = ourClass(resolve(p.x, p.y));
       if (!same(ours, gameClass(names[i] as string))) {
         out.push({ x: p.x, y: p.y, ours, game: names[i] as string });
       }
@@ -119,7 +126,7 @@ describe("fulgora land/ocean binary agrees with the game", () => {
       for (let dy = -1; dy <= 1 && !adjacent; dy++) {
         for (let dx = -1; dx <= 1 && !adjacent; dx++) {
           if (dx === 0 && dy === 0) continue;
-          if (resolve(m.x + dx, m.y + dy) === want) adjacent = true;
+          if (ourClass(resolve(m.x + dx, m.y + dy)) === want) adjacent = true;
         }
       }
       if (!adjacent)
@@ -134,12 +141,12 @@ describe("fulgora land/ocean binary agrees with the game", () => {
     // near any class change - so 18 of 18 is p ~ 1e-10 under the null.
     let nearAny = 0;
     for (const p of positions) {
-      const own = resolve(p.x, p.y);
+      const own = ourClass(resolve(p.x, p.y));
       let diff = false;
       for (let dy = -1; dy <= 1 && !diff; dy++) {
         for (let dx = -1; dx <= 1 && !diff; dx++) {
           if (dx === 0 && dy === 0) continue;
-          if (resolve(p.x + dx, p.y + dy) !== own) diff = true;
+          if (ourClass(resolve(p.x + dx, p.y + dy)) !== own) diff = true;
         }
       }
       if (diff) nearAny++;
@@ -161,7 +168,7 @@ describe("fulgora land/ocean binary agrees with the game", () => {
   });
 
   it("shallow and deep are distinguished, not collapsed", () => {
-    const got = new Set(positions.map((p) => resolve(p.x, p.y)));
+    const got = new Set(positions.map((p) => ourClass(resolve(p.x, p.y))));
     expect(got.has("shallow")).toBe(true);
     expect(got.has("deep")).toBe(true);
     expect(got.has("land")).toBe(true);

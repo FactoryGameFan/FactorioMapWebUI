@@ -3,12 +3,41 @@ import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/oracle-fulgora-shared.seed123456.json";
 import cellsFixture from "./fixtures/oracle-fulgora-cells.seed123456.json";
 import elevationFixture from "./fixtures/oracle-fulgora-elevation.seed123456.json";
+import ruinsFixture from "./fixtures/oracle-fulgora-ruins.seed123456.json";
 import { makeFulgoraShared } from "../src/noise/expressions/fulgoraShared";
 import { makeFulgoraCells } from "../src/noise/expressions/fulgoraCells";
 import { makeFulgoraElevation } from "../src/noise/expressions/fulgoraElevation";
+import { makeFulgoraMasks } from "../src/noise/expressions/fulgoraMasks";
 import { makeVoronoi } from "../src/noise/voronoiNoise";
 import { renderFulgoraTerrain } from "../src/noise/preview/renderFulgoraTerrain";
 import { sliderRescale } from "../src/noise/eval/math";
+
+/**
+ * Shared by every describe block that reads `oracle-fulgora-ruins.seed123456.json`
+ * (masks here; Tasks 3 and 4 add the road/structure and ruins layers on top of
+ * the same fixture). Module scope on purpose - the existing `check` helpers
+ * above are each trapped inside their own `describe` and are not reachable from
+ * anywhere else, and this one needs to be reachable from more than one.
+ */
+const checkRuins = (fn: (x: number, y: number) => number, want: number[], bound: number): void => {
+  let worst = 0;
+  let worstAt = -1;
+  for (let i = 0; i < ruinsFixture.positions.length; i++) {
+    const p = ruinsFixture.positions[i] as { x: number; y: number };
+    const got = Math.fround(fn(p.x, p.y));
+    const d = Math.abs(got - Math.fround(want[i] as number));
+    if (d > worst) {
+      worst = d;
+      worstAt = i;
+    }
+  }
+  expect(
+    worst,
+    `worst residual ${worst.toExponential(3)} at position ${String(worstAt)} ` +
+      `(${String((ruinsFixture.positions[worstAt] as { x: number; y: number } | undefined)?.x)}, ` +
+      `${String((ruinsFixture.positions[worstAt] as { x: number; y: number } | undefined)?.y)})`,
+  ).toBeLessThanOrEqual(bound);
+};
 
 /**
  * Fulgora's shared layer, checked against the game.
@@ -628,28 +657,28 @@ describe("renderFulgoraTerrain is stable", () => {
       seed0: 123456,
       originX: -64,
       originY: -64,
-      hashes: { 1: "eb312806", 8: "b9f0b2e2" },
+      hashes: { 1: "eb312806", 8: "df976957" },
     },
     {
       name: "far field",
       seed0: 123456,
       originX: 6000,
       originY: -4000,
-      hashes: { 1: "8577e6aa", 8: "32c0f70a" },
+      hashes: { 1: "8577e6aa", 8: "50277b5f" },
     },
     {
       name: "off origin",
       seed0: 123456,
       originX: -1524,
       originY: 976,
-      hashes: { 1: "156859be", 8: "0cb8c823" },
+      hashes: { 1: "156859be", 8: "14cb5c16" },
     },
     {
       name: "second seed",
       seed0: 987654,
       originX: -64,
       originY: -64,
-      hashes: { 1: "84f3a789", 8: "d139c583" },
+      hashes: { 1: "84f3a789", 8: "c9aa4f56" },
     },
   ];
 
@@ -701,5 +730,30 @@ describe("renderFulgoraTerrain is stable", () => {
         }),
       );
     expect(at(1)).not.toBe(at(8));
+  });
+});
+
+describe("makeFulgoraMasks", () => {
+  const ctx = { seed0: ruinsFixture.seed0 };
+  const shared = makeFulgoraShared(ctx);
+  const cells = makeFulgoraCells(shared, ctx);
+  const chain = makeFulgoraElevation(shared, cells, ctx);
+  const masks = makeFulgoraMasks(shared, cells, chain);
+
+  /**
+   * The three masks are built from comparisons and `max`/`min`, so every value
+   * is exactly 0 or 1 and the bound is 0 - not a tolerance, an identity. A
+   * non-integer here means a comparison was ported as arithmetic.
+   */
+  it("matches the game exactly on all three masks", () => {
+    checkRuins(masks.naturalMask, ruinsFixture.fulgora_natural_mask, 0);
+    checkRuins(masks.naturalAndMesaMask, ruinsFixture.fulgora_natural_and_mesa_mask, 0);
+    checkRuins(masks.artificialMask, ruinsFixture.fulgora_artificial_mask, 0);
+  });
+
+  it("the masks are not all one value, so the test above discriminates", () => {
+    const distinct = (v: number[]) => new Set(v).size;
+    expect(distinct(ruinsFixture.fulgora_natural_mask)).toBe(2);
+    expect(distinct(ruinsFixture.fulgora_artificial_mask)).toBe(2);
   });
 });
