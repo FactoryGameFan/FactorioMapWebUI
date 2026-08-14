@@ -97,21 +97,50 @@ boxes in the same world:
 fourth box is a true negative in both directions, so the model does not invent
 scrap where the game has none.
 
-### 2.4 The game's map preview draws about one pixel per TWO entities
+### 2.4 The game's map preview draws about one pixel per TWO entities, and the cause is `map_grid`
 
 This is the finding that changed the validation plan. Over the same boxes, the
 preview's scrap layer holds **385 changed pixels against 770 entities -
 0.5000 per entity**, and per box 0.457, 0.508, 0.510.
 
-It is not a half-resolution layer. That was tested and refuted: parity across
-`(px % 2, py % 2)` is flat at 24.1% to 25.9%, and only 44.1% of changed pixels
-have a horizontal 2x2 mate, where a halved layer would be near 100%. The
-changed pixels carry **50 distinct grey levels** across 1825 pixels, so the
-resource layer is blended rather than stamped, and a faint enough blend rounds
-to the terrain colour and produces no change at all.
+**The cause is `ResourceEntityPrototype::map_grid`**, which the docs describe as
+"whether the resource should have a grid pattern on the map instead of a solid
+map color". It **defaults to `true`**, and scrap does not override it.
 
-**The exact blend rule was not decoded**, and this spec does not assert one.
-What it asserts is the consequence: the preview PNG cannot gate scrap density.
+Taking all 770 entity positions and asking which produced a pixel change gives
+a clean 4x4 signature:
+
+| | `ty % 4` = 0 | 1 | 2 | 3 |
+| --- | --- | --- | --- | --- |
+| `tx % 4` = 0 | 0% | 0% | 80% | 83% |
+| 1 | 0% | 0% | 84% | 77% |
+| 2 | 87% | 81% | 0% | 0% |
+| 3 | 75% | 84% | 0% | 0% |
+
+So a pixel is drawn only where
+`(floor(tx / 2) + floor(ty / 2)) % 2 == 1` - a checkerboard of **2x2 tile
+blocks**. 384 of the 770 entities sit in a never-drawn block, and all eight of
+those cells read 0.0% with n between 42 and 56 each. That is the whole factor
+of two.
+
+An earlier, cheaper test looked at the changed pixels alone and found flat
+parity across `(px % 2, py % 2)`, which correctly refuted a half-resolution
+layer but was blind to this. Correlating against the known entity set is what
+exposed it - **test the full population, not the survivors.**
+
+**Only four resources opt out**, all of them fluid or vent types:
+`crude-oil`, `sulfuric-acid-geyser`, `lithium-brine`, `fluorine`. Every solid
+ore keeps the grid, scrap included. A useful corollary: the preview **is** a
+1:1 density oracle for those four, and is not for anything else.
+
+**The residual inside drawn blocks is NOT decoded.** 314 of 386 entities there
+produce a change, 81.3%, and it is uniform across position within the block
+(78.9% to 83.8%) and shows no clear terrain dependence. The layer also carries
+50 distinct grey levels across 1825 pixels, so it blends rather than stamps,
+and a faint enough blend plausibly rounds to the terrain colour - but that was
+not established.
+
+The consequence stands either way: the preview PNG cannot gate scrap density.
 
 ### 2.5 What the preview CAN gate
 
@@ -275,16 +304,19 @@ explained rather than rounded away.
 - **The superset assertion is weaker than equality**, and deliberately so. It
   cannot catch our overlay painting too much. The entity-count test is what
   bounds that, so the two are not redundant and neither can be dropped.
-- **The preview blend rule is undecoded.** If a future Factorio version changes
-  it, the superset assertion still holds but the 0.5 ratio recorded here stops
+- **The preview's `map_grid` pattern removes pixels but never adds them**, so
+  the superset assertion in section 7 is unaffected by it. If a future Factorio
+  version changes the pattern or the blend, the 0.5 ratio recorded here stops
   being true. Nothing in the test suite depends on the 0.5, by design.
 
 ## 9. What is NOT established
 
-- The rule the game's map preview uses to blend a resource's `map_color`, and
-  therefore why about half of scrap entities leave no pixel change. Measured
-  that it is not a half-resolution layer and that it produces 50 grey levels;
-  the rule itself was not decoded.
+- Why 18.7% of scrap entities inside a **drawn** `map_grid` block still leave no
+  pixel change. The grid itself is decoded (section 2.4) and accounts for the
+  factor of two; this smaller residual is not. It is uniform across position
+  within the block and shows no clear terrain dependence. The blend is the
+  obvious suspect, given 50 grey levels across 1825 pixels, but that was not
+  established and is not asserted anywhere.
 - Whether `fulgora_structure_subnoise` dropping below -1 is intended by the
   game's authors or incidental. It is faithfully reproduced either way, and the
   clamp is what the game's own placement does with a negative probability.
