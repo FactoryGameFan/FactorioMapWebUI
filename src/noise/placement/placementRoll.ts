@@ -81,6 +81,8 @@ export const PLACEMENT_SALT = {
    * (`test/entityDensity.spec.ts`). See `docs/noise/random-penalty-NOTES.md`.
    */
   crudeOilPenalty: 0x91c40d,
+  /** Fulgora scrap's own roll stream (Task 4). */
+  fulgoraScrap: 0x3ba58c,
 } as const;
 
 /** `max(341, 0x3FBE2C + 7919*chunkX + 7907*chunkY + salt)` in u32 arithmetic. */
