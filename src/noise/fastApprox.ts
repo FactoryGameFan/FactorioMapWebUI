@@ -29,7 +29,8 @@
  * accumulation this comment exists to prevent.
  */
 
-const f32 = Math.fround;
+import { f32 } from "./eval/f32";
+
 const i32 = new Int32Array(1);
 const f32view = new Float32Array(i32.buffer);
 const bitsToFloat = (bits: number): number => {

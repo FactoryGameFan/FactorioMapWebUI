@@ -72,6 +72,7 @@
  */
 import type { EvalCtx } from "../eval/ctx";
 import { distanceFromNearestPoint } from "../distanceFromNearestPoint";
+import { f32 } from "../eval/f32";
 import { clamp, lerp, max } from "../eval/math";
 import { memoXY } from "../eval/memoXY";
 import { sliderRescale } from "../eval/sliderRescale";
@@ -107,7 +108,6 @@ export interface VulcanusBiomes {
   mountainsRawVolcano(x: number, y: number): number;
 }
 
-const f32 = Math.fround;
 /** region index for a coordinate (regions centred on multiples of the region size). */
 const regionIndex = (c: number): number =>
   Math.floor((c + VOLCANO_REGION_SIZE / 2) / VOLCANO_REGION_SIZE);

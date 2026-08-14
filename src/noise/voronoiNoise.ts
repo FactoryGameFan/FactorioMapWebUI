@@ -55,10 +55,9 @@
  * `oracle-voronoi-cellid.multiseed.json` (9 seed series x 256 cells, all exact).
  */
 
+import { f32 } from "./eval/f32";
 import { memoXY } from "./eval/memoXY";
 import { fastLog2, fastPow2 } from "./fastApprox";
-
-const f32 = Math.fround;
 
 /** f32(1/3), the exact multiplier the binary uses (`0x3eaaaaab`) for the cube root. */
 const ONE_THIRD_F32 = f32(1 / 3);

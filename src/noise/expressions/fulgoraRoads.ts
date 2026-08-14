@@ -18,9 +18,7 @@
  *    at `y`. The stretch is in the Lua call, not in the grid size.
  * 2. **`structure_subnoise` reads `x + 10000 * structure_cells`, and the
  *    MULTIPLY itself must be rounded to f32**, not just the coordinate that
- *    reaches `multioctave_noise`. The noise machine evaluates every op in f32,
- *    so `10000 * structure_cells` is an f32 multiply whose f32 result is then
- *    added to `x` - narrowing only where the sum crosses into
+ *    reaches `multioctave_noise`. Narrowing only where the sum crosses into
  *    `makeMultioctaveNoise` (which itself narrows incoming coordinates as of
  *    #190) is a different, coarser rounding than the game performs, and at
  *    this field's coordinate magnitudes (up to ~17460, where one f32 ULP is
@@ -29,7 +27,14 @@
  *    (`x + f32(10000 * structure_cells)`) drops that to 2.98e-7 - a 131x
  *    improvement, and back in line with this field's continuous siblings. Do
  *    not "simplify" this back to narrowing the sum alone.
+ *
+ * These two are the port's worked examples of the same rule, and they need
+ * OPPOSITE fixes - one narrows the product, the other narrows the constant.
+ * The general rule, and why applying the wrong one silently fixes nothing,
+ * lives in `src/noise/eval/f32.ts`. Read that before chasing an f32 residual
+ * anywhere else in this port.
  */
+import { f32 } from "../eval/f32";
 import { lerp } from "../eval/math";
 import { memoXY } from "../eval/memoXY";
 import { makeMultioctaveNoise } from "../multioctaveNoise";
@@ -54,8 +59,6 @@ const STRUCTURE_JITTER = 0.8;
 /** A comparison yields 1 or 0, matching the engine's boolean-to-number convention. */
 const gt = (a: number, b: number): number => (a > b ? 1 : 0);
 const lt = (a: number, b: number): number => (a < b ? 1 : 0);
-
-const f32 = Math.fround;
 
 export interface FulgoraRoads {
   readonly roadCells: (x: number, y: number) => number;
