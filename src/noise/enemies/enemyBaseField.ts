@@ -19,6 +19,7 @@
  */
 import { basisNoise, basisNoiseTablesFromSeed, type BasisNoiseTables } from "../basisNoise";
 import { distanceFromNearestPoint, type Point } from "../distanceFromNearestPoint";
+import { f32 } from "../eval/f32";
 import { selectSpots, type SelectedSpot } from "../spotSelection";
 import type { SpotRegionKey } from "../spotCandidates";
 import {
@@ -50,7 +51,6 @@ export interface EnemyBaseField {
   probability(x: number, y: number): number;
 }
 
-const f32 = Math.fround;
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
 /** region index for a coordinate (regions centred on multiples of ENEMY_REGION_SIZE). */
 const regionIndex = (c: number): number =>

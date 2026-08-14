@@ -24,6 +24,7 @@
  */
 import { basisNoise, basisNoiseTablesFromSeed, type BasisNoiseTables } from "../basisNoise";
 import { distanceFromNearestPoint, type Point } from "../distanceFromNearestPoint";
+import { f32 } from "../eval/f32";
 import { fastCbrt } from "../fastApprox";
 import { randomPenaltyBatch } from "../randomPenalty";
 import { selectSpots, type SelectedSpot } from "../spotSelection";
@@ -68,7 +69,6 @@ export interface RegularPatches {
   richness(x: number, y: number): number;
 }
 
-const f32 = Math.fround;
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
 /** region index for a coordinate (regions centred on multiples of REGION_SIZE). */
 const regionIndex = (c: number): number => Math.floor((c + REGION_SIZE / 2) / REGION_SIZE);
