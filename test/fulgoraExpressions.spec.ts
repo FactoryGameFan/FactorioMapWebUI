@@ -8,6 +8,7 @@ import { makeFulgoraShared } from "../src/noise/expressions/fulgoraShared";
 import { makeFulgoraCells } from "../src/noise/expressions/fulgoraCells";
 import { makeFulgoraElevation } from "../src/noise/expressions/fulgoraElevation";
 import { makeFulgoraMasks } from "../src/noise/expressions/fulgoraMasks";
+import { makeFulgoraRoads } from "../src/noise/expressions/fulgoraRoads";
 import { makeVoronoi } from "../src/noise/voronoiNoise";
 import { renderFulgoraTerrain } from "../src/noise/preview/renderFulgoraTerrain";
 import { sliderRescale } from "../src/noise/eval/math";
@@ -755,5 +756,67 @@ describe("makeFulgoraMasks", () => {
     const distinct = (v: number[]) => new Set(v).size;
     expect(distinct(ruinsFixture.fulgora_natural_mask)).toBe(2);
     expect(distinct(ruinsFixture.fulgora_artificial_mask)).toBe(2);
+  });
+});
+
+describe("makeFulgoraRoads", () => {
+  const ctx = { seed0: ruinsFixture.seed0 };
+  const shared = makeFulgoraShared(ctx);
+  const cells = makeFulgoraCells(shared, ctx);
+  const roads = makeFulgoraRoads(shared, cells, ctx);
+
+  /**
+   * Compare at f32, `bound` the measured worst residual for that field with
+   * modest headroom - never a blanket tolerance, so a regression in one field
+   * cannot hide behind another's slack. Measured worst, 101 positions:
+   *
+   * | field | worst | bound |
+   * | --- | --- | --- |
+   * | `roadCells`, `structureCells` | **0** | 0 |
+   * | `roadPyramids` | **0** | 0 |
+   * | `roadPavingThin`, `roadPaving2`, `roadPaving2b`, `roadPaving2c`, `roadDust` | **0** | 0 |
+   * | `pyramidsBanding` | 9.54e-7 | 1.5e-6 |
+   * | `spotsPrebanding` | 3.58e-6 | 5e-6 |
+   * | `spotsBanding` | 3.64e-6 | 5e-6 |
+   * | `structureFacets` | 7.63e-6 | 1e-5 |
+   * | `structureSubnoise` | 3.91e-5 | 5e-5 |
+   *
+   * `roadCells` and `structureCells` are cell IDs, and `roadPavingThin` through
+   * `roadDust` are built from comparisons/lerps of comparisons, so all seven are
+   * exact by construction - a non-zero residual there would mean a rounding
+   * error grew large enough to flip a comparison, not a tolerance to widen.
+   * `roadPyramids` is continuous but ALSO came back bit-exact: unlike
+   * `cells.pyramids` in `fulgoraCells.ts`, it is sampled at the RAW (x, y) with
+   * no wobble distortion, so the input is already on the f32 grid the game
+   * itself samples - no coordinate-rounding error to carry through.
+   *
+   * The rest carry the port's known `basisNoise` floor (this port evaluates it
+   * in f64 where the game uses f32), scaled by how the expression composes it.
+   * `structureSubnoise` is the largest because it is sampled at a coordinate up
+   * to `x + 10000 * structureCells` - the derived-coordinate f32-narrowing case
+   * `makeMultioctaveNoise` handles internally (see the file header); without
+   * that narrowing this field misses by two more orders of magnitude.
+   *
+   * The `%` question (Step 4) did not arise: `pyramidsBanding` and
+   * `spotsBanding` both passed comfortably against the brief's starting bounds,
+   * and the fixture's own `fulgora_spots_prebanding` / `fulgora_pyramids_banding`
+   * arrays never go negative (checked directly), so JS `%`'s sign convention was
+   * never exercised at any of the 101 positions - there is nothing here to
+   * distinguish flooring modulo from C `fmod`.
+   */
+  it("matches the game on the road and structure layer", () => {
+    checkRuins(roads.roadCells, ruinsFixture.fulgora_road_cells, 0);
+    checkRuins(roads.structureCells, ruinsFixture.fulgora_structure_cells, 0);
+    checkRuins(roads.roadPyramids, ruinsFixture.fulgora_road_pyramids, 0);
+    checkRuins(roads.structureFacets, ruinsFixture.fulgora_structure_facets, 1e-5);
+    checkRuins(roads.structureSubnoise, ruinsFixture.fulgora_structure_subnoise, 5e-5);
+    checkRuins(roads.pyramidsBanding, ruinsFixture.fulgora_pyramids_banding, 1.5e-6);
+    checkRuins(roads.spotsPrebanding, ruinsFixture.fulgora_spots_prebanding, 5e-6);
+    checkRuins(roads.spotsBanding, ruinsFixture.fulgora_spots_banding, 5e-6);
+    checkRuins(roads.roadPavingThin, ruinsFixture.fulgora_road_paving_thin, 0);
+    checkRuins(roads.roadPaving2, ruinsFixture.fulgora_road_paving_2, 0);
+    checkRuins(roads.roadPaving2b, ruinsFixture.fulgora_road_paving_2b, 0);
+    checkRuins(roads.roadPaving2c, ruinsFixture.fulgora_road_paving_2c, 0);
+    checkRuins(roads.roadDust, ruinsFixture.fulgora_road_dust, 0);
   });
 });
