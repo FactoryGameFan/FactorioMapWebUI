@@ -775,11 +775,11 @@ describe("makeFulgoraRoads", () => {
    * | `roadCells`, `structureCells` | **0** | 0 |
    * | `roadPyramids` | **0** | 0 |
    * | `roadPavingThin`, `roadPaving2`, `roadPaving2b`, `roadPaving2c`, `roadDust` | **0** | 0 |
+   * | `structureSubnoise` | 2.98e-7 | 4e-7 |
    * | `pyramidsBanding` | 9.54e-7 | 1.5e-6 |
    * | `spotsPrebanding` | 3.58e-6 | 5e-6 |
    * | `spotsBanding` | 3.64e-6 | 5e-6 |
    * | `structureFacets` | 7.63e-6 | 1e-5 |
-   * | `structureSubnoise` | 3.91e-5 | 5e-5 |
    *
    * `roadCells` and `structureCells` are cell IDs, and `roadPavingThin` through
    * `roadDust` are built from comparisons/lerps of comparisons, so all seven are
@@ -792,10 +792,13 @@ describe("makeFulgoraRoads", () => {
    *
    * The rest carry the port's known `basisNoise` floor (this port evaluates it
    * in f64 where the game uses f32), scaled by how the expression composes it.
-   * `structureSubnoise` is the largest because it is sampled at a coordinate up
-   * to `x + 10000 * structureCells` - the derived-coordinate f32-narrowing case
-   * `makeMultioctaveNoise` handles internally (see the file header); without
-   * that narrowing this field misses by two more orders of magnitude.
+   * `structureSubnoise` used to be the worst of the thirteen by a wide margin -
+   * 3.91e-5, an order of magnitude above every other continuous field - because
+   * narrowing only happened where its coordinate crossed into
+   * `makeMultioctaveNoise`. The engine evaluates every op in f32, so
+   * `10000 * structure_cells` is itself an f32 multiply; narrowing the PRODUCT
+   * (see the file header) drops the residual to 2.98e-7, back in line with its
+   * siblings - a 131x improvement, not a wider tolerance.
    *
    * The `%` question (Step 4) did not arise: `pyramidsBanding` and
    * `spotsBanding` both passed comfortably against the brief's starting bounds,
@@ -809,7 +812,7 @@ describe("makeFulgoraRoads", () => {
     checkRuins(roads.structureCells, ruinsFixture.fulgora_structure_cells, 0);
     checkRuins(roads.roadPyramids, ruinsFixture.fulgora_road_pyramids, 0);
     checkRuins(roads.structureFacets, ruinsFixture.fulgora_structure_facets, 1e-5);
-    checkRuins(roads.structureSubnoise, ruinsFixture.fulgora_structure_subnoise, 5e-5);
+    checkRuins(roads.structureSubnoise, ruinsFixture.fulgora_structure_subnoise, 4e-7);
     checkRuins(roads.pyramidsBanding, ruinsFixture.fulgora_pyramids_banding, 1.5e-6);
     checkRuins(roads.spotsPrebanding, ruinsFixture.fulgora_spots_prebanding, 5e-6);
     checkRuins(roads.spotsBanding, ruinsFixture.fulgora_spots_banding, 5e-6);

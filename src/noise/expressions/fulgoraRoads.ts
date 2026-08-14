@@ -16,10 +16,19 @@
  *
  * 1. **`structure_cells` and `structure_facets` are sampled at `y * 0.8`**, not
  *    at `y`. The stretch is in the Lua call, not in the grid size.
- * 2. **`structure_subnoise` is sampled at `x + 10000 * structure_cells`** - a
- *    derived coordinate large enough that f64 and f32 evaluation disagree
- *    visibly. `makeMultioctaveNoise` narrows incoming coordinates to f32
- *    internally as of #190; this is the first caller that depends on it.
+ * 2. **`structure_subnoise` reads `x + 10000 * structure_cells`, and the
+ *    MULTIPLY itself must be rounded to f32**, not just the coordinate that
+ *    reaches `multioctave_noise`. The noise machine evaluates every op in f32,
+ *    so `10000 * structure_cells` is an f32 multiply whose f32 result is then
+ *    added to `x` - narrowing only where the sum crosses into
+ *    `makeMultioctaveNoise` (which itself narrows incoming coordinates as of
+ *    #190) is a different, coarser rounding than the game performs, and at
+ *    this field's coordinate magnitudes (up to ~17460, where one f32 ULP is
+ *    2.08e-3) the two disagree by a lot. Measured over the 101-position
+ *    fixture: narrowing only the sum misses by 3.91e-5; narrowing the product
+ *    (`x + f32(10000 * structure_cells)`) drops that to 2.98e-7 - a 131x
+ *    improvement, and back in line with this field's continuous siblings. Do
+ *    not "simplify" this back to narrowing the sum alone.
  */
 import { lerp } from "../eval/math";
 import { memoXY } from "../eval/memoXY";
@@ -45,6 +54,8 @@ const STRUCTURE_JITTER = 0.8;
 /** A comparison yields 1 or 0, matching the engine's boolean-to-number convention. */
 const gt = (a: number, b: number): number => (a > b ? 1 : 0);
 const lt = (a: number, b: number): number => (a < b ? 1 : 0);
+
+const f32 = Math.fround;
 
 export interface FulgoraRoads {
   readonly roadCells: (x: number, y: number) => number;
@@ -99,8 +110,11 @@ export function makeFulgoraRoads(
 
   const structureCells = memoXY((x: number, y: number) => structure.cellId(x, y * 0.8));
   const structureFacets = memoXY((x: number, y: number) => structure.facetNoise(x, y * 0.8));
+  // The multiply is narrowed to f32 on its own, matching the engine's
+  // per-op f32 evaluation - see the file header for why narrowing only the
+  // sum (which `makeMultioctaveNoise` already does internally) is not enough.
   const structureSubnoise = memoXY((x: number, y: number) =>
-    subnoise(x + 10000 * structureCells(x, y), y),
+    subnoise(x + f32(10000 * structureCells(x, y)), y),
   );
 
   const pyramidsBanding = memoXY((x: number, y: number) => (cells.pyramids(x, y) * 8) % 1);
