@@ -12,9 +12,10 @@
  * `1 - fulgora_dunes`, and so on), while an ocean tile whose mask is on scores
  * `50 * 1000 * ...` or `100 * 2000 * ...` - four orders of magnitude more. So
  * wherever an ocean probability is positive it wins, and the land tiles only
- * have to be resolved against each other. Three of the eight are modelled here
- * (`fulgoran-dunes`, `fulgoran-sand`, `fulgoran-rock` - the ones that read only
- * fields this port already has); the rest need the road and ruins layer.
+ * have to be resolved against each other. All eight are modelled here and
+ * resolved in an eight-way argmax, using the road and ruins layer for the five
+ * that need it (`fulgoran-dust`, `fulgoran-paving`, `fulgoran-walls`,
+ * `fulgoran-conduit`, `fulgoran-machinery`).
  *
  * The argument has one thin spot and it is named here rather than hidden: the
  * two shallow tiles split on the SIGN of `scrap_medium + dunes`, one taking
@@ -26,6 +27,9 @@
  */
 import { makeFulgoraCells } from "../expressions/fulgoraCells";
 import { makeFulgoraElevation } from "../expressions/fulgoraElevation";
+import { makeFulgoraMasks } from "../expressions/fulgoraMasks";
+import { makeFulgoraRoads } from "../expressions/fulgoraRoads";
+import { makeFulgoraRuins } from "../expressions/fulgoraRuins";
 import { makeFulgoraShared, type FulgoraCtx } from "../expressions/fulgoraShared";
 
 /**
@@ -34,11 +38,32 @@ import { makeFulgoraShared, type FulgoraCtx } from "../expressions/fulgoraShared
  * The two shallow variants share a map colour and so do the two deep ones, so
  * the ocean side collapses to two members rather than four - see the header
  * comment on the ocean argmax. The land side names real tiles, because they do
- * NOT share colours.
- *
- * Only three land tiles are reachable until the road and ruins layer lands.
+ * NOT share colours - all eight are resolved against each other in the land
+ * argmax below.
  */
-export type FulgoraTile = "fulgoran-dunes" | "fulgoran-sand" | "fulgoran-rock" | "shallow" | "deep";
+export type FulgoraTile =
+  | "fulgoran-dust"
+  | "fulgoran-dunes"
+  | "fulgoran-sand"
+  | "fulgoran-rock"
+  | "fulgoran-paving"
+  | "fulgoran-walls"
+  | "fulgoran-conduit"
+  | "fulgoran-machinery"
+  | "shallow"
+  | "deep";
+
+/** The eight land probabilities in a fixed order, so the tie-break is stable. */
+const LAND_ORDER = [
+  "fulgoran-dust",
+  "fulgoran-dunes",
+  "fulgoran-sand",
+  "fulgoran-rock",
+  "fulgoran-paving",
+  "fulgoran-walls",
+  "fulgoran-conduit",
+  "fulgoran-machinery",
+] as const;
 
 /**
  * `water_base(max_elevation, influence)` from
@@ -87,49 +112,29 @@ function bestProbability(...values: number[]): number {
 
 /**
  * Resolve a Fulgora world position to a tile: `shallow`, `deep`, or one of the
- * three natural land tiles this port models (`fulgoran-dunes`,
- * `fulgoran-sand`, `fulgoran-rock`).
+ * eight land tiles, argmaxed against each other.
  *
  * `ctx.seed0` is `map_seed` as the noise program sees it - the FULGORA SURFACE
  * seed, so derive it with `surfaceSeedForPlanet("fulgora", mapSeed)` before
  * constructing. The oracle harness sets the surface seed explicitly, which is
  * why the spec passes its fixture seed raw.
  *
- * **OPEN FINDING, not yet resolved.** At the 828 fixture positions where the
- * game placed one of these three tiles, this three-way argmax over their
- * `probability_expression`s (transcribed verbatim from
- * `tiles-fulgora.lua`, byte-checked against the source) matches the game on
- * only 783 (94.6%) - see `test/fulgoraLandTiles.spec.ts`. This is NOT a port
- * bug: `fulgora_rock`, `fulgora_dunes` and `fulgora_mix_oil` were queried
- * directly from a live Fulgora surface at several disputed positions and
- * matched this port to ~1e-7, and the game's own evaluation of the composite
- * formulas (queried as whole expression strings) matched this port's
- * arithmetic exactly. At one measured position (-1628, 872) the game's own
- * `fulgoran-rock` formula scores 2.254 against `fulgoran-dunes`'s 1.615 - yet
- * `get_tile` there is `fulgoran-dunes`. So highest-value-wins over these three
- * formulas is demonstrably not the whole selection rule, unlike the Nauvis
- * 21-tile catalog (`resolve.ts`, argmax validated 100%) and the ocean argmax
- * above. A rival explanation - the game samples tile autoplace at the tile
- * CENTRE rather than the corner - was tested and refuted: every offset from
- * -0.5 to 0.5 scores worse than the corner on both land accuracy and land/ocean
- * misses (see `test/fulgoraLandTiles.spec.ts` for the measured table).
- *
- * 43 of the 45 mismatches ARE Chebyshev-1 adjacent to a position this resolver
- * already classifies the game's way. The base rate for that adjacency among
- * all 828 scoped positions is 47.8% (these three tiles interleave far more
- * often than land and ocean do), much higher than the ocean residual's 3.8%
- * base rate - but a higher base rate does not by itself weaken the signal:
- * `P(X >= 43 | n = 45, p = 0.478) = 4.6e-12` (binomial tail), a STRONGER
- * p-value than the ocean residual's ~1e-10. What it does not do is identify
- * the mechanism: unlike the ocean residual (traced to the game placing a tile
- * its own expressions score unplaceable, pointing at a post-argmax correction
- * pass), no mechanism has been found here. It is the same open question, not
- * yet answered.
+ * **OPEN FINDING: highest-value-wins over these `probability_expression`s,
+ * transcribed verbatim from `tiles-fulgora.lua`, is demonstrably not the whole
+ * selection rule.** At (-1628, 872) the game's own `fulgoran-rock` formula
+ * scores 2.2537 against `fulgoran-dunes`'s 1.6149 - yet `get_tile` there is
+ * `fulgoran-dunes`. See `test/fulgoraLandTiles.spec.ts` for the measured
+ * agreement count, the confusion pairs, the boundary-adjacency statistics, and
+ * the refuted rival explanations (a sub-tile centre-sampling offset, an
+ * inflated probability formula).
  */
 export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number) => FulgoraTile {
   const shared = makeFulgoraShared(ctx);
   const cells = makeFulgoraCells(shared, ctx);
   const chain = makeFulgoraElevation(shared, cells, ctx);
+  const masks = makeFulgoraMasks(shared, cells, chain);
+  const roads = makeFulgoraRoads(shared, cells, ctx);
+  const ruins = makeFulgoraRuins(cells, masks, roads, ctx);
 
   // Not `memoXY`-wrapped, unlike every field below it: that helper is typed for
   // numbers, and there is nothing to gain here anyway - every expensive read
@@ -137,6 +142,10 @@ export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number)
   return (x: number, y: number): FulgoraTile => {
     const e = chain.elevation(x, y);
     const mask = chain.oilMask(x, y);
+    // `s`'s SIGN is what picks between the two shallow variants below
+    // (`shallow` takes `max(-s, 0)`, `shallow2` takes `max(s, 0)`) - see the
+    // header comment's "thin spot" paragraph for why a value near zero can let
+    // a land tile win on a technicality.
     const s = chain.scrapMedium(x, y) + chain.dunes(x, y);
 
     const shallowBase = 50 * mask * waterBase(COASTLINE, 1000, e);
@@ -152,8 +161,12 @@ export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number)
     const bestDeep = bestProbability(deepBase, deep2);
     const bestOcean = bestProbability(bestShallow, bestDeep);
 
-    // The ocean early-out is what keeps the ocean question as cheap as it was
-    // in V1: 55% of sampled positions never touch the land layer at all.
+    // The ocean early-out is what keeps the ocean question cheap: measured
+    // directly on the render-cost benchmark window (1024x1024 at (-512,-512),
+    // seed 123456), 79.7% of pixels resolve here and never touch the land
+    // layer below - see `docs/noise/fulgora-elevation-NOTES.md`'s Task 12 for
+    // the measurement (the `oracle-fulgora-tiles` fixture's own ocean share,
+    // 55.3%, is a coastline-concentrated sample and understates this).
     //
     // `> 0` rather than `>= 0`: a probability of exactly 0 does not place a
     // tile, and `-inf` (above the tile's water level) fails it too. Both are
@@ -162,15 +175,48 @@ export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number)
     // below rather than taking this branch.
     if (bestOcean > 0) return bestDeep > bestShallow ? "deep" : "shallow";
 
-    // `fulgoran-sand` is `1 - fulgora_dunes`, and `fulgora_dunes` is
-    // `0.66 - abs(n)`, so sand is `0.34 + abs(n)` - never below 0.34. Some land
-    // tile is therefore always placeable and there is no fallback to model.
-    const dunesField = chain.dunes(x, y);
-    const dunes = 1 + dunesField;
-    const sand = 1 - dunesField;
-    const rock = 0.8 + chain.rock(x, y) * 2 - Math.max(0, chain.mixOil(x, y)) * 6;
+    // `fulgoran-dust` reads `max(0, natural, 2 * mesa * pyramids)` - a THREE
+    // argument max, not `max(0, natural)` times something.
+    const dust =
+      chain.scrapMedium(x, y) +
+      Math.max(0, chain.natural(x, y), 2 * cells.mesa(x, y) * cells.pyramids(x, y)) * 2 -
+      0.9 +
+      chain.rock(x, y) +
+      roads.roadDust(x, y) * cells.sprawl(x, y);
 
-    if (rock > dunes && rock > sand) return "fulgoran-rock";
-    return dunes > sand ? "fulgoran-dunes" : "fulgoran-sand";
+    const dunesField = chain.dunes(x, y);
+    const probabilities = [
+      dust,
+      1 + dunesField,
+      1 - dunesField,
+      0.8 + chain.rock(x, y) * 2 - Math.max(0, chain.mixOil(x, y)) * 6,
+      ruins.tileRuinPaving(x, y),
+      ruins.tileRuinWalls(x, y),
+      ruins.tileRuinConduit(x, y),
+      ruins.tileRuinMachinery(x, y),
+    ];
+
+    // A manual loop rather than `bestProbability(...probabilities)`: this
+    // needs the winning INDEX, not just the winning value, so it can look the
+    // name up in `LAND_ORDER`. The comparison logic is identical to
+    // `bestProbability` - a NaN loses rather than poisoning the max, matching
+    // `LAND_ORDER[0]` ("fulgoran-dust") only if EVERY probability were NaN at
+    // once. Checked directly rather than assumed: none of the eight land
+    // formulas divides, and none multiplies a mask by `-Infinity` the way
+    // `water_base` does, so none can produce NaN from a `0 * -Infinity` the
+    // way the ocean branch's `deep`/`deep2` do. Measured zero NaNs across all
+    // 5057 `oracle-fulgora-tiles` fixture positions and a dense 169,303-point
+    // sweep of [-8000, 8000]^2 - the all-NaN case this comment describes has
+    // not been observed anywhere.
+    let bestIndex = 0;
+    let bestValue = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < probabilities.length; i++) {
+      const v = probabilities[i] as number;
+      if (v > bestValue) {
+        bestValue = v;
+        bestIndex = i;
+      }
+    }
+    return LAND_ORDER[bestIndex] as FulgoraTile;
   };
 }

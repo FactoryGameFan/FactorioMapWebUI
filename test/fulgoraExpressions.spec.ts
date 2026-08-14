@@ -8,6 +8,8 @@ import { makeFulgoraShared } from "../src/noise/expressions/fulgoraShared";
 import { makeFulgoraCells } from "../src/noise/expressions/fulgoraCells";
 import { makeFulgoraElevation } from "../src/noise/expressions/fulgoraElevation";
 import { makeFulgoraMasks } from "../src/noise/expressions/fulgoraMasks";
+import { makeFulgoraRoads } from "../src/noise/expressions/fulgoraRoads";
+import { makeFulgoraRuins } from "../src/noise/expressions/fulgoraRuins";
 import { makeVoronoi } from "../src/noise/voronoiNoise";
 import { renderFulgoraTerrain } from "../src/noise/preview/renderFulgoraTerrain";
 import { sliderRescale } from "../src/noise/eval/math";
@@ -628,12 +630,62 @@ describe("makeFulgoraElevation", () => {
  * a reordered `max`, a lost `memoXY`, a palette edit, an off-by-one in the
  * pixel sweep. None of those are visible to a residual test.
  *
- * Four windows, each at two scales. `tilesPerPixel: 1` walks contiguous tiles
+ * Five windows, each at two scales. `tilesPerPixel: 1` walks contiguous tiles
  * and so exercises the memo caches the way a real render does; `8` steps past
  * them and lands on a completely different set of Voronoi cells. The far-field
  * window matters on its own because that is where the f32 coordinate narrowing
  * bites (see `sumOctaves`), and the second seed is what would catch a constant
  * accidentally hardcoded from the fixture seed.
+ *
+ * **The first four windows are 100% ocean at `tilesPerPixel: 1`** - measured
+ * by counting colours in each rendered window, not assumed from the hashes.
+ * The `tpp: 8` column is the POST-Task-5 breakdown (all eight land tiles);
+ * before this task's eight-way argmax, the same four windows' `tpp: 8` pixels
+ * split across only `dunes`/`rock`/`sand` (e.g. near spawn was dunes 43, rock
+ * 74, sand 31 - the same 148 land pixels, previously argmaxed over three
+ * tiles instead of eight), which is why re-pinning those hashes when the
+ * palette widened was expected rather than a bug:
+ *
+ * | window | `tpp: 1` | `tpp: 8` |
+ * | --- | --- | --- |
+ * | near spawn | deep 969, shallow 55 - no land | deep 329, shallow 547, rock 53, paving 25, dunes 22, sand 19, machinery 10, walls 8, dust 6, conduit 5 |
+ * | far field | deep 915, shallow 109 - no land | deep 319, shallow 357, rock 100, paving 66, walls 56, dunes 48, sand 29, conduit 25, machinery 15, dust 9 |
+ * | off origin | deep 941, shallow 83 - no land | deep 369, shallow 334, paving 86, rock 74, walls 37, dunes 34, dust 29, sand 23, conduit 23, machinery 15 |
+ * | second seed | deep 118, shallow 906 - no land | deep 313, shallow 502, rock 49, paving 40, dunes 30, dust 28, sand 23, walls 22, machinery 11, conduit 6 |
+ *
+ * The ocean halves (`deep`/`shallow` counts) are UNCHANGED from the pre-Task-5
+ * measurement in all four windows - a second, independent confirmation
+ * (alongside `fulgoraAgreement.spec.ts`'s pinned 7-and-11) that the land
+ * argmax did not move the land/ocean boundary.
+ *
+ * That is the scale a real render actually uses, so the fifth window
+ * (`land core`) exists to give the eight land colours coverage at `tpp: 1`
+ * too - without it a land-argmax regression could only be caught at `tpp: 8`,
+ * past the memo caches, on a different set of Voronoi cells entirely.
+ *
+ * **Its origin was chosen by measurement, not by guess.** A sweep evaluated
+ * the resolver's 32x32 `tpp: 1` footprint at every point on a 128-tile grid
+ * across the full [-6000, 6000] square (step 128, ~8800 candidate origins,
+ * ~46s) and kept every origin whose footprint contained at least four distinct
+ * land tiles - 3637 of them qualified, most with all eight. `(-5872, 3088)` was
+ * picked from that set because its footprint contains all EIGHT land tiles and
+ * NO ocean tile at all, with no tile reduced to a token pixel: `fulgoran-rock`
+ * 370, `fulgoran-walls` 244, `fulgoran-paving` 179, `fulgoran-dunes` 125,
+ * `fulgoran-conduit` 63, `fulgoran-sand` 31, `fulgoran-machinery` 9,
+ * `fulgoran-dust` 3 (of 1024 pixels). A regression that recolours or
+ * misclassifies any of the eight land tiles has a real chance of moving this
+ * window's `tpp: 1` hash, which none of the other four can offer.
+ *
+ * Re-pinning the first four windows' `tpp: 8` hashes when this task's palette
+ * landed was expected, not a bug: those windows already contain land pixels at
+ * `tpp: 8` (see the table above), and the palette gained five new colours plus
+ * changed all three land tiles it already had (`fulgoran-dust` is new;
+ * `fulgoran-dunes`/`-sand`/`-rock` are unchanged tile CLASSES but some
+ * positions that used to fall through to one of those three - because only
+ * three land tiles existed to argmax against - now correctly resolve to one of
+ * the five new tiles instead, changing pixels these windows already painted).
+ * Their `tpp: 1` hashes did NOT move, confirming the "100% ocean" measurement
+ * above still holds after the palette change.
  *
  * A changed hash is NOT automatically a bug - it is a prompt to say which
  * change caused it. Re-pin deliberately, never to make the suite green.
@@ -657,28 +709,38 @@ describe("renderFulgoraTerrain is stable", () => {
       seed0: 123456,
       originX: -64,
       originY: -64,
-      hashes: { 1: "eb312806", 8: "df976957" },
+      hashes: { 1: "eb312806", 8: "7d185bba" },
     },
     {
       name: "far field",
       seed0: 123456,
       originX: 6000,
       originY: -4000,
-      hashes: { 1: "8577e6aa", 8: "50277b5f" },
+      hashes: { 1: "8577e6aa", 8: "ae435250" },
     },
     {
       name: "off origin",
       seed0: 123456,
       originX: -1524,
       originY: 976,
-      hashes: { 1: "156859be", 8: "14cb5c16" },
+      hashes: { 1: "156859be", 8: "1ea17751" },
     },
     {
       name: "second seed",
       seed0: 987654,
       originX: -64,
       originY: -64,
-      hashes: { 1: "84f3a789", 8: "c9aa4f56" },
+      hashes: { 1: "84f3a789", 8: "0febee19" },
+    },
+    {
+      // Land-centred: (-5872, 3088), seed 123456. All eight land tiles, no
+      // ocean at all - see the header comment above for how this origin was
+      // chosen and what it contains.
+      name: "land core",
+      seed0: 123456,
+      originX: -5872,
+      originY: 3088,
+      hashes: { 1: "a3a580a9", 8: "82ca093c" },
     },
   ];
 
@@ -698,7 +760,7 @@ describe("renderFulgoraTerrain is stable", () => {
   });
 
   it("the windows are not all the same picture", () => {
-    // Four identical hashes would pin nothing. Renders that differ prove each
+    // Five identical hashes would pin nothing. Renders that differ prove each
     // window is actually reaching different terrain.
     const seen = new Set(
       WINDOWS.map((w) =>
@@ -754,6 +816,179 @@ describe("makeFulgoraMasks", () => {
   it("the masks are not all one value, so the test above discriminates", () => {
     const distinct = (v: number[]) => new Set(v).size;
     expect(distinct(ruinsFixture.fulgora_natural_mask)).toBe(2);
+    expect(distinct(ruinsFixture.fulgora_natural_and_mesa_mask)).toBe(2);
     expect(distinct(ruinsFixture.fulgora_artificial_mask)).toBe(2);
+  });
+});
+
+describe("makeFulgoraRoads", () => {
+  const ctx = { seed0: ruinsFixture.seed0 };
+  const shared = makeFulgoraShared(ctx);
+  const cells = makeFulgoraCells(shared, ctx);
+  const roads = makeFulgoraRoads(shared, cells, ctx);
+
+  /**
+   * Compare at f32, `bound` the measured worst residual for that field with
+   * modest headroom - never a blanket tolerance, so a regression in one field
+   * cannot hide behind another's slack. Measured worst, 101 positions:
+   *
+   * | field | worst | bound |
+   * | --- | --- | --- |
+   * | `roadCells`, `structureCells` | **0** | 0 |
+   * | `roadPyramids` | **0** | 0 |
+   * | `roadPavingThin`, `roadPaving2`, `roadPaving2b`, `roadPaving2c`, `roadDust` | **0** | 0 |
+   * | `structureFacets` | **0** | 0 |
+   * | `structureSubnoise` | 2.98e-7 | 4e-7 |
+   * | `pyramidsBanding` | 9.54e-7 | 1.5e-6 |
+   * | `spotsPrebanding` | 3.58e-6 | 5e-6 |
+   * | `spotsBanding` | 3.64e-6 | 5e-6 |
+   *
+   * `roadCells` and `structureCells` are cell IDs, and `roadPavingThin` through
+   * `roadDust` are built from comparisons/lerps of comparisons, so all seven are
+   * exact by construction - a non-zero residual there would mean a rounding
+   * error grew large enough to flip a comparison, not a tolerance to widen.
+   * `roadPyramids` is continuous but ALSO came back bit-exact: unlike
+   * `cells.pyramids` in `fulgoraCells.ts`, it is sampled at the RAW (x, y) with
+   * no wobble distortion, so the input is already on the f32 grid the game
+   * itself samples - no coordinate-rounding error to carry through.
+   *
+   * `structureFacets` is ALSO now bit-exact, and it did not start that way -
+   * it was 7.63e-6 (the worst of the thirteen at the time) until a fix-round
+   * review caught that `structure_cells`/`structure_facets` sample at
+   * `y * 0.8`, and the engine's `0.8` is an f32 CONSTANT
+   * (0.80000001192092895508), not the f64 literal this port was using
+   * (0.80000000000000004441) - two different numbers. Narrowing the PRODUCT
+   * (`f32(y * 0.8)`) does nothing at all (still 7.63e-6); only narrowing the
+   * CONSTANT itself (`y * f32(0.8)`, see the call site) does. This is a
+   * different defect from `structureSubnoise`'s below - that one needed the
+   * product narrowed, this one needs the constant narrowed - do not conflate
+   * the two fixes or assume one covers the other.
+   *
+   * The rest carry the port's known `basisNoise` floor (this port evaluates it
+   * in f64 where the game uses f32), scaled by how the expression composes it -
+   * and for `pyramidsBanding` that scaling is an EXACT, checked identity, not
+   * just a family resemblance: it is `(cells.pyramids(x, y) * 8) % 1`, an f32
+   * multiply by a power of two is exact in IEEE 754, and the measured worst
+   * residuals confirm it - `cells.pyramids` 1.1920928955078125e-7,
+   * `pyramidsBanding` 9.5367431640625e-7, a ratio of exactly 8, both at the
+   * SAME fixture position (index 45 of 101). `spotsPrebanding` does NOT close
+   * this cleanly the same way (measured ratio to `startingVaultCone`'s
+   * residual is 4.44, not the 4.5 its `(1 - cone) / 2 * 9` coefficients would
+   * predict, and the two worst cases fall at different positions, 43 vs 47) -
+   * see `docs/noise/fulgora-elevation-NOTES.md`'s Task 13 for the full
+   * decomposition and why that one stays a family resemblance, not an
+   * identity.
+   * `structureSubnoise` used to be the worst of the thirteen by a wide margin -
+   * 3.91e-5, an order of magnitude above every other continuous field - because
+   * narrowing only happened where its coordinate crossed into
+   * `makeMultioctaveNoise`. The engine evaluates every op in f32, so
+   * `10000 * structure_cells` is itself an f32 multiply; narrowing the PRODUCT
+   * (see the file header) drops the residual to 2.98e-7, back in line with its
+   * siblings - a 131x improvement, not a wider tolerance.
+   *
+   * The `%` question (Step 4) did not arise: `pyramidsBanding` and
+   * `spotsBanding` both passed comfortably against the brief's starting bounds.
+   * The OPERANDS that would decide it are `cells.pyramids(x, y) * 8` (for
+   * `pyramidsBanding`) and `fulgora_spots_prebanding` itself (for
+   * `spotsBanding`) - not `fulgora_pyramids_banding`, which is the fixture's
+   * POST-modulo result and cannot discriminate a sign convention either way
+   * (checked directly: it spans 0.002517 to 0.999766, and a flooring modulo
+   * never leaves `[0, 1)` regardless of its operand's sign). The real operands,
+   * `fulgora_pyramids * 8` (minimum 0.022018) and `fulgora_spots_prebanding`
+   * (minimum 0.70791), never go negative at these 101 positions, so JS `%`'s
+   * sign convention was never exercised here - see
+   * `docs/noise/fulgora-elevation-NOTES.md`'s Task 13 for the wider-map sweep.
+   */
+  it("matches the game on the road and structure layer", () => {
+    checkRuins(roads.roadCells, ruinsFixture.fulgora_road_cells, 0);
+    checkRuins(roads.structureCells, ruinsFixture.fulgora_structure_cells, 0);
+    checkRuins(roads.roadPyramids, ruinsFixture.fulgora_road_pyramids, 0);
+    checkRuins(roads.structureFacets, ruinsFixture.fulgora_structure_facets, 0);
+    checkRuins(roads.structureSubnoise, ruinsFixture.fulgora_structure_subnoise, 4e-7);
+    checkRuins(roads.pyramidsBanding, ruinsFixture.fulgora_pyramids_banding, 1.5e-6);
+    checkRuins(roads.spotsPrebanding, ruinsFixture.fulgora_spots_prebanding, 5e-6);
+    checkRuins(roads.spotsBanding, ruinsFixture.fulgora_spots_banding, 5e-6);
+    checkRuins(roads.roadPavingThin, ruinsFixture.fulgora_road_paving_thin, 0);
+    checkRuins(roads.roadPaving2, ruinsFixture.fulgora_road_paving_2, 0);
+    checkRuins(roads.roadPaving2b, ruinsFixture.fulgora_road_paving_2b, 0);
+    checkRuins(roads.roadPaving2c, ruinsFixture.fulgora_road_paving_2c, 0);
+    checkRuins(roads.roadDust, ruinsFixture.fulgora_road_dust, 0);
+  });
+});
+
+describe("makeFulgoraRuins", () => {
+  const ctx = { seed0: ruinsFixture.seed0 };
+  const shared = makeFulgoraShared(ctx);
+  const cells = makeFulgoraCells(shared, ctx);
+  const chain = makeFulgoraElevation(shared, cells, ctx);
+  const masks = makeFulgoraMasks(shared, cells, chain);
+  const roads = makeFulgoraRoads(shared, cells, ctx);
+  const ruins = makeFulgoraRuins(cells, masks, roads, ctx);
+
+  /**
+   * Compare at f32, `bound` the measured worst residual for that field with
+   * modest headroom - never a blanket tolerance, so a regression in one field
+   * cannot hide behind another's slack. Measured worst, 101 positions:
+   *
+   * | field | worst | bound |
+   * | --- | --- | --- |
+   * | `ruinsPaving` | 2.38e-7 | 4e-7 |
+   * | `ruinsWalls` | 3.87e-7 | 6e-7 |
+   * | `tileRuinMachinery` | 3.80e-7 | 6e-7 |
+   * | `tileRuinConduit` | 4.17e-7 | 6e-7 |
+   * | `tileRuinPaving`, `tileRuinWalls` | 4.77e-7 | 7e-7 |
+   *
+   * `ruinsWalls` and `ruinsPaving` are raw multioctave fields, so they carry the
+   * same `basisNoise` floor as `fulgora_dunes`/`fulgora_rock` in
+   * `fulgoraElevation.ts` (both 4e-7) - nothing Fulgora- or ruins-specific.
+   *
+   * **This table was wrong once.** The first Step 4 pass measured
+   * `tileRuinWalls`/`tileRuinConduit`/`tileRuinMachinery` at 1.90e-5, 9.95e-6
+   * and 1.21e-5 - all three above the brief's `1e-5` starting bound - and
+   * WIDENED their bounds to 3e-5/1.5e-5/2e-5 to make the test pass, in direct
+   * violation of the "tighten only" rule (the report at the time also
+   * incorrectly claimed no bound had been loosened). That was the wrong call:
+   * the three had inherited `structureFacets`' 7.63e-6 residual (scaled 4x, 2x
+   * and 2.5x by their own coefficients), and `structureFacets` itself was
+   * wrong, not at its floor - see the fix in `fulgoraRoads.ts`'s comment table
+   * above. Once `structureFacets` came back bit-exact, all three fields here
+   * dropped 24x-40x to the row above, back under their own basisNoise floor
+   * and comfortably under the brief's original `1e-5` with no widening at all.
+   *
+   * `tileRuinConduit` and `tileRuinMachinery` have ONLY the `artificialMask`
+   * term, so their masked-in branch (where the residual above is even
+   * reachable) is exercised at just the 9 of 101 positions where
+   * `artificial_mask` is 1 - weaker evidence than the other rows in this
+   * table, not stronger, though the wider land argmax closes most of that gap:
+   * `test/fulgoraLandTiles.spec.ts`'s 2261-position gate (not the 828-position
+   * three-tile subset, which contains zero `fulgoran-conduit` or
+   * `fulgoran-machinery` positions and so could never have covered these two
+   * fields at all) measures `fulgoran-conduit` at 147/147 and
+   * `fulgoran-machinery` at 108/108, both 100% recall.
+   */
+  it("matches the game on the two ruins noise fields", () => {
+    checkRuins(ruins.ruinsWalls, ruinsFixture.fulgora_ruins_walls, 6e-7);
+    checkRuins(ruins.ruinsPaving, ruinsFixture.fulgora_ruins_paving, 4e-7);
+  });
+
+  it("matches the game on all four tile_ruin outputs", () => {
+    checkRuins(ruins.tileRuinPaving, ruinsFixture.fulgora_tile_ruin_paving, 7e-7);
+    checkRuins(ruins.tileRuinWalls, ruinsFixture.fulgora_tile_ruin_walls, 7e-7);
+    checkRuins(ruins.tileRuinConduit, ruinsFixture.fulgora_tile_ruin_conduit, 6e-7);
+    checkRuins(ruins.tileRuinMachinery, ruinsFixture.fulgora_tile_ruin_machinery, 6e-7);
+  });
+
+  /**
+   * `tile_ruin_conduit` and `tile_ruin_machinery` subtract `road_paving_2c`
+   * OUTSIDE the artificial-mask product as well as inside it, so they are
+   * negative over most of the map rather than zero. A port that dropped the
+   * trailing term would still pass a "close to the fixture" check wherever the
+   * mask is 0 unless the fixture actually varies there.
+   */
+  it("the conduit field is not constant off the artificial mask", () => {
+    const off = ruinsFixture.fulgora_tile_ruin_conduit.filter(
+      (_v: number, i: number) => ruinsFixture.fulgora_artificial_mask[i] === 0,
+    );
+    expect(new Set(off).size).toBeGreaterThan(1);
   });
 });

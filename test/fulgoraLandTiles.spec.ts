@@ -4,113 +4,233 @@ import tilesFixture from "./fixtures/oracle-fulgora-tiles.seed123456.json";
 import { makeFulgoraTileResolver } from "../src/noise/tiles/fulgoraCatalog";
 
 /**
- * Does the port pick the same LAND tile the game placed?
+ * Does the port pick the same LAND tile the game placed, over all eight land
+ * tiles now that the road and ruins layer has landed?
  *
  * `fulgoraAgreement.spec.ts` asks the land-versus-ocean question and is where
- * the 18-mismatch boundary residual is documented. This file asks the different
+ * the 7-and-11 boundary residual is documented. This file asks the different
  * question of which land tile wins, so a regression in one cannot be read as
- * the other. Separate file for the same reason that one is separate: the CI
- * shard wall is set by which shard picks up the heavy files.
- *
- * ## Why this task can assert on a SUBSET
- *
- * Only three of the eight land tiles are modelled here. An argmax over a subset
- * agrees with the full argmax wherever the full winner is in the subset - if a
- * tile beats all eight it beats any three that include it. So the assertion is
- * scoped to the positions where the game placed one of the three, and it stays
- * valid unchanged once the other five land.
+ * the other.
  *
  * ## Why this asserts an exact count rather than zero
  *
- * The plan for this task specified `expect(wrong.length).toBe(0)`. 45 of 828
- * (5.4%) appear instead, and they are the same CLASS of result
- * `fulgoraAgreement.spec.ts` documents for its own 7-and-11 residual: "not
- * reachable by any model of the four `oil-ocean-*` probability expressions -
- * which is a finding, not a tolerance." The land case is that finding again,
- * established the same way - not by relaxing a bound, but by asking the game.
+ * The plan for this task specified `expect(wrong.length).toBe(0)`. That line is
+ * stale: Task 1 already found, against the game's own expression compiler (not
+ * by inference), that `get_tile` is not always the argmax of the tile
+ * `probability_expression`s. At (-1628, 872) the game scores `fulgoran-rock` at
+ * 2.2537, above `fulgoran-dunes`'s 1.6149, and then places `fulgoran-dunes`
+ * anyway - no transcription of those formulas can close that gap. The
+ * three-tile subset landed at 783/828 (45 mismatches, 94.6%) for exactly this
+ * reason.
  *
- * **The fields and the formulas are confirmed correct against the game
- * directly**, not just against a disjoint fixture. `fulgora_rock`,
- * `fulgora_dunes` and `fulgora_mix_oil` were queried from a live Fulgora
- * surface at the disputed positions and matched this port to ~1e-7 (the same
- * tolerance `fulgoraExpressions.spec.ts` measures over its own disjoint
- * 101-point fixture, confirmed here at the specific positions that disagree).
- * The game's own expression compiler was then asked to evaluate the three
- * tiles' COMPOSITE probability strings directly - `"1 + fulgora_dunes"`,
- * `"1 - fulgora_dunes"`, `"0.8 + fulgora_rock * 2 - max(0, fulgora_mix_oil) * 6"`
- * - and it agrees with this port's arithmetic exactly. At (-1628, 872) the
- * game's own numbers put `fulgoran-rock` at 2.2537, above `fulgoran-dunes`'s
- * 1.6149 - yet `get_tile` there is `fulgoran-dunes`. Highest-value-wins over
- * these three formulas is demonstrably not the whole selection rule.
+ * A rival explanation for the three-tile residual - that the game samples
+ * tile autoplace at the tile CENTRE rather than the corner this port (and
+ * every Fulgora fixture) uses - was tested and refuted. `fulgora_rock`
+ * (input_scale 1/3) and `fulgora_dunes` (1/6) are the finest fields in the
+ * whole elevation chain, so a half-tile shift was a plausible way to flip a
+ * close three-way call. Measured across the 828-position three-tile fixture,
+ * it is not - every offset scores worse than the corner on BOTH metrics:
  *
- * A rival explanation was tested and refuted: that the game samples tile
- * autoplace at the tile CENTRE rather than the corner this port (and every
- * other Fulgora fixture) uses. `fulgora_rock` (input_scale 1/3) and
- * `fulgora_dunes` (1/6) are the finest fields in the whole elevation chain, so
- * a half-tile shift was a plausible way to flip a close three-way call.
- * Measured across the whole fixture, it is not - every offset scores worse on
- * BOTH metrics:
+ * | corner offset | land accuracy | land/ocean misses |
+ * | --- | --- | --- |
+ * | 0 (corner) | 783/828 (94.6%) | 18 (best) |
+ * | 0.25 | 755/828 (91.2%) | 54 |
+ * | 0.5 (centre) | 716/828 (86.5%) | 97 |
+ * | -0.5 | 732/828 (88.4%) | 109 |
  *
- * | corner offset | land accuracy   | land/ocean misses |
- * | -------------- | --------------- | ------------------ |
- * | 0 (corner)    | 783/828 (94.6%) | 18 (best)          |
- * | 0.25          | 755/828 (91.2%) | 54                 |
- * | 0.5 (centre)  | 716/828 (86.5%) | 97                 |
- * | -0.5          | 732/828 (88.4%) | 109                |
+ * **Measured (2026-08-13, against `test/fixtures/oracle-fulgora-tiles.seed123456.json`,
+ * 2261 land positions): 124 mismatches, 2137 correct (94.5% agreement).**
+ * Widening from three tiles to eight, and from 828 to 2261 positions, made the
+ * residual bigger in absolute terms - as expected, since five more tiles now
+ * compete and there are more chances for the same post-argmax mechanism to
+ * fire - while the AGGREGATE agreement rate barely moved (94.6% -> 94.5%).
  *
- * ## What the residual IS: boundary-associated, and MORE strongly than the ocean case
+ * Broken down by which tile the game placed (matched / total, descending by
+ * rate):
  *
- * Same technique as `fulgoraAgreement.spec.ts`'s adjacency guard: 43 of the 45
- * mismatches (95.6%) sit Chebyshev-1 from a position this resolver already
- * classifies as the game's tile. These three tiles interleave far more often
- * than land and ocean do (`fulgoran-dunes`/`fulgoran-sand` flip on the SIGN of
- * a ridged noise field, which crosses zero often, rather than an elevation
- * threshold), so the measured base rate for that adjacency among all 828
- * scoped positions is 47.8% (396/828) - much higher than the ocean case's
- * 3.8%/10.0%. A higher base rate does not by itself weaken the signal: computed
- * properly, `P(X >= 43 | n = 45, p = 0.478) = 4.6e-12` (z = 6.41, binomial
- * tail, not a normal-approximation shortcut) - a STRONGER p-value than the
- * ocean residual's ~1e-10, not a weaker one. What this does NOT do is identify
- * the mechanism: unlike the ocean residual (traced to the game placing a tile
- * its own expressions score unplaceable, pointing at a post-argmax correction
- * pass), no mechanism has been found here. It is the same open question, not
- * yet answered: something runs after the raw per-tile argmax and this port
- * does not model it.
+ * | game tile | matched | total | rate |
+ * | --- | --- | --- | --- |
+ * | `fulgoran-walls` | 269 | 269 | 100% |
+ * | `fulgoran-conduit` | 147 | 147 | 100% |
+ * | `fulgoran-machinery` | 108 | 108 | 100% |
+ * | `fulgoran-rock` | 478 | 493 | 97.0% |
+ * | `fulgoran-paving` | 663 | 685 | 96.8% |
+ * | `fulgoran-dust` | 201 | 224 | 89.7% |
+ * | `fulgoran-sand` | 98 | 116 | 84.5% |
+ * | `fulgoran-dunes` | 173 | 219 | 79.0% |
+ *
+ * `fulgoran-walls`, `fulgoran-conduit` and `fulgoran-machinery` - the three
+ * tiles whose formulas read `masks`/`roads`/`ruins` fields this port could not
+ * check against `get_tile` until now (`tileRuinConduit` and
+ * `tileRuinMachinery` in particular were only exercised at 9 of 101 positions
+ * in `fulgoraExpressions.spec.ts`, an accepted coverage gap this task exists to
+ * close) - have 100% RECALL: every position where the game placed one of them
+ * is matched. Recall alone is not the whole picture - it is exactly what a
+ * uniformly-too-large probability produces (it keeps every true cell winning
+ * while stealing a ring of neighbours), and precision is measurably lower:
+ *
+ * | tile | game | ours | net | recall | precision |
+ * | --- | --- | --- | --- | --- | --- |
+ * | `fulgoran-walls` | 269 | 300 | +31 | 100.0% | 89.7% |
+ * | `fulgoran-conduit` | 147 | 159 | +12 | 100.0% | 92.5% |
+ * | `fulgoran-machinery` | 108 | 115 | +7 | 100.0% | 93.9% |
+ *
+ * (`ours` and `net` count every position where THIS resolver names that tile,
+ * whether or not the game agrees - derivable from the pinned confusion pairs
+ * below: e.g. walls' +31 is the sum of every `"... -> fulgoran-walls"` pair.)
+ *
+ * The inflated-probability hypothesis was checked against the game directly
+ * rather than argued from recall, which cannot distinguish it. `fulgora_tile_ruin_walls`
+ * is a named expression, so the game was asked for it directly at all four
+ * `fulgoran-dunes -> fulgoran-walls` mismatches (2.1.14, seed 123456):
+ *
+ * | position | `fulgora_tile_ruin_walls` (game) | `1 + fulgora_dunes` (game) | game places |
+ * | --- | --- | --- | --- |
+ * | (-1420, 892) | 1.868947 | 1.523166 | `fulgoran-dunes` |
+ * | (-1404, 920) | 1.552315 | 1.476634 | `fulgoran-dunes` |
+ * | (-1428, 1032) | 1.453150 | 1.332996 | `fulgoran-dunes` |
+ * | (-1420, 1044) | 1.526603 | 1.210111 | `fulgoran-dunes` |
+ *
+ * The game's OWN walls expression outscores its OWN dunes expression at all
+ * four, yet `get_tile` is `fulgoran-dunes` anyway - the same post-argmax
+ * mechanism Task 1 found for rock/dunes, now demonstrated on this task's own
+ * residual, on a ruins tile. And the margins the game reports here (0.3458,
+ * 0.0757, 0.1202, 0.3165) match this port's own margins at those same four
+ * positions to four decimal places - which refutes the inflated-probability
+ * hypothesis directly: if `tileRuinWalls` were uniformly too large, this
+ * port's margin would exceed the game's, and it does not.
+ *
+ * `fulgoran-dunes` is the worst-matching tile (79.0%), which is consistent with
+ * the mechanism rather than evidence of a new one: `fulgoran-dust`'s formula
+ * (`scrap_medium + 2*max(0, natural, 2*mesa*pyramids) - 0.9 + rock + road_dust*sprawl`)
+ * and the ruins formulas' `natural_and_mesa_mask` branch both compete directly
+ * in the same value range as `dunes`/`sand`/`rock` wherever `mesa` is 1, so
+ * widening the argmax created more near-ties exactly where the three-tile
+ * argmax already had its residual concentrated.
+ *
+ * See the confusion-pairs test below for which tiles are confused, and the
+ * boundary-concentration test for why this is the same open question as the
+ * ocean residual and the three-tile residual, not a new defect: something runs
+ * after the raw per-tile argmax and this port does not model it.
  */
-const SUBSET = new Set(["fulgoran-dunes", "fulgoran-sand", "fulgoran-rock"]);
+const LAND = new Set([
+  "fulgoran-dust",
+  "fulgoran-dunes",
+  "fulgoran-sand",
+  "fulgoran-rock",
+  "fulgoran-paving",
+  "fulgoran-walls",
+  "fulgoran-conduit",
+  "fulgoran-machinery",
+]);
 
-describe("fulgora land argmax over the three natural tiles", () => {
+describe("fulgora land argmax over all eight tiles", () => {
   const resolve = makeFulgoraTileResolver({ seed0: tilesFixture.seed0 });
   const positions = tilesFixture.positions as { x: number; y: number }[];
   const names = tilesFixture.tileNames;
 
   const scoped = positions
     .map((p, i) => ({ ...p, game: names[i] as string }))
-    .filter((p) => SUBSET.has(p.game));
-
-  it("covers 828 positions, so the assertion below is not vacuous", () => {
-    expect(scoped.length).toBe(828);
-  });
+    .filter((p) => LAND.has(p.game));
 
   const wrong = scoped
     .map((p) => ({ ...p, ours: resolve(p.x, p.y) }))
     .filter((p) => p.ours !== p.game);
 
-  it("matches the game on all but 45 of 828 (94.6%)", () => {
+  it("covers 2261 land positions", () => {
+    expect(scoped.length).toBe(2261);
+  });
+
+  it("picks the game's tile at every land position bar the known residual", () => {
     // The slice goes first so a failure NAMES the offending coordinates rather
-    // than printing only a count.
-    expect(wrong.length, `first few: ${JSON.stringify(wrong.slice(0, 5))}`).toBe(45);
+    // than printing only a count. MEASURED, not assumed - see the header
+    // comment for why 0 is not reachable and for the per-tile breakdown.
+    expect(wrong.length, `first few: ${JSON.stringify(wrong.slice(0, 5))}`).toBe(124);
   });
 
   /**
-   * The real guard, mirroring `fulgoraAgreement.spec.ts`'s adjacency check. A
-   * bare pinned count would pass on 45 mismatches anywhere; this fails unless
-   * (nearly) every one is adjacent to a position we already class the game's
-   * way - which is what says the residual is boundary-associated rather than a
-   * wrong formula. Unlike the ocean case this is not all 45 (43/45, not
-   * `toEqual([])`), so the bound is `>= 43`.
+   * A count alone would pass with every miss piled into one tile. This says
+   * WHICH pairs are confused, so a residual arrives already localised - it is
+   * how Task 1's three-tile residual was traced to a post-argmax mechanism
+   * rather than a wrong formula.
+   *
+   * Measured (2026-08-13): every one of Task 1's three-tile confusion pairs
+   * reappears here (`fulgoran-dunes -> fulgoran-rock`,
+   * `fulgoran-sand -> fulgoran-rock`, `fulgoran-rock -> fulgoran-dunes`,
+   * `fulgoran-dunes -> fulgoran-sand`) alongside new pairs among the five
+   * tiles Task 1 could not see at all. `fulgoran-sand -> fulgoran-dunes`
+   * (2 cases under the three-tile argmax) does NOT reappear - not because
+   * those two positions became correct, but because `dunes` already beat
+   * `sand` there, and a wider argmax can only replace a winning tile with a
+   * HIGHER-scoring one, never resurrect the tile that was already losing; both
+   * positions now lose to a still-higher-scoring third tile instead (see
+   * `fulgoran-sand -> fulgoran-walls` / `-> fulgoran-rock` below).
+   * `fulgoran-walls`, `fulgoran-conduit` and `fulgoran-machinery` never appear
+   * as the GAME side of any pair - every position where the game placed one of
+   * those three is matched. That is recall, not the whole picture: see the
+   * header comment for the precision figures and the game-measured margin
+   * check that actually rules out an inflated ruins formula.
    */
-  it("at least 43 of the 45 mismatches are Chebyshev-1 from a tile we already class the game's way", () => {
+  it("reports the confusion pairs when it fails", () => {
+    const pairs = new Map<string, number>();
+    for (const w of wrong) {
+      const k = `${w.game} -> ${w.ours}`;
+      pairs.set(k, (pairs.get(k) ?? 0) + 1);
+    }
+    expect([...pairs.entries()].sort((a, b) => b[1] - a[1])).toEqual([
+      ["fulgoran-dunes -> fulgoran-rock", 25],
+      ["fulgoran-sand -> fulgoran-rock", 12],
+      ["fulgoran-dunes -> fulgoran-walls", 11],
+      ["fulgoran-paving -> fulgoran-rock", 11],
+      ["fulgoran-dust -> fulgoran-rock", 7],
+      ["fulgoran-dust -> fulgoran-sand", 6],
+      ["fulgoran-dunes -> fulgoran-conduit", 6],
+      ["fulgoran-paving -> fulgoran-walls", 6],
+      ["fulgoran-rock -> fulgoran-walls", 6],
+      ["fulgoran-dust -> fulgoran-dunes", 5],
+      ["fulgoran-sand -> fulgoran-walls", 5],
+      ["fulgoran-dust -> fulgoran-walls", 3],
+      ["fulgoran-dunes -> fulgoran-machinery", 3],
+      ["fulgoran-rock -> fulgoran-conduit", 3],
+      ["fulgoran-paving -> fulgoran-dunes", 3],
+      ["fulgoran-rock -> fulgoran-dunes", 2],
+      ["fulgoran-rock -> fulgoran-paving", 2],
+      ["fulgoran-paving -> fulgoran-conduit", 2],
+      ["fulgoran-rock -> fulgoran-machinery", 2],
+      ["fulgoran-dust -> fulgoran-machinery", 1],
+      ["fulgoran-dust -> fulgoran-conduit", 1],
+      ["fulgoran-sand -> fulgoran-machinery", 1],
+      ["fulgoran-dunes -> fulgoran-sand", 1],
+    ]);
+  });
+
+  /**
+   * The structural guard, mirroring `fulgoraAgreement.spec.ts`'s and Task 1's
+   * adjacency checks. A bare pinned count would pass on 124 mismatches
+   * anywhere; this fails unless (nearly) every one is adjacent to a position
+   * we already class the game's way - which is what says the residual stayed
+   * a boundary effect at the wider scope rather than becoming a real formula
+   * defect.
+   *
+   * Measured: 121 of the 124 mismatches (97.6%) are Chebyshev-1 adjacent to a
+   * tile this resolver already classifies the game's way - HIGHER than Task
+   * 1's 95.6% (43/45), not lower, even though the base rate for that adjacency
+   * (see the next test) also rose. Computed properly as a binomial tail,
+   * `P(X >= 121 | n = 124, p = 0.6701) = 1.07e-17` - a far stronger signal
+   * than either the ocean residual's ~1e-10 or the three-tile residual's
+   * 4.6e-12, because both the count and the fraction grew together.
+   *
+   * **That tail assumes the 124 mismatches are independent samples, and they
+   * are not** - the fixture's dense block is sampled at stride 4, so nearby
+   * mismatches are spatially correlated by construction. Clustering the 124 at
+   * Chebyshev distance <= 8 gives 79 clusters (57 singletons, the rest sized
+   * 2-8); of those, 76 have EVERY member individually meeting the adjacency
+   * criterion above. A cluster-level tail, `P(X >= 76 | n = 79, p = 0.6701) =
+   * 1.88e-10`, is the more defensible number - still overwhelming, just eight
+   * orders of magnitude less extreme than the point-level 1.07e-17. Don't
+   * quote the point-level figure as if the samples were independent.
+   */
+  it("at least 121 of the 124 mismatches are Chebyshev-1 from a tile we already class the game's way", () => {
     let adjacentCount = 0;
     for (const m of wrong) {
       let adjacent = false;
@@ -122,18 +242,26 @@ describe("fulgora land argmax over the three natural tiles", () => {
       }
       if (adjacent) adjacentCount++;
     }
-    expect(adjacentCount).toBeGreaterThanOrEqual(43);
+    expect(adjacentCount).toBeGreaterThanOrEqual(121);
   });
 
   /**
    * The base rate, measured separately so the adjacency check above cannot
-   * become cheap if it ever drifts toward 100%. Measured: 47.8% (396/828) -
-   * much higher than the ocean case's 3.8%/10.0%, because these three tiles
-   * flip on a noise SIGN rather than an elevation threshold. Even so,
-   * `P(X >= 43 | n = 45, p = 0.478) = 4.6e-12`: a higher base rate does not by
-   * itself weaken the 43/45 finding above.
+   * become cheap if it ever drifts toward 100%.
+   *
+   * Measured: 67.0% (1515/2261) - much higher than the three-tile case's
+   * 47.8%, because eight tiles interleave far more densely than three (more
+   * distinct tile classes means more cells have at least one differently
+   * classified neighbour). Even so, that base rate does not by itself weaken
+   * the 121/124 finding above: `P(X >= 121 | n = 124, p = 0.6701) = 1.07e-17`
+   * (or, clustered for spatial independence, `P(X >= 76 | n = 79, p = 0.6701)
+   * = 1.88e-10` - see the caveat on the test above; either way the conclusion
+   * survives). The bound below (0.75) is loose - not pinned to the decimal, so ordinary
+   * noise in a re-sampled fixture does not break it - the point is that it
+   * stays far below the 97.6% observed among the mismatches, not that it is
+   * pinned to this exact number.
    */
-  it("boundary adjacency among ALL scoped positions is well below the 43/45 observed rate", () => {
+  it("boundary adjacency among ALL scoped positions is well below the observed mismatch rate", () => {
     let nearAny = 0;
     for (const p of scoped) {
       const own = resolve(p.x, p.y);
@@ -146,10 +274,6 @@ describe("fulgora land argmax over the three natural tiles", () => {
       }
       if (diff) nearAny++;
     }
-    // Measured 47.8%. The bound is loose (0.6, not pinned to the decimal) so
-    // ordinary noise in a re-sampled fixture doesn't break it - the point is
-    // that it stays far below the 95.6% observed among the mismatches, not
-    // that it is pinned to this exact number.
-    expect(nearAny / scoped.length).toBeLessThan(0.6);
+    expect(nearAny / scoped.length).toBeLessThan(0.75);
   });
 });
