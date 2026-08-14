@@ -9,6 +9,7 @@ import { makeFulgoraCells } from "../src/noise/expressions/fulgoraCells";
 import { makeFulgoraElevation } from "../src/noise/expressions/fulgoraElevation";
 import { makeFulgoraMasks } from "../src/noise/expressions/fulgoraMasks";
 import { makeFulgoraRoads } from "../src/noise/expressions/fulgoraRoads";
+import { makeFulgoraRuins } from "../src/noise/expressions/fulgoraRuins";
 import { makeVoronoi } from "../src/noise/voronoiNoise";
 import { renderFulgoraTerrain } from "../src/noise/preview/renderFulgoraTerrain";
 import { sliderRescale } from "../src/noise/eval/math";
@@ -821,5 +822,74 @@ describe("makeFulgoraRoads", () => {
     checkRuins(roads.roadPaving2b, ruinsFixture.fulgora_road_paving_2b, 0);
     checkRuins(roads.roadPaving2c, ruinsFixture.fulgora_road_paving_2c, 0);
     checkRuins(roads.roadDust, ruinsFixture.fulgora_road_dust, 0);
+  });
+});
+
+describe("makeFulgoraRuins", () => {
+  const ctx = { seed0: ruinsFixture.seed0 };
+  const shared = makeFulgoraShared(ctx);
+  const cells = makeFulgoraCells(shared, ctx);
+  const chain = makeFulgoraElevation(shared, cells, ctx);
+  const masks = makeFulgoraMasks(shared, cells, chain);
+  const roads = makeFulgoraRoads(shared, cells, ctx);
+  const ruins = makeFulgoraRuins(cells, masks, roads, ctx);
+
+  /**
+   * Compare at f32, `bound` the measured worst residual for that field with
+   * modest headroom - never a blanket tolerance, so a regression in one field
+   * cannot hide behind another's slack. Measured worst, 101 positions:
+   *
+   * | field | worst | bound |
+   * | --- | --- | --- |
+   * | `ruinsPaving` | 2.38e-7 | 4e-7 |
+   * | `ruinsWalls` | 3.87e-7 | 6e-7 |
+   * | `tileRuinPaving` | 4.77e-7 | 7e-7 |
+   * | `tileRuinConduit` | 9.95e-6 | 1.5e-5 |
+   * | `tileRuinMachinery` | 1.21e-5 | 2e-5 |
+   * | `tileRuinWalls` | 1.90e-5 | 3e-5 |
+   *
+   * `ruinsWalls` and `ruinsPaving` are raw multioctave fields, so they carry the
+   * same `basisNoise` floor as `fulgora_dunes`/`fulgora_rock` in
+   * `fulgoraElevation.ts` (both 4e-7) - nothing Fulgora- or ruins-specific.
+   * `tileRuinWalls`, `tileRuinConduit` and `tileRuinMachinery` all read
+   * `structureFacets` (worst 7.63e-6 in `fulgoraRoads.ts`) scaled 4x, 2x and
+   * 2.5x respectively, and their measured worst grows in that same order
+   * (1.90e-5, 9.95e-6, 1.21e-5 - conduit and machinery swap places because their
+   * worst positions differ, not because either carries extra error). None of
+   * the six exceed what a linear combination of their already-measured inputs
+   * would predict, so there is no sign here of the per-op-narrowing class of
+   * bug Task 3 found in `structureSubnoise` - this file has no large
+   * intermediate product that skips f32 rounding.
+   *
+   * `tileRuinConduit` and `tileRuinMachinery` have ONLY the `artificialMask`
+   * term, so their masked-in branch (where the residual above is even
+   * reachable) is exercised at just the 9 of 101 positions where
+   * `artificial_mask` is 1 - a known, accepted coverage limit (Task 5's argmax
+   * over 828 land positions is the broader gate for these two fields).
+   */
+  it("matches the game on the two ruins noise fields", () => {
+    checkRuins(ruins.ruinsWalls, ruinsFixture.fulgora_ruins_walls, 6e-7);
+    checkRuins(ruins.ruinsPaving, ruinsFixture.fulgora_ruins_paving, 4e-7);
+  });
+
+  it("matches the game on all four tile_ruin outputs", () => {
+    checkRuins(ruins.tileRuinPaving, ruinsFixture.fulgora_tile_ruin_paving, 7e-7);
+    checkRuins(ruins.tileRuinWalls, ruinsFixture.fulgora_tile_ruin_walls, 3e-5);
+    checkRuins(ruins.tileRuinConduit, ruinsFixture.fulgora_tile_ruin_conduit, 1.5e-5);
+    checkRuins(ruins.tileRuinMachinery, ruinsFixture.fulgora_tile_ruin_machinery, 2e-5);
+  });
+
+  /**
+   * `tile_ruin_conduit` and `tile_ruin_machinery` subtract `road_paving_2c`
+   * OUTSIDE the artificial-mask product as well as inside it, so they are
+   * negative over most of the map rather than zero. A port that dropped the
+   * trailing term would still pass a "close to the fixture" check wherever the
+   * mask is 0 unless the fixture actually varies there.
+   */
+  it("the conduit field is not constant off the artificial mask", () => {
+    const off = ruinsFixture.fulgora_tile_ruin_conduit.filter(
+      (_v: number, i: number) => ruinsFixture.fulgora_artificial_mask[i] === 0,
+    );
+    expect(new Set(off).size).toBeGreaterThan(1);
   });
 });
