@@ -679,6 +679,14 @@ This layer is where the real effort and the ongoing maintenance sit: the trees
 are large, interdependent, reference the `control:*` constants, and differ across
 game versions and base-vs-Space-Age.
 
+**Tile autoplace is not the last word on which tile gets placed.** A separate
+map-generation stage, `TileCorrectionMapGenerationTask`, runs afterwards over a
+3x3 chunk neighbourhood and can replace the tile the argmax chose. It is why
+Fulgora's residuals are all at boundaries, and it is not ported. Read
+`docs/noise/tile-correction-NOTES.md` before spending time on a tile residual
+that sits on a boundary - the formulas may be right and still disagree with the
+game.
+
 **Before porting a new planet, read `src/noise/eval/f32.ts`.** The game's noise
 machine evaluates its program in f32, one operation at a time, and JavaScript
 does not. That gap is the single largest source of residuals this port has hit.

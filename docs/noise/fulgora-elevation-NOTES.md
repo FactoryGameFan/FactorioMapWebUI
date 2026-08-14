@@ -953,8 +953,12 @@ nobody re-derives it a third time.
 
 **This is the same open question as the ocean residual's 18 boundary-exclusive
 mismatches** (Task 10 above) - something runs after the raw per-tile argmax,
-at a land/ocean or land/land boundary, and this port does not model it. The
-mechanism is unknown.
+at a land/ocean or land/land boundary, and this port does not model it.
+
+**That something now has a name: `TileCorrectionMapGenerationTask`** - see
+`docs/noise/tile-correction-NOTES.md`. It is a separate map-generation stage
+over a 3x3 chunk neighbourhood, which is why it only ever shows up at
+boundaries. How much of this residual it accounts for is still unmeasured.
 
 ### A LEAD, not a finding: the tile prototypes' `layer` field correlates with the direction of every mismatch
 
@@ -995,6 +999,19 @@ ocean side `oil-ocean-deep` 2, `oil-ocean-deep-2` 3, `oil-ocean-shallow-2` 3,
   (-1428, 984) and (400, -400) - and in these `layer(ours) < layer(game)`, so
   they are genuine exceptions to the pattern, not just unclassified.
 
+  **This bullet's REASONING is wrong, though its direction survives.** `layer`
+  is a `uint8` OFFSET from `layer_group`; the effective layer the game compares
+  is the `uint16` `layer_group + layer`. The two deep tiles sit in the `water`
+  group while everything else on this page sits in `ground-natural`, so the
+  raw-number comparison above is a cross-group one and does not mean what it
+  says. It survives only because the docs place `ground-natural` above `water`
+  ("natural tile sprites above water"), which makes deep the lower effective
+  layer by a much wider margin than 2-against-3 implies. The other two bullets
+  are unaffected - all eight land tiles AND both shallow variants are
+  `ground-natural`, so those comparisons are within one group. See
+  `docs/noise/tile-correction-NOTES.md` for the table and for the binary
+  evidence that the game reads the combined `uint16`.
+
 135 of 142 mismatches across all three residuals follow the same direction:
 **the game favours the lower-`layer` tile at a disputed boundary.**
 
@@ -1021,6 +1038,17 @@ independently reproduced by any base-rate construction tried. What both checks
 agree on is that a same-direction rate at or above 96.8% (120/124, and 7/7 and
 8/11 above) is far outside a chance range under 60%, whichever of the two
 nulls above is used.
+
+**This lead was FOLLOWED on 2026-08-14 and the mechanism is now named** -
+`TileCorrectionMapGenerationTask`, a distinct map-generation stage that runs
+after tile autoplace over a 3x3 chunk neighbourhood, and whose
+`isWeakHighLayerSupport` / `isStrongHighLayerSupport` compare exactly the
+effective layer this entry noticed. The full reverse-engineering, the object
+layout, what is still unknown, and why porting it is an architectural change
+rather than a patch, are in **`docs/noise/tile-correction-NOTES.md`**. What
+follows is the original entry, kept because its reasoning about proxies and
+base rates is still the right caution: nothing below, and nothing in that file
+either, yet MEASURES how much of the 124 the pass explains.
 
 **Record this as a LEAD, not a finding.** `layer` is not read anywhere in this
 port, and nothing here demonstrates that `layer` is itself the mechanism - it
@@ -1080,12 +1108,16 @@ over-placement Task 14 measured is not this port scoring `tileRuinWalls` too
 high - the same post-argmax mechanism is at work here as in the three-tile
 case, on a completely different tile pair.
 
-**The mechanism is unknown, and it is the same open question the ocean
-residual and the three-tile residual already raised** - not a new defect and
-not one this task closes. What is established: it runs after the raw per-tile
-argmax, it is boundary-concentrated (Task 14), and a tile-centre sampling
-offset is refuted as its cause (Task 14). Reverse-engineering the post-argmax
-pass itself is future work.
+**It is the same open question the ocean residual and the three-tile residual
+already raised** - not a new defect and not one this task closes. What is
+established: it runs after the raw per-tile argmax, it is boundary-concentrated
+(Task 14), and a tile-centre sampling offset is refuted as its cause (Task 14).
+
+**The pass has since been identified** as
+`TileCorrectionMapGenerationTask` - see `docs/noise/tile-correction-NOTES.md`,
+which also explains why the counter-examples above are exactly what it would
+produce: the game's own expression values are not the last word, because a
+later stage can replace the tile the argmax chose.
 
 ---
 
