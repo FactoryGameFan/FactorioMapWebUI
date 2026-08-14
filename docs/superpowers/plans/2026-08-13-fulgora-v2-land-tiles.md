@@ -18,7 +18,7 @@
 - **Acceptance is f32.** Compare with `Math.fround`. Per-field bounds are set from the measured worst residual with modest headroom, never a blanket tolerance.
 - **Never guess a `seed1`.** Compute it with `crc32` from `src/codec/crc32.ts`. The five this plan needs are computed in Task 3 and Task 4 and written out there; a wrong one produces a plausible map that no residual check would flag.
 - **Never edit a fixture or an expected value to make a test pass.** A mismatch is a real finding.
-- **Every new fixture needs a `test/fixtures/PROVENANCE.json` entry** (version `2.1.14`, evidence `stated`) or `test/fixtureProvenance.spec.ts` fails. Insert it in place; do not re-sort the file. `FACTORIO_TARGET_VERSION` is already 2.1.14, so no target bump is needed.
+- **Every new fixture needs a `test/fixtures/PROVENANCE.json` entry** or `test/fixtureProvenance.spec.ts` fails. The schema is exactly two keys inside the top-level `fixtures` object: `factorioVersion` (here `2.1.14`) and `evidence`, which is non-empty **prose** describing how the ground truth was captured - not an enum. `test/fixtureProvenance.spec.ts:55-60` enforces that. The grading words in CLAUDE.md ("stated" beats "inferred") describe how the sentence reads, not the field's value. Insert the entry in place; do not re-sort the file. `FACTORIO_TARGET_VERSION` is already 2.1.14, so no target bump is needed.
 - **Use hyphens (`-`), never em or en dashes,** in every file this plan creates.
 - Run commands through pnpm: `pnpm vp test`, `pnpm vp check --fix`, `pnpm run verify`. `npx vp` fails with `EBADDEVENGINES`.
 - Oracle specs are gated `it.skipIf(!oracleAvailable())` so CI stays green with no Factorio installed.
