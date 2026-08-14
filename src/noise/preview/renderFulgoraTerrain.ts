@@ -26,27 +26,29 @@ export interface RenderFulgoraTerrainOptions {
  * which variant of each. The scaled triple is written out here in the form the
  * Lua uses so it stays checkable against the source.
  *
- * Three of Fulgora's eight land tiles are resolved against each other as of
- * this task (`fulgoran-dunes`, `fulgoran-sand`, `fulgoran-rock` - see
- * `fulgoraCatalog.ts`); the remaining five need the road and ruins layer
- * before they can be modelled. The ocean tiles still dominate the argmax
- * wherever they are placeable, so the land argmax only runs once none of them
- * are.
+ * All eight of Fulgora's land tiles are resolved against each other as of this
+ * task (see `fulgoraCatalog.ts`), so this palette can now paint every position
+ * in the fixture with the tile the resolver actually names. The ocean tiles
+ * still dominate the argmax wherever they are placeable, so the land argmax
+ * only runs once none of them are.
  *
- * **The three-way land argmax is 94.6% accurate against `get_tile` only at
- * the positions where the game placed one of these three tiles** (783/828 -
- * see the "OPEN FINDING" paragraph on `makeFulgoraTileResolver` in
- * `fulgoraCatalog.ts`, and the gap is an open finding, not a rounding error).
- * This file paints ALL 2261 land positions in the fixture, and at the other
- * 1433 the game placed one of the five tiles this palette cannot yet produce
- * (the road/ruins layer), so a rendered land PIXEL matches `get_tile` at only
- * 783/2261 = **34.6%** - the unqualified 94.6% figure is not the accuracy of
- * this render. Task 5 is what closes that gap.
+ * **The eight-way land argmax is 94.5% accurate against `get_tile`, measured
+ * over all 2261 land positions in the fixture** (2137/2261 - see the "OPEN
+ * FINDING" paragraph on `makeFulgoraTileResolver` in `fulgoraCatalog.ts` and
+ * `test/fulgoraLandTiles.spec.ts` for the full breakdown; the gap is an open
+ * finding, not a rounding error). Unlike the three-way palette this replaces,
+ * that accuracy figure now IS the accuracy of a rendered land pixel - there is
+ * no tile left that this palette cannot produce.
  */
 const COLORS: Record<FulgoraTile, readonly [number, number, number]> = {
+  "fulgoran-dust": [112, 65, 50],
   "fulgoran-dunes": [125, 71, 59],
   "fulgoran-sand": [118, 68, 56],
   "fulgoran-rock": [131, 85, 66],
+  "fulgoran-paving": [120, 94, 67],
+  "fulgoran-walls": [114, 75, 65],
+  "fulgoran-conduit": [100, 79, 68],
+  "fulgoran-machinery": [89, 79, 68],
   shallow: [74, 42, 43],
   deep: [Math.round(49 * 1.15), Math.round(31 * 1.15), Math.round(35 * 1.15)],
 };

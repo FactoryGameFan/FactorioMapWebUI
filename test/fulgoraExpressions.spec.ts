@@ -630,12 +630,51 @@ describe("makeFulgoraElevation", () => {
  * a reordered `max`, a lost `memoXY`, a palette edit, an off-by-one in the
  * pixel sweep. None of those are visible to a residual test.
  *
- * Four windows, each at two scales. `tilesPerPixel: 1` walks contiguous tiles
+ * Five windows, each at two scales. `tilesPerPixel: 1` walks contiguous tiles
  * and so exercises the memo caches the way a real render does; `8` steps past
  * them and lands on a completely different set of Voronoi cells. The far-field
  * window matters on its own because that is where the f32 coordinate narrowing
  * bites (see `sumOctaves`), and the second seed is what would catch a constant
  * accidentally hardcoded from the fixture seed.
+ *
+ * **The first four windows are 100% ocean at `tilesPerPixel: 1`** - measured
+ * by counting colours in each rendered window, not assumed from the hashes:
+ *
+ * | window | `tpp: 1` | `tpp: 8` |
+ * | --- | --- | --- |
+ * | near spawn | deep 969, shallow 55 - no land | deep 329, shallow 547, dunes 43, rock 74, sand 31 |
+ * | far field | deep 915, shallow 109 - no land | deep 319, shallow 357, dunes 117, rock 158, sand 73 |
+ * | off origin | deep 941, shallow 83 - no land | deep 369, shallow 334, dunes 125, rock 140, sand 56 |
+ * | second seed | deep 118, shallow 906 - no land | deep 313, shallow 502, dunes 83, rock 82, sand 44 |
+ *
+ * That is the scale a real render actually uses, so the fifth window
+ * (`land core`) exists to give the eight land colours coverage at `tpp: 1`
+ * too - without it a land-argmax regression could only be caught at `tpp: 8`,
+ * past the memo caches, on a different set of Voronoi cells entirely.
+ *
+ * **Its origin was chosen by measurement, not by guess.** A sweep evaluated
+ * the resolver's 32x32 `tpp: 1` footprint at every point on a 128-tile grid
+ * across the full [-6000, 6000] square (step 128, ~8800 candidate origins,
+ * ~46s) and kept every origin whose footprint contained at least four distinct
+ * land tiles - 3637 of them qualified, most with all eight. `(-5872, 3088)` was
+ * picked from that set because its footprint contains all EIGHT land tiles and
+ * NO ocean tile at all, with no tile reduced to a token pixel: `fulgoran-rock`
+ * 370, `fulgoran-walls` 244, `fulgoran-paving` 179, `fulgoran-dunes` 125,
+ * `fulgoran-conduit` 63, `fulgoran-sand` 31, `fulgoran-machinery` 9,
+ * `fulgoran-dust` 3 (of 1024 pixels). A regression that recolours or
+ * misclassifies any of the eight land tiles has a real chance of moving this
+ * window's `tpp: 1` hash, which none of the other four can offer.
+ *
+ * Re-pinning the first four windows' `tpp: 8` hashes when this task's palette
+ * landed was expected, not a bug: those windows already contain land pixels at
+ * `tpp: 8` (see the table above), and the palette gained five new colours plus
+ * changed all three land tiles it already had (`fulgoran-dust` is new;
+ * `fulgoran-dunes`/`-sand`/`-rock` are unchanged tile CLASSES but some
+ * positions that used to fall through to one of those three - because only
+ * three land tiles existed to argmax against - now correctly resolve to one of
+ * the five new tiles instead, changing pixels these windows already painted).
+ * Their `tpp: 1` hashes did NOT move, confirming the "100% ocean" measurement
+ * above still holds after the palette change.
  *
  * A changed hash is NOT automatically a bug - it is a prompt to say which
  * change caused it. Re-pin deliberately, never to make the suite green.
@@ -659,28 +698,38 @@ describe("renderFulgoraTerrain is stable", () => {
       seed0: 123456,
       originX: -64,
       originY: -64,
-      hashes: { 1: "eb312806", 8: "df976957" },
+      hashes: { 1: "eb312806", 8: "7d185bba" },
     },
     {
       name: "far field",
       seed0: 123456,
       originX: 6000,
       originY: -4000,
-      hashes: { 1: "8577e6aa", 8: "50277b5f" },
+      hashes: { 1: "8577e6aa", 8: "ae435250" },
     },
     {
       name: "off origin",
       seed0: 123456,
       originX: -1524,
       originY: 976,
-      hashes: { 1: "156859be", 8: "14cb5c16" },
+      hashes: { 1: "156859be", 8: "1ea17751" },
     },
     {
       name: "second seed",
       seed0: 987654,
       originX: -64,
       originY: -64,
-      hashes: { 1: "84f3a789", 8: "c9aa4f56" },
+      hashes: { 1: "84f3a789", 8: "0febee19" },
+    },
+    {
+      // Land-centred: (-5872, 3088), seed 123456. All eight land tiles, no
+      // ocean at all - see the header comment above for how this origin was
+      // chosen and what it contains.
+      name: "land core",
+      seed0: 123456,
+      originX: -5872,
+      originY: 3088,
+      hashes: { 1: "a3a580a9", 8: "82ca093c" },
     },
   ];
 
