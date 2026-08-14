@@ -227,12 +227,18 @@ blockIt("nauvis")(
     const vulcanusResources = b.add("vulcanus resources (default Vulcanus view)", () =>
       runRenderRequest({ ...base, planet: "vulcanus", view: "resources" }),
     );
-    // Fulgora V1 (#27). Terrain is the ONLY view it has - no overlay has a
+    // Fulgora (#27). Terrain is the ONLY view it has - no overlay has a
     // Fulgora port - so this single row is the whole planet's cost, unlike
     // Vulcanus where the default view is the pricier `resources`. Every pixel
-    // runs the full elevation chain: ~31 basis_noise octaves plus three voronoi
-    // searches, with no early-out, because deciding a pixel is ocean IS the
-    // computation.
+    // runs the full elevation chain (~31 basis_noise octaves) and the ocean
+    // argmax; there IS an ocean early-out (`bestOcean > 0`), so a LAND pixel
+    // pays a lot more than an ocean one - it goes on to run the road/structure
+    // layer's two more Voronoi tilings (four total, on top of the two the
+    // ocean-side cells layer already runs for every pixel) and three more
+    // multioctave fields (`fulgoraRoads.ts`'s `structureSubnoise`,
+    // `fulgoraRuins.ts`'s `ruinsWalls`/`ruinsPaving`) that an ocean pixel never
+    // reaches. The cost model is strongly bimodal, not uniform: see the
+    // land-only figure in `docs/noise/fulgora-elevation-NOTES.md`'s Task 12.
     const fulgoraTerrain = b.add("fulgora terrain (the only Fulgora view)", () =>
       runRenderRequest({ ...base, planet: "fulgora", view: "terrain" }),
     );

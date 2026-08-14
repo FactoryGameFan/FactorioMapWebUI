@@ -548,15 +548,23 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       margins that match this port's own to four decimal places (which rules
       out an inflated `tileRuinWalls` formula as the cause). 121 of the 124
       mismatches are Chebyshev-1 adjacent to a position already classified the
-      game's way (base rate 67.0%, `p = 1.07e-17`) - the same open,
+      game's way (base rate 67.0%, `p = 1.07e-17` treating each mismatch as
+      independent - the fixture's dense block is not, so a clustered null
+      gives `p = 1.88e-10` instead; both are far past significant, see
+      `docs/noise/fulgora-elevation-NOTES.md`) - the same open,
       unexplained post-argmax mechanism as V1's 18-mismatch residual below,
       not a new defect. A sub-tile centre-sampling offset was tested again at
       this wider scope and refuted again.
 
       **Perf: ~4.78 us/px (was 3.91 for V1), +22%**, still the cheapest planet
-      rendered - the new road/structure/ruins fields are paid only on the
-      ~45% of pixels that reach past the ocean early-out. Full before/after
-      table: `docs/noise/fulgora-elevation-NOTES.md`.
+      rendered on a whole-image average - the new road/structure/ruins fields
+      are paid only on the pixels that reach past the ocean early-out, which
+      is **20.3%** of the benchmark window (measured directly; the fixture's
+      44.7% land share overstates it - that fixture is deliberately
+      coastline-concentrated). A land-only window measures ~7.9 us/px,
+      essentially on par with nauvis terrain (7.58) rather than well below it,
+      and still far under vulcanus (13.82). Full before/after table and the
+      land-only measurement: `docs/noise/fulgora-elevation-NOTES.md`.
 
       Deferred for Fulgora: scrap resources, cliffs, and the island finder.
       Two residuals remain open, and as far as anything measured so far can

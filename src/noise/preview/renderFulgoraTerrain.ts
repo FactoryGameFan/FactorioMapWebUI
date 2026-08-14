@@ -26,8 +26,8 @@ export interface RenderFulgoraTerrainOptions {
  * which variant of each. The scaled triple is written out here in the form the
  * Lua uses so it stays checkable against the source.
  *
- * All eight of Fulgora's land tiles are resolved against each other as of this
- * task (see `fulgoraCatalog.ts`), so this palette can now paint every position
+ * All eight of Fulgora's land tiles are resolved against each other in the land
+ * argmax (see `fulgoraCatalog.ts`), so this palette can paint every position
  * in the fixture with the tile the resolver actually names. The ocean tiles
  * still dominate the argmax wherever they are placeable, so the land argmax
  * only runs once none of them are.

@@ -219,6 +219,16 @@ describe("fulgora land argmax over all eight tiles", () => {
    * `P(X >= 121 | n = 124, p = 0.6701) = 1.07e-17` - a far stronger signal
    * than either the ocean residual's ~1e-10 or the three-tile residual's
    * 4.6e-12, because both the count and the fraction grew together.
+   *
+   * **That tail assumes the 124 mismatches are independent samples, and they
+   * are not** - the fixture's dense block is sampled at stride 4, so nearby
+   * mismatches are spatially correlated by construction. Clustering the 124 at
+   * Chebyshev distance <= 8 gives 79 clusters (57 singletons, the rest sized
+   * 2-8); of those, 76 have EVERY member individually meeting the adjacency
+   * criterion above. A cluster-level tail, `P(X >= 76 | n = 79, p = 0.6701) =
+   * 1.88e-10`, is the more defensible number - still overwhelming, just eight
+   * orders of magnitude less extreme than the point-level 1.07e-17. Don't
+   * quote the point-level figure as if the samples were independent.
    */
   it("at least 121 of the 124 mismatches are Chebyshev-1 from a tile we already class the game's way", () => {
     let adjacentCount = 0;
@@ -243,8 +253,10 @@ describe("fulgora land argmax over all eight tiles", () => {
    * 47.8%, because eight tiles interleave far more densely than three (more
    * distinct tile classes means more cells have at least one differently
    * classified neighbour). Even so, that base rate does not by itself weaken
-   * the 121/124 finding above: `P(X >= 121 | n = 124, p = 0.6701) = 1.07e-17`.
-   * The bound below (0.75) is loose - not pinned to the decimal, so ordinary
+   * the 121/124 finding above: `P(X >= 121 | n = 124, p = 0.6701) = 1.07e-17`
+   * (or, clustered for spatial independence, `P(X >= 76 | n = 79, p = 0.6701)
+   * = 1.88e-10` - see the caveat on the test above; either way the conclusion
+   * survives). The bound below (0.75) is loose - not pinned to the decimal, so ordinary
    * noise in a re-sampled fixture does not break it - the point is that it
    * stays far below the 97.6% observed among the mismatches, not that it is
    * pinned to this exact number.

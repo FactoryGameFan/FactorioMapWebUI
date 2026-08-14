@@ -3633,7 +3633,14 @@ async function captureFulgoraElevation(): Promise<void> {
  * Two fields here are captured because the port cannot settle them by reading:
  * `fulgora_pyramids_banding` and `fulgora_spots_banding` are the noise
  * machine's `%` operator, whose behaviour on a negative left operand is not
- * stated anywhere in the docs. The fixture decides it.
+ * stated anywhere in the docs. The OPERAND is what would settle it -
+ * `fulgora_pyramids * 8` for the first, `fulgora_spots_prebanding` (captured
+ * directly below) for the second - not either field's post-modulo result. At
+ * these 101 positions the operand never goes negative (`fulgora_pyramids * 8`
+ * minimum 0.022018, `fulgora_spots_prebanding` minimum 0.70791), so the
+ * fixture does not decide the sign convention; see
+ * `docs/noise/fulgora-elevation-NOTES.md`'s Task 13 for the wider-map sweep
+ * that does.
  */
 async function captureFulgoraRuins(): Promise<void> {
   const seed = 123456;

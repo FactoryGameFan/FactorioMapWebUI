@@ -760,7 +760,7 @@ describe("renderFulgoraTerrain is stable", () => {
   });
 
   it("the windows are not all the same picture", () => {
-    // Four identical hashes would pin nothing. Renders that differ prove each
+    // Five identical hashes would pin nothing. Renders that differ prove each
     // window is actually reaching different terrain.
     const seen = new Set(
       WINDOWS.map((w) =>
@@ -816,6 +816,7 @@ describe("makeFulgoraMasks", () => {
   it("the masks are not all one value, so the test above discriminates", () => {
     const distinct = (v: number[]) => new Set(v).size;
     expect(distinct(ruinsFixture.fulgora_natural_mask)).toBe(2);
+    expect(distinct(ruinsFixture.fulgora_natural_and_mesa_mask)).toBe(2);
     expect(distinct(ruinsFixture.fulgora_artificial_mask)).toBe(2);
   });
 });
@@ -864,7 +865,19 @@ describe("makeFulgoraRoads", () => {
    * the two fixes or assume one covers the other.
    *
    * The rest carry the port's known `basisNoise` floor (this port evaluates it
-   * in f64 where the game uses f32), scaled by how the expression composes it.
+   * in f64 where the game uses f32), scaled by how the expression composes it -
+   * and for `pyramidsBanding` that scaling is an EXACT, checked identity, not
+   * just a family resemblance: it is `(cells.pyramids(x, y) * 8) % 1`, an f32
+   * multiply by a power of two is exact in IEEE 754, and the measured worst
+   * residuals confirm it - `cells.pyramids` 1.1920928955078125e-7,
+   * `pyramidsBanding` 9.5367431640625e-7, a ratio of exactly 8, both at the
+   * SAME fixture position (index 45 of 101). `spotsPrebanding` does NOT close
+   * this cleanly the same way (measured ratio to `startingVaultCone`'s
+   * residual is 4.44, not the 4.5 its `(1 - cone) / 2 * 9` coefficients would
+   * predict, and the two worst cases fall at different positions, 43 vs 47) -
+   * see `docs/noise/fulgora-elevation-NOTES.md`'s Task 13 for the full
+   * decomposition and why that one stays a family resemblance, not an
+   * identity.
    * `structureSubnoise` used to be the worst of the thirteen by a wide margin -
    * 3.91e-5, an order of magnitude above every other continuous field - because
    * narrowing only happened where its coordinate crossed into
@@ -874,11 +887,17 @@ describe("makeFulgoraRoads", () => {
    * siblings - a 131x improvement, not a wider tolerance.
    *
    * The `%` question (Step 4) did not arise: `pyramidsBanding` and
-   * `spotsBanding` both passed comfortably against the brief's starting bounds,
-   * and the fixture's own `fulgora_spots_prebanding` / `fulgora_pyramids_banding`
-   * arrays never go negative (checked directly), so JS `%`'s sign convention was
-   * never exercised at any of the 101 positions - there is nothing here to
-   * distinguish flooring modulo from C `fmod`.
+   * `spotsBanding` both passed comfortably against the brief's starting bounds.
+   * The OPERANDS that would decide it are `cells.pyramids(x, y) * 8` (for
+   * `pyramidsBanding`) and `fulgora_spots_prebanding` itself (for
+   * `spotsBanding`) - not `fulgora_pyramids_banding`, which is the fixture's
+   * POST-modulo result and cannot discriminate a sign convention either way
+   * (checked directly: it spans 0.002517 to 0.999766, and a flooring modulo
+   * never leaves `[0, 1)` regardless of its operand's sign). The real operands,
+   * `fulgora_pyramids * 8` (minimum 0.022018) and `fulgora_spots_prebanding`
+   * (minimum 0.70791), never go negative at these 101 positions, so JS `%`'s
+   * sign convention was never exercised here - see
+   * `docs/noise/fulgora-elevation-NOTES.md`'s Task 13 for the wider-map sweep.
    */
   it("matches the game on the road and structure layer", () => {
     checkRuins(roads.roadCells, ruinsFixture.fulgora_road_cells, 0);
@@ -939,11 +958,13 @@ describe("makeFulgoraRuins", () => {
    * `tileRuinConduit` and `tileRuinMachinery` have ONLY the `artificialMask`
    * term, so their masked-in branch (where the residual above is even
    * reachable) is exercised at just the 9 of 101 positions where
-   * `artificial_mask` is 1 - a known, accepted coverage limit (Task 5's argmax
-   * over 828 land positions is the broader gate for these two fields). Their
-   * residuals are smaller than the other four fields' now, but that is still a
-   * measurement made on 9 points, not 101 - weaker evidence than the other
-   * rows in this table, not stronger.
+   * `artificial_mask` is 1 - weaker evidence than the other rows in this
+   * table, not stronger, though the wider land argmax closes most of that gap:
+   * `test/fulgoraLandTiles.spec.ts`'s 2261-position gate (not the 828-position
+   * three-tile subset, which contains zero `fulgoran-conduit` or
+   * `fulgoran-machinery` positions and so could never have covered these two
+   * fields at all) measures `fulgoran-conduit` at 147/147 and
+   * `fulgoran-machinery` at 108/108, both 100% recall.
    */
   it("matches the game on the two ruins noise fields", () => {
     checkRuins(ruins.ruinsWalls, ruinsFixture.fulgora_ruins_walls, 6e-7);
