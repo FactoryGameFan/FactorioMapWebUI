@@ -33,10 +33,15 @@ export interface RenderFulgoraTerrainOptions {
  * wherever they are placeable, so the land argmax only runs once none of them
  * are.
  *
- * **The three-way land argmax is only 94.6% accurate against `get_tile`, and
- * the gap is an open finding, not a rounding error** - see the "OPEN FINDING"
- * paragraph on `makeFulgoraTileResolver` in `fulgoraCatalog.ts` before trusting
- * a rendered land pixel.
+ * **The three-way land argmax is 94.6% accurate against `get_tile` only at
+ * the positions where the game placed one of these three tiles** (783/828 -
+ * see the "OPEN FINDING" paragraph on `makeFulgoraTileResolver` in
+ * `fulgoraCatalog.ts`, and the gap is an open finding, not a rounding error).
+ * This file paints ALL 2261 land positions in the fixture, and at the other
+ * 1433 the game placed one of the five tiles this palette cannot yet produce
+ * (the road/ruins layer), so a rendered land PIXEL matches `get_tile` at only
+ * 783/2261 = **34.6%** - the unqualified 94.6% figure is not the accuracy of
+ * this render. Task 5 is what closes that gap.
  */
 const COLORS: Record<FulgoraTile, readonly [number, number, number]> = {
   "fulgoran-dunes": [125, 71, 59],

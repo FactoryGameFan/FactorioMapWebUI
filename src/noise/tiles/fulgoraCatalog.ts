@@ -131,6 +131,9 @@ export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number)
   const cells = makeFulgoraCells(shared, ctx);
   const chain = makeFulgoraElevation(shared, cells, ctx);
 
+  // Not `memoXY`-wrapped, unlike every field below it: that helper is typed for
+  // numbers, and there is nothing to gain here anyway - every expensive read
+  // this function makes is already memoized inside the chain.
   return (x: number, y: number): FulgoraTile => {
     const e = chain.elevation(x, y);
     const mask = chain.oilMask(x, y);
@@ -151,6 +154,12 @@ export function makeFulgoraTileResolver(ctx: FulgoraCtx): (x: number, y: number)
 
     // The ocean early-out is what keeps the ocean question as cheap as it was
     // in V1: 55% of sampled positions never touch the land layer at all.
+    //
+    // `> 0` rather than `>= 0`: a probability of exactly 0 does not place a
+    // tile, and `-inf` (above the tile's water level) fails it too. Both are
+    // reachable - the mask being off makes every term exactly 0 - so an ocean
+    // probability of exactly 0 correctly falls through to the land argmax
+    // below rather than taking this branch.
     if (bestOcean > 0) return bestDeep > bestShallow ? "deep" : "shallow";
 
     // `fulgoran-sand` is `1 - fulgora_dunes`, and `fulgora_dunes` is
