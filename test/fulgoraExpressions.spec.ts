@@ -776,11 +776,11 @@ describe("makeFulgoraRoads", () => {
    * | `roadCells`, `structureCells` | **0** | 0 |
    * | `roadPyramids` | **0** | 0 |
    * | `roadPavingThin`, `roadPaving2`, `roadPaving2b`, `roadPaving2c`, `roadDust` | **0** | 0 |
+   * | `structureFacets` | **0** | 0 |
    * | `structureSubnoise` | 2.98e-7 | 4e-7 |
    * | `pyramidsBanding` | 9.54e-7 | 1.5e-6 |
    * | `spotsPrebanding` | 3.58e-6 | 5e-6 |
    * | `spotsBanding` | 3.64e-6 | 5e-6 |
-   * | `structureFacets` | 7.63e-6 | 1e-5 |
    *
    * `roadCells` and `structureCells` are cell IDs, and `roadPavingThin` through
    * `roadDust` are built from comparisons/lerps of comparisons, so all seven are
@@ -790,6 +790,18 @@ describe("makeFulgoraRoads", () => {
    * `cells.pyramids` in `fulgoraCells.ts`, it is sampled at the RAW (x, y) with
    * no wobble distortion, so the input is already on the f32 grid the game
    * itself samples - no coordinate-rounding error to carry through.
+   *
+   * `structureFacets` is ALSO now bit-exact, and it did not start that way -
+   * it was 7.63e-6 (the worst of the thirteen at the time) until a fix-round
+   * review caught that `structure_cells`/`structure_facets` sample at
+   * `y * 0.8`, and the engine's `0.8` is an f32 CONSTANT
+   * (0.80000001192092895508), not the f64 literal this port was using
+   * (0.80000000000000004441) - two different numbers. Narrowing the PRODUCT
+   * (`f32(y * 0.8)`) does nothing at all (still 7.63e-6); only narrowing the
+   * CONSTANT itself (`y * f32(0.8)`, see the call site) does. This is a
+   * different defect from `structureSubnoise`'s below - that one needed the
+   * product narrowed, this one needs the constant narrowed - do not conflate
+   * the two fixes or assume one covers the other.
    *
    * The rest carry the port's known `basisNoise` floor (this port evaluates it
    * in f64 where the game uses f32), scaled by how the expression composes it.
@@ -812,7 +824,7 @@ describe("makeFulgoraRoads", () => {
     checkRuins(roads.roadCells, ruinsFixture.fulgora_road_cells, 0);
     checkRuins(roads.structureCells, ruinsFixture.fulgora_structure_cells, 0);
     checkRuins(roads.roadPyramids, ruinsFixture.fulgora_road_pyramids, 0);
-    checkRuins(roads.structureFacets, ruinsFixture.fulgora_structure_facets, 1e-5);
+    checkRuins(roads.structureFacets, ruinsFixture.fulgora_structure_facets, 0);
     checkRuins(roads.structureSubnoise, ruinsFixture.fulgora_structure_subnoise, 4e-7);
     checkRuins(roads.pyramidsBanding, ruinsFixture.fulgora_pyramids_banding, 1.5e-6);
     checkRuins(roads.spotsPrebanding, ruinsFixture.fulgora_spots_prebanding, 5e-6);
@@ -843,29 +855,35 @@ describe("makeFulgoraRuins", () => {
    * | --- | --- | --- |
    * | `ruinsPaving` | 2.38e-7 | 4e-7 |
    * | `ruinsWalls` | 3.87e-7 | 6e-7 |
-   * | `tileRuinPaving` | 4.77e-7 | 7e-7 |
-   * | `tileRuinConduit` | 9.95e-6 | 1.5e-5 |
-   * | `tileRuinMachinery` | 1.21e-5 | 2e-5 |
-   * | `tileRuinWalls` | 1.90e-5 | 3e-5 |
+   * | `tileRuinMachinery` | 3.80e-7 | 6e-7 |
+   * | `tileRuinConduit` | 4.17e-7 | 6e-7 |
+   * | `tileRuinPaving`, `tileRuinWalls` | 4.77e-7 | 7e-7 |
    *
    * `ruinsWalls` and `ruinsPaving` are raw multioctave fields, so they carry the
    * same `basisNoise` floor as `fulgora_dunes`/`fulgora_rock` in
    * `fulgoraElevation.ts` (both 4e-7) - nothing Fulgora- or ruins-specific.
-   * `tileRuinWalls`, `tileRuinConduit` and `tileRuinMachinery` all read
-   * `structureFacets` (worst 7.63e-6 in `fulgoraRoads.ts`) scaled 4x, 2x and
-   * 2.5x respectively, and their measured worst grows in that same order
-   * (1.90e-5, 9.95e-6, 1.21e-5 - conduit and machinery swap places because their
-   * worst positions differ, not because either carries extra error). None of
-   * the six exceed what a linear combination of their already-measured inputs
-   * would predict, so there is no sign here of the per-op-narrowing class of
-   * bug Task 3 found in `structureSubnoise` - this file has no large
-   * intermediate product that skips f32 rounding.
+   *
+   * **This table was wrong once.** The first Step 4 pass measured
+   * `tileRuinWalls`/`tileRuinConduit`/`tileRuinMachinery` at 1.90e-5, 9.95e-6
+   * and 1.21e-5 - all three above the brief's `1e-5` starting bound - and
+   * WIDENED their bounds to 3e-5/1.5e-5/2e-5 to make the test pass, in direct
+   * violation of the "tighten only" rule (the report at the time also
+   * incorrectly claimed no bound had been loosened). That was the wrong call:
+   * the three had inherited `structureFacets`' 7.63e-6 residual (scaled 4x, 2x
+   * and 2.5x by their own coefficients), and `structureFacets` itself was
+   * wrong, not at its floor - see the fix in `fulgoraRoads.ts`'s comment table
+   * above. Once `structureFacets` came back bit-exact, all three fields here
+   * dropped 24x-40x to the row above, back under their own basisNoise floor
+   * and comfortably under the brief's original `1e-5` with no widening at all.
    *
    * `tileRuinConduit` and `tileRuinMachinery` have ONLY the `artificialMask`
    * term, so their masked-in branch (where the residual above is even
    * reachable) is exercised at just the 9 of 101 positions where
    * `artificial_mask` is 1 - a known, accepted coverage limit (Task 5's argmax
-   * over 828 land positions is the broader gate for these two fields).
+   * over 828 land positions is the broader gate for these two fields). Their
+   * residuals are smaller than the other four fields' now, but that is still a
+   * measurement made on 9 points, not 101 - weaker evidence than the other
+   * rows in this table, not stronger.
    */
   it("matches the game on the two ruins noise fields", () => {
     checkRuins(ruins.ruinsWalls, ruinsFixture.fulgora_ruins_walls, 6e-7);
@@ -874,9 +892,9 @@ describe("makeFulgoraRuins", () => {
 
   it("matches the game on all four tile_ruin outputs", () => {
     checkRuins(ruins.tileRuinPaving, ruinsFixture.fulgora_tile_ruin_paving, 7e-7);
-    checkRuins(ruins.tileRuinWalls, ruinsFixture.fulgora_tile_ruin_walls, 3e-5);
-    checkRuins(ruins.tileRuinConduit, ruinsFixture.fulgora_tile_ruin_conduit, 1.5e-5);
-    checkRuins(ruins.tileRuinMachinery, ruinsFixture.fulgora_tile_ruin_machinery, 2e-5);
+    checkRuins(ruins.tileRuinWalls, ruinsFixture.fulgora_tile_ruin_walls, 7e-7);
+    checkRuins(ruins.tileRuinConduit, ruinsFixture.fulgora_tile_ruin_conduit, 6e-7);
+    checkRuins(ruins.tileRuinMachinery, ruinsFixture.fulgora_tile_ruin_machinery, 6e-7);
   });
 
   /**

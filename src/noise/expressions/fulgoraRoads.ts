@@ -108,8 +108,15 @@ export function makeFulgoraRoads(
   const roadCells = memoXY((x: number, y: number) => road.cellId(x, y));
   const roadPyramids = memoXY((x: number, y: number) => road.pyramidNoise(x, y));
 
-  const structureCells = memoXY((x: number, y: number) => structure.cellId(x, y * 0.8));
-  const structureFacets = memoXY((x: number, y: number) => structure.facetNoise(x, y * 0.8));
+  // `0.8` must be narrowed to f32 BEFORE the multiply, not after: the engine's
+  // own `0.8` literal is f32 (0.80000001192092895508), not f64
+  // (0.80000000000000004441), and those are different numbers. Measured over
+  // the 101-position fixture, `structureFacets` worst residual: `y * 0.8`
+  // 7.629e-6; `f32(y * 0.8)` (narrowing the product) still 7.629e-6, no help;
+  // `y * f32(0.8)` (narrowing the constant) exactly 0. Do not "simplify" this
+  // back to a bare `0.8` literal or to narrowing the product instead.
+  const structureCells = memoXY((x: number, y: number) => structure.cellId(x, y * f32(0.8)));
+  const structureFacets = memoXY((x: number, y: number) => structure.facetNoise(x, y * f32(0.8)));
   // The multiply is narrowed to f32 on its own, matching the engine's
   // per-op f32 evaluation - see the file header for why narrowing only the
   // sum (which `makeMultioctaveNoise` already does internally) is not enough.
