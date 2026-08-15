@@ -279,4 +279,47 @@ describe("tiled render equals untiled render", () => {
     });
     expect(renderTiled(req, 24)).toEqual(renderWhole(req));
   });
+
+  // Fulgora goes through its own dispatch branch too, and scrap is the one
+  // overlay it has. Unlike the Vulcanus/Nauvis 3x3-mark overlays above, scrap
+  // paints a single pixel per roll, so it cannot straddle a worker-tile seam
+  // and needs no `sweepBox` halo - this is the case that proves that, rather
+  // than assuming it.
+  //
+  // Origin (-256, 872), 64x64: `test/fulgoraScrapDensity.spec.ts`'s own dense
+  // regions sit near (0,0)-(256,256) and (-1200,800)-(-944,1056), and this
+  // window was checked directly against `makeFulgoraScrapPlacement` before
+  // use - it holds 205 rolled placements in the 4096-pixel box, not the
+  // suppressed empty chunk at (0,128)-(32,160) that
+  // `fulgoraScrapDensity.spec.ts` documents. The `resources` case below
+  // re-checks this at the pixel level: its output must differ from the
+  // `terrain` render of the same window, or the tiled-equality assertion
+  // would be comparing two identical, scrap-free images and proving nothing.
+  const FULGORA_VIEWS = ["terrain", "resources", "all"] as const;
+  for (const view of FULGORA_VIEWS) {
+    it(`matches byte for byte on Fulgora, ${view} view`, () => {
+      const req = baseReq({
+        view,
+        planet: "fulgora",
+        originX: -256,
+        originY: 872,
+        width: 64,
+        height: 64,
+      });
+      expect(renderTiled(req, 32)).toEqual(renderWhole(req));
+    });
+  }
+
+  it("the Fulgora resources window is not vacuous: scrap actually changes pixels", () => {
+    const terrainReq = baseReq({
+      view: "terrain",
+      planet: "fulgora",
+      originX: -256,
+      originY: 872,
+      width: 64,
+      height: 64,
+    });
+    const resourcesReq = { ...terrainReq, view: "resources" as const };
+    expect(renderWhole(resourcesReq)).not.toEqual(renderWhole(terrainReq));
+  });
 });
