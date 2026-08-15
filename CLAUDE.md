@@ -449,13 +449,23 @@ otherwise, and all three are things the file-level timings above cannot show:
   (205s) - **503s of that shard's 653s sitting on 2 of its 4 workers**. Moving
   one of them elsewhere leaves the other behind.
 
+**And the runner noise is bigger than the effect anyone is trying to tune.**
+#202's run and #203's run have the **same 210 spec files**, so vitest hands
+them identical shards. The jobs still came in at **259 / 351 / 389 / 133**
+against **366 / 273 / 327 / 137** - shard 1 up 41%, shard 3 down 16%, and the
+binding shard changed identity from 3 to 1. Any rebalancing worth doing has to
+beat that, and a single run cannot show that it did.
+
 So the gate wall stays where it is, and the thing that actually broke was a
 **timeout, not the wall**. On #203 - a docs-only change - the unchanged
 "Vulcanus rock and cliff coverage" test hit its 120s budget at 150.5s. Across
 four consecutive runs the same code measured **69.6s, 90.1s, 108.8s and
 150.5s**, so run-to-run spread on a 4-core runner is about 40%, and main itself
 had passed at 108.8s with 10% to spare. That file's budget is now 300s, with
-the table in its own header comment. Note what this means for the next heavy
+the table in its own header comment. The green re-run measured that same test
+at **139.7s**, which is the row that matters: given room it finishes, and it
+finishes above 120s rather than just under, so the old ceiling was genuinely
+too small and the new one is not hiding anything. Note what this means for the next heavy
 test: the ceiling is per-test and hand-written, so a shard rebalance moves which
 tests are near it.
 

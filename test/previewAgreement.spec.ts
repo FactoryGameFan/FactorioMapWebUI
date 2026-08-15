@@ -43,14 +43,19 @@ import { SCRAP_MAP_COLOR } from "../src/noise/resources/fulgoraResourceCatalog";
  * The same unchanged test, "Vulcanus rock and cliff coverage", on four
  * consecutive CI runs:
  *
- * | tree                        | duration | result    |
- * | --------------------------- | -------- | --------- |
- * | main, before the scrap work | 69.6s    | pass      |
- * | PR #202                     | 90.1s    | pass      |
- * | main, after #202 merged     | 108.8s   | pass      |
- * | PR #203                     | 150.5s   | TIMED OUT |
+ * | tree                         | duration | result    |
+ * | ---------------------------- | -------- | --------- |
+ * | main, before the scrap work  | 69.6s    | pass      |
+ * | PR #202                      | 90.1s    | pass      |
+ * | main, after #202 merged      | 108.8s   | pass      |
+ * | PR #203                      | 150.5s   | TIMED OUT |
+ * | PR #203, at this 300s budget | 139.7s   | pass      |
  *
- * Its own work never changed across those four runs - #202's only render-path
+ * That last row is what proves the budget was the problem: given room, the same
+ * test finishes in 139.7s. It is over 120s on its own merits rather than just
+ * under, so a bigger number is not masking anything here.
+ *
+ * Its own work never changed across any of those runs - #202's only render-path
  * edit is inside the `planet === "fulgora"` branch, and Vulcanus never enters
  * it. What changed is the runner. #202 added three spec files, which re-buckets
  * vitest's sha1 hash-shard, and shard 1 now co-schedules this file (298s) with
