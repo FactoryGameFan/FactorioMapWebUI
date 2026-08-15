@@ -1,7 +1,14 @@
-import { type FulgoraTile, makeFulgoraTileResolver } from "../tiles/fulgoraCatalog";
+import {
+  type FulgoraStack,
+  type FulgoraTile,
+  makeFulgoraTileResolver,
+  makeFulgoraTileResolverFrom,
+} from "../tiles/fulgoraCatalog";
 import type { FulgoraCtx } from "../expressions/fulgoraShared";
 
 export interface RenderFulgoraTerrainOptions {
+  /** Shared field DAG - see `RenderVulcanusTerrainOptions.stack`. */
+  readonly stack?: FulgoraStack;
   /** Map seed as the noise program sees it - the FULGORA SURFACE seed. */
   readonly seed0: number;
   /** Output pixel dimensions. */
@@ -54,7 +61,22 @@ const COLORS: Record<FulgoraTile, readonly [number, number, number]> = {
   "fulgoran-conduit": [100, 79, 68],
   "fulgoran-machinery": [89, 79, 68],
   shallow: [74, 42, 43],
-  deep: [Math.round(49 * 1.15), Math.round(31 * 1.15), Math.round(35 * 1.15)],
+  // The Lua defines this as `{49*1.15, 31*1.15, 35*1.15}` = (56.35, 35.65,
+  // 40.25). Red and blue floor and round identically, so they cannot tell the
+  // two rules apart; GREEN is the only discriminating channel: 35.65 rounds to
+  // 36 under every rounding rule, including round-half-even, but the game's
+  // own `--generate-map-preview` PNG (test/fixtures/oracle-preview-fulgora-
+  // terrain.seed123456.png) shows 35 at every one of the 370,891 deep-ocean
+  // pixels sampled. That is truncation, not rounding, and it is not a lone
+  // reading: `SCRAP_MAP_COLOR`'s 0.9*255 = 229.5 lands on 229 in that same PNG
+  // (`src/noise/resources/fulgoraResourceCatalog.ts`), a second, independent
+  // case of a game map colour landing one below the rounded value. Using
+  // Math.round here painted 91% of a whole-image Fulgora comparison as
+  // "different" (differing/1,048,576 = 0.387) before this was found; Math.floor
+  // drops that to 0.0334, in line with the ~5.5% land-tile argmax residual this
+  // file already documents. Found and fixed while writing
+  // `test/previewAgreement.spec.ts`'s whole-image Fulgora terrain comparison.
+  deep: [Math.floor(49 * 1.15), Math.floor(31 * 1.15), Math.floor(35 * 1.15)],
 };
 
 /**
@@ -78,7 +100,10 @@ export function renderFulgoraTerrain(opts: RenderFulgoraTerrainOptions): ImageDa
   const originY = opts.originY ?? 0;
   const tpp = opts.tilesPerPixel ?? 1;
 
-  const resolve = makeFulgoraTileResolver({ seed0, ...opts.ctx });
+  const resolve =
+    opts.stack === undefined
+      ? makeFulgoraTileResolver({ seed0, ...opts.ctx })
+      : makeFulgoraTileResolverFrom(opts.stack);
   const data = new Uint8ClampedArray(width * height * 4);
 
   for (let py = 0; py < height; py++) {

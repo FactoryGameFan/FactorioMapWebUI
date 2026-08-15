@@ -130,12 +130,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const seed = 123456;
   const size = 1024;
   const planet = process.argv[2] ?? "nauvis";
-  // Vulcanus has no `trees`/`rocks`/`nauvis_cliff`; naming a control the planet
-  // does not define is harmless, but its own resources need disabling by name.
+  // Naming a control the planet does not define is harmless, so the Nauvis
+  // names stay in every arm; each planet's OWN disableable controls are added.
+  // Fulgora's are `scrap` and `fulgora_cliff` - `fulgora_islands` reports
+  // can_be_disabled: false, so it cannot be switched off and is not listed.
   const disabled =
     planet === "vulcanus"
       ? [...DISABLEABLE, "calcite", "tungsten_ore", "vulcanus_coal", "sulfuric_acid_geyser"]
-      : DISABLEABLE;
+      : planet === "fulgora"
+        ? [...DISABLEABLE, "scrap", "fulgora_cliff"]
+        : DISABLEABLE;
   const png = await generatePreview({ seed, planet, size, disabled });
   const out = join(process.cwd(), `preview-${planet}-terrain.png`);
   await writeFile(out, png);

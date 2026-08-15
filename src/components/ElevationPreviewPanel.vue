@@ -70,9 +70,15 @@ const unsupportedLabel = computed(() =>
 // be Nauvis (neither has a Vulcanus port - runRenderRequest skips them for
 // `planet: "vulcanus"` regardless of `view`, so leaving them enabled there
 // would offer a control that silently does nothing).
-// Fulgora (Task 11) has a terrain renderer and NO overlay ports at all, so it
-// joins `terrainAvailable` only - every other toggle stays off for it, matching
-// how runRenderRequest falls back to plain terrain for a view it cannot honour.
+// Fulgora (Task 11) has a terrain renderer, and the scrap resource overlay
+// (see `makeFulgoraScrap`) now renders too - but only through the default
+// "all" composite. `resourcesAvailable` below still excludes Fulgora, so it
+// joins `terrainAvailable` only and every dev-mode toggle stays off for it,
+// matching how runRenderRequest falls back to plain terrain for a view it
+// cannot honour. That keeps the dev-mode Resources toggle disabled for
+// Fulgora while ordinary users - who only ever see "all" - get scrap painted
+// automatically. Deliberately out of scope to wire the toggle up too; see
+// `resourcesAvailable`'s comment below.
 // Three views gate more broadly, because each has a Vulcanus port:
 //   Terrain   -> renderVulcanusTerrain (V1)
 //   Resources -> renderVulcanusResources (V2)

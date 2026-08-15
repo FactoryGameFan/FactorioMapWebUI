@@ -3741,6 +3741,121 @@ async function captureFulgoraRuins(): Promise<void> {
 }
 
 /**
+ * Scrap's `probability_expression`, sampled from the game with its
+ * `local_expressions` inlined.
+ *
+ * Every FIELD it reads is already covered by the shared/cells/elevation/ruins
+ * fixtures, so this exists to cover the one thing they cannot: the COMPOSITION,
+ * including operator precedence and the two `min`s. Positions deliberately span
+ * the whole range from zero to the 0.5 cap - a sample that only hit zeros would
+ * pass against a stub.
+ */
+async function captureFulgoraScrap(): Promise<void> {
+  const seed = 123456;
+  const positions = fulgoraCapturePositions();
+  const sample = (expression: string) => sampleFulgora(expression, positions, seed);
+
+  const STRUCT =
+    "(fulgora_structure_cells < min(0.1 * control:scrap:frequency, 0.05 + 0.05 * control:scrap:frequency))" +
+    " * (1 + fulgora_structure_subnoise)" +
+    " * (fulgora_elevation > (fulgora_coastline + 10))" +
+    " * fulgora_artificial_mask";
+  const VAULT =
+    "(fulgora_spots_prebanding < (1.2 + 0.4 * slider_to_linear(control:scrap:size, -1, 1)))" +
+    " * fulgora_vaults_and_starting_vault * 10";
+  const EXPRS: Record<string, string> = {
+    fulgora_scrap_probability: `(control:scrap:size > 0) * (1 - fulgora_starting_mask) * (min(${STRUCT} + ${VAULT}, 0.5) * (1 - fulgora_road_paving_2c))`,
+    fulgora_scrap_struct_term: STRUCT,
+    fulgora_scrap_vault_term: VAULT,
+    scrap_control_frequency: "control:scrap:frequency",
+    scrap_control_size: "control:scrap:size",
+  };
+
+  const fields: Record<string, number[]> = {};
+  for (const [name, expr] of Object.entries(EXPRS)) {
+    fields[name] = await sample(expr);
+    console.log(`  captured ${name}`);
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 (Space Age enabled) via the test/oracle harness: the " +
+      "scrap resource's probability_expression with its local_expressions inlined, plus its two " +
+      "additive terms and the three control levers read back, on a real Fulgora surface " +
+      "(game.planets['fulgora'].create_surface(), seed FORCED to 123456 - NOT the derived " +
+      "mapSeed + crc32('fulgora')). Every FIELD the expression reads is already covered by the " +
+      "shared/cells/elevation/ruins fixtures; this covers the COMPOSITION, which nothing else " +
+      "does. The control rows are the non-vacuity check: a default surface must report 1 for " +
+      "frequency and size, which is what the composition assumes. Regenerate: node " +
+      "--experimental-strip-types test/oracle/capture.ts fulgora-scrap",
+    seed0: seed,
+    planet: "fulgora",
+    positions,
+    ...fields,
+  };
+  const out = join(FIXTURES, "oracle-fulgora-scrap.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(positions.length)} positions)`);
+}
+
+/**
+ * Every scrap entity the game actually places in three regions.
+ *
+ * This is what gates DENSITY, and it is not interchangeable with the preview
+ * PNGs: `map_grid` defaults to true, so the preview draws solid ores in a
+ * checkerboard of 2x2 tile blocks and shows only ~0.5 pixels per entity. A pixel
+ * diff would therefore bake a 2x under-placement into the renderer. Measured on
+ * these exact regions: the model's clamped expectation is 0.9836 per real
+ * entity, inside Poisson noise at n = 770.
+ */
+async function captureFulgoraScrapEntities(): Promise<void> {
+  const seed = 123456;
+  const regions: Region[] = [
+    { x0: 0, y0: 0, x1: 256, y1: 256 },
+    { x0: -1200, y0: 800, x1: -944, y1: 1056 },
+    { x0: 800, y0: -1600, x1: 1056, y1: -1344 },
+  ];
+  const cases: unknown[] = [];
+  for (const region of regions) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const dump = await sampleCliffEntitiesFull(region, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet: "fulgora",
+        entityType: "resource",
+        alsoResources: true,
+        protoNames: ["scrap"],
+      });
+      cases.push({ region, resources: dump.resources, protos: dump.protos });
+      console.log(
+        `  [${String(region.x0)},${String(region.y0)}] -> ${String(dump.resources?.length ?? -1)} scrap`,
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 via test/oracle: every resource entity " +
+      "(find_entities_filtered{type='resource'}) the game placed in each region on FULGORA at the " +
+      "DEFAULT preset, after chunk-forced generation, on a create_surface() surface whose seed is " +
+      "FORCED to `seed`. This is the DENSITY oracle and the preview PNGs cannot replace it: " +
+      "ResourceEntityPrototype::map_grid defaults to true, so the game's map preview draws solid " +
+      "ores in a 2x2-block checkerboard and shows about 0.5 pixels per entity. `protos` records " +
+      "scrap's collision box and map_grid read off the running game. Regenerate: node " +
+      "--experimental-strip-types test/oracle/capture.ts fulgora-scrap-entities",
+    seed0: seed,
+    planet: "fulgora",
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-fulgora-scrap-entities.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${String(cases.length)} regions)`);
+}
+
+/**
  * The tile the GAME actually placed on Fulgora - `surface.get_tile(x, y).name`
  * after real chunk generation, which no `sampleExpression` can report.
  *
@@ -3836,6 +3951,8 @@ if (want("fulgora-shared")) await captureFulgoraShared();
 if (want("fulgora-cells")) await captureFulgoraCells();
 if (want("fulgora-elevation")) await captureFulgoraElevation();
 if (want("fulgora-ruins")) await captureFulgoraRuins();
+if (want("fulgora-scrap")) await captureFulgoraScrap();
+if (want("fulgora-scrap-entities")) await captureFulgoraScrapEntities();
 if (want("fulgora-tiles")) await captureFulgoraTiles();
 
 if (want("basis")) await captureBasis();

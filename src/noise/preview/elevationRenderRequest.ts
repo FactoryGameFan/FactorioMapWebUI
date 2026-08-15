@@ -20,6 +20,9 @@ import { renderVulcanusResources } from "./renderVulcanusResources";
 import { renderVulcanusRocks } from "./renderVulcanusRocks";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
 import { renderFulgoraTerrain } from "./renderFulgoraTerrain";
+import { renderFulgoraResources } from "./renderFulgoraResources";
+import { makeFulgoraStack } from "../tiles/fulgoraCatalog";
+import type { FulgoraScrapControls } from "../expressions/fulgoraScrap";
 
 /** A render job posted to the worker. `id` tags the response for staleness. */
 export interface ElevationRenderRequest {
@@ -107,6 +110,12 @@ export interface ElevationRenderRequest {
    * moved.
    */
   fulgoraIslandControls?: { readonly frequency?: number; readonly size?: number };
+  /**
+   * `control:scrap:frequency` / `:size` - consumed only when `planet: "fulgora"`
+   * and the view includes resources. No UI writes this yet; it exists so the
+   * renderer reads the levers the game does rather than hardcoding neutral.
+   */
+  fulgoraScrapControls?: FulgoraScrapControls;
   /**
    * Escape hatch for `test/vulcanusStackCache.spec.ts`, which has to render the
    * same request BOTH ways to prove the shared cached stack is byte-identical
@@ -369,12 +378,19 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
     }
     if (planet === "fulgora") {
-      // Fulgora has NO overlay ports at all yet - not resources, not cliffs,
-      // not rocks - so every terrain-family view resolves to plain Fulgora
-      // terrain. That is the same fallback the Vulcanus branch above applies to
-      // the overlays it lacks: a view that asks for an overlay this planet has
-      // no port for gets the terrain, never a Nauvis field composited onto
-      // another planet's colours.
+      // Fulgora has a resources overlay now; it still has no cliffs and no
+      // rocks, so those views fall back to plain terrain - the same fallback
+      // the Vulcanus branch applies to the overlays it lacks. A view that asks
+      // for an overlay this planet has no port for gets the terrain, never a
+      // Nauvis field composited onto another planet's colours.
+      const fulgoraCtx = {
+        islandsFrequency: req.fulgoraIslandControls?.frequency,
+        islandsSize: req.fulgoraIslandControls?.size,
+      };
+      const stack =
+        req.unsharedStacks === true
+          ? undefined
+          : makeFulgoraStack({ seed0: req.seed0, ...fulgoraCtx });
       image = renderFulgoraTerrain({
         seed0: req.seed0,
         width: req.width,
@@ -382,11 +398,20 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         originX: req.originX,
         originY: req.originY,
         tilesPerPixel: req.tilesPerPixel,
-        ctx: {
-          islandsFrequency: req.fulgoraIslandControls?.frequency,
-          islandsSize: req.fulgoraIslandControls?.size,
-        },
+        ctx: fulgoraCtx,
+        stack,
       });
+      if (req.view === "resources" || req.view === "all") {
+        renderFulgoraResources(image, {
+          seed0: req.seed0,
+          originX: req.originX,
+          originY: req.originY,
+          tilesPerPixel: req.tilesPerPixel,
+          ctx: fulgoraCtx,
+          scrapControls: req.fulgoraScrapControls,
+          stack,
+        });
+      }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
     }
     image = renderTerrain({
