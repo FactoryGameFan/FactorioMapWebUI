@@ -682,28 +682,28 @@ describe("renderFulgoraTerrain is stable", () => {
       seed0: 123456,
       originX: -64,
       originY: -64,
-      hashes: { 1: "eb312806", 8: "7d185bba" },
+      hashes: { 1: "79e0f097", 8: "b032bcaf" },
     },
     {
       name: "far field",
       seed0: 123456,
       originX: 6000,
       originY: -4000,
-      hashes: { 1: "8577e6aa", 8: "ae435250" },
+      hashes: { 1: "9f56c6a3", 8: "cc86663d" },
     },
     {
       name: "off origin",
       seed0: 123456,
       originX: -1524,
       originY: 976,
-      hashes: { 1: "156859be", 8: "1ea17751" },
+      hashes: { 1: "e67b6147", 8: "dfbe7098" },
     },
     {
       name: "second seed",
       seed0: 987654,
       originX: -64,
       originY: -64,
-      hashes: { 1: "84f3a789", 8: "0febee19" },
+      hashes: { 1: "6570b551", 8: "2edda820" },
     },
     {
       // Land-centred: (-5872, 3088), seed 123456. All eight land tiles, no
@@ -713,9 +713,17 @@ describe("renderFulgoraTerrain is stable", () => {
       seed0: 123456,
       originX: -5872,
       originY: 3088,
-      hashes: { 1: "a3a580a9", 8: "82ca093c" },
+      hashes: { 1: "a3a580a9", 8: "4dbff944" },
     },
   ];
+  // Re-pinned 2026-08-14: `renderFulgoraTerrain.ts`'s `deep` colour changed
+  // from `Math.round` to `Math.floor` (the game truncates `map_color` floats;
+  // see the comment on that constant). Every hash above that touches a
+  // deep-ocean pixel moved - all five `tpp: 8` windows and four of five
+  // `tpp: 1` windows. The one exception, `land core`'s `tpp: 1` hash, held
+  // exactly steady, which is the expected confirmation: that window is
+  // documented above as containing no ocean tile at all at that scale, so it
+  // is the one cell in this table a deep-ocean colour change cannot reach.
 
   it.each(WINDOWS)("$name renders a stable image", ({ seed0, originX, originY, hashes }) => {
     for (const tilesPerPixel of [1, 8] as const) {
