@@ -306,6 +306,14 @@ export interface VoronoiParams {
 /** The four ops of one voronoi field, each sampled at a world position in tiles. */
 export interface Voronoi {
   readonly cellId: (x: number, y: number) => number;
+  /**
+   * The winning cell's integer lattice coordinates - the STABLE identity of a
+   * cell, as opposed to `cellId`, which hashes this pair into `[0, 1)` and can
+   * therefore collide between two distinct cells. Anything grouping samples by
+   * "which cell am I in" must use this; `cellId` is for the game's own
+   * expressions, which only ever consume the float.
+   */
+  readonly cellIndex: (x: number, y: number) => { cellX: number; cellY: number };
   readonly spotNoise: (x: number, y: number) => number;
   readonly facetNoise: (x: number, y: number) => number;
   readonly pyramidNoise: (x: number, y: number) => number;
@@ -880,6 +888,14 @@ export function makeVoronoi(p: VoronoiParams): Voronoi {
       const s = searchAt(...toGrid(x, y));
       return cellRandom(p.seed0, p.seed1, s.cellX, s.cellY);
     }),
+
+    // Deliberately NOT memoXY-wrapped: that helper is typed for number results,
+    // and `searchAt` already carries its own one-entry cache, which is the
+    // expensive part. Wrapping would add an allocation per call for nothing.
+    cellIndex: (x, y) => {
+      const s = searchAt(...toGrid(x, y));
+      return { cellX: s.cellX, cellY: s.cellY };
+    },
 
     spotNoise: memoXY((x, y) => searchAt(...toGrid(x, y)).d1),
 
