@@ -32,6 +32,45 @@ import { SCRAP_MAP_COLOR } from "../src/noise/resources/fulgoraResourceCatalog";
  *
  * Alignment: `--map-preview-size 1024` covers 1024 world tiles centred on the
  * origin, i.e. 1 tile per pixel from `(-512, -512)`.
+ *
+ * ---
+ *
+ * **Every comparison here carries `}, 300000)`, and it used to be `120000`.**
+ * Each one renders a full 1024x1024 image, which makes them the slowest tests
+ * in the suite. That number is a RESOURCE budget, not an assertion bound -
+ * raising it blesses nothing, and every measured claim below still has to hold.
+ *
+ * The same unchanged test, "Vulcanus rock and cliff coverage", on four
+ * consecutive CI runs:
+ *
+ * | tree                         | duration | result    |
+ * | ---------------------------- | -------- | --------- |
+ * | main, before the scrap work  | 69.6s    | pass      |
+ * | PR #202                      | 90.1s    | pass      |
+ * | main, after #202 merged      | 108.8s   | pass      |
+ * | PR #203                      | 150.5s   | TIMED OUT |
+ * | PR #203, at this 300s budget | 139.7s   | pass      |
+ *
+ * That last row is what proves the budget was the problem: given room, the same
+ * test finishes in 139.7s. It is over 120s on its own merits rather than just
+ * under, so a bigger number is not masking anything here.
+ *
+ * Its own work never changed across any of those runs - #202's only render-path
+ * edit is inside the `planet === "fulgora"` branch, and Vulcanus never enters
+ * it. What changed is the runner. #202 added three spec files, which re-buckets
+ * vitest's sha1 hash-shard, and shard 1 now co-schedules this file (298s) with
+ * `vulcanusCliffRejectionStage.spec.ts` (205s) - 503s of that shard's 653s on
+ * 2 of its 4 workers.
+ *
+ * So a timeout here means slow, exactly as CLAUDE.md says, and the run-to-run
+ * spread on identical code is about 40%. 300s gives the worst run yet a 2x
+ * margin. If it ever trips again, read the duration the reporter prints before
+ * assuming a hang - no assertion in this file has ever failed on CI.
+ *
+ * Kept as a bare literal rather than a named constant on purpose: any longer
+ * token pushes `}, 300000);` past the formatter's line budget, and oxfmt then
+ * rewrites all five `it(...)` calls into multi-line argument form and re-indents
+ * every test body. That is a 146-line diff to change a timeout.
  */
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
@@ -115,7 +154,7 @@ describe("preview agreement with the game", () => {
     expect(enemyPx).toBeLessThan(3000);
     expect(differing).toBeLessThan(200);
     expect(differing / compared).toBeLessThan(0.0002);
-  }, 120000);
+  }, 300000);
 
   it("Vulcanus terrain agrees once rocks and cliffs are masked", () => {
     const game = reference("oracle-preview-vulcanus-terrain.seed123456.png");
@@ -140,7 +179,7 @@ describe("preview agreement with the game", () => {
     // 99.999% and NOT yet diagnosed - the bound guards against drift, it does not
     // bless the gap.
     expect(rel).toBeLessThan(0.02);
-  }, 120000);
+  }, 300000);
 
   it("Vulcanus rock and cliff coverage stays in the game's neighbourhood", () => {
     const game = reference("oracle-preview-vulcanus-terrain.seed123456.png");
@@ -177,7 +216,7 @@ describe("preview agreement with the game", () => {
     // above the current value so it cannot get worse unnoticed; tighten it when
     // #18 lands rather than leaving this as a permanent blessing.
     expect(ourCliff / gameCliff).toBeLessThan(2.5);
-  }, 120000);
+  }, 300000);
 
   it("Fulgora terrain is pixel-identical to the game's own preview", () => {
     const game = reference("oracle-preview-fulgora-terrain.seed123456.png");
@@ -202,7 +241,7 @@ describe("preview agreement with the game", () => {
     // in that file for the evidence. The 3.34% left over after that fix is the
     // land-argmax residual this comment already expected.
     expect(differing / (SIZE * SIZE)).toBeLessThan(0.04);
-  }, 120000);
+  }, 300000);
 
   it("every scrap pixel the game drew is inside our model's footprint", () => {
     const off = reference("oracle-preview-fulgora-terrain.seed123456.png");
@@ -246,7 +285,7 @@ describe("preview agreement with the game", () => {
     // section 2.5 measurement of 1824/1825. The bound is set just above that.
     expect(gameScrap).toBeGreaterThan(1500);
     expect(outside / gameScrap).toBeLessThan(0.001);
-  }, 120000);
+  }, 300000);
 
   it("we paint scrap in the game's own map_color", () => {
     const on = reference("oracle-preview-fulgora-scrap.seed123456.png");

@@ -407,6 +407,68 @@ should raise N again without re-measuring **on CI** - and note this whole
 paragraph has a shelf life, because it is a statement about the suite's current
 file-weight distribution.
 
+**Re-measured on CI 2026-08-14, after the Fulgora scrap work (#202).** That
+branch added three 1024x1024 comparisons to `previewAgreement.spec.ts`, which
+the scrap spec had flagged in advance as a shard-balance risk. The four shard
+**jobs** came in at **259 / 351 / 389 / 133 seconds**, so the binding shard is
+**389s against the 333s** in the table above - **+56s of gate wall, +17%**.
+
+Two things that measurement settles:
+
+- **The cost of those comparisons is real but modest**, and it was paid
+  deliberately: they are what caught a rounding bug that had been wrong in
+  shipped Fulgora terrain since V1 (`Math.round` where the game truncates,
+  worth 35 percentage points of whole-image agreement).
+- **Balance is still the lever, and the spread widened to 3x** - 389s against
+  133s on the lightest shard. Raising N does not help: #119 measured N=5 and
+  N=6 at +5s and +8s against N=4, inside noise, for more runner-minutes.
+
+**The split this section used to recommend was measured on 2026-08-15 (#203),
+and it is NOT the move.** The text here said splitting `previewAgreement.spec.ts`
+into separate files "targets that spread directly". Three measurements say
+otherwise, and all three are things the file-level timings above cannot show:
+
+- **Hash-sharding does not let you balance anything on purpose.** Vitest shards
+  by sha1 of each spec's path, sorted, then sliced into N contiguous chunks.
+  Reimplementing that against this run's four logs reproduces **209 of the 210
+  file placements** (the one miss is a single file at the shard 3/4 boundary,
+  where the slice arithmetic differs by one), so it predicts where a file lands
+  but not which side of a boundary a near-boundary file falls. Run it on a
+  split into four natural per-planet names and two of the four parts collide in
+  the same shard, putting the binding shard around **415s against the 366s it
+  was**. Treat that number as a projection, not a measurement - the placements
+  are solid, the per-part costs are estimates. The durable point needs neither:
+  adding any spec file changes the count and re-slices every shard, so names
+  picked to spread today do not stay spread.
+- **Import time is a first-order cost, not overhead.** Shard 3 spent **332s
+  importing against 260s running tests**. `isolate: true` is required here (see
+  above), so each spec file gets a fresh module registry and re-imports the
+  whole noise graph. Turning one file into four adds three more of those.
+- **The binding shard is not bound by one file.** Shard 1 pairs
+  `previewAgreement.spec.ts` (298s) with `vulcanusCliffRejectionStage.spec.ts`
+  (205s) - **503s of that shard's 653s sitting on 2 of its 4 workers**. Moving
+  one of them elsewhere leaves the other behind.
+
+**And the runner noise is bigger than the effect anyone is trying to tune.**
+#202's run and #203's run have the **same 210 spec files**, so vitest hands
+them identical shards. The jobs still came in at **259 / 351 / 389 / 133**
+against **366 / 273 / 327 / 137** - shard 1 up 41%, shard 3 down 16%, and the
+binding shard changed identity from 3 to 1. Any rebalancing worth doing has to
+beat that, and a single run cannot show that it did.
+
+So the gate wall stays where it is, and the thing that actually broke was a
+**timeout, not the wall**. On #203 - a docs-only change - the unchanged
+"Vulcanus rock and cliff coverage" test hit its 120s budget at 150.5s. Across
+four consecutive runs the same code measured **69.6s, 90.1s, 108.8s and
+150.5s**, so run-to-run spread on a 4-core runner is about 40%, and main itself
+had passed at 108.8s with 10% to spare. That file's budget is now 300s, with
+the table in its own header comment. The green re-run measured that same test
+at **139.7s**, which is the row that matters: given room it finishes, and it
+finishes above 120s rather than just under, so the old ceiling was genuinely
+too small and the new one is not hiding anything. Note what this means for the next heavy
+test: the ceiling is per-test and hand-written, so a shard rebalance moves which
+tests are near it.
+
 A second job, **`build`**, runs `pnpm vp build` in parallel (issue #61). `verify`
 is check + type-check + tests and none of them build, so a change could pass all
 three, break the production build, and only surface days later when somebody
@@ -559,13 +621,25 @@ wrong belief that a green suite endorsed.
 
 #### `testTimeout` is 30s, deliberately, and retries are not used
 
-Vitest's 5s default was too tight for this suite long before CI existed - 24
-individual tests across 10 files carry an explicit `}, 120000)`, which is the
-same complaint made 24 times by hand. The first CI run proved the default was the
-real problem rather than any one test: on a 4-core runner (~3x slower, 230s vs
-71s for the same suite) `elevationRenderRequest.spec.ts`'s `view 'all'` case
-needs **9.8s**, and that file has 27 tests and zero annotations. `vite.config.ts`
-now sets `testTimeout: 30_000`; the existing 120000 annotations still win over it.
+Vitest's 5s default was too tight for this suite long before CI existed - **86
+individual tests across 29 files** carry an explicit `}, 120000)`, and five more
+in `previewAgreement.spec.ts` now carry `}, 300000)`. That is the same complaint
+made 91 times by hand. (The count read "24 across 10" for a year and went stale
+as the suite grew; re-counted 2026-08-15.) The first CI run
+proved the default was the real problem rather than any one test: on a 4-core
+runner (~3x slower, 230s vs 71s for the same suite)
+`elevationRenderRequest.spec.ts`'s `view 'all'` case needs **9.8s**, and that
+file has 27 tests and zero annotations. `vite.config.ts` now sets
+`testTimeout: 30_000`; the existing annotations still win over it, so raising
+the global does nothing for any of those 91 tests.
+
+**120000 is not a safe ceiling any more, and only one file has been moved off
+it.** `previewAgreement.spec.ts` uses 300s as of #203, after its heaviest case
+timed out at 150.5s (see the CI section above for the four-run table). The rest
+still sit at 120s, and the nearest to the edge is an 85.2s case in
+`vulcanusCliffRejectionStage.spec.ts`. At the ~40% run-to-run spread measured on
+these runners, 85.2s is about one bad draw from red. Nothing is broken there
+today - this is where to look first if a shard goes red on a timeout.
 
 Do **not** reach for `retry` when a heavy render test fails in CI. Nothing here is
 nondeterministic - these tests compare pixels against captured game output - so a
