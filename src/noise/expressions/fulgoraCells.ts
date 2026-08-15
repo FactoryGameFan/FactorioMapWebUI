@@ -45,6 +45,12 @@ export interface FulgoraCells {
   readonly vaults: (x: number, y: number) => number;
   /** `max(vaults, startingVaultMask)` - forces a vault at the starting vault cone. */
   readonly vaultsAndStartingVault: (x: number, y: number) => number;
+  /**
+   * The manhattan Voronoi instance `cells` and `pyramids` read. Exposed so the
+   * island finder can group samples by the STABLE integer cell index rather
+   * than by the `cells` float, which is a hash and can collide.
+   */
+  readonly voronoiCells: Voronoi;
 }
 
 export function makeFulgoraCells(shared: FulgoraShared, ctx: FulgoraCtx): FulgoraCells {
@@ -111,5 +117,6 @@ export function makeFulgoraCells(shared: FulgoraShared, ctx: FulgoraCtx): Fulgor
     sprawl,
     vaults,
     vaultsAndStartingVault,
+    voronoiCells: manhattan,
   };
 }
