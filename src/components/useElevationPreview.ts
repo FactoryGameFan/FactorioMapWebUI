@@ -49,17 +49,27 @@ function createRenderWorker(): WorkerLike {
 }
 
 /**
- * Own a pool of `size` workers - one per pool slot, created lazily on first use
- * and reused for the renderer's lifetime - and drive them through a RenderPool.
- * Lifecycle-free; callers own dispose().
+ * A pool of `size` workers - one per slot, created lazily on first use and
+ * reused for the host's lifetime - dispatched by request id. Owns the worker
+ * lifecycle and id-keyed reply routing only; no tiling or supersede semantics,
+ * so a second consumer that isn't a tiled renderer can share it.
  */
-export function createElevationRenderer(
+export interface WorkerHost {
+  execute(req: ElevationRenderRequest, slot: number): Promise<ElevationRenderResult>;
+  readonly size: number;
+  dispose(): void;
+}
+
+/**
+ * Own a pool of `size` workers - one per pool slot, created lazily on first use
+ * and reused for the host's lifetime. Lifecycle-free; callers own dispose().
+ */
+export function createWorkerHost(
   createWorker: () => WorkerLike = createRenderWorker,
   size: number = defaultPoolSize(
     typeof navigator === "undefined" ? undefined : navigator.hardwareConcurrency,
   ),
-  tileSize: number = DEFAULT_TILE_SIZE,
-): ElevationRenderer {
+): WorkerHost {
   const workers: (WorkerLike | null)[] = Array.from({ length: size }, () => null);
 
   // Keyed by request id, NOT by slot. A slot can legitimately hold two in-flight
@@ -115,24 +125,46 @@ export function createElevationRenderer(
     return w;
   }
 
-  const pool: RenderPool = createRenderPool({
+  return {
     size,
-    tileSize,
     execute: (req, slot) =>
       new Promise<ElevationRenderResult>((resolve, reject) => {
         pending.set(req.id, { slot, resolve, reject });
         ensureWorker(slot).postMessage(req);
       }),
+    dispose() {
+      for (let slot = 0; slot < size; slot++) {
+        dropWorker(slot);
+        rejectSlot(slot, "Elevation renderer disposed");
+      }
+    },
+  };
+}
+
+/**
+ * Own a pool of `size` workers and drive them through a RenderPool - the
+ * tiling queue and supersede-on-new-render semantics layered on top of a
+ * WorkerHost. Lifecycle-free; callers own dispose().
+ */
+export function createElevationRenderer(
+  createWorker: () => WorkerLike = createRenderWorker,
+  size: number = defaultPoolSize(
+    typeof navigator === "undefined" ? undefined : navigator.hardwareConcurrency,
+  ),
+  tileSize: number = DEFAULT_TILE_SIZE,
+): ElevationRenderer {
+  const host = createWorkerHost(createWorker, size);
+  const pool: RenderPool = createRenderPool({
+    size,
+    tileSize,
+    execute: (req, slot) => host.execute(req, slot),
   });
 
   return {
     render: (req, onTile) => pool.render(req, onTile),
     dispose() {
       pool.dispose();
-      for (let slot = 0; slot < size; slot++) {
-        dropWorker(slot);
-        rejectSlot(slot, "Elevation renderer disposed");
-      }
+      host.dispose();
     },
   };
 }
