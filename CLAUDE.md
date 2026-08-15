@@ -407,6 +407,27 @@ should raise N again without re-measuring **on CI** - and note this whole
 paragraph has a shelf life, because it is a statement about the suite's current
 file-weight distribution.
 
+**Re-measured on CI 2026-08-14, after the Fulgora scrap work (#202).** That
+branch added three 1024x1024 comparisons to `previewAgreement.spec.ts`, which
+the scrap spec had flagged in advance as a shard-balance risk. The four shard
+**jobs** came in at **259 / 351 / 389 / 133 seconds**, so the binding shard is
+**389s against the 333s** in the table above - **+56s of gate wall, +17%**.
+
+Two things that measurement settles:
+
+- **The cost of those comparisons is real but modest**, and it was paid
+  deliberately: they are what caught a rounding bug that had been wrong in
+  shipped Fulgora terrain since V1 (`Math.round` where the game truncates,
+  worth 35 percentage points of whole-image agreement).
+- **Balance is still the lever, and the spread widened to 3x** - 389s against
+  133s on the lightest shard. Splitting `previewAgreement.spec.ts` into
+  separate files, so vitest's hash-split can distribute its cases, targets that
+  spread directly. Raising N does not: #119 measured N=5 and N=6 at +5s and +8s
+  against N=4, inside noise, for more runner-minutes.
+
+Accepted rather than acted on, deliberately. Revisit if the binding shard grows
+again; the split is the move, not more shards.
+
 A second job, **`build`**, runs `pnpm vp build` in parallel (issue #61). `verify`
 is check + type-check + tests and none of them build, so a change could pass all
 three, break the production build, and only surface days later when somebody
