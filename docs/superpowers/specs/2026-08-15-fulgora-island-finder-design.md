@@ -65,10 +65,11 @@ over 256-tile windows that are 100% land:
 | (0, 0) | 22.96 us/px | 20.81 us/px |
 | (3000, 3000) | 16.88 us/px | 17.09 us/px |
 
-Every budget below uses **17 us/px**, the cheaper end. The coarse pass samples
-at 8 tiles/px, which was not measured directly - but since per-pixel cost does
-not improve with a coarser step (the next bullet), carrying 17 forward is the
-conservative reading rather than an optimistic one.
+**Those are Node figures, and Node is not where this ships.** Section 2b
+re-measures the same work in a real browser Worker against a production build,
+and gets **48.4 us/px** - 2.6x slower. Every budget in this spec uses the
+browser number. Keep the Node figures only as a cross-check; if the two ever
+agree, suspect the harness.
 
 Two results from that table killed two design ideas, and both are worth keeping
 written down so nobody retries them:
@@ -87,10 +88,58 @@ written down so nobody retries them:
   resolver.** Call the existing resolver and test its result.
 
 Note the roadmap records ~7.9 us/px for a land-filled Fulgora viewport, and this
-spec measures 17-23. Both are right. The roadmap figure is a 1024x1024 render;
-these are 256-tile candidate windows, which amortize the caches worse. **The
-figure that governs this design is the one measured at the geometry that ships**
-- see the existing note on benchmark geometry in the repo's memory.
+spec measures 17-23 in Node and 48.4 in a browser. All three are right. The
+roadmap figure is a 1024x1024 render; these are 256-tile candidate windows,
+which amortize the caches worse. **The figure that governs this design is the
+one measured at the geometry AND in the runtime that ships** - see the existing
+note on benchmark geometry in the repo's memory.
+
+Two things that were checked and are *not* the explanation for any of the gaps
+above, so they do not need re-testing:
+
+- **Cache warming.** A fresh stack per candidate at scattered origins measures
+  18.4 us/px against 16.5 for one shared stack re-reading the same window. Cold
+  is barely worse than warm, so the finder does not need to keep stacks alive
+  between candidates.
+- **Stack construction.** `makeFulgoraStack` costs **0.445 ms** and the first
+  sample off a cold stack adds 0.077 ms. Even rebuilding it for all 2,200
+  candidates is 1.15 s single-threaded, and one stack per worker reused across
+  its share of jobs is about 5 ms in total.
+
+## 2b. What the worker-pool spike measured (browser, production build)
+
+Run against `pnpm vp build` output served over HTTP, in a real module Worker,
+Chrome. This is the runtime the finder ships into.
+
+**Dispatch overhead is a non-issue.** A 1x1-pixel request round-trips in
+**2.3 ms** median (0.9 min, 5.6 max) over 100 samples. Against a job of tens of
+milliseconds that is under 5%, and against a full-resolution job it is 0.07%.
+The named risk about job shape - 2,200 small jobs instead of 64 large ones - is
+**retired**.
+
+**`view` must be `"terrain"`, never `"all"`. This is the single most important
+result of the spike.** Same window, same worker, same build:
+
+| tiles/px | view | median | us/px |
+| --- | --- | --- | --- |
+| 8 | **terrain** | **49 ms** | 48.2 |
+| 8 | all | 5,537 ms | 5,407 |
+| 1 | terrain | 3,170 ms | 48.4 |
+| 1 | all | 8,371 ms | 127.7 |
+
+`"all"` adds `renderFulgoraResources`, and the scrap roll iterates **tiles, not
+pixels**. So a coarse render at 8 tiles/px still pays the full 65,536-tile roll
+and costs **112x** what the terrain-only render does. The finder needs
+land-versus-ocean and nothing else, so it asks for `"terrain"`.
+
+Had this gone unmeasured, the coarse pass would have been about 3.4 hours
+single-threaded instead of under two minutes, and it would have looked like the
+design was simply too slow rather than asking for the wrong view.
+
+**Per-pixel cost is flat across sampling density** once the scrap overlay is
+out of the picture: 48.2 us/px at 8 tiles/px against 48.4 at 1 tile/px. So
+coarse sampling reduces total cost in direct proportion to pixel count, and the
+two-phase structure in section 3 is sound.
 
 ## 3. Architecture
 
@@ -136,27 +185,40 @@ in the cell, so the centroid and bounding box come from those.
 ### Stage 2 - coarse measure (`islandMask.ts`, `largestRectangle.ts`)
 
 For each candidate, rasterize a land mask over its sample bounding box at
-**8 tiles/px**, keeping only pixels belonging to that cell, then compute the
-largest inscribed rectangle.
+**8 tiles/px and `view: "terrain"`**, keeping only pixels belonging to that
+cell, then compute the largest inscribed rectangle. The view matters more than
+anything else in this stage - see section 2b.
 
 `largestRectangle` is the standard histogram-and-stack method: build a
 per-column run-length histogram, then sweep it with a monotonic stack, O(w x h).
 Axis-aligned. It is pure, takes a binary mask, and returns
 `{x, y, width, height}` in mask coordinates.
 
-Budget: 2,200 candidates x about 1,024 px x 17 us = **38s single-threaded**,
-roughly **3.5s** across the existing worker pool.
+Budget, measured rather than derived: a 32x32 terrain job is **49 ms**, so 2,200
+candidates is **108s single-threaded**, roughly **10s** across the existing
+worker pool.
 
 ### Stage 3 - refine (`findIslands.ts`)
 
-Re-measure the top 50 by coarse rectangle area at **1 tile/px**.
+Re-measure the top 50 by coarse rectangle area at **2 tiles/px**, same
+`"terrain"` view.
 
 50 rather than 10 because the coarse pass can misorder near-ties: an 8-tile
 sampling step can misjudge a rectangle edge by up to 8 tiles in each dimension.
 50 is a deliberate over-provision, and the right way to revisit it is to measure
 how far a refined ranking moves from the coarse one, not to argue about it.
 
-Budget: 50 x 65,536 px x 17 us = **56s single-threaded**, roughly **5s** pooled.
+**2 tiles/px rather than 1, and the reason is that 1 buys nothing real.** A
+full-resolution job measures 3,170 ms, so 50 of them is 158s single-threaded and
+about **14s** pooled - more than the coarse pass over all 2,200 candidates. At 2
+tiles/px the same job is roughly 790 ms, so 50 is 40s single-threaded and about
+**4s** pooled. The accuracy given up is +-2 tiles on a rectangle edge, against a
+renderer whose land boundary is itself only good to about +-1 tile (section 5).
+Spending 10 extra seconds to sharpen a number that the underlying data cannot
+support is not a trade worth making.
+
+If a later measurement shows the refined ranking still moving materially against
+the coarse one, raise the refined count before raising the resolution.
 
 ### Stage 4 - chains (`chainGraph.ts`)
 
@@ -195,12 +257,17 @@ work, not milliseconds.
 
 ## 4. Total cost, and the lever
 
-About **9 seconds** for the default 5,000-tile radius: 0.5s survey, 3.5s coarse,
-5s refine, with chains and UI negligible beside those.
+About **15 seconds** for the default 5,000-tile radius, from measured job times
+across an 11-worker pool: 0.5s survey, 10s coarse, 4s refine, with chains and UI
+negligible beside those.
 
 The radius is the lever, and cost grows with its square. A 2,000-tile radius is
-roughly 1.5s; a 10,000-tile radius roughly 35s. The UI should say so rather than
+roughly 3s; a 10,000-tile radius roughly 60s. The UI should say so rather than
 letting a user discover it.
+
+15s is long enough that the panel needs real progress reporting and a working
+cancel, not a spinner. Results should stream in as candidates finish, so the
+list is useful before the run completes.
 
 ## 5. Accuracy, and what to tell the user
 
@@ -239,12 +306,22 @@ established that way and should not be re-litigated from argument.
 
 ## 7. Risks
 
-- **The 9-second budget assumes the worker pool.** The finder must run off the
-  main thread through the existing pool, or the UI locks up. That pool currently
-  serves tiled rendering; feeding it a different job shape is the main
-  integration risk in this plan and should be the first thing prototyped.
+- **RETIRED - worker-pool job shape.** This was the main risk and the spike in
+  section 2b settled it. Dispatch is 2.3 ms against jobs of 49 ms and up, so
+  2,200 small jobs cost no more in overhead than 64 large ones. What remains is
+  ordinary work, not risk: `createRenderPool` takes `execute` as a clean seam,
+  but its queue is `planTiles` and its types are `ElevationRenderRequest`. The
+  finder needs a list of scattered, differently-sized windows. Either generalize
+  the pool over a job type and make tiling one `plan` implementation, or give
+  the finder its own smaller pool. Decide that in the implementation plan.
 - **Candidate count scales with the Islands frequency slider.** At the smallest
   grid (125) a 10k x 10k box holds about 6,400 cells rather than 3,265, nearly
   doubling the cost. Budget from the preset's actual grid, not the default.
 - **50 refined rows may be too few or too many.** Measure the reordering rather
   than guessing.
+- **`view` is a correctness-shaped performance trap.** Section 2b measured
+  `"all"` at 112x `"terrain"` for the same coarse window, because the scrap roll
+  is per-tile. Nothing in the type system stops someone "fixing" the view later
+  to make the preview match, and the cost would look like the design being slow
+  rather than the view being wrong. The perf spec row in section 6 exists partly
+  to catch that.
