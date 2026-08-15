@@ -118,6 +118,15 @@ const allAvailable = computed(() => nauvisOverlaysAvailable.value || planet.valu
 //   1b. Vulcanus otherwise - "all", which on Vulcanus means terrain + cliffs +
 //      rocks + resources. Enemies and trees have no Vulcanus port, so "all"
 //      composites exactly the four layers that exist.
+//   1c. Fulgora, same shape as Vulcanus, and it must return BEFORE the map-type
+//      check below for the same reason. Its ported views are "terrain" and
+//      "all"; `resourcesAvailable` deliberately excludes Fulgora (see above),
+//      so scrap reaches the user only through the "all" composite. Falling
+//      through to rule 2 on a Lakes/Island preset returned "elevation", and
+//      `runRenderRequest`'s Fulgora branch paints scrap only for "resources"
+//      or "all" - so the whole V3 layer vanished on those presets. Measured at
+//      256x256 around the origin, seed0 123456: "all" and "resources" paint
+//      177 scrap pixels, "elevation" and "terrain" paint 0.
 //   2. Nauvis planet, off-Nauvis map type (Lakes/Island), always "elevation" -
 //      renderTerrain always evaluates the Nauvis climate + tile catalog
 //      regardless of the preset's map type, so every non-elevation view would
@@ -137,6 +146,12 @@ const effectiveView = computed(() => {
     // Only these have a Vulcanus port; anything else the user last picked on
     // Nauvis (enemies, trees, elevation) falls back to the composite.
     const ported = ["terrain", "resources", "cliffs", "rocks", "all"];
+    if (ui.devMode && ported.includes(view.value)) return view.value;
+    return "all";
+  }
+  if (planet.value === "fulgora") {
+    // Terrain is the only non-composite view Fulgora enables a toggle for.
+    const ported = ["terrain", "all"];
     if (ui.devMode && ported.includes(view.value)) return view.value;
     return "all";
   }
