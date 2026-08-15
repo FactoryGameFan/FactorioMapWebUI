@@ -12,8 +12,8 @@ import {
  * again - which is the only reason this exists. If it ever changes a resolved
  * tile, it is a bug, not an optimisation.
  */
-describe("the shared Fulgora stack resolves identically to a private one", () => {
-  it("agrees on every tile of a 64x64 block spanning the coastline", () => {
+describe("the shared Fulgora stack resolves deterministically", () => {
+  it("agrees on every tile of a 256x256-tile block (stride 4) spanning the coastline", () => {
     const ctx = { seed0: 123456 };
     const priv = makeFulgoraTileResolver(ctx);
     const shared = makeFulgoraTileResolverFrom(makeFulgoraStack(ctx));

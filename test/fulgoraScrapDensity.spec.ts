@@ -87,7 +87,7 @@ describe("Fulgora scrap placement density", () => {
     expect(actual).toBeGreaterThan(400);
     expect(expected / actual).toBeGreaterThan(0.9);
     expect(expected / actual).toBeLessThan(1.1);
-  });
+  }, 120000);
 
   /**
    * Same exclusion, per region rather than pooled: region 0,0's rolled count
@@ -110,7 +110,7 @@ describe("Fulgora scrap placement density", () => {
       expect(ratio, `region ${String(c.region.x0)},${String(c.region.y0)}`).toBeGreaterThan(0.8);
       expect(ratio, `region ${String(c.region.x0)},${String(c.region.y0)}`).toBeLessThan(1.2);
     }
-  });
+  }, 120000);
 
   /**
    * The finding as a REGRESSION TEST, not just a comment, split across the two

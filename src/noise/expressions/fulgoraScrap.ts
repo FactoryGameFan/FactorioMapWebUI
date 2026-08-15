@@ -38,6 +38,17 @@ export interface FulgoraScrapControls {
 export interface FulgoraScrap {
   /** The per-tile placement probability, clamped to `[0, 1]`. */
   readonly probability: (x: number, y: number) => number;
+  /**
+   * `fulgora_scrap_struct_term`, the additive term the game's own diagnostic
+   * dump names - exported (not just inlined into `probability`) so
+   * `test/fulgoraScrap.spec.ts` can compare it against the fixture's own
+   * `fulgora_scrap_struct_term` directly, rather than only checking its sign.
+   * `probability` composes this function rather than duplicating its body, so
+   * the comparison exercises the same code the renderer runs.
+   */
+  readonly structTerm: (x: number, y: number) => number;
+  /** `fulgora_scrap_vault_term` - see {@link structTerm}. */
+  readonly vaultTerm: (x: number, y: number) => number;
 }
 
 export function makeFulgoraScrap(
@@ -67,19 +78,39 @@ export function makeFulgoraScrap(
   const spotsCut = f32(f32(1.2) + f32(f32(0.4) * sliderToLinear(size, -1, 1)));
   const enabled = size > 0 ? 1 : 0;
 
-  const probability = memoXY((x: number, y: number) => {
-    if (enabled === 0) return 0;
-    const structTerm =
+  const structTerm = memoXY(
+    (x: number, y: number) =>
       (roads.structureCells(x, y) < cellsCut ? 1 : 0) *
       f32(1 + roads.structureSubnoise(x, y)) *
       (chain.elevation(x, y) > COASTLINE + 10 ? 1 : 0) *
-      masks.artificialMask(x, y);
-    const vaultTerm =
+      masks.artificialMask(x, y),
+  );
+  const vaultTerm = memoXY(
+    (x: number, y: number) =>
       (roads.spotsPrebanding(x, y) < spotsCut ? 1 : 0) *
-      f32(cells.vaultsAndStartingVault(x, y) * 10);
-    const inner = Math.min(f32(structTerm + vaultTerm), 0.5);
+      f32(cells.vaultsAndStartingVault(x, y) * 10),
+  );
+
+  const probability = memoXY((x: number, y: number) => {
+    if (enabled === 0) return 0;
+    const inner = Math.min(f32(structTerm(x, y) + vaultTerm(x, y)), 0.5);
+    // Both `1 - <field>` subtractions narrow their field to f32 BEFORE the
+    // subtraction, not just the result: `roadPaving2c` and `startingMask`
+    // return f64 (e.g. `roadPaving2c`'s `lerp(...) * 0.9` chain ends on the
+    // f64 literal 0.9). `f32(1 - 0.9)` is 0.10000000149011612; the game
+    // computes `1 - f32(0.9)`, i.e. `1 - 0.8999999761581421` =
+    // 0.10000002384185791 - a different f32. This is `f32.ts`'s "narrow the
+    // CONSTANT" case, applied at the point of consumption rather than at
+    // `roadPaving2c`'s own 0.9/0.85/0.5 literals in `fulgoraRoads.ts`: fixing
+    // it there is the broader, arguably more correct fix (it would also
+    // straighten out `roadDust`, which reads `roadPaving2c` too), but it
+    // re-pins every tile hash downstream of the road/paving layer and risks
+    // the `fulgoraLandTiles` 2137/2261 agreement count - out of scope for the
+    // scrap composition this module owns. Measured: this drops the fixture's
+    // worst relative error from 2.235e-7 to exactly 0, see
+    // `test/fulgoraScrap.spec.ts`.
     const raw = f32(
-      f32(1 - shared.startingMask(x, y)) * f32(inner * f32(1 - roads.roadPaving2c(x, y))),
+      f32(1 - f32(shared.startingMask(x, y))) * f32(inner * f32(1 - f32(roads.roadPaving2c(x, y)))),
     );
     // The game rolls `U < probability`, so a negative value is simply never,
     // and a value above 1 always. Clamping here is what makes the expectation
@@ -87,5 +118,5 @@ export function makeFulgoraScrap(
     return raw < 0 ? 0 : raw > 1 ? 1 : raw;
   });
 
-  return { probability };
+  return { probability, structTerm, vaultTerm };
 }

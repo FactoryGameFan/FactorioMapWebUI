@@ -24,6 +24,15 @@ describe("Fulgora scrap probability", () => {
     // Bound sized from the measurement, not chosen to fit. Do not widen it: the
     // repo has twice had a real bug hidden behind a widened bound.
     //
+    // Measured exactly 0 across all 101 positions once `fulgoraScrap.ts`
+    // narrowed `roadPaving2c` and `startingMask` to f32 BEFORE the `1 -`
+    // subtraction (see the comment there). Before that fix this bound was
+    // 1e-5 against a measured worst of 2.235e-7 - `f32.ts`'s "a residual
+    // landing at exactly 0 is the confirmation": the narrowing was not just
+    // smaller, it was the whole residual. Asserting exactness rather than
+    // re-padding a tolerance follows `fulgoraExpressions.spec.ts`'s
+    // convention for fields the game computes exactly.
+    //
     // This is also what makes the port itself non-vacuous, not the term
     // checks below: it calls scrap.probability at every position, including
     // indices 46 and 53 - the only two where the expression is nonzero (see
@@ -41,30 +50,48 @@ describe("Fulgora scrap probability", () => {
     // The elevation gate's real guards are this file's own ocean test below
     // (10,000+ ocean tiles, every one required to read exactly 0) and Task
     // 6's footprint comparison against the game's own preview.
-    expect(worst, `worst at index ${String(worstAt)}`).toBeLessThan(1e-5);
+    expect(worst, `worst at index ${String(worstAt)}`).toBe(0);
   });
 
   it("both additive terms are exercised, so agreement is not agreement on one branch of the +", () => {
-    // This test never calls scrap.probability - it reads the fixture's own
-    // diagnostic rows, so it cannot discriminate the PORT (that is test 1's
-    // job, and it does: see the comment there). What this guards is the
-    // FIXTURE: fulgora_scrap_probability has exactly 2 of 101 nonzero
-    // entries, so a future re-capture that silently landed all zeros - a
-    // dead RNG seed, a wrong surface, a broken sampling harness - would still
-    // let test 1 pass vacuously (0 against 0 everywhere). Asserting each
-    // additive term has its own nonzero witness makes that failure mode
+    // The FIXTURE half: it reads the fixture's own diagnostic rows, not the
+    // port, so it cannot discriminate the port on its own. What it guards is
+    // the fixture itself: fulgora_scrap_probability has exactly 2 of 101
+    // nonzero entries, so a future re-capture that silently landed all zeros
+    // - a dead RNG seed, a wrong surface, a broken sampling harness - would
+    // still let test 1 pass vacuously (0 against 0 everywhere). Asserting
+    // each additive term has its own nonzero witness makes that failure mode
     // visible here instead. Measured: struct_term is nonzero only at index 53
     // (1.292399525642395) and vault_term is nonzero only at index 46 (10) -
     // disjoint positions, so each branch of the `+` has its own witness.
-    const structTerm = fixture.fulgora_scrap_struct_term as number[];
-    const vaultTerm = fixture.fulgora_scrap_vault_term as number[];
-    expect(structTerm.filter((v) => v > 0).length).toBeGreaterThan(0);
-    expect(vaultTerm.filter((v) => v > 0).length).toBeGreaterThan(0);
+    const wantStructTerm = fixture.fulgora_scrap_struct_term as number[];
+    const wantVaultTerm = fixture.fulgora_scrap_vault_term as number[];
+    expect(wantStructTerm.filter((v) => v > 0).length).toBeGreaterThan(0);
+    expect(wantVaultTerm.filter((v) => v > 0).length).toBeGreaterThan(0);
 
     // The cap: min(struct_term + vault_term, 0.5) reaches its ceiling at
-    // index 53 (struct_term 1.29 alone already exceeds 0.5).
+    // index 53 (struct_term 1.29 alone already exceeds 0.5). Both nonzero
+    // positions saturate the cap, which is exactly why test 1 alone cannot
+    // discriminate an arithmetic error inside either term that still leaves
+    // it above 0.5 - the PORT half below closes that hole.
     const want = fixture.fulgora_scrap_probability as number[];
     expect(want.filter((v) => v >= 0.4999).length).toBeGreaterThan(0);
+
+    // The PORT half: `makeFulgoraScrap` exports `structTerm`/`vaultTerm` as
+    // the same functions `probability` composes (not a re-derivation), so
+    // this calls the actual code path rather than checking a copy of it.
+    // Exact match at both nonzero indices (53 and 46) and every zero index:
+    // neither term does a `1 - <f64>` subtraction the way finding 2's fix
+    // targeted, so there is no residual to bound here.
+    let worstStruct = 0;
+    let worstVault = 0;
+    for (let i = 0; i < fixture.positions.length; i++) {
+      const p = fixture.positions[i];
+      worstStruct = Math.max(worstStruct, Math.abs(scrap.structTerm(p.x, p.y) - wantStructTerm[i]));
+      worstVault = Math.max(worstVault, Math.abs(scrap.vaultTerm(p.x, p.y) - wantVaultTerm[i]));
+    }
+    expect(worstStruct, "worst struct_term residual").toBe(0);
+    expect(worstVault, "worst vault_term residual").toBe(0);
   });
 
   it("the game reports the default controls the composition assumes", () => {
