@@ -1195,3 +1195,173 @@ error could have been hiding, and it means Task 14's 124 mismatches and Task
 15's counter-examples cannot be explained by this port getting a formula wrong.
 The post-argmax mechanism remains unknown, but the search space is smaller:
 it is not in the expressions.
+
+---
+
+## Task 17: one 32x32 chunk near spawn places zero scrap where the model expects 140
+
+Source: `space-age/prototypes/planet/planet-fulgora-map-gen.lua`, the scrap
+resource's `probability_expression`. See the scrap design spec,
+`docs/superpowers/specs/2026-08-14-fulgora-scrap-resources-design.md`, for the
+full expression and its port.
+
+This task is a diagnosis, not a fix. No tracked file changed because of the
+sampling below. The one exception is `test/fulgoraScrapDensity.spec.ts`,
+which excludes the chunk from its density gates and pins the suppression as
+a regression guard.
+
+### The density mismatch is one chunk, not a systematic bias
+
+`test/oracle/capture.ts`'s `captureFulgoraScrap` inlines the probability
+expression. It samples `find_entities_filtered{type = "resource"}` on a real,
+generated Fulgora surface, seed 123456. Three 256x256 regions were captured
+this way. Per 32x32 chunk, the model's expectation (summed
+`probability(x, y)`) agrees closely with the game's actual entity count
+everywhere except one chunk:
+
+| expected | actual |
+| --- | --- |
+| 62 | 62 |
+| 61 | 59 |
+| 51 | 59 |
+| 25 | 28 |
+| 10 | 9 |
+| 8 | 5 |
+| 185 | 190 |
+| 93 | 89 |
+| 68 | 60 |
+| **140** | **0** |
+
+Excluding the last row, the remainder totals **566.0 expected against 562
+actual - a ratio of 1.0071**. That is tighter than the design spec's own
+0.9836, which was measured on a different pair of boxes (section 2.3 there).
+Including the last row, the ratio is 1.2565. That number is what first
+surfaced the mismatch: the plan's density gate asserts `expected/actual`
+inside `[0.9, 1.1]`, and 1.2565 fails it.
+
+The suspect chunk is (0, 4): world tiles x in [0, 32), y in [128, 160). That
+is roughly 128-160 tiles from spawn, in Fulgora starting-vault territory. A
+natural scrap pocket follows the structure-cell Voronoi tiling, not a chunk
+boundary. So one chunk carrying 140 of the 706 sampled entities (about 20%),
+while all four neighbours read normally, was itself a reason to suspect a
+real mechanism rather than noise.
+
+### Not a capture defect - two independently bounded regions both read zero
+
+The rival explanation: the capture simply failed to force-generate that one
+chunk. Two captures test this. Each used different region bounds, so the
+chunk sits in a different position relative to the requested area. Both rule
+the explanation out:
+
+| capture | region | chunk (0, 4) position | total entities | chunk (0, 4) entities |
+| --- | --- | --- | --- | --- |
+| reproduction | `{0,0}-{256,256}` | at a corner | 222 | 0 |
+| shifted | `{-64,64}-{192,320}` | 2+ chunks from every edge | 383 | 0 |
+
+The reproduction matches the committed fixture exactly, including the
+per-chunk breakdown. That confirms the capture is deterministic, not flaky.
+The shifted capture forces chunk (0, 4) to generate from a different
+control-mod run, away from any region boundary. That is the condition under
+which a skipped-chunk bug should show up as a fresh, near-140 count. It read
+0 again.
+
+Its immediate neighbours were checked too: (-1, 4), (1, 4), (0, 3) and
+(0, 5). Chunk (0, 3) reads 62, matching the reproduction's own count for that
+chunk. The rest read 0 - consistent with scrap being sparse in general, not
+with a broken capture.
+
+The tile-to-chunk conversion in `test/oracle/oracle.ts` (`floor(x0/32)` /
+`ceil(x1/32) - 1`) was also read directly. It carries no off-by-one that
+would drop a chunk-aligned region like `[0, 256)`.
+
+### Not a port defect - the game's own expression agrees to zero difference
+
+The remaining question: which side is wrong? Does the port overstate the
+probability inside the chunk? Or does the game evaluate the same probability
+and then suppress placement anyway?
+
+The oracle can evaluate the game's own `probability_expression`, and each of
+its named sub-terms, at any position. It was sampled at the 50
+highest-probability positions inside chunk (0, 4) - by construction, the
+tiles carrying the model's expected 140. A 10-position control set was also
+sampled in chunk (1, 3), the neighbouring chunk that reads 51 expected / 59
+actual in the table above.
+
+At all 60 positions, the game's own evaluation of the full
+`fulgora_scrap_probability` expression equals the port's exactly - zero
+difference at double precision, not just small. All 50 chunk (0, 4)
+positions score the capped maximum, 0.5, on both sides.
+
+Every sub-term agrees too, within f32 rounding noise. The largest gap is
+0.000335, on `fulgora_elevation`, which is multioctave noise summed in a
+different order than the game's C++ - the port's known, unrelated floor.
+Every other term's largest gap is at most 1e-6, and most are exactly 0. One
+representative position, (12, 132):
+
+| term | game | port |
+| --- | --- | --- |
+| `fulgora_scrap_probability` | 0.5 | 0.5 |
+| `fulgora_starting_mask` | 0 | 0 |
+| `fulgora_vaults_and_starting_vault` | 1 | 1 |
+| `fulgora_spots_prebanding` | 0.9897783398628235 | 0.9897793792188168 |
+| `fulgora_structure_cells` | 0.05654405429959297 | 0.05654405429959297 |
+| `fulgora_structure_subnoise` | 0.23600700497627258 | 0.23600709438323975 |
+| `fulgora_artificial_mask` | 0 | 0 |
+| `fulgora_elevation` | 19.898632049560547 | 19.89853887812948 |
+| `fulgora_road_paving_2c` | 0 | 0 |
+
+`fulgora_vaults_and_starting_vault` reads exactly 1 at all 50 positions, on
+both sides. That means the game genuinely classifies this whole chunk as
+vault territory, which drives the vault additive term to its cap. That
+matches the chunk's location, and it confirms the composition was
+cross-checked verbatim against
+`~/GitHub/factorio-data/space-age/prototypes/planet/planet-fulgora-map-gen.lua`
+lines 582-601 - not just against a prior fixture.
+
+### The control chunk shows the method reads healthy as healthy
+
+Chunk (1, 3) was carried through the identical comparison. It reads the
+normal pattern at all 10 positions: game and port both 0.5,
+`vaults_and_starting_vault` both 1, every sub-term matching. This is what a
+healthy chunk should look like under this method. It rules out one more
+explanation for the chunk (0, 4) result: that the sampling method always
+reports agreement, healthy or not.
+
+### What ships, and what is still open
+
+The probability expression is right. The game's own evaluation of it agrees
+with the port everywhere tested, including at the exact cells carrying the
+140. So whatever governs whether the game places an entity here is not
+captured by `probability_expression`, and it is localized to this one chunk.
+
+The most likely candidate, given the chunk's location and
+`fulgora_vaults_and_starting_vault = 1`: the game's actual starting vault is
+a scripted structure placed near spawn, not an autoplace roll, and autoplace
+resource placement is suppressed in some footprint around it - separate from
+`fulgora_starting_mask`, which this port already reads. But nothing measured
+here identifies or confirms that mechanism. It is a plausible site, not a
+finding.
+
+`test/fulgoraScrapDensity.spec.ts` excludes chunk (0, 4) from both its
+expectation-ratio and roll-count-ratio gates. This was confirmed to matter:
+removing the exclusion makes the expectation ratio fail at
+1.2564995023007655, and restoring it fixes that.
+
+The test also pins the suppression at the layer where a future fix would
+land, not at the probability layer. It can't trip at the probability layer,
+because the game's own expression already reads 0.5 there. One assertion
+checks that the model's summed expectation inside the chunk is large
+(measured 140.2) while the fixture's actual entity count there is 0. A
+second assertion checks that `makeFulgoraScrapPlacement` still rolls
+placements inside the chunk today - measured 162 tiles placed on this
+fixture's seed, the renderer's phantom scrap. If a future port of the real
+mechanism adds a gate that zeroes that count, this test fails. That is the
+intended signal to update or remove the exclusion.
+
+Left for a follow-up RE task: identify the suppression mechanism itself. The
+unstripped Factorio binary's symbols and a runtime probe are the tools this
+repo normally reaches for - see the `factorio-data-version-hazard` and
+`noise-oracle-basis-measurements` house notes for the pattern. Also open:
+whether it is a scripted starting-vault footprint or something else, and
+whether it is chunk-shaped by construction or only looks that way because
+chunk (0, 4) happens to contain the whole footprint. Tracked under issue #27.

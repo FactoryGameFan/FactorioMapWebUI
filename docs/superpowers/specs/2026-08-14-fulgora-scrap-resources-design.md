@@ -323,3 +323,20 @@ explained rather than rounded away.
 - Whether scrap interacts with the placement order of any other Fulgora
   autoplacer. The autoplace `order` is `"b"`, and nothing here models
   cross-overlay occupancy. The 0.9836 agreement was reached with it left out.
+- **Why the game places zero scrap in one 32x32 chunk where the model expects
+  140.** Chunk (0, 4) is world x in [0, 32), y in [128, 160), about 128-160
+  tiles from spawn. Two separate captures each found 0 entities there. The
+  game's own evaluation of `fulgora_scrap_probability` matches this port
+  exactly at the 50 highest-probability positions in the chunk - zero
+  difference at double precision, both sides capped at 0.5. Every sub-term
+  agrees too, including `fulgora_vaults_and_starting_vault`, which reads
+  exactly 1 at all 50 positions on both sides: real starting-vault territory.
+  So the probability expression is right, and something outside it blocks
+  placement. A scripted starting-vault footprint is a likely site, but that
+  was not checked and is not established. Excluding the chunk, the rest of
+  the density still agrees: 566.0 expected against 562 actual, a ratio of
+  1.0071. Including it, 1.2565. `test/fulgoraScrapDensity.spec.ts` excludes
+  the chunk from its density gates and pins that the renderer still paints
+  about 162 phantom scrap marks there, so a future port of the real
+  mechanism will fail this test instead of passing silently. Tracked in
+  issue #27's follow-up.
