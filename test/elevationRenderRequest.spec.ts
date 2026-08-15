@@ -10,6 +10,7 @@ import { RESOURCE_CATALOG } from "../src/noise/resources/resourceCatalog";
 import { ENEMY_MAP_COLOR } from "../src/noise/enemies/enemyCatalog";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
 import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
+import { SCRAP_MAP_COLOR } from "../src/noise/resources/fulgoraResourceCatalog";
 import { makeTreeDensity } from "../src/noise/trees/treeField";
 
 const REQ: ElevationRenderRequest = {
@@ -740,4 +741,104 @@ describe("cliffCellQueryBox", () => {
     // High side takes its BACKWARD extent (CLIFF_MARK_BACK_PX = 2): 2 * 4.
     expect(box.x1).toBe(-32 + 32 * 4 + 8);
   });
+});
+
+describe("fulgora scrap is gated on the view", () => {
+  /**
+   * Which views paint scrap is the whole reason `ElevationPreviewPanel`'s
+   * `effectiveView` has a Fulgora branch, and it was pinned nowhere - so the
+   * panel test asserting `view: "all"` was asserting a bare string with
+   * nothing behind it. These rows are what give that string its meaning.
+   */
+  function fulgoraImage(view: string): Uint8ClampedArray {
+    const r = runRenderRequest({
+      id: 1,
+      seed0: 123456,
+      planet: "fulgora",
+      view,
+      width: 256,
+      height: 256,
+      originX: -128,
+      originY: -128,
+      tilesPerPixel: 1,
+    } as unknown as ElevationRenderRequest);
+    return new Uint8ClampedArray(r.buffer);
+  }
+
+  function scrapPixels(view: string): number {
+    const px = fulgoraImage(view);
+    let n = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      if (
+        px[i] === SCRAP_MAP_COLOR[0] &&
+        px[i + 1] === SCRAP_MAP_COLOR[1] &&
+        px[i + 2] === SCRAP_MAP_COLOR[2]
+      )
+        n++;
+    }
+    return n;
+  }
+
+  it("paints scrap for the 'all' composite and for 'resources'", () => {
+    // 177 at this window/seed. Asserted as a floor rather than an equality so
+    // an unrelated terrain change cannot redden it - the discrimination that
+    // matters is "some" against "none", which the next row supplies.
+    //
+    // Confirmed to discriminate by planting the break: dropping `"all"` from
+    // the gate in `runRenderRequest`'s Fulgora branch fails this at
+    // "expected 0 to be greater than 100".
+    expect(scrapPixels("all")).toBeGreaterThan(100);
+    expect(scrapPixels("resources")).toBeGreaterThan(100);
+  }, 120000);
+
+  it("paints NO scrap for 'terrain'", () => {
+    // Confirmed to discriminate by adding `"terrain"` to the same gate.
+    expect(scrapPixels("terrain")).toBe(0);
+  }, 120000);
+
+  it("KNOWN HOLE: view 'elevation' renders the NAUVIS field, not Fulgora at all", () => {
+    // Not a scrap bug - a wrong-planet bug, and the reason the panel fix that
+    // accompanies this test matters more than "the overlay was missing".
+    //
+    // `runRenderRequest` puts its whole planet dispatch inside a view test that
+    // lists terrain/resources/enemies/cliffs/trees/rocks/all. "elevation" is
+    // not in that list, so it never reaches the Fulgora branch and falls
+    // through to `renderElevation`, which evaluates the Nauvis elevation
+    // field. The output is BYTE-IDENTICAL to `planet: "nauvis"` at the same
+    // seed0 - measured, which is what the second assertion below pins.
+    //
+    // This is exactly the failure `ElevationPreviewPanel`'s `supported` comment
+    // says its guard exists to prevent ("would silently fall through
+    // runRenderRequest's dispatch ... and render mislabeled Nauvis colors").
+    // That guard covers the PLANET axis; the map-type axis re-opened the same
+    // hole, because `effectiveView` forced "elevation" whenever the preset's
+    // own map type was Lakes or Island.
+    //
+    // The panel no longer asks for it (see elevationPreviewPanel.spec.ts), so
+    // this is unreachable from the UI. It is pinned rather than fixed because
+    // closing it properly means making `runRenderRequest` itself refuse a
+    // Nauvis-only view for a non-Nauvis planet, which changes Vulcanus too -
+    // a wider change than this fix. Vulcanus has the identical hole and is
+    // likewise unreachable. If that lands, this test should flip to asserting
+    // the refusal.
+    const fulgoraElevation = fulgoraImage("elevation");
+    const nauvisElevation = new Uint8ClampedArray(
+      runRenderRequest({
+        id: 1,
+        seed0: 123456,
+        planet: "nauvis",
+        view: "elevation",
+        width: 256,
+        height: 256,
+        originX: -128,
+        originY: -128,
+        tilesPerPixel: 1,
+        waterLevel: 0,
+        segmentationMultiplier: 1,
+        startingPositions: [{ x: 0, y: 0 }],
+      } as unknown as ElevationRenderRequest).buffer,
+    );
+    expect(scrapPixels("elevation")).toBe(0);
+    expect(Array.from(fulgoraElevation)).toEqual(Array.from(nauvisElevation));
+  }, 120000);
 });

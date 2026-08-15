@@ -682,4 +682,63 @@ describe("ElevationPreviewPanel", () => {
       expect(arg).toMatchObject({ planet: "nauvis", view: "all" });
     });
   });
+
+  describe("planet: fulgora (V1 terrain, V2 land tiles, V3 scrap)", () => {
+    it("resolves view:'all' on a NON-Nauvis map type, so the scrap overlay still paints", async () => {
+      // The regression this pins: `effectiveView` gated on the PRESET's own
+      // elevation map type - a Nauvis-only concept (nauvis/lakes/island) that
+      // says nothing about Fulgora. On a Lakes or Island preset it returned
+      // "elevation", and `runRenderRequest`'s Fulgora branch only paints scrap
+      // for "resources" or "all". Measured at 256x256 around the origin, seed0
+      // 123456: "all" and "resources" paint 177 scrap pixels, "elevation" and
+      // "terrain" paint 0. So this path silently dropped the whole V3 layer.
+      //
+      // Vulcanus never had the bug because its branch returns before the
+      // map-type check. Fulgora reached `supported` and `terrainAvailable` but
+      // not that early return.
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("lakes", renderer, { planet: "fulgora", dev: false });
+
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({ planet: "fulgora", view: "all" });
+    });
+
+    it("never asks for view:'elevation', which would render the NAUVIS field", async () => {
+      // The severity behind the row above. `runRenderRequest` keeps its planet
+      // dispatch inside a view test that excludes "elevation", so that view
+      // falls through to `renderElevation` and returns bytes IDENTICAL to
+      // `planet: "nauvis"` at the same seed - see the KNOWN HOLE test in
+      // elevationRenderRequest.spec.ts. So this was not "scrap went missing",
+      // it was "the user was shown Nauvis and told it was Fulgora".
+      stubCanvas();
+      for (const mapType of ["lakes", "island", "nauvis"]) {
+        const renderer = okRenderer();
+        const w = setup(mapType, renderer, { planet: "fulgora", dev: false });
+        await w.find('[data-test="generate"]').trigger("click");
+        await flushPromises();
+        const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        expect(arg.view, `map type ${mapType}`).not.toBe("elevation");
+      }
+    });
+
+    it("honors the Terrain toggle on Fulgora in dev mode", async () => {
+      // Fulgora enables the Terrain toggle (`terrainAvailable` includes it), so
+      // "terrain" has to be in the branch's ported list or the enabled button
+      // would silently render the composite instead.
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "fulgora", dev: true });
+
+      await w.find('[data-test="view-terrain"]').trigger("click");
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({ planet: "fulgora", view: "terrain" });
+    });
+  });
 });
