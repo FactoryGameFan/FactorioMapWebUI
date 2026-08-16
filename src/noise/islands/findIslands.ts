@@ -27,6 +27,7 @@
  * so one pathological island cannot make every search re-render forever.
  */
 import { largestRectangle, type Rect } from "./largestRectangle";
+import { countFullChunks } from "./fullChunks";
 import { surveyIslands, type IslandCandidate } from "./cellSurvey";
 import { floodFillFrom, landMaskFromImage } from "./islandMask";
 import { chainComponents, type PlacedMask } from "./chainGraph";
@@ -54,6 +55,13 @@ export interface IslandResult extends IslandCandidate {
   readonly rect: Rect;
   readonly rectTiles: { readonly width: number; readonly height: number };
   readonly landTiles: number;
+  /**
+   * Whole 32x32 chunks that are land all the way across - the area figure a
+   * build plan is made of. Deliberately not `landTiles / 1024`; see
+   * `fullChunks.ts`. Trustworthy on refined rows, approximate on coarse ones,
+   * for the resolution reason recorded there.
+   */
+  readonly fullChunks: number;
   readonly refined: boolean;
   /**
    * True if the isolated island mask still touched the render window's own
@@ -104,6 +112,7 @@ interface Measured {
   readonly candidate: IslandCandidate;
   readonly rect: Rect;
   readonly landTiles: number;
+  readonly fullChunks: number;
   readonly placed: PlacedMask;
   readonly refined: boolean;
   readonly clipped: boolean;
@@ -290,6 +299,9 @@ async function measure(
     candidate: c,
     rect: largestRectangle(mine, win.width, win.height),
     landTiles: landPx * tpp * tpp,
+    // One more pass over a mask already in memory - no extra render, and
+    // negligible beside the one that produced it.
+    fullChunks: countFullChunks(mine, win.width, win.height, win.originX, win.originY, tpp),
     placed: {
       mask: mine,
       width: win.width,
@@ -447,6 +459,7 @@ export async function findIslands(opts: FindOptions): Promise<IslandResult[]> {
       height: m.rect.height * m.placed.tilesPerPixel,
     },
     landTiles: m.landTiles,
+    fullChunks: m.fullChunks,
     refined: m.refined,
     clipped: m.clipped,
     chainId: chains[i] as number,

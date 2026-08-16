@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import IslandFinderPanel from "../src/components/IslandFinderPanel.vue";
 import { usePresetsStore } from "../src/store/presets";
+import { useUiStore } from "../src/store/ui";
 import type { FindOptions, IslandResult } from "../src/noise/islands/findIslands";
 
 function row(over: Partial<IslandResult> = {}): IslandResult {
@@ -21,6 +22,7 @@ function row(over: Partial<IslandResult> = {}): IslandResult {
     rect: { x: 0, y: 0, width: 10, height: 10 },
     rectTiles: { width: 80, height: 80 },
     landTiles: 9000,
+    fullChunks: 7,
     refined: true,
     clipped: false,
     chainId: 0,
@@ -55,11 +57,68 @@ describe("IslandFinderPanel", () => {
     expect(w.emitted("jump")?.[0]).toEqual([{ x: 1234, y: -567 }]);
   });
 
-  it("marks unrefined rows so a coarse number is never read as measured", async () => {
-    const w = setup(async () => [row({ refined: false })]);
+  it("defaults the radius to 1024", () => {
+    // Pinned because nothing pinned it before: the default lived in one `ref`
+    // and every radius test set its own value, so it could drift silently.
+    // Measured in the browser, the previous 5,000 default took ~28s and
+    // returned 1,922 rows; 1024 takes ~6.9s and returns about 105.
+    const w = setup(async () => []);
+    expect((w.find('[data-test="island-radius"]').element as HTMLInputElement).value).toBe("1024");
+  });
+
+  it("shows FULL CHUNKS, not the raw land-tile count", async () => {
+    // The two are different numbers on purpose - a frilly island carries land
+    // tiles in chunks no blueprint can use - so this pins that the column
+    // reads `fullChunks` and did not silently go back to `landTiles`. The stub
+    // keeps them far apart (7 vs 9,000) so neither can pass for the other.
+    const w = setup(async () => [row({ fullChunks: 7, landTiles: 9000 })]);
     await w.find('[data-test="island-search"]').trigger("click");
     await flushPromises();
-    expect(w.find('[data-test="island-approx"]').exists()).toBe(true);
+    const cells = w.find('[data-test="island-row"]').findAll("td");
+    expect(cells[2]!.text()).toBe("7");
+    expect(w.text()).not.toContain("9,000");
+  });
+
+  it("divides refined rows from coarse ones so a coarse number is never read as measured", async () => {
+    // This replaces a per-row `~` marker. `compareResults` ranks the whole
+    // refined GROUP above the unrefined one, so the refined rows are always a
+    // contiguous prefix and the marker only ever said "you are past row N" -
+    // on 97% of rows in a real radius-5,000 search. One divider says it once.
+    const w = setup(async () => [row(), row({ cellX: 9, refined: false })]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    // It must sit BETWEEN the two rows, not merely exist somewhere, so this
+    // asserts the DOM sequence rather than mere presence - a divider rendered
+    // above the first row or below the last would pass an `exists()` check.
+    const seq = [
+      ...w.element.querySelectorAll('[data-test="island-row"],[data-test="island-coarse-divider"]'),
+    ].map((el) => el.getAttribute("data-test"));
+    expect(seq).toEqual(["island-row", "island-coarse-divider", "island-row"]);
+  });
+
+  it("shows no divider when every row was refined", async () => {
+    const w = setup(async () => [row(), row({ cellX: 9 })]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    expect(w.find('[data-test="island-coarse-divider"]').exists()).toBe(false);
+  });
+
+  it("hides Class and Chain unless dev mode is on", async () => {
+    // The chain id has to be a number no other column can spell. A first
+    // version used 77 and failed: the row renders chunks 7 beside distance 78,
+    // so the table text contains "778" and a substring check matched inside a
+    // number that was never the chain id.
+    const CHAIN = 987654;
+    const w = setup(async () => [row({ klass: "vault", chainId: CHAIN })]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    expect(w.text()).not.toContain("vault");
+    expect(w.text()).not.toContain(String(CHAIN));
+
+    useUiStore().setDevMode(true);
+    await w.vm.$nextTick();
+    expect(w.text()).toContain("vault");
+    expect(w.text()).toContain(String(CHAIN));
   });
 
   it("marks clipped rows so a truncated rectangle is never read as complete", async () => {
