@@ -601,13 +601,23 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       `"all"` - see `findIslands.ts`'s header for why) costs **~24 ms** in
       this Node test harness.
 
-      **The full end-to-end search time for the default 5,000-tile radius is
-      unmeasured.** This perf block times the two per-unit costs above, not
-      the whole survey -> coarse -> refine -> chain pipeline run across the
-      app's worker pool. The design spec's own ~15s figure for that case
-      (section 4) is a design-time estimate from a throwaway benchmark, not a
-      number this task measured - treat it as unconfirmed until a real
-      end-to-end run is timed and recorded here.
+      **The full end-to-end search time is now MEASURED: ~28 seconds** at the
+      default 5,000-tile radius. Taken 2026-08-15 in Chrome 151 on a 12-core
+      Mac, against the deployed build 0a160df, with seed 2967702466 and
+      Fulgora at default settings. Three consecutive runs took 28,041 /
+      28,261 / 27,976 ms - a spread under 1%, so this is a stable figure and
+      not one lucky draw. That search did 2,335 units of work (2,285 coarse
+      candidates plus 50 refines) and returned 1,922 islands.
+
+      That is **1.9x the design spec's ~15s estimate** (section 4), which was
+      always a design-time projection off a throwaway benchmark. The estimate
+      was not wrong in kind - the search still finishes while you wait, and
+      the progress readout counts the whole way - but quote 28s, not 15s.
+
+      Two limits on that number. It came from a 12-core machine, and the
+      search's concurrency follows the worker pool, so a 4-core laptop should
+      be expected to take considerably longer. And it is one machine and one
+      browser, so it bounds nothing; it is a reference point.
 
       **The chain stage is NOT negligible, and now has a measured figure.**
       The design spec's own estimate (section 4) called stage 4 (dedup +
@@ -637,9 +647,19 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       reported rectangle is a real measurement of a truncated slice, not the
       whole island, and `IslandResult.clipped` records that so the panel can
       say so (the `!` marker beside a clipped row's rectangle, next to the
-      existing `~` marker for an unrefined one). No case in the current
-      seed/radius test fixtures needs more than pad 256, but nothing rules
-      one out at a larger radius.
+      existing `~` marker for an unrefined one).
+
+      **At the default radius, clipped rows are common, and they cluster at
+      the top.** The radius-600 test fixtures made this look like a corner
+      case. The radius-5,000 run timed above returned 43 clipped rows, spread
+      very unevenly: 43 of 1,922 rows is 2.2% overall, but **17 of the 50
+      refined rows (34%) and 5 of the top 10 (50%)** carry the marker. The cap
+      bites hardest on the biggest islands, which are the ones the tool exists
+      to find, so the headline rectangle on several top rows is a lower bound
+      rather than a measurement of the whole island. The `!` marker is
+      therefore load-bearing, not decoration. Raising `MAX_WINDOW_GROWTHS` is
+      the obvious lever and it is not free - each growth quadruples that
+      candidate's window area, on a search that already takes ~28s.
 
       **Accuracy**: Fulgora's land/ocean split agrees with the real game on
       99.86% of positions (Fulgora V1, above), and the residual mismatches

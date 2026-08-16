@@ -248,14 +248,16 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   Docker at all, which is what makes the CI workflow possible. Auto-start is
   opt-in behind `FMW_AUTO_START_DOCKER=1`.
 - `pnpm run verify` - `verify:lint` + `vp test` + `preview:test` in
-  one gate. **~65-90s on a dev machine.** On a runner it is no longer one job -
-  see the CI section, which shards it. The `~9.5s` this line
-  claimed for a long time was simply wrong - already wrong by a factor of six
-  before `check:vue` existed, because the suite grew through the Vulcanus and
-  cliff work (143 files then; **152 as of 2026-08-01**, which is what the
-  `test/**/*.spec.ts` include actually matches) - and the gap mattered: ~63s is exactly the duration
-  at which people start skipping a manual gate, which is half the argument for
-  the CI workflow below. Don't budget 10 seconds for this.
+  one gate. **~3m30s cold on a dev machine** (measured 2026-08-15 at #207:
+  3m28s wall, 218 test files, 1,922 tests). On a runner it is no longer one job -
+  see the CI section, which shards it. This line has been wrong twice and in the
+  same direction, so treat the number as perishable. It claimed `~9.5s` for a
+  long time - wrong by a factor of six even before `check:vue` existed, because
+  the suite grew through the Vulcanus and cliff work. It was then corrected to
+  `~65-90s`, which the island finder (#207) invalidated within two weeks by
+  adding one 134.6s spec file. The gap matters both times: a gate people believe
+  is instant and is not is a gate they stop running, which is half the argument
+  for the CI workflow below. Don't budget seconds for this; budget minutes.
 
   The test phase runs through **`vp run --cache test`**, not a bare `vp test`.
   Measured 2026-08-02: the four phases are `vp check` 2.0s, `check:vue` 3.0s,
@@ -456,6 +458,42 @@ against **366 / 273 / 327 / 137** - shard 1 up 41%, shard 3 down 16%, and the
 binding shard changed identity from 3 to 1. Any rebalancing worth doing has to
 beat that, and a single run cannot show that it did.
 
+**Re-measured on CI 2026-08-15 after the Fulgora island finder (#207) - three
+runs over the SAME 218 spec files, and they disagree by more than the effect
+anyone would want to read out of them.** #207 and both runs of #208 (docs-only,
+so identical spec files and identical shard assignment):
+
+| run               | shards (s)            | binding |
+| ----------------- | --------------------- | ------- |
+| #207              | 391 / 378 / 469 / 400 | 469     |
+| #208 first        | 248 / 269 / 259 / 294 | **294** |
+| #208 after a redo | 366 / 281 / 416 / 368 | 416     |
+
+Range **294-469 on identical test code**, a 59% spread, against a recorded 389s
+for #202. Two of the three sit above 389 and one sits well below it, so the
+finder probably did add gate wall - but the noise is the same size as the thing
+being measured, and no honest point estimate comes out of this.
+
+Note how that table was built, because it is the cheapest way to get one: three
+runs of the same tests arrived for free from one PR's normal life (open, amend,
+push). If a number here matters, collect it that way rather than from whichever
+run you happened to look at. The first draft of this very paragraph read
+"+80s, +21%" off #207 alone, and the next run refuted it.
+
+That is the #202/#203 lesson arriving a second time, and it should be the
+default assumption now: a single CI run here measures the runner as much as the
+suite. Do not tune on one.
+
+What IS solid, because it was measured locally where the spread is small:
+**`test/findIslands.spec.ts` is the new heaviest file at 134.6s**, taking the
+crown from `previewAgreement.spec.ts`. Read that with its history - it was
+**240.4s** when the branch's last fix landed, and four of its tests were then
+cut to a small `refineCount` for identical coverage. Why it is expensive at all:
+the finder re-renders a candidate at a doubled pad whenever its island mask
+touches the window border, and refinement pays 16x the pixels of the coarse
+pass. One test in that file **cannot** be cheapened the same way and its own
+comment explains why, so do not "finish the job" by lowering its refine count.
+
 So the gate wall stays where it is, and the thing that actually broke was a
 **timeout, not the wall**. On #203 - a docs-only change - the unchanged
 "Vulcanus rock and cliff coverage" test hit its 120s budget at 150.5s. Across
@@ -621,25 +659,36 @@ wrong belief that a green suite endorsed.
 
 #### `testTimeout` is 30s, deliberately, and retries are not used
 
-Vitest's 5s default was too tight for this suite long before CI existed - **86
-individual tests across 29 files** carry an explicit `}, 120000)`, and five more
-in `previewAgreement.spec.ts` now carry `}, 300000)`. That is the same complaint
-made 91 times by hand. (The count read "24 across 10" for a year and went stale
-as the suite grew; re-counted 2026-08-15.) The first CI run
-proved the default was the real problem rather than any one test: on a 4-core
-runner (~3x slower, 230s vs 71s for the same suite)
-`elevationRenderRequest.spec.ts`'s `view 'all'` case needs **9.8s**, and that
-file has 27 tests and zero annotations. `vite.config.ts` now sets
-`testTimeout: 30_000`; the existing annotations still win over it, so raising
-the global does nothing for any of those 91 tests.
+Vitest's 5s default was too tight for this suite long before CI existed. Counted
+on `test/*.spec.ts` at #207 (2026-08-15): **94 tests across 31 files** carry an
+explicit `}, 120000)`, and **74 tests across 17 files** carry `}, 300000)`. That
+is the same complaint made 168 times by hand. The first CI run proved the
+default was the real problem rather than any one test: on a 4-core runner (~3x
+slower, 230s vs 71s for the same suite) `elevationRenderRequest.spec.ts`'s
+`view 'all'` case needs **9.8s**, and that file has 27 tests and zero
+annotations. `vite.config.ts` now sets `testTimeout: 30_000`; the existing
+annotations still win over it, so raising the global does nothing for any of
+those 168 tests.
 
-**120000 is not a safe ceiling any more, and only one file has been moved off
-it.** `previewAgreement.spec.ts` uses 300s as of #203, after its heaviest case
-timed out at 150.5s (see the CI section above for the four-run table). The rest
-still sit at 120s, and the nearest to the edge is an 85.2s case in
-`vulcanusCliffRejectionStage.spec.ts`. At the ~40% run-to-run spread measured on
-these runners, 85.2s is about one bad draw from red. Nothing is broken there
-today - this is where to look first if a shard goes red on a timeout.
+**Do not trust a hand-maintained count here - this one has now gone stale
+twice.** It read "24 across 10" for a year, was corrected to "86 across 29" on
+2026-08-15, and was still wrong the same day: the real figures were 89/30 and
+66/16 before #207 even landed. Re-count before quoting:
+
+```bash
+git grep -c '}, 120000)' -- 'test/*.spec.ts' | awk -F: '{s+=$3} END {print s}'
+```
+
+**120000 is not a safe ceiling, and 300s is not one file's exception.** This
+paragraph used to say `previewAgreement.spec.ts` took 300s "as of #203" and that
+it was the only file moved off 120s. Both halves are wrong. 17 files use 300s,
+and the practice long predates #203 - the earliest arrived with the cliff work
+in #122. It also named an 85.2s case in `vulcanusCliffRejectionStage.spec.ts` as
+the nearest to the edge at 120s; that file carries **zero** 120s annotations and
+three 300s ones, so the claim's premise is void. Which test now sits nearest its
+own budget has not been re-derived - it needs a fresh per-test read off a CI run,
+not a grep. Treat that as an open question, not a settled one, if a shard goes
+red on a timeout.
 
 Do **not** reach for `retry` when a heavy render test fails in CI. Nothing here is
 nondeterministic - these tests compare pixels against captured game output - so a
