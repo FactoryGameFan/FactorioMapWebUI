@@ -18,6 +18,49 @@ const SEED0 = 2967702466;
 const execute = async (req: ElevationRenderRequest) => runRenderRequest(req);
 
 /**
+ * The refine count for every test here that asserts nothing about the SIZE of
+ * the refine set. The exact value 3 is measured, not arbitrary - see below.
+ *
+ * WHY NOT THE DEFAULT: radius 600 at `SEED0` returns 35 deduped rows, so
+ * `DEFAULT_REFINE_COUNT` (50) refines every one of them - and refinement is the
+ * expensive half, because `measure`'s grow-and-re-render loop pays 16x the
+ * pixels for the same pad at 2 tiles/px that it pays at 8. Measured per test on
+ * a dev machine: 41-58s at the default against 15-31s here, and the whole file
+ * 240s against 135s. CI shards by file, the binding shard was 389s, and runner
+ * spread is about 40% against a 300s per-test budget - so the default adds most
+ * of a second binding shard to the gate for coverage it does not buy.
+ *
+ * WHY 3 AND NOT 2: only at 3 do the grouped and flat orderings actually
+ * disagree on this data, which is what lets the sort test below discriminate.
+ * Measured across the whole ladder (smallest refined area vs largest unrefined
+ * area, in tiles):
+ *
+ *   count 1: 19,684 vs 17,920 - no crossing
+ *   count 2: 17,440 vs 17,280 - no crossing
+ *   count 3: 14,256 vs 16,640 - CROSSING
+ *   count 5: 13,800 vs 11,648 - no crossing
+ *
+ * At 3, cell (-2,-3) refines from a coarse 17,280 down to a true 14,256 and so
+ * falls below two rows still carrying coarse numbers, (-1,2) at 16,640 and
+ * (2,1) at 14,976. The window is narrow because the refine set is chosen BY
+ * coarse area, so the refined group starts out holding the largest rows and
+ * only a row that shrinks a lot on measurement can cross under one left behind.
+ *
+ * Two tests deliberately do NOT use this:
+ *
+ * - "grows the render window ..." passes 0, because it is about the coarse
+ *   pass and wants no refinement at all.
+ * - "reports progress ..." keeps the default, and cannot be cheapened this way.
+ *   The overcount it guards against was `candidates.length +
+ *   Math.min(refineCount, candidates.length)`, which differs from the correct
+ *   `candidates.length + toRefine.length` only when `refineCount` exceeds the
+ *   DEDUPED count (35 here, against 41 candidates). At 3 both arithmetics give
+ *   44 and the bug is invisible; at 36 or more the refine set is the whole
+ *   deduped list again, so there is nothing left to save.
+ */
+const CHEAP_REFINE_COUNT = 3;
+
+/**
  * A fixed grid every `landTilesOf` reconstruction snaps to, INDEPENDENT of
  * whichever `tpp` `findIslands` happened to measure a given row at.
  *
@@ -89,7 +132,13 @@ describe("findIslands", () => {
       seen.push(String(req.view));
       return runRenderRequest(req);
     };
-    await findIslands({ ctx: { seed0: SEED0 }, radius: 600, execute: spy, concurrency: 4 });
+    await findIslands({
+      ctx: { seed0: SEED0 },
+      radius: 600,
+      execute: spy,
+      concurrency: 4,
+      refineCount: CHEAP_REFINE_COUNT,
+    });
     expect(seen.length).toBeGreaterThan(0);
     expect([...new Set(seen)]).toEqual(["terrain"]);
   }, 300000);
@@ -100,6 +149,7 @@ describe("findIslands", () => {
       radius: 600,
       execute,
       concurrency: 4,
+      refineCount: CHEAP_REFINE_COUNT,
     });
     expect(found.length).toBeGreaterThan(0);
     for (const r of found) {
@@ -108,15 +158,52 @@ describe("findIslands", () => {
     }
   }, 300000);
 
-  it("sorts by rectangle area, largest first", async () => {
+  it("sorts refined rows as a group above unrefined ones, each group by area descending", async () => {
+    // NOT a flat area sort, and that is deliberate. An unrefined row's
+    // rectangle was measured at `COARSE_TILES_PER_PIXEL` (8), so its area is
+    // quantized to 64-tile blocks and biased upward - a coarse pixel counts as
+    // land if its one sample does. Such a row can carry a bigger number than a
+    // refined row that is genuinely larger, so `compareResults` ranks the whole
+    // refined group first. See its header in `findIslands.ts`.
+    //
+    // `CHEAP_REFINE_COUNT` is what makes that observable, and it took a
+    // measurement to find - at the default 50 every one of the 35 deduped rows
+    // at this radius gets refined, so the unrefined group is EMPTY, the two
+    // orderings trivially coincide, and a flat-area assertion (which is what
+    // this test used to make) passes while testing nothing. Lowering the count
+    // is necessary but not sufficient: at 1, 2 and 5 the orderings still agree.
+    // See `CHEAP_REFINE_COUNT` for the ladder.
+    //
+    // Confirmed to discriminate by planting the break: dropping the
+    // `a.refined !== b.refined` line from `compareResults` - i.e. restoring the
+    // flat sort this test used to assert - fails the group-boundary assertion
+    // below with "expected false to be true", because refined row (-2,-3)
+    // moves down past two unrefined rows.
     const found = await findIslands({
       ctx: { seed0: SEED0 },
       radius: 600,
       execute,
       concurrency: 4,
+      refineCount: CHEAP_REFINE_COUNT,
     });
-    const areas = found.map((r) => r.rectTiles.width * r.rectTiles.height);
-    expect([...areas].sort((a, b) => b - a)).toEqual(areas);
+    const area = (r: IslandResult) => r.rectTiles.width * r.rectTiles.height;
+    // -1 (no unrefined row) and 0 (no refined prefix) both fail here, so this
+    // one assertion pins the group boundary AND that neither group is empty.
+    const firstUnrefined = found.findIndex((r) => !r.refined);
+    expect(firstUnrefined).toBeGreaterThan(0);
+    expect(found.slice(firstUnrefined).every((r) => !r.refined)).toBe(true);
+    for (const group of [found.slice(0, firstUnrefined), found.slice(firstUnrefined)]) {
+      const areas = group.map(area);
+      expect([...areas].sort((a, b) => b - a)).toEqual(areas);
+    }
+    // ...and the two orderings must actually DISAGREE on this data, or every
+    // assertion above would hold for a plain area sort too. A red line here
+    // does not mean the sort broke - it means this test went vacuous, the way
+    // the flat-sort version it replaced was. Fix it by re-establishing a real
+    // coarse/refined area crossing, never by deleting the check.
+    const key = (r: IslandResult) => `${r.cellX},${r.cellY}`;
+    const flat = [...found].sort((a, b) => area(b) - area(a));
+    expect(flat.map(key)).not.toEqual(found.map(key));
   }, 300000);
 
   it("never reports the same physical island twice - no two results share a land tile", async () => {
@@ -132,6 +219,7 @@ describe("findIslands", () => {
       radius: 600,
       execute,
       concurrency: 4,
+      refineCount: CHEAP_REFINE_COUNT,
     });
     expect(found.length).toBeGreaterThan(0);
     const sets = await Promise.all(found.map((r) => landTilesOf(r)));
@@ -187,6 +275,9 @@ describe("findIslands", () => {
   }, 300000);
 
   it("reports progress that ends at the total, WITHOUT the end-of-run fallback firing", async () => {
+    // The one heavy test that keeps the default refine count on purpose - see
+    // `CHEAP_REFINE_COUNT`. A small count makes the wrong and right totals
+    // equal, so this would pass on the very bug it exists to catch.
     const seen: [number, number][] = [];
     await findIslands({
       ctx: { seed0: SEED0 },
