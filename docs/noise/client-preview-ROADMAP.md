@@ -697,9 +697,54 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       bites hardest on the biggest islands, which are the ones the tool exists
       to find, so the headline rectangle on several top rows is a lower bound
       rather than a measurement of the whole island. The `!` marker is
-      therefore load-bearing, not decoration. Raising `MAX_WINDOW_GROWTHS` is
-      the obvious lever and it is not free - each growth quadruples that
-      candidate's window area, on a search that already takes ~28s.
+      therefore load-bearing, not decoration.
+
+      **RESOLVED 2026-08-16: `MAX_WINDOW_GROWTHS` raised 3 -> 4, and 4 is a
+      measured ceiling.** This paragraph used to end by calling the raise "the
+      obvious lever" that "is not free", on the strength of a per-growth cost
+      estimate and nothing else. Measured properly - radius 1024, seed
+      2967702466, renders counted by grouping `execute` calls by their `id`,
+      since `measure` reuses one `id` across every re-render of a candidate:
+
+      | cap | renders | pixels  | Node wall | clipped |
+      | --- | ------- | ------- | --------- | ------- |
+      | 3   | 338     | 4.2 Mpx | 94.8s     | 3       |
+      | 4   | 349     | 5.7 Mpx | 126.1s    | **0**   |
+      | 5   | 349     | 5.7 Mpx | 127.9s    | 0       |
+
+      Three things that estimate could not have told anyone:
+
+      - **Cap 5 is byte-identical to cap 4.** Same renders, same pixels, same
+        per-candidate histogram. Nothing wanted a fifth growth, so 4 is the
+        ceiling and "raise it more" buys strictly nothing.
+      - **The cap was changing the RANKING, not just adding a marker.** At cap
+        3 the top row was (-193,-171) at 266x74. (989,114) sat at rank 4,
+        clipped, measured 84x186; grown it is 114x186 - +36% area, chunks
+        29 -> 35 - and it is rank **1**. Reported positions move too:
+        (310,-674) and (135,-696) are one island reporting the identical
+        218x80 rectangle from two different centroids, because a wider window
+        changes which cell wins `bestByGroup`.
+      - **The grow loop was already most of the work.** Of 154 candidates at
+        cap 3, only 83 never grew and 46 hit the cap; re-renders were **88% of
+        all pixels**. So this is a first-order cost, and the increase is in
+        PIXELS not renders: +3.3% renders but +36% pixels, because the renders
+        it adds are the biggest windows.
+
+      Cost paid: `test/findIslands.spec.ts` goes **132.6s -> 186.9s (+41%)**,
+      its slowest test 51.7s against a 300s budget.
+
+      **Browser wall time was NOT resolvable** and no figure should be quoted
+      for it. Same build, same seed, same session gave 32.8s (cold) / 23.5s /
+      24.4s at cap 3 and 36.0s (cold) / 69.0s at cap 4 - a 2.9x spread on work
+      that provably grew 36%. What the pixel count does bound: the extra work
+      is +36%, and pooling can only shrink that ratio.
+
+      Note also that none of those readings resemble the ~6.9s the panel's own
+      radius table records for radius 1024, and this probe counts **89 rows**
+      where that table says **105**. One explanation covers both: that table
+      looks measured with `2967702466` typed as the MAP seed, while the specs
+      use that value as a SURFACE seed - a different map. Unconfirmed, and
+      deliberately not acted on here.
 
       **Accuracy**: Fulgora's land/ocean split agrees with the real game on
       99.86% of positions (Fulgora V1, above), and the residual mismatches
