@@ -3,6 +3,7 @@
 import { computed, onBeforeUnmount, ref, shallowRef } from "vue";
 import { usePresetsStore } from "../store/presets";
 import { surfaceSeedForPlanet } from "../model/planetSurfaceSeed";
+import { elevationCtxFromPreset } from "../model/elevationPreviewCtx";
 import type { Planet } from "../model/planets";
 import FButton from "../ui/FButton.vue";
 import FNumberInput from "../ui/FNumberInput.vue";
@@ -22,7 +23,8 @@ const emit = defineEmits<{ jump: [{ x: number; y: number }] }>();
 // 2,000 tiles and 60s for 10,000 - so an unbounded field lets someone start a
 // search that never realistically finishes and just reads as a hang.
 // `FNumberInput` has no min/max/step of its own (unlike a raw <input
-// type="number">), so the bound is enforced here instead, on every write.
+// type="number">), so the bound is enforced here instead - see `clampRadius`
+// below for where and why, not on every keystroke.
 const RADIUS_MIN = 500;
 const RADIUS_MAX = 20000;
 
@@ -30,10 +32,20 @@ const store = usePresetsStore();
 const radius = ref(5000);
 const radiusModel = computed({
   get: () => radius.value,
+  // Does NOT clamp here. `FNumberInput` commits on the native `change` event,
+  // so a setter that clamps on every write forced the field to snap to
+  // RADIUS_MIN the moment a partially-typed value (e.g. "5" on the way to
+  // "5000") committed mid-edit - the field fighting the user rather than
+  // waiting for them to finish. `clampRadius` below enforces the bound
+  // instead, on blur and (as the actual guarantee) at the start of a search.
   set: (v: number) => {
-    radius.value = Math.min(RADIUS_MAX, Math.max(RADIUS_MIN, v));
+    radius.value = v;
   },
 });
+
+function clampRadius() {
+  radius.value = Math.min(RADIUS_MAX, Math.max(RADIUS_MIN, radius.value));
+}
 const running = ref(false);
 const done = ref(0);
 const total = ref(0);
@@ -53,6 +65,10 @@ function ensureHost() {
 async function search() {
   const preset = store.activePreset;
   if (!preset || running.value || !supported.value) return;
+  // The one place the bound MUST hold: whatever the field currently shows
+  // (possibly never blurred, possibly mid-edit), no out-of-range radius
+  // reaches `findIslands`.
+  clampRadius();
   running.value = true;
   error.value = null;
   done.value = 0;
@@ -61,6 +77,13 @@ async function search() {
   aborter = new AbortController();
   try {
     const seed0 = surfaceSeedForPlanet("fulgora", store.previewSeed());
+    // The finder must survey and render the SAME map the preview beside it
+    // shows, not the default grid - `fulgoraIslandControls` (Islands
+    // frequency/size) changes the Voronoi `grid` constant that both the
+    // survey step and every render window derive from, so a preset that
+    // moves those sliders would otherwise silently analyse a different map.
+    // Follows the same read `ElevationPreviewPanel.vue` already uses.
+    const islandControls = elevationCtxFromPreset(preset).fulgoraIslandControls;
     const run = props.find ?? findIslands;
     // With `find` injected, `ensureHost()` must never be called - not even to
     // build the `execute` argument - or every test would try to spawn a real
@@ -68,7 +91,11 @@ async function search() {
     // in a closure defers that lookup until `execute` actually runs, which the
     // injected `find` never does.
     results.value = await run({
-      ctx: { seed0 },
+      ctx: {
+        seed0,
+        islandsFrequency: islandControls.frequency,
+        islandsSize: islandControls.size,
+      },
       radius: radius.value,
       concurrency: props.find
         ? 1
@@ -110,6 +137,7 @@ onBeforeUnmount(() => {
           v-model="radiusModel"
           data-test="island-radius"
           label="Search radius (tiles)"
+          @blur="clampRadius"
         />
       </label>
       <FButton data-test="island-search" :disabled="running" @click="search">
@@ -153,6 +181,12 @@ onBeforeUnmount(() => {
             {{ r.rectTiles.width }} x {{ r.rectTiles.height }}
             <span v-if="!r.refined" data-test="island-approx" title="Coarse estimate, not refined"
               >~</span
+            >
+            <span
+              v-if="r.clipped"
+              data-test="island-clipped"
+              title="Window still touched this island's edge after growing - the true rectangle may be larger"
+              >!</span
             >
           </td>
           <td>{{ r.landTiles }}</td>
@@ -200,6 +234,11 @@ onBeforeUnmount(() => {
 
 .error {
   color: var(--f-red);
+}
+
+[data-test="island-clipped"] {
+  color: var(--f-red);
+  font-weight: 700;
 }
 
 .dim {

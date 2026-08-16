@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   findIslands,
   nearestLandPixel,
+  compareResults,
   COARSE_TILES_PER_PIXEL,
   REFINE_TILES_PER_PIXEL,
   type IslandResult,
@@ -145,6 +146,35 @@ describe("findIslands", () => {
     }
   }, 300000);
 
+  it("grows the render window and re-measures when the isolated island mask touches the border", async () => {
+    // Cells (-1,-1) and (-1,0) are two Voronoi views of the SAME connected
+    // island, and its coastline runs right past the flat pad-32 window edge -
+    // so BOTH candidates' pad-32 flood fills are truncated (the isolated mask
+    // touches the border). Dedup keeps whichever of the two saw more land at
+    // that truncated size; measured directly with growth disabled: (-1,-1) =
+    // 20,992 tiles / 10x11 rect, (-1,0) = 32,000 tiles / 25x9 rect, so (-1,0)
+    // wins pre-fix and (-1,-1) does not appear in the results at all.
+    // Growing the window on border contact lets either candidate's flood fill
+    // reach the island's true extent - both converge to the SAME 70,016
+    // tiles / 34x9 rectangle once the mask stops touching the border, which
+    // happens at pad 256 for this island (confirmed unchanged at pad 400, so
+    // the 3-growth cap is not itself the limit here).
+    const found = await findIslands({
+      ctx: { seed0: SEED0 },
+      radius: 600,
+      execute,
+      concurrency: 4,
+      refineCount: 0,
+    });
+    const row = found.find(
+      (r) => (r.cellX === -1 && r.cellY === -1) || (r.cellX === -1 && r.cellY === 0),
+    );
+    expect(row).toBeDefined();
+    expect(row!.clipped).toBe(false);
+    expect(row!.landTiles).toBeGreaterThan(32000);
+    expect(row!.rect.width * row!.rect.height).toBeGreaterThan(25 * 9);
+  }, 300000);
+
   it("marks exactly the refined rows as refined", async () => {
     const found = await findIslands({
       ctx: { seed0: SEED0 },
@@ -202,5 +232,51 @@ describe("findIslands", () => {
   it("uses the documented sampling densities", () => {
     expect(COARSE_TILES_PER_PIXEL).toBe(8);
     expect(REFINE_TILES_PER_PIXEL).toBe(2);
+  });
+});
+
+/** A minimal row for `compareResults` - only the fields the comparator reads matter. */
+function stubResult(over: { refined: boolean; area: number }): IslandResult {
+  return {
+    cellX: 0,
+    cellY: 0,
+    id: 0.8,
+    klass: "mesa",
+    sampleCount: 1,
+    minX: 0,
+    minY: 0,
+    maxX: 0,
+    maxY: 0,
+    centroidX: 0,
+    centroidY: 0,
+    rect: { x: 0, y: 0, width: over.area, height: 1 },
+    rectTiles: { width: over.area, height: 1 },
+    landTiles: over.area,
+    refined: over.refined,
+    clipped: false,
+    chainId: 0,
+    distanceFromSpawn: 0,
+  };
+}
+
+describe("compareResults", () => {
+  it("sorts refined rows before unrefined rows, even when an unrefined row's area is larger", () => {
+    // This is the exact scenario a plain area sort gets wrong: the unrefined
+    // row's coarse area (500) is bigger than the refined row's true area
+    // (100), but the refined measurement must still rank first because it is
+    // the one that can be trusted.
+    const bigUnrefined = stubResult({ refined: false, area: 500 });
+    const smallRefined = stubResult({ refined: true, area: 100 });
+    const sorted = [bigUnrefined, smallRefined].sort(compareResults);
+    expect(sorted).toEqual([smallRefined, bigUnrefined]);
+  });
+
+  it("sorts by area descending within each refined/unrefined group", () => {
+    const refinedSmall = stubResult({ refined: true, area: 10 });
+    const refinedBig = stubResult({ refined: true, area: 90 });
+    const unrefinedSmall = stubResult({ refined: false, area: 5 });
+    const unrefinedBig = stubResult({ refined: false, area: 50 });
+    const sorted = [unrefinedSmall, refinedSmall, unrefinedBig, refinedBig].sort(compareResults);
+    expect(sorted).toEqual([refinedBig, refinedSmall, unrefinedBig, unrefinedSmall]);
   });
 });

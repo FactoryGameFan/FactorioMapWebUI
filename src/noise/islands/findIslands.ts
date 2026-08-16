@@ -13,6 +13,18 @@
  * - Refinement runs at 2 tiles/px, not 1. Full resolution costs about 14s
  *   pooled against 4s, to sharpen a rectangle edge by one tile - on a renderer
  *   whose own land boundary is only good to about a tile.
+ *
+ * A candidate's render window starts at `WINDOW_PAD_TILES` beyond its sampled
+ * bounding box, but `floodFillFrom` deliberately crosses Voronoi cell
+ * boundaries (see `islandMask.ts`), so a multi-cell island can fill right out
+ * to that window's edge - a truncated measurement, not a complete one, and
+ * one that can flip which of two candidates ranks higher. `measure` re-renders
+ * at a doubled pad whenever the isolated mask touches the border, up to
+ * `MAX_WINDOW_GROWTHS` times; a result whose mask still touches the border
+ * after the last growth is marked `clipped: true` rather than presented as a
+ * complete measurement. An island whose true extent needs more than a
+ * 256-tile pad past its sampled bounding box stays clipped - the cap exists
+ * so one pathological island cannot make every search re-render forever.
  */
 import { largestRectangle, type Rect } from "./largestRectangle";
 import { surveyIslands, type IslandCandidate } from "./cellSurvey";
@@ -28,16 +40,52 @@ export const COARSE_TILES_PER_PIXEL = 8;
 export const REFINE_TILES_PER_PIXEL = 2;
 export const DEFAULT_REFINE_COUNT = 50;
 
-/** Padding around a candidate's sample bounding box, in tiles. */
+/** Starting padding around a candidate's sample bounding box, in tiles. */
 const WINDOW_PAD_TILES = 32;
+
+/**
+ * How many times a border-touching window may be doubled before giving up.
+ * With `WINDOW_PAD_TILES = 32` this makes the pad sequence 32 -> 64 -> 128 ->
+ * 256 - four renders in the worst case, not an unbounded retry loop.
+ */
+const MAX_WINDOW_GROWTHS = 3;
 
 export interface IslandResult extends IslandCandidate {
   readonly rect: Rect;
   readonly rectTiles: { readonly width: number; readonly height: number };
   readonly landTiles: number;
   readonly refined: boolean;
+  /**
+   * True if the isolated island mask still touched the render window's own
+   * edge after the last growth attempt - i.e. this measurement is a
+   * TRUNCATED slice of a larger island, not the whole thing. See
+   * `MAX_WINDOW_GROWTHS` and `measure`'s growth loop.
+   */
+  readonly clipped: boolean;
   readonly chainId: number;
   readonly distanceFromSpawn: number;
+}
+
+/**
+ * Orders the final result list: refined rows sort before unrefined ones as a
+ * whole GROUP, then within each group by rectangle area descending.
+ *
+ * Refined and unrefined rows are not comparable by rectangle area. A refined
+ * row was measured at 2 tiles/px; an unrefined one stayed at
+ * `COARSE_TILES_PER_PIXEL` (8), where area is quantized to 64-tile blocks and
+ * biased upward (a coarse pixel counts as land if its single sample does) -
+ * so a plain area sort could let an unrefined 51st-place row leapfrog a
+ * measured one. The `~` marker in the UI already tells the user which group a
+ * row is in.
+ *
+ * Exported so `findIslands.spec.ts` can test the ordering directly against
+ * synthetic rows - a real search's refine set tends to already hold the
+ * largest true areas, so an organic coarse/refined area crossing is not
+ * guaranteed to show up in any one real sample.
+ */
+export function compareResults(a: IslandResult, b: IslandResult): number {
+  if (a.refined !== b.refined) return a.refined ? -1 : 1;
+  return b.rectTiles.width * b.rectTiles.height - a.rectTiles.width * a.rectTiles.height;
 }
 
 export interface FindOptions {
@@ -58,6 +106,7 @@ interface Measured {
   readonly landTiles: number;
   readonly placed: PlacedMask;
   readonly refined: boolean;
+  readonly clipped: boolean;
 }
 
 /**
@@ -79,18 +128,44 @@ interface Measured {
  * candidate's mask on one shared coordinate system, so a real overlap always
  * produces an exact position match. Re-measured after this fix: the same
  * pair collapses to one dedup group.
+ *
+ * `pad` is a parameter rather than always `WINDOW_PAD_TILES` because `measure`
+ * below re-calls this with a doubled pad when the previous attempt's isolated
+ * mask touched the window's own border - see `touchesBorder` and the growth
+ * loop in `measure`. The snapping-to-`tpp` property holds for any `pad`, so
+ * growing the window never breaks the dedup grid alignment above.
  */
-function windowFor(c: IslandCandidate, tpp: number) {
-  const originX = Math.floor((c.minX - WINDOW_PAD_TILES) / tpp) * tpp;
-  const originY = Math.floor((c.minY - WINDOW_PAD_TILES) / tpp) * tpp;
-  const x1 = c.maxX + WINDOW_PAD_TILES;
-  const y1 = c.maxY + WINDOW_PAD_TILES;
+function windowFor(c: IslandCandidate, tpp: number, pad: number) {
+  const originX = Math.floor((c.minX - pad) / tpp) * tpp;
+  const originY = Math.floor((c.minY - pad) / tpp) * tpp;
+  const x1 = c.maxX + pad;
+  const y1 = c.maxY + pad;
   return {
     originX,
     originY,
     width: Math.max(1, Math.ceil((x1 - originX) / tpp)),
     height: Math.max(1, Math.ceil((y1 - originY) / tpp)),
   };
+}
+
+/**
+ * True if any land pixel of `mask` sits on the window's own edge - i.e. the
+ * flood fill may have run out of window before it ran out of island.
+ * `floodFillFrom` deliberately crosses Voronoi cell boundaries (see
+ * `islandMask.ts`'s header), so a multi-cell island can fill right out to
+ * whatever box it was given; a mask that stops exactly at the border is not
+ * distinguishable from one that stops there because the island actually
+ * ends there, which is why this can only ever be a signal to grow and
+ * re-check, not a certainty that more land exists.
+ */
+function touchesBorder(mask: Uint8Array, width: number, height: number): boolean {
+  for (let x = 0; x < width; x++) {
+    if (mask[x] || mask[(height - 1) * width + x]) return true;
+  }
+  for (let y = 0; y < height; y++) {
+    if (mask[y * width] || mask[y * width + (width - 1)]) return true;
+  }
+  return false;
 }
 
 /**
@@ -143,47 +218,70 @@ async function measure(
   slot: number,
   refined: boolean,
 ): Promise<Measured> {
-  const win = windowFor(c, tpp);
-  const res = await execute(
-    {
-      id,
-      seed0: ctx.seed0,
-      planet: "fulgora",
-      // Never "all" - see this module's header.
-      view: "terrain",
-      width: win.width,
-      height: win.height,
-      originX: win.originX,
-      originY: win.originY,
-      tilesPerPixel: tpp,
-      fulgoraIslandControls: { frequency: ctx.islandsFrequency, size: ctx.islandsSize },
-    } as unknown as ElevationRenderRequest,
-    slot,
-  );
+  let pad = WINDOW_PAD_TILES;
+  let win = windowFor(c, tpp, pad);
+  let mine: Uint8Array = new Uint8Array(win.width * win.height);
+  let clipped = false;
 
-  const rgba = new Uint8ClampedArray(res.buffer);
-  const all = landMaskFromImage(rgba, win.width, win.height);
-  const seedPx = Math.round((c.centroidX - win.originX) / tpp);
-  const seedPy = Math.round((c.centroidY - win.originY) / tpp);
-  // Task 3's ruling guarantees the centroid names a WORLD position that
-  // belongs to a non-ocean Voronoi cell - it does NOT guarantee the rendered
-  // TILE at that position is land. Those are different questions: cell
-  // classification says what kind of terrain this region would grow, actual
-  // per-tile elevation decides whether any given point ends up land or water,
-  // and a cell can render mostly water near its own boundary. Measured
-  // directly on radius 600 / SEED0: rounding the centroid to a pixel and
-  // flood-filling from it landed on ocean for several real candidates, one of
-  // which only flipped from land (coarse) to ocean (refine) because the two
-  // passes round to different world positions. `nearestLandPixel` searches
-  // outward for the closest actual land pixel in the window instead of
-  // trusting the raw rounded seed; `undefined` means the window - already
-  // padded by `WINDOW_PAD_TILES` - has no land at all, which `findIslands`
-  // treats as "not a real island" and drops.
-  const seed = nearestLandPixel(all, win.width, win.height, seedPx, seedPy);
-  const mine =
-    seed === undefined
-      ? new Uint8Array(win.width * win.height)
-      : floodFillFrom(all, win.width, win.height, seed.x, seed.y);
+  // Grow-and-re-render loop. `floodFillFrom` deliberately crosses Voronoi
+  // cell boundaries (see `islandMask.ts`'s header), so a multi-cell island
+  // can fill right out to this window's own edge - a mask that TOUCHES the
+  // border is a truncated slice, not necessarily the whole island. Measured
+  // directly at seed 2967702466, radius 600: a cell whose pad-32 window saw
+  // 328 land tiles and a 10x11 rectangle reached 1,094 land tiles and a
+  // 34x9 rectangle once its window stopped touching the border - 3.3x the
+  // land and 2.8x the rectangle area, and the true figure, not an
+  // approximation (pad 400 measures the same). Re-rendering at a doubled pad
+  // whenever the border is touched catches this; `MAX_WINDOW_GROWTHS` stops
+  // it from re-rendering forever for an island (or a render bug) that never
+  // stops touching the edge - `clipped` records whether that happened, so a
+  // still-truncated result is visible rather than presented as complete.
+  for (let growth = 0; ; growth++) {
+    const res = await execute(
+      {
+        id,
+        seed0: ctx.seed0,
+        planet: "fulgora",
+        // Never "all" - see this module's header.
+        view: "terrain",
+        width: win.width,
+        height: win.height,
+        originX: win.originX,
+        originY: win.originY,
+        tilesPerPixel: tpp,
+        fulgoraIslandControls: { frequency: ctx.islandsFrequency, size: ctx.islandsSize },
+      } as unknown as ElevationRenderRequest,
+      slot,
+    );
+
+    const rgba = new Uint8ClampedArray(res.buffer);
+    const all = landMaskFromImage(rgba, win.width, win.height);
+    const seedPx = Math.round((c.centroidX - win.originX) / tpp);
+    const seedPy = Math.round((c.centroidY - win.originY) / tpp);
+    // Task 3's ruling guarantees the centroid names a WORLD position that
+    // belongs to a non-ocean Voronoi cell - it does NOT guarantee the rendered
+    // TILE at that position is land. Those are different questions: cell
+    // classification says what kind of terrain this region would grow, actual
+    // per-tile elevation decides whether any given point ends up land or water,
+    // and a cell can render mostly water near its own boundary. Measured
+    // directly on radius 600 / SEED0: rounding the centroid to a pixel and
+    // flood-filling from it landed on ocean for several real candidates, one of
+    // which only flipped from land (coarse) to ocean (refine) because the two
+    // passes round to different world positions. `nearestLandPixel` searches
+    // outward for the closest actual land pixel in the window instead of
+    // trusting the raw rounded seed; `undefined` means the window has no land
+    // at all, which `findIslands` treats as "not a real island" and drops.
+    const seed = nearestLandPixel(all, win.width, win.height, seedPx, seedPy);
+    mine =
+      seed === undefined
+        ? new Uint8Array(win.width * win.height)
+        : floodFillFrom(all, win.width, win.height, seed.x, seed.y);
+
+    clipped = touchesBorder(mine, win.width, win.height);
+    if (!clipped || growth >= MAX_WINDOW_GROWTHS) break;
+    pad *= 2;
+    win = windowFor(c, tpp, pad);
+  }
 
   let landPx = 0;
   for (let i = 0; i < mine.length; i++) if (mine[i]) landPx++;
@@ -201,6 +299,7 @@ async function measure(
       tilesPerPixel: tpp,
     },
     refined,
+    clipped,
   };
 }
 
@@ -349,13 +448,12 @@ export async function findIslands(opts: FindOptions): Promise<IslandResult[]> {
     },
     landTiles: m.landTiles,
     refined: m.refined,
+    clipped: m.clipped,
     chainId: chains[i] as number,
     distanceFromSpawn: Math.hypot(m.candidate.centroidX, m.candidate.centroidY),
   }));
 
-  results.sort(
-    (a, b) => b.rectTiles.width * b.rectTiles.height - a.rectTiles.width * a.rectTiles.height,
-  );
+  results.sort(compareResults);
   if (done < total) opts.onProgress?.(total, total);
   return results;
 }

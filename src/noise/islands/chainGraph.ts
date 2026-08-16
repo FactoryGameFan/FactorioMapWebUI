@@ -47,13 +47,16 @@ function boxGap(a: PlacedMask, b: PlacedMask): number {
 }
 
 /**
- * Chebyshev distance in tiles between the nearest land tiles of two masks.
- * A big pole sits on a land tile, so reach is measured tile-centre to
- * tile-centre: two poles up to 30 tiles apart connect.
+ * Chebyshev distance in tiles between the nearest land tiles of two
+ * PRE-EXTRACTED land-tile arrays. The shared body behind both the public
+ * `minGapTiles` (which extracts on every call, for callers with just one pair
+ * to check) and `chainComponents` (which extracts every mask's array ONCE and
+ * reuses it across every pair - see the comment there).
  */
-export function minGapTiles(a: PlacedMask, b: PlacedMask): number {
-  const A = landTiles(a);
-  const B = landTiles(b);
+function minGapTilesFromArrays(
+  A: readonly { x: number; y: number }[],
+  B: readonly { x: number; y: number }[],
+): number {
   let best = Infinity;
   for (const p of A)
     for (const q of B) {
@@ -62,6 +65,15 @@ export function minGapTiles(a: PlacedMask, b: PlacedMask): number {
       if (best === 0) return 0;
     }
   return best === Infinity ? Infinity : best;
+}
+
+/**
+ * Chebyshev distance in tiles between the nearest land tiles of two masks.
+ * A big pole sits on a land tile, so reach is measured tile-centre to
+ * tile-centre: two poles up to 30 tiles apart connect.
+ */
+export function minGapTiles(a: PlacedMask, b: PlacedMask): number {
+  return minGapTilesFromArrays(landTiles(a), landTiles(b));
 }
 
 export function chainComponents(
@@ -83,13 +95,34 @@ export function chainComponents(
     if (a !== b) parent[b] = a;
   };
 
+  // Extracted ONCE per mask, not once per PAIR. `minGapTiles` re-walks a
+  // mask's whole pixel grid to rebuild its land-tile array every time it is
+  // called, and this loop calls it once per pair below - redundant work that
+  // scales with how many pairs pass the `boxGap` prefilter, not with `n`.
+  // Measured two ways (2026-08-15 review fix): on REAL Fulgora dedup data
+  // (radius 5000, 2,313 candidates), `boxGap` already discards 99.8%+ of
+  // pairs cheaply, so the whole stage costs ~200ms either way and this hoist
+  // saves only a few percent of that. On an adversarial synthetic case shaped
+  // to make most box-passing pairs land right next to each other (so far more
+  // of them reach this loop), the same hoist saves ~5-10% of a ~1.9s call.
+  // Worth doing either way - it removes real, provably redundant work at
+  // zero behavior change - but don't expect it to be the dominant cost here;
+  // the remaining O(land^2) per-pair comparison is.
+  const tiles = masks.map((m) => landTiles(m));
+
   for (let i = 0; i < n; i++)
     for (let j = i + 1; j < n; j++) {
       // Cheap box test first: a pair whose BOXES are further apart than the
       // reach cannot possibly have land within it, and the per-tile comparison
       // below is quadratic in island area.
       if (boxGap(masks[i] as PlacedMask, masks[j] as PlacedMask) > reachTiles) continue;
-      if (minGapTiles(masks[i] as PlacedMask, masks[j] as PlacedMask) <= reachTiles) union(i, j);
+      if (
+        minGapTilesFromArrays(
+          tiles[i] as { x: number; y: number }[],
+          tiles[j] as { x: number; y: number }[],
+        ) <= reachTiles
+      )
+        union(i, j);
     }
 
   return Array.from({ length: n }, (_, i) => find(i));

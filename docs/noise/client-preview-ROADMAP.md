@@ -609,6 +609,38 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       number this task measured - treat it as unconfirmed until a real
       end-to-end run is timed and recorded here.
 
+      **The chain stage is NOT negligible, and now has a measured figure.**
+      The design spec's own estimate (section 4) called stage 4 (dedup +
+      chain, `chainGraph.ts`) negligible beside the coarse/refine renders.
+      Measured directly on real Fulgora data (radius 5000, seed 2967702466,
+      2,313 coarse candidates deduping to 2,000): the two `chainComponents`
+      calls together cost **~365 ms** - small next to the render stages
+      (which run into the tens of seconds), but a real, countable cost, not
+      zero. A pre-fix version of `chainGraph.ts` re-extracted each mask's
+      land-tile array on every pairwise comparison instead of once per mask;
+      a 2026-08-15 review fix hoists that extraction (`chainGraph.ts`,
+      `chainComponents`). On this same real-data shape the hoist's own effect
+      was small (the box-gap prefilter already discards 99.8%+ of pairs
+      cheaply, so the redundant work it removes is a small fraction of an
+      already-small stage) - the fix is still correct and worth keeping, just
+      don't expect it to move the total search time by much.
+
+      **The render window's grow-on-border-touch has a known limit.** A
+      2026-08-15 review fix found that `findIslands.ts`'s render window
+      (candidate bounding box + a flat pad) could cut a multi-cell island off
+      at its own edge, undercounting its land and rectangle and even
+      flipping which of two candidates ranks higher. The fix re-renders at a
+      doubled pad whenever the isolated island mask still touches the
+      window's border, capped at 3 growths (pad 32 -> 64 -> 128 -> 256). An
+      island whose true extent needs more padding than that - i.e. one that
+      still touches the border after the pad reaches 256 - stays clipped: its
+      reported rectangle is a real measurement of a truncated slice, not the
+      whole island, and `IslandResult.clipped` records that so the panel can
+      say so (the `!` marker beside a clipped row's rectangle, next to the
+      existing `~` marker for an unrefined one). No case in the current
+      seed/radius test fixtures needs more than pad 256, but nothing rules
+      one out at a larger radius.
+
       **Accuracy**: Fulgora's land/ocean split agrees with the real game on
       99.86% of positions (Fulgora V1, above), and the residual mismatches
       are boundary-exclusive - they sit exactly where an island's edge is,

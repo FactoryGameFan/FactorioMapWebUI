@@ -3,7 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import IslandFinderPanel from "../src/components/IslandFinderPanel.vue";
 import { usePresetsStore } from "../src/store/presets";
-import type { IslandResult } from "../src/noise/islands/findIslands";
+import type { FindOptions, IslandResult } from "../src/noise/islands/findIslands";
 
 function row(over: Partial<IslandResult> = {}): IslandResult {
   return {
@@ -22,13 +22,14 @@ function row(over: Partial<IslandResult> = {}): IslandResult {
     rectTiles: { width: 80, height: 80 },
     landTiles: 9000,
     refined: true,
+    clipped: false,
     chainId: 0,
     distanceFromSpawn: 78,
     ...over,
   } as IslandResult;
 }
 
-function setup(find: () => Promise<IslandResult[]>) {
+function setup(find: (opts: FindOptions) => Promise<IslandResult[]>) {
   setActivePinia(createPinia());
   const store = usePresetsStore();
   store.createFromBuiltin("Default", "t");
@@ -59,6 +60,20 @@ describe("IslandFinderPanel", () => {
     await w.find('[data-test="island-search"]').trigger("click");
     await flushPromises();
     expect(w.find('[data-test="island-approx"]').exists()).toBe(true);
+  });
+
+  it("marks clipped rows so a truncated rectangle is never read as complete", async () => {
+    const w = setup(async () => [row({ clipped: true })]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    expect(w.find('[data-test="island-clipped"]').exists()).toBe(true);
+  });
+
+  it("does not mark an unclipped row", async () => {
+    const w = setup(async () => [row({ clipped: false })]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    expect(w.find('[data-test="island-clipped"]').exists()).toBe(false);
   });
 
   it("shows the accuracy caveat without needing a search first", () => {
@@ -102,5 +117,72 @@ describe("IslandFinderPanel", () => {
     store.createFromBuiltin("Default", "t");
     const w = mount(IslandFinderPanel, { props: { planet: "nauvis", find: async () => [] } });
     expect(w.find('[data-test="island-search"]').exists()).toBe(false);
+  });
+
+  it("forwards the preset's fulgora_islands slider values into ctx, not just seed0", async () => {
+    // `FulgoraCtx.islandsFrequency`/`islandsSize` change the Voronoi grid
+    // constant both the survey step and every render window derive from
+    // (see elevationPreviewCtx.ts / fulgoraShared.ts). A ctx carrying only
+    // seed0 makes the finder survey and render the DEFAULT grid even when
+    // the preset moved these sliders - a different map than the preview
+    // beside it shows.
+    setActivePinia(createPinia());
+    const store = usePresetsStore();
+    store.createFromBuiltin("Default", "t");
+    store.activePreset!.seed = 123456;
+    store.activePreset!.autoplaceControls.fulgora_islands = {
+      frequency: 1.4,
+      size: 0.6,
+      richness: 1,
+    };
+    let seenCtx: { seed0: number; islandsFrequency?: number; islandsSize?: number } | undefined;
+    const w = mount(IslandFinderPanel, {
+      props: {
+        planet: "fulgora",
+        find: async (opts: FindOptions) => {
+          seenCtx = opts.ctx;
+          return [];
+        },
+      },
+    });
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    expect(seenCtx?.islandsFrequency).toBe(1.4);
+    expect(seenCtx?.islandsSize).toBe(0.6);
+  });
+
+  it("does not clamp the radius field while it is being typed into", async () => {
+    const w = setup(async () => []);
+    const input = w.find('[data-test="island-radius"]');
+    (input.element as HTMLInputElement).value = "5";
+    // `FNumberInput` commits on the native `change` event, not on every
+    // keystroke - this is the moment a naive setter used to snap the field
+    // to RADIUS_MIN (500) before the rest of a value like "5000" was typed.
+    await input.trigger("change");
+    expect((input.element as HTMLInputElement).value).toBe("5");
+  });
+
+  it("clamps the radius field on blur", async () => {
+    const w = setup(async () => []);
+    const input = w.find('[data-test="island-radius"]');
+    (input.element as HTMLInputElement).value = "5";
+    await input.trigger("change");
+    await input.trigger("blur");
+    expect((input.element as HTMLInputElement).value).toBe("500");
+  });
+
+  it("never passes an out-of-range radius to findIslands, even without a blur first", async () => {
+    let seenRadius: number | undefined;
+    const w = setup(async (opts) => {
+      seenRadius = opts.radius;
+      return [];
+    });
+    const input = w.find('[data-test="island-radius"]');
+    (input.element as HTMLInputElement).value = "5";
+    await input.trigger("change");
+    // No blur - straight to search. The guarantee has to hold here too.
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    expect(seenRadius).toBe(500);
   });
 });
