@@ -47,8 +47,9 @@ function boxGap(a: PlacedMask, b: PlacedMask): number {
 }
 
 /**
- * Smallest distance in tiles between any land tile of `a` and any of `b`, as a
- * Chebyshev distance - a pole's reach is a square, not a circle.
+ * Chebyshev distance in tiles between the nearest land tiles of two masks.
+ * A big pole sits on a land tile, so reach is measured tile-centre to
+ * tile-centre: two poles up to 30 tiles apart connect.
  */
 export function minGapTiles(a: PlacedMask, b: PlacedMask): number {
   const A = landTiles(a);
@@ -60,7 +61,7 @@ export function minGapTiles(a: PlacedMask, b: PlacedMask): number {
       if (d < best) best = d;
       if (best === 0) return 0;
     }
-  return best === Infinity ? Infinity : Math.max(0, best - 1);
+  return best === Infinity ? Infinity : best;
 }
 
 export function chainComponents(
