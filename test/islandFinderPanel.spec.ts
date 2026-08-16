@@ -171,8 +171,10 @@ describe("IslandFinderPanel", () => {
   it("defaults the radius to 1024", () => {
     // Pinned because nothing pinned it before: the default lived in one `ref`
     // and every radius test set its own value, so it could drift silently.
-    // Measured in the browser, the previous 5,000 default took ~28s and
-    // returned 1,922 rows; 1024 takes ~6.9s and returns about 105.
+    // Measured in the browser, the previous 5,000 default returned 1,922 rows
+    // against roughly 90 to 105 at 1024 - 89 at surface seed 2967702466, 105
+    // at 1640314180. See the panel's own comment for why those two numbers
+    // differ and why the browser times beside them should not be quoted.
     const w = setup(async () => []);
     expect((w.find('[data-test="island-radius"]').element as HTMLInputElement).value).toBe("1024");
   });
