@@ -152,10 +152,19 @@ describe("findIslands", () => {
       refineCount: CHEAP_REFINE_COUNT,
     });
     expect(found.length).toBeGreaterThan(0);
+    let anyChunks = 0;
     for (const r of found) {
       expect(r.rect.width * r.rect.height).toBeLessThanOrEqual(r.landTiles);
       expect(r.landTiles).toBeGreaterThan(0);
+      // Whole chunks can never claim more area than the island actually has.
+      // This is the invariant that would catch `countFullChunks` counting a
+      // chunk twice, or counting one that runs off the mask - both of which
+      // would inflate the headline area number rather than crash.
+      expect(r.fullChunks * 32 * 32).toBeLessThanOrEqual(r.landTiles);
+      anyChunks += r.fullChunks;
     }
+    // ...and the bound above is not satisfied by simply always returning 0.
+    expect(anyChunks).toBeGreaterThan(0);
   }, 300000);
 
   it("sorts refined rows as a group above unrefined ones, each group by area descending", async () => {
@@ -343,6 +352,7 @@ function stubResult(over: { refined: boolean; area: number }): IslandResult {
     rect: { x: 0, y: 0, width: over.area, height: 1 },
     rectTiles: { width: over.area, height: 1 },
     landTiles: over.area,
+    fullChunks: 0,
     refined: over.refined,
     clipped: false,
     chainId: 0,

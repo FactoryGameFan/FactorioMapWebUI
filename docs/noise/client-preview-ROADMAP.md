@@ -588,8 +588,29 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       per candidate and compute its largest inscribed rectangle
       (`islandMask.ts`, `largestRectangle.ts`), refine the top 50 by coarse
       area at finer resolution, chain islands whose land comes within 30
-      tiles (`chainGraph.ts`), and list the results in a sortable UI panel
-      that re-centers the preview on a click.
+      tiles (`chainGraph.ts`), and list the results in a UI panel that
+      re-centers the preview on a click.
+
+      **The results table reports area in whole CHUNKS** (`fullChunks.ts`),
+      not raw land tiles - 32x32 blocks that are land all the way across,
+      which is the unit a build plan is actually made of. It is deliberately
+      not `landTiles / 1024`: a frilly island carries a large tile count and
+      few whole chunks, because every chunk its coastline crosses is worth
+      nothing to a blueprint. Chunk boundaries always fall on pixel
+      boundaries, since a chunk is 32 tiles, both sampling steps (8 and 2)
+      divide 32, and every window origin is already snapped to its own step.
+      What counts as land is whatever the mask says: ocean is excluded and
+      cliffs are not modelled at all, which matches how the terrain plays -
+      cliffs can be removed, ocean cannot.
+
+      The table shows Position, Rectangle, Chunks and From spawn. Class and
+      Chain sit behind the dev-mode toggle: `chainId` is an arbitrary
+      component index, so with ~1,900 islands nearly every row carries a
+      unique number and it reads as noise unless you are debugging chaining
+      itself. Refined rows are separated from coarse ones by a single divider
+      rather than a per-row `~` marker - `compareResults` already ranks the
+      refined group first, so the marker sat on 97% of rows and only ever
+      said "you are past row N".
 
       **Perf, measured 2026-08-15** (`test/render-cost.perf.spec.ts`,
       `FMW_PERF_BLOCK=islands`, min of 3, seed 2967702466): the survey pass
@@ -601,23 +622,39 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       `"all"` - see `findIslands.ts`'s header for why) costs **~24 ms** in
       this Node test harness.
 
-      **The full end-to-end search time is now MEASURED: ~28 seconds** at the
-      default 5,000-tile radius. Taken 2026-08-15 in Chrome 151 on a 12-core
-      Mac, against the deployed build 0a160df, with seed 2967702466 and
-      Fulgora at default settings. Three consecutive runs took 28,041 /
-      28,261 / 27,976 ms - a spread under 1%, so this is a stable figure and
-      not one lucky draw. That search did 2,335 units of work (2,285 coarse
-      candidates plus 50 refines) and returned 1,922 islands.
+      **The full end-to-end search time is now MEASURED, across the whole
+      radius range** - taken 2026-08-15 in Chrome 151 on a 12-core Mac against
+      the deployed build, seed 2967702466, Fulgora at default settings:
 
-      That is **1.9x the design spec's ~15s estimate** (section 4), which was
-      always a design-time projection off a throwaway benchmark. The estimate
-      was not wrong in kind - the search still finishes while you wait, and
-      the progress readout counts the whole way - but quote 28s, not 15s.
+      | radius | time  | islands |
+      | -----: | ----: | ------: |
+      |    512 |  3.1s |      28 |
+      |  1,024 |  6.9s |     105 |
+      |  2,048 | 15.6s |     361 |
+      |  4,096 | 27.2s |   1,274 |
+      |  5,000 | 28.0s |   1,922 |
+      | 10,000 | 52.5s |   7,556 |
 
-      Two limits on that number. It came from a 12-core machine, and the
-      search's concurrency follows the worker pool, so a 4-core laptop should
-      be expected to take considerably longer. And it is one machine and one
-      browser, so it bounds nothing; it is a reference point.
+      The 5,000 row is a min of three runs at 28,041 / 28,261 / 27,976 ms - a
+      spread under 1%, so these are stable figures, not lucky draws.
+
+      **Doubling the radius costs about 2.2x, NOT 4x**, and the design spec,
+      this roadmap and the panel's own caveat text all said 4x. Measured
+      doubling ratios: 512 -> 1,024 is 2.25x, 1,024 -> 2,048 is 2.26x, and
+      2,048 -> 4,096 is 1.74x. The reason is structural rather than
+      incidental: refinement is capped at `DEFAULT_REFINE_COUNT` candidates
+      however wide the search is, so only the coarse pass scales with area and
+      it is the cheaper half. At small radii the fixed refine cost dominates
+      completely - which is why 512 is not 24x faster than 5,000, only 9x.
+
+      Two limits on these numbers. They came from a 12-core machine, and
+      concurrency follows the worker pool, so a 4-core laptop will be
+      considerably slower. And it is one machine and one browser.
+
+      **The default radius is 1024**, changed from 5,000 on this evidence: the
+      old default made the first thing a new user does take ~28s and return
+      1,922 rows, while 1024 takes ~6.9s and returns about 105, which fits on
+      a screen. `test/islandFinderPanel.spec.ts` pins it - nothing did before.
 
       **The chain stage is NOT negligible, and now has a measured figure.**
       The design spec's own estimate (section 4) called stage 4 (dedup +
@@ -649,11 +686,14 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       say so (the `!` marker beside a clipped row's rectangle, next to the
       existing `~` marker for an unrefined one).
 
-      **At the default radius, clipped rows are common, and they cluster at
-      the top.** The radius-600 test fixtures made this look like a corner
-      case. The radius-5,000 run timed above returned 43 clipped rows, spread
-      very unevenly: 43 of 1,922 rows is 2.2% overall, but **17 of the 50
-      refined rows (34%) and 5 of the top 10 (50%)** carry the marker. The cap
+      **Clipped rows are common, and they cluster at the top - at every
+      radius.** The radius-600 test fixtures made this look like a corner
+      case. The radius-5,000 run returned 43 clipped rows, spread very
+      unevenly: 43 of 1,922 rows is 2.2% overall, but **17 of the 50 refined
+      rows (34%) and 5 of the top 10 (50%)** carry the marker. Shrinking the
+      search does not help - at radius 1,024 only 5 of 105 rows are clipped,
+      and **all 5 are in the top 10**; at radius 10,000, 6 of the top 10 are.
+      So this is a property of big islands, not of wide searches. The cap
       bites hardest on the biggest islands, which are the ones the tool exists
       to find, so the headline rectangle on several top rows is a lower bound
       rather than a measurement of the whole island. The `!` marker is
