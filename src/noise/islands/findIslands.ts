@@ -47,9 +47,41 @@ const WINDOW_PAD_TILES = 32;
 /**
  * How many times a border-touching window may be doubled before giving up.
  * With `WINDOW_PAD_TILES = 32` this makes the pad sequence 32 -> 64 -> 128 ->
- * 256 - four renders in the worst case, not an unbounded retry loop.
+ * 256 -> 512 - five renders in the worst case, not an unbounded retry loop.
+ *
+ * **Raised from 3 to 4 on 2026-08-16, and 4 is the measured ceiling, not a
+ * guess.** Radius 1024 at seed 2967702466, counting renders by grouping
+ * `execute` calls by their `id` (one `id` per candidate, reused for every
+ * re-render), single-threaded Node:
+ *
+ *   cap  renders  pixels    wall    clipped rows
+ *    3     338    4.2 Mpx   94.8s        3
+ *    4     349    5.7 Mpx  126.1s        0
+ *    5     349    5.7 Mpx  127.9s        0
+ *
+ * **Cap 5 is byte-identical to cap 4** - same renders, same pixels, same
+ * per-candidate histogram. Nothing in that search ever wanted a fifth growth,
+ * so raising it further buys strictly nothing and the ceiling is 4. Re-derive
+ * before changing it; this is a statement about the current island-size
+ * distribution, not a law.
+ *
+ * **Why it was worth +36% pixels: the cap was changing the ranking, not just
+ * a marker.** At cap 3 the top row was (-193,-171) at 266x74. The row at
+ * (989,114) was rank 4, clipped, measured 84x186; grown, it is 114x186 -
+ * **+36% area, chunks 29 -> 35** - and it is rank **1**. The tool's single
+ * most-read output was wrong. Reported POSITIONS move too: (310,-674) and
+ * (135,-696) are one island reporting the identical 218x80 rectangle from
+ * two different centroids, because a bigger window changes which Voronoi
+ * cell wins `bestByGroup`.
+ *
+ * **The grow loop is not a rare correction - it is most of the work.** Of 154
+ * candidates at cap 3, only 83 never grew and 46 hit the cap (31 coarse, 15
+ * refine), and re-renders were **88% of all pixels**. So the cost of this
+ * constant is first-order, which is exactly why it is measured rather than
+ * assumed. Note the cost is in PIXELS, not renders: +3.3% renders but +36%
+ * pixels, because the renders it adds are the largest windows.
  */
-const MAX_WINDOW_GROWTHS = 3;
+const MAX_WINDOW_GROWTHS = 4;
 
 export interface IslandResult extends IslandCandidate {
   readonly rect: Rect;
