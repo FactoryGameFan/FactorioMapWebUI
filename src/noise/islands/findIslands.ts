@@ -60,16 +60,36 @@ interface Measured {
   readonly refined: boolean;
 }
 
+/**
+ * The origin is snapped DOWN to a multiple of `tpp`, not left at the raw
+ * `c.minX - WINDOW_PAD_TILES`. This is load-bearing for the coarse dedup
+ * pass below, not cosmetic: `surveyIslands`'s candidates sample world
+ * positions at multiples of an irregular step (`grid / 8`, e.g. 21.875
+ * tiles), so two different candidates' raw bboxes are essentially never
+ * congruent modulo `tpp` - their UNsnapped windows would sample completely
+ * disjoint sets of world positions even where they geometrically overlap.
+ * `chainComponents(masks, 0)` decides "same island" by finding an EXACT
+ * shared land-tile position between two masks, so two windows on
+ * incommensurable grids can never register as touching, no matter how much
+ * land they actually share. Measured directly before this fix: 39 coarse
+ * survivors at radius 600 / SEED0 produced 39 dedup groups - zero merged,
+ * even though two of those rows are the SAME connected island (confirmed by
+ * an independent tpp=1 flood fill: 46,192 of 46,192 land tiles shared).
+ * Snapping every window's origin to the same `tpp`-multiple grid puts every
+ * candidate's mask on one shared coordinate system, so a real overlap always
+ * produces an exact position match. Re-measured after this fix: the same
+ * pair collapses to one dedup group.
+ */
 function windowFor(c: IslandCandidate, tpp: number) {
-  const originX = c.minX - WINDOW_PAD_TILES;
-  const originY = c.minY - WINDOW_PAD_TILES;
-  const tilesW = c.maxX - c.minX + WINDOW_PAD_TILES * 2;
-  const tilesH = c.maxY - c.minY + WINDOW_PAD_TILES * 2;
+  const originX = Math.floor((c.minX - WINDOW_PAD_TILES) / tpp) * tpp;
+  const originY = Math.floor((c.minY - WINDOW_PAD_TILES) / tpp) * tpp;
+  const x1 = c.maxX + WINDOW_PAD_TILES;
+  const y1 = c.maxY + WINDOW_PAD_TILES;
   return {
     originX,
     originY,
-    width: Math.max(1, Math.ceil(tilesW / tpp)),
-    height: Math.max(1, Math.ceil(tilesH / tpp)),
+    width: Math.max(1, Math.ceil((x1 - originX) / tpp)),
+    height: Math.max(1, Math.ceil((y1 - originY) / tpp)),
   };
 }
 
@@ -84,8 +104,12 @@ function windowFor(c: IslandCandidate, tpp: number) {
  * tiles/px) would cover 4x fewer tiles at the refine pass (2 tiles/px) -
  * exactly backwards, since the refine window is the one where a seed miss
  * needs the wider search.
+ *
+ * Exported so `findIslands.spec.ts` can independently reconstruct a result's
+ * land tiles for its no-overlap check, without re-deriving this seed-search
+ * from scratch and risking it drifting out of sync with the real thing.
  */
-function nearestLandPixel(
+export function nearestLandPixel(
   mask: Uint8Array,
   width: number,
   height: number,
@@ -220,7 +244,14 @@ export async function findIslands(opts: FindOptions): Promise<IslandResult[]> {
     y1: radius,
   });
 
-  const total = candidates.length + Math.min(refineCount, candidates.length);
+  // The total starts as the coarse-only count and is EXTENDED once the
+  // deduplicated refine set is known (below) - it cannot be computed upfront,
+  // because the zero-land filter and the dedup pass both drop candidates
+  // before refinement, and how many survive isn't known until they run. A
+  // `let`, not a `const`: `tick` closes over the binding, so raising `total`
+  // between the coarse and refine passes changes what every later call
+  // reports without touching the calls already made.
+  let total = candidates.length;
   let done = 0;
   const tick = () => opts.onProgress?.(++done, total);
 
@@ -244,10 +275,42 @@ export async function findIslands(opts: FindOptions): Promise<IslandResult[]> {
   // bounding box touching the box boundary.
   const coarse = coarseAll.filter((m) => m.landTiles > 0);
 
-  const byArea = [...coarse].sort(
+  // Several adjacent Voronoi cells can each survey a slice of the SAME
+  // physical island. `islandMask`'s flood fill deliberately crosses cell
+  // boundaries - two cells whose land touches ARE one island - but
+  // `surveyIslands` enumerates one candidate per CELL, so several neighbours
+  // each re-flood an overlapping slice of the same island into their own row.
+  // Two coarse results that are views of the same connected component
+  // necessarily share at least one land tile, so `minGapTiles` between their
+  // masks is exactly 0: `chainComponents` at `reachTiles: 0` (Task 6's
+  // existing function, no new algorithm) groups exactly the rows that are
+  // the same island. Two genuinely separate islands whose land is merely
+  // ADJACENT are Chebyshev distance >= 1, not 0, so they are not grouped -
+  // and had they been adjacent, the 4-connected flood fill would already
+  // have merged them into one mask, so the two views of "how many islands
+  // are here" stay consistent with each other.
+  const dedupeGroups = chainComponents(
+    coarse.map((m) => m.placed),
+    0,
+  );
+  const bestByGroup = new Map<number, Measured>();
+  for (const [i, m] of coarse.entries()) {
+    const group = dedupeGroups[i] as number;
+    const current = bestByGroup.get(group);
+    // The row that saw the most of the island is the least clipped, so it is
+    // both the best coarse estimate to rank by and the one worth refining.
+    if (current === undefined || m.landTiles > current.landTiles) bestByGroup.set(group, m);
+  }
+  const deduped = [...bestByGroup.values()];
+
+  const byArea = [...deduped].sort(
     (a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height,
   );
   const toRefine = byArea.slice(0, refineCount);
+  // Now that the refine set is known, extend the total by the work it
+  // actually represents - `done` already equals the OLD total (every coarse
+  // candidate ticked once), so this is purely additive, not a correction.
+  total = candidates.length + toRefine.length;
   const refined = await pooled(
     toRefine.map(
       (m) => (slot: number) =>
@@ -258,10 +321,13 @@ export async function findIslands(opts: FindOptions): Promise<IslandResult[]> {
     tick,
   );
 
-  // Refined rows replace their coarse counterparts, keyed by the STABLE cell
-  // index rather than by list position, which the sort above has shuffled.
+  // Refined rows replace their DEDUPLICATED coarse counterparts, keyed by the
+  // STABLE cell index rather than by list position, which the sort above has
+  // shuffled. Seeding from `deduped` rather than `coarse` is what keeps a
+  // duplicate cell that lost its dedup group (never refined, since only its
+  // group's best representative reached `toRefine`) from reappearing here.
   const merged = new Map<string, Measured>();
-  for (const m of coarse) merged.set(`${m.candidate.cellX},${m.candidate.cellY}`, m);
+  for (const m of deduped) merged.set(`${m.candidate.cellX},${m.candidate.cellY}`, m);
   for (const m of refined) merged.set(`${m.candidate.cellX},${m.candidate.cellY}`, m);
 
   // A candidate that still measures zero land after `nearestLandPixel` -
