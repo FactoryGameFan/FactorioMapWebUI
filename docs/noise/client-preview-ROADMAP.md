@@ -708,6 +708,31 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       rectangle is accurate to about a tile, not exact; the panel says this
       once rather than implying an exact answer.
 
+      **Getting to an island: the `⧉` button copies a Factorio chat tag.**
+      Each Position cell carries a copy button that puts
+      `[gps=<x>,<y>,fulgora]` on the clipboard; pasting that into the in-game
+      chat makes a clickable ping. Three things about it are deliberate:
+
+      - **The coordinates round exactly as the column prints them**, so the
+        number on screen and the number on the clipboard cannot disagree.
+        That means the tag names the Voronoi cell CENTROID - the same point
+        the row already shows and the row click already jumps to - and
+        `findIslands.ts` records (see `nearestLandPixel`) that this point can
+        sit on ocean for some candidates. A ping is "this island", not "a
+        buildable tile". Moving it to a guaranteed-land point was considered
+        and declined: it would need `measure` to carry a world coordinate out
+        of the render window, and it would make the copied number differ from
+        the printed one.
+      - **The surface comes from the `planet` prop, not a literal**, even
+        though `supported` gates the whole panel to Fulgora today - so
+        widening that gate cannot leave the tag naming the wrong surface.
+      - **The write is raced against a 1.5s timeout.** There are three failure
+        modes, not two: the API is absent on an insecure origin, the write can
+        reject, and - measured in Chrome, not reasoned about - an unfocused
+        document can leave the promise **pending forever**. The button held
+        `idle` through 1.8s of polling in that state. A `catch` cannot see it,
+        so only a race turns it into the visible red `✗`.
+
 ## Milestone 5 - integration
 
 - [ ] A `previewMap(preset, {width, height, scale}) -> ImageData` entry point.
