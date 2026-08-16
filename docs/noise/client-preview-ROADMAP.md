@@ -624,7 +624,9 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
 
       **The full end-to-end search time is now MEASURED, across the whole
       radius range** - taken 2026-08-15 in Chrome 151 on a 12-core Mac against
-      the deployed build, seed 2967702466, Fulgora at default settings:
+      the deployed build, Fulgora at default settings, with **2967702466 typed
+      into the seed field**. That field takes a MAP seed, so the map actually
+      searched was surface seed **1640314180**:
 
       | radius | time  | islands |
       | -----: | ----: | ------: |
@@ -637,6 +639,30 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
 
       The 5,000 row is a min of three runs at 28,041 / 28,261 / 27,976 ms - a
       spread under 1%, so these are stable figures, not lucky draws.
+
+      **CONFIRMED 2026-08-16: this table is a different map from every fixture
+      and probe in the repo, and the seed line above is the fix.** It used to
+      read "seed 2967702466" with no qualifier, which reads as a surface seed -
+      that is the value `findIslands.spec.ts`, `cellSurvey.spec.ts` and
+      `render-cost.perf.spec.ts` hand straight to `seed0`. Both arms run in
+      Node at radius 1024 on the current build:
+
+      | `seed0`    | what it is                | rows    | clipped | top 3 rectangles                    |
+      | ---------- | ------------------------- | ------: | ------: | ----------------------------------- |
+      | 2967702466 | the specs' surface seed   |  **89** |       0 | 114x186, 266x74, 142x138            |
+      | 1640314180 | 2967702466 as a MAP seed  | **105** |       0 | 140x152, **142x140**, **120x152**   |
+
+      105 is the table's own number to the digit, and a second match settles it
+      independently: the browser session recorded its top three rectangles as
+      142x140, 120x152 and 70x248, and two of those three come back from
+      1640314180 and from neither arm otherwise.
+
+      **What that does NOT fix is the time column, and an earlier note here
+      claimed it did.** "One explanation covers both" was wrong. 1640314180 is
+      the more expensive of the two maps - 636.7s against 505.9s in the same
+      Node harness, 1.26x - so the map the table describes should read SLOWER
+      than the specs' map, not four times faster. The counts are explained; the
+      seconds are not, and the seed is not what will explain them.
 
       **Doubling the radius costs about 2.2x, NOT 4x**, and the design spec,
       this roadmap and the panel's own caveat text all said 4x. Measured
@@ -652,9 +678,10 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       considerably slower. And it is one machine and one browser.
 
       **The default radius is 1024**, changed from 5,000 on this evidence: the
-      old default made the first thing a new user does take ~28s and return
-      1,922 rows, while 1024 takes ~6.9s and returns about 105, which fits on
-      a screen. `test/islandFinderPanel.spec.ts` pins it - nothing did before.
+      old default made the first thing a new user does return 1,922 rows and
+      wait most of half a minute, while 1024 returns roughly 90 to 105 rows
+      (89 at surface seed 2967702466, 105 at 1640314180), which fits on a
+      screen. `test/islandFinderPanel.spec.ts` pins it - nothing did before.
 
       **The chain stage is NOT negligible, and now has a measured figure.**
       The design spec's own estimate (section 4) called stage 4 (dedup +
@@ -693,6 +720,10 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       rows (34%) and 5 of the top 10 (50%)** carry the marker. Shrinking the
       search does not help - at radius 1,024 only 5 of 105 rows are clipped,
       and **all 5 are in the top 10**; at radius 10,000, 6 of the top 10 are.
+      (Those clipped counts are all at `MAX_WINDOW_GROWTHS` 3. At the current
+      cap of 4, radius 1,024 returns **0 clipped rows on both maps** - measured
+      2026-08-16, and consistent with #211's 3 -> 0. The wider radii have not
+      been re-run at cap 4, so their clipped counts are still cap-3 figures.)
       So this is a property of big islands, not of wide searches. The cap
       bites hardest on the biggest islands, which are the ones the tool exists
       to find, so the headline rectangle on several top rows is a lower bound
@@ -741,10 +772,11 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
 
       Note also that none of those readings resemble the ~6.9s the panel's own
       radius table records for radius 1024, and this probe counts **89 rows**
-      where that table says **105**. One explanation covers both: that table
-      looks measured with `2967702466` typed as the MAP seed, while the specs
-      use that value as a SURFACE seed - a different map. Unconfirmed, and
-      deliberately not acted on here.
+      where that table says **105**. The 89 against 105 is now **CONFIRMED** as
+      the map-seed / surface-seed mix-up - see the radius table above for the
+      two arms that settle it. The ~6.9s against ~23.5s is **not** explained by
+      it, and the direction is the opposite of helpful: the table's map is the
+      more expensive one.
 
       **Accuracy**: Fulgora's land/ocean split agrees with the real game on
       99.86% of positions (Fulgora V1, above), and the residual mismatches

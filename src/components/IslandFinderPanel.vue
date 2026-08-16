@@ -23,7 +23,9 @@ const emit = defineEmits<{ jump: [{ x: number; y: number }] }>();
 /**
  * Search cost does NOT grow with the square of the radius, and this comment
  * used to say it did. Measured end to end in Chrome against a production
- * build, seed 2967702466, Fulgora at defaults (min of 2 runs each):
+ * build, Fulgora at defaults (min of 2 runs each), typing **2967702466 into
+ * the seed field** - which is a MAP seed, so the map searched was surface
+ * seed 1640314180:
  *
  *   radius    512 =  3.1s     28 islands
  *   radius  1,024 =  6.9s    105
@@ -32,11 +34,30 @@ const emit = defineEmits<{ jump: [{ x: number; y: number }] }>();
  *   radius  5,000 = 28.0s  1,922
  *   radius 10,000 = 52.5s  7,556
  *
+ * **That seed line is the correction, and it matters.** This comment used to
+ * say "seed 2967702466" with no qualifier, which reads as a surface seed -
+ * that is what `findIslands.spec.ts`, `cellSurvey.spec.ts` and the perf spec
+ * all hand straight to `seed0`. Here the value went through the field, and
+ * `search()` below calls `surfaceSeedForPlanet` on it. So the table describes
+ * a different Fulgora from every fixture and probe in the repo. Measured both
+ * ways at radius 1024 (2026-08-16): surface seed 2967702466 returns **89**
+ * rows, 1640314180 returns **105** - the table's own number. Two of the three
+ * top rectangles that browser session recorded, 142x140 and 120x152, come
+ * back from 1640314180 and not from 2967702466.
+ *
+ * The counts are therefore real and all from one map. The TIMES are not
+ * explained: 1640314180 is the more expensive map of the two (1.26x in a Node
+ * run), yet 6.9s here sits far below every later browser reading of the
+ * cheaper one. Read this column as a shape, not as figures to quote. They also
+ * predate #211, which raised `MAX_WINDOW_GROWTHS` 3 -> 4 for +36% render
+ * pixels, so every time above understates today's cost.
+ *
  * Doubling the radius costs about **2.2x**, not 4x, because the refine pass is
  * capped at `DEFAULT_REFINE_COUNT` candidates however wide the search is - so
- * only the coarse pass scales with area, and it is the cheaper half. The old
- * "about 3s for 2,000 tiles and 60s for 10,000" was wrong in both directions:
- * 2,000 is really ~15.6s, and 10,000 is 52.5s.
+ * only the coarse pass scales with area, and it is the cheaper half. That
+ * reason is structural rather than a property of one map, which is why the
+ * conclusion outlives the seed mix-up even though the seconds do not. The old
+ * "about 3s for 2,000 tiles and 60s for 10,000" was wrong in both directions.
  *
  * The bound still matters - 10,000 tiles is most of a minute - but it is a
  * comfort limit, not a cliff. `FNumberInput` has no min/max/step of its own
@@ -48,10 +69,12 @@ const RADIUS_MAX = 20000;
 
 /**
  * The default decides whether the first thing a new user does feels instant or
- * feels broken. The previous 5,000 took ~28s and returned 1,922 rows, which is
- * both a long wait and far more rows than anyone scans. 1024 takes ~6.9s and
- * returns about 105, which fits on a screen. The field still accepts up to
- * RADIUS_MAX for a deliberate wider sweep.
+ * feels broken. The previous 5,000 returned 1,922 rows and took the better
+ * part of half a minute, which is both a long wait and far more rows than
+ * anyone scans. Radius 1024 returns roughly 90 to 105 rows depending on the
+ * map - 89 at surface seed 2967702466, 105 at 1640314180 - which fits on a
+ * screen, and it is the cheapest row in the table above. The field still
+ * accepts up to RADIUS_MAX for a deliberate wider sweep.
  *
  * `test/islandFinderPanel.spec.ts` pins this value. Nothing pinned it before,
  * so it could drift without a single test noticing.
