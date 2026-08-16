@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { SUPPORTED_VERSIONS_LABEL } from "./codec/mapExchangeString";
 import { FACTORIO_TARGET_VERSION } from "./model/factorioTarget";
 import { BUILD_INFO, BUILD_STAMP } from "./model/buildStamp";
@@ -21,13 +21,11 @@ const activeTab = ref("Resources");
 const selectedPlanet = ref<Planet>("nauvis");
 const showImport = ref(false);
 /**
- * The last island the finder's results table was jumped to. There is no
- * origin/center prop on ElevationPreviewPanel to actually re-point the client
- * preview's render window at this coordinate - adding one is out of scope
- * here (this task touches only App.vue and IslandFinderPanel.vue) - so the
- * smallest thing that works is surfacing the target coordinates next to the
- * preview and switching to the tab that shows it, rather than silently doing
- * nothing on a click.
+ * The last island the finder's results table was jumped to - fed straight to
+ * ElevationPreviewPanel's `centerX`/`centerY` props, which move the client
+ * preview's render window onto it. `null` (not 0) while nothing has been
+ * jumped to yet, so the preview keeps its own "centered on world origin"
+ * default rather than this component asserting a coordinate.
  */
 const jumpTarget = ref<{ x: number; y: number } | null>(null);
 
@@ -35,6 +33,13 @@ function onIslandJump(target: { x: number; y: number }) {
   jumpTarget.value = target;
   activeTab.value = "Preview";
 }
+
+// A jump target named for one planet's geography is meaningless on another -
+// switching planets without clearing it would leave a stale coordinate note
+// (and a stale render center) pointing at nothing in particular.
+watch(selectedPlanet, () => {
+  jumpTarget.value = null;
+});
 </script>
 
 <template>
@@ -94,10 +99,13 @@ function onIslandJump(target: { x: number; y: number }) {
           <div v-else-if="activeTab === 'Preview'" class="preview-tab">
             <IslandFinderPanel :planet="selectedPlanet" @jump="onIslandJump" />
             <p v-if="jumpTarget" class="jump-note" data-test="jump-target">
-              Jumped to {{ jumpTarget.x }}, {{ jumpTarget.y }} - the client preview below cannot
-              re-center on it yet, so use these coordinates to navigate manually.
+              Centered on {{ jumpTarget.x }}, {{ jumpTarget.y }}.
             </p>
-            <ElevationPreviewPanel :planet="selectedPlanet" />
+            <ElevationPreviewPanel
+              :planet="selectedPlanet"
+              :center-x="jumpTarget?.x"
+              :center-y="jumpTarget?.y"
+            />
           </div>
           <AdvancedTab v-else />
         </div>

@@ -1,6 +1,6 @@
 <!-- src/components/ElevationPreviewPanel.vue -->
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { elevationCtxFromPreset } from "../model/elevationPreviewCtx";
 import { PLANET_LABELS, type Planet } from "../model/planets";
 import { surfaceSeedForPlanet } from "../model/planetSurfaceSeed";
@@ -17,7 +17,20 @@ import { useElevationPreview, type ElevationRenderer } from "./useElevationPrevi
 const PREVIEW_PX = 1024;
 const TILES_PER_PIXEL = 1;
 
-const props = defineProps<{ renderer?: ElevationRenderer; planet?: Planet }>();
+const props = defineProps<{
+  renderer?: ElevationRenderer;
+  planet?: Planet;
+  /**
+   * World coordinate the render window is centered on - the island finder's
+   * jump-to target (#27). Both default to 0, which reproduces the original
+   * "always centered on world origin" behavior exactly (`half` subtracted,
+   * nothing else). Optional rather than required so every caller that
+   * predates this - the whole app before Task 8, and most of this file's own
+   * tests - is unaffected.
+   */
+  centerX?: number;
+  centerY?: number;
+}>();
 // In the app no renderer is passed -> build the real worker-backed one (which
 // registers its own onBeforeUnmount). Tests inject a fake, so no Worker is made.
 const renderer = props.renderer ?? useElevationPreview();
@@ -196,8 +209,8 @@ async function generate() {
         view: effectiveView.value,
         width: PREVIEW_PX,
         height: PREVIEW_PX,
-        originX: -half,
-        originY: -half,
+        originX: (props.centerX ?? 0) - half,
+        originY: (props.centerY ?? 0) - half,
         tilesPerPixel: TILES_PER_PIXEL,
         waterLevel: info.ctx.waterLevel,
         segmentationMultiplier: info.ctx.segmentationMultiplier,
@@ -241,6 +254,17 @@ async function generate() {
     loading.value = false;
   }
 }
+
+// Re-center on a jump target automatically, but only once the user has
+// already asked for a render at least once - a caller that sets centerX/
+// centerY before the first Generate click (e.g. mounting straight onto a
+// jump target) must not trigger a render the user never asked for.
+watch(
+  () => [props.centerX, props.centerY],
+  () => {
+    if (hasRendered.value) void generate();
+  },
+);
 </script>
 
 <template>

@@ -18,8 +18,22 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ jump: [{ x: number; y: number }] }>();
 
+// Search cost grows with the SQUARE of the radius - measured at about 3s for
+// 2,000 tiles and 60s for 10,000 - so an unbounded field lets someone start a
+// search that never realistically finishes and just reads as a hang.
+// `FNumberInput` has no min/max/step of its own (unlike a raw <input
+// type="number">), so the bound is enforced here instead, on every write.
+const RADIUS_MIN = 500;
+const RADIUS_MAX = 20000;
+
 const store = usePresetsStore();
 const radius = ref(5000);
+const radiusModel = computed({
+  get: () => radius.value,
+  set: (v: number) => {
+    radius.value = Math.min(RADIUS_MAX, Math.max(RADIUS_MIN, v));
+  },
+});
 const running = ref(false);
 const done = ref(0);
 const total = ref(0);
@@ -92,7 +106,11 @@ onBeforeUnmount(() => {
     <div class="island-toolbar">
       <label class="radius-label">
         Search radius (tiles)
-        <FNumberInput v-model="radius" data-test="island-radius" label="Search radius (tiles)" />
+        <FNumberInput
+          v-model="radiusModel"
+          data-test="island-radius"
+          label="Search radius (tiles)"
+        />
       </label>
       <FButton data-test="island-search" :disabled="running" @click="search">
         {{ running ? "Searching..." : "Find islands" }}

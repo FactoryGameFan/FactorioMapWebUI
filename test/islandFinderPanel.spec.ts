@@ -77,6 +77,25 @@ describe("IslandFinderPanel", () => {
     expect(w.find('[data-test="island-search"]').attributes("disabled")).toBeUndefined();
   });
 
+  it("re-enables the search button after cancel, since findIslands resolves rather than rejects on abort", async () => {
+    let release: (v: IslandResult[]) => void = () => {};
+    const w = setup(() => new Promise((r) => (release = r)));
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    await w.find('[data-test="island-cancel"]').trigger("click");
+    // findIslands resolves with whatever partial results it collected before
+    // noticing the abort signal - it does NOT reject. A future change that
+    // made it reject instead would still leave `running` cleared (a `catch`
+    // sets `error` but the `finally` still fires), but the button staying
+    // enabled here is what proves this path goes through the same success/
+    // partial-completion handling as an ordinary finish, not a bespoke abort
+    // branch.
+    release([]);
+    await flushPromises();
+    expect(w.find('[data-test="island-search"]').attributes("disabled")).toBeUndefined();
+    expect(w.find('[data-test="island-cancel"]').exists()).toBe(false);
+  });
+
   it("is inert for a planet other than fulgora", () => {
     setActivePinia(createPinia());
     const store = usePresetsStore();
