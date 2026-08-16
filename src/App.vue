@@ -8,6 +8,7 @@ import AdvancedTab from "./components/AdvancedTab.vue";
 import ElevationPreviewPanel from "./components/ElevationPreviewPanel.vue";
 import EnemyTab from "./components/EnemyTab.vue";
 import ImportPanel from "./components/ImportPanel.vue";
+import IslandFinderPanel from "./components/IslandFinderPanel.vue";
 import PresetBar from "./components/PresetBar.vue";
 import PreviewPanel from "./components/PreviewPanel.vue";
 import ResourcesTab from "./components/ResourcesTab.vue";
@@ -19,6 +20,21 @@ const TABS = ["Resources", "Terrain", "Enemy", "Advanced", "Preview"];
 const activeTab = ref("Resources");
 const selectedPlanet = ref<Planet>("nauvis");
 const showImport = ref(false);
+/**
+ * The last island the finder's results table was jumped to. There is no
+ * origin/center prop on ElevationPreviewPanel to actually re-point the client
+ * preview's render window at this coordinate - adding one is out of scope
+ * here (this task touches only App.vue and IslandFinderPanel.vue) - so the
+ * smallest thing that works is surfacing the target coordinates next to the
+ * preview and switching to the tab that shows it, rather than silently doing
+ * nothing on a click.
+ */
+const jumpTarget = ref<{ x: number; y: number } | null>(null);
+
+function onIslandJump(target: { x: number; y: number }) {
+  jumpTarget.value = target;
+  activeTab.value = "Preview";
+}
 </script>
 
 <template>
@@ -75,7 +91,14 @@ const showImport = ref(false);
           <ResourcesTab v-if="activeTab === 'Resources'" />
           <TerrainTab v-else-if="activeTab === 'Terrain'" />
           <EnemyTab v-else-if="activeTab === 'Enemy'" />
-          <ElevationPreviewPanel v-else-if="activeTab === 'Preview'" :planet="selectedPlanet" />
+          <div v-else-if="activeTab === 'Preview'" class="preview-tab">
+            <IslandFinderPanel :planet="selectedPlanet" @jump="onIslandJump" />
+            <p v-if="jumpTarget" class="jump-note" data-test="jump-target">
+              Jumped to {{ jumpTarget.x }}, {{ jumpTarget.y }} - the client preview below cannot
+              re-center on it yet, so use these coordinates to navigate manually.
+            </p>
+            <ElevationPreviewPanel :planet="selectedPlanet" />
+          </div>
           <AdvancedTab v-else />
         </div>
       </main>
@@ -186,6 +209,26 @@ const showImport = ref(false);
 
 .tab-content {
   flex: 1;
+}
+
+.preview-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* IslandFinderPanel sizes to its content; ElevationPreviewPanel is the one
+     that wants the remaining room. */
+  height: 100%;
+}
+
+.preview-tab > :last-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.jump-note {
+  margin: 0;
+  font-size: 0.9em;
+  color: var(--f-text-dim);
 }
 
 .preview {
