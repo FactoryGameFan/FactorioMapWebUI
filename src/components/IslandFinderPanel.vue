@@ -100,6 +100,101 @@ const firstCoarseIndex = computed(() => results.value.findIndex((r) => !r.refine
 /** Explicit locale so the rendered digits do not depend on the machine. */
 const formatTiles = (n: number) => n.toLocaleString("en-US");
 
+type CopyState = "idle" | "copied" | "failed";
+
+const GPS_GLYPH: Record<CopyState, string> = { idle: "⧉", copied: "✔", failed: "✗" };
+
+/**
+ * Which row last had its position copied, and how that went. One entry rather
+ * than a per-row flag: only one row can be the most recent copy, and a map
+ * would keep stale ticks alive on rows the user has moved on from.
+ */
+const gpsCopy = ref<{ key: string; state: Exclude<CopyState, "idle"> } | null>(null);
+let gpsTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Same identity the `v-for` keys on, so the tick follows the row it belongs to. */
+const rowKey = (r: IslandResult) => `${r.cellX},${r.cellY}`;
+
+/**
+ * Factorio's chat rich-text tag for a map position: pasting `[gps=x,y,surface]`
+ * into the in-game chat turns it into a clickable ping, which is how someone
+ * actually gets to an island this panel found.
+ *
+ * The coordinates round exactly as the Position column prints them, so the
+ * number on screen and the number on the clipboard can never disagree. Note
+ * what that point IS: the Voronoi cell centroid, which `findIslands.ts` records
+ * (see `nearestLandPixel`) can sit on ocean for some candidates. A ping is
+ * therefore "this island", not "a buildable tile".
+ *
+ * The surface comes from the `planet` prop rather than a literal, even though
+ * `supported` currently gates this whole panel to Fulgora - so widening that
+ * gate cannot leave the tag naming the wrong surface.
+ */
+function gpsTag(r: IslandResult): string {
+  return `[gps=${Math.round(r.centroidX)},${Math.round(r.centroidY)},${props.planet}]`;
+}
+
+function gpsState(r: IslandResult): CopyState {
+  return gpsCopy.value?.key === rowKey(r) ? gpsCopy.value.state : "idle";
+}
+
+const gpsLiveText = computed(() => {
+  if (!gpsCopy.value) return "";
+  return gpsCopy.value.state === "copied" ? "Copied map position" : "Copy failed";
+});
+
+/**
+ * How long to wait for a clipboard write before calling it failed.
+ *
+ * There is a THIRD failure mode beyond the two ActionBar guards, and it was
+ * found in a real browser rather than reasoned about: with the document
+ * unfocused, Chrome can leave `writeText`'s promise **pending** instead of
+ * rejecting it. Measured on this panel - the button held `idle` through 1.8s
+ * of polling, giving no feedback at all. A `catch` cannot see that, so
+ * without a race the button just looks broken.
+ *
+ * 1.5s is chosen to be far longer than a working local write (which settles
+ * in well under a frame) while still being under the 2s the confirmation
+ * itself stays up. The cost of getting it wrong is mild in one direction
+ * only: a slow-but-successful write gets labelled failed, and the text is on
+ * the clipboard anyway.
+ */
+const COPY_TIMEOUT_MS = 1500;
+
+async function writeWithTimeout(text: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      navigator.clipboard.writeText(text),
+      new Promise<never>((_unused, reject) => {
+        timer = setTimeout(() => reject(new Error("Clipboard write timed out")), COPY_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function copyGps(r: IslandResult) {
+  let state: Exclude<CopyState, "idle"> = "copied";
+  try {
+    // The same two failure modes ActionBar guards: the API is absent entirely
+    // on an insecure origin, and the write itself can reject (denied
+    // permission, unfocused document). Both have to show feedback, or the
+    // button is silently dead and looks like it worked. The third - a write
+    // that never settles at all - is what `writeWithTimeout` covers.
+    if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+    await writeWithTimeout(gpsTag(r));
+  } catch {
+    state = "failed";
+  }
+  gpsCopy.value = { key: rowKey(r), state };
+  clearTimeout(gpsTimer);
+  gpsTimer = setTimeout(() => {
+    gpsCopy.value = null;
+  }, 2000);
+}
+
 let host: ReturnType<typeof createWorkerHost> | null = null;
 let aborter: AbortController | null = null;
 
@@ -171,6 +266,7 @@ onBeforeUnmount(() => {
   aborter?.abort();
   host?.dispose();
   host = null;
+  clearTimeout(gpsTimer);
 });
 </script>
 
@@ -201,6 +297,11 @@ onBeforeUnmount(() => {
       Chunks are whole 32x32 blocks that are land all the way across - ocean is excluded, cliffs are
       not, since those can be removed. Rectangles are accurate to about 1 tile, because the terrain
       port's own land boundary is only that good. Doubling the radius costs roughly twice the time.
+      <!-- The glyph is aria-hidden so the sentence still reads correctly
+           aloud; "the copy icon beside a position" carries the meaning on
+           its own, and the icon is only there for sighted matching. -->
+      The copy icon <span aria-hidden="true">⧉</span> beside a position copies a
+      <code>[gps=...]</code> tag - paste it into Factorio chat for a clickable ping.
     </p>
 
     <p v-if="error" class="error" role="alert" data-test="island-error">{{ error }}</p>
@@ -232,7 +333,23 @@ onBeforeUnmount(() => {
             </td>
           </tr>
           <tr data-test="island-row" @click="emit('jump', { x: r.centroidX, y: r.centroidY })">
-            <td>{{ Math.round(r.centroidX) }}, {{ Math.round(r.centroidY) }}</td>
+            <td>
+              {{ Math.round(r.centroidX) }}, {{ Math.round(r.centroidY) }}
+              <!-- `.stop` is load-bearing: the whole ROW carries a click that
+                   emits `jump`, so without it one copy would also move the
+                   preview. `test/islandFinderPanel.spec.ts` pins that. -->
+              <button
+                type="button"
+                class="gps-copy"
+                data-test="island-gps"
+                :data-state="gpsState(r)"
+                :title="`Copy ${gpsTag(r)} - paste into Factorio chat for a clickable ping`"
+                :aria-label="`Copy map position ${gpsTag(r)}`"
+                @click.stop="copyGps(r)"
+              >
+                {{ GPS_GLYPH[gpsState(r)] }}
+              </button>
+            </td>
             <td>
               {{ r.rectTiles.width }} x {{ r.rectTiles.height }}
               <span
@@ -251,6 +368,13 @@ onBeforeUnmount(() => {
       </tbody>
     </table>
     <p v-else-if="!running" class="dim">No islands found yet - run a search.</p>
+
+    <!-- The tick on the button is a visual-only cue; this is what a screen
+         reader hears. Rendered always so the live region already exists when
+         its text changes - one injected at copy time may not be announced. -->
+    <span class="gps-live" role="status" aria-live="polite" data-test="island-gps-status">
+      {{ gpsLiveText }}
+    </span>
   </div>
 </template>
 
@@ -324,5 +448,40 @@ onBeforeUnmount(() => {
 
 .island-table tbody tr:hover {
   background: var(--f-panel-raised);
+}
+
+.gps-copy {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  margin-left: 4px;
+  color: var(--f-text-dim);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.gps-copy:hover,
+.gps-copy:focus-visible {
+  color: var(--f-text);
+}
+
+.gps-copy[data-state="copied"] {
+  color: var(--f-green, #5eb663);
+}
+
+.gps-copy[data-state="failed"] {
+  color: var(--f-red);
+}
+
+/* Announced, never shown - the button's own glyph is the visible feedback.
+   Not `display: none`, which removes it from the accessibility tree too. */
+.gps-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 </style>

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import IslandFinderPanel from "../src/components/IslandFinderPanel.vue";
@@ -31,6 +31,14 @@ function row(over: Partial<IslandResult> = {}): IslandResult {
   } as IslandResult;
 }
 
+/** Same shape as `actionBar.spec.ts`'s stub - `navigator.clipboard` is absent in this environment. */
+function stubClipboard(impl: (text: string) => Promise<void>) {
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: vi.fn(impl) },
+    configurable: true,
+  });
+}
+
 function setup(find: (opts: FindOptions) => Promise<IslandResult[]>) {
   setActivePinia(createPinia());
   const store = usePresetsStore();
@@ -55,6 +63,109 @@ describe("IslandFinderPanel", () => {
     await flushPromises();
     await w.find('[data-test="island-row"]').trigger("click");
     expect(w.emitted("jump")?.[0]).toEqual([{ x: 1234, y: -567 }]);
+  });
+
+  it("copies a Factorio gps tag whose coordinates match the Position column", async () => {
+    // The tag and the printed position must round the same way, or the number
+    // you read and the number you paste disagree - which reads as a bug even
+    // though both are "right". Fractional inputs are what make that visible;
+    // whole numbers would pass under either rounding rule.
+    const written: string[] = [];
+    stubClipboard(async (t) => {
+      written.push(t);
+    });
+    const w = setup(async () => [row({ centroidX: 1234.6, centroidY: -567.2 })]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+
+    await w.find('[data-test="island-gps"]').trigger("click");
+    await flushPromises();
+
+    expect(written).toEqual(["[gps=1235,-567,fulgora]"]);
+    expect(w.find('[data-test="island-row"]').findAll("td")[0]!.text()).toContain("1235, -567");
+  });
+
+  it("does not jump the preview when the copy button inside a row is clicked", async () => {
+    // The whole ROW carries a click handler that emits `jump`. Without
+    // `.stop` on the button, one copy would also move the preview - the
+    // classic nested-click bug, and invisible in a test that only asserts
+    // the clipboard got the right text.
+    stubClipboard(async () => {});
+    const w = setup(async () => [row()]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+
+    await w.find('[data-test="island-gps"]').trigger("click");
+    await flushPromises();
+
+    expect(w.emitted("jump")).toBeUndefined();
+  });
+
+  it("confirms the copy on the clicked row only, not on every row", async () => {
+    stubClipboard(async () => {});
+    const w = setup(async () => [row({ cellX: 1 }), row({ cellX: 9 })]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+
+    await w.findAll('[data-test="island-gps"]')[1]!.trigger("click");
+    await flushPromises();
+
+    const after = w.findAll('[data-test="island-gps"]');
+    expect(after[1]!.attributes("data-state")).toBe("copied");
+    expect(after[0]!.attributes("data-state")).toBe("idle");
+  });
+
+  it("reports a rejected clipboard write instead of looking like it worked", async () => {
+    stubClipboard(() => Promise.reject(new Error("denied")));
+    const w = setup(async () => [row()]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+
+    await w.find('[data-test="island-gps"]').trigger("click");
+    await flushPromises();
+
+    expect(w.find('[data-test="island-gps"]').attributes("data-state")).toBe("failed");
+  });
+
+  it("reports a missing Clipboard API as a failure, not a dead button", async () => {
+    // Insecure origins have no `navigator.clipboard` at all. That is a
+    // different branch from a rejected write, and it is the one that turns a
+    // button into a no-op with no feedback.
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    const w = setup(async () => [row()]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+
+    await w.find('[data-test="island-gps"]').trigger("click");
+    await flushPromises();
+
+    expect(w.find('[data-test="island-gps"]').attributes("data-state")).toBe("failed");
+  });
+
+  it("gives up on a clipboard write that never settles, instead of sitting silent", async () => {
+    // Measured in Chrome: with the document unfocused, `writeText` can leave
+    // its promise PENDING rather than rejecting - the button held `idle`
+    // through 1.8s of polling with no feedback at all. A `catch` never fires
+    // for that, so the only thing that turns it into a visible failure is a
+    // timeout. The mid-flight `idle` assertion is what stops this passing
+    // for the wrong reason (a copy that failed instantly).
+    vi.useFakeTimers();
+    try {
+      stubClipboard(() => new Promise<void>(() => {}));
+      const w = setup(async () => [row()]);
+      await w.find('[data-test="island-search"]').trigger("click");
+      await flushPromises();
+
+      await w.find('[data-test="island-gps"]').trigger("click");
+      await flushPromises();
+      expect(w.find('[data-test="island-gps"]').attributes("data-state")).toBe("idle");
+
+      await vi.advanceTimersByTimeAsync(1500);
+      await flushPromises();
+      expect(w.find('[data-test="island-gps"]').attributes("data-state")).toBe("failed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("defaults the radius to 1024", () => {
