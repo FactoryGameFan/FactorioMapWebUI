@@ -96,6 +96,9 @@ import { renderResources } from "../src/noise/preview/renderResources";
 import { renderEnemies } from "../src/noise/preview/renderEnemies";
 import { renderCliffs } from "../src/noise/preview/renderCliffs";
 import { renderTrees } from "../src/noise/preview/renderTrees";
+import { surveyIslands, surveyStep } from "../src/noise/islands/cellSurvey";
+import { COARSE_TILES_PER_PIXEL } from "../src/noise/islands/findIslands";
+import { makeFulgoraStack } from "../src/noise/tiles/fulgoraCatalog";
 
 const OUT = "perf-result.txt";
 const SEED = 123456;
@@ -110,7 +113,7 @@ const ITERS = Number(process.env.FMW_PERF_N ?? 7);
  */
 const TILE_ITERS = Number(process.env.FMW_PERF_TILE_N ?? 1);
 /** Which blocks to run. Default: all of them. */
-const BLOCKS = (process.env.FMW_PERF_BLOCK ?? "nauvis,vulcanus,tiles")
+const BLOCKS = (process.env.FMW_PERF_BLOCK ?? "nauvis,vulcanus,tiles,islands")
   .split(",")
   .map((s) => s.trim());
 
@@ -187,7 +190,7 @@ const emit = (text: string): void => {
         "drifting absolutes and moved 3.8% over the same pair, so a few percent in\n" +
         "it is noise. See the header comment in test/render-cost.perf.spec.ts and\n" +
         "issue #19. Knobs: FMW_PERF_N, FMW_PERF_TILE_N,\n" +
-        "FMW_PERF_BLOCK=nauvis,vulcanus,tiles\n" +
+        "FMW_PERF_BLOCK=nauvis,vulcanus,tiles,islands\n" +
         text,
     );
     started = true;
@@ -453,6 +456,94 @@ blockIt("tiles")(
           row(tiled),
           `${`ratio ${view}`.padEnd(42)} ${(minOf(tiled) / minOf(whole)).toFixed(3).padStart(6)}`,
         ]),
+        "",
+      ].join("\n"),
+    );
+  },
+  3_600_000,
+);
+
+// The Fulgora island finder (#27), which pins the two costs
+// `docs/superpowers/specs/2026-08-15-fulgora-island-finder-design.md` staked
+// its whole design on: the survey pass is supposed to be free, and each
+// candidate's coarse measurement is supposed to be the real cost. Two arms:
+//
+//  - `surveyIslands` (Stage 1, cellSurvey.ts) scanning a 4,000-tile box at the
+//    derived `grid / 8` step, evaluating only the `cells` field.
+//  - One Stage-2-shaped coarse render (findIslands.ts's `measure`): a
+//    256x256-tile window at `COARSE_TILES_PER_PIXEL` (8) tiles/px, so 32x32
+//    pixels, `view: "terrain"` - NEVER "all". This module's header explains
+//    why: "all" adds the scrap overlay, whose placement roll iterates TILES
+//    rather than pixels, measured at 112x for a coarse window in a real
+//    browser Worker (spec section 2b). Origin (0,0) at this seed is a
+//    100%-land window (the same one the design spec's own Node benchmark
+//    used in section 2), so this times real terrain work rather than an
+//    ocean early-out.
+//
+// The design spec measured one `cells` evaluation at 2.33 us in a throwaway
+// benchmark; the survey arm here reproduces that as a per-sample figure from
+// a real, gated test rather than a one-off script.
+const ISLAND_SEED = 2967702466; // Fulgora's surface seed for map seed 123456 - the seed cellSurvey.spec.ts, findIslands.spec.ts and the design spec's own benchmark all use.
+const ISLAND_CTX = { seed0: ISLAND_SEED };
+const ISLAND_BOX = { x0: -2000, y0: -2000, x1: 2000, y1: 2000 }; // a 4,000-tile box
+const islandGrid = makeFulgoraStack(ISLAND_CTX).shared.grid;
+const islandStep = surveyStep(islandGrid);
+/**
+ * The number of (x, y) grid points `surveyIslands` visits over `box` at
+ * `step`. Mirrors that function's own nested loop bounds exactly - cellSurvey.ts
+ * has no separate sample-count export - so this is the true denominator for
+ * "us per sample", not an estimate of it.
+ */
+function sampleCountOf(box: typeof ISLAND_BOX, step: number): number {
+  let nx = 0;
+  for (let x = box.x0; x <= box.x1; x += step) nx++;
+  let ny = 0;
+  for (let y = box.y0; y <= box.y1; y += step) ny++;
+  return nx * ny;
+}
+const ISLAND_SAMPLE_COUNT = sampleCountOf(ISLAND_BOX, islandStep);
+const islandCoarseBase = {
+  id: 0,
+  seed0: ISLAND_SEED,
+  planet: "fulgora" as const,
+  view: "terrain" as const,
+  width: 32,
+  height: 32,
+  originX: 0,
+  originY: 0,
+  tilesPerPixel: COARSE_TILES_PER_PIXEL,
+  waterLevel: 0,
+  segmentationMultiplier: 1,
+  startingPositions: [{ x: 0, y: 0 }],
+};
+
+blockIt("islands")(
+  "fulgora island finder: survey cost + one coarse measure render",
+  () => {
+    const b = bench();
+    let candidateCount = 0;
+    const survey = b.add(`surveyIslands (4,000-tile box, step ~${islandStep.toFixed(2)})`, () => {
+      candidateCount = surveyIslands(ISLAND_CTX, ISLAND_BOX).length;
+    });
+    const coarse = b.add(
+      `coarse measure render (256x256 tiles @ ${COARSE_TILES_PER_PIXEL} tpp, terrain)`,
+      () => runRenderRequest(islandCoarseBase),
+    );
+
+    b.run(ITERS);
+
+    const header = `fulgora island finder, seed ${ISLAND_SEED}, min of ${ITERS}`;
+    const usPerSample = (minOf(survey) * 1000) / ISLAND_SAMPLE_COUNT;
+    emit(
+      [
+        "",
+        header,
+        "-".repeat(header.length),
+        row(survey),
+        row(coarse),
+        "",
+        `survey cost:    ~${usPerSample.toFixed(2)} us/sample (${ISLAND_SAMPLE_COUNT} samples scanned, ${candidateCount} candidates found)`,
+        `coarse measure: ~${minOf(coarse).toFixed(1)} ms/candidate (one Stage-2 render, terrain view)`,
         "",
       ].join("\n"),
     );

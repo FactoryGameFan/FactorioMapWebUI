@@ -566,16 +566,55 @@ Done = ore patches overlaid on land, responding to the frequency/size/richness s
       and still far under vulcanus (13.82). Full before/after table and the
       land-only measurement: `docs/noise/fulgora-elevation-NOTES.md`.
 
-      Deferred for Fulgora: scrap resources, cliffs, and the island finder.
-      Two residuals remain open, and as far as anything measured so far can
-      tell they are the SAME unexplained post-argmax mechanism rather than two
-      defects: the original 18 land/ocean and shallow/deep tile mismatches are
-      boundary-exclusive and are NOT reachable by any model of the four ocean
-      expressions - the game places water where its own expressions score it
-      unplaceable - and the eight-land-tile argmax's 124 mismatches are also
-      boundary-exclusive and are not explained by a sampling offset or an
-      inflated formula either. Both need the post-argmax transition pass
-      reverse-engineered, not a constant re-fitted.
+      Deferred for Fulgora: scrap resources and cliffs (the island finder
+      below no longer is). Two residuals remain open, and as far as anything
+      measured so far can tell they are the SAME unexplained post-argmax
+      mechanism rather than two defects: the original 18 land/ocean and
+      shallow/deep tile mismatches are boundary-exclusive and are NOT
+      reachable by any model of the four ocean expressions - the game places
+      water where its own expressions score it unplaceable - and the
+      eight-land-tile argmax's 124 mismatches are also boundary-exclusive and
+      are not explained by a sampling offset or an inflated formula either.
+      Both need the post-argmax transition pass reverse-engineered, not a
+      constant re-fitted.
+
+      **Fulgora island finder - DONE 2026-08-15** (#27, spec
+      `docs/superpowers/specs/2026-08-15-fulgora-island-finder-design.md`).
+      Finds the largest buildable islands, ranked by largest inscribed
+      rectangle, inside a user-set search radius, and groups nearby islands
+      into chains (a big power pole's 30-tile wire reach). Five stages, each
+      its own module under `src/noise/islands/`: survey the search box for
+      candidate Voronoi cells (`cellSurvey.ts`), rasterize a coarse land mask
+      per candidate and compute its largest inscribed rectangle
+      (`islandMask.ts`, `largestRectangle.ts`), refine the top 50 by coarse
+      area at finer resolution, chain islands whose land comes within 30
+      tiles (`chainGraph.ts`), and list the results in a sortable UI panel
+      that re-centers the preview on a click.
+
+      **Perf, measured 2026-08-15** (`test/render-cost.perf.spec.ts`,
+      `FMW_PERF_BLOCK=islands`, min of 3, seed 2967702466): the survey pass
+      (Stage 1), scanning a 4,000-tile box at the derived `grid / 8` step,
+      costs **~2.5 us per sample** (84 ms for 33,489 samples, 375 candidates
+      found) - in line with the design spec's own throwaway measurement of
+      2.33 us per `cells` evaluation. One coarse measure-shaped render
+      (Stage 2: a 256x256-tile window at 8 tiles/px, `view: "terrain"`, never
+      `"all"` - see `findIslands.ts`'s header for why) costs **~24 ms** in
+      this Node test harness.
+
+      **The full end-to-end search time for the default 5,000-tile radius is
+      unmeasured.** This perf block times the two per-unit costs above, not
+      the whole survey -> coarse -> refine -> chain pipeline run across the
+      app's worker pool. The design spec's own ~15s figure for that case
+      (section 4) is a design-time estimate from a throwaway benchmark, not a
+      number this task measured - treat it as unconfirmed until a real
+      end-to-end run is timed and recorded here.
+
+      **Accuracy**: Fulgora's land/ocean split agrees with the real game on
+      99.86% of positions (Fulgora V1, above), and the residual mismatches
+      are boundary-exclusive - they sit exactly where an island's edge is,
+      which is exactly what a rectangle measurement reads. So a reported
+      rectangle is accurate to about a tile, not exact; the panel says this
+      once rather than implying an exact answer.
 
 ## Milestone 5 - integration
 
