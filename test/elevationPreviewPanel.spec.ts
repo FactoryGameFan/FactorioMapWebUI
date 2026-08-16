@@ -683,6 +683,64 @@ describe("ElevationPreviewPanel", () => {
     });
   });
 
+  describe("centerX/centerY (island-finder jump-to, #27)", () => {
+    it("defaults to centered on world origin (0,0) when centerX/centerY are omitted", async () => {
+      // The existing behavior every other test in this file relies on -
+      // -512/-512 - must stay a no-op default.
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({ originX: -512, originY: -512 });
+    });
+
+    it("offsets the render origin by the centerX/centerY props on Generate", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "nauvis" });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (w as any).setProps({ centerX: 1234, centerY: -567 });
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({
+        originX: 1234 - 512,
+        originY: -567 - 512,
+        width: 1024,
+        height: 1024,
+      });
+    });
+
+    it("auto re-renders when the center changes AFTER a render has already happened", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      expect(renderer.render).toHaveBeenCalledOnce();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (w as any).setProps({ centerX: 100, centerY: 200 });
+      await flushPromises();
+
+      expect(renderer.render).toHaveBeenCalledTimes(2);
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[1][0];
+      expect(arg).toMatchObject({ originX: 100 - 512, originY: 200 - 512 });
+    });
+
+    it("does NOT auto-render when the center changes before any render has happened", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (w as any).setProps({ centerX: 100, centerY: 200 });
+      await flushPromises();
+      expect(renderer.render).not.toHaveBeenCalled();
+    });
+  });
+
   describe("planet: fulgora (V1 terrain, V2 land tiles, V3 scrap)", () => {
     it("resolves view:'all' on a NON-Nauvis map type, so the scrap overlay still paints", async () => {
       // The regression this pins: `effectiveView` gated on the PRESET's own

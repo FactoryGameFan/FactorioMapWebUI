@@ -80,6 +80,19 @@ const COLORS: Record<FulgoraTile, readonly [number, number, number]> = {
 };
 
 /**
+ * The colours that mean "not land" in a Fulgora terrain render.
+ *
+ * Derived from `COLORS` rather than written out again: a second hardcoded copy
+ * would drift the first time a tile colour is corrected, and one already was -
+ * deep ocean's green channel was wrong from V1 until the scrap work, because
+ * the game truncates where this renderer rounded.
+ */
+export const FULGORA_OCEAN_RGB: readonly (readonly [number, number, number])[] = [
+  COLORS.shallow,
+  COLORS.deep,
+];
+
+/**
  * Sweep a `width x height` pixel grid over world space and return an
  * `ImageData` painted with each pixel's Fulgora surface colour, mirroring
  * `renderVulcanusTerrain`.

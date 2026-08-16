@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { SUPPORTED_VERSIONS_LABEL } from "./codec/mapExchangeString";
 import { FACTORIO_TARGET_VERSION } from "./model/factorioTarget";
 import { BUILD_INFO, BUILD_STAMP } from "./model/buildStamp";
@@ -8,6 +8,7 @@ import AdvancedTab from "./components/AdvancedTab.vue";
 import ElevationPreviewPanel from "./components/ElevationPreviewPanel.vue";
 import EnemyTab from "./components/EnemyTab.vue";
 import ImportPanel from "./components/ImportPanel.vue";
+import IslandFinderPanel from "./components/IslandFinderPanel.vue";
 import PresetBar from "./components/PresetBar.vue";
 import PreviewPanel from "./components/PreviewPanel.vue";
 import ResourcesTab from "./components/ResourcesTab.vue";
@@ -19,6 +20,26 @@ const TABS = ["Resources", "Terrain", "Enemy", "Advanced", "Preview"];
 const activeTab = ref("Resources");
 const selectedPlanet = ref<Planet>("nauvis");
 const showImport = ref(false);
+/**
+ * The last island the finder's results table was jumped to - fed straight to
+ * ElevationPreviewPanel's `centerX`/`centerY` props, which move the client
+ * preview's render window onto it. `null` (not 0) while nothing has been
+ * jumped to yet, so the preview keeps its own "centered on world origin"
+ * default rather than this component asserting a coordinate.
+ */
+const jumpTarget = ref<{ x: number; y: number } | null>(null);
+
+function onIslandJump(target: { x: number; y: number }) {
+  jumpTarget.value = target;
+  activeTab.value = "Preview";
+}
+
+// A jump target named for one planet's geography is meaningless on another -
+// switching planets without clearing it would leave a stale coordinate note
+// (and a stale render center) pointing at nothing in particular.
+watch(selectedPlanet, () => {
+  jumpTarget.value = null;
+});
 </script>
 
 <template>
@@ -75,7 +96,17 @@ const showImport = ref(false);
           <ResourcesTab v-if="activeTab === 'Resources'" />
           <TerrainTab v-else-if="activeTab === 'Terrain'" />
           <EnemyTab v-else-if="activeTab === 'Enemy'" />
-          <ElevationPreviewPanel v-else-if="activeTab === 'Preview'" :planet="selectedPlanet" />
+          <div v-else-if="activeTab === 'Preview'" class="preview-tab">
+            <IslandFinderPanel :planet="selectedPlanet" @jump="onIslandJump" />
+            <p v-if="jumpTarget" class="jump-note" data-test="jump-target">
+              Centered on {{ jumpTarget.x }}, {{ jumpTarget.y }}.
+            </p>
+            <ElevationPreviewPanel
+              :planet="selectedPlanet"
+              :center-x="jumpTarget?.x"
+              :center-y="jumpTarget?.y"
+            />
+          </div>
           <AdvancedTab v-else />
         </div>
       </main>
@@ -186,6 +217,26 @@ const showImport = ref(false);
 
 .tab-content {
   flex: 1;
+}
+
+.preview-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* IslandFinderPanel sizes to its content; ElevationPreviewPanel is the one
+     that wants the remaining room. */
+  height: 100%;
+}
+
+.preview-tab > :last-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.jump-note {
+  margin: 0;
+  font-size: 0.9em;
+  color: var(--f-text-dim);
 }
 
 .preview {
