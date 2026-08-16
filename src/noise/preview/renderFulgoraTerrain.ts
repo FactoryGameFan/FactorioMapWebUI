@@ -1,6 +1,8 @@
 import {
   type FulgoraStack,
   type FulgoraTile,
+  makeFulgoraOceanTestFrom,
+  makeFulgoraStack,
   makeFulgoraTileResolver,
   makeFulgoraTileResolverFrom,
 } from "../tiles/fulgoraCatalog";
@@ -124,6 +126,60 @@ export function renderFulgoraTerrain(opts: RenderFulgoraTerrainOptions): ImageDa
     for (let px = 0; px < width; px++) {
       const wx = originX + px * tpp;
       const color = COLORS[resolve(wx, wy)];
+      const o = (py * width + px) * 4;
+      data[o] = color[0];
+      data[o + 1] = color[1];
+      data[o + 2] = color[2];
+      data[o + 3] = 255;
+    }
+  }
+
+  return new ImageData(data, width, height);
+}
+
+/**
+ * The colour {@link renderFulgoraLandMask} paints every LAND pixel.
+ *
+ * Deliberately not one of the eight land-tile colours: this render does not
+ * know which land tile a pixel is, and painting `fulgoran-dust` would be a
+ * picture that claims to know. All `landMaskFromImage` asks is "is this one of
+ * `FULGORA_OCEAN_RGB`", so any non-ocean colour is correct, and one that names
+ * itself is honest.
+ */
+export const FULGORA_LANDMASK_LAND_RGB: readonly [number, number, number] = [255, 0, 255];
+
+/**
+ * As {@link renderFulgoraTerrain}, but answering only LAND versus OCEAN.
+ *
+ * The island finder renders terrain and then collapses it to one bit against
+ * `FULGORA_OCEAN_RGB` (`islandMask.ts`), so every land-tile probability it
+ * computes is discarded. This skips the eight-way argmax on the pixels that
+ * reach it. Ocean pixels keep their true `deep`/`shallow` colour - the ocean
+ * branch already distinguishes them for free - and land pixels get
+ * {@link FULGORA_LANDMASK_LAND_RGB}.
+ *
+ * **This is NOT the cheap early-out it might look like.** The elevation chain
+ * still runs at every pixel, because deciding "is this ocean" IS that chain -
+ * the same point `renderFulgoraTerrain`'s header makes. Measured over 40 real
+ * candidate windows at radius 1024: **15.7% faster at 8 tiles/px, 13.8% at 2**
+ * (20.94 -> 17.66 us/px, 20.13 -> 17.34). The ceiling is structural, because
+ * `chain.elevation` alone is 81% of a tile pixel and both views pay it.
+ */
+export function renderFulgoraLandMask(opts: RenderFulgoraTerrainOptions): ImageData {
+  const { width, height, seed0 } = opts;
+  const originX = opts.originX ?? 0;
+  const originY = opts.originY ?? 0;
+  const tpp = opts.tilesPerPixel ?? 1;
+
+  const ocean = makeFulgoraOceanTestFrom(opts.stack ?? makeFulgoraStack({ seed0, ...opts.ctx }));
+  const data = new Uint8ClampedArray(width * height * 4);
+
+  for (let py = 0; py < height; py++) {
+    const wy = originY + py * tpp;
+    for (let px = 0; px < width; px++) {
+      const wx = originX + px * tpp;
+      const wet = ocean(wx, wy);
+      const color = wet === undefined ? FULGORA_LANDMASK_LAND_RGB : COLORS[wet];
       const o = (py * width + px) * 4;
       data[o] = color[0];
       data[o + 1] = color[1];

@@ -19,7 +19,7 @@ import { makeVulcanusStack } from "../tiles/vulcanusCatalog";
 import { renderVulcanusResources } from "./renderVulcanusResources";
 import { renderVulcanusRocks } from "./renderVulcanusRocks";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
-import { renderFulgoraTerrain } from "./renderFulgoraTerrain";
+import { renderFulgoraLandMask, renderFulgoraTerrain } from "./renderFulgoraTerrain";
 import { renderFulgoraResources } from "./renderFulgoraResources";
 import { makeFulgoraStack } from "../tiles/fulgoraCatalog";
 import type { FulgoraScrapControls } from "../expressions/fulgoraScrap";
@@ -84,7 +84,23 @@ export interface ElevationRenderRequest {
    * when `mapType` is "nauvis" - callers (the preview panel) disable those
    * toggles for lakes/island presets rather than send an unfaithful request here.
    */
-  view?: "elevation" | "terrain" | "resources" | "enemies" | "cliffs" | "trees" | "rocks" | "all";
+  /**
+   * `"landmask"` is the island finder's view and nothing else's: Fulgora land
+   * versus ocean, skipping the eight-way land argmax whose answer the finder
+   * discards. It is deliberately absent from `ElevationPreviewPanel`'s own view
+   * union, so no dev-mode toggle can select it. On any planet without a port it
+   * falls back to that planet's terrain, like every other view here.
+   */
+  view?:
+    | "elevation"
+    | "terrain"
+    | "resources"
+    | "enemies"
+    | "cliffs"
+    | "trees"
+    | "rocks"
+    | "all"
+    | "landmask";
   /**
    * Per-resource control levers (control:<res>:frequency|size|richness), keyed by
    * controlName - consumed only when `view: "resources"`. Missing entries default
@@ -294,7 +310,8 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
     req.view === "cliffs" ||
     req.view === "trees" ||
     req.view === "rocks" ||
-    req.view === "all"
+    req.view === "all" ||
+    req.view === "landmask"
   ) {
     if (planet === "vulcanus") {
       // Vulcanus has its own resource and cliff overlays. The remaining three
@@ -391,7 +408,7 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         req.unsharedStacks === true
           ? undefined
           : makeFulgoraStack({ seed0: req.seed0, ...fulgoraCtx });
-      image = renderFulgoraTerrain({
+      const fulgoraRender = {
         seed0: req.seed0,
         width: req.width,
         height: req.height,
@@ -400,7 +417,14 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
         tilesPerPixel: req.tilesPerPixel,
         ctx: fulgoraCtx,
         stack,
-      });
+      };
+      // Returns straight away: a land mask takes no overlays, and compositing
+      // resources onto it would paint over the very bit the caller wants.
+      if (req.view === "landmask") {
+        const mask = renderFulgoraLandMask(fulgoraRender);
+        return { id: req.id, buffer: mask.data.buffer, width: req.width, height: req.height };
+      }
+      image = renderFulgoraTerrain(fulgoraRender);
       if (req.view === "resources" || req.view === "all") {
         renderFulgoraResources(image, {
           seed0: req.seed0,
