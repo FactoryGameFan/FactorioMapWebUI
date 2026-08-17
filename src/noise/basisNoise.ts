@@ -1,33 +1,42 @@
 /**
  * A reimplementation of Factorio's `basis_noise` primitive.
  *
- * Reverse-engineered against Factorio 2.1.11 and verified to a max error of
- * 3.1e-7 - tighter than the game's own internal self-consistency (~2e-6, from
- * its fastapprox `pow`). See docs/noise/basis-noise-NOTES.md for the derivation
- * and the evidence.
+ * Reverse-engineered against Factorio 2.1.11. See
+ * docs/noise/basis-noise-NOTES.md for the derivation and the evidence.
+ *
+ * **Evaluates in f32 with the game's own operation order** (#214). It used to
+ * evaluate in f64 with `(1 - d) ** 3` and a left-to-right sum, which is a
+ * different function - measurably, not just in principle. Scored by exact f32
+ * match count against the 512-point fixture, because every value in it is
+ * exactly f32 and so a bound cannot tell "close" from "identical":
+ *
+ * | shape | exact | worst abs |
+ * | --- | --- | --- |
+ * | old: f64, `(1-d)**3`, left to right | 132/512 | 3.110e-7 |
+ * | this: f32, `t*(t*t)`, row-pairwise fold, committed table | **473/512** | **1.192e-7** |
+ *
+ * The 39 remaining points are 18 at 1 ULP, 11 at 2 ULP and a short tail whose
+ * large ULP counts are near-zero cancellations. On the seed-derived
+ * `oracle-basis` fixture it is 36/38 exact, worst 5.960e-8.
  *
  * The `(seed0, seed1) -> tables` derivation is also solved:
  * `basisNoiseTablesFromSeed` builds `a`/`b`/`sigma` straight from the seed (no
  * game round-trip), matching the disassembly of `Noise::setSeed` and verified
  * against the game across the seed combine, the low-byte salt and the clamp.
- *
- * NOT wired into the app. This is the building block a client-side map preview
- * would need; the editor itself does not evaluate noise.
  */
+import { GRADIENT_X, GRADIENT_Y } from "./basisGradientTable";
 import { seededState, taus88Next } from "./taus88";
 
 /** Number of gradient directions, and the period of the hash on each axis. */
 const TABLE_SIZE = 256;
 
-/** Measured at 4.19999919 +/- 1.4e-6 across 9216 lattice points. */
-const GRADIENT_MAGNITUDE = 4.2;
-
-const GRADIENT_X: readonly number[] = Array.from({ length: TABLE_SIZE }, (_, h) =>
-  Math.cos((2 * Math.PI * h) / TABLE_SIZE),
-);
-const GRADIENT_Y: readonly number[] = Array.from({ length: TABLE_SIZE }, (_, h) =>
-  Math.sin((2 * Math.PI * h) / TABLE_SIZE),
-);
+/**
+ * Narrow to f32. The game's noise machine is f32 end to end, and this kernel
+ * rounds after every operation rather than once at the end - an f64 chain
+ * narrowed only on return is a different function, worth 2.6x in worst error
+ * here.
+ */
+const f = Math.fround;
 
 /**
  * The per-seed tables. `a` and `b` are the per-axis permutation tables of
@@ -59,28 +68,45 @@ export interface BasisNoiseTables {
 export function basisNoise(x: number, y: number, tables: BasisNoiseTables): number {
   const ix = Math.floor(x);
   const iy = Math.floor(y);
-  const fx = x - ix;
-  const fy = y - iy;
+  const fx = f(x - ix);
+  const fy = f(y - iy);
 
-  let value = 0;
   // Summation over the 4 cell corners, simplex-style, rather than Perlin's
   // separable interpolation: the (1-d)^3 falloff reaches exactly 0 at d = 1, so
   // corners further than one unit contribute nothing.
-  for (let cornerY = 0; cornerY <= 1; cornerY++) {
-    for (let cornerX = 0; cornerX <= 1; cornerX++) {
-      const dx = fx - cornerX;
-      const dy = fy - cornerY;
-      const d = dx * dx + dy * dy;
-      if (d >= 1) continue;
+  const corner = (cornerX: number, cornerY: number): number => {
+    const dx = f(fx - cornerX);
+    const dy = f(fy - cornerY);
+    const d = f(f(dx * dx) + f(dy * dy));
+    // The game is branchless here - two corners share a NEON register, so a
+    // far corner is SELECTED to zero rather than skipped. Written as an early
+    // return because the result is what matters, not the lane trick: past
+    // d = 1 the falloff would go negative and SUBTRACT a contribution.
+    if (!(d < 1)) return 0;
 
-      const hash =
-        tables.a[(ix + cornerX) & (TABLE_SIZE - 1)] ^ tables.b[(iy + cornerY) & (TABLE_SIZE - 1)];
-      const g = tables.sigma[hash & (TABLE_SIZE - 1)];
-      const falloff = (1 - d) ** 3;
-      value += falloff * GRADIENT_MAGNITUDE * (dx * GRADIENT_X[g] + dy * GRADIENT_Y[g]);
-    }
-  }
-  return value;
+    const t = f(1 - d);
+    // `t * (t * t)`, not `t ** 3`. Not the same function: #214 folded 4M
+    // results and got `01efaddf3f789c57` for `x*x*x` against
+    // `01efaddf3fdbc55d` for `powf(3.0)`, and the game's two `fmul`s say which
+    // one it is.
+    const falloff = f(t * f(t * t));
+
+    const hash =
+      tables.a[(ix + cornerX) & (TABLE_SIZE - 1)] ^ tables.b[(iy + cornerY) & (TABLE_SIZE - 1)];
+    const g = tables.sigma[hash & (TABLE_SIZE - 1)];
+    // The magnitude is folded into the table, which the fixture discriminates:
+    // see scripts/gen-gradient-table.ts.
+    const dot = f(f(dx * GRADIENT_X[g]) + f(dy * GRADIENT_Y[g]));
+    return f(dot * falloff);
+  };
+
+  // Pairwise, not left to right: the game adds two corners at a time and folds
+  // the pair last. Which two is measured rather than read off the disassembly -
+  // pairing the corners that share a `cornerY` scores 473/512 exact against
+  // 353 for the other pairing, 345 diagonally and 406 left-to-right.
+  const rowY0 = f(corner(0, 0) + corner(1, 0));
+  const rowY1 = f(corner(0, 1) + corner(1, 1));
+  return f(rowY0 + rowY1);
 }
 
 // ---------------------------------------------------------------------------
