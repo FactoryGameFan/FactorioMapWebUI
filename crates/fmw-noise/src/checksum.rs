@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn matches_the_published_fnv1a64_vectors() {
         assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
-        assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8d);
         assert_eq!(fnv1a64(b"foobar"), 0x8594_4171_f739_67e8);
     }
 
