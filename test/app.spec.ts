@@ -28,7 +28,7 @@ describe("App shell", () => {
     const w = mountApp();
     const link = w.find("a.repo-link");
     expect(link.exists()).toBe(true);
-    expect(link.attributes("href")).toBe("https://github.com/wormeyman/FactorioMapWebUI");
+    expect(link.attributes("href")).toBe("https://github.com/FactoryGameFan/FactorioMapWebUI");
     expect(link.attributes("target")).toBe("_blank");
     expect(link.attributes("rel")).toContain("noopener");
   });

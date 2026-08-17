@@ -663,7 +663,7 @@ Two settings whose reasoning is not guessable from the outside:
 
 `main` is protected by a repository ruleset named **`EJ`** (2026-07-30, issue
 #60), not by classic branch protection. Read it with
-`gh api repos/wormeyman/FactorioMapWebUI/rules/branches/main` - the classic
+`gh api repos/FactoryGameFan/FactorioMapWebUI/rules/branches/main` - the classic
 `/branches/main/protection` endpoint returns **404**, which looks exactly like
 "unprotected" and is not.
 

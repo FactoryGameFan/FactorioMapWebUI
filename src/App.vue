@@ -73,7 +73,7 @@ watch(selectedPlanet, () => {
       </span>
       <a
         class="repo-link"
-        href="https://github.com/wormeyman/FactorioMapWebUI"
+        href="https://github.com/FactoryGameFan/FactorioMapWebUI"
         target="_blank"
         rel="noopener noreferrer"
         title="View this project on GitHub"
