@@ -7,6 +7,15 @@
 # PR #116. The phases are now split across a `static` job and a sharded `tests`
 # matrix that run in parallel, with a `verify` job aggregating them.
 #
+# The jobs here are `static`, `tests` (4 shards), `rust`, `verify` and `build`.
+# Only `verify` and `build` are REQUIRED status checks in ruleset `EJ`. `rust`
+# is deliberately not one, and its absence from the ruleset is not an oversight
+# to fix: `verify` asserts `needs.rust.result`, so a red `rust` job turns the
+# required check red anyway, with no ruleset PUT and no two-step. Every
+# required NAME is a permanent liability - rename it and every PR blocks
+# forever on a check that cannot run - so the aggregator absorbing new phases
+# is the cheaper shape. Add future phases the same way.
+#
 # The anti-drift rule that motivated the old VERBATIM comment still holds, and
 # is now enforced differently: this file names only package.json SCRIPTS
 # (`verify:static`, `verify:shard`), never the underlying commands. `verify`,
@@ -164,6 +173,68 @@ jobs:
 
       - run: pnpm run verify:shard -- --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
+  # The Rust half of the gate: cargo fmt, clippy, tests, the zero-dependency
+  # assertion, and the byte comparison against the committed engine.wasm.
+  #
+  # It is NOT a required status check of its own, and that is the point. Ruleset
+  # `EJ` matches required checks by NAME, so every name added is a name that
+  # blocks every PR forever if it is ever renamed or removed. The `verify` job
+  # below already exists to aggregate, so asserting one more `needs.*.result`
+  # there gets identical blocking behaviour with no ruleset PUT and no two-step.
+  # See CLAUDE.md for when a genuinely new required name is warranted.
+  #
+  # No toolchain action, pinned or otherwise: `rust-toolchain.toml` pins 1.97.1
+  # with rustfmt, clippy and the wasm32 target, and rustup installs that on the
+  # first cargo command. Expect a `syncing channel updates` line in the log even
+  # though the image already ships Cargo 1.97.1 - rustup treats `1.97.1-<host>`
+  # and `stable-<host>` as separate installs of the same compiler, so the pin
+  # costs one download per runner. Measured on a dev machine before this landed;
+  # it is the price of the pin and it is visible in the log rather than silent.
+  rust:
+    runs-on: ubuntu-latest
+    # The whole job is seconds of compiling two tiny crates on top of the
+    # toolchain sync. 15 minutes is a hang detector, matching the jobs above.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Printed rather than assumed: if a byte comparison against the committed
+      # engine.wasm ever fails, the first question is whether the compiler
+      # moved, and that question needs an answer in the log of the run that
+      # failed - not a re-run months later against a different image.
+      - name: Show the resolved toolchain
+        run: |
+          rustup show
+          cargo --version
+          rustc --version --verbose
+
+      # A pinned release binary rather than `cargo install`, which builds from
+      # source and would dominate a job that is otherwise seconds - it took
+      # ~4 minutes locally. The checksum is this asset's own published sha256,
+      # so the binary is pinned by content the same way the actions above are
+      # pinned by commit SHA.
+      - name: Install cargo-deny 0.20.2
+        run: |
+          V=0.20.2
+          F=cargo-deny-$V-x86_64-unknown-linux-musl.tar.gz
+          curl -fsSLO "https://github.com/EmbarkStudios/cargo-deny/releases/download/$V/$F"
+          echo "$CARGO_DENY_SHA256  $F" | sha256sum -c -
+          tar -xzf "$F"
+          sudo mv "cargo-deny-$V-x86_64-unknown-linux-musl/cargo-deny" /usr/local/bin/
+          cargo deny --version
+        env:
+          CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+
+      # The one deviation from "always name a package.json script", and it does
+      # not reopen the drift the rule guards against: `verify:rust` is exactly
+      # `bash scripts/verify-rust.sh`, so the SCRIPT FILE is the single
+      # definition and both sides run the same bytes of it. Going through pnpm
+      # would add a pnpm/action-setup + setup-node + `pnpm install` (~28s) to a
+      # job that needs no JavaScript at all, purely to shell out to this line.
+      # If `verify:rust` ever grows a second command, this must become
+      # `pnpm run verify:rust` with the setup steps restored.
+      - run: bash scripts/verify-rust.sh
+
   # The required status check. Ruleset `EJ` requires a check named `verify`, so
   # this job must keep that id even though the work now happens above.
   #
@@ -173,7 +244,7 @@ jobs:
   # dependency failed is otherwise skipped, and a skipped required check does
   # not block a merge. Hence the explicit result assertions.
   verify:
-    needs: [static, tests]
+    needs: [static, tests, rust]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -182,11 +253,13 @@ jobs:
         env:
           STATIC: ${{ needs.static.result }}
           TESTS: ${{ needs.tests.result }}
+          RUST: ${{ needs.rust.result }}
         run: |
-          echo "static=$STATIC tests=$TESTS"
+          echo "static=$STATIC tests=$TESTS rust=$RUST"
           # `tests` is the matrix aggregate: 'success' only if every shard was.
           [ "$STATIC" = "success" ] || { echo "::error::static phase: $STATIC"; exit 1; }
           [ "$TESTS" = "success" ] || { echo "::error::test shards: $TESTS"; exit 1; }
+          [ "$RUST" = "success" ] || { echo "::error::rust phase: $RUST"; exit 1; }
 
   # `verify` is check + type-check + tests. None of them build, so a change that
   # passes all three and breaks the production build reached `main` unnoticed
