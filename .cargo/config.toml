@@ -1,0 +1,19 @@
+# Deliberately minimal. Everything absent here is absent on purpose.
+#
+# NO `-C target-cpu=native`: it makes codegen machine-specific, which defeats
+# the byte-identity check on the committed engine.wasm and could change
+# vectorisation between two machines running the same source. #218 measured
+# that identity holding across macOS/aarch64 and Linux/x86_64; this file is
+# part of why.
+#
+# NO `-C target-feature=+simd128`: measured at 1.27x on the basis kernel, which
+# is gather-bound - three table lookups per corner, and WASM SIMD has no gather.
+# It would not change results, because LLVM will not reassociate floats without
+# fast-math, but it does change the binary and therefore the gate, for no
+# measured gain.
+#
+# NO `+relaxed-simd` under any circumstances: its fused multiply-add is
+# explicitly non-deterministic across engines, which is the one thing this port
+# cannot tolerate.
+[target.wasm32-unknown-unknown]
+rustflags = []

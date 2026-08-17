@@ -3,6 +3,9 @@ name = "fmw-wasm"
 version = "0.0.0"
 edition = "2021"
 publish = false
+# See the note in crates/fmw-noise/Cargo.toml: cargo-deny fails an unlicensed
+# workspace crate, so this field is load-bearing rather than metadata.
+license = "AGPL-3.0-or-later"
 
 [lib]
 crate-type = ["cdylib"]
