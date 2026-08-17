@@ -61,7 +61,11 @@ describe("variablePersistenceMultioctaveNoise reproduces the game", () => {
     const { worst, label } = sweep((x, y, p, c) =>
       variablePersistenceMultioctaveNoise(x, y, p, paramsFor(fixture.seed0, c)),
     );
-    expect(worst, `worst at ${label}`).toBeLessThan(2e-5);
+    // 3.8147e-6, measured after #214. #162 recorded 1.144e-5 here and named
+    // basisNoise's f64 evaluation as the whole residual; the number moved 3x on
+    // a change that touched nothing in this file, which is that prediction
+    // being confirmed rather than merely restated.
+    expect(worst, `worst at ${label}`).toBeLessThan(4e-6);
   });
 
   /**
@@ -89,7 +93,7 @@ describe("variablePersistenceMultioctaveNoise reproduces the game", () => {
       expect(
         worst / gain,
         `octaves=${c.octaves} offset=${c.offsetX} seed1=${c.seed1} (gain ${gain})`,
-      ).toBeLessThan(3e-7);
+      ).toBeLessThan(1.3e-7);
     }
   });
 

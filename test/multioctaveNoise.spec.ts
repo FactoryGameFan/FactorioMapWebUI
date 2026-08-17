@@ -59,7 +59,30 @@ describe("multioctaveNoise reproduces the game", () => {
     // With the true +17.17 the error no longer depends on distance at all: the
     // fixture's extreme point (12345.75, 6789.125) is no worse than the origin.
     const { worst, label } = sweep((x, y, p) => multioctaveNoise(x, y, p));
-    expect(worst, `worst at ${label}`).toBeLessThan(1e-6);
+    // 4.7684e-7, measured after #214 gave basisNoise the game's own arithmetic.
+    // #162 predicted this: it recorded 7.153e-7 here and said basisNoise's f64
+    // evaluation was "the entire residual" for this op. It was - the number
+    // moved 1.5x on a change that touched nothing in this file.
+    expect(worst, `worst at ${label}`).toBeLessThan(5e-7);
+  });
+
+  it("reproduces most of the fixture bit-exactly, not merely within tolerance", () => {
+    // #162 exists because almost nothing here compares f32-exact, which is how
+    // a real bug stayed green for a year. 231 of 266 now match bit for bit.
+    // `toBeGreaterThanOrEqual`, not `toBe`: a rise is an improvement and the
+    // number should be raised to match, but it must never fall.
+    let exact = 0;
+    let n = 0;
+    for (const c of fixture.cases) {
+      const p = params(c);
+      for (let i = 0; i < fixture.positions.length; i++) {
+        const pos = fixture.positions[i];
+        n++;
+        if (Math.fround(multioctaveNoise(pos.x, pos.y, p)) === c.values[i]) exact++;
+      }
+    }
+    expect(n).toBe(266);
+    expect(exact).toBeGreaterThanOrEqual(231);
   });
 
   it("agrees with the prebuilt-closure form bit for bit", () => {

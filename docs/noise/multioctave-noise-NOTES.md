@@ -240,7 +240,15 @@ game does. Measured, against the same fixture:
 | f64, alias (the old shipped code) | 1.170e-4 | 12/266 |
 | f64, true offset | 1.170e-4 | 12/266 |
 | f32 op order, alias | 1.427e-3 | 10/266 |
-| **f32 op order, true offset** | **7.153e-7** | **62/266** |
+| f32 op order, true offset | 7.153e-7 | 62/266 |
+| **the same, on the #214 basis kernel** | **4.768e-7** | **231/266** |
+
+**The last row is #214 arriving, and it is worth reading as a prediction that
+paid.** #162 said this op's remaining residual was entirely `basisNoise`
+evaluating in f64. Giving `basisNoise` the game's own f32 arithmetic moved this
+op from 7.153e-7 to **4.768e-7** and its bit-exact count from 62 to **231 of
+266**, with nothing in this file or its op changed. The bound in
+`test/multioctaveNoise.spec.ts` moved 1e-6 -> 5e-7 to match.
 
 Neither fix does anything alone - one is a literal no-op, the other is a 12x
 regression - and together they are 164x. Four earlier variants (f32 per term, f32

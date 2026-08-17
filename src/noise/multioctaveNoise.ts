@@ -166,8 +166,11 @@ function octaveTerms(params: MultioctaveParams): {
  * passed a RAW WORLD COORDINATE, and those are already exactly representable in
  * f32 (an integer or quarter tile below 2^24), so the narrowing is a no-op on
  * them - confirmed rather than assumed: `oracle-multioctave.seed123456.json`
- * reports the identical 7.153e-7 worst residual with and without it, and the
- * whole suite is unchanged. Fulgora is the first caller to pass a DERIVED
+ * reported the identical worst residual with and without it, and the whole
+ * suite was unchanged. (That residual was 7.153e-7 when this was measured; it
+ * is 4.768e-7 since #214 gave `basisNoise` the game's f32 arithmetic. The
+ * with/without comparison was not re-run, and the conclusion does not depend
+ * on the value.) Fulgora is the first caller to pass a DERIVED
  * coordinate (`fulgora_wx = x + grid/2 + wobble_x * wobble_mask`), which lands
  * off the f32 grid, and there the difference is large:
  *
@@ -179,9 +182,15 @@ function octaveTerms(params: MultioctaveParams): {
  * `fulgora_basis_oil` is the clearest case: its coordinate reaches ~15000,
  * where an f32 ulp is 9.8e-4, so an f64 coordinate can sit half an ulp from the
  * game's and that error is then amplified by the octave scales. Both fields
- * land on the `basisNoise` f64-vs-f32 floor once narrowed, and the worst
- * residual moves from the FAR field to the near field - the signature of
- * removing a magnitude-dependent error rather than of a lucky fit.
+ * land on the `basisNoise` floor once narrowed, and the worst residual moves
+ * from the FAR field to the near field - the signature of removing a
+ * magnitude-dependent error rather than of a lucky fit.
+ *
+ * That floor is no longer where this table says: #214 replaced the f64 basis
+ * kernel with the game's f32 one, so these two figures are upper bounds now
+ * rather than measurements. They have not been re-measured, and the bounds in
+ * `test/fulgoraExpressions.spec.ts` still hold, so nothing here is wrong - only
+ * looser than it needs to be.
  */
 function sumOctaves(
   x: number,

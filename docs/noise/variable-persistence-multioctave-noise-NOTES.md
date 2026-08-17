@@ -131,7 +131,15 @@ f32-exact count) and everything in f32:
 | f64, shift -7936 (the old shipped code) | 1.847e-3 | 61/266 |
 | f64, no shift | 1.847e-3 | 61/266 |
 | f32 op order, shift -7936 | **3.629e-1** | 45/266 |
-| **f32 op order, no shift** | **1.144e-5** | 66/266 |
+| f32 op order, no shift | 1.144e-5 | 66/266 |
+| **the same, on the #214 basis kernel** | **3.815e-6** | **239/266** |
+
+The last row is #214. #162 named `basisNoise`'s f64 evaluation as this op's
+entire remaining residual; giving it the game's f32 arithmetic moved the worst
+error 3x and the bit-exact count from 66 to 239 of 266, with nothing in this op
+changed. The spec's bounds moved with it: 2e-5 -> 4e-6 absolute, and 3e-7 ->
+1.3e-7 relative to the `2^N * output_scale` gain (measured 1.192e-7, which is
+one f32 ULP).
 
 Note the third row: reproducing the game's arithmetic *with* the alias is nearly
 **200x worse than doing nothing**, because `k*(-7936)` at octave 5 lands near
