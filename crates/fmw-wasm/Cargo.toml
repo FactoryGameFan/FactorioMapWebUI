@@ -7,5 +7,9 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+# One path dependency and no others, and deliberately no wasm-bindgen. The
+# 2026-08-16 spike hit 1,518 bytes without it, and the boundary is one call per
+# render sweep, so there is no glue worth generating. CI asserts that
+# `cargo tree --edges normal` over the workspace lists ONLY these two crates.
 [dependencies]
 fmw-noise = { path = "../fmw-noise" }
