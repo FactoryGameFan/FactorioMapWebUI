@@ -1,0 +1,54 @@
+# cargo-deny, the stand-in for pnpm's `minimumReleaseAge: 1440`.
+#
+# Cargo has no stable equivalent: `-Zmin-publish-age` (rust-lang/cargo#15973)
+# is unstable. So the policy is split. Nothing that SHIPS has a dependency at
+# all, which scripts/verify-rust.sh asserts with `cargo tree --edges normal`,
+# and that removes the question for every byte a user downloads. This file
+# governs whatever dev-dependencies arrive later.
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# A `path` dependency carries no version requirement, so cargo-deny reads
+# `fmw-noise = { path = "../fmw-noise" }` as a wildcard and the check above
+# fails on the workspace's own edge. Measured, not predicted: without this,
+# `cargo deny check` reports `error[wildcard]: found 1 wildcard dependency for
+# crate 'fmw-wasm'`. The exemption is narrow - it covers path dependencies of
+# crates marked `publish = false`, which both of ours are, and leaves a real
+# `serde = "*"` from crates.io denied.
+allow-wildcard-paths = true
+
+[licenses]
+version = 2
+# The app is AGPL-3.0-or-later, and so are both crates. These are the
+# permissive licences that can be combined with it without further thought;
+# anything else needs a decision recorded here rather than an entry added
+# quietly.
+#
+# The workspace's own crates are graded too, which is why each manifest carries
+# a `license` field - see the note in crates/fmw-noise/Cargo.toml.
+allow = [
+  "AGPL-3.0-or-later",
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+]
+# With zero dependencies, every permissive entry above is unmatched by
+# construction, and each one warns on every run. The list is pre-declared on
+# purpose, so the warning is noise rather than a finding; silencing it keeps a
+# real one visible. Revisit if the shipped dependency count ever leaves zero.
+unused-allowed-license = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

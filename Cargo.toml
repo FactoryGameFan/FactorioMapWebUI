@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/fmw-noise", "crates/fmw-wasm"]
+
+# Shared by both crates. `panic = "abort"` is not a size trick alone: an unwind
+# across the WASM boundary has no defined meaning, and expected errors are
+# returned as status codes rather than raised (see spec section 6.5).
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

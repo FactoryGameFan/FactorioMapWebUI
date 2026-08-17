@@ -1,0 +1,14 @@
+[package]
+name = "fmw-noise"
+version = "0.0.0"
+edition = "2021"
+publish = false
+# Matches package.json. Not decoration: `cargo deny check licenses` grades the
+# workspace's OWN crates as well as third-party ones, and a manifest with no
+# `license` field fails as `unlicensed`.
+license = "AGPL-3.0-or-later"
+
+# NO dependencies, and CI asserts it (scripts/verify-rust.sh). A noise kernel
+# needs none, and keeping it that way sidesteps the cargo supply-chain question
+# for everything that ships rather than managing it.
+[dependencies]

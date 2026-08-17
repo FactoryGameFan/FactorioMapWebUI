@@ -1,0 +1,17 @@
+# The counterpart to .node-version. A compiler change is a codegen change, and
+# codegen determines the bytes of the committed engine.wasm, so this pin is a
+# correctness control rather than a convenience.
+#
+# Measured 2026-08-16 (#218): this pin produces a BYTE-IDENTICAL module on
+# aarch64-apple-darwin and x86_64-unknown-linux-gnu. That result belongs to the
+# pin, so bumping this file means re-running the #218 probe, not assuming the
+# property carries over.
+#
+# Note rustup treats `1.97.1-<host>` and `stable-<host>` as separate installs
+# even at the same version, so the first cargo command after a fresh clone
+# downloads a toolchain even though `stable` is already 1.97.1.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"
