@@ -67,7 +67,7 @@ export default defineConfig({
     // 27 tests and zero annotations; on a 4-core GitHub runner (~3x slower than
     // a dev machine: 230s vs 71s for the same suite) its `view 'all' composites
     // all five overlays` case needs 9.8s and failed the very first CI run.
-    // https://github.com/wormeyman/FactorioMapWebUI/actions/runs/30512820959
+    // https://github.com/FactoryGameFan/FactorioMapWebUI/actions/runs/30512820959
     //
     // 30s is ~3x the slowest measured case, so it absorbs runner variance while
     // still failing a genuine hang in well under the job's 15-minute cap. It is

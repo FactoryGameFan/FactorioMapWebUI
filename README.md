@@ -1,6 +1,6 @@
 # Factorio Map WebUI
 
-[![verify](https://github.com/wormeyman/FactorioMapWebUI/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/wormeyman/FactorioMapWebUI/actions/workflows/verify.yml)
+[![verify](https://github.com/FactoryGameFan/FactorioMapWebUI/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/FactoryGameFan/FactorioMapWebUI/actions/workflows/verify.yml)
 
 A static SPA for authoring and exchanging Factorio 2.1.x map generation presets
 (exchange-string codec format `2.1.9.3`). The core editor has no backend -
@@ -136,7 +136,9 @@ test: `pnpm --filter @fmw/preview-container test:integration`.
 ### Deploy
 
 The app and preview service are already deployed (Cloudflare Pages +
-Workers/Containers on the `wormeyman` account; `pnpm run deploy` verifies,
+Workers/Containers on the `wormeyman` **Cloudflare** account - unrelated to the
+GitHub org, which moved to `FactoryGameFan` on 2026-08-17 and did not take the
+Cloudflare account with it; `pnpm run deploy` verifies,
 builds, and publishes the app). Both deploy paths are gated: `pnpm run deploy`
 runs `pnpm run verify` (`vp check` + `check:vue` + `vp test` + `preview:test`) first and
 aborts before `wrangler` if anything fails. The one-time setup, for reference, needs a Cloudflare account
