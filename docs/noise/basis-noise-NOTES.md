@@ -20,11 +20,14 @@ basis_noise(x, y) = SUM over the 4 cell corners of  (1 - d)^3 * (D . G[h(i,j)])
   a, b       = per-axis permutations of 0..255
 ```
 
-Reproduces the game to **max error 3.1e-7** over 512 independent points, at a
-different `input_scale` than the tables were measured at. For scale: the game's
-own `multioctave_noise{octaves=1}` and `basis_noise` disagree by ~2e-6 (its `pow`
-is documented as coming from the fastapprox library), so this is a closer match
-than Factorio is to itself.
+That formula is the ALGEBRA. It is not the arithmetic, and the difference is
+worth 2.6x - see "The arithmetic is part of the answer" below.
+
+Reproduces the game to **max error 1.192e-7** over 512 independent points, at a
+different `input_scale` than the tables were measured at, with **473 of those
+512 values bit-exact**. For scale: the game's own `multioctave_noise{octaves=1}`
+and `basis_noise` disagree by ~2e-6 (its `pow` is documented as coming from the
+fastapprox library), so this is a closer match than Factorio is to itself.
 
 The tables `a`, `b` and the gradient assignment are now derived **straight from
 the seed** (`basisNoiseTablesFromSeed`); see "The seeding" below.
@@ -62,8 +65,54 @@ lattice points where the game gives exactly 0.
 | gradient magnitude | direct measurement, 9216 lattice points | 4.19999919 +/- 1.4e-6 |
 | 256 uniform directions | angle spacing | exactly 360/256 = 1.40625 deg, std 0.0000 |
 | period 256 per axis | `G(k)` vs `G(k+256)` | 0.000e+00 (exact) |
-| full model | 512 independent points from tables alone | max err 3.1e-7, corr 1.0000000000 |
+| full model | 512 independent points from tables alone | max err 1.192e-7, 473/512 bit-exact |
 | seed -> tables | 9 seed pairs generated from seed alone vs the game | max err 2.8e-7 |
+
+## The arithmetic is part of the answer (#214, measured 2026-08-16)
+
+The algebra above was right for a year while the arithmetic was wrong, and the
+gap was invisible because every test compared against a tolerance. **Every
+value in both fixtures is exactly f32** (checked, not assumed), so a bit-exact
+port reproduces them exactly - which makes **exact match count** a far sharper
+instrument than any bound. Under it, the old shape scores 132/512.
+
+Four things were swept, 384 variants, against both fixtures:
+
+| what | old | now | evidence |
+| --- | --- | --- | --- |
+| precision | f64 throughout | **f32 after every operation** | see the table below |
+| falloff | `(1 - d) ** 3` | **`t * (t * t)`** | the game's two `fmul`s; `x*x*x` and `powf(3)` fold to different checksums over 4M points |
+| corner sum | left to right | **pairwise, corners sharing a `cornerY` first** | 473/512 against 406 left-to-right, 353 the other pairing, 345 diagonal |
+| gradient table | `Math.cos` at load, `* 4.2` at evaluation | **committed constants, magnitude folded in** | 473/512 against 208 |
+
+The gradient table is where most of it lives, and the winning construction is
+not the obvious one:
+
+| table construction | exact | worst |
+| --- | --- | --- |
+| f64 angle, f64 trig, `* 4.2`, narrow | 208/512 | 2.682e-7 |
+| f64 angle, narrowed trig, `* f32(4.2)` | 147/512 | 2.533e-7 |
+| f32 angle, narrowed trig, `* f32(4.2)` | 234/512 | 2.384e-7 |
+| **f32 angle, then trig and `* 4.2`, ONE narrowing** | **473/512** | **1.192e-7** |
+
+So the angle is f32 and everything after it rounds once. The residual is 18
+points at 1 ULP, 11 at 2 ULP and a short tail whose large ULP counts are
+near-zero cancellations - consistent with the game's table coming from the
+minimax polynomial in `Noise::Noise(bool)` rather than from libm. Extracting
+those coefficients is the remaining lead; it needs the capstone tooling in the
+method notes below, which is not in the repo.
+
+**What does NOT discriminate, so do not claim it:** `t * (t * t)` versus
+`(t * t) * t`, `dx*gx + dy*gy` versus `dy*gy + dx*gx`, and the order of the two
+terms in `d`. All eight combinations score identically on both fixtures.
+Narrowing the incoming `x`/`y` to f32 also changes nothing here (that is #191's
+question, and this measurement does not answer it).
+
+**Why the table is committed rather than derived at load:** #214 measured V8's
+`Math.cos`/`Math.sin` differing from libm in the last bit, so a load-time table
+depends on the engine, and the Rust port would derive a different one with
+libm - putting a last-bit disagreement under every planet on both sides.
+`scripts/gen-gradient-table.ts` regenerates it.
 
 ## The probing technique
 

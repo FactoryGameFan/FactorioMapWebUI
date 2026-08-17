@@ -151,12 +151,19 @@ describe("oracle fixture is genuine ground truth", () => {
   it("pure basisNoise reproduces the committed oracle-basis fixture to the noise floor", () => {
     const tables = basisNoiseTablesFromSeed(basisFixture.seed0, basisFixture.seed1);
     let worst = 0;
+    let exact = 0;
     for (const p of basisFixture.points) {
       const got = basisNoise(p.x * basisFixture.inputScale, p.y * basisFixture.inputScale, tables);
       worst = Math.max(worst, Math.abs(got - p.v));
+      if (Math.fround(got) === p.v) exact++;
     }
-    // ~2e-6 is the game's own fastapprox self-consistency floor.
-    expect(worst).toBeLessThan(2e-6);
+    // Measured 5.9605e-8 after #214 gave the kernel the game's own arithmetic.
+    // The bound was 2e-6 - the game's fastapprox self-consistency floor - which
+    // is 33x slack and passed throughout the period the kernel was wrong.
+    expect(worst).toBeLessThan(7e-8);
+    // 36 of 38 exactly, the other two 2 ULP out. This is the assertion that
+    // discriminates; see test/basisNoise.spec.ts for why a bound alone cannot.
+    expect(exact).toBe(36);
   });
 });
 
