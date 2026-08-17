@@ -46,41 +46,31 @@
 // is wrong - do not merge it, fix the age rule instead.
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  extends: [
-    "config:recommended",
-    // Pin every GitHub Action to a commit SHA rather than a moving tag, and keep
-    // the `# vX.Y.Z` comment beside it updated. .github/workflows/verify.yml is
-    // already written that way by hand; this makes it the rule for anything
-    // added later, so the choice cannot drift action-by-action.
-    "helpers:pinGitHubActionDigests",
-  ],
+  // The org preset supplies what used to be spelled out here: config:recommended,
+  // helpers:pinGitHubActionDigests (pin every GitHub Action to a commit SHA rather
+  // than a moving tag, keeping the `# vX.Y.Z` comment beside it updated - which is
+  // how .github/workflows/verify.yml is already written by hand), the
+  // America/Los_Angeles timezone, the "before 6am on monday" batch, automerge:false,
+  // prConcurrentLimit/prHourlyLimit, dependencyDashboard, osvVulnerabilityAlerts,
+  // the rule that security fixes skip the weekly window, and a "github actions"
+  // grouping.
+  // Source: https://github.com/FactoryGameFan/.github/blob/main/renovate-config.json
+  //
+  // THIS MATTERS GIVEN "Require config file", noted above: Renovate cannot read a
+  // preset it has no access to, so FactoryGameFan/.github must stay ticked in the
+  // app installation. A preset that fails to resolve reads as "no updates
+  // available", silently, which is the same failure mode as a broken config file.
+  extends: ["local>FactoryGameFan/.github:renovate-config"],
 
   // See the pnpm interaction above. This is a floor, not a preference.
   minimumReleaseAge: "3 days",
 
-  // The central invariant here is byte-exactness against captured fixtures, and
-  // a green CI run is evidence of consistency, not of a bump being *correct*
-  // (`pnpm run verify` does not exercise every dependency - see the js-beautify
-  // note in pnpm-workspace.yaml). Nothing merges unread.
-  automerge: false,
-
-  dependencyDashboard: true,
-
-  // Seattle. Without this the schedule below is UTC, i.e. "before 6am Monday"
-  // fires around midnight Sunday local - which reads as a bot that runs at
-  // random times.
-  timezone: "America/Los_Angeles",
-
-  // One weekly batch instead of a trickle. To pull a run forward without editing
-  // this, tick the "Check this box to trigger a request for Renovate to run
-  // again" checkbox on the dependency dashboard issue.
-  schedule: ["before 6am on monday"],
-
-  // Now that PRs actually arrive unattended, cap the burst. The first run after
-  // enabling the app sees every pending update at once; without a limit that is
-  // a dozen PRs in one morning, each triggering a ~4 minute CI run.
-  prConcurrentLimit: 3,
-  prHourlyLimit: 2,
+  // `automerge: false` now comes from the preset. The reason it must stay false
+  // HERE is repo-specific and so stays written down: the central invariant is
+  // byte-exactness against captured fixtures, and a green CI run is evidence of
+  // consistency, not of a bump being *correct* (`pnpm run verify` does not exercise
+  // every dependency - see the js-beautify note in pnpm-workspace.yaml). The one
+  // narrow exception is the digest rule in packageRules below.
 
   // Renovate's `lockFileMaintenance` is automated `pnpm up` for the lockfile, and
   // that is the one dependency operation this repo has measured as harmful:
@@ -91,8 +81,13 @@
   // Off by default; pinned off explicitly so it cannot get switched on as tidying.
   lockFileMaintenance: { enabled: false },
 
-  // Security fixes must not wait for the weekly window. Without this block a CVE
-  // fix could sit ~10 days: up to 3 for the age floor, then up to 7 for Monday.
+  // The preset already clears the weekly window for security PRs, so a CVE fix
+  // cannot sit up to 7 days waiting for Monday. What stays here is the AGE VALUE,
+  // which is derived from this repo's pnpm setup and belongs nowhere else.
+  //
+  // (`vulnerabilityAlerts` is a mergeable option, so setting `minimumReleaseAge`
+  // here KEEPS the preset's schedule override rather than replacing the block -
+  // verified against renovate's own config/utils.js, which the docs do not cover.)
   //
   // NOTE THE AGE VALUE, which is not zero and must not be. pnpm 11 refuses
   // anything younger than 24h without writing a `minimumReleaseAgeExclude:`
@@ -106,15 +101,11 @@
   // would then be pinned to a release pnpm refuses to install, which is the
   // opposite of what this whole block is for.
   vulnerabilityAlerts: {
-    schedule: [],
     minimumReleaseAge: "25 hours",
     prBodyNotes: [
       'Security update - this bypassed the weekly schedule deliberately. Still read it: `brace-expansion`\'s advisory carries a flat `<=5.0.7` range, so `pnpm audit` flags a version that already has the fix. "The audit is red" is not by itself a reason to take a bump here.',
     ],
   },
-
-  // GitHub's own advisories miss ecosystem-only reports; OSV catches more.
-  osvVulnerabilityAlerts: true,
 
   packageRules: [
     {
@@ -139,8 +130,19 @@
       // If branch protection is ever loosened - bypass actors added, `verify`
       // dropped, strict turned off - THIS RULE MUST GO WITH IT. It is not
       // independently safe.
+      //
+      // `groupName` IS LOAD-BEARING AND IS NOT COSMETIC. The org preset contributes
+      // a `{matchManagers: ["github-actions"], groupName: "github actions"}` rule
+      // ahead of this one, and it matches every github-actions update including
+      // these digests. Without a separate group name here, a digest re-pin and an
+      // action VERSION bump would land in one branch, and the automerge below would
+      // then be deciding the fate of a version bump nobody read - which is exactly
+      // the thing `automerge: false` exists to prevent. Naming a different group
+      // splits them back apart: version bumps go to "github actions", digests come
+      // here. Do not remove this line while the preset rule exists.
       matchManagers: ["github-actions"],
       matchUpdateTypes: ["digest", "pin", "pinDigest"],
+      groupName: "github action digest pins",
       automerge: true,
       automergeType: "pr",
       platformAutomerge: true,
