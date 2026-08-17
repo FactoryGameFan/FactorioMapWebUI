@@ -283,8 +283,19 @@ async function measure(
         id,
         seed0: ctx.seed0,
         planet: "fulgora",
-        // Never "all" - see this module's header.
-        view: "terrain",
+        // Never "all" - see this module's header. "landmask" rather than
+        // "terrain" because the only thing done with this image is
+        // `landMaskFromImage`, which collapses it to land-versus-ocean; the
+        // eight-way land argmax that "terrain" also runs is work whose answer
+        // is thrown away one line later.
+        //
+        // Worth 15.7% at 8 tiles/px and 13.8% at 2, measured over 40 real
+        // candidate windows - a trim, not a multiple, and that ceiling is
+        // structural: `chain.elevation` is 81% of a tile pixel (16.41 of 20.14
+        // us) and BOTH views pay it, because deciding "is this ocean" is that
+        // chain. Do not expect a bigger number by skipping more of the tile
+        // layer; there is only ~18% of it to skip.
+        view: "landmask",
         width: win.width,
         height: win.height,
         originX: win.originX,

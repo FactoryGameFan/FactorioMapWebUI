@@ -123,10 +123,15 @@ async function landTilesOf(r: IslandResult): Promise<Set<string>> {
 }
 
 describe("findIslands", () => {
-  it("only ever asks for view:'terrain'", async () => {
+  it("only ever asks for view:'landmask'", async () => {
     // The single most expensive mistake available here. `view: "all"` adds the
     // scrap overlay, whose roll is per TILE, so a coarse render pays the full
     // tile cost - measured at 112x. See the spec, section 2b.
+    //
+    // "landmask" rather than "terrain" since 2026-08-16: the mask this render
+    // feeds is land-versus-ocean, so the eight-way land argmax "terrain" runs
+    // is discarded work. `test/fulgoraLandMaskRender.spec.ts` pins that the two
+    // views produce byte-identical masks, which is what makes the swap safe.
     const seen: string[] = [];
     const spy = async (req: ElevationRenderRequest) => {
       seen.push(String(req.view));
@@ -140,7 +145,7 @@ describe("findIslands", () => {
       refineCount: CHEAP_REFINE_COUNT,
     });
     expect(seen.length).toBeGreaterThan(0);
-    expect([...new Set(seen)]).toEqual(["terrain"]);
+    expect([...new Set(seen)]).toEqual(["landmask"]);
   }, 300000);
 
   it("returns islands with a rectangle no larger than their land area", async () => {

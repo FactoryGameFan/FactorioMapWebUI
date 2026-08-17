@@ -231,14 +231,21 @@ export function makeFulgoraLandProbabilities(ctx: FulgoraCtx): (x: number, y: nu
  * the refuted rival explanations (a sub-tile centre-sampling offset, an
  * inflated probability formula).
  */
-function resolveFrom(
+/**
+ * The ocean half of {@link resolveFrom}: the winning ocean tile at a position,
+ * or `undefined` where the land argmax has to decide instead.
+ *
+ * Split out so the land-mask renderer can answer land-versus-ocean without
+ * evaluating the eight land formulas, while sharing ONE copy of this rule with
+ * the full resolver. Two copies would be the real hazard here - they would
+ * drift, and a land mask that disagreed with the terrain render would move
+ * every rectangle, area and ranking the island finder reports without failing
+ * anything obvious. `test/fulgoraLandMaskRender.spec.ts` pins that they agree.
+ */
+function oceanTileFrom(
   chain: FulgoraElevation,
-  landProbabilities: (x: number, y: number) => number[],
-): (x: number, y: number) => FulgoraTile {
-  // Not `memoXY`-wrapped, unlike every field below it: that helper is typed for
-  // numbers, and there is nothing to gain here anyway - every expensive read
-  // this function makes is already memoized inside the chain.
-  return (x: number, y: number): FulgoraTile => {
+): (x: number, y: number) => "deep" | "shallow" | undefined {
+  return (x: number, y: number): "deep" | "shallow" | undefined => {
     const e = chain.elevation(x, y);
     const mask = chain.oilMask(x, y);
     // `s`'s SIGN is what picks between the two shallow variants below
@@ -273,6 +280,36 @@ function resolveFrom(
     // probability of exactly 0 correctly falls through to the land argmax
     // below rather than taking this branch.
     if (bestOcean > 0) return bestDeep > bestShallow ? "deep" : "shallow";
+    return undefined;
+  };
+}
+
+/**
+ * Is this position OCEAN? The land-mask renderer's whole question.
+ *
+ * Costs an elevation-chain evaluation and nothing more - measured at radius
+ * 1024 over 40 real candidate windows, `chain.elevation` alone is 81% of a full
+ * tile pixel (16.41 of 20.14 us at 8 tiles/px), so skipping the land argmax is
+ * the remaining ~18% at most. Measured end to end through the renderer it is
+ * 15.7% at 8 tiles/px and 13.8% at 2.
+ */
+export function makeFulgoraOceanTestFrom(
+  stack: FulgoraStack,
+): (x: number, y: number) => "deep" | "shallow" | undefined {
+  return oceanTileFrom(stack.chain);
+}
+
+function resolveFrom(
+  chain: FulgoraElevation,
+  landProbabilities: (x: number, y: number) => number[],
+): (x: number, y: number) => FulgoraTile {
+  // Not `memoXY`-wrapped, unlike every field below it: that helper is typed for
+  // numbers, and there is nothing to gain here anyway - every expensive read
+  // this function makes is already memoized inside the chain.
+  const ocean = oceanTileFrom(chain);
+  return (x: number, y: number): FulgoraTile => {
+    const wet = ocean(x, y);
+    if (wet !== undefined) return wet;
 
     const probabilities = landProbabilities(x, y);
 
