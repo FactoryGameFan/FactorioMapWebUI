@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # The Rust half of `pnpm run verify`, and the same phases CI's `rust` job runs.
 #
-# Runs LAST in `verify`, after `vp test`: `verify` is already ~3m30s cold and a
-# cold cargo build should not sit in front of the phases that fail fastest.
+# Runs LAST in `verify`, after `vp test`, per issue #219 - on the reasoning that
+# a cold cargo build should not sit in front of the phases that fail fastest.
+# That premise turned out to be much smaller than assumed, and the numbers are
+# here rather than the assumption: three runs after `cargo clean` measure
+# 1.62 / 1.64 / 1.62s, and three warm runs measure 0.84 / 0.85 / 0.87s. Both
+# are under `vp check`'s 2.0s, so the ordering is nearly free either way and is
+# left where #219 put it rather than churned. On the CI runner the whole job is
+# 19s, of which this script is 2s and the pinned-toolchain sync is 10s.
+#
+# The cost that IS real is the FIRST run on a machine with no Rust: rustup
+# installs the pinned toolchain and its components before anything here runs.
+# `pnpm run verify` now needs a cargo, which it did not before.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

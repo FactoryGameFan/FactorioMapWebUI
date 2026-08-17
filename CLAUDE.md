@@ -240,6 +240,29 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
 - `pnpm run verify:shard` - bare `vp test`, for CI's sharded matrix. Takes a
   passthrough arg: `pnpm run verify:shard -- --shard=1/4`. The `--` is
   required.
+- `pnpm run verify:rust` - `scripts/verify-rust.sh`: `cargo fmt --check`,
+  `clippy -D warnings`, `cargo test`, the zero-shipped-dependencies assertion,
+  a byte comparison against the committed `src/noise/wasm/engine.wasm`, and
+  `cargo deny check`. This is the `rust` CI job. **Cheap, and that is measured
+  rather than assumed: 1.62 / 1.64 / 1.62s over three `cargo clean` runs and
+  0.84 / 0.85 / 0.87s warm** - both under `vp check`'s 2.0s, so its position
+  last in `verify` costs almost nothing.
+
+  Two things about it that are easy to get wrong:
+  - **It probes cargo-deny with `cargo deny --version`, never
+    `command -v cargo-deny`.** `cargo install` puts the binary in
+    `$CARGO_HOME/bin` and cargo finds its own subcommands there whether or not
+    that directory is on `PATH`, so `command -v` reported it missing on a
+    machine where `cargo deny check` ran fine - and the step skipped itself
+    while printing a green gate. Install it with
+    `cargo install cargo-deny --locked --version 0.20.2` (~4 minutes, it builds
+    from source; CI downloads a checksum-pinned release binary instead).
+  - **`cargo deny` grades the workspace's OWN crates, not only third-party
+    ones.** Both crates carry `license = "AGPL-3.0-or-later"` because a
+    manifest without it fails as `unlicensed`, and `allow-wildcard-paths` is on
+    because a `path` dependency has no version requirement and reads as a
+    wildcard. Neither is decoration; deleting either turns the gate red.
+
 - `pnpm run require:docker` - preflight that fails loudly when no container
   runtime is reachable, naming the start command for whichever one you have
   installed (`scripts/require-docker.ts`). `preview:dev` and `preview:deploy`
@@ -247,8 +270,13 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   `preview:test` or `verify` - those must keep passing on a runner with no
   Docker at all, which is what makes the CI workflow possible. Auto-start is
   opt-in behind `FMW_AUTO_START_DOCKER=1`.
-- `pnpm run verify` - `verify:lint` + `vp test` + `preview:test` in
-  one gate. **~3m30s cold on a dev machine** (measured 2026-08-15 at #207:
+- `pnpm run verify` - `verify:lint` + `vp test` + `preview:test` +
+  `verify:rust` in one gate. **It now needs a Rust toolchain**, which it did
+  not before #219 - `rust-toolchain.toml` pins 1.97.1 and rustup installs it on
+  the first cargo command, so a machine with no Rust pays that download once
+  before the gate can run at all. Nothing else about the gate changed: the
+  Rust phase adds ~1.6s cold. **~3m30s cold on a dev machine** (measured
+  2026-08-15 at #207:
   3m28s wall, 218 test files, 1,922 tests). On a runner it is no longer one job -
   see the CI section, which shards it. This line has been wrong twice and in the
   same direction, so treat the number as perishable. It claimed `~9.5s` for a
@@ -343,8 +371,29 @@ Four jobs now run in parallel:
 | ----------------- | ------------------------------------------------------------------ |
 | `static`          | `pnpm run verify:static` - `vp check`, `check:vue`, `preview:test` |
 | `tests (1..4, 4)` | `pnpm run verify:shard -- --shard=N/4` - the app suite             |
+| `rust`            | `scripts/verify-rust.sh` - **19s**, added #219                     |
 | `verify`          | the required check: asserts every job above succeeded              |
 | `build`           | `pnpm vp build`, unchanged (issue #61)                             |
+
+**`rust` is NOT a required status check, and its absence from ruleset `EJ` is
+deliberate rather than an oversight to fix.** `verify` asserts
+`needs.rust.result`, so a red `rust` job turns the required check red anyway -
+with no ruleset PUT and no two-step. Every required NAME is a permanent
+liability, since renaming or removing one blocks every PR forever on a check
+that cannot run, so the aggregator absorbing new phases is the cheaper shape.
+Add future phases the same way.
+
+Two more things about that job, both measured on its first run (#230):
+
+- **It is 19s**, of which `scripts/verify-rust.sh` is 2s, the pinned-toolchain
+  sync is 10s and cargo-deny is 1s. It is the cheapest job in the workflow.
+- **It runs `bash scripts/verify-rust.sh` directly**, the one deviation from
+  "the YAML names only package.json scripts". That does not reopen the drift
+  the rule guards against, because `verify:rust` _is_ that one line, so the
+  script file stays the single definition. Going through pnpm would add
+  action-setup, setup-node and a full install (~28s) to a job that needs no
+  JavaScript. If `verify:rust` ever grows a second command, the job must become
+  `pnpm run verify:rust` with the setup steps restored.
 
 Measured result: **9m03s -> 4m36s** at the time (2026-08-03, N=3, 171 spec
 files). Do not read that as the current number: the suite has since grown to 201
@@ -998,6 +1047,41 @@ conventions live here:
 Field labels carry in-game tooltip text via `FInfo` (an `info` prop on
 `EnemyValueRow`, an `info:` entry in `controlCatalog.ts` for the enemy-base
 autoplace rows).
+
+### The Rust/WASM noise engine (`crates/`) - phase 0 only so far
+
+A Cargo workspace at the repository root, landed empty on purpose (#219) so the
+gate was proven green on `main` before any port code depended on it. Two crates:
+`fmw-noise` is the engine library and `fmw-wasm` is a `cdylib` holding only the
+boundary. The design record is
+`docs/superpowers/specs/2026-08-16-rust-wasm-noise-engine-design.md`.
+
+Today it holds `fnv1a64` and `fold_f64` - the tier-2 parity checksum, not a
+placeholder. **`fold_f64` folds RAW BITS and must stay order-sensitive**: an
+XOR fold is blind to order and cancels pairs, so swapping two points or
+breaking two identically would leave it unchanged. `the_fold_is_order_sensitive`
+is what makes that load-bearing rather than a claim in a comment, and it was
+watched failing against a planted XOR fold.
+
+- **`src/noise/wasm/engine.wasm` is a COMMITTED artifact**, 599 bytes, sha256
+  `3b2752f6...`. `scripts/build-wasm.sh` produces it; `verify:rust` rebuilds and
+  compares bytes rather than regenerating. That is what keeps `vp build` free of
+  any non-JS step and lets `deploy:app` run on a machine with no Rust at all.
+- **Byte identity across machines is measured, not hoped for** (#218): the same
+  source, profile and pinned toolchain give the same 599 bytes and the same
+  sha256 on macOS/aarch64 and on an ubuntu x86_64 runner. That is why the gate
+  can use `cmp` instead of rebuild-and-retest.
+- **The determinism rules are what protect that**, and each is written where it
+  is enforced: no `mul_add` or fast-math, `clippy::suboptimal_flops` explicitly
+  allowed so turning `nursery` on later cannot push the port toward FMA, no
+  `target-cpu=native`, `simd128` off (measured at 1.27x on a gather-bound
+  kernel - it would change the binary for no gain), and `relaxed_simd` never,
+  since its fused multiply-add is non-deterministic across engines by design.
+- **A WASM `u64` arrives in JavaScript as a SIGNED BigInt.** `fnv1a64("")` is
+  `0xcbf29ce484222325` and JavaScript reads `-0x340d631b7bdddcdb`, its two's
+  complement. No error is raised - the number is simply wrong in a way that
+  looks like a broken checksum. Every u64 crossing needs
+  `BigInt.asUintN(64, x)`; `test/wasmEngine.spec.ts` shows the shape.
 
 ### Preview service (`preview-service/`)
 
