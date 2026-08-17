@@ -57,3 +57,7 @@ lerna-debug.log*
 
 # superpowers SDD scratch (ledgers, briefs, review packages)
 .superpowers/
+
+# Rust build output. The one artifact that IS committed is
+# src/noise/wasm/engine.wasm, written by scripts/build-wasm.sh.
+target/

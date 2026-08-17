@@ -1,0 +1,10 @@
+[package]
+name = "fmw-noise"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# NO dependencies, and CI asserts it (scripts/verify-rust.sh). A noise kernel
+# needs none, and keeping it that way sidesteps the cargo supply-chain question
+# for everything that ships rather than managing it.
+[dependencies]
