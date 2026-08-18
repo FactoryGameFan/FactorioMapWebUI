@@ -157,13 +157,18 @@ describe("oracle fixture is genuine ground truth", () => {
       worst = Math.max(worst, Math.abs(got - p.v));
       if (Math.fround(got) === p.v) exact++;
     }
-    // Measured 5.9605e-8 after #214 gave the kernel the game's own arithmetic.
-    // The bound was 2e-6 - the game's fastapprox self-consistency floor - which
-    // is 33x slack and passed throughout the period the kernel was wrong.
-    expect(worst).toBeLessThan(7e-8);
-    // 36 of 38 exactly, the other two 2 ULP out. This is the assertion that
+    // Measured EXACTLY 0 since 2026-08-18 (#234), when the gradient table
+    // stopped being derived from a formula and started being recovered from the
+    // game. It was 5.9605e-8 after #214 gave the kernel the game's own
+    // arithmetic, and the bound before that was 2e-6 - the game's fastapprox
+    // self-consistency floor - which is 33x slack and passed throughout the
+    // period the kernel was wrong.
+    expect(worst).toBe(0);
+    // All 38 exactly, up from 36. The other two were 2 ULP out, and both were
+    // the formula table rather than our arithmetic - they went away with the
+    // table and the kernel did not change. This is the assertion that
     // discriminates; see test/basisNoise.spec.ts for why a bound alone cannot.
-    expect(exact).toBe(36);
+    expect(exact).toBe(38);
   });
 });
 

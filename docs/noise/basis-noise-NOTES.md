@@ -23,11 +23,19 @@ basis_noise(x, y) = SUM over the 4 cell corners of  (1 - d)^3 * (D . G[h(i,j)])
 That formula is the ALGEBRA. It is not the arithmetic, and the difference is
 worth 2.6x - see "The arithmetic is part of the answer" below.
 
-Reproduces the game to **max error 1.192e-7** over 512 independent points, at a
-different `input_scale` than the tables were measured at, with **473 of those
-512 values bit-exact**. For scale: the game's own `multioctave_noise{octaves=1}`
-and `basis_noise` disagree by ~2e-6 (its `pow` is documented as coming from the
-fastapprox library), so this is a closer match than Factorio is to itself.
+Reproduces the game **exactly** over 512 independent points, at a different
+`input_scale` than the tables were measured at: **512 of 512 bit-exact, max
+error 0**, since 2026-08-18. It was 473 of 512 at max error 1.192e-7 until the
+gradient table stopped being derived from a formula and was recovered from the
+game instead (#234, and "Recovering the gradient table" below). The kernel did
+not change; the 39 misses were the table. The same change took
+`oracle-basis.seed123456.json` from 36 of 38 to 38 of 38 and the multioctave
+fixture from 231 of 266 to 266 of 266.
+
+For scale: the game's own `multioctave_noise{octaves=1}` and `basis_noise`
+disagree by ~2e-6 (its `pow` is documented as coming from the fastapprox
+library), so this now matches the game more closely than the game matches
+itself.
 
 The tables `a`, `b` and the gradient assignment are now derived **straight from
 the seed** (`basisNoiseTablesFromSeed`); see "The seeding" below.
@@ -114,19 +122,102 @@ depends on the engine, and the Rust port would derive a different one with
 libm - putting a last-bit disagreement under every planet on both sides.
 `scripts/gen-gradient-table.ts` regenerates it.
 
+## Recovering the gradient table (#234, measured 2026-08-18)
+
+The table is no longer a formula. `src/noise/basisGradientTable.ts` is generated
+from `test/fixtures/basis-gradient-table.json`, which is inverted out of a
+capture of the running game. That took the fixtures from 473/512, 36/38 and
+231/266 exact to **512/512, 38/38 and 266/266, all at max error 0**.
+
+### How
+
+`scripts/probes/basis-gradient/` is a `create`-mode probe run through
+[factorio-oracle](https://github.com/FactoryGameFan/factorio-oracle). It
+registers `basis_noise` at `input_scale = 1` - so the noise coordinate IS the
+world coordinate - routes `elevation` at it, and samples one f32 step off the
+lattice along each axis. `scripts/recover-gradient-table.ts` then inverts it.
+
+Three properties of the sampling grid matter, and each is a fact rather than a
+preference:
+
+- **A single row already covers every slot.** `a` and `sigma` are permutations,
+  so one row of 256 `I` values touches all 256 gradient slots exactly once.
+  16 rows give 16 independent samples per slot, which is what lets disagreement
+  between them fail instead of averaging away.
+- **A 17th row is sampled and never solved from.** Along x the far corner is
+  `(i+1) mod 256`, and a whole row covers all 256 `i`, so that wrap is the
+  game's own. Along y the far corner is row `j+1`, whose real wrap is mod 256
+  rows, not mod 16. Wrapping it to row 0 instead poisons 256 of 4,096 equations
+  and drags the recovered y table from 4,092 reproduced samples down to **148**.
+  That was caught by a control, not by reading the code.
+- **The inversion runs in three stages:** label each lattice point's slot from
+  `atan2` (one corner is plenty for four digits, and it needs no seeding
+  tables), then subtract the far corner's term and iterate to a fixed point in
+  two rounds, then try each slot's f32 neighbours and keep whichever reproduces
+  the most captured samples. Seeded from zeros, so no existing table is an
+  input, and scored only against the probe's own samples.
+
+The recovery deliberately imports nothing from `src/`. It produces the table
+`basisGradientTable.ts` is generated from, so depending on that module would be
+circular, and labelling slots by angle rather than by our own seeding
+reimplementation is what makes the cross-check below a real control.
+
+### The controls, and one that was malformed
+
+| control | result |
+| --- | --- |
+| Each slot recovered from 16 independent lattice points | 4,086/4,096 x and 4,092/4,096 y samples reproduced |
+| On-lattice values must be exactly 0 | 16/16 |
+| Recovered magnitude must be the measured 4.2 | worst error 2.470e-7 |
+| Two Factorio versions must agree | 2.0.77 and 2.1.14 give **byte-identical** captures and tables |
+| Gauge equivalence with the fixture's own `a`/`b`/`sigma` | 65,536/65,536 lattice cells |
+
+The gauge control failed at first and looked like a defect in the recovery. It
+was the control that was wrong: `basis-noise.seed123456.json` stores a canonical
+gauge, its `a` starting `0,1,2,4,8,16,32,15`, while `basisNoiseTablesFromSeed`
+returns the game's own tables. Both produce identical noise, so equality was
+never the right test - equivalence is.
+
+### The limit, priced
+
+Four slots are near zero and cannot be pinned by probing at all. Their ULP is
+3.6e-15 and the game returns f32, so the information is not in the output at any
+geometry. It costs nothing: perturbing them by 1.0e-9, which is 280x the actual
+residual, changes **0 of the 512** values in `basis-noise.seed123456.json`. A
+measured limit, not an open question.
+
+### Re-running it
+
+```bash
+factorio-oracle run --probe scripts/probes/basis-gradient/probe.json --work-dir /tmp/bg
+node scripts/recover-gradient-table.ts /tmp/bg/write/script-output/oracle-dump.json \
+  test/fixtures/basis-gradient-table.json
+node scripts/gen-gradient-table.ts
+```
+
+The probe must write `oracle-dump.json`; that name is factorio-oracle's contract.
+`test/basisGradientTable.spec.ts` scores the old formula through the real kernel,
+so the 473-versus-512 comparison stays reproducible rather than a claim here.
+
 ## The probing technique
 
 The trick that made this tractable: **near a lattice point every other corner's
-falloff vanishes**, so
+falloff nearly vanishes**, so
 
 ```
-value(c + eps*u) = eps * (u . G[c])   + O(eps^3)
+value(c + eps*u) ~= eps * (u . G[c])   + O(eps^3)
 ```
 
 which reads gradients straight out of the game, one lattice point at a time. It
 works for *any* candidate falloff, since every candidate has `falloff(0) = 1` -
 so gradients can be measured **before** knowing the kernel, and the kernel then
 solved with gradients held fixed. Two unknowns, separated.
+
+**"Nearly" is load-bearing, and this used to say "vanishes".** It does not
+vanish. At `eps = 1/256` the opposite corner still contributes 1.2e-4 of the
+near term, which is 1,014 f32 epsilons - fine for reading a direction index to
+four digits, fatal for reading a gradient to the last bit. See "Recovering the
+gradient table" for the correction and what it cost.
 
 Three traps, all of which cost a run:
 
@@ -247,8 +338,22 @@ harness:
 coord. Near lattice point `(I,J)`, `value(I+eps, J) ~= C * cos(2*pi*K/256)` and
 `value(I, J+eps) ~= C * sin(2*pi*K/256)`, so `K(I,J) =
 round(atan2(vy,vx)/(2*pi)*256) mod 256` is the physical direction index. `eps =
-1/256` is exact in f32 for `I,J <= 255` and isolates the `(I,J)` corner. This is
-denser and stricter than the float field, and gauge-free.
+1/256` is exact in f32 for `I,J <= 255`. This is denser and stricter than the
+float field, and gauge-free.
+
+> **Correction, 2026-08-18.** This paragraph used to say that `eps = 1/256`
+> "isolates the `(I,J)` corner". It does not, and no offset can. `d` in the
+> kernel is the SQUARED distance, so the corner at `(1,0)` sits at `d = 0.9922`,
+> inside the falloff's support, and contributes about 1.2e-4 of the near term -
+> 1,014 times f32 epsilon. Leaving one corner live would need `fy^2 > fx` and
+> `fx^2 > fy` at once, which forces `fy > 1`; a scan of the unit cell agrees
+> that every interior point has two or more live corners.
+>
+> The `~=` above was honest, and for its own purpose it is fine: `K` needs about
+> four digits and the one-corner form gives them. Reading it as an exact
+> inversion is what breaks. A one-corner inversion recovers **2 of 256** gradient
+> slots while returning all 512 numbers at plausible magnitudes - it does not
+> fail, it just answers wrongly. See "Recovering the gradient table".
 
 **Which-seed GF(2) test** (`which_seed.py`). For each grid recover the
 XOR-difference vectors `alpha(I) = L(a[I]^a[0])`, `beta(J) = L(b[J]^b[0])` via a

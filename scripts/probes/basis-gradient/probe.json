@@ -1,0 +1,17 @@
+{
+  "mode": "create",
+  "mod": {
+    "name": "basis_gradient_probe",
+    "version": "0.0.1",
+    "dependencies": ["base"],
+    "control_lua_file": "scripts/probes/basis-gradient/control.lua",
+    "data_lua": "-- Registers the noise expression the probe samples.\n--\n-- input_scale = 1 is the whole point: it makes the noise coordinate equal the\n-- world coordinate, so a sample at (I + 1/256, J) sits a known tiny distance\n-- from the lattice point (I,J) and the falloff is computable in closed form.\n-- The existing oracle-basis fixture used 0.125, which does not have that\n-- property.\ndata:extend({\n  {\n    type = \"noise-expression\",\n    name = \"probe_basis\",\n    expression = \"basis_noise{x = x, y = y, seed0 = 123456, seed1 = 0, input_scale = 1, output_scale = 1}\",\n  },\n})\n"
+  },
+  "seed": 123456,
+  "map_gen_settings": {
+    "property_expression_names": {
+      "elevation": "probe_basis"
+    }
+  },
+  "timeout_seconds": 300
+}
