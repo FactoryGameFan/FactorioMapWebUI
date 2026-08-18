@@ -11,7 +11,7 @@
     "@cloudflare/containers": "^0.3.7"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.20.0",
+    "@cloudflare/vitest-pool-workers": "^0.21.0",
     "vitest": "^4.1.10",
     "wrangler": "^4.115.0"
   }
