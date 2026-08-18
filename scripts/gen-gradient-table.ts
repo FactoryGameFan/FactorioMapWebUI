@@ -58,8 +58,10 @@ const f = Math.fround;
 /**
  * What the formula produces. Kept for the comparison above, never emitted.
  *
- * `scripts/compare-gradient-table.ts` scores this against the measured table so
- * the 473-versus-512 claim stays reproducible rather than a number in a comment.
+ * `test/basisGradientTable.spec.ts` runs the real kernel against this table and
+ * scores it, so the 473-versus-512 claim stays reproducible rather than a number
+ * in a comment. That file, not a script - it needs `vi.mock`, which is hoisted
+ * and file-scoped, so the swap cannot be confined to one test.
  */
 export function formulaTable(): { gx: number[]; gy: number[] } {
   /** The f32 angle for slot `h`. Narrowing HERE is what the sweep selected. */

@@ -1,3 +1,11 @@
+-- READ-ONLY COPY. The live text is the inline `data_lua` string in probe.json.
+--
+-- factorio-oracle reads `control_lua` OR `control_lua_file`, but `data_lua` is
+-- inline ONLY - there is no `data_lua_file` (src/run.rs:39-139, checked
+-- 2026-08-18). So editing this file changes nothing about what the probe runs.
+-- It exists because a 14-line Lua program embedded in a JSON string is not
+-- reviewable. Change probe.json first, then mirror it here.
+--
 -- Registers the noise expression the probe samples.
 --
 -- input_scale = 1 is the whole point: it makes the noise coordinate equal the
