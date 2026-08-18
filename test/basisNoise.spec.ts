@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/basis-noise.seed123456.json";
+import table from "./fixtures/basis-gradient-table.json";
 import { GRADIENT_X, GRADIENT_Y } from "../src/noise/basisGradientTable";
 import { basisNoise, type BasisNoiseTables } from "../src/noise/basisNoise";
 
-// Ground truth captured from Factorio 2.1.11 via calculate_tile_properties.
+// Ground truth captured from Factorio 2.1.11 via calculate_tile_properties, and
+// re-verified bit-for-bit on 2.1.12 (see PROVENANCE.json).
 // See docs/noise/basis-noise-NOTES.md for how the tables were recovered.
 const tables: BasisNoiseTables = {
   sigma: fixture.sigma,
@@ -18,31 +20,43 @@ describe("basisNoise", () => {
       const got = basisNoise(p.x * fixture.inputScale, p.y * fixture.inputScale, tables);
       worst = Math.max(worst, Math.abs(got - p.v));
     }
-    // Measured 1.1921e-7 (#214). The old bound here was 1e-5, which is 84x
-    // slack - it passed the whole time the kernel was evaluating in f64 with
+    // Measured EXACTLY 0 since 2026-08-18, when the gradient table stopped
+    // being derived from a formula and started being recovered from the game
+    // (#234). It was 1.1921e-7 before that (#214), and 1e-5 before THAT - 84x
+    // slack that passed the whole time the kernel was evaluating in f64 with
     // the wrong falloff and the wrong summation order, which is exactly the
     // defect a loose bound cannot see.
-    expect(worst).toBeLessThan(1.3e-7);
+    //
+    // Zero is not a bound at all any more, which is the point: the sharp test
+    // below is now the only one carrying weight, and this one is kept because
+    // a regression would show up here as a number rather than as a count.
+    expect(worst).toBe(0);
   });
 
-  it("reproduces 473 of those 512 values EXACTLY, bit for bit", () => {
+  it("reproduces ALL 512 of those values EXACTLY, bit for bit", () => {
     // The sharp instrument, and the reason the defect above survived a year of
     // green tests. Every `v` in this fixture is exactly f32 (asserted below),
     // so a bit-exact port reproduces it exactly and a tolerance cannot tell
     // "very close" from "identical". Under an error bound the old f64 kernel
     // looked fine; under this one it scores 132.
     //
-    // Not a bound to widen. A drop means the kernel's arithmetic changed, and
-    // the fix is to find out why, not to lower the number. The 39 that miss
-    // are 18 at 1 ULP, 11 at 2 ULP and a tail of near-zero cancellations; they
-    // are the game's minimax gradient table, not our arithmetic.
+    // 473 until 2026-08-18. The 39 that missed were read as "the game's minimax
+    // gradient table, not our arithmetic", and that reading was right: the 39
+    // went away when the table was recovered from the game instead of derived
+    // from `f32(cos(f32(2*pi*h/256)) * 4.2)`, which differs in 28 of 256 slots
+    // (#234). The kernel did not change.
+    //
+    // Not a number to lower. It is now the whole fixture, so any drop at all
+    // means the arithmetic or the table changed, and the fix is to find out
+    // which. `basisGradientTable.spec.ts` scores the old formula so the
+    // 473-versus-512 comparison stays reproducible rather than a claim here.
     let exact = 0;
     for (const p of fixture.points) {
       expect(Math.fround(p.v)).toBe(p.v);
       const got = basisNoise(p.x * fixture.inputScale, p.y * fixture.inputScale, tables);
       if (Math.fround(got) === p.v) exact++;
     }
-    expect(exact).toBe(473);
+    expect(exact).toBe(512);
   });
 
   it("returns an f32-representable value, because the kernel is f32 throughout", () => {
@@ -74,26 +88,39 @@ describe("basisNoise", () => {
     }
   });
 
-  it("the committed gradient table still matches the formula that generated it", () => {
+  it("the committed gradient table still matches the capture it came from", () => {
     // scripts/gen-gradient-table.ts is the only thing allowed to write
     // src/noise/basisGradientTable.ts, and nothing else re-derives it at load.
     // Without this, a hand-edit or a drifted generator is silent: the fixture
     // scores above would sag by a few points and look like noise.
     //
-    // This recomputes with `Math.cos`, so it is engine-sensitive by
-    // construction - which is the POINT of committing the table, not a flaw in
-    // the test. If it ever fails on a new runtime with the file untouched,
-    // that runtime's trig differs from the one the constants were built on,
-    // and the constants are what ship. Do not "fix" it by regenerating on the
-    // new engine without reading #214 first.
-    const f = Math.fround;
+    // Until 2026-08-18 this recomputed the table with `Math.cos` and so was
+    // engine-sensitive by construction - a known cost of committing constants
+    // derived from trig (#214). The reference is now the measured JSON, so the
+    // check no longer depends on the runtime's libm at all. That is a strict
+    // improvement, and it is why #214's warning is gone rather than moved.
+    for (let h = 0; h < 256; h++) {
+      expect(GRADIENT_X[h]).toBe(Math.fround(table.gradientX[h]));
+      expect(GRADIENT_Y[h]).toBe(Math.fround(table.gradientY[h]));
+    }
+  });
+
+  it("the measured table is 256 f32 slots, from the seed the fixture uses", () => {
+    // Guards the fixture itself rather than the generated file. Every value the
+    // generator emits must already be f32, or the literals it writes would
+    // round and the shipped table would not be the measured one.
+    expect(table.gradientX.length).toBe(256);
+    expect(table.gradientY.length).toBe(256);
     expect(GRADIENT_X.length).toBe(256);
     expect(GRADIENT_Y.length).toBe(256);
-    for (let h = 0; h < 256; h++) {
-      const angle = f((2 * Math.PI * h) / 256);
-      expect(GRADIENT_X[h]).toBe(f(Math.cos(angle) * 4.2));
-      expect(GRADIENT_Y[h]).toBe(f(Math.sin(angle) * 4.2));
+    for (const v of [...table.gradientX, ...table.gradientY]) {
+      expect(Math.fround(v)).toBe(v);
     }
+    // The recovery ran against the same seed pair the fixture was captured
+    // with, which is what makes scoring one against the other meaningful.
+    expect(table.seed0).toBe(fixture.seed);
+    expect(table.seed1).toBe(0);
+    expect(table.gradientX.length).toBe(fixture.gradientDirections);
   });
 
   it("every gradient has the measured 4.2 magnitude", () => {

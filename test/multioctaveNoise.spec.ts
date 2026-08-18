@@ -68,9 +68,14 @@ describe("multioctaveNoise reproduces the game", () => {
 
   it("reproduces most of the fixture bit-exactly, not merely within tolerance", () => {
     // #162 exists because almost nothing here compares f32-exact, which is how
-    // a real bug stayed green for a year. 231 of 266 now match bit for bit.
-    // `toBeGreaterThanOrEqual`, not `toBe`: a rise is an improvement and the
-    // number should be raised to match, but it must never fall.
+    // a real bug stayed green for a year. ALL 266 now match bit for bit, up
+    // from 231 on 2026-08-18 when the gradient table was recovered from the
+    // game instead of derived from a formula (#234). The kernel did not change.
+    //
+    // `toBe`, not `toBeGreaterThanOrEqual`: the standing instruction on this
+    // number was to raise it whenever it rose and never let it fall, and it has
+    // now reached the whole fixture, so there is nothing left to rise to. Any
+    // movement at all is a regression.
     let exact = 0;
     let n = 0;
     for (const c of fixture.cases) {
@@ -82,7 +87,7 @@ describe("multioctaveNoise reproduces the game", () => {
       }
     }
     expect(n).toBe(266);
-    expect(exact).toBeGreaterThanOrEqual(231);
+    expect(exact).toBe(266);
   });
 
   it("agrees with the prebuilt-closure form bit for bit", () => {
