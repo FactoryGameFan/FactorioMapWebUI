@@ -125,8 +125,8 @@ Prefer the game as an oracle over byte-diffing when settling a codec question.
 
 ## Asking the running game - factorio-oracle
 
-The two references above say what the game *ships*. When a question needs what
-the game *computes*, run it.
+The two references above say what the game _ships_. When a question needs what
+the game _computes_, run it.
 
 [`factorio-oracle`](https://github.com/FactoryGameFan/factorio-oracle) is a
 shared Rust CLI that owns discovery, mod scaffolding, launching and reading
@@ -169,11 +169,17 @@ Three things it establishes:
   reports failure anyway.
 - **`error("DUMPED-OK")` makes Factorio exit non-zero, and that is success.**
   The tool keys `create` off the dump appearing, not off the exit code.
-- **Run it against two versions when you can.** `--factorio
-  ~/GitHub/factorio-oracle/installs/factorio-2.0.77.app` names a 2.0.77 install
-  that sits outside every discovery path on purpose. The gradient table came back
-  byte-identical from 2.0.77 and 2.1.14, which is how we know it is a constant of
-  the engine rather than of a version.
+- **Run it against two versions when you can.** A second install is named with
+  `--factorio`, and the 2.0.77 one sits outside every discovery path on purpose,
+  so a bare run finds only the Steam 2.1.14:
+
+  ```bash
+  ~/.cargo/bin/factorio-oracle run --probe <probe.json> --work-dir /tmp/w \
+    --factorio ~/GitHub/factorio-oracle/installs/factorio-2.0.77.app
+  ```
+
+  The gradient table came back byte-identical from 2.0.77 and 2.1.14, which is
+  how we know it is a constant of the engine rather than of a version.
 
 ### Where the probe-writing knowledge lives
 
