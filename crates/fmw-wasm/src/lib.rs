@@ -4,7 +4,10 @@
 //! whole loading path works - compile the module, instantiate it, write into
 //! linear memory, read a result back - before any noise math depends on it.
 
-use fmw_noise::{basis_noise, checksum};
+use fmw_noise::{
+    basis_noise, checksum, multioctave_noise, quick_multioctave_noise,
+    variable_persistence_multioctave_noise,
+};
 
 /// A fixed scratch region the caller writes into.
 ///
@@ -86,6 +89,136 @@ pub extern "C" fn checksum_basis_noise(
         for i in 0..n {
             let x = x0 + f64::from(i) * step;
             acc = checksum::fold_f64(acc, f64::from(basis_noise::basis_noise(x, y, &tables)));
+        }
+    }
+    acc
+}
+
+/// Tier 2 for `multioctave_noise`: fold `n * n` results into one checksum.
+///
+/// Same contract as [`checksum_basis_noise`] - rows outer, order-sensitive
+/// fold, strict bit equality rather than a tolerance, and the same signed-BigInt
+/// caveat. And the same limit: it detects divergence between the two ports, it
+/// does not establish correctness. Correctness is tier 1.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn checksum_multioctave_noise(
+    seed0: u32,
+    seed1: u32,
+    octaves: f64,
+    persistence: f64,
+    input_scale: f64,
+    output_scale: f64,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    n: u32,
+) -> u64 {
+    let params = multioctave_noise::MultioctaveParams {
+        seed0,
+        seed1,
+        octaves,
+        persistence,
+        input_scale,
+        output_scale,
+    };
+    let tables = basis_noise::tables_from_seed(seed0, seed1);
+    let terms = multioctave_noise::octave_terms(&params);
+    let mut acc = 0u64;
+    for j in 0..n {
+        let y = y0 + f64::from(j) * step;
+        for i in 0..n {
+            let x = x0 + f64::from(i) * step;
+            let v = multioctave_noise::sum_octaves(x, y, &terms, &tables);
+            acc = checksum::fold_f64(acc, f64::from(v));
+        }
+    }
+    acc
+}
+
+/// Tier 2 for `variable_persistence_multioctave_noise`.
+///
+/// `persistence` is a single value per call rather than per point. The real op
+/// takes a spatially varying persistence, and computing one here would put
+/// arithmetic that is NOT the op under test on both sides of the comparison,
+/// where a difference would read as an op divergence. The per-tile path is
+/// graded by tier 1 instead, which feeds the fixture's captured
+/// `persistenceField`; the spec calls this with several values.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn checksum_variable_persistence(
+    seed0: u32,
+    seed1: u32,
+    octaves: u32,
+    input_scale: f64,
+    output_scale: f64,
+    offset_x: f64,
+    persistence: f32,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    n: u32,
+) -> u64 {
+    let params = variable_persistence_multioctave_noise::VariablePersistenceParams {
+        seed0,
+        seed1,
+        octaves,
+        input_scale,
+        output_scale,
+        offset_x,
+    };
+    let tables = basis_noise::tables_from_seed(seed0, seed1);
+    let terms = variable_persistence_multioctave_noise::terms(&params);
+    let mut acc = 0u64;
+    for j in 0..n {
+        let y = y0 + f64::from(j) * step;
+        for i in 0..n {
+            let x = x0 + f64::from(i) * step;
+            let v =
+                variable_persistence_multioctave_noise::eval(x, y, persistence, &terms, &tables);
+            acc = checksum::fold_f64(acc, f64::from(v));
+        }
+    }
+    acc
+}
+
+/// Tier 2 for `quick_multioctave_noise`.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn checksum_quick_multioctave(
+    seed0: u32,
+    seed1: u32,
+    octaves: u32,
+    input_scale: f64,
+    output_scale: f64,
+    oosm: f64,
+    oism: f64,
+    offset_x: f64,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    n: u32,
+) -> u64 {
+    let params = quick_multioctave_noise::QuickMultioctaveParams {
+        seed0,
+        seed1,
+        octaves,
+        input_scale,
+        output_scale,
+        octave_output_scale_multiplier: oosm,
+        octave_input_scale_multiplier: oism,
+        offset_x,
+    };
+    let terms = quick_multioctave_noise::octave_terms(&params);
+    let mut acc = 0u64;
+    for j in 0..n {
+        let y = y0 + f64::from(j) * step;
+        for i in 0..n {
+            let x = x0 + f64::from(i) * step;
+            acc = checksum::fold_f64(
+                acc,
+                f64::from(quick_multioctave_noise::sum_octaves(x, y, &terms)),
+            );
         }
     }
     acc
