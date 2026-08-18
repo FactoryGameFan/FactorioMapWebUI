@@ -452,6 +452,14 @@
     "oracle-vulcanus-cliff-removal-probability.seed123456.json": {
       "factorioVersion": "2.1.14",
       "evidence": "captured 2026-08-14 by test/oracle/capture.ts vulcanus-cliff-removal-probability against the installed binary, which pnpm refs:sync --check reported binary/factorio-data/lua-api all in sync at 2.1.14 at capture time; each arm also reads ResourceEntityPrototype::cliff_removal_probability back off the running game, so the version the arm ran under is recorded inside the fixture as well as here"
+    },
+    "oracle-basis-gradient.seed123456.json": {
+      "factorioVersion": "2.1.14",
+      "evidence": "CAPTURED 2026-08-18 against Factorio 2.1.14 (build 87180, mac-arm64, steam) by running scripts/probes/basis-gradient through factorio-oracle in create mode. 8,720 samples of basis_noise at input_scale 1: 4,352 one f32 step along x and 4,352 along y from the lattice, plus 16 on-lattice controls that must be exactly 0 and are. Every sample round-trips as exact f32 (8720/8720). The identical probe on Factorio 2.0.77 (build 84539) returns a byte-identical capture, so the table this yields is a constant of the engine rather than of a version. See issue #234"
+    },
+    "basis-gradient-table.json": {
+      "factorioVersion": "2.1.14",
+      "evidence": "DERIVED 2026-08-18 from oracle-basis-gradient.seed123456.json by scripts/recover-gradient-table.ts, which inverts the falloff over the two contributing corners. Not a capture and not a formula: it is what the game's own gradient table has to be for the captured samples to come out as they did. Reproduces 4,086 of 4,096 x samples and 4,092 of 4,096 y; the misses are the four near-zero slots, whose ULP is 3.6e-15 and which no f32 output can resolve - perturbing them by 1.0e-9, 280x the residual, changes 0 of the 512 values in basis-noise.seed123456.json. Scores 512/512 exact against that fixture, worst error 0, where the previous formula-derived table scored 473. See issue #234"
     }
   },
   "notFixtures": {
