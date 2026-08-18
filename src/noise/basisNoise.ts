@@ -13,11 +13,18 @@
  * | shape | exact | worst abs |
  * | --- | --- | --- |
  * | old: f64, `(1-d)**3`, left to right | 132/512 | 3.110e-7 |
- * | this: f32, `t*(t*t)`, row-pairwise fold, committed table | **473/512** | **1.192e-7** |
+ * | f32, `t*(t*t)`, row-pairwise fold, FORMULA table | 473/512 | 1.192e-7 |
+ * | this: the same kernel, MEASURED table (#234) | **512/512** | **0** |
  *
- * The 39 remaining points are 18 at 1 ULP, 11 at 2 ULP and a short tail whose
- * large ULP counts are near-zero cancellations. On the seed-derived
- * `oracle-basis` fixture it is 36/38 exact, worst 5.960e-8.
+ * The last 39 points were never our arithmetic. They were the game's own
+ * gradient table, which #234 recovered from a running game rather than fitting
+ * a formula to it; the kernel below did not change and the misses went away.
+ * On the seed-derived `oracle-basis` fixture it is likewise 38/38, worst 0.
+ *
+ * Do not read those two zeros as slack to spend. They are asserted as `toBe(0)`
+ * and `toBe(512)` in test/basisNoise.spec.ts and test/oracle/oracle.spec.ts, so
+ * anything less is a regression with nowhere left to hide - the "that is the
+ * game's table, not us" allowance that covered the 39 is gone.
  *
  * The `(seed0, seed1) -> tables` derivation is also solved:
  * `basisNoiseTablesFromSeed` builds `a`/`b`/`sigma` straight from the seed (no
