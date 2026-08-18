@@ -8,9 +8,18 @@
     "'evidence' grades how the version was established - 'inferred' is weaker than",
     "'stated', and 'unknown' means nobody wrote it down. Do not upgrade an inferred",
     "or unknown entry without re-capturing against a known binary.",
+    "Every file in this directory is named, either in 'fixtures' or, when it is",
+    "deliberately not ground truth, in 'notFixtures' with a reason. The check used",
+    "to glob '.json' and '.png', and eight captured map exchange strings sat",
+    "unrecorded behind that filter for a month (issue #240). Filtering by extension",
+    "is how ground truth goes unrecorded, so there is no longer a filter.",
+    "'maxUnknown' is the ratchet. The number of 'unknown' entries must EQUAL it, so",
+    "adding one fails, and resolving one fails until the number is lowered - the old",
+    "less-than-or-equal bound never had to fall.",
     "Enforced by test/fixtureProvenance.spec.ts; report staleness with",
     "'pnpm refs:sync --fixtures'."
   ],
+  "maxUnknown": 1,
   "fixtures": {
     "autoplace-can-be-disabled.dump.json": {
       "factorioVersion": "unknown",
@@ -27,6 +36,18 @@
     "builtin-presets.json": {
       "factorioVersion": "2.1.9",
       "evidence": "the fixture's own _factorioVersion field (\"2.1.9 (experimental)\")"
+    },
+    "defaultgenwithpeaceful.txt": {
+      "factorioVersion": "2.1.9",
+      "evidence": "stated in decode.spec.ts, which reads this string and the no-enemies one as positive single-toggle fixtures captured from Factorio 2.1.9; jsonExport.spec.ts reads it as well. Confirmed by measuring the string itself: its inflated payload opens with the version quad 2.1.9.3. The version quad tracks the game version, measured 2026-08-18 across the three fixtures whose capture version is documented independently: builtin-presets.json stamps 2.1.9.3 at its stated 2.1.9, map-exchange-2.1.12.strings.json stamps 2.1.12.2, and map-exchange-2.1.14.strings.json stamps 2.1.14.1. Added 2026-07-06 in commit b7c4ce4, whose message records no version."
+    },
+    "defaultmodenoenemiespeacefulunchecked.txt": {
+      "factorioVersion": "2.1.9",
+      "evidence": "stated in decode.spec.ts, which reads this string and the peaceful one as positive single-toggle fixtures captured from Factorio 2.1.9; jsonExport.spec.ts reads it as well. Confirmed by measuring the string itself: its inflated payload opens with the version quad 2.1.9.3. The version quad tracks the game version, measured 2026-08-18 across the three fixtures whose capture version is documented independently: builtin-presets.json stamps 2.1.9.3 at its stated 2.1.9, map-exchange-2.1.12.strings.json stamps 2.1.12.2, and map-exchange-2.1.14.strings.json stamps 2.1.14.1. Added 2026-07-06 in commit b7c4ce4, whose message records no version."
+    },
+    "map-64x64.txt": {
+      "factorioVersion": "2.1.9",
+      "evidence": "measured from the string itself, because nothing else states a version: its inflated payload opens with the version quad 2.1.9.3. The version quad tracks the game version, measured 2026-08-18 across the three fixtures whose capture version is documented independently: builtin-presets.json stamps 2.1.9.3 at its stated 2.1.9, map-exchange-2.1.12.strings.json stamps 2.1.12.2, and map-exchange-2.1.14.strings.json stamps 2.1.14.1. Added 2026-07-08 in commit c3fe717, which describes a headless Factorio CLI hunt at seed 123456 but names no version, and neither reader (decode.spec.ts, encode.spec.ts) names one either. Read as ground truth for the area_to_generate_at_start negative control: a 64x64 finite map leaves the constant box unchanged."
     },
     "map-exchange-2.1.12.strings.json": {
       "factorioVersion": "2.1.12",
@@ -352,6 +373,26 @@
       "factorioVersion": "2.1.11",
       "evidence": "inferred: committed 2026-07-17 alongside basis-noise-seeding.game.json, which states 2.1.11"
     },
+    "starting-area-5.txt": {
+      "factorioVersion": "2.1.9",
+      "evidence": "measured from the string itself, because nothing else states a version: its inflated payload opens with the version quad 2.1.9.3. The version quad tracks the game version, measured 2026-08-18 across the three fixtures whose capture version is documented independently: builtin-presets.json stamps 2.1.9.3 at its stated 2.1.9, map-exchange-2.1.12.strings.json stamps 2.1.12.2, and map-exchange-2.1.14.strings.json stamps 2.1.14.1. Added 2026-07-08 in commit c3fe717, which describes a headless Factorio CLI hunt at seed 123456 but names no version, and neither reader (decode.spec.ts, encode.spec.ts) names one either. Read as ground truth for the area_to_generate_at_start negative control: a 5x starting_area leaves the constant box unchanged."
+    },
+    "starting-points-1-origin.txt": {
+      "factorioVersion": "2.1.9",
+      "evidence": "stated in decode.spec.ts, which reads the four starting_points strings as ground truth captured from Factorio 2.1.9 at seed 123456; encode.spec.ts reads it too, as a byte-exact round-trip fixture. Confirmed by measuring the string itself: its inflated payload opens with the version quad 2.1.9.3. The version quad tracks the game version, measured 2026-08-18 across the three fixtures whose capture version is documented independently: builtin-presets.json stamps 2.1.9.3 at its stated 2.1.9, map-exchange-2.1.12.strings.json stamps 2.1.12.2, and map-exchange-2.1.14.strings.json stamps 2.1.14.1. Added 2026-07-08 in commit e9ffe7d, which typed the variable-length mid-block trailer against these four. This string carries the one-point baseline at the origin."
+    },
+    "starting-points-1-x450.txt": {
+      "factorioVersion": "2.1.9",
+      "evidence": "stated in decode.spec.ts, which reads the four starting_points strings as ground truth captured from Factorio 2.1.9 at seed 123456; encode.spec.ts and jsonExport.spec.ts read it too. Confirmed by measuring the string itself: its inflated payload opens with the version quad 2.1.9.3. The version quad tracks the game version, measured 2026-08-18 across the three fixtures whose capture version is documented independently: builtin-presets.json stamps 2.1.9.3 at its stated 2.1.9, map-exchange-2.1.12.strings.json stamps 2.1.12.2, and map-exchange-2.1.14.strings.json stamps 2.1.14.1. Added 2026-07-08 in commit e9ffe7d, which typed the variable-length mid-block trailer against these four. This string carries the x coordinate, pinned independently of y."
+    },
+    "starting-points-1-y450.txt": {
+      "factorioVersion": "2.1.9",
+      "evidence": "stated in decode.spec.ts, which reads the four starting_points strings as ground truth captured from Factorio 2.1.9 at seed 123456; encode.spec.ts reads it too, as a byte-exact round-trip fixture. Confirmed by measuring the string itself: its inflated payload opens with the version quad 2.1.9.3. The version quad tracks the game version, measured 2026-08-18 across the three fixtures whose capture version is documented independently: builtin-presets.json stamps 2.1.9.3 at its stated 2.1.9, map-exchange-2.1.12.strings.json stamps 2.1.12.2, and map-exchange-2.1.14.strings.json stamps 2.1.14.1. Added 2026-07-08 in commit e9ffe7d, which typed the variable-length mid-block trailer against these four. This string carries the y coordinate, pinned independently of x."
+    },
+    "starting-points-2pt.txt": {
+      "factorioVersion": "2.1.9",
+      "evidence": "stated in decode.spec.ts, which reads the four starting_points strings as ground truth captured from Factorio 2.1.9 at seed 123456; encode.spec.ts and jsonExport.spec.ts read it too. Confirmed by measuring the string itself: its inflated payload opens with the version quad 2.1.9.3. The version quad tracks the game version, measured 2026-08-18 across the three fixtures whose capture version is documented independently: builtin-presets.json stamps 2.1.9.3 at its stated 2.1.9, map-exchange-2.1.12.strings.json stamps 2.1.12.2, and map-exchange-2.1.14.strings.json stamps 2.1.14.1. Added 2026-07-08 in commit e9ffe7d, which typed the variable-length mid-block trailer against these four. This string carries the two-point case, which is what proves the count byte and the variable length."
+    },
     "tree-expressions.2.1.11.json": {
       "factorioVersion": "2.1.11",
       "evidence": "the version is in the filename, and in the commit that added it"
@@ -412,5 +453,11 @@
       "factorioVersion": "2.1.14",
       "evidence": "captured 2026-08-14 by test/oracle/capture.ts vulcanus-cliff-removal-probability against the installed binary, which pnpm refs:sync --check reported binary/factorio-data/lua-api all in sync at 2.1.14 at capture time; each arm also reads ResourceEntityPrototype::cliff_removal_probability back off the running game, so the version the arm ran under is recorded inside the fixture as well as here"
     }
+  },
+  "notFixtures": {
+    "README.md": "prose, not ground truth. It is this directory's own table of what each file is and why it exists, written for people; no spec reads it.",
+    "extract-tree-exprs.py": "a tool, not ground truth. It rebuilds tree-expressions.2.1.11.json from the game's own Lua, and was committed 2026-07-22 beside that fixture so a future game version can be re-extracted. The provenance that matters is the fixture's, which has its own entry.",
+    "seed-123456789.txt": "a captured map exchange string that no test reads. Grepped 2026-08-18 across the repo: only this directory's README.md and two design docs name it, and no spec asserts anything about it, so it is ground truth for nothing today. Its own payload stamps 2.1.9.3, so it can be given a real entry the moment a test starts reading it. Issue #240 flags it and starting-area-diff.txt as either unasserted ground truth or dead.",
+    "starting-area-diff.txt": "a captured map exchange string that no test reads. The README says it pins the mid-block starting_area f32 offset, but the same 2026-08-18 grep found only README.md and three design docs, no spec. Its own payload stamps 2.1.9.3, so it can be given a real entry the moment a test starts reading it. Issue #240 flags it and seed-123456789.txt as either unasserted ground truth or dead."
   }
 }
