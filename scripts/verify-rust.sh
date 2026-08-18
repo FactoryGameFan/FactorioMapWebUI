@@ -25,6 +25,24 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 echo "==> cargo test"
 cargo test --locked --workspace
 
+echo "==> anti-vacuity: the gate must FAIL against a deliberately broken port"
+# A parity test that passes against a broken port is worth nothing, so the gate
+# proves it can fail rather than asserting it can (#220). `--features poison`
+# bends every non-zero basis_noise result by one ULP; the tier-1 fixture tests
+# must go red.
+#
+# `set -e` is why this is written with `if !` rather than a bare command: a
+# non-zero exit is the PASS here, and an unguarded call would abort the script
+# on success.
+if cargo test --locked -p fmw-noise --features poison >/dev/null 2>&1; then
+  echo "ERROR: the port's tests PASSED with --features poison." >&2
+  echo "       The gate cannot see a one-ULP error, so it is not a gate." >&2
+  echo "       See the poison() note in crates/fmw-noise/src/basis_noise.rs -" >&2
+  echo "       an earlier version of this control perturbed a gradient-table" >&2
+  echo "       slot instead, and the fixtures could not resolve it." >&2
+  exit 1
+fi
+
 echo "==> zero dependencies in anything that ships"
 # `--edges normal` excludes dev- and build-dependencies, so this is a statement
 # about the artifact rather than about the toolchain. See spec section 4.2.

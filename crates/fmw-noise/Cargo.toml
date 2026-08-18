@@ -12,3 +12,11 @@ license = "AGPL-3.0-or-later"
 # needs none, and keeping it that way sidesteps the cargo supply-chain question
 # for everything that ships rather than managing it.
 [dependencies]
+
+[features]
+# The anti-vacuity control for the port's gate. Bends one gradient-table slot by
+# one ULP, which is the smallest realistic transcription bug. `verify:rust`
+# builds with it and asserts the tier-1 fixture tests go RED; a gate that stays
+# green against a deliberately broken port is worth nothing. Never enable it in
+# a shipped build - `fmw-wasm` does not forward it.
+poison = []
