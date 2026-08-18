@@ -123,6 +123,84 @@ is a wiki page, not in the `factorioLuaAPI/` mirror). Relevant here:
 
 Prefer the game as an oracle over byte-diffing when settling a codec question.
 
+## Asking the running game - factorio-oracle
+
+The two references above say what the game _ships_. When a question needs what
+the game _computes_, run it.
+
+[`factorio-oracle`](https://github.com/FactoryGameFan/factorio-oracle) is a
+shared Rust CLI that owns discovery, mod scaffolding, launching and reading
+results back, so a probe is a JSON document plus a `control.lua` rather than a
+rebuilt harness. Four repos share it. It is checked out at
+`~/GitHub/factorio-oracle` and installed:
+
+```bash
+# ~/.cargo/bin is on no PATH here, so use the full path.
+~/.cargo/bin/factorio-oracle installs list
+~/.cargo/bin/factorio-oracle run --probe <probe.json> --work-dir /tmp/w
+cat /tmp/w/write/script-output/oracle-dump.json
+
+# After pulling the oracle, reinstall:
+cd ~/GitHub/factorio-oracle && cargo install --path .
+```
+
+### The rule is new probes only
+
+**`test/oracle/` stays.** It is 9,593 lines, it works, and nothing in it gets
+rewritten to use the CLI. Adoption happens when someone writes a probe they did
+not have before. `sampleExpression()` remains the right tool for sampling a
+noise expression, and the local harness is what most of `docs/noise/` was built
+with.
+
+Reach for `factorio-oracle` when the probe is new, and especially when it needs
+something the local harness does not do: a second Factorio version, a timeout, or
+provenance recorded for what it captured.
+
+### The worked example in this repo
+
+`scripts/probes/basis-gradient/` recovered the `basis_noise` gradient table from
+the game (#234). Read it before writing another probe - it is short, and it
+carries the traps in comments beside the code that hit them.
+
+Three things it establishes:
+
+- **The dump must be written as `oracle-dump.json`.** That name is the tool's
+  contract, not the game's. `helpers.write_file` accepts any name and the run
+  reports failure anyway.
+- **`error("DUMPED-OK")` makes Factorio exit non-zero, and that is success.**
+  The tool keys `create` off the dump appearing, not off the exit code.
+- **Run it against two versions when you can.** A second install is named with
+  `--factorio`, and the 2.0.77 one sits outside every discovery path on purpose,
+  so a bare run finds only the Steam 2.1.14:
+
+  ```bash
+  ~/.cargo/bin/factorio-oracle run --probe <probe.json> --work-dir /tmp/w \
+    --factorio ~/GitHub/factorio-oracle/installs/factorio-2.0.77.app
+  ```
+
+  The gradient table came back byte-identical from 2.0.77 and 2.1.14, which is
+  how we know it is a constant of the engine rather than of a version.
+
+### Where the probe-writing knowledge lives
+
+Three documents in the oracle repo, lifted from this repo and
+factorio-blueprint-editor with attribution, so a fifth repo does not learn it
+again. Read them before writing a probe:
+
+- `~/GitHub/factorio-oracle/docs/order-of-attack.md` - factorio-data first, then
+  the oracle, then the binary.
+- `~/GitHub/factorio-oracle/docs/method.md` - a control must be able to fail
+  while the hypothesis holds; last man standing is not a measurement.
+- `~/GitHub/factorio-oracle/docs/gotchas.md` - the facts, each of which cost a
+  run.
+
+It also checks this repo's fixture manifest, which is the same check
+`test/fixtureProvenance.spec.ts` runs:
+
+```bash
+~/.cargo/bin/factorio-oracle provenance check test/fixtures
+```
+
 ## Commands
 
 Run `vp` (Vite+) **through pnpm** - `pnpm vp <cmd>` - which is what every script
