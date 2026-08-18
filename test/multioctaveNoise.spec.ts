@@ -59,11 +59,25 @@ describe("multioctaveNoise reproduces the game", () => {
     // With the true +17.17 the error no longer depends on distance at all: the
     // fixture's extreme point (12345.75, 6789.125) is no worse than the origin.
     const { worst, label } = sweep((x, y, p) => multioctaveNoise(x, y, p));
-    // 4.7684e-7, measured after #214 gave basisNoise the game's own arithmetic.
-    // #162 predicted this: it recorded 7.153e-7 here and said basisNoise's f64
-    // evaluation was "the entire residual" for this op. It was - the number
-    // moved 1.5x on a change that touched nothing in this file.
-    expect(worst, `worst at ${label}`).toBeLessThan(5e-7);
+    // EXACTLY 0. #162 predicted this: it recorded 7.153e-7 here and said
+    // basisNoise's f64 evaluation was "the entire residual" for this op. It was -
+    // the number went 7.153e-7 -> 4.7684e-7 (#214) -> 0 (#243's measured gradient
+    // table), on changes that touched nothing in this file. The bound is deleted
+    // rather than lowered: against a true residual of zero, any bound at all is
+    // room for a wrong port to hide in, which is the whole of #162's complaint.
+    //
+    // Measured, by planting defects in the op and scoring it both ways - BOTH of
+    // these keep the old bound green while destroying bit-exactness wholesale:
+    //
+    // | planted defect | worst | exact | old `< 5e-7` |
+    // | --- | --- | --- | --- |
+    // | drop f32 on the `amp * basis` product | 3.725e-7 | 173/266 | **passes** |
+    // | drop f32 on the amplitude chain | 4.768e-7 | 215/266 | **passes** |
+    //
+    // 93 and 51 points respectively stop matching the game, and the bound sees
+    // neither. That is what "a bound cannot tell close from identical" means in
+    // this file specifically.
+    expect(worst, `worst at ${label}`).toBe(0);
   });
 
   it("reproduces most of the fixture bit-exactly, not merely within tolerance", () => {
@@ -83,11 +97,24 @@ describe("multioctaveNoise reproduces the game", () => {
       for (let i = 0; i < fixture.positions.length; i++) {
         const pos = fixture.positions[i];
         n++;
-        if (Math.fround(multioctaveNoise(pos.x, pos.y, p)) === c.values[i]) exact++;
+        // No `Math.fround` on the result: the op already returns an f32, and
+        // rounding it here would let an implementation that returned a NEARBY
+        // f64 score as exact. Measured before removing it - the count is 266
+        // either way today, so this costs nothing and closes the loophole.
+        if (multioctaveNoise(pos.x, pos.y, p) === c.values[i]) exact++;
       }
     }
     expect(n).toBe(266);
     expect(exact).toBe(266);
+  });
+
+  // The exact-count and zero-residual assertions above are only meaningful if the
+  // fixture is all-f32; against an f64 ground truth no f32 port could ever reach
+  // them, and the temptation would be to loosen the score instead of reading it.
+  it("every fixture value is exactly representable in f32", () => {
+    for (const c of fixture.cases) {
+      for (const v of c.values) expect(Math.fround(v)).toBe(v);
+    }
   });
 
   it("agrees with the prebuilt-closure form bit for bit", () => {

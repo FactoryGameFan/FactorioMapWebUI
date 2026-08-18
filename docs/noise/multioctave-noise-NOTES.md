@@ -241,14 +241,21 @@ game does. Measured, against the same fixture:
 | f64, true offset | 1.170e-4 | 12/266 |
 | f32 op order, alias | 1.427e-3 | 10/266 |
 | f32 op order, true offset | 7.153e-7 | 62/266 |
-| **the same, on the #214 basis kernel** | **4.768e-7** | **231/266** |
+| the same, on the #214 basis kernel | 4.768e-7 | 231/266 |
+| **the same, on #243's MEASURED gradient table** | **0** | **266/266** |
 
-**The last row is #214 arriving, and it is worth reading as a prediction that
-paid.** #162 said this op's remaining residual was entirely `basisNoise`
+**The last two rows are #214 and #243 arriving, and both are worth reading as a
+prediction that paid.** #162 said this op's remaining residual was entirely `basisNoise`
 evaluating in f64. Giving `basisNoise` the game's own f32 arithmetic moved this
 op from 7.153e-7 to **4.768e-7** and its bit-exact count from 62 to **231 of
 266**, with nothing in this file or its op changed. The bound in
 `test/multioctaveNoise.spec.ts` moved 1e-6 -> 5e-7 to match.
+
+#243 then finished it. Recovering the gradient table from a running game instead
+of fitting a formula to it took the last 39 misses out of `basisNoise`, and this
+op inherited the whole of that: **266/266, worst error exactly 0**, again with
+nothing here changed. The spec's bound is now deleted rather than lowered - see
+below.
 
 Neither fix does anything alone - one is a literal no-op, the other is a 12x
 regression - and together they are 164x. Four earlier variants (f32 per term, f32
@@ -264,14 +271,24 @@ Before trusting a fit, check whether the model has a period, and prefer the
 representative of smallest magnitude - it is the one the original author is
 likely to have typed, and the one that survives f32.
 
-`variablePersistenceMultioctaveNoise` carries a fitted per-octave shift of
-**`-7936`, which is `-31 * 256`** - an alias of 0. That is the same signature and
-it is very likely the same defect; it is untouched by this change and worth
-checking next.
+`variablePersistenceMultioctaveNoise` carried a fitted per-octave shift of
+**`-7936`, which is `-31 * 256`** - an alias of 0. That was the same signature and
+the same defect; it has since been fixed the same way, and that op is now
+bit-exact too. See `variable-persistence-multioctave-noise-NOTES.md`.
 
-## What is left (7.2e-7), and it is not this file's problem
+`quick_multioctave_noise` turned out to be a THIRD instance of the same family
+resolved on 2026-08-18, though with a different cause: no aliased constant (it has
+no fitted constant at all), just an op evaluating entirely in f64. Its notes
+record the shape all three share - a distance-dependent residual read as an
+inherent precision limit, when it was the wrong precision all along.
 
-The residual after the fix does **not** come from the composition. Decomposed
+## What was left (7.2e-7), and it was not this file's problem - now it is gone
+
+**Resolved.** The residual is zero as of #243; this section is kept because its
+reasoning is what predicted that, and a prediction that paid is worth more than
+a tidy file. Read it in the past tense.
+
+The residual after the fix did **not** come from the composition. Decomposed
 per case, `octaves = 1` already carries 2.4e-7 with only 10/38 samples f32-exact -
 and at `octaves = 1, P = 0.5` the normalisation is exactly 1, so that case reduces
 to a single `basisNoise` call. `src/noise/basisNoise.ts` evaluates in f64
@@ -280,8 +297,15 @@ floor"; the game's vector `Noise::noise` computes the same kernel in f32 NEON,
 two lattice corners per 2-lane vector with a final `faddp`, and folds the
 gradient magnitude into the stored gradient table.
 
-So closing the last 7.2e-7 is a `basis_noise` job, not a `multioctave_noise` one.
-See `basis-noise-NOTES.md`.
+So closing the last 7.2e-7 was a `basis_noise` job, not a `multioctave_noise`
+one - and that is exactly where it was closed. See `basis-noise-NOTES.md`.
+
+**The bound is now gone, not lowered.** `test/multioctaveNoise.spec.ts` asserts
+`toBe(0)` and `toBe(266)`. Against a true residual of zero, any surviving bound
+is pure slack, and two planted defects measured on 2026-08-18 show what fits in
+5e-7 of it: dropping the f32 on the `amp * basis` product scores 3.725e-7 worst
+with **173/266** exact, and dropping it on the amplitude chain scores 4.768e-7
+with **215/266**. Both keep a `< 5e-7` bound green. Neither survives `toBe(0)`.
 
 ## The op's offset_x / offset_y parameters are NOT the per-octave shift
 

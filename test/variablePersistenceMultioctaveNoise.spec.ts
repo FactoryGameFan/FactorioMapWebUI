@@ -61,21 +61,70 @@ describe("variablePersistenceMultioctaveNoise reproduces the game", () => {
     const { worst, label } = sweep((x, y, p, c) =>
       variablePersistenceMultioctaveNoise(x, y, p, paramsFor(fixture.seed0, c)),
     );
-    // 3.8147e-6, measured after #214. #162 recorded 1.144e-5 here and named
-    // basisNoise's f64 evaluation as the whole residual; the number moved 3x on
-    // a change that touched nothing in this file, which is that prediction
-    // being confirmed rather than merely restated.
-    expect(worst, `worst at ${label}`).toBeLessThan(4e-6);
+    // EXACTLY 0, over all 266 samples. This assertion has been three numbers:
+    // 1.144e-5 (#162), then 4e-6 "3.8147e-6, measured after #214", and now zero.
+    // Each time the residual fell it was because `basisNoise` underneath got
+    // more faithful, and this op's own arithmetic never changed; #243's measured
+    // gradient table took the last of it. The bound is gone rather than lowered,
+    // because a bound against a true residual of zero is pure slack - room for a
+    // wrong port to sit in undetected, which is exactly #162's complaint.
+    //
+    // That is not a theoretical worry - it was measured by planting defects in
+    // the op and scoring both ways:
+    //
+    // | planted defect | worst | exact | old `< 4e-6` |
+    // | --- | --- | --- | --- |
+    // | drop f32 on the final gain multiply | 1.907e-6 | 252/266 | **passes** |
+    // | drop f32 on `acc * persistence` | 7.629e-6 | 216/266 | fails |
+    //
+    // The first one loses 14 points of bit-exactness and the old bound never
+    // notices. `toBe(0)` notices both.
+    expect(worst, `worst at ${label}`).toBe(0);
+  });
+
+  // The exact-count and zero-residual assertions above are only meaningful if the
+  // fixture is all-f32; against an f64 ground truth no f32 port could ever reach
+  // them, and the temptation would be to loosen the score instead of reading it.
+  it("every fixture value is exactly representable in f32", () => {
+    for (const c of fixture.cases as VarPersCase[]) {
+      for (const v of c.values) expect(Math.fround(v)).toBe(v);
+    }
+  });
+
+  it("reproduces the whole fixture bit-exactly, not merely within tolerance", () => {
+    let exact = 0;
+    let n = 0;
+    for (const c of fixture.cases as VarPersCase[]) {
+      const params = paramsFor(fixture.seed0, c);
+      for (let i = 0; i < fixture.positions.length; i++) {
+        const p = fixture.positions[i];
+        n++;
+        if (
+          variablePersistenceMultioctaveNoise(p.x, p.y, fixture.persistenceField[i], params) ===
+          c.values[i]
+        ) {
+          exact++;
+        }
+      }
+    }
+    expect(n).toBe(266);
+    expect(exact).toBe(266);
   });
 
   /**
-   * The residual is `basisNoise`'s f32 floor multiplied by this op's `2^N *
-   * output_scale` gain, not a modelling gap - so the meaningful bound is relative
-   * to that gain, and it is one to two f32 ulps in every case. Asserting this
-   * rather than only the absolute worst is what keeps a future regression that
-   * scales with gain from hiding inside a loose absolute tolerance.
+   * Per-case, not just the worst over the whole sweep. The cases differ by up to
+   * a `2^N * output_scale` gain, so a single aggregate figure is dominated by
+   * whichever case has the largest gain and a regression confined to a low-gain
+   * case could hide behind it. Every case is checked on its own here.
+   *
+   * This test used to assert `worst / gain < 1.3e-7` - "one to two f32 ulps" -
+   * on the reasoning that the residual WAS `basisNoise`'s f32 floor amplified by
+   * the gain. That reasoning was sound when written and is now void: the
+   * residual is zero, so there is no floor left to normalise against and
+   * dividing by the gain no longer measures anything. The per-case granularity
+   * was the durable half of the idea, so it is what survives.
    */
-  it("the residual is the basis floor times the gain, at 1-2 f32 ulps per case", () => {
+  it("matches bit-for-bit in every case on its own, not just in aggregate", () => {
     for (const c of fixture.cases as VarPersCase[]) {
       const params = paramsFor(fixture.seed0, c);
       const gain = c.outputScale * 2 ** c.octaves;
@@ -91,9 +140,9 @@ describe("variablePersistenceMultioctaveNoise reproduces the game", () => {
         worst = Math.max(worst, Math.abs(got - c.values[i]));
       }
       expect(
-        worst / gain,
+        worst,
         `octaves=${c.octaves} offset=${c.offsetX} seed1=${c.seed1} (gain ${gain})`,
-      ).toBeLessThan(1.3e-7);
+      ).toBe(0);
     }
   });
 

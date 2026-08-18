@@ -39,11 +39,18 @@ So: **N octaves of `basis_noise` sharing ONE (seed0, seed1)**. Each octave halve
 the input scale (lacunarity 1/2) and is weighted by a power of the per-tile
 persistence, combined in Horner order - finest octave (k=0) gets the smallest
 weight `p^(N-1)`, coarsest (k=N-1) gets `1`. The whole sum is scaled by
-`output_scale * 2^N`. Verified to **1.1e-5 worst over all 266 oracle samples**,
-and that residual is `basisNoise`'s own f32 floor amplified by the gain rather than
-a modelling gap: `worst/gain` is **1.2e-7 to 2.4e-7 - one to two f32 ulps - in
-every one of the seven cases**, including those with `offset_x` of 5000 and 40000.
-The old "grows to ~2e-3 at large offset_x / far points" was the alias, not a floor.
+`output_scale * 2^N`. **Bit-exact against the committed oracle as of #243:
+266/266, worst error exactly 0**, including the cases with `offset_x` of 5000 and
+40000. The old "grows to ~2e-3 at large offset_x / far points" was the alias, not
+a floor.
+
+That zero arrived in two steps and neither was in this file. This paragraph read
+"verified to 1.1e-5, and that residual is `basisNoise`'s own f32 floor amplified
+by the gain - `worst/gain` is 1.2e-7 to 2.4e-7, one to two f32 ulps in every one
+of the seven cases". That was a correct measurement AND a correct diagnosis:
+#214 gave `basisNoise` the game's f32 arithmetic (-> 3.815e-6, 239/266) and #243
+gave it the game's measured gradient table (-> 0, 266/266). The residual really
+was the basis floor, and naming it is what let two later changes collect it.
 
 Two things distinguish it from the plain / quick relatives:
 
@@ -132,14 +139,24 @@ f32-exact count) and everything in f32:
 | f64, no shift | 1.847e-3 | 61/266 |
 | f32 op order, shift -7936 | **3.629e-1** | 45/266 |
 | f32 op order, no shift | 1.144e-5 | 66/266 |
-| **the same, on the #214 basis kernel** | **3.815e-6** | **239/266** |
+| the same, on the #214 basis kernel | 3.815e-6 | 239/266 |
+| **the same, on #243's MEASURED gradient table** | **0** | **266/266** |
 
-The last row is #214. #162 named `basisNoise`'s f64 evaluation as this op's
+The last two rows are #214 and #243. #162 named `basisNoise`'s f64 evaluation as this op's
 entire remaining residual; giving it the game's f32 arithmetic moved the worst
 error 3x and the bit-exact count from 66 to 239 of 266, with nothing in this op
-changed. The spec's bounds moved with it: 2e-5 -> 4e-6 absolute, and 3e-7 ->
-1.3e-7 relative to the `2^N * output_scale` gain (measured 1.192e-7, which is
-one f32 ULP).
+changed. #243's gradient table then took the rest, on the same terms.
+
+**Both bounds are now gone rather than lowered.** The absolute one went
+2e-5 -> 4e-6 -> `toBe(0)`; the per-case one was `worst/gain < 1.3e-7` and is now
+a per-case `toBe(0)`. Dividing by the gain no longer measures anything once the
+residual is zero, but the per-case granularity it existed for is real and was
+kept: the cases differ by up to a `2^N * output_scale` gain, so one aggregate
+figure is dominated by the highest-gain case.
+
+What a 4e-6 bound could still hide, measured 2026-08-18 by planting the defect:
+dropping the f32 on the final gain multiply scores **1.907e-6 worst with 252/266
+exact**. That passes `< 4e-6` while 14 points stop matching the game.
 
 Note the third row: reproducing the game's arithmetic *with* the alias is nearly
 **200x worse than doing nothing**, because `k*(-7936)` at octave 5 lands near
