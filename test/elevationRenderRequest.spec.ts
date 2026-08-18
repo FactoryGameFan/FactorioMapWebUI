@@ -396,6 +396,22 @@ describe("runRenderRequest", () => {
     }
   });
 
+  /**
+   * **Explicit 120s budget: this test has no headroom under the 30s global on a
+   * contended CI shard.** Measured 7540ms on a dev machine. That looks safe and is
+   * not: on PR #253 a 5952ms test in test/vulcanusCliffBands.spec.ts blew the
+   * 30000ms global on shard 3, so the
+   * real multiplier for a contended 4-core runner is above 5x rather than the
+   * ~3x a core-count comparison suggests - that shard's import time alone was
+   * 514s. 7540ms x 5 lands past 30s.
+   *
+   * It renders six 128x128 views at 4 tiles/px - the composite plus one per
+   * overlay - and diffs them pixel by pixel.
+   *
+   * Not `retry` if it reddens anyway: nothing here is nondeterministic, these
+   * tests compare pixels against captured game output, so a retry would only
+   * hide a real slowdown. Read the duration the reporter prints first.
+   */
   it("view 'all' composites all five overlays onto terrain (exactly the union of the single-overlay diffs)", () => {
     // 128x128 px at 4 tiles/px over world [512, 1024) - a region with resources,
     // enemy bases, cliffs, trees, and rocks all present, which is all this test
@@ -501,7 +517,7 @@ describe("runRenderRequest", () => {
     // contend for the same pixel, so prove this window has such pixels rather
     // than passing because they never meet.
     expect(treesUnder, "window must have pixels both trees and resources paint").toBeGreaterThan(0);
-  });
+  }, 120000);
 
   it("view 'all' composites rocks OVER resources", () => {
     // Split out of the union test above when Nauvis rocks moved from a
