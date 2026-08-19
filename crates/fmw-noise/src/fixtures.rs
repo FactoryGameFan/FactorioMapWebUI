@@ -1973,3 +1973,251 @@ fn puts_fulgora_land_and_ocean_where_the_game_puts_them() {
         "shallow/deep disagreements among tiles both sides call ocean"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4 - the rest of Fulgora (#224).
+//
+// Same rule as phase 3's block above: the counts are the measured truth, each
+// one checked against the TypeScript side by side, and a change to any of them
+// is a finding rather than a number to adjust.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::fulgora_scrap::ScrapControls;
+use crate::expressions::fulgora_stack::{FulgoraStack, StackFields};
+
+/// Sweep the whole Fulgora graph once at every fixture position.
+fn fulgora_stack_sweep(seed0: u32, positions: &[Json]) -> Vec<StackFields> {
+    let ctx = FulgoraCtx::new(seed0);
+    let mut stack = FulgoraStack::with_host_trig(&ctx, &ScrapControls::default());
+    positions
+        .iter()
+        .map(|p| stack.eval(p.get("x").as_f64(), p.get("y").as_f64()))
+        .collect()
+}
+
+/// The masks, the road and structure layer, the ruins layer, and the four land
+/// probabilities the fixture reports directly.
+///
+/// **Six fields here are exact at 101/101 and that is worth reading**, because
+/// they are the ones the two-case f32 rule was applied to: `structure_cells`,
+/// `structure_subnoise` and `structure_facets` all reach exactly 0 residual.
+/// `structure_facets` needs the CONSTANT narrowed (`y * 0.8f32`) and
+/// `structure_subnoise` needs the PRODUCT narrowed
+/// (`x + f32(10000 * structure_cells)`) - opposite fixes, worth 7.629e-6 and
+/// 131x respectively. If either regresses, this is where it shows.
+#[test]
+fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-fulgora-ruins.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 101, "fixture size");
+    let f = fulgora_stack_sweep(fixture.get("seed0").as_f64() as u32, positions);
+
+    type S = StackFields;
+    for (key, want_exact, select) in [
+        (
+            "fulgora_natural_mask",
+            101,
+            &(|f: &S| f.masks.natural) as &dyn Fn(&S) -> f64,
+        ),
+        ("fulgora_natural_and_mesa_mask", 101, &|f: &S| {
+            f.masks.natural_and_mesa
+        }),
+        ("fulgora_artificial_mask", 101, &|f: &S| f.masks.artificial),
+        ("fulgora_road_cells", 101, &|f: &S| f.roads.road_cells),
+        ("fulgora_road_pyramids", 101, &|f: &S| f.roads.road_pyramids),
+        ("fulgora_pyramids_banding", 100, &|f: &S| {
+            f.roads.pyramids_banding
+        }),
+        ("fulgora_spots_prebanding", 91, &|f: &S| {
+            f.roads.spots_prebanding
+        }),
+        ("fulgora_spots_banding", 46, &|f: &S| f.roads.spots_banding),
+        ("fulgora_structure_cells", 101, &|f: &S| {
+            f.roads.structure_cells
+        }),
+        ("fulgora_structure_subnoise", 101, &|f: &S| {
+            f.roads.structure_subnoise
+        }),
+        ("fulgora_structure_facets", 101, &|f: &S| {
+            f.roads.structure_facets
+        }),
+        ("fulgora_road_paving_thin", 101, &|f: &S| {
+            f.roads.road_paving_thin
+        }),
+        ("fulgora_road_paving_2", 101, &|f: &S| f.roads.road_paving_2),
+        ("fulgora_road_paving_2b", 101, &|f: &S| {
+            f.roads.road_paving_2b
+        }),
+        ("fulgora_road_paving_2c", 101, &|f: &S| {
+            f.roads.road_paving_2c
+        }),
+        ("fulgora_road_dust", 101, &|f: &S| f.roads.road_dust),
+        ("fulgora_ruins_walls", 19, &|f: &S| f.ruins.ruins_walls),
+        ("fulgora_ruins_paving", 101, &|f: &S| f.ruins.ruins_paving),
+        ("fulgora_tile_ruin_paving", 97, &|f: &S| {
+            f.ruins.tile_ruin_paving
+        }),
+        ("fulgora_tile_ruin_walls", 75, &|f: &S| {
+            f.ruins.tile_ruin_walls
+        }),
+        ("fulgora_tile_ruin_conduit", 94, &|f: &S| {
+            f.ruins.tile_ruin_conduit
+        }),
+        ("fulgora_tile_ruin_machinery", 95, &|f: &S| {
+            f.ruins.tile_ruin_machinery
+        }),
+        ("fulgoran_dust_probability", 33, &|f: &S| {
+            f.land_probabilities()[0]
+        }),
+        ("fulgoran_dunes_probability", 75, &|f: &S| {
+            f.land_probabilities()[1]
+        }),
+        ("fulgoran_sand_probability", 60, &|f: &S| {
+            f.land_probabilities()[2]
+        }),
+        ("fulgoran_rock_probability", 78, &|f: &S| {
+            f.land_probabilities()[3]
+        }),
+    ] {
+        let got: Vec<f64> = f.iter().map(select).collect();
+        assert_eq!(
+            score_fulgora(&got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 101"
+        );
+    }
+}
+
+/// `fulgora_ruins_walls` is the SAME `0.66 - abs(v)` shape as `fulgora_dunes`,
+/// and it scores 19/101 for the same reason - #273.
+///
+/// Recorded as its own test rather than folded into the table above, because
+/// the point is not the count: it is that the count has a known cause and a
+/// known fix, and that a second field carrying the identical shape scores badly
+/// in the identical way. That is what makes #273 a pattern rather than one
+/// field's bad luck.
+#[test]
+fn the_ruins_walls_constant_is_the_same_f32_case_as_dunes() {
+    use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
+    let fixture = load("test/fixtures/oracle-fulgora-ruins.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    let want = fixture.get("fulgora_ruins_walls").as_array();
+    let params = MultioctaveParams {
+        seed0: fixture.get("seed0").as_f64() as u32,
+        seed1: 2_307_136_174,
+        octaves: 3.0,
+        persistence: 0.7,
+        input_scale: 1.0 / 6.0,
+        output_scale: 1.0,
+    };
+
+    let mut with_f32 = 0usize;
+    let mut with_f64 = 0usize;
+    let mut worst_f32 = 0.0f64;
+    for (i, w) in want.iter().enumerate() {
+        let p = &positions[i];
+        let v = multioctave_noise(p.get("x").as_f64(), p.get("y").as_f64(), &params);
+        let b = w.as_f64() as f32;
+        let typed = 0.66f32 - v.abs();
+        worst_f32 = worst_f32.max(f64::from((typed - b).abs()));
+        if typed == b {
+            with_f32 += 1;
+        }
+        if ((0.66 - f64::from(v.abs())) as f32) == b {
+            with_f64 += 1;
+        }
+    }
+    assert_eq!(with_f32, 101, "typing 0.66 as f32 should be exact here too");
+    assert_eq!(worst_f32, 0.0, "and reach a residual of exactly 0");
+    assert_eq!(
+        with_f64, 19,
+        "the shipped f64 constant should still score 19 - if this moved, #273 \
+         was fixed and this file's counts need re-measuring"
+    );
+}
+
+/// Fulgora's scrap probability and the two additive terms the game's own
+/// diagnostic dump names.
+///
+/// All three are **101/101 exact**, which is the payoff for transcribing the
+/// TypeScript's f32 narrowings operation for operation rather than tidying
+/// them. The fixture is captured at the default sliders, so it cannot grade the
+/// two slider cuts - `fulgora_scrap`'s module docs carry the reasoning and its
+/// own unit test carries the numbers.
+#[test]
+fn reproduces_the_fulgora_scrap_probability_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-fulgora-scrap.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 101, "fixture size");
+
+    // The capture is at neutral sliders, and the port must be told so rather
+    // than assuming it - the fixture states it per position.
+    for k in ["scrap_control_frequency", "scrap_control_size"] {
+        for v in fixture.get(k).as_f64_array() {
+            assert_eq!(v, 1.0, "{k} is not neutral in this fixture");
+        }
+    }
+
+    let f = fulgora_stack_sweep(fixture.get("seed0").as_f64() as u32, positions);
+    type S = StackFields;
+    for (key, select) in [
+        (
+            "fulgora_scrap_probability",
+            &(|f: &S| f.scrap.probability) as &dyn Fn(&S) -> f64,
+        ),
+        ("fulgora_scrap_struct_term", &|f: &S| f.scrap.struct_term),
+        ("fulgora_scrap_vault_term", &|f: &S| f.scrap.vault_term),
+    ] {
+        let got: Vec<f64> = f.iter().map(select).collect();
+        assert_eq!(
+            score_fulgora(&got, fixture.get(key).as_array(), key),
+            101,
+            "{key} exact f32 matches out of 101"
+        );
+    }
+}
+
+/// **The full eight-way tile argmax against the tile the GAME actually
+/// placed**, which is the strongest question this phase can ask.
+///
+/// Phase 3 graded only land-versus-ocean. This grades the winner among all ten
+/// tiles at 5,057 positions, and 4,915 of them agree - the same count
+/// `test/fulgoraLandTiles.spec.ts` reaches from the other side (it scopes to
+/// 2,261 land positions and asserts 124 wrong, and 5057 - 2261 + 2137 = 4933
+/// is not this number because the ocean half contributes its own 18 misses
+/// too; the two are counting different populations, which is why this asserts
+/// its own).
+///
+/// The `-2` variants collapse: the game distinguishes `oil-ocean-shallow-2` and
+/// `oil-ocean-deep-2`, and this port models neither, so both fold onto their
+/// base tile before comparing.
+#[test]
+fn puts_every_fulgora_tile_where_the_game_puts_it() {
+    let fixture = load("test/fixtures/oracle-fulgora-tiles.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    let names = fixture.get("tileNames").as_array();
+    assert_eq!(positions.len(), 5057, "fixture size");
+
+    let f = fulgora_stack_sweep(fixture.get("seed0").as_f64() as u32, positions);
+    let mut exact = 0usize;
+    let mut seen_land_kinds = std::collections::BTreeSet::new();
+    for (i, name) in names.iter().enumerate() {
+        let game = name.as_str();
+        let game_base = game.strip_suffix("-2").unwrap_or(game);
+        let ours = f[i].tile().game_name();
+        if ours == game_base {
+            exact += 1;
+        }
+        if !game.starts_with("oil-ocean") {
+            seen_land_kinds.insert(game_base);
+        }
+    }
+    // Non-vacuity: the fixture really does contain all eight land tiles, so
+    // this is grading an eight-way argmax rather than a two-way one.
+    assert_eq!(
+        seen_land_kinds.len(),
+        8,
+        "land tiles present: {seen_land_kinds:?}"
+    );
+    assert_eq!(exact, 4915, "tiles matching the game out of 5057");
+}

@@ -10,6 +10,7 @@
 //! into what the cell becomes - most of the map is `blanks`, which turns into
 //! oil ocean.
 
+use crate::eval::math::max2;
 use crate::expressions::fulgora_shared::{FulgoraCtx, SharedFields};
 use crate::voronoi_noise::{Voronoi, VoronoiDistanceType, VoronoiParams};
 
@@ -100,7 +101,7 @@ impl FulgoraCells {
         let mesa = f64::from(u8::from(cells > 0.75));
         let sprawl = f64::from(u8::from(cells > 0.5)) - mesa;
         let vaults = 1.0 - blanks - sprawl - mesa;
-        let vaults_and_starting_vault = vaults.max(shared.starting_vault_mask);
+        let vaults_and_starting_vault = max2(vaults, shared.starting_vault_mask);
 
         CellFields {
             cells,

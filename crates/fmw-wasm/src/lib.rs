@@ -783,17 +783,17 @@ pub extern "C" fn checksum_eval_pipeline(
 // ---------------------------------------------------------------------------
 
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
-use fmw_noise::expressions::{fulgora_cells, fulgora_elevation, fulgora_shared};
-use fmw_noise::tiles::fulgora_ocean;
+use fmw_noise::expressions::{fulgora_scrap, fulgora_shared, fulgora_stack};
+use fmw_noise::tiles::{fulgora_catalog, fulgora_ocean};
 
 /// The named field a [`checksum_fulgora`] call folds.
 ///
 /// A selector rather than one blended number, so a divergence names the field
 /// it is in. The order is the order the chain evaluates in, which is also the
 /// order the oracle fixtures list.
-const FIELD_COUNT: u32 = 42;
+const FIELD_COUNT: u32 = 76;
 
-/// Tier 2 for Fulgora's landmask chain, one named field at a time.
+/// Tier 2 for Fulgora's whole field graph, one named field at a time.
 ///
 /// **The two bearings' sine and cosine are INPUTS**, which is the whole reason
 /// this signature is as wide as it is. `starting_spot_at_angle` is plain f64
@@ -803,17 +803,16 @@ const FIELD_COUNT: u32 = 42;
 /// of 600 slider positions, where `cargo test` on the host could not see it.
 ///
 /// Every call site's angle is a per-render constant, so lifting the trig out
-/// costs nothing and closes the question rather than bounding it. The caller
-/// computes both, and both ports then evaluate identical inputs.
+/// costs nothing and closes the question rather than bounding it.
 ///
 /// `field` selects which named expression to fold, `0..FIELD_COUNT`. Same
 /// contract as [`checksum_basis_noise`] otherwise: rows outer, order-sensitive
 /// fold, strict bit equality, the signed-BigInt caveat, and the same limit -
 /// it detects divergence, it does not establish correctness.
 ///
-/// **The Voronoi caches are inside the comparison**, because the chain is built
-/// once and swept. A cache that returned a neighbouring cell's point would move
-/// this and nothing else in the gate would notice.
+/// **The four Voronoi caches are inside the comparison**, because the stack is
+/// built once and swept. A cache that returned a neighbouring cell's point
+/// would move this and nothing else in the gate would notice.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub extern "C" fn checksum_fulgora(
@@ -835,22 +834,25 @@ pub extern "C" fn checksum_fulgora(
         islands_frequency,
         islands_size,
     };
-    let shared = fulgora_shared::FulgoraShared::new(
+    let mut stack = fulgora_stack::FulgoraStack::new(
         &ctx,
+        &fulgora_scrap::ScrapControls::default(),
         AngleTrig::new(sin_start, cos_start),
         AngleTrig::new(sin_vault, cos_vault),
     );
-    let mut cells = fulgora_cells::FulgoraCells::new(&ctx, shared.grid);
-    let elevation = fulgora_elevation::FulgoraElevation::new(&ctx, shared.grid);
 
     let mut acc = 0u64;
     for j in 0..n {
         let y = y0 + f64::from(j) * step;
         for i in 0..n {
             let x = x0 + f64::from(i) * step;
-            let s = shared.eval(x, y);
-            let c = cells.eval(&s);
-            let e = elevation.eval(x, y, &s, &c);
+            let f = stack.eval(x, y);
+            let s = &f.shared;
+            let c = &f.cells;
+            let e = &f.elevation;
+            let m = &f.masks;
+            let r = &f.roads;
+            let u = &f.ruins;
             let v = match field {
                 0 => s.wobble_influence,
                 1 => s.wobble_mask,
@@ -893,19 +895,64 @@ pub extern "C" fn checksum_fulgora(
                 38 => e.sand_basins,
                 39 => e.pre_elevation,
                 40 => e.elevation,
-                // The landmask's own answer: 0 land, 1 shallow, 2 deep. Folded
-                // as a number so it rides the same comparator as the fields it
-                // is derived from.
-                _ => match fulgora_ocean::ocean_tile(&e) {
+                // The landmask's own answer: 0 land, 1 shallow, 2 deep.
+                41 => match fulgora_ocean::ocean_tile(e) {
                     None => 0.0,
                     Some(fulgora_ocean::Ocean::Shallow) => 1.0,
                     Some(fulgora_ocean::Ocean::Deep) => 2.0,
                 },
+                42 => m.natural,
+                43 => m.natural_and_mesa,
+                44 => m.artificial,
+                45 => r.road_cells,
+                46 => r.road_pyramids,
+                47 => r.pyramids_banding,
+                48 => r.spots_prebanding,
+                49 => r.spots_banding,
+                50 => r.structure_cells,
+                51 => r.structure_subnoise,
+                52 => r.structure_facets,
+                53 => r.road_paving_thin,
+                54 => r.road_paving_2,
+                55 => r.road_paving_2b,
+                56 => r.road_paving_2c,
+                57 => r.road_dust,
+                58 => u.ruins_walls,
+                59 => u.ruins_paving,
+                60 => u.tile_ruin_paving,
+                61 => u.tile_ruin_walls,
+                62 => u.tile_ruin_conduit,
+                63 => u.tile_ruin_machinery,
+                64 => f.scrap.probability,
+                65 => f.scrap.struct_term,
+                66 => f.scrap.vault_term,
+                // The eight land probabilities, in LAND_ORDER.
+                67..=74 => f.land_probabilities()[(field - 67) as usize],
+                // The resolved tile, as its index in a fixed list. A number so
+                // it rides the same comparator as the fields it derives from.
+                _ => tile_code(f.tile()),
             };
             acc = checksum::fold_f64(acc, v);
         }
     }
     acc
+}
+
+/// The resolved tile as a number, in the order `FulgoraTile` declares.
+fn tile_code(tile: fulgora_catalog::FulgoraTile) -> f64 {
+    use fulgora_catalog::FulgoraTile as T;
+    match tile {
+        T::FulgoranDust => 0.0,
+        T::FulgoranDunes => 1.0,
+        T::FulgoranSand => 2.0,
+        T::FulgoranRock => 3.0,
+        T::FulgoranPaving => 4.0,
+        T::FulgoranWalls => 5.0,
+        T::FulgoranConduit => 6.0,
+        T::FulgoranMachinery => 7.0,
+        T::Shallow => 8.0,
+        T::Deep => 9.0,
+    }
 }
 
 /// How many fields [`checksum_fulgora`] can select, so the spec cannot silently

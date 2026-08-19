@@ -142,3 +142,32 @@ pub fn bool_result(value: bool) -> bool {
     #[cfg(not(feature = "poison"))]
     value
 }
+
+/// Rotate a winning INDEX to the next candidate.
+///
+/// The counterpart of [`bool_result`] for an argmax rather than a two-way
+/// choice. Fulgora's land layer picks one of eight tiles, and a one-ULP nudge
+/// to any of the eight probabilities changes the winner essentially never - the
+/// same reason a numeric hook cannot reach the ocean test.
+///
+/// **It needs its own hook even though the tile test already goes red**, and
+/// that distinction is the doctrine this module exists for: under poison the
+/// ocean hook flips every position's land-versus-ocean answer, so
+/// `puts_every_fulgora_tile_where_the_game_puts_it` would be red whether or not
+/// the argmax had a control. A gate satisfiable by an unrelated part of the
+/// system is not a gate for the new part.
+///
+/// `tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order`
+/// is the test that sees THIS hook and not the ocean one, because it calls
+/// `land_argmax` directly.
+#[inline]
+#[must_use]
+pub fn index_result(index: usize, len: usize) -> usize {
+    #[cfg(feature = "poison")]
+    if len > 1 {
+        return (index + 1) % len;
+    }
+    #[cfg(not(feature = "poison"))]
+    let _ = len;
+    index
+}

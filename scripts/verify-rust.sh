@@ -55,39 +55,52 @@ fi
 # Adding an op therefore means adding its tier-1 test here. A list rather than a
 # pattern, for the same reason `SUPPORTED_VERSIONS` is a list rather than a
 # range: a pattern silently accepts something nobody checked.
+#
+# Entries are FULL test paths, not bare names. That changed with #224, and the
+# reason is worth keeping: Fulgora's land argmax needed a control that the ocean
+# test's control could not stand in for, and the only test that can see it is a
+# unit test living beside the op in `tiles::fulgora_catalog`. Requiring every
+# entry to sit in `fixtures::` would have meant either moving that test away
+# from its op or leaving the argmax with no control of its own.
 POISONED_TESTS=(
-  reproduces_all_512_points_of_the_basis_noise_fixture_exactly
-  reproduces_the_multioctave_fixture_exactly
-  reproduces_the_variable_persistence_fixture_exactly
-  reproduces_the_quick_multioctave_fixture_exactly
-  reproduces_the_quick_persistence_wrapper_exactly
-  reproduces_the_random_penalty_fixture_exactly
-  reproduces_the_games_distance_from_nearest_point_at_all_26_positions
-  computes_the_games_real_starting_lake_for_seed_123456
-  reproduces_every_starting_lake_distance_in_the_fixture
-  reproduces_the_recovered_candidate_draw_stream_bit_exactly
-  reproduces_every_game_captured_candidate_set
-  reproduces_every_game_captured_spot_selection_probe
-  reproduces_the_games_per_cell_voronoi_draw_across_all_nine_seed_series
-  reproduces_the_jitter_zero_voronoi_fixture_exactly
-  reproduces_the_jittered_voronoi_fixture_exactly
-  reproduces_the_voronoi_point_inversion_lattice_exactly
-  reproduces_the_voronoi_search_range_fixture_and_rejects_the_wrong_ring
-  reproduces_the_games_pow_operator_at_every_position
-  reproduces_the_native_multisample_shift_at_all_150_comparisons
-  the_multisample_port_implements_the_one_tile_channel_only
-  reproduces_every_game_captured_seed_variable
-  reproduces_the_games_slider_rescale_at_all_seven_probe_points
-  reproduces_the_fulgora_shared_layer_at_every_captured_position
-  reproduces_the_fulgora_cell_classification_at_every_captured_position
-  reproduces_the_fulgora_elevation_chain_at_every_captured_position
-  reproduces_the_games_starting_spot_at_angle_at_every_case
-  typing_the_dunes_constant_f32_reaches_exactly_zero_residual
-  puts_fulgora_land_and_ocean_where_the_game_puts_them
+  fixtures::reproduces_all_512_points_of_the_basis_noise_fixture_exactly
+  fixtures::reproduces_the_multioctave_fixture_exactly
+  fixtures::reproduces_the_variable_persistence_fixture_exactly
+  fixtures::reproduces_the_quick_multioctave_fixture_exactly
+  fixtures::reproduces_the_quick_persistence_wrapper_exactly
+  fixtures::reproduces_the_random_penalty_fixture_exactly
+  fixtures::reproduces_the_games_distance_from_nearest_point_at_all_26_positions
+  fixtures::computes_the_games_real_starting_lake_for_seed_123456
+  fixtures::reproduces_every_starting_lake_distance_in_the_fixture
+  fixtures::reproduces_the_recovered_candidate_draw_stream_bit_exactly
+  fixtures::reproduces_every_game_captured_candidate_set
+  fixtures::reproduces_every_game_captured_spot_selection_probe
+  fixtures::reproduces_the_games_per_cell_voronoi_draw_across_all_nine_seed_series
+  fixtures::reproduces_the_jitter_zero_voronoi_fixture_exactly
+  fixtures::reproduces_the_jittered_voronoi_fixture_exactly
+  fixtures::reproduces_the_voronoi_point_inversion_lattice_exactly
+  fixtures::reproduces_the_voronoi_search_range_fixture_and_rejects_the_wrong_ring
+  fixtures::reproduces_the_games_pow_operator_at_every_position
+  fixtures::reproduces_the_native_multisample_shift_at_all_150_comparisons
+  fixtures::the_multisample_port_implements_the_one_tile_channel_only
+  fixtures::reproduces_every_game_captured_seed_variable
+  fixtures::reproduces_the_games_slider_rescale_at_all_seven_probe_points
+  fixtures::reproduces_the_fulgora_shared_layer_at_every_captured_position
+  fixtures::reproduces_the_fulgora_cell_classification_at_every_captured_position
+  fixtures::reproduces_the_fulgora_elevation_chain_at_every_captured_position
+  fixtures::reproduces_the_games_starting_spot_at_angle_at_every_case
+  fixtures::typing_the_dunes_constant_f32_reaches_exactly_zero_residual
+  fixtures::puts_fulgora_land_and_ocean_where_the_game_puts_them
+  fixtures::reproduces_the_fulgora_ruins_layer_at_every_captured_position
+  fixtures::the_ruins_walls_constant_is_the_same_f32_case_as_dunes
+  fixtures::reproduces_the_fulgora_scrap_probability_at_every_captured_position
+  fixtures::puts_every_fulgora_tile_where_the_game_puts_it
+
+  tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order
 )
 for t in "${POISONED_TESTS[@]}"; do
-  if ! grep -q "^test fixtures::${t} \.\.\. FAILED" <<<"$POISON_OUT"; then
-    echo "ERROR: fixtures::${t} stayed GREEN under --features poison." >&2
+  if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then
+    echo "ERROR: ${t} stayed GREEN under --features poison." >&2
     echo "       Its op has no live poison hook, so nothing proves that test" >&2
     echo "       can fail. Add one - see crates/fmw-noise/src/poison.rs." >&2
     exit 1
