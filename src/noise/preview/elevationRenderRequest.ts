@@ -297,7 +297,8 @@ export function placementMarkSweepBox(req: ElevationRenderRequest): WorldBox {
 }
 
 /**
- * The Rust engine's landmask path.
+ * The Rust engine's Fulgora path - the land mask, and now the full terrain
+ * render too.
  *
  * **The copy here is real and is the only one.** Reading the output is
  * zero-copy - `renderThroughWasm` hands back a view over WebAssembly linear
@@ -309,11 +310,13 @@ export function placementMarkSweepBox(req: ElevationRenderRequest): WorldBox {
  * Written out because a wrong belief about where a copy happens is exactly the
  * kind of thing that gets repeated.
  */
-function renderLandMaskThroughWasm(
+function renderFulgoraThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
+  which: "landmask" | "terrain",
 ): ElevationRenderResult {
   const view = renderThroughWasm(engine, {
+    view: which,
     seed0: req.seed0,
     width: req.width,
     height: req.height,
@@ -338,7 +341,7 @@ function renderLandMaskThroughWasm(
  * exactly as before. A parameter rather than module state, so nothing has to be
  * registered, reset between tests, or reasoned about across files.
  *
- * The two paths are BYTE-IDENTICAL, which `test/wasmLandmaskParity.spec.ts`
+ * The two paths are BYTE-IDENTICAL, which `test/wasmFulgoraRenderParity.spec.ts`
  * asserts across four windows, so this is a speed choice and not a behaviour
  * switch.
  */
@@ -444,8 +447,8 @@ export function runRenderRequest(
       // TypeScript stack is built, because `makeFulgoraStack` derives seed
       // tables for eight multioctave fields, and building them only to throw
       // them away would be most of the saving.
-      if (engine !== undefined && req.view === "landmask") {
-        return renderLandMaskThroughWasm(req, engine);
+      if (engine !== undefined && (req.view === "landmask" || req.view === "terrain")) {
+        return renderFulgoraThroughWasm(req, engine, req.view);
       }
       // Fulgora has a resources overlay now; it still has no cliffs and no
       // rocks, so those views fall back to plain terrain - the same fallback

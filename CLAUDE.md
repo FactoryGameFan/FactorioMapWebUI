@@ -1251,6 +1251,31 @@ been red whether or not the argmax had a control at all. `POISONED_TESTS` now
 carries FULL test paths rather than bare `fixtures::` names, so a control can
 live beside its op.
 
+**Tier 3 now covers both preview PNGs**, which is what #224's gate asks for.
+`test/wasmFulgoraRenderParity.spec.ts` renders through the real boundary and
+compares against the images Factorio itself produced:
+
+| comparison                                              | result                                                              |
+| ------------------------------------------------------- | ------------------------------------------------------------------- |
+| WASM vs TypeScript, landmask AND terrain, four windows  | byte-identical                                                      |
+| WASM vs `oracle-preview-fulgora-terrain.png`, 1024x1024 | **34,976** differing pixels (3.34%) - the TypeScript's exact number |
+| WASM scrap footprint vs the scrap PNG                   | **1,825** game scrap pixels, **1** outside the footprint            |
+
+The terrain figure is an EXACT count rather than a bound, because the two
+renders are byte-identical: it must be that number, not merely under 4%.
+
+The scrap comparison is a SUPERSET on the FOOTPRINT, never equality and never
+against a rolled overlay. `map_grid` defaults to true, so the game draws solid
+ore as a 2x2 checkerboard at about 0.5 pixels per entity, and a roll paints only
+where a draw succeeds - about 40% of the nonzero positions. Diffing rolled
+pixels would measure the salt rather than the model.
+
+**And the seed trap has its own test.** The PNGs come from
+`--generate-map-preview --map-gen-seed`, a MAP seed, while every `oracle-*.json`
+comes from `sampleExpression`, which forces the SURFACE seed. Rendering with the
+map seed makes the same comparison collapse from 3% differing to over 40%, and
+that is asserted rather than described.
+
 **`multioctave_noise(x, y, &params)` REBUILDS its seed tables on every call, and
 that cost 20x before it was measured.** `tables_from_seed` runs a PRNG over
 three 256-byte permutation tables, and `octave_terms` re-derives the octave

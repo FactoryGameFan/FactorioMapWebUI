@@ -30,7 +30,7 @@ export const REQUEST_BYTES = 104;
 export const PLANET = { fulgora: 0 } as const;
 
 /** The `view` codes the module understands. */
-export const VIEW = { landmask: 0 } as const;
+export const VIEW = { landmask: 0, terrain: 1, scrapFootprint: 2 } as const;
 
 /**
  * The status codes `render_request` returns. Mirrors `fmw_wasm::abi::Status`.
@@ -49,6 +49,8 @@ export const STATUS: Record<number, string> = {
 };
 
 export interface WasmRenderRequest {
+  /** Which render. Defaults to the land mask, the view #223 shipped first. */
+  readonly view?: keyof typeof VIEW;
   /** The SURFACE seed, not the map seed. */
   readonly seed0: number;
   readonly width: number;
@@ -104,7 +106,7 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
   view.setUint32(0, MAGIC, true);
   view.setUint32(4, ABI_VERSION, true);
   view.setUint32(8, PLANET.fulgora, true);
-  view.setUint32(12, VIEW.landmask, true);
+  view.setUint32(12, VIEW[req.view ?? "landmask"], true);
   // `setUint32` takes the number modulo 2^32, so a surface seed above 2^31 -
   // which is the normal case - writes its true bit pattern rather than
   // saturating. Fulgora's own seed for map seed 123456 is 2,967,702,466.
