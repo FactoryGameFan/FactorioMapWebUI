@@ -568,3 +568,209 @@ pub extern "C" fn checksum_voronoi_cell_index(
     }
     acc
 }
+
+// ---------------------------------------------------------------------------
+// Tier 2 for the phase-2 `eval` layer (#221).
+//
+// Same contract as `checksum_basis_noise` throughout - order-sensitive fold,
+// strict bit equality rather than a tolerance, and the same signed-BigInt
+// caveat. And the same limit: this detects divergence between the two ports, it
+// does not establish correctness. Correctness is tier 1.
+// ---------------------------------------------------------------------------
+
+use fmw_noise::eval::{math, memo_region::MemoRegion, memo_xy::MemoXy, multisample, primitives};
+use fmw_noise::expressions::vulcanus_seed;
+use fmw_noise::fast_approx;
+
+/// Tier 2 for the noise machine's `^`, across all three of its branches.
+///
+/// `exponent` selects the branch the way the operator itself does: `0.5` takes
+/// the exact square root, a whole number takes exponentiation by squaring, and
+/// anything else takes fastapprox. `use_cbrt` routes to `fast_cbrt` instead, so
+/// the `ONE_THIRD_F32` constant is inside the comparison rather than beside it.
+///
+/// The bases sweep `x0 + i * step` and must stay positive - `fast_log2` of a
+/// non-positive base is not a value either port promises anything about.
+#[unsafe(no_mangle)]
+pub extern "C" fn checksum_pow(exponent: f32, use_cbrt: u32, x0: f64, step: f64, n: u32) -> u64 {
+    let mut acc = 0u64;
+    for i in 0..n {
+        let x = (x0 + f64::from(i) * step) as f32;
+        let v = if use_cbrt == 0 {
+            fast_approx::noise_machine_pow(x, exponent)
+        } else {
+            fast_approx::fast_cbrt(x)
+        };
+        acc = checksum::fold_f64(acc, f64::from(v));
+    }
+    acc
+}
+
+/// Tier 2 for the two slider functions that the game's own arithmetic matches.
+///
+/// **This one carries more weight than the others**, because it is the only
+/// place in the port where both sides call a libm transcendental (`log2`,
+/// `2^x`) rather than arithmetic the ISA specifies exactly. Tier 1 grades
+/// `slider_rescale` at seven probe points; this sweeps 600, in WASM, against
+/// V8's libm.
+///
+/// `kind` is 0 `slider_to_linear(s, a, b)` and 1 `slider_rescale(s, a)`. `s`
+/// sweeps `s0 + i * ds` and must stay positive.
+///
+/// ## `slider_rescale_f64` is deliberately NOT reachable from here (#270)
+///
+/// The third shipped form - `src/noise/eval/sliderRescale.ts`, the one that
+/// rounds once at the end instead of per operation - **does not agree between
+/// the two ports**, and that was measured rather than assumed:
+///
+/// | form | agreement over 600 slider positions, n = 2 and n = 3 |
+/// | --- | --- |
+/// | `slider_to_linear` (per-op f32) | 600 / 600 |
+/// | `slider_rescale` (per-op f32) | 600 / 600 |
+/// | `slider_rescale_f64` (rounded once) | **599 / 600** |
+///
+/// The single disagreement is at `s = 3.5435` for `n = 2` and `s = 6.3657` for
+/// `n = 3`. **Native Rust agrees with V8 exactly at both points** - checked
+/// directly, same bits - so this is the `wasm32-unknown-unknown` libm
+/// specifically, not Rust. Which means `cargo test` on the host cannot see it,
+/// and only this tier-2 spec can.
+///
+/// Why the other two survive and this one does not: they narrow every
+/// intermediate to f32, and a one-ULP f64 difference is 29 bits below what
+/// survives that. The f64 form has no narrowing to absorb it. This is the
+/// determinism policy's transcendental rule (spec section 5) arriving as a
+/// measurement.
+///
+/// So the un-narrowed form stays out of the shipped module. It has no consumer
+/// until Vulcanus (#225), and #270 records the two ways to close it: replace
+/// the TypeScript's f64 form with the per-op one the oracle says the game uses,
+/// or have phase 5 pass the computed value in across the ABI. Do not export it
+/// here without settling that.
+#[unsafe(no_mangle)]
+pub extern "C" fn checksum_slider(kind: u32, s0: f64, ds: f64, n: u32, a: f64, b: f64) -> u64 {
+    let mut acc = 0u64;
+    for i in 0..n {
+        let s = s0 + f64::from(i) * ds;
+        let v = if kind == 0 {
+            f64::from(math::slider_to_linear(s, a, b))
+        } else {
+            f64::from(math::slider_rescale(s, a))
+        };
+        acc = checksum::fold_f64(acc, v);
+    }
+    acc
+}
+
+/// Tier 2 for the two engine seed variables.
+///
+/// Folds both per seed, so a port that got one right and the other wrong still
+/// moves the number. The stride is a `u32` add that WRAPS, which is deliberate:
+/// it lets a short sweep reach the top of the range, where `map_seed_normalized`
+/// narrows to exactly 1 and plain f64 division does not.
+#[unsafe(no_mangle)]
+pub extern "C" fn checksum_seed_vars(seed_start: u32, stride: u32, n: u32) -> u64 {
+    let mut acc = 0u64;
+    let mut seed = seed_start;
+    for _ in 0..n {
+        acc = checksum::fold_f64(acc, f64::from(vulcanus_seed::seed_normalized(seed)));
+        acc = checksum::fold_f64(acc, f64::from(vulcanus_seed::seed_small(seed)));
+        seed = seed.wrapping_add(stride);
+    }
+    acc
+}
+
+/// Tier 2 for the DSL's plain math operators.
+///
+/// Small, but `min` and `max` are where a JavaScript-versus-Rust SEMANTIC
+/// difference lurks rather than a numeric one - `f64::min` discards NaN where
+/// `Math.min` propagates it, and the two disagree on signed zero. The sweep
+/// includes `-0.0` for that reason. NaN is deliberately NOT folded: it has many
+/// bit patterns and folding raw bits would compare the two engines' choice of
+/// payload rather than the operator. Both sides assert the NaN rule directly
+/// instead.
+#[unsafe(no_mangle)]
+pub extern "C" fn checksum_eval_math(x0: f64, step: f64, n: u32) -> u64 {
+    let mut acc = 0u64;
+    for i in 0..n {
+        let x = x0 + f64::from(i) * step;
+        acc = checksum::fold_f64(acc, math::clamp(x, -1.0, 1.0));
+        acc = checksum::fold_f64(acc, math::lerp(-3.0, 7.0, x));
+        acc = checksum::fold_f64(acc, math::min(&[x, -x, 0.5, -0.0]));
+        acc = checksum::fold_f64(acc, math::max(&[x, -x, 0.5, -0.0]));
+    }
+    acc
+}
+
+/// Tier 2 for the composed `eval` pipeline: `basis_noise_expr` read through
+/// `multisample`, through `MemoXy`, through `MemoRegion`.
+///
+/// **The grid is swept TWICE - forward, then in reverse - and both sweeps are
+/// folded.** The reverse pass is all cache hits, so the memos are inside the
+/// comparison rather than beside it. A cache that returned a neighbour's value
+/// would move this checksum and nothing else in the gate would notice; that is
+/// the exact shape of the sentinel bug the Go spike shipped, where a
+/// zero-initialised tag array made cell (0, 0) read uninitialised offsets.
+///
+/// The step is a whole number so the coordinates stay integral and
+/// `MemoRegion` caches rather than bypassing. A fractional step would silently
+/// turn the second sweep into 2n fresh evaluations and the test would still
+/// pass, proving nothing about the cache.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn checksum_eval_pipeline(
+    seed0: u32,
+    seed1: u32,
+    input_scale: f64,
+    output_scale: f64,
+    offset_x: f64,
+    dx: f64,
+    dy: f64,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    n: u32,
+) -> u64 {
+    let params = primitives::BasisExprParams {
+        seed0,
+        seed1,
+        input_scale,
+        output_scale,
+        offset_x,
+    };
+    let tables = basis_noise::tables_from_seed(seed0, seed1);
+    // f64, not f32: `basis_noise_expr` returns the un-narrowed f64 product
+    // that the TypeScript returns, and the TypeScript memos hold a `number`.
+    // See the note on `basis_noise_expr` and #269.
+    let mut region = MemoRegion::<f64>::new();
+    let mut slot = MemoXy::<f64>::new();
+
+    let mut acc = 0u64;
+    for pass in 0..2u32 {
+        for j in 0..n {
+            for i in 0..n {
+                // Reverse the second pass so the one-slot memo cannot serve it
+                // and the region memo has to.
+                let (ii, jj) = if pass == 0 {
+                    (i, j)
+                } else {
+                    (n - 1 - i, n - 1 - j)
+                };
+                let x = x0 + f64::from(ii) * step;
+                let y = y0 + f64::from(jj) * step;
+                let v = region.get(x, y, |px, py| {
+                    slot.get(px, py, |qx, qy| {
+                        multisample::multisample(
+                            |sx, sy| primitives::basis_noise_expr(sx, sy, &params, &tables),
+                            qx,
+                            qy,
+                            dx,
+                            dy,
+                        )
+                    })
+                });
+                acc = checksum::fold_f64(acc, v);
+            }
+        }
+    }
+    acc
+}

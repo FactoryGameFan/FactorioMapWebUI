@@ -16,6 +16,8 @@ pub mod basis_gradient_table;
 pub mod basis_noise;
 pub mod checksum;
 pub mod distance_from_nearest_point;
+pub mod eval;
+pub mod expressions;
 pub mod fast_approx;
 pub mod multioctave_noise;
 pub mod poison;

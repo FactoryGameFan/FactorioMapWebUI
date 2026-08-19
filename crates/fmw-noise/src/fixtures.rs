@@ -1168,3 +1168,405 @@ fn reproduces_the_voronoi_search_range_fixture_and_rejects_the_wrong_ring() {
     // the fixture has stopped discriminating and the range is inert again.
     assert_eq!(wrong_ring_matches, 0, "matches under a planted wrong ring");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2 - the `eval` layer (#221).
+//
+// Same rule as everything above: read the file the TypeScript spec reads, and
+// assert an exact count rather than a bound.
+// ---------------------------------------------------------------------------
+
+use crate::eval::math::{slider_rescale, slider_rescale_f64};
+use crate::eval::multisample::multisample;
+use crate::expressions::vulcanus_seed::{seed_normalized, seed_small};
+use crate::fast_approx::{fast_cbrt, fast_pow, noise_machine_pow};
+
+/// Look up one exponent series in the `^` fixture.
+fn pow_series<'a>(fixture: &'a Json, exponent: &str) -> &'a [Json] {
+    for s in fixture.get("series").as_array() {
+        if s.get("exponent").as_str() == exponent {
+            return s.get("values").as_array();
+        }
+    }
+    panic!("fixture has no series for exponent {exponent}");
+}
+
+/// **The noise machine's `^` is THREE functions**, and this grades all three
+/// against the operator itself rather than through a downstream chain.
+///
+/// | exponent | model | matches |
+/// | --- | --- | --- |
+/// | `1/3`, `2.5` | fastapprox via `Math::powSafe` | 123/123 |
+/// | `0.5` | exact `sqrt` | 123/123 |
+/// | integral | exact exponentiation by squaring | 123/123 |
+///
+/// `test/fastApprox.spec.ts` asserts the same four series at the same 123
+/// positions. It exists because the rest of the suite could not answer two
+/// open questions about a shipped file (#161, #163): every other fixture that
+/// touches `fast_approx` compares with a tolerance of ~5e-5 or 1.0, and the
+/// effects in question are ~1e-5.
+///
+/// The `1/3` series is graded through [`fast_cbrt`] rather than
+/// `noise_machine_pow(x, 1.0/3.0)`, so the exponent constant `ONE_THIRD_F32` is
+/// inside the comparison. In Rust the double-versus-f32 exponent question the
+/// TypeScript has to guard against cannot arise - `fast_pow` takes an `f32`, so
+/// the type system rules it out - which is why the guards below are the other
+/// three rather than a copy of that one.
+#[test]
+fn reproduces_the_games_pow_operator_at_every_position() {
+    let fixture = load("test/fixtures/oracle-fastpow.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    let xs: Vec<f32> = positions
+        .iter()
+        .map(|p| p.get("x").as_f64() as f32)
+        .collect();
+    assert_eq!(xs.len(), 123, "fixture size");
+    // Every position must be exactly f32, or grading `noise_machine_pow` at
+    // `x as f32` would be evaluating a different point than the game did.
+    for (i, p) in positions.iter().enumerate() {
+        let x = p.get("x").as_f64();
+        assert_eq!(f64::from(x as f32), x, "position {i} is not exactly f32");
+    }
+
+    for (exponent, eval) in [
+        (
+            "2.5",
+            &(|x: f32| noise_machine_pow(x, 2.5)) as &dyn Fn(f32) -> f32,
+        ),
+        ("0.5", &|x: f32| noise_machine_pow(x, 0.5)),
+        ("1/3", &fast_cbrt),
+        ("2", &|x: f32| noise_machine_pow(x, 2.0)),
+    ] {
+        let values = pow_series(&fixture, exponent);
+        assert_all_f32(values, exponent);
+        let (exact, worst) = score_case(values, |i| eval(xs[i]));
+        assert_eq!(worst, 0.0, "worst absolute error for exponent {exponent}");
+        assert_eq!(exact, 123, "exact f32 matches for exponent {exponent}");
+    }
+}
+
+/// **The guards that stop the test above being self-satisfied.**
+///
+/// Each asserts that the WRONG model disagrees at many positions. Without them
+/// the fixture could drift onto positions where every candidate agrees, and the
+/// test above would endorse nothing.
+///
+/// `> 10` rather than `> 0`, so a single coincidental position cannot satisfy
+/// them.
+#[test]
+fn the_pow_fixture_still_discriminates_between_the_three_branches() {
+    let fixture = load("test/fixtures/oracle-fastpow.seed123456.json");
+    let xs: Vec<f32> = fixture
+        .get("positions")
+        .as_array()
+        .iter()
+        .map(|p| p.get("x").as_f64() as f32)
+        .collect();
+
+    // An exponent of 0.5 is an EXACT square root, not fastapprox. This was not
+    // predicted - the TypeScript spec first asserted fastapprox here and the
+    // game refuted it at the first position.
+    let half = pow_series(&fixture, "0.5");
+    let wrong = xs
+        .iter()
+        .enumerate()
+        .filter(|(i, &x)| f64::from(fast_pow(x, 0.5)) != half[*i].as_f64())
+        .count();
+    assert!(
+        wrong > 10,
+        "fastapprox now matches x^0.5 at all but {wrong} positions, so the sqrt \
+         special case has been misread or the fixture no longer discriminates"
+    );
+
+    // An INTEGRAL exponent takes powSafe's exact squaring path. That matters
+    // because `fast_pow`'s other call sites pass an integer `octaves`, which
+    // makes "so those are wrong too" a very natural inference - and it is
+    // FALSE: swapping the multioctave norm to squaring makes its oracle error
+    // 20x worse.
+    let two = pow_series(&fixture, "2");
+    let squaring_wrong = xs
+        .iter()
+        .enumerate()
+        .filter(|(i, &x)| f64::from(x * x) != two[*i].as_f64())
+        .count();
+    assert_eq!(squaring_wrong, 0, "x^2 must be exact squaring");
+    let fastapprox_wrong = xs
+        .iter()
+        .enumerate()
+        .filter(|(i, &x)| f64::from(fast_pow(x, 2.0)) != two[*i].as_f64())
+        .count();
+    assert!(
+        fastapprox_wrong > 10,
+        "fastapprox now matches x^2 at all but {fastapprox_wrong} positions, so \
+         the integral fast path has been misread"
+    );
+
+    // The pre-`9b49ebb` single-rounding fastapprox must FAIL, which is what
+    // turns this fixture from a confirmation of the current code into an
+    // adjudication between the two. Reproduced here rather than imported,
+    // because it no longer exists in `src/`.
+    fn old_log2(x: f32) -> f32 {
+        let bits = x.to_bits();
+        let y = (f64::from(bits) * 1.192_092_895_507_812_5e-7) as f32;
+        let mx = f32::from_bits((bits & 0x007f_ffff) | 0x3f00_0000);
+        (f64::from(y)
+            - 124.225_514_99
+            - 1.498_030_302 * f64::from(mx)
+            - 1.725_879_99 / (0.352_088_706_8 + f64::from(mx))) as f32
+    }
+    fn old_pow2(p: f32) -> f32 {
+        let clipp = if p < -126.0 { -126.0 } else { f64::from(p) };
+        let z = (clipp - clipp.trunc() + if clipp < 0.0 { 1.0 } else { 0.0 }) as f32;
+        let v = (8_388_608.0
+            * (clipp + 121.274_057_5 + 27.728_023_3 / (4.842_525_68 - f64::from(z))
+                - 1.490_129_07 * f64::from(z))) as f32;
+        f32::from_bits(v as i32 as u32)
+    }
+    let two_point_five = pow_series(&fixture, "2.5");
+    let old_wrong = xs
+        .iter()
+        .enumerate()
+        .filter(|(i, &x)| f64::from(old_pow2(2.5 * old_log2(x))) != two_point_five[*i].as_f64())
+        .count();
+    assert!(
+        old_wrong > 10,
+        "the old single-rounding fastapprox now agrees at all but {old_wrong} \
+         positions, so per-operation rounding has been undone or the fixture \
+         drifted onto non-discriminating points"
+    );
+}
+
+/// `multisample(e, dx, dy)` at `(x, y)` equals `e` evaluated at
+/// `(x + dx, y + dy)` - a plain integer coordinate shift, not a supersample.
+///
+/// The fixture routes the bare `x` and bare `y` variables through the builtin,
+/// so the returned number IS the world coordinate it sampled and no inversion
+/// is needed. 15 offsets x 5 points x 2 axes = 150 comparisons, and the game's
+/// values are exact, so this asserts equality rather than a bound.
+/// `test/multisample.spec.ts` asserts the same.
+#[test]
+fn reproduces_the_native_multisample_shift_at_all_150_comparisons() {
+    let fixture = load("test/fixtures/oracle-multisample.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    let cases = fixture.get("cases").as_array();
+
+    let mut compared = 0usize;
+    for case in cases {
+        let dx = case.get("dx").as_f64();
+        let dy = case.get("dy").as_f64();
+        let sampled_x = case.get("sampledX").as_f64_array();
+        let sampled_y = case.get("sampledY").as_f64_array();
+        for (i, p) in positions.iter().enumerate() {
+            let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+            assert_eq!(
+                multisample(|xx, _yy| xx, x, y, dx, dy),
+                sampled_x[i],
+                "x at ({x},{y}) dx={dx} dy={dy}"
+            );
+            assert_eq!(
+                multisample(|_xx, yy| yy, x, y, dx, dy),
+                sampled_y[i],
+                "y at ({x},{y}) dx={dx} dy={dy}"
+            );
+            compared += 2;
+        }
+    }
+    assert_eq!(compared, 150, "fixture size");
+}
+
+/// **The port implements the ONE-TILE channel only, and that limit is measured
+/// rather than asserted in a comment** (#83, open).
+///
+/// `oracle-multisample-grid` reads the same builtin through the CLIFF
+/// generator, whose grid is the 4-tile corner lattice, and a `dx` of 4 moves
+/// the field by **16** tiles there - 4 x the grid step - against the 4 this port
+/// applies. The two agree in the 1-tile channel that
+/// `calculate_tile_properties` and the tile renderer use, which is where the
+/// fixture above was captured.
+///
+/// So this test pins three things at once: that the fixture still shows the 4x
+/// scaling, that the port does NOT reproduce it, and that the null control
+/// holds. If a future change makes the port grid-aware, this test is the one
+/// that should be rewritten - not deleted.
+#[test]
+fn the_multisample_port_implements_the_one_tile_channel_only() {
+    let fixture = load("test/fixtures/oracle-multisample-grid.seed123456.json");
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), 4, "four arms");
+
+    /// The cell column a set of cliffs sits in, ignoring off-lattice
+    /// crater-cliffs.
+    fn columns(case: &Json) -> Vec<i64> {
+        let mut out: Vec<i64> = case
+            .get("cliffs")
+            .as_array()
+            .iter()
+            .filter(|c| c.get("name").as_str() == "cliff-vulcanus")
+            .map(|c| c.get("x").as_f64())
+            .filter(|x| x.fract() == 0.0)
+            .map(|x| x as i64)
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    for case in cases {
+        let e = case.get("effective");
+        assert_eq!(e.get("cliff_elevation_0").as_f64(), 71.0);
+        assert_eq!(e.get("cliff_elevation_interval").as_f64(), 1_000_000.0);
+        assert_eq!(e.get("cliff_smoothing").as_f64(), 0.0);
+        assert_eq!(e.get("richness").as_f64(), 4.0);
+        // Non-vacuity: every arm actually placed cliffs, so comparing columns
+        // is comparing something.
+        assert!(!columns(case).is_empty(), "an arm placed no cliffs");
+    }
+
+    let baseline = columns(&cases[0]);
+    assert_eq!(
+        baseline,
+        vec![70],
+        "a single column makes a shift unambiguous"
+    );
+    assert_eq!(columns(&cases[1]), baseline, "multisample(x, 0, 0) == x");
+    assert_eq!(
+        columns(&cases[3]),
+        baseline,
+        "dy cannot move a vertical contour"
+    );
+
+    // The measurement. 4 tiles would have left the column at 70 or moved it to
+    // 66; the game moved it to 54, which is 16 tiles.
+    let shifted = columns(&cases[2]);
+    assert_eq!(shifted, vec![54]);
+    assert_eq!(baseline[0] - shifted[0], 16, "the game shifted 16 tiles");
+
+    // And this port shifts by 4, not 16. Stated as an assertion so "the port
+    // implements the 1-tile channel" cannot quietly stop being true.
+    assert_eq!(multisample(|x, _y| x, 70.0, 0.0, 4.0, 0.0), 74.0);
+    assert_ne!(multisample(|x, _y| x, 70.0, 0.0, 4.0, 0.0), 86.0);
+}
+
+/// `map_seed_normalized` and `map_seed_small` across 12 seeds spanning the
+/// 32-bit range, plus the `x_from_start`/`y_from_start` identity.
+///
+/// `test/vulcanusSeed.spec.ts` asserts the same rows. The discriminating one is
+/// `seed0 = 0xFFFFFFFF`: plain f64 division gives 0.9999999997671694, and only
+/// the f32 narrowing reaches the oracle's exact 1.
+#[test]
+fn reproduces_every_game_captured_seed_variable() {
+    let fixture = load("test/fixtures/oracle-seed-vars.multi.json");
+    let rows = fixture.get("seeds").as_array();
+    assert_eq!(rows.len(), 12, "fixture size");
+
+    let mut saw_the_top_of_the_range = false;
+    for row in rows {
+        let seed0 = row.get("seed0").as_f64() as u32;
+        let want_normalized = row.get("mapSeedNormalized").as_f64();
+        assert_eq!(
+            f64::from(seed_normalized(seed0)),
+            want_normalized,
+            "map_seed_normalized for seed0={seed0}"
+        );
+        assert_eq!(
+            f64::from(seed_small(seed0)),
+            row.get("mapSeedSmall").as_f64(),
+            "map_seed_small for seed0={seed0}"
+        );
+        if seed0 == u32::MAX {
+            saw_the_top_of_the_range = true;
+            assert_eq!(want_normalized, 1.0, "the oracle's own value at 0xFFFFFFFF");
+        }
+    }
+    assert!(
+        saw_the_top_of_the_range,
+        "the fixture no longer carries the one row that discriminates f32 \
+         narrowing from plain division"
+    );
+}
+
+/// `x_from_start` and `y_from_start` are the other two seed vars in that
+/// fixture, and they need no port: at the default spawn they ARE `x` and `y`.
+///
+/// Pinned rather than left as a note, because a non-default spawn would change
+/// it and this fixture is where that would show up.
+#[test]
+fn the_from_start_vars_are_the_identity_at_the_default_spawn() {
+    let fixture = load("test/fixtures/oracle-seed-vars.multi.json");
+    let point = fixture.get("point");
+    let (x, y) = (point.get("x").as_f64(), point.get("y").as_f64());
+    for row in fixture.get("seeds").as_array() {
+        assert_eq!(row.get("xFromStart").as_f64(), x);
+        assert_eq!(row.get("yFromStart").as_f64(), y);
+    }
+}
+
+/// `slider_rescale(s, 2)` at the seven literal slider positions the game was
+/// probed at.
+///
+/// **The default slider cannot see any of this.** At `s = 1` the exponent is
+/// exactly 0 and the whole call is a multiply by one, so all 101 captured
+/// positions in that fixture accept any implementation. The probe exists for
+/// exactly that reason.
+///
+/// The guard below is the other half: the f64-rounded-once form must MISS at
+/// `s = 0.5` and `s = 5`, and fastapprox must miss almost everywhere. Without
+/// them, "per-operation f32" would be endorsed by a test that any of the three
+/// candidates passes.
+#[test]
+fn reproduces_the_games_slider_rescale_at_all_seven_probe_points() {
+    let fixture = load("test/fixtures/oracle-fulgora-elevation.seed123456.json");
+    let probe = fixture.get("sliderRescaleProbe");
+
+    let points = ["0.5", "1", "2", "3", "4", "5", "6"];
+    let mut exact = 0usize;
+    for key in points {
+        let s: f64 = key.parse().expect("probe key is a number");
+        let want = probe.get(key).as_f64();
+        assert_eq!(
+            f64::from(want as f32),
+            want,
+            "probe value at s={key} is not exactly f32"
+        );
+        assert_eq!(
+            f64::from(slider_rescale(s, 2.0)),
+            want,
+            "slider_rescale({key}, 2)"
+        );
+        exact += 1;
+    }
+    assert_eq!(exact, 7, "probe size");
+
+    // The f64-rounded-once form misses exactly two of the seven, and they are
+    // the two the fixture's own provenance names. An implementation that
+    // agreed everywhere would mean the probe had stopped discriminating.
+    let f64_misses = points
+        .iter()
+        .filter(|key| {
+            let s: f64 = key.parse().unwrap();
+            f64::from(slider_rescale_f64(s, 2.0) as f32) != probe.get(key).as_f64()
+        })
+        .count();
+    assert_eq!(
+        f64_misses, 2,
+        "the f64 form should miss s=0.5 and s=5 and nothing else"
+    );
+
+    // And the noise machine's fastapprox `^` misses almost all of them, which
+    // is why this resolves on the prototype side rather than through powSafe.
+    let fastapprox_misses = points
+        .iter()
+        .filter(|key| {
+            let s: f64 = key.parse().unwrap();
+            let ratio = ((f64::from(s.log2() as f32)) / f64::from(6.0f64.log2() as f32)) as f32;
+            let got = noise_machine_pow(2.0, ratio * (2.0f64.log2() as f32));
+            f64::from(got) != probe.get(key).as_f64()
+        })
+        .count();
+    assert!(
+        fastapprox_misses >= 5,
+        "fastapprox now matches {} of 7 probe points, so the exact-math reading \
+         has been misread or the probe drifted",
+        7 - fastapprox_misses
+    );
+}

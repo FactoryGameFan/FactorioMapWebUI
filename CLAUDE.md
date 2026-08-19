@@ -1141,7 +1141,7 @@ Field labels carry in-game tooltip text via `FInfo` (an `info` prop on
 `EnemyValueRow`, an `info:` entry in `controlCatalog.ts` for the enemy-base
 autoplace rows).
 
-### The Rust/WASM noise engine (`crates/`) - phase 1 in progress
+### The Rust/WASM noise engine (`crates/`) - phases 1 and 2 landed
 
 A Cargo workspace at the repository root, landed empty on purpose (#219) so the
 gate was proven green on `main` before any port code depended on it. Two crates:
@@ -1160,11 +1160,44 @@ without deciding it is worth maintaining.
 **Phase 1 is complete** (#220): `taus88`, `fast_approx`, `basis_noise` and its
 gradient table, the four multioctave ops, `random_penalty`, `spot_candidates`,
 `spot_selection`, `distance_from_nearest_point`, `starting_lakes` and
-`voronoi_noise`. Phase 2 is the `eval` layer (#221). `checksum` holds the tier-2 parity fold; **`fold_f64`
-folds RAW BITS and must stay order-sensitive**, because an XOR fold is blind to
-order and cancels pairs, so swapping two points or breaking two identically would
-leave it unchanged. `the_fold_is_order_sensitive` makes that load-bearing rather
-than a claim in a comment, and it was watched failing against a planted XOR fold.
+`voronoi_noise`.
+
+**Phase 2 is complete** (#221): the `eval` layer - `multisample`, `memo_xy`,
+`memo_region`, `math`, `ctx`, `primitives`, plus `expressions/vulcanus_seed`.
+Five oracle fixtures joined tier 1 (`oracle-fastpow`, `oracle-multisample`,
+`oracle-multisample-grid`, `oracle-seed-vars`, and the `sliderRescaleProbe` in
+`oracle-fulgora-elevation`), which also closed a standing gap: `fast_approx`
+shipped in phase 1 with **no tier-1 test and no poison hook** of its own.
+`eval/f32.ts` has no Rust counterpart on purpose - the narrowing is the type -
+and `eval/mod.rs` carries the two-case rule in its place. Phase 3 is the Fulgora
+vertical slice (#223), with the CSP change (#222) landing with or before it.
+
+`checksum` holds the tier-2 parity fold; **`fold_f64` folds RAW BITS and must
+stay order-sensitive**, because an XOR fold is blind to order and cancels pairs,
+so swapping two points or breaking two identically would leave it unchanged.
+`the_fold_is_order_sensitive` makes that load-bearing rather than a claim in a
+comment, and it was watched failing against a planted XOR fold.
+
+**The wasm libm is NOT the host libm, and only a tier-2 spec can see the
+difference** (#270, measured 2026-08-19). Sweeping 600 slider positions,
+`sliderToLinear` and the per-operation `sliderRescale` agree between the ports
+600/600, and the un-narrowed `eval/sliderRescale.ts` form agrees **599/600** -
+one position each at `s = 3.5435` (n=2) and `s = 6.3657` (n=3). Native Rust
+agrees with V8 at both points, same 64 bits, so the divergence belongs to the
+`log2`/`pow` that `wasm32-unknown-unknown` compiles in. Two consequences:
+`cargo test` runs on the host libm and cannot find this class of bug at all, and
+the per-operation f32 forms survive **because** they narrow - one f64 ULP is ~29
+bits below what an f32 narrowing keeps. The un-narrowed form is therefore not
+exported from `fmw-wasm` at all. Anything new that reaches a transcendental
+needs a tier-2 sweep, not just a fixture.
+
+**Two TypeScript findings came out of the port and neither was fixed in it.**
+Both are behaviour changes to shipped fields that pass their own fixtures today,
+so both got issues instead: #269 (`basisNoiseExpr` returns an un-narrowed f64
+product where the game narrows to f32, and none of its five callers narrow
+either) and #270 above. The port reproduces the TypeScript exactly in both
+cases - a unilateral "fix" on the Rust side would read as a port bug in tier 2,
+which is the whole point of having tier 2.
 
 - **`src/noise/wasm/engine.wasm` is a COMMITTED artifact.**
   `scripts/build-wasm.sh` produces it; `verify:rust` rebuilds and compares bytes
@@ -1184,8 +1217,13 @@ than a claim in a comment, and it was watched failing against a planted XOR fold
   added in #220's second batch compose it in none of their paths, and that check
   would have passed with five ports carrying no control at all. Adding an op
   means adding its hook and its test name to `POISONED_TESTS`. That list has
-  already earned itself: it caught `voronoi_noise`'s `cell_random` shipping
-  with no hook, on the first run of the gate after the port landed.
+  already earned itself twice: it caught `voronoi_noise`'s `cell_random`
+  shipping with no hook on the first run of the gate after the port landed, and
+  phase 2 found that `fast_approx` had shipped in phase 1 with no tier-1 test
+  and no hook at all. Two of the phase-2 tier-1 tests stay GREEN under poison
+  and both should - one reads a fixture and no port code, and the other asserts
+  that WRONG models of `^` disagree, which poisoning only strengthens.
+  `poison.rs` records why, beside the two earlier ones.
 - **The determinism rules are what protect that**, and each is written where it
   is enforced: no `mul_add` or fast-math, `clippy::suboptimal_flops` explicitly
   allowed so turning `nursery` on later cannot push the port toward FMA, no

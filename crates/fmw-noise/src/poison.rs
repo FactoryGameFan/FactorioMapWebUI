@@ -41,6 +41,17 @@
 //!   perturbation applies to both sides and cancels by construction. That is
 //!   what a relational assertion is; its discriminating power comes from the
 //!   relation, not from a value.
+//!
+//! Phase 2 (#221) added two more of the same two kinds:
+//!
+//! - `the_from_start_vars_are_the_identity_at_the_default_spawn` reads the
+//!   fixture and nothing else. `x_from_start` needed no port - at the default
+//!   spawn it IS `x` - so there is no op to perturb. It exists to notice a
+//!   fixture that stops saying that.
+//! - `the_pow_fixture_still_discriminates_between_the_three_branches` asserts
+//!   that the WRONG models of `^` disagree with the game at many positions.
+//!   Poisoning makes them disagree MORE, so it stays green by construction -
+//!   which is correct for a guard whose whole content is a negative.
 
 /// Bend an f32 result by one ULP. Zero is left alone, because several ops
 /// legitimately return exactly zero and the point is to perturb a computed
@@ -85,6 +96,21 @@ pub fn f64_result(value: f64) -> f64 {
 pub fn i64_result(value: i64) -> i64 {
     #[cfg(feature = "poison")]
     return value + 1;
+    #[cfg(not(feature = "poison"))]
+    value
+}
+
+/// Bend a `u32` result by one.
+///
+/// Used by `map_seed_small`, whose only consumer downstream is its PARITY
+/// (`vulcanus_starting_direction = -1 + 2*(map_seed_small & 1)`). Adding one
+/// flips that parity, so the smallest perturbation available is also the one
+/// the consumer can see.
+#[inline]
+#[must_use]
+pub fn u32_result(value: u32) -> u32 {
+    #[cfg(feature = "poison")]
+    return value.wrapping_add(1);
     #[cfg(not(feature = "poison"))]
     value
 }
