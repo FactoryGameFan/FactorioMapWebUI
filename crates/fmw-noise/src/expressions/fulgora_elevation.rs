@@ -25,8 +25,9 @@
 use crate::eval::math::lerp;
 use crate::eval::math::slider_rescale;
 use crate::expressions::fulgora_cells::CellFields;
+use crate::expressions::fulgora_shared::Prepared;
 use crate::expressions::fulgora_shared::{FulgoraCtx, SharedFields};
-use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
+use crate::multioctave_noise::MultioctaveParams;
 use crate::poison;
 
 /// `seed1` for each multioctave call: `crc32` of the Lua's string seed.
@@ -76,13 +77,12 @@ pub struct ElevationFields {
 }
 
 /// The per-render constants of the elevation chain.
-#[derive(Debug, Clone)]
 pub struct FulgoraElevation {
-    basis: MultioctaveParams,
-    basis_oil: MultioctaveParams,
-    rock: MultioctaveParams,
-    dunes: MultioctaveParams,
-    scrap_medium: MultioctaveParams,
+    basis: Prepared,
+    basis_oil: Prepared,
+    rock: Prepared,
+    dunes: Prepared,
+    scrap_medium: Prepared,
     /// `slider_rescale(size, 2)`, hoisted out of the per-position path because
     /// it depends only on the slider.
     ///
@@ -102,46 +102,46 @@ impl FulgoraElevation {
         // `output_scale`; where the Lua omits it the engine default of 1
         // applies.
         Self {
-            basis: MultioctaveParams {
+            basis: Prepared::new(&MultioctaveParams {
                 seed0,
                 seed1: SEED1_BASIS,
                 octaves: 6.0,
                 persistence: 0.5,
                 input_scale: 128.0 / grid / 7.5,
                 output_scale: 0.5,
-            },
-            basis_oil: MultioctaveParams {
+            }),
+            basis_oil: Prepared::new(&MultioctaveParams {
                 seed0,
                 seed1: SEED1_BASIS_OIL,
                 octaves: 4.0,
                 persistence: 0.65,
                 input_scale: 1.0 / 10.0,
                 output_scale: 1.0,
-            },
-            rock: MultioctaveParams {
+            }),
+            rock: Prepared::new(&MultioctaveParams {
                 seed0,
                 seed1: SEED1_ROCK,
                 octaves: 4.0,
                 persistence: 0.7,
                 input_scale: 1.0 / 3.0,
                 output_scale: 1.0,
-            },
-            dunes: MultioctaveParams {
+            }),
+            dunes: Prepared::new(&MultioctaveParams {
                 seed0,
                 seed1: SEED1_DUNES,
                 octaves: 3.0,
                 persistence: 0.7,
                 input_scale: 1.0 / 6.0,
                 output_scale: 1.0,
-            },
-            scrap_medium: MultioctaveParams {
+            }),
+            scrap_medium: Prepared::new(&MultioctaveParams {
                 seed0,
                 seed1: SEED1_SCRAP_MEDIUM,
                 octaves: 3.0,
                 persistence: 0.7,
                 input_scale: 1.0 / 18.0,
                 output_scale: 1.0,
-            },
+            }),
             size_rescale: f64::from(slider_rescale(ctx.islands_size, 2.0)),
         }
     }
@@ -155,20 +155,19 @@ impl FulgoraElevation {
         shared: &SharedFields,
         cells: &CellFields,
     ) -> ElevationFields {
-        let basis = f64::from(multioctave_noise(shared.wx, shared.wy, &self.basis));
+        let basis = f64::from(self.basis.eval(shared.wx, shared.wy));
 
         // The distortion here is 1.5x the wobble and does NOT go through
         // `wobble_mask` - so unlike `wx`/`wy`, the oil noise is displaced even
         // where the mask has turned the island distortion off.
-        let basis_oil = f64::from(multioctave_noise(
-            x + 1.5 * shared.wobble_x,
-            y + 1.5 * shared.wobble_y,
-            &self.basis_oil,
-        ));
+        let basis_oil = f64::from(
+            self.basis_oil
+                .eval(x + 1.5 * shared.wobble_x, y + 1.5 * shared.wobble_y),
+        );
 
-        let rock = 0.33 + f64::from(multioctave_noise(x, y, &self.rock)).abs();
-        let dunes = 0.66 - f64::from(multioctave_noise(x, y, &self.dunes)).abs();
-        let scrap_medium = f64::from(multioctave_noise(x, y, &self.scrap_medium));
+        let rock = 0.33 + f64::from(self.rock.eval(x, y)).abs();
+        let dunes = 0.66 - f64::from(self.dunes.eval(x, y)).abs();
+        let scrap_medium = f64::from(self.scrap_medium.eval(x, y));
 
         let natural = basis * 2.0 * self.size_rescale - 0.85;
 

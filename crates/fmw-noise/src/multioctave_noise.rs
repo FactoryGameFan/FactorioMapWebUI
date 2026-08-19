@@ -146,6 +146,20 @@ pub fn sum_octaves(x: f64, y: f64, terms: &OctaveTerms, tables: &BasisNoiseTable
 }
 
 /// Evaluate `multioctave_noise` at world coordinates `(x, y)`.
+///
+/// **NOT for a per-pixel loop.** It derives the basis tables and the octave
+/// terms on every call, and `tables_from_seed` runs a PRNG to fill three
+/// 256-byte permutation tables. Hoist them with [`tables_from_seed`] and
+/// [`octave_terms`] and call [`sum_octaves`] instead - which is what the
+/// TypeScript's `makeMultioctaveNoise` closure does, and what every renderer
+/// here needs.
+///
+/// This is not a hypothetical. Fulgora's landmask chain called it eight times
+/// per pixel and measured **1.15x** against the TypeScript renderer; hoisting
+/// took it to the number in that phase's pull request. Nothing failed in the
+/// meantime, because the results are identical either way - only a benchmark
+/// can see this, which is why it is written here rather than left to be
+/// rediscovered.
 #[must_use]
 pub fn multioctave_noise(x: f64, y: f64, params: &MultioctaveParams) -> f32 {
     let tables = tables_from_seed(params.seed0, params.seed1);
