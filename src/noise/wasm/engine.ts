@@ -57,8 +57,23 @@ export async function compileEngine(bytes: BufferSource): Promise<WebAssembly.Mo
  * confusing status code per tile.
  */
 export async function instantiateEngine(module: WebAssembly.Module): Promise<EngineExports> {
-  const instance = await WebAssembly.instantiate(module, {});
-  const engine = instance.exports as unknown as EngineExports;
+  return checkAbi((await WebAssembly.instantiate(module, {})).exports as unknown as EngineExports);
+}
+
+/**
+ * As {@link instantiateEngine}, synchronously.
+ *
+ * `new WebAssembly.Instance(module)` on an ALREADY-COMPILED module is allowed
+ * on any thread - the size limit that forbids synchronous *compilation* on the
+ * main thread does not apply to instantiation. That is what lets the render
+ * worker's `onmessage` stay synchronous, so message ordering needs no reasoning
+ * about a pending promise.
+ */
+export function instantiateEngineSync(module: WebAssembly.Module): EngineExports {
+  return checkAbi(new WebAssembly.Instance(module, {}).exports as unknown as EngineExports);
+}
+
+function checkAbi(engine: EngineExports): EngineExports {
   const theirVersion = engine.abi_version();
   if (theirVersion !== ABI_VERSION) {
     throw new Error(

@@ -3,6 +3,7 @@ import type {
   ElevationRenderRequest,
   ElevationRenderResult,
 } from "../noise/preview/elevationRenderRequest";
+import { loadEngineModule } from "../noise/wasm/load";
 import { createRenderPool, type RenderPool, type TilePaint } from "./renderPool";
 
 /** The minimal Worker surface the renderer uses, so tests can inject a fake. */
@@ -43,9 +44,39 @@ function createRenderWorker(): WorkerLike {
   // WorkerLike's ((e: unknown) => void) | null (kept broad so tests can invoke
   // it with any value) - the real Worker structurally provides everything
   // WorkerLike needs, so assert the narrowing here rather than loosen the type.
-  return new Worker(new URL("../noise/preview/elevationRender.worker.ts", import.meta.url), {
-    type: "module",
-  }) as unknown as WorkerLike;
+  const worker = new Worker(
+    new URL("../noise/preview/elevationRender.worker.ts", import.meta.url),
+    { type: "module" },
+  ) as unknown as WorkerLike;
+
+  // Hand the worker the compiled Rust engine as soon as it is available (#223).
+  // `loadEngineModule` memoises, so N workers cost ONE compile - a
+  // `WebAssembly.Module` is structured-cloneable, which is the whole reason the
+  // main thread compiles and the workers only instantiate.
+  //
+  // **This lives in the real worker factory rather than in `createWorkerHost`,
+  // and that is deliberate.** The host is constructed with a fake factory by
+  // every test that exercises it, and fetching from there made those tests
+  // print a page of `ECONNREFUSED` while still passing - the module URL under
+  // vitest points at a dev server that is not running. Loading beside the real
+  // `new Worker` means only the real browser path ever reaches the network.
+  //
+  // **A render dispatched before the engine arrives is not a bug**, and that is
+  // what makes this cutover safe rather than merely tested: the two render
+  // paths are byte-identical, so a request that lands first takes the
+  // TypeScript path and returns the same pixels. There is no window in which
+  // the worker is wrong, only one in which it is slower - which is also why a
+  // failed fetch or compile is swallowed. A missing `engine.wasm` costs speed,
+  // not correctness.
+  void loadEngineModule().then(
+    (module) => {
+      worker.postMessage({ kind: "engine", module });
+    },
+    () => {
+      /* no engine; the TypeScript path renders exactly the same pixels */
+    },
+  );
+  return worker;
 }
 
 /**

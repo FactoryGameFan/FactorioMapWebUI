@@ -1212,10 +1212,30 @@ Errors return a **status code and do not trap**, because a trap would poison the
 instance for every later request in that worker; a spec sends a bad magic and
 then renders successfully through the same instance.
 
-Still to do in #223: the cutover itself - `elevationRenderRequest` dispatching
-`view: "landmask"` on Fulgora to the module, the worker plumbing that compiles
-once on the main thread and instantiates per worker, `findIslands.spec.ts`
-passing against it, and the in-browser measurement.
+Part 3 is the cutover. `runRenderRequest(req, engine?)` takes an OPTIONAL
+engine and dispatches Fulgora's land mask to it when one is supplied - a
+parameter rather than module state, so nothing has to be registered or reset
+between tests. `createRenderWorker` loads and compiles the module once per page
+and posts it to each worker it creates; the worker instantiates synchronously
+with `new WebAssembly.Instance(module)`, which is allowed for an
+already-compiled module on any thread.
+
+**A render dispatched before the engine message arrives is not a bug**, and that
+is what makes the cutover safe rather than merely tested: the two paths are
+byte-identical, so an early request takes the TypeScript path and returns the
+same pixels. There is no window in which the worker is wrong, only one in which
+it is slower - which is also why a failed fetch or compile is swallowed.
+`test/renderWorkerEngine.spec.ts` asserts exactly that, comparing the pixels
+from before the handshake against the pixels from after it.
+
+**The engine load sits in `createRenderWorker`, not in `createWorkerHost`, and
+that is not stylistic.** Every test that exercises the host constructs it with a
+fake worker factory, and fetching from the host made those tests print a page of
+`ECONNREFUSED` while still passing - under vitest the module URL points at a dev
+server that is not running. Loading beside the real `new Worker` means only the
+real browser path ever reaches the network.
+
+Still to do in #223: the in-browser measurement.
 
 **`multioctave_noise(x, y, &params)` REBUILDS its seed tables on every call, and
 that cost 20x before it was measured.** `tables_from_seed` runs a PRNG over
