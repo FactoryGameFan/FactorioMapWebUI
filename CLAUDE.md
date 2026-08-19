@@ -1235,7 +1235,8 @@ fake worker factory, and fetching from the host made those tests print a page of
 server that is not running. Loading beside the real `new Worker` means only the
 real browser path ever reaches the network.
 
-Still to do in #223: the in-browser measurement.
+The in-browser measurement is done - see the speedup table below. #223 is
+complete.
 
 **`multioctave_noise(x, y, &params)` REBUILDS its seed tables on every call, and
 that cost 20x before it was measured.** `tables_from_seed` runs a PRNG over
@@ -1243,19 +1244,40 @@ three 256-byte permutation tables, and `octave_terms` re-derives the octave
 list; Fulgora's chain makes eight such calls per pixel. Hoisting them into a
 `Prepared` built once per render - which is exactly what the TypeScript's
 `makeMultioctaveNoise` closure has always done - moved a 256x256 landmask render
-from **1152.2ms to 50.7ms**, so the port went from **1.15x to 22.71x** against
-the TypeScript. Method: warmed, interleaved arms, min of 9, one process; a
-single shot right after a build measures the machine (see the E-core note in
-#215). Nothing in tiers 1-3 could see this, because the results are identical
-either way - only a benchmark can. The wrapper now carries the warning in its
-own docs.
+from **975.8ms to 50.7ms** in the same harness, a **19.2x** within-arm
+improvement. Nothing in tiers 1-3 could see it, because the results are
+identical either way; only a benchmark can. The wrapper carries the warning in
+its own docs.
 
-Read 22.71x beside the spike's 7.5-13.2x rather than instead of it: the spike
-measured the leaf kernel and one composition, this is a whole composed render
-where the TypeScript also pays `memoXY` closure overhead per field per pixel.
-And **it is a Node measurement, not a browser one** - the browser number the
-issue asks for belongs with the cutover, since nothing in the app calls the
-module yet.
+**The engine is ~2.46x faster than the TypeScript IN THE BROWSER, and the
+"22.71x" #275 published is wrong.** That number came from a benchmark running
+inside vitest, where the TYPESCRIPT arm is taxed and the WASM arm is not:
+
+| harness             | TypeScript |        WASM |     ratio |
+| ------------------- | ---------: | ----------: | --------: |
+| Chrome, dev server  | **246 ms** | **99.7 ms** | **2.46x** |
+| Node, inside vitest |    1134 ms |     50.7 ms |     22.4x |
+
+The same TypeScript is **246 ms in the browser and ~1130 ms under vitest**, and
+its warm-up trace is flat from the first pass, so that is not a cold JIT - it is
+issue **#267**, vitest's per-module transform, which #267 measured at 3.7x on a
+different file. **A ratio measured under vitest is not an engine comparison**,
+because only one of its two arms pays that tax. Note the WASM arm differs the
+other way (50.7 ms in Node against 99.7 ms in Chrome), so neither engine is
+uniformly faster - which is the second reason to quote the browser.
+
+Browser method, on the geometry the island finder uses: warmed 12 passes per
+arm, interleaved, min of 11, three separate page loads giving **2.46 / 2.47 /
+2.46**, plus **2.41x** at 1024x1024 @ 2 tiles/px (3786 ms against 1574 ms).
+Byte-identity was re-checked in the browser in the same run.
+
+Read 2.46x beside the spike's 7.5-13.2x rather than instead of it: the spike
+measured the leaf kernel and one composition, this is a whole composed render.
+
+**The lesson generalises past this number.** Any A/B where the two arms go
+through different amounts of the test harness is measuring the harness. Benchmark
+the arms in the environment that ships, or at least confirm the harness treats
+them alike.
 
 **No memo in the Rust chain, and that is not a shortcut.** The TypeScript wraps
 every field in `memoXY` because it builds a DAG of lazy closures; the Rust
