@@ -2272,3 +2272,116 @@ fn puts_every_fulgora_tile_where_the_game_puts_it() {
     );
     assert_eq!(exact, 4915, "tiles matching the game out of 5057");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 (#225) - Vulcanus. The helper layer lands first, because climate,
+// biomes, elevation and the resource stack all read it.
+//
+// The counts below are FROZEN EXACT NUMBERS, measured against the oracle and
+// recorded rather than chosen. If one moves: read the number, do not adjust it.
+// Up is a finding worth taking; down is a regression.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::vulcanus_helpers::VulcanusHelpers;
+
+/// Score one named field against its fixture column, at f32.
+///
+/// The same comparator `score_fulgora` uses, and for the same reason: the game
+/// reports f32 values and the chain models f32 arithmetic, so an f64 comparison
+/// would measure the host's extra precision rather than the port.
+fn score_vulcanus(got: &[f64], want: &[Json], label: &str) -> usize {
+    assert_eq!(got.len(), want.len(), "{label}: length mismatch");
+    let mut exact = 0usize;
+    for (i, w) in want.iter().enumerate() {
+        if (got[i] as f32) == (w.as_f64() as f32) {
+            exact += 1;
+        }
+    }
+    exact
+}
+
+/// Vulcanus's helper layer: the three leaf closures the oracle captured, plus
+/// the `vulcanus_scale_multiplier` program constant.
+///
+/// The three graded fields are deliberately one of each KIND rather than three
+/// of the cheapest: `vulcanus_wobble_x` is a two-octave `detail_noise` at a
+/// small magnitude, `mountain_plasma` is the `abs(A - B)` of two `basis_noise`
+/// calls at magnitudes up to 625, and `detail_noise(837, 1/40, 4, 1.25)` is a
+/// four-octave call at a fine input scale. A transcription error in the seed
+/// offset, the input scale or the plasma's asymmetric seeds shows in a
+/// different one of them.
+///
+/// **The TypeScript spec for these same three fields asserts BOUNDS**
+/// (`4e-4`, `4e-3`, `1e-4`), which is the #162 pathology and is what #256
+/// exists to remove. This side counts exact f32 matches instead, so a change
+/// that moves a residual without moving a match is visible here and invisible
+/// there.
+///
+/// **And one of those bounds is already stale by six orders of magnitude.**
+/// `test/vulcanusHelpers.spec.ts` bounds `vulcanus_wobble_x` at `4e-4` and its
+/// comment records "measured worst 2.32e-4 (deep-field point)". Re-measured on
+/// this tree the worst residual is **exactly 0** at all 38 positions - the
+/// field is bit-exact and the bound would not notice it losing four digits.
+/// Recorded here rather than fixed there: the bound is not wrong, it is inert,
+/// and rewriting it belongs to #256 with the other 86.
+#[test]
+fn reproduces_the_vulcanus_helper_layer_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-vulcanus-helpers.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 38, "fixture size");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let mountain_plasma = helpers.plasma(102, 2.5, 10.0, 125.0, 625.0);
+    let detail = helpers.detail_noise(837, 1.0 / 40.0, 4.0, 1.25);
+
+    let mut wobble_x = Vec::with_capacity(positions.len());
+    let mut plasma = Vec::with_capacity(positions.len());
+    let mut detail_out = Vec::with_capacity(positions.len());
+    for p in positions {
+        let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+        wobble_x.push(helpers.wobble_x(x, y));
+        plasma.push(mountain_plasma.eval(x, y));
+        detail_out.push(f64::from(detail.eval(x, y)));
+    }
+
+    // Frozen exact counts, measured 2026-08-19 and matched field for field
+    // against the TypeScript on the same fixture - 38, 7 and 1, with the same
+    // worst residuals. They describe the distance BOTH ports still sit from the
+    // game, not a gap between them.
+    for (key, want_exact, got) in [
+        // Bit-exact at all 38, worst residual exactly 0, deep-field point
+        // included. Two octaves at magnitude 4 is the shallowest call the
+        // fixture grades and nothing accumulates.
+        ("wobbleX", 38usize, &wobble_x),
+        // `abs(A - B)` of two basis calls at magnitudes 125 and 625; worst
+        // residual 2.807e-3. The output scales amplify the coordinate floor,
+        // which is why this is the loosest of the three in absolute terms while
+        // still beating `detailNoise` on exact matches.
+        ("mountainPlasma", 7, &plasma),
+        // Four octaves at input scale 0.8; worst residual 7.778e-5. The
+        // SMALLEST residual of the three and the FEWEST exact matches, which is
+        // the whole argument for counting matches rather than bounding error:
+        // a field can be uniformly close and almost never right.
+        ("detailNoise", 1, &detail_out),
+    ] {
+        assert_eq!(
+            score_vulcanus(got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 38"
+        );
+    }
+
+    // `vulcanus_scale_multiplier` is a program constant and the fixture repeats
+    // it at every position, so the check is that it is ONE value and that it is
+    // ours. It is 1 at the game's default preset, which is what pins the
+    // neutral slider at 1 rather than 0.
+    let multipliers = fixture.get("scaleMultiplier").as_f64_array();
+    assert!(
+        multipliers.iter().all(|m| *m == multipliers[0]),
+        "scale multiplier is not constant"
+    );
+    assert_eq!(multipliers[0], 1.0);
+    assert_eq!(helpers.scale_multiplier, 1.0);
+}

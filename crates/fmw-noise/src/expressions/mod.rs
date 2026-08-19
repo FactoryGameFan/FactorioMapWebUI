@@ -15,4 +15,5 @@ pub mod fulgora_scrap;
 pub mod fulgora_shared;
 pub mod fulgora_stack;
 pub mod starting_spot_at_angle;
+pub mod vulcanus_helpers;
 pub mod vulcanus_seed;
