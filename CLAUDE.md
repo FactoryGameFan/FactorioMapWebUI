@@ -424,6 +424,21 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
     what made N=4 look pointless, and once it stopped dominating, N=4 became a
     32% cut of the gate.
 
+  **A fourth, measured 2026-08-18: bun and deno are refuted, and the premise
+  under the question was refuted with them.** The suite is transform **0.7%**,
+  so a faster transpiler aims at almost nothing; on identical work plain bun is
+  **10% slower** than the node already installed (5.97s against 5.40s) and
+  deno's 5.17s is inside noise. Both also enforce their release-age floor at
+  resolution only, never on a frozen install from a lockfile - which is exactly
+  pnpm's _unset_ default, i.e. the hole `minimumReleaseAge: 1440` exists to
+  close - and both exit 0 having installed no `node_modules` for either
+  preview-service workspace. Full arm-by-arm numbers, the deno flag-spelling
+  trap that produces a false negative, and the one result that would reopen it
+  are in `docs/bun-deno-evaluation.md`. What that work DID find is issue #267:
+  vitest's per-module transform costs **3.7x** on the noise graph
+  (`test/findIslands.spec.ts`, 162.11s against 43.63s pre-bundled, 11 tests
+  passing both ways), which is reachable without changing runtime at all.
+
 - `pnpm refs:sync` - pin `factorioLuaAPI/` + `~/GitHub/factorio-data` to the
   installed binary's version (`--check` reports drift only; `--fixtures` reports
   which oracle fixtures predate the binary). Deliberately **not** part of
