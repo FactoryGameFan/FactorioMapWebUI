@@ -20,6 +20,7 @@ import { renderVulcanusResources } from "./renderVulcanusResources";
 import { renderVulcanusRocks } from "./renderVulcanusRocks";
 import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
 import { renderFulgoraLandMask, renderFulgoraTerrain } from "./renderFulgoraTerrain";
+import { renderThroughWasm, type EngineExports } from "../wasm/engine";
 import { renderFulgoraResources } from "./renderFulgoraResources";
 import { makeFulgoraStack } from "../tiles/fulgoraCatalog";
 import type { FulgoraScrapControls } from "../expressions/fulgoraScrap";
@@ -296,11 +297,55 @@ export function placementMarkSweepBox(req: ElevationRenderRequest): WorldBox {
 }
 
 /**
+ * The Rust engine's landmask path.
+ *
+ * **The copy here is real and is the only one.** Reading the output is
+ * zero-copy - `renderThroughWasm` hands back a view over WebAssembly linear
+ * memory - but `postMessage` cannot transfer a view over WASM memory, and the
+ * buffer is reused by the next render anyway. So this slices once into a fresh
+ * `ArrayBuffer` and that is what gets transferred. At 1024x1024 it is 4 MB,
+ * well under a millisecond against renders measured in seconds.
+ *
+ * Written out because a wrong belief about where a copy happens is exactly the
+ * kind of thing that gets repeated.
+ */
+function renderLandMaskThroughWasm(
+  req: ElevationRenderRequest,
+  engine: EngineExports,
+): ElevationRenderResult {
+  const view = renderThroughWasm(engine, {
+    seed0: req.seed0,
+    width: req.width,
+    height: req.height,
+    originX: req.originX,
+    originY: req.originY,
+    tilesPerPixel: req.tilesPerPixel,
+    islandsFrequency: req.fulgoraIslandControls?.frequency ?? 1,
+    islandsSize: req.fulgoraIslandControls?.size ?? 1,
+  });
+  const owned = new Uint8ClampedArray(view);
+  return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
+}
+
+/**
  * Pure render step shared by the worker and its tests: run renderElevation or
  * renderTerrain (per `req.view`) and hand back the transferable RGBA buffer. No
  * Worker or DOM canvas involved.
+ *
+ * `engine` is optional and opt-in. When a caller supplies an instantiated Rust
+ * engine AND the request is Fulgora's land mask - the one path #223 ports - the
+ * render goes through WebAssembly; otherwise it takes the TypeScript path
+ * exactly as before. A parameter rather than module state, so nothing has to be
+ * registered, reset between tests, or reasoned about across files.
+ *
+ * The two paths are BYTE-IDENTICAL, which `test/wasmLandmaskParity.spec.ts`
+ * asserts across four windows, so this is a speed choice and not a behaviour
+ * switch.
  */
-export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderResult {
+export function runRenderRequest(
+  req: ElevationRenderRequest,
+  engine?: EngineExports,
+): ElevationRenderResult {
   const planet = req.planet ?? "nauvis";
   let image: ImageData;
   if (
@@ -395,6 +440,13 @@ export function runRenderRequest(req: ElevationRenderRequest): ElevationRenderRe
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
     }
     if (planet === "fulgora") {
+      // The one path the Rust engine serves so far (#223). Checked BEFORE the
+      // TypeScript stack is built, because `makeFulgoraStack` derives seed
+      // tables for eight multioctave fields, and building them only to throw
+      // them away would be most of the saving.
+      if (engine !== undefined && req.view === "landmask") {
+        return renderLandMaskThroughWasm(req, engine);
+      }
       // Fulgora has a resources overlay now; it still has no cliffs and no
       // rocks, so those views fall back to plain terrain - the same fallback
       // the Vulcanus branch applies to the overlays it lacks. A view that asks
