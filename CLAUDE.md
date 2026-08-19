@@ -1159,7 +1159,7 @@ Field labels carry in-game tooltip text via `FInfo` (an `info` prop on
 `EnemyValueRow`, an `info:` entry in `controlCatalog.ts` for the enemy-base
 autoplace rows).
 
-### The Rust/WASM noise engine (`crates/`) - phases 1 and 2 landed
+### The Rust/WASM noise engine (`crates/`) - phases 1-3 expressions landed
 
 A Cargo workspace at the repository root, landed empty on purpose (#219) so the
 gate was proven green on `main` before any port code depended on it. Two crates:
@@ -1187,8 +1187,35 @@ Five oracle fixtures joined tier 1 (`oracle-fastpow`, `oracle-multisample`,
 `oracle-fulgora-elevation`), which also closed a standing gap: `fast_approx`
 shipped in phase 1 with **no tier-1 test and no poison hook** of its own.
 `eval/f32.ts` has no Rust counterpart on purpose - the narrowing is the type -
-and `eval/mod.rs` carries the two-case rule in its place. Phase 3 is the Fulgora
-vertical slice (#223), with the CSP change (#222) landing with or before it.
+and `eval/mod.rs` carries the two-case rule in its place.
+
+**Phase 3's EXPRESSION half is complete; the ABI and the execute seam are
+not** (#223). Landed: `expressions/fulgora_shared`, `fulgora_cells`,
+`fulgora_elevation`, `starting_spot_at_angle`, and `tiles/` with `water_base`,
+`best_probability` and the ocean test the land mask is built on. Tier 1 grades
+all 41 named fields against `oracle-fulgora-{shared,cells,elevation}` plus
+`oracle-starting-spot`, and the whole chain end to end against
+`oracle-fulgora-tiles` - 5,057 tiles the game actually placed. Tier 2 folds all
+42 fields at two slider settings. Still to do in #223: the request encoding, the
+module/instance lifetime, `catalog_names`, tier-3 whole-image parity, and the
+in-browser measurement. The CSP change (#222) has landed.
+
+**No memo in the Rust chain, and that is not a shortcut.** The TypeScript wraps
+every field in `memoXY` because it builds a DAG of lazy closures; the Rust
+evaluates the chain top to bottom in one pass and keeps intermediates in locals.
+That is what the memo achieves, bit-identically (a hit returns the value the
+function computed), with no cache and no `&mut` plumbing. It is legitimate only
+because every read in that chain is at the SAME `(x, y)` - checked field by
+field. A field that read a neighbour would need the cache back.
+
+**`starting_spot_at_angle` takes its trig as an INPUT**, and phase 3 is where
+that stopped being optional. It is plain f64 arithmetic with no narrowing, so a
+one-ULP `sin` difference lands straight in the result - and #270 measured that
+the wasm libm and V8 really do disagree. At **all 13 call sites** the angle and
+distance are per-render constants (read, not assumed), so the sine and cosine
+are computed once outside the per-pixel path and handed in. Tier 2 passes V8's
+values to the module, which makes a libm disagreement impossible rather than
+unlikely.
 
 `checksum` holds the tier-2 parity fold; **`fold_f64` folds RAW BITS and must
 stay order-sensitive**, because an XOR fold is blind to order and cancels pairs,
@@ -1209,13 +1236,29 @@ bits below what an f32 narrowing keeps. The un-narrowed form is therefore not
 exported from `fmw-wasm` at all. Anything new that reaches a transcendental
 needs a tier-2 sweep, not just a fixture.
 
-**Two TypeScript findings came out of the port and neither was fixed in it.**
-Both are behaviour changes to shipped fields that pass their own fixtures today,
-so both got issues instead: #269 (`basisNoiseExpr` returns an un-narrowed f64
-product where the game narrows to f32, and none of its five callers narrow
-either) and #270 above. The port reproduces the TypeScript exactly in both
-cases - a unilateral "fix" on the Rust side would read as a port bug in tier 2,
-which is the whole point of having tier 2.
+**THREE TypeScript findings came out of the port and none was fixed in it.**
+All are behaviour changes to shipped fields that pass their own fixtures today,
+so each got an issue instead. The port reproduces the TypeScript exactly in
+every case - a unilateral "fix" on the Rust side would read as a port bug in
+tier 2, which is the whole point of having tier 2.
+
+- **#269** - `basisNoiseExpr` returns an un-narrowed f64 product where the game
+  narrows to f32, and none of its five callers narrow either.
+- **#270** - the wasm libm question above.
+- **#273** - Fulgora's elevation constants are f64 where the game holds them at
+  f32. Typing them takes `fulgora_dunes` from **26/101 to 101/101 with worst
+  error exactly 0** and `fulgora_rock` from 84/101 to 101/101. The control is
+  `fulgora_scrap_medium`: same op family, no added constant, already 101/101 -
+  so the whole gap is the literal. `crates/fmw-noise/src/fixtures.rs` carries
+  the planted fix as a live test rather than leaving it in the issue, because a
+  measurement nobody runs goes stale.
+
+**The Fulgora tier-1 counts are NOT 101/101 and that is deliberate.** Each was
+measured against the TypeScript side by side and all 21 agree exactly - same
+count, same worst residual - so they describe the port's known distance from the
+game, which both implementations share. Freezing them is what makes a change to
+any of them a finding. If one moves: read the number, do not adjust it. Up is
+worth taking; down is a regression.
 
 - **`src/noise/wasm/engine.wasm` is a COMMITTED artifact.**
   `scripts/build-wasm.sh` produces it; `verify:rust` rebuilds and compares bytes
@@ -1242,6 +1285,15 @@ which is the whole point of having tier 2.
   and both should - one reads a fixture and no port code, and the other asserts
   that WRONG models of `^` disagree, which poisoning only strengthens.
   `poison.rs` records why, beside the two earlier ones.
+
+  **A numeric hook does not reach a DISCRETE output**, which phase 3 measured
+  rather than assumed: with only the elevation hook live, the end-to-end tile
+  test stayed green at 7 and 11 misses out of 5,057, because a one-ULP nudge
+  changes which side of a comparison a value falls on essentially never. That is
+  the same property that makes `voronoi_cell_id` exact where `pyramid_noise` is
+  not. `poison::bool_result` flips the classification instead. Any future op
+  whose output is a choice rather than a number needs that hook, not `f64_result`.
+
 - **The determinism rules are what protect that**, and each is written where it
   is enforced: no `mul_add` or fast-math, `clippy::suboptimal_flops` explicitly
   allowed so turning `nursery` on later cannot push the port toward FMA, no

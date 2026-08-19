@@ -114,3 +114,31 @@ pub fn u32_result(value: u32) -> u32 {
     #[cfg(not(feature = "poison"))]
     value
 }
+
+/// Flip a binary CLASSIFICATION.
+///
+/// Used by the ops whose output is a choice rather than a number. Fulgora's
+/// ocean test is one: it returns "deep", "shallow" or "not ocean", and its
+/// tier-1 test counts how often that choice disagrees with the tile the game
+/// actually placed across 5,057 positions.
+///
+/// **A numeric hook does not reach it, and that was measured rather than
+/// assumed** (2026-08-19). With only the elevation hook live, the whole chain
+/// underneath moved by one ULP and
+/// `puts_fulgora_land_and_ocean_where_the_game_puts_them` stayed GREEN at 7 and
+/// 11 - because the decision is a comparison, and a one-ULP nudge changes which
+/// side of it a value falls on essentially never. Same reason `voronoi_cell_id`
+/// is exact where `pyramid_noise` is not: a discrete lookup absorbs a sub-ULP
+/// input error.
+///
+/// So the perturbation has to act on the choice. This is the smallest wrong
+/// answer a classifier can give, the way `i64_result`'s one-tile shift is for a
+/// coordinate.
+#[inline]
+#[must_use]
+pub fn bool_result(value: bool) -> bool {
+    #[cfg(feature = "poison")]
+    return !value;
+    #[cfg(not(feature = "poison"))]
+    value
+}

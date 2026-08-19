@@ -78,6 +78,12 @@ POISONED_TESTS=(
   the_multisample_port_implements_the_one_tile_channel_only
   reproduces_every_game_captured_seed_variable
   reproduces_the_games_slider_rescale_at_all_seven_probe_points
+  reproduces_the_fulgora_shared_layer_at_every_captured_position
+  reproduces_the_fulgora_cell_classification_at_every_captured_position
+  reproduces_the_fulgora_elevation_chain_at_every_captured_position
+  reproduces_the_games_starting_spot_at_angle_at_every_case
+  typing_the_dunes_constant_f32_reaches_exactly_zero_residual
+  puts_fulgora_land_and_ocean_where_the_game_puts_them
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test fixtures::${t} \.\.\. FAILED" <<<"$POISON_OUT"; then
