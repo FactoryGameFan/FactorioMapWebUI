@@ -3,6 +3,8 @@
  * named expression reads 1:1 with the Lua (`min(a, b, c)`, `clamp(x, lo, hi)`, ...).
  */
 
+import { f32 } from "./f32";
+
 /** Clamp `v` into `[lo, hi]`. */
 export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
@@ -11,6 +13,22 @@ export function clamp(v: number, lo: number, hi: number): number {
 /** Linear interpolate: `a` at `t=0`, `b` at `t=1`. */
 export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+/**
+ * {@link lerp} with per-operation f32 rounding, for expressions the noise
+ * machine evaluates one operation at a time.
+ *
+ * **Same FORM, three roundings instead of none.** It is still `a + (b - a) * t`,
+ * so `lerpF32(a, b, 1)` is still not exactly `b` - that is the game's own shape
+ * and must not be "fixed" to `if (t === 1) return b`. See {@link lerp}.
+ *
+ * Both of Fulgora's lerps read this (`fulgora_mix_moats` and `fulgora_mix_oil`).
+ * Written here rather than inline at each call site so there is ONE definition
+ * to keep in step with `fmw_noise::eval::math::lerp_f32`.
+ */
+export function lerpF32(a: number, b: number, t: number): number {
+  return f32(a + f32(f32(b - a) * t));
 }
 
 /** Variadic min (the DSL's `min(...)`). */

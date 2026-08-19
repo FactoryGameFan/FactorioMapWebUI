@@ -1811,17 +1811,17 @@ fn reproduces_the_fulgora_elevation_chain_at_every_captured_position() {
         ("fulgora_vault_pyramids_and_start", 101, &|f| {
             f.vault_pyramids_and_start
         }),
-        ("fulgora_moats", 69, &|f| f.moats),
-        ("fulgora_mix_pyramids", 93, &|f| f.mix_pyramids),
-        ("fulgora_mix_natural", 94, &|f| f.mix_natural),
-        ("fulgora_mix_moats", 59, &|f| f.mix_moats),
-        ("fulgora_vault_spots", 69, &|f| f.vault_spots),
-        ("fulgora_mix_spots", 63, &|f| f.mix_spots),
+        ("fulgora_moats", 101, &|f| f.moats),
+        ("fulgora_mix_pyramids", 100, &|f| f.mix_pyramids),
+        ("fulgora_mix_natural", 100, &|f| f.mix_natural),
+        ("fulgora_mix_moats", 98, &|f| f.mix_moats),
+        ("fulgora_vault_spots", 101, &|f| f.vault_spots),
+        ("fulgora_mix_spots", 99, &|f| f.mix_spots),
         ("fulgora_oil_mask", 101, &|f| f.oil_mask),
-        ("fulgora_mix_oil", 58, &|f| f.mix_oil),
-        ("fulgora_sand_basins", 53, &|f| f.sand_basins),
-        ("fulgora_pre_elevation", 49, &|f| f.pre_elevation),
-        ("fulgora_elevation", 47, &|f| f.elevation),
+        ("fulgora_mix_oil", 99, &|f| f.mix_oil),
+        ("fulgora_sand_basins", 99, &|f| f.sand_basins),
+        ("fulgora_pre_elevation", 100, &|f| f.pre_elevation),
+        ("fulgora_elevation", 100, &|f| f.elevation),
     ] {
         let got: Vec<f64> = e.iter().map(select).collect();
         assert_eq!(
@@ -2105,20 +2105,26 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
         ("fulgoran_sand_probability", 96, &|f: &S| {
             f.land_probabilities()[2]
         }),
-        // **80 -> 79 with #279, the one count that went DOWN**, against 13 that
-        // went up (four of them to a full 101). Recorded rather than smoothed,
-        // the same way #273 recorded `fulgora_pre_elevation` 44 -> 43 and
-        // `fulgora_tile_ruin_machinery` 95 -> 94, and it is the same class: a
-        // still-inexact deep composite where one position crossed a rounding
-        // boundary in the unlucky direction.
+        // **The one count that keeps going DOWN: 80 -> 79 with #279, then
+        // 79 -> 78 with the elevation-chain narrowings.** Recorded rather than
+        // smoothed, the same way #273 recorded `fulgora_pre_elevation` 44 -> 43
+        // and `fulgora_tile_ruin_machinery` 95 -> 94.
         //
-        // It is NOT evidence the cone narrowing is wrong. The direct oracle test
-        // of `starting_spot_at_angle` went 88 -> 152 of 152 - exact at every
-        // captured case the game produced - and both starting cones reached
-        // 101/101 at a residual of exactly 0. A one-point move on a composite
-        // several layers downstream of an expression that is now bit-exact is
-        // noise in the composite, not a signal about the expression.
-        ("fulgoran_rock_probability", 79, &|f: &S| {
+        // Two rounds in the same direction is worth naming, but it is still not
+        // evidence against either change, and the company it keeps is the
+        // argument: in the same two commits, `starting_spot_at_angle` went
+        // 88 -> 152 of 152 against the game's own captured values, both starting
+        // cones and `fulgora_moats` and `fulgora_vault_spots` reached 101/101 at
+        // a residual of exactly 0, and `fulgora_elevation` went 47 -> 100.
+        // Against that, one position on one still-inexact composite crossed a
+        // rounding boundary the unlucky way, twice.
+        //
+        // What WOULD make it a signal: this field reaching a full 101 elsewhere
+        // in the chain and then dropping, or the drop appearing on a field that
+        // is already exact. Neither has happened. If it goes down a third time,
+        // score this field on its own the way #273 scored its candidates rather
+        // than reading it out of a cumulative sweep.
+        ("fulgoran_rock_probability", 78, &|f: &S| {
             f.land_probabilities()[3]
         }),
     ] {
