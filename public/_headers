@@ -23,11 +23,39 @@
 #   by `zlib-asm`, an asm.js port that shipped three eval sites (2016 Emscripten
 #   runtime glue, none of them compression) and needed a local patch to strip
 #   them so this policy could drop 'unsafe-eval'. That dependency and its patch
-#   are gone; the constraint they were working around no longer exists. The
-#   policy itself was verified live in Chrome under the zlib-asm build - the app
-#   decoded and re-encoded all 9 builtin fixtures with zero
-#   securitypolicyviolation events, while a deliberately injected inline
-#   <script> WAS blocked - and pako is strictly less demanding than what passed.
+#   are gone; the constraint they were working around no longer exists.
+#
+#   VERIFIED LIVE 2026-08-19 against deploy e723b30, and how that check was
+#   built matters more than the fact it came back clean. THIS FILE ONLY TAKES
+#   EFFECT ON CLOUDFLARE PAGES, so the policy had never run in production until
+#   that deploy - which is also the first one carrying the WASM engine, i.e. the
+#   first thing here that needs 'wasm-unsafe-eval' at all. Four parts, in this
+#   order, because a run with no violations proves nothing on its own:
+#
+#   1. CALIBRATION. `eval("1+1")` and `new Function(...)` were tried in the
+#      measuring context FIRST. Both threw EvalError naming the CSP. A debugger
+#      context that bypassed page CSP would have made every probe below pass for
+#      the wrong reason, so this is what licenses reading the rest - and it is
+#      also the direct evidence that 'unsafe-eval' is not in force.
+#   2. CONTROL, which must FIRE. An inline <script> inserted through the DOM
+#      never executed, and recorded violatedDirective "script-src-elem",
+#      blockedURI "inline".
+#   3. POSITIVE PROBE, for the half that breaks the app rather than loosening
+#      it. The shipped engine-*.wasm (application/wasm, 84,177 bytes, sha256
+#      cd1a79c1..., byte-identical to src/noise/wasm/engine.wasm) compiled AND
+#      instantiated in the page world, all 28 exports present.
+#   4. NORMAL OPERATION, with a securitypolicyviolation listener installed
+#      before any page script ran: server preview (so connect-src is right), a
+#      client-side Fulgora terrain render at 1024x1024 across 11 workers, and a
+#      radius-1024 island search. Zero violations, zero console errors.
+#
+#   This paragraph used to say the policy "was verified live in Chrome under the
+#   zlib-asm build", with all 9 builtin fixtures re-encoded and an inline script
+#   blocked. That was true when written and had quietly stopped describing
+#   anything that ships: pako replaced zlib-asm, and the WASM engine arrived
+#   after both, so the run being cited had never exercised the token this rule
+#   now turns on. Re-verify after any deploy that changes what the app compiles
+#   or fetches, and name the build the run was against.
 # - img-src needs blob:: the preview PNG is shown via URL.createObjectURL(blob).
 # - connect-src must include the preview Worker origin (the app's only outbound
 #   call). Replace the placeholder with the deployed Worker origin.
