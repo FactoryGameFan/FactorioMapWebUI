@@ -141,8 +141,16 @@ impl<'a> VulcanusElevation<'a> {
             biomes,
             climate,
             mountain_basis: BasisLeaf::new(seed0, 13_423, 1.0 / 500.0, 250.0),
-            // Note the input scale divides by the ashlands LOCAL scale of 3, and
-            // by the volcanism scale multiplier - not by the crack scale.
+            // The input scale MULTIPLIES by the volcanism scale multiplier and
+            // divides by 50 and by the ashlands LOCAL scale of 3 - not by the
+            // crack scale, and the multiplier is not a divisor.
+            //
+            // Spelled out because no test here can tell the two apart:
+            // `scale_multiplier` is exactly 1 at the default preset, which is
+            // what every fixture and the poison gate run at, so
+            // `m / 50 / 3` and `1 / 50 / 3 / m` are bit-identical throughout.
+            // The forms only diverge at a non-default volcanism FREQUENCY
+            // slider, and they would diverge with the whole gate green.
             ashlands_basis: BasisLeaf::new(
                 seed0,
                 12_643,

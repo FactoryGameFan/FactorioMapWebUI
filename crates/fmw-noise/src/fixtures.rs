@@ -2434,14 +2434,39 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
     // 5.460e-4, 6.387e-4.
     //
     // `hairlineCracks` at 3 of 61 is the weakest and it is the SHALLOWEST
-    // expression in the layer - a bare `plasma` with nothing composed on top.
-    // That points at the plasma adapter rather than at anything this file
-    // builds, and specifically at #269: `basis_noise_expr` returns an
-    // un-narrowed f64 product where the game narrows to f32, and `plasma` is
-    // two of those subtracted. The crack layer's scales are 0.3 * 0.325 and
-    // 0.6 * 0.325, neither exact in f32, so this layer is exactly the case the
-    // #269 comment says the existing `oracle-basis` fixture is blind to. Do not
-    // chase these five counts before that one is settled.
+    // expression in the layer - a bare `plasma` with nothing composed on top -
+    // so the weakness cannot come from anything this file builds. It points at
+    // the plasma adapter, and specifically at #269: `basis_noise_expr` returns
+    // an un-narrowed f64 product where the game narrows to f32, and `plasma` is
+    // two of those subtracted.
+    //
+    // **Which call sites #269 can reach is decided by the OUTPUT scale alone,
+    // and it is a clean rule.** `basis_noise` returns an f32, so multiplying by
+    // a POWER OF TWO is a pure exponent shift and can never leave the f32 grid:
+    // narrowing that product is the identity. Any other output scale can.
+    // Measured over 90,000 samples at a fixed input scale, output scale
+    // 1 / 0.5 / 0.25 / 2 / 4 / 64 each change **0.00%** of products, while 0.6
+    // changes 79.88%, 0.75 and 3 change 56.32%, 150 changes 97.46% and 125
+    // changes 98.38%. Holding the output scale at 1 and sweeping the INPUT
+    // scale over 0.125, 0.205, 0.51, 0.6, 1.5 and 0.002 changes 0.00% every
+    // time - the input scale decides which noise value you get, never whether
+    // the product is representable.
+    //
+    // So of the twelve `basis_noise_expr` calls this layer makes, exactly ONE
+    // is exposed: `hairline_cracks`'s first term, at output scale 0.6, where
+    // 80.10% of products differ. The other eleven sit at 1, 0.5 or 0.25 and are
+    // blind by construction. That is a one-term explanation for the one bad
+    // count here, and it is why the four fields built only from power-of-two
+    // sites score 15, 40, 10 and 8 rather than 3.
+    //
+    // It also explains why `oracle-basis` cannot grade this: that fixture was
+    // captured at output scale 1. Do not chase `hairlineCracks` before #269 is
+    // settled, and do not expect the other four to move when it is.
+    //
+    // An earlier draft of this comment blamed the layer's INPUT scales
+    // (0.3 * 0.325 and 0.6 * 0.325, neither exact in f32). That was wrong, and
+    // it is recorded rather than quietly deleted because it is the plausible
+    // guess: the input scale is the number that looks inexact.
     type C = CrackFields;
     for (key, want_exact, select) in [
         (
