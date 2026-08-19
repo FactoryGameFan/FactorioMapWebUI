@@ -236,7 +236,14 @@ impl FulgoraShared {
         // "We usually want a lot of wobble or none at all, so influence has a
         // high output scale and then we clamp it." The +0.6 biases most of the
         // map to fully on rather than centring the mask.
-        let wobble_mask = clamp(wobble_influence + 0.6, 0.0, 1.0);
+        //
+        // `0.6f32` is case 2 from the `eval` module docs - the engine holds the
+        // literal as 0.60000002384185791016 and the f64 one is
+        // 0.59999999999999997780. 96/101 exact before, **101/101 at a residual
+        // of exactly 0** after, and it is what takes `wx`, `wy`,
+        // `fulgora_basis`, `fulgora_pyramids` and `fulgora_pyramids_banding` to
+        // 101/101 as well. See #273.
+        let wobble_mask = clamp(wobble_influence + f64::from(0.6f32), 0.0, 1.0);
 
         // Offset the grid by half a cell so spawn sits in the MIDDLE of a cell
         // rather than on a corner where four islands meet.

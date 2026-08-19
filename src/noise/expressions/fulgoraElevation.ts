@@ -21,6 +21,7 @@
  * chain, but nothing here reads them - they feed the deferred tile layer.
  */
 import { memoXY } from "../eval/memoXY";
+import { f32 } from "../eval/f32";
 import { lerp, sliderRescale } from "../eval/math";
 import { makeMultioctaveNoise } from "../multioctaveNoise";
 import type { FulgoraCells } from "./fulgoraCells";
@@ -154,12 +155,32 @@ export function makeFulgoraElevation(
   // Note the distortion here is 1.5x the wobble and does NOT go through
   // `wobbleMask` - so unlike `wx`/`wy`, the oil noise is displaced even where
   // the mask has turned the island distortion off.
+  // The distortion multiply is its own f32 operation, so it is narrowed BEFORE
+  // the add and the sum is narrowed before it reaches the primitive (case 1 in
+  // `src/noise/eval/f32.ts`). `1.5` is exact at f32, so the constant is not the
+  // problem here and narrowing it would buy nothing. 97/101 -> **101/101** at a
+  // residual of exactly 0.
   const basisOil = memoXY((x: number, y: number) =>
-    basisOilNoise(x + 1.5 * shared.wobbleX(x, y), y + 1.5 * shared.wobbleY(x, y)),
+    basisOilNoise(
+      f32(x + f32(1.5 * shared.wobbleX(x, y))),
+      f32(y + f32(1.5 * shared.wobbleY(x, y))),
+    ),
   );
 
-  const rock = memoXY((x: number, y: number) => 0.33 + Math.abs(rockNoise(x, y)));
-  const dunes = memoXY((x: number, y: number) => 0.66 - Math.abs(dunesNoise(x, y)));
+  // `0.33` and `0.66` are narrowed as CONSTANTS (case 2 in
+  // `src/noise/eval/f32.ts`), not as products - the multioctave underneath is
+  // already bit-exact, so the whole residual was the literal. Measured over the
+  // 101-position fixture, each reaching a residual of exactly 0:
+  //
+  // | field | f64 literal | f32 literal |
+  // | --- | --- | --- |
+  // | `fulgora_rock` | 84/101 | **101/101** |
+  // | `fulgora_dunes` | 26/101 | **101/101** |
+  //
+  // The control is `fulgora_scrap_medium` below: same op family, same octaves
+  // and persistence, no added constant, and 101/101 before and after.
+  const rock = memoXY((x: number, y: number) => f32(0.33) + Math.abs(rockNoise(x, y)));
+  const dunes = memoXY((x: number, y: number) => f32(0.66) - Math.abs(dunesNoise(x, y)));
   const scrapMedium = memoXY(scrapMediumNoise);
 
   // `slider_rescale(size, 2)` is a program CONSTANT - it depends only on the
@@ -168,16 +189,36 @@ export function makeFulgoraElevation(
   // rather than through this field. See `sliderRescale`.
   const sizeRescale = sliderRescale(ctx.islandsSize ?? 1, 2);
 
-  const natural = memoXY((x: number, y: number) => basis(x, y) * 2 * sizeRescale - 0.85);
+  // `0.85` narrowed as a constant: 51/101 -> **101/101**, residual exactly 0.
+  //
+  // #273 predicted this one would stall at 99/101 and it does NOT, because the
+  // prediction was measured before `wobbleMask` was fixed. `natural` reads
+  // `basis`, which was itself only 98/101 then; with both narrowed the second
+  // cause is gone. A field that improves without reaching 0 usually means
+  // another term upstream, not a floor - check upstream before concluding one.
+  const natural = memoXY((x: number, y: number) => basis(x, y) * 2 * sizeRescale - f32(0.85));
 
   // Mesas take the pyramid relief scaled by an oil/rock term; sprawl cells take
   // it whole; every other class takes none of it (`sprawl` and `mesa` are
   // mutually exclusive 0/1 flags, so the bracket is one or the other).
+  // Narrowing only the three constants REGRESSES this field (99 -> 97) while
+  // narrowing every operation takes it to **101/101** at a residual of exactly
+  // 0. Both were measured; the constants-only form is the wrong fix here even
+  // though it is the right fix for `rock` and `dunes` above. The difference is
+  // arity - a single `a OP constant` recovers at the comparison's own rounding,
+  // a three-term sum does not, so each intermediate has to round where the
+  // engine rounds.
   const sprawlPyramids = memoXY(
     (x: number, y: number) =>
       cells.pyramids(x, y) *
       (cells.sprawl(x, y) +
-        cells.mesa(x, y) * Math.min(1, Math.abs(0.9 - 0.2 * basisOil(x, y) + 0.05 * rock(x, y)))),
+        cells.mesa(x, y) *
+          Math.min(
+            1,
+            Math.abs(
+              f32(f32(f32(0.9) - f32(f32(0.2) * basisOil(x, y))) + f32(f32(0.05) * rock(x, y))),
+            ),
+          )),
   );
 
   const vaultPyramids = memoXY((x: number, y: number) =>

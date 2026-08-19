@@ -13,6 +13,7 @@
  * re-run its four octaves several times per pixel.
  */
 import { memoXY } from "../eval/memoXY";
+import { f32 } from "../eval/f32";
 import { clamp, sliderToLinear } from "../eval/math";
 import { makeMultioctaveNoise } from "../multioctaveNoise";
 import { startingSpotAtAngle } from "./vulcanusShared";
@@ -117,7 +118,18 @@ export function makeFulgoraShared(ctx: FulgoraCtx): FulgoraShared {
   // "We usually want a lot of wobble or none at all, so influence has a high
   // output scale and then we clamp it." The +0.6 biases most of the map to
   // fully-on rather than centring the mask.
-  const wobbleMask = memoXY((x: number, y: number) => clamp(wobbleInfluence(x, y) + 0.6, 0, 1));
+  //
+  // `0.6` is narrowed as a CONSTANT (case 2 in `src/noise/eval/f32.ts`): the
+  // engine holds it as the f32 0.60000002384185791016, JavaScript's literal is
+  // the f64 0.59999999999999997780, and no rounding of the result recovers the
+  // difference. Measured over the 101-position fixture: 96/101 exact as an f64
+  // literal, **101/101 at a residual of exactly 0** narrowed. It is the most
+  // load-bearing of the eight in #273 - `wx`, `wy`, `fulgora_basis`,
+  // `fulgora_pyramids` and `fulgora_pyramids_banding` all reach 101/101 with
+  // it and none of them reaches 101/101 without it.
+  const wobbleMask = memoXY((x: number, y: number) =>
+    clamp(wobbleInfluence(x, y) + f32(0.6), 0, 1),
+  );
 
   // Offset the grid by half a cell so spawn sits in the MIDDLE of a cell
   // rather than on a corner where four islands meet.

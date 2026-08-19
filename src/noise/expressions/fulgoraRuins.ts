@@ -17,6 +17,7 @@
  * mask product - so they go negative on open ground rather than to zero.
  */
 import { memoXY } from "../eval/memoXY";
+import { f32 } from "../eval/f32";
 import { makeMultioctaveNoise } from "../multioctaveNoise";
 import type { FulgoraCells } from "./fulgoraCells";
 import type { FulgoraCtx } from "./fulgoraShared";
@@ -62,7 +63,11 @@ export function makeFulgoraRuins(
     outputScale: 1,
   });
 
-  const ruinsWalls = memoXY((x: number, y: number) => 0.66 - Math.abs(wallsNoise(x, y)));
+  // The same `0.66 - abs(v)` shape as `fulgora_dunes`, on a different seed, and
+  // it failed the same way: 19/101 as an f64 literal, **101/101** narrowed, at
+  // a residual of exactly 0. Two fields with one shape failing identically is
+  // what turned #273 from three edits into a sweep of the whole chain.
+  const ruinsWalls = memoXY((x: number, y: number) => f32(0.66) - Math.abs(wallsNoise(x, y)));
   const ruinsPaving = memoXY((x: number, y: number) => Math.abs(pavingNoise(x, y)));
 
   const tileRuinPaving = memoXY((x: number, y: number) =>
@@ -72,15 +77,27 @@ export function makeFulgoraRuins(
     ),
   );
 
+  // Per-operation narrowing throughout, matching the engine's own evaluation
+  // order: 88/101 -> **101/101** at a residual of exactly 0. Every constant here
+  // (0.5, 0.25, 4, 2, 2.5) is already exact at f32, so this is case 1 only -
+  // the rounding of the intermediates, not of any literal.
   const tileRuinWalls = memoXY((x: number, y: number) =>
     Math.max(
-      masks.naturalAndMesaMask(x, y) * (2 * ruinsWalls(x, y) + ruinsPaving(x, y) - 0.5),
-      masks.artificialMask(x, y) *
-        (0.25 * ruinsWalls(x, y) +
-          0.25 * roads.structureSubnoise(x, y) -
-          4 * roads.structureFacets(x, y) -
-          roads.roadPaving2c(x, y) +
-          2.5),
+      f32(
+        masks.naturalAndMesaMask(x, y) *
+          f32(f32(f32(2 * ruinsWalls(x, y)) + ruinsPaving(x, y)) - 0.5),
+      ),
+      f32(
+        masks.artificialMask(x, y) *
+          f32(
+            f32(
+              f32(
+                f32(f32(0.25 * ruinsWalls(x, y)) + f32(0.25 * roads.structureSubnoise(x, y))) -
+                  f32(4 * roads.structureFacets(x, y)),
+              ) - roads.roadPaving2c(x, y),
+            ) + 2.5,
+          ),
+      ),
     ),
   );
 
