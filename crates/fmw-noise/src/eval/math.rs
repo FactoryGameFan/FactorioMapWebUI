@@ -88,6 +88,20 @@ pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
 
+/// [`lerp`] with per-operation f32 rounding, for expressions the noise machine
+/// evaluates one operation at a time.
+///
+/// **Same FORM, three roundings instead of none.** It is still `a + (b - a) * t`,
+/// so `lerp_f32(a, b, 1.0)` is still not exactly `b` - that is the game's own
+/// shape and must not be "fixed" to `if t == 1.0 { b }`. See [`lerp`].
+///
+/// Both of Fulgora's lerps read this (`fulgora_mix_moats` and `fulgora_mix_oil`).
+/// Mirrors `lerpF32` in `src/noise/eval/math.ts`; keep the two in step.
+#[must_use]
+pub fn lerp_f32(a: f64, b: f64, t: f64) -> f64 {
+    f64::from((a + f64::from((f64::from((b - a) as f32) * t) as f32)) as f32)
+}
+
 /// Variadic `min(...)`, with JavaScript's `Math.min` semantics.
 ///
 /// **NaN poisons the result and `Rust`'s `f64::min` does not**, which is the

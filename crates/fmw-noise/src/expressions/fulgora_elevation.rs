@@ -23,7 +23,7 @@
 //! the deferred tile layer.
 
 use crate::eval::math::slider_rescale;
-use crate::eval::math::{lerp, max2, min2};
+use crate::eval::math::{lerp_f32, max2, min2};
 use crate::expressions::fulgora_cells::CellFields;
 use crate::expressions::fulgora_shared::Prepared;
 use crate::expressions::fulgora_shared::{FulgoraCtx, SharedFields};
@@ -218,17 +218,28 @@ impl FulgoraElevation {
         // the island, the second rises with it, and `max` takes whichever is
         // nearer the surface. The -0.05 floor is what guarantees some oil ocean
         // in the moat.
-        let moats = min2(
-            ARTIFICIAL_CAP,
-            1.5 * max2(
-                -0.05 - vault_pyramids_and_start * 2.0,
-                (vault_pyramids_and_start - 0.35) * 2.0,
-            ),
+        // Per-operation f32, mirroring `src/noise/expressions/fulgoraElevation.ts`
+        // (#279 follow-up). This reached 101/101 on its own; the rest of the
+        // chain below only closes when every one of them is narrowed together.
+        let moats_a =
+            (f64::from(-0.05f32) - f64::from((vault_pyramids_and_start * 2.0) as f32)) as f32;
+        let moats_b =
+            ((f64::from((vault_pyramids_and_start - f64::from(0.35f32)) as f32)) * 2.0) as f32;
+        let moats = f64::from(
+            (min2(
+                ARTIFICIAL_CAP,
+                f64::from((1.5 * max2(f64::from(moats_a), f64::from(moats_b))) as f32),
+            )) as f32,
         );
 
-        let mix_pyramids = min2(ARTIFICIAL_CAP, (sprawl_pyramids - 0.185) * 4.0);
+        let mix_pyramids = f64::from(
+            (min2(
+                ARTIFICIAL_CAP,
+                f64::from((f64::from((sprawl_pyramids - f64::from(0.185f32)) as f32) * 4.0) as f32),
+            )) as f32,
+        );
         let mix_natural = max2(natural, mix_pyramids);
-        let mix_moats = lerp(
+        let mix_moats = lerp_f32(
             mix_natural,
             moats,
             max2(cells.vaults_and_starting_vault, shared.starting_mask),
@@ -239,18 +250,48 @@ impl FulgoraElevation {
         // turns that narrow band into a plateau with near-vertical sides before
         // the cap flattens its top. The two starting terms carry a +0.5 bump so
         // spawn blends in.
-        let vault_spots = min2(
-            ARTIFICIAL_CAP,
-            -10.0
-                + 11.5
-                    * crate::eval::math::max(&[
-                        cells.vaults * cells.spots_inv,
-                        shared.starting_vault_mask * (0.5 + 0.5 * shared.starting_vault_cone),
-                        shared.starting_mask * (0.5 + 0.5 * shared.starting_cone),
-                    ]),
+        let vault_spots = f64::from(
+            (min2(
+                ARTIFICIAL_CAP,
+                f64::from(
+                    (-10.0
+                        + f64::from(
+                            (11.5
+                                * crate::eval::math::max(&[
+                                    f64::from((cells.vaults * cells.spots_inv) as f32),
+                                    f64::from(
+                                        (shared.starting_vault_mask
+                                            * f64::from(
+                                                (0.5 + f64::from(
+                                                    (0.5 * shared.starting_vault_cone) as f32,
+                                                ))
+                                                    as f32,
+                                            )) as f32,
+                                    ),
+                                    f64::from(
+                                        (shared.starting_mask
+                                            * f64::from(
+                                                (0.5 + f64::from(
+                                                    (0.5 * shared.starting_cone) as f32,
+                                                ))
+                                                    as f32,
+                                            )) as f32,
+                                    ),
+                                ])) as f32,
+                        )) as f32,
+                ),
+            )) as f32,
         );
 
-        let mix_spots = max2(mix_moats, vault_spots) + max2(0.0, shared.starting_cone - 0.8);
+        let mix_spots = f64::from(
+            (max2(mix_moats, vault_spots)
+                + f64::from(
+                    (max2(
+                        0.0,
+                        f64::from((shared.starting_cone - f64::from(0.8f32)) as f32),
+                    )) as f32,
+                )) as f32,
+        );
 
         // Comparisons yield 1 or 0, matching the engine's convention.
         let oil_mask = f64::from(u8::from(mix_spots < 0.0));
@@ -259,26 +300,37 @@ impl FulgoraElevation {
         // the `min(-0.01, ...)` guarantees the result stays negative, so
         // applying the noise can never lift an oil area back out of the mask it
         // was chosen by.
-        let mix_oil = lerp(
-            mix_spots,
-            min2(-0.01, mix_spots - 0.4 + 0.6 * basis_oil),
-            oil_mask,
+        let mix_oil_inner = f64::from(
+            (min2(
+                f64::from(-0.01f32),
+                f64::from(
+                    (f64::from((mix_spots - f64::from(0.4f32)) as f32)
+                        + f64::from((f64::from(0.6f32) * basis_oil) as f32))
+                        as f32,
+                ),
+            )) as f32,
         );
+        let mix_oil = lerp_f32(mix_spots, mix_oil_inner, oil_mask);
 
         // The inversion: above 0.3 the field folds back down, so high inland
         // ground becomes a bowl whose cliffs face inwards. This is what makes
         // inland sand areas negative, and why the tile layer needs `oil_mask`
         // rather than a plain "elevation < coastline" test to decide where
         // liquid goes.
-        let sand_basins = min2(mix_oil, 0.6 - mix_oil);
+        let sand_basins =
+            f64::from((min2(mix_oil, f64::from((f64::from(0.6f32) - mix_oil) as f32))) as f32);
 
-        let pre_elevation = sand_basins * 60.0 + COASTLINE;
+        let pre_elevation = f64::from((f64::from((sand_basins * 60.0) as f32) + COASTLINE) as f32);
 
         // The coastal step: +10 on land, -10 in water, so the coastline is a
         // cliff face rather than a gradual slope the cliff smoothing could
         // smear.
-        let elevation =
-            pre_elevation + (f64::from(u8::from(sand_basins > 0.0)) - 0.5) * COASTLINE_DROP;
+        let elevation = f64::from(
+            (pre_elevation
+                + f64::from(
+                    ((f64::from(u8::from(sand_basins > 0.0)) - 0.5) * COASTLINE_DROP) as f32,
+                )) as f32,
+        );
 
         ElevationFields {
             basis,

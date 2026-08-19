@@ -22,7 +22,7 @@
  */
 import { memoXY } from "../eval/memoXY";
 import { f32 } from "../eval/f32";
-import { lerp, sliderRescale } from "../eval/math";
+import { lerpF32, max, min, sliderRescale } from "../eval/math";
 import { makeMultioctaveNoise } from "../multioctaveNoise";
 import type { FulgoraCells } from "./fulgoraCells";
 import type { FulgoraCtx, FulgoraShared } from "./fulgoraShared";
@@ -233,41 +233,51 @@ export function makeFulgoraElevation(
   // surface. The `-0.05` floor is what guarantees some oil ocean in the moat.
   const moats = memoXY((x: number, y: number) => {
     const v = vaultPyramidsAndStart(x, y);
-    return Math.min(ARTIFICIAL_CAP, 1.5 * Math.max(-0.05 - v * 2, (v - 0.35) * 2));
+    const a = f32(f32(-0.05) - f32(v * 2));
+    const b = f32(f32(v - f32(0.35)) * 2);
+    return f32(min(ARTIFICIAL_CAP, f32(1.5 * max(a, b))));
   });
 
   const mixPyramids = memoXY((x: number, y: number) =>
-    Math.min(ARTIFICIAL_CAP, (sprawlPyramids(x, y) - 0.185) * 4),
+    f32(min(ARTIFICIAL_CAP, f32(f32(sprawlPyramids(x, y) - f32(0.185)) * 4))),
   );
-  const mixNatural = memoXY((x: number, y: number) => Math.max(natural(x, y), mixPyramids(x, y)));
-  const mixMoats = memoXY((x: number, y: number) =>
-    lerp(
-      mixNatural(x, y),
-      moats(x, y),
-      Math.max(cells.vaultsAndStartingVault(x, y), shared.startingMask(x, y)),
-    ),
-  );
+  const mixNatural = memoXY((x: number, y: number) => max(natural(x, y), mixPyramids(x, y)));
+  const mixMoats = memoXY((x: number, y: number) => {
+    const t = max(cells.vaultsAndStartingVault(x, y), shared.startingMask(x, y));
+    return lerpF32(mixNatural(x, y), moats(x, y), t);
+  });
 
   // "normal spot inverse is roughly 0.5 to 1, but the lower bound can be a bit
   // less in corners" - hence the steep `-10 + 11.5 *` remap, which turns that
   // narrow band into a plateau with near-vertical sides before the cap flattens
   // its top. The two starting terms carry a +0.5 bump so spawn blends in.
   const vaultSpots = memoXY((x: number, y: number) =>
-    Math.min(
-      ARTIFICIAL_CAP,
-      -10 +
-        11.5 *
-          Math.max(
-            cells.vaults(x, y) * cells.spotsInv(x, y),
-            shared.startingVaultMask(x, y) * (0.5 + 0.5 * shared.startingVaultCone(x, y)),
-            shared.startingMask(x, y) * (0.5 + 0.5 * shared.startingCone(x, y)),
-          ),
+    f32(
+      min(
+        ARTIFICIAL_CAP,
+        f32(
+          -10 +
+            f32(
+              11.5 *
+                max(
+                  f32(cells.vaults(x, y) * cells.spotsInv(x, y)),
+                  f32(
+                    shared.startingVaultMask(x, y) *
+                      f32(0.5 + f32(0.5 * shared.startingVaultCone(x, y))),
+                  ),
+                  f32(shared.startingMask(x, y) * f32(0.5 + f32(0.5 * shared.startingCone(x, y)))),
+                ),
+            ),
+        ),
+      ),
     ),
   );
 
-  const mixSpots = memoXY(
-    (x: number, y: number) =>
-      Math.max(mixMoats(x, y), vaultSpots(x, y)) + Math.max(0, shared.startingCone(x, y) - 0.8),
+  const mixSpots = memoXY((x: number, y: number) =>
+    f32(
+      max(mixMoats(x, y), vaultSpots(x, y)) +
+        f32(max(0, f32(shared.startingCone(x, y) - f32(0.8)))),
+    ),
   );
 
   // Comparisons yield 1 or 0, matching the engine's boolean-to-number convention.
@@ -278,7 +288,8 @@ export function makeFulgoraElevation(
   // noise can never lift an oil area back out of the mask it was chosen by.
   const mixOil = memoXY((x: number, y: number) => {
     const s = mixSpots(x, y);
-    return lerp(s, Math.min(-0.01, s - 0.4 + 0.6 * basisOil(x, y)), oilMask(x, y));
+    const inner = f32(min(f32(-0.01), f32(f32(s - f32(0.4)) + f32(f32(0.6) * basisOil(x, y)))));
+    return lerpF32(s, inner, oilMask(x, y));
   });
 
   // The inversion: above 0.3 the field folds back down, so high inland ground
@@ -287,16 +298,17 @@ export function makeFulgoraElevation(
   // "elevation < coastline" test to decide where liquid goes.
   const sandBasins = memoXY((x: number, y: number) => {
     const o = mixOil(x, y);
-    return Math.min(o, 0.6 - o);
+    return f32(min(o, f32(f32(0.6) - o)));
   });
 
-  const preElevation = memoXY((x: number, y: number) => sandBasins(x, y) * 60 + COASTLINE);
+  const preElevation = memoXY((x: number, y: number) =>
+    f32(f32(sandBasins(x, y) * 60) + COASTLINE),
+  );
 
   // The coastal step: +10 on land, -10 in water, so the coastline is a cliff
   // face rather than a gradual slope the cliff smoothing could smear.
-  const elevation = memoXY(
-    (x: number, y: number) =>
-      preElevation(x, y) + ((sandBasins(x, y) > 0 ? 1 : 0) - 0.5) * COASTLINE_DROP,
+  const elevation = memoXY((x: number, y: number) =>
+    f32(preElevation(x, y) + f32(f32((sandBasins(x, y) > 0 ? 1 : 0) - 0.5) * COASTLINE_DROP)),
   );
 
   return {
