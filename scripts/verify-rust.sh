@@ -68,6 +68,11 @@ POISONED_TESTS=(
   reproduces_the_recovered_candidate_draw_stream_bit_exactly
   reproduces_every_game_captured_candidate_set
   reproduces_every_game_captured_spot_selection_probe
+  reproduces_the_games_per_cell_voronoi_draw_across_all_nine_seed_series
+  reproduces_the_jitter_zero_voronoi_fixture_exactly
+  reproduces_the_jittered_voronoi_fixture_exactly
+  reproduces_the_voronoi_point_inversion_lattice_exactly
+  reproduces_the_voronoi_search_range_fixture_and_rejects_the_wrong_ring
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test fixtures::${t} \.\.\. FAILED" <<<"$POISON_OUT"; then

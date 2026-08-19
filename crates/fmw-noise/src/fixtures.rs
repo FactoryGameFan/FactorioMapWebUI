@@ -868,3 +868,303 @@ fn reproduces_every_game_captured_spot_selection_probe() {
         "worst peak error {worst_peak:e} at {worst_label}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// voronoi_*: the per-cell RNG.
+// ---------------------------------------------------------------------------
+
+use crate::voronoi_noise::{cell_random, CELL_DRAW_ID};
+
+#[test]
+fn reproduces_the_games_per_cell_voronoi_draw_across_all_nine_seed_series() {
+    let fixture = load("test/fixtures/oracle-voronoi-cellid.multiseed.json");
+    let cells: Vec<(i32, i32)> = fixture
+        .get("cells")
+        .as_array()
+        .iter()
+        .map(|c| (c.get("cx").as_f64() as i32, c.get("cy").as_f64() as i32))
+        .collect();
+    let series = fixture.get("series").as_array();
+
+    // Negative cell indices are half the point of the capture: a hash that
+    // mishandled two's complement would be invisible on a 0..15 block.
+    assert_eq!(cells.len(), 256, "cells");
+    assert_eq!(series.len(), 9, "seed series");
+    assert_eq!(
+        cells.iter().filter(|(x, y)| *x < 0 || *y < 0).count(),
+        192,
+        "cells with a negative index"
+    );
+
+    let mut total = 0usize;
+    let mut exact = 0usize;
+    for s in series {
+        let seed0 = s.get("seed0").as_f64() as u32;
+        let seed1 = s.get("seed1").as_f64() as u32;
+        let values = s.get("values").as_array();
+        assert_all_f32(values, "cellRandom");
+        for (i, (cx, cy)) in cells.iter().enumerate() {
+            total += 1;
+            if f64::from(cell_random(seed0, seed1, *cx, *cy, CELL_DRAW_ID)) == values[i].as_f64() {
+                exact += 1;
+            }
+        }
+    }
+
+    // test/voronoiNoise.spec.ts asserts the same 9 x 256.
+    assert_eq!(total, 2304, "fixture size");
+    assert_eq!(exact, 2304, "exact f32 matches");
+}
+
+#[test]
+fn the_voronoi_seeds_combine_as_a_single_32_bit_sum() {
+    // Read out of `VoronoiNoise::VoronoiNoise` rather than guessed:
+    // `w8 = asNoiseLayerID(seed1) + (uint)seed0`. So (123456, 1) and (123457, 0)
+    // are the SAME field, and the sum wraps. Pinned so a later "fix" that
+    // separated the two seeds fails loudly.
+    for cy in -3..=3 {
+        for cx in -3..=3 {
+            assert_eq!(
+                cell_random(123_456, 1, cx, cy, CELL_DRAW_ID),
+                cell_random(123_457, 0, cx, cy, CELL_DRAW_ID)
+            );
+            assert_eq!(
+                cell_random(0xffff_ffff, 1, cx, cy, CELL_DRAW_ID),
+                cell_random(0, 0, cx, cy, CELL_DRAW_ID)
+            );
+        }
+    }
+}
+
+use crate::voronoi_noise::{points_search_range, Voronoi, VoronoiDistanceType, VoronoiParams};
+
+/// Build a field for one fixture series.
+fn voronoi(
+    seed0: u32,
+    seed1: u32,
+    grid_size: f64,
+    jitter: f64,
+    dt: &str,
+    override_ring: Option<i32>,
+) -> Voronoi {
+    Voronoi::new(&VoronoiParams {
+        seed0,
+        seed1,
+        grid_size,
+        jitter,
+        distance_type: VoronoiDistanceType::from_name(dt),
+        search_range_override: override_ring,
+    })
+}
+
+/// Score one `op:distance_type[:jitter]` series against its positions.
+fn score_voronoi_series(
+    key: &str,
+    values: &[Json],
+    positions: &[(f64, f64)],
+    mut eval: impl FnMut(f64, f64) -> f32,
+) -> (usize, usize) {
+    assert_all_f32(values, key);
+    assert_eq!(values.len(), positions.len(), "{key} length");
+    let mut exact = 0usize;
+    for (i, (x, y)) in positions.iter().enumerate() {
+        if f64::from(eval(*x, *y)) == values[i].as_f64() {
+            exact += 1;
+        }
+    }
+    (values.len(), exact)
+}
+
+fn fixture_positions(fixture: &Json, key: &str) -> Vec<(f64, f64)> {
+    fixture
+        .get(key)
+        .as_array()
+        .iter()
+        .map(|p| (p.get("x").as_f64(), p.get("y").as_f64()))
+        .collect()
+}
+
+/// Dispatch one of the four ops by the fixture's key prefix.
+fn eval_voronoi_op(v: &mut Voronoi, op: &str, x: f64, y: f64) -> f32 {
+    match op {
+        "voronoi_cell_id" => v.cell_id(x, y),
+        "voronoi_spot_noise" => v.spot_noise(x, y),
+        "voronoi_facet_noise" => v.facet_noise(x, y),
+        "voronoi_pyramid_noise" => v.pyramid_noise(x, y),
+        other => panic!("unknown voronoi op {other:?}"),
+    }
+}
+
+#[test]
+fn reproduces_the_jitter_zero_voronoi_fixture_exactly() {
+    // **This rung is DEGENERATE and proves less than its size suggests.** At
+    // jitter 0 every cell is a congruent unit square, so many different
+    // algorithms collapse onto identical numbers. It is the jittered fixture
+    // below that discriminates. Kept because it is free and because a
+    // regression would show here first.
+    let fixture = load("test/fixtures/oracle-voronoi-jitter0.seed123456.json");
+    let seed0 = fixture.get("seed").as_f64() as u32;
+    let seed1 = fixture.get("seed1").as_f64() as u32;
+    let grid_size = fixture.get("gridSize").as_f64();
+    let jitter = fixture.get("jitter").as_f64();
+    let positions = fixture_positions(&fixture, "positions");
+    let values = fixture.get("values");
+
+    let Json::Obj(entries) = values else {
+        panic!("values is not an object")
+    };
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    for (key, series) in entries {
+        let (op, dt) = key.split_once(':').expect("op:distance_type");
+        let mut v = voronoi(seed0, seed1, grid_size, jitter, dt, None);
+        let (n, exact) = score_voronoi_series(key, series.as_array(), &positions, |x, y| {
+            eval_voronoi_op(&mut v, op, x, y)
+        });
+        total += n;
+        exact_total += exact;
+    }
+
+    // 15 series, not 16: `voronoi_pyramid_noise:minkowski3` does not exist,
+    // because the game's own expression compiler refuses that pair.
+    assert_eq!(entries.len(), 15, "series");
+    assert_eq!(total, 2625, "fixture size");
+    assert_eq!(exact_total, 2625, "exact f32 matches");
+}
+
+#[test]
+fn reproduces_the_jittered_voronoi_fixture_exactly() {
+    // The rung that actually discriminates: 45 series at jitter 0.6, 0.8 and
+    // 1.0. The pyramid's old jitter-0 formula scored 0 of 175 at every one of
+    // these, which is what the degenerate rung above could never have shown.
+    let fixture = load("test/fixtures/oracle-voronoi-points.seed123456.json");
+    let seed0 = fixture.get("seed").as_f64() as u32;
+    let seed1 = fixture.get("seed1").as_f64() as u32;
+    let grid_size = fixture.get("gridSize").as_f64();
+    let positions = fixture_positions(&fixture, "opPositions");
+    let ops = fixture.get("ops");
+
+    let Json::Obj(entries) = ops else {
+        panic!("ops is not an object")
+    };
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    for (key, series) in entries {
+        let mut parts = key.split(':');
+        let op = parts.next().expect("op");
+        let dt = parts.next().expect("distance_type");
+        let jitter: f64 = parts
+            .next()
+            .expect("jitter")
+            .parse()
+            .expect("jitter number");
+        let mut v = voronoi(seed0, seed1, grid_size, jitter, dt, None);
+        let (n, exact) = score_voronoi_series(key, series.as_array(), &positions, |x, y| {
+            eval_voronoi_op(&mut v, op, x, y)
+        });
+        total += n;
+        exact_total += exact;
+    }
+
+    assert_eq!(entries.len(), 45, "series");
+    assert_eq!(total, 7875, "fixture size");
+    assert_eq!(exact_total, 7875, "exact f32 matches");
+}
+
+#[test]
+fn reproduces_the_voronoi_point_inversion_lattice_exactly() {
+    // The lattice recovers the POINT POSITIONS themselves rather than an op's
+    // output: 6 series x 4,096 samples of `spot_noise` and `cell_id` around one
+    // cell, at three jitters and two distance types. This is what pins
+    // `point_offset_in_cell` directly instead of through an argmin.
+    let fixture = load("test/fixtures/oracle-voronoi-points.seed123456.json");
+    let seed0 = fixture.get("seed").as_f64() as u32;
+    let seed1 = fixture.get("seed1").as_f64() as u32;
+    let grid_size = fixture.get("gridSize").as_f64();
+
+    let mut total = 0usize;
+    let mut exact_values = 0usize;
+    let mut exact_ids = 0usize;
+    for s in fixture.get("series").as_array() {
+        let jitter = s.get("jitter").as_f64();
+        let dt = s.get("distanceType").as_str();
+        let lattice = s.get("lattice").as_array();
+        let values = s.get("values").as_array();
+        let cell_ids = s.get("cellIds").as_array();
+        assert_all_f32(values, "lattice values");
+        assert_all_f32(cell_ids, "lattice cellIds");
+        let mut v = voronoi(seed0, seed1, grid_size, jitter, dt, None);
+        for (i, p) in lattice.iter().enumerate() {
+            let x = p.get("x").as_f64();
+            let y = p.get("y").as_f64();
+            total += 1;
+            if f64::from(v.spot_noise(x, y)) == values[i].as_f64() {
+                exact_values += 1;
+            }
+            if f64::from(v.cell_id(x, y)) == cell_ids[i].as_f64() {
+                exact_ids += 1;
+            }
+        }
+    }
+
+    assert_eq!(total, 24576, "fixture size");
+    assert_eq!(exact_values, 24576, "exact spot_noise matches");
+    assert_eq!(exact_ids, 24576, "exact cell_id matches");
+}
+
+#[test]
+fn reproduces_the_voronoi_search_range_fixture_and_rejects_the_wrong_ring() {
+    // `points_search_range` was INERT until 2026-08-05: forcing it to 2 for all
+    // four distance types passed 95/95 voronoi tests, and forcing it to 1 also
+    // passed 95/95. This fixture is what ended that, and it is the only place
+    // the ring is observable at all - so the anti-vacuity half (the planted
+    // wrong ring must FAIL) is the point of the test, not a garnish.
+    let fixture = load("test/fixtures/oracle-voronoi-search-range.seed123456.json");
+    let seed0 = fixture.get("seed").as_f64() as u32;
+    let seed1 = fixture.get("seed1").as_f64() as u32;
+    let grid_size = fixture.get("gridSize").as_f64();
+
+    let mut total = 0usize;
+    let mut exact = 0usize;
+    let mut wrong_ring_matches = 0usize;
+    for s in fixture.get("series").as_array() {
+        let dt = s.get("distanceType").as_str();
+        let jitter = s.get("jitter").as_f64();
+        let expected_range = s.get("expectedRange").as_f64() as i32;
+        let positions = fixture_positions(s, "positions");
+        let values = s.get("values").as_array();
+        assert_all_f32(values, "searchRange values");
+
+        // The range this port computes must be the one the fixture names.
+        assert_eq!(
+            points_search_range(VoronoiDistanceType::from_name(dt), jitter),
+            expected_range,
+            "{dt} at jitter {jitter}"
+        );
+
+        let mut right = voronoi(seed0, seed1, grid_size, jitter, dt, None);
+        let wrong = if expected_range == 1 { 2 } else { 1 };
+        let mut planted = voronoi(seed0, seed1, grid_size, jitter, dt, Some(wrong));
+        for (i, (x, y)) in positions.iter().enumerate() {
+            total += 1;
+            if f64::from(right.pyramid_noise(*x, *y)) == values[i].as_f64() {
+                exact += 1;
+            }
+            if f64::from(planted.pyramid_noise(*x, *y)) == values[i].as_f64() {
+                wrong_ring_matches += 1;
+            }
+        }
+    }
+
+    // 37, over 5 series: chebyshev at jitter 1 (8), manhattan at 1 (11) and at
+    // 0.7 (6), euclidean at 1 (11) and at 0.9 (1). Small because the ring is
+    // only observable at ~3.3e-5 of positions - 553 of 16,777,216 for chebyshev
+    // at jitter 1 - which is why the other two fixtures never hit one.
+    assert_eq!(fixture.get("series").as_array().len(), 5, "series");
+    assert_eq!(total, 37, "fixture size");
+    assert_eq!(exact, 37, "exact f32 matches at the game's own ring");
+    // Every one of these positions was CHOSEN because the two rings disagree
+    // there, so the planted ring must miss all 40. If this ever reads above 0
+    // the fixture has stopped discriminating and the range is inert again.
+    assert_eq!(wrong_ring_matches, 0, "matches under a planted wrong ring");
+}
