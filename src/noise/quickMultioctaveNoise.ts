@@ -238,8 +238,14 @@ export function makeQuickMultioctaveNoise(
  * Only the integral branch is exercised by anything here (`octaves` is a whole
  * number in every base-game caller), but the other two are spelled out because
  * a wrong branch is silent: it returns a plausible number.
+ *
+ * **Exported for the Rust port's tier-2 parity check** (`test/wasmEvalParity.spec.ts`),
+ * which compares this against `fmw_noise::fast_approx::noise_machine_pow` over a
+ * sweep. Comparing the port against a copy of this function reimplemented in the
+ * spec would prove nothing, so the shipped one is what gets exported. It has no
+ * other caller outside this file.
  */
-function noiseMachinePow(base: number, exponent: number): number {
+export function noiseMachinePow(base: number, exponent: number): number {
   if (exponent === 0.5) return f32(Math.sqrt(f32(base)));
   if (!Number.isInteger(exponent) || exponent < 0) return f32(fastPow(f32(base), f32(exponent)));
   let result = 1;

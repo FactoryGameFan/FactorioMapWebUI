@@ -81,7 +81,7 @@ pub fn fast_pow2(p: f32) -> f32 {
 /// `x^p` via the fastapprox pair, as the game computes powers in noise programs.
 #[must_use]
 pub fn fast_pow(x: f32, p: f32) -> f32 {
-    fast_pow2(p * fast_log2(x))
+    crate::poison::f32_result(fast_pow2(p * fast_log2(x)))
 }
 
 /// `f32(1/3)`, bit pattern `0x3eaaaaab` - the exact multiplier the binary uses.
@@ -112,9 +112,11 @@ pub fn fast_cbrt(x: f32) -> f32 {
 #[must_use]
 pub fn noise_machine_pow(base: f32, exponent: f32) -> f32 {
     if exponent == 0.5 {
-        return base.sqrt();
+        return crate::poison::f32_result(base.sqrt());
     }
     if exponent.fract() != 0.0 || exponent < 0.0 {
+        // Already bent inside `fast_pow`; bending again here would only make
+        // the perturbation larger, not more detectable.
         return fast_pow(base, exponent);
     }
     let mut result = 1.0f32;
@@ -129,5 +131,5 @@ pub fn noise_machine_pow(base: f32, exponent: f32) -> f32 {
         b *= b;
         e >>= 1;
     }
-    result
+    crate::poison::f32_result(result)
 }
