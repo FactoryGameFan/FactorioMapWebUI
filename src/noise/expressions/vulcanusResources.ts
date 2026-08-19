@@ -19,7 +19,7 @@ import type { EvalCtx } from "../eval/ctx";
 import { f32 } from "../eval/f32";
 import { clamp, max, min } from "../eval/math";
 import { memoXY } from "../eval/memoXY";
-import { sliderRescale } from "../eval/sliderRescale";
+import { sliderRescale } from "../eval/math";
 import { distanceFromNearestPoint } from "../distanceFromNearestPoint";
 import { makeMultioctaveNoise } from "../multioctaveNoise";
 import type { SpotRegionKey } from "../spotCandidates";

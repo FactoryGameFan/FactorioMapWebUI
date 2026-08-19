@@ -620,35 +620,38 @@ pub extern "C" fn checksum_pow(exponent: f32, use_cbrt: u32, x0: f64, step: f64,
 /// `kind` is 0 `slider_to_linear(s, a, b)` and 1 `slider_rescale(s, a)`. `s`
 /// sweeps `s0 + i * ds` and must stay positive.
 ///
-/// ## `slider_rescale_f64` is deliberately NOT reachable from here (#270)
+/// ## This sweep already caught one, and that is why it exists (#270, CLOSED)
 ///
-/// The third shipped form - `src/noise/eval/sliderRescale.ts`, the one that
-/// rounds once at the end instead of per operation - **does not agree between
-/// the two ports**, and that was measured rather than assumed:
+/// A third form used to ship: `src/noise/eval/sliderRescale.ts`, which rounded
+/// once at the end instead of per operation. It **did not agree between the two
+/// ports**, and that was measured rather than assumed:
 ///
 /// | form | agreement over 600 slider positions, n = 2 and n = 3 |
 /// | --- | --- |
 /// | `slider_to_linear` (per-op f32) | 600 / 600 |
 /// | `slider_rescale` (per-op f32) | 600 / 600 |
-/// | `slider_rescale_f64` (rounded once) | **599 / 600** |
+/// | the rounded-once form | **599 / 600** |
 ///
 /// The single disagreement is at `s = 3.5435` for `n = 2` and `s = 6.3657` for
 /// `n = 3`. **Native Rust agrees with V8 exactly at both points** - checked
-/// directly, same bits - so this is the `wasm32-unknown-unknown` libm
-/// specifically, not Rust. Which means `cargo test` on the host cannot see it,
-/// and only this tier-2 spec can.
+/// directly, same bits - so this was the `wasm32-unknown-unknown` libm
+/// specifically, not Rust. Which means `cargo test` on the host could not see
+/// it, and only this tier-2 spec could.
 ///
-/// Why the other two survive and this one does not: they narrow every
-/// intermediate to f32, and a one-ULP f64 difference is 29 bits below what
-/// survives that. The f64 form has no narrowing to absorb it. This is the
-/// determinism policy's transcendental rule (spec section 5) arriving as a
+/// Why the other two survive and that one did not: they narrow every
+/// intermediate to f32, and a one-ULP f64 difference is about 29 bits below
+/// what survives that. The un-narrowed form had nothing to absorb it. This is
+/// the determinism policy's transcendental rule (spec section 5) arriving as a
 /// measurement.
 ///
-/// So the un-narrowed form stays out of the shipped module. It has no consumer
-/// until Vulcanus (#225), and #270 records the two ways to close it: replace
-/// the TypeScript's f64 form with the per-op one the oracle says the game uses,
-/// or have phase 5 pass the computed value in across the ABI. Do not export it
-/// here without settling that.
+/// **It was deleted rather than routed around**, because the oracle says it was
+/// also the form that disagreed with the GAME - it misses two of the seven
+/// probe points the per-operation form matches. Every caller (four Vulcanus
+/// fields plus Nauvis rock size) now reads `eval::math::slider_rescale`, and
+/// `slider_rescale_rounded_once` survives only as a `#[cfg(test)]` control. So
+/// there is no un-narrowed form left to keep out of this module - and none
+/// should be added. Anything new that reaches a transcendental gets a sweep
+/// here, not just a fixture.
 #[unsafe(no_mangle)]
 pub extern "C" fn checksum_slider(kind: u32, s0: f64, ds: f64, n: u32, a: f64, b: f64) -> u64 {
     let mut acc = 0u64;

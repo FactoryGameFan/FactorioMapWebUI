@@ -21,7 +21,7 @@
  * prototype's box, and unlike Vulcanus the Nauvis argmax is NOT degenerate.
  */
 import { clamp } from "../eval/math";
-import { sliderRescale } from "../eval/sliderRescale";
+import { sliderRescale } from "../eval/math";
 import { distanceFromNearestPoint, type Point } from "../distanceFromNearestPoint";
 import { makeAux } from "../expressions/aux";
 import { makeMoisture } from "../expressions/moisture";

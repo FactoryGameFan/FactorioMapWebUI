@@ -8,7 +8,6 @@ import { memoRegion } from "../src/noise/eval/memoRegion";
 import { memoXY } from "../src/noise/eval/memoXY";
 import { multisample } from "../src/noise/eval/multisample";
 import { basisNoiseExpr } from "../src/noise/eval/primitives";
-import { sliderRescale as sliderRescaleF64 } from "../src/noise/eval/sliderRescale";
 import { seedNormalized, seedSmall } from "../src/noise/expressions/vulcanusSeed";
 import { fastCbrt } from "../src/noise/fastApprox";
 import { noiseMachinePow } from "../src/noise/quickMultioctaveNoise";
@@ -168,46 +167,57 @@ describe("Rust and TypeScript agree bit for bit on the slider functions", () => 
   });
 
   /**
-   * **The third shipped form does NOT agree between the ports, and that is a
-   * measurement rather than a suspicion** (#270).
+   * **A third form used to ship, it did NOT agree between the ports, and it is
+   * now deleted** (#270, resolved).
    *
-   * `src/noise/eval/sliderRescale.ts` rounds once at the end instead of per
-   * operation. Over the same 600 positions:
+   * `src/noise/eval/sliderRescale.ts` rounded the whole chain once at the end
+   * instead of per operation, and four Vulcanus fields plus Nauvis rock size
+   * read it. Over the same 600 positions:
    *
    * | form | agreement, n = 2 and n = 3 |
    * | --- | --- |
    * | `sliderToLinear` (per-op f32) | 600 / 600 |
    * | `sliderRescale` (per-op f32) | 600 / 600 |
-   * | `sliderRescale` from `eval/sliderRescale.ts` (rounded once) | **599 / 600** |
+   * | the rounded-once form | **599 / 600** |
    *
    * One position each: `s = 3.5435` at `n = 2`, `s = 6.3657` at `n = 3`.
    * **Native Rust agrees with V8 exactly at both** - same bits, checked
-   * directly - so the difference belongs to the `wasm32-unknown-unknown` libm,
+   * directly - so the difference belonged to the `wasm32-unknown-unknown` libm,
    * not to Rust. `cargo test` on the host cannot see it; only a spec that runs
-   * the WASM can.
+   * the WASM can. That is the durable lesson here: anything new that reaches a
+   * transcendental needs a sweep like this one, not just a fixture.
    *
    * The two per-op forms survive because they narrow every intermediate to f32,
-   * and one ULP of f64 is 29 bits below what survives that. The f64 form has no
-   * narrowing to absorb it.
+   * and one ULP of f64 is about 29 bits below what survives that. The f64 form
+   * had no narrowing to absorb it.
    *
-   * So it is not exported through the WASM boundary. This test pins the two
-   * facts that decision rests on, so neither can quietly stop being true.
+   * It was not fixed by keeping it out of the WASM boundary, because the oracle
+   * says it was also the form that disagreed with the GAME - it misses two of
+   * the seven probe positions the per-operation form matches. So every caller
+   * moved onto the per-operation form and the second implementation is gone;
+   * see `test/sliderRescale.spec.ts`.
+   *
+   * This test keeps the reason recorded and executable. The deleted form lives
+   * here now, as a control: without it, "the shipped form folds identically"
+   * above could pass for a version that had never been at risk.
    */
-  it("the un-narrowed f64 form is a different function, and is the one kept out of the module", () => {
+  it("the deleted rounded-once form really was a different function", () => {
+    const roundedOnce = (v: number, n: number): number =>
+      v === 1 ? 1 : 2 ** ((Math.log2(v) / Math.log2(6)) * Math.log2(n));
     const ss = sliders();
-    // It really is a different function - otherwise excluding it would be
-    // excluding nothing.
+    // It really is a different function - otherwise deleting it would have
+    // changed nothing and this whole issue was noise.
     expect(foldAll(ss.map((s) => sliderRescale(s, 2)))).not.toBe(
-      foldAll(ss.map((s) => sliderRescaleF64(s, 2))),
+      foldAll(ss.map((s) => roundedOnce(s, 2))),
     );
-    // And the exact positions the divergence was measured at still behave the
-    // way the table says on this side: the f64 form and the f32 form disagree
-    // there, which is what leaves room for the two libms to disagree too.
+    // And the exact positions the libm divergence was measured at still behave
+    // the way the table says on this side, which is what left room for the two
+    // libms to disagree there in the first place.
     for (const [s, n] of [
       [3.5435, 2],
       [6.3657, 3],
     ] as const) {
-      expect(sliderRescaleF64(s, n)).not.toBe(sliderRescale(s, n));
+      expect(roundedOnce(s, n)).not.toBe(sliderRescale(s, n));
     }
   });
 });

@@ -1176,7 +1176,7 @@ fn reproduces_the_voronoi_search_range_fixture_and_rejects_the_wrong_ring() {
 // assert an exact count rather than a bound.
 // ---------------------------------------------------------------------------
 
-use crate::eval::math::{slider_rescale, slider_rescale_f64};
+use crate::eval::math::{slider_rescale, slider_rescale_rounded_once};
 use crate::eval::multisample::multisample;
 use crate::expressions::vulcanus_seed::{seed_normalized, seed_small};
 use crate::fast_approx::{fast_cbrt, fast_pow, noise_machine_pow};
@@ -1544,7 +1544,7 @@ fn reproduces_the_games_slider_rescale_at_all_seven_probe_points() {
         .iter()
         .filter(|key| {
             let s: f64 = key.parse().unwrap();
-            f64::from(slider_rescale_f64(s, 2.0) as f32) != probe.get(key).as_f64()
+            f64::from(slider_rescale_rounded_once(s, 2.0) as f32) != probe.get(key).as_f64()
         })
         .count();
     assert_eq!(

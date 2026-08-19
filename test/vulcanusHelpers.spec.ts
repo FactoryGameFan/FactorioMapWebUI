@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-vulcanus-helpers.seed123456.json";
 import { withCtxDefaults } from "../src/noise/eval/ctx";
-import { sliderRescale } from "../src/noise/eval/sliderRescale";
+import { sliderRescale } from "../src/noise/eval/math";
 import { makeVulcanusHelpers } from "../src/noise/expressions/vulcanusHelpers";
 
 describe("makeVulcanusHelpers", () => {

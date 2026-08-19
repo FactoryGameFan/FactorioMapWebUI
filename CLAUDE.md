@@ -1341,34 +1341,73 @@ so swapping two points or breaking two identically would leave it unchanged.
 comment, and it was watched failing against a planted XOR fold.
 
 **The wasm libm is NOT the host libm, and only a tier-2 spec can see the
-difference** (#270, measured 2026-08-19). Sweeping 600 slider positions,
-`sliderToLinear` and the per-operation `sliderRescale` agree between the ports
-600/600, and the un-narrowed `eval/sliderRescale.ts` form agrees **599/600** -
-one position each at `s = 3.5435` (n=2) and `s = 6.3657` (n=3). Native Rust
-agrees with V8 at both points, same 64 bits, so the divergence belongs to the
-`log2`/`pow` that `wasm32-unknown-unknown` compiles in. Two consequences:
-`cargo test` runs on the host libm and cannot find this class of bug at all, and
-the per-operation f32 forms survive **because** they narrow - one f64 ULP is ~29
-bits below what an f32 narrowing keeps. The un-narrowed form is therefore not
-exported from `fmw-wasm` at all. Anything new that reaches a transcendental
-needs a tier-2 sweep, not just a fixture.
+difference** (#270, measured 2026-08-19, **now FIXED**). Sweeping 600 slider
+positions, `sliderToLinear` and the per-operation `sliderRescale` agree between
+the ports 600/600, and the un-narrowed `eval/sliderRescale.ts` form agreed
+**599/600** - one position each at `s = 3.5435` (n=2) and `s = 6.3657` (n=3).
+Native Rust agrees with V8 at both points, same 64 bits, so the divergence
+belonged to the `log2`/`pow` that `wasm32-unknown-unknown` compiles in. Two
+consequences: `cargo test` runs on the host libm and cannot find this class of
+bug at all, and the per-operation f32 forms survive **because** they narrow -
+one f64 ULP is ~29 bits below what an f32 narrowing keeps. Anything new that
+reaches a transcendental needs a tier-2 sweep, not just a fixture.
 
-**THREE TypeScript findings came out of the port and none was fixed in it.**
-All are behaviour changes to shipped fields that pass their own fixtures today,
-so each got an issue instead. The port reproduces the TypeScript exactly in
-every case - a unilateral "fix" on the Rust side would read as a port bug in
-tier 2, which is the whole point of having tier 2.
+**It was closed by DELETING the un-narrowed form, not by keeping it out of the
+module**, and the reason is that the libm question was the second-worst thing
+about it. `slider_rescale` is a **noise-function** in
+`core/prototypes/noise-functions.lua:16` - the noise machine evaluates it, per
+operation, in f32 - so the oracle already said which form is the game's: the
+per-operation one matches all 7 probe points in
+`oracle-fulgora-elevation.seed123456.json` and the rounded-once one misses
+`s = 0.5` and `s = 5`. It was the form that disagreed with the game, on five
+shipped call sites.
 
-- **#269** - `basisNoiseExpr` returns an un-narrowed f64 product where the game
-  narrows to f32, and none of its five callers narrow either.
-- **#270** - the wasm libm question above.
-- **#273** - Fulgora's elevation constants are f64 where the game holds them at
-  f32. Typing them takes `fulgora_dunes` from **26/101 to 101/101 with worst
-  error exactly 0** and `fulgora_rock` from 84/101 to 101/101. The control is
-  `fulgora_scrap_medium`: same op family, no added constant, already 101/101 -
-  so the whole gap is the literal. `crates/fmw-noise/src/fixtures.rs` carries
-  the planted fix as a live test rather than leaving it in the issue, because a
-  measurement nobody runs goes stale.
+`src/noise/eval/sliderRescale.ts` is gone. All five callers -
+`vulcanusResources.ts` (x4 at n=2), `vulcanusHelpers.ts` and `vulcanusBiomes.ts`
+(x3 at n=3), and **`rocks/rockField.ts`** at n=1.5, which the issue did not list
+
+- read `eval/math.ts` now, and `rockCatalog.ts` re-exports rather than
+  re-implements. Three things worth knowing before touching this again:
+
+- **No fixture could see the change, and that is measured rather than lucky.**
+  Every fixture and spec feeds these call sites only `size` 0 or 1, and the two
+  forms are BIT-IDENTICAL at both. The full gate went 2057 -> 2061 tests passed,
+  the +4 being the rewritten `test/sliderRescale.spec.ts` and nothing else.
+- **The input space is 12 values, not a range.** `PERCENT_STEPS` is `Math.fround`
+  of twelve exact fractions and those are the only settings a user can pick.
+  Across them the two forms return a different f64 at **10 of 12** for every `n`,
+  and a different f32 at 3 of 12 (n=2), 4 of 12 (n=3), and **0 of 12** (n=1.5).
+  So the Nauvis rock change is invisible at f32 granularity at every reachable
+  setting; it was taken to remove the second implementation, not to move a pixel.
+- **`engine.wasm` is byte-identical across the change** (`cd1a79c1...`, 84,177
+  bytes). `slider_rescale_f64` was never exported, so it had already been
+  dead-code-eliminated. It survives as `slider_rescale_rounded_once` under
+  `#[cfg(test)]`, purely as the control that keeps "the shipped form matches the
+  oracle" from being an assertion against nothing.
+
+**THREE TypeScript findings came out of the port and none was fixed IN the
+port.** All were behaviour changes to shipped fields that passed their own
+fixtures, so each got an issue instead. The port reproduces the TypeScript
+exactly in every case - a unilateral "fix" on the Rust side would read as a port
+bug in tier 2, which is the whole point of having tier 2. **Two have since
+landed as their own changes**, which is the intended path, not an exception:
+
+- **#269 - STILL OPEN.** `basisNoiseExpr` returns an un-narrowed f64 product
+  where the game narrows to f32, and none of its five callers narrow either.
+- **#270 - FIXED.** The wasm libm question above. Closed by deleting the
+  un-narrowed `slider_rescale` and moving all five callers onto the
+  per-operation form the oracle says the game uses.
+- **#273 - LANDED** (`e723b30`). Fulgora's elevation constants were f64 where
+  the game holds them at f32. Typing them took `fulgora_dunes` from **26/101 to
+  101/101 with worst error exactly 0** and `fulgora_rock` from 84/101 to
+  101/101. The control was `fulgora_scrap_medium`: same op family, no added
+  constant, already 101/101 - so the whole gap was the literal.
+  `crates/fmw-noise/src/fixtures.rs` carries the planted fix as a live test
+  rather than leaving it in the issue, because a measurement nobody runs goes
+  stale.
+
+The shape to copy: find it while porting, reproduce it faithfully so tier 2 stays
+honest, open an issue, and fix it in a change graded on its own.
 
 **`f64::max` is NOT `Math.max`, and only a raw-bits fold can see the
 difference** (found 2026-08-19, #224). They differ two ways: on NaN, where
@@ -1437,9 +1476,16 @@ evaluates in f64 and is SHARED with Vulcanus. Narrowing it takes both Fulgora
 starting cones to 101/101 - but only with all five of per-op narrowing, an f32
 `pi`, f32 `sin`/`cos`, f32 radius/distance and an f32 angle, and no subset does
 it. It also regresses `vulcanus_starting_calcite` past its bound, because
-Vulcanus's call sites were not narrowed to match and its `startingCalcite`
-radius reads the un-narrowed `sliderRescale` of #270. That is **#279**, and it
-belongs with #270 and #225, not with a Fulgora change.
+Vulcanus's call sites were not narrowed to match. That is **#279**, and it
+belongs with #225, not with a Fulgora change.
+
+**#270 landing does NOT move that on its own**, and the note here used to imply
+it might by blaming the calcite radius on "the un-narrowed `sliderRescale` of
+#270". The radius is `(35 / 1.5) * sliderRescale(calcite.size, 2)`, and at the
+default `size = 1` **both** forms return exactly 1 - so the value that reaches
+`startingCalcite` in every fixture is unchanged. What is still un-narrowed there
+is the `35 / 1.5` and the multiply, which is #279's own per-operation lattice.
+Read that as the remaining work, not as a dependency that has now cleared.
 
 - **`src/noise/wasm/engine.wasm` is a COMMITTED artifact.**
   `scripts/build-wasm.sh` produces it; `verify:rust` rebuilds and compares bytes

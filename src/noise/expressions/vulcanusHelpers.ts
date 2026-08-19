@@ -54,7 +54,7 @@ import type { EvalCtx } from "../eval/ctx";
 import { clamp } from "../eval/math";
 import { memoXY } from "../eval/memoXY";
 import { basisNoiseExpr } from "../eval/primitives";
-import { sliderRescale } from "../eval/sliderRescale";
+import { sliderRescale } from "../eval/math";
 import { makeMultioctaveNoise } from "../multioctaveNoise";
 
 export interface VulcanusHelpers {
