@@ -774,3 +774,144 @@ pub extern "C" fn checksum_eval_pipeline(
     }
     acc
 }
+
+// ---------------------------------------------------------------------------
+// Tier 2 for phase 3 - Fulgora's landmask chain (#223).
+// ---------------------------------------------------------------------------
+
+use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
+use fmw_noise::expressions::{fulgora_cells, fulgora_elevation, fulgora_shared};
+use fmw_noise::tiles::fulgora_ocean;
+
+/// The named field a [`checksum_fulgora`] call folds.
+///
+/// A selector rather than one blended number, so a divergence names the field
+/// it is in. The order is the order the chain evaluates in, which is also the
+/// order the oracle fixtures list.
+const FIELD_COUNT: u32 = 42;
+
+/// Tier 2 for Fulgora's landmask chain, one named field at a time.
+///
+/// **The two bearings' sine and cosine are INPUTS**, which is the whole reason
+/// this signature is as wide as it is. `starting_spot_at_angle` is plain f64
+/// arithmetic with no narrowing anywhere, so a one-ULP `sin` difference between
+/// V8 and whatever libm `wasm32-unknown-unknown` links would land straight in
+/// the result - and #270 measured that those two libms really do disagree, on 1
+/// of 600 slider positions, where `cargo test` on the host could not see it.
+///
+/// Every call site's angle is a per-render constant, so lifting the trig out
+/// costs nothing and closes the question rather than bounding it. The caller
+/// computes both, and both ports then evaluate identical inputs.
+///
+/// `field` selects which named expression to fold, `0..FIELD_COUNT`. Same
+/// contract as [`checksum_basis_noise`] otherwise: rows outer, order-sensitive
+/// fold, strict bit equality, the signed-BigInt caveat, and the same limit -
+/// it detects divergence, it does not establish correctness.
+///
+/// **The Voronoi caches are inside the comparison**, because the chain is built
+/// once and swept. A cache that returned a neighbouring cell's point would move
+/// this and nothing else in the gate would notice.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub extern "C" fn checksum_fulgora(
+    seed0: u32,
+    islands_frequency: f64,
+    islands_size: f64,
+    sin_start: f64,
+    cos_start: f64,
+    sin_vault: f64,
+    cos_vault: f64,
+    field: u32,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    n: u32,
+) -> u64 {
+    let ctx = fulgora_shared::FulgoraCtx {
+        seed0,
+        islands_frequency,
+        islands_size,
+    };
+    let shared = fulgora_shared::FulgoraShared::new(
+        &ctx,
+        AngleTrig::new(sin_start, cos_start),
+        AngleTrig::new(sin_vault, cos_vault),
+    );
+    let mut cells = fulgora_cells::FulgoraCells::new(&ctx, shared.grid);
+    let elevation = fulgora_elevation::FulgoraElevation::new(&ctx, shared.grid);
+
+    let mut acc = 0u64;
+    for j in 0..n {
+        let y = y0 + f64::from(j) * step;
+        for i in 0..n {
+            let x = x0 + f64::from(i) * step;
+            let s = shared.eval(x, y);
+            let c = cells.eval(&s);
+            let e = elevation.eval(x, y, &s, &c);
+            let v = match field {
+                0 => s.wobble_influence,
+                1 => s.wobble_mask,
+                2 => s.wobble_x,
+                3 => s.wobble_y,
+                4 => s.ox,
+                5 => s.oy,
+                6 => s.wx,
+                7 => s.wy,
+                8 => s.starting_cone,
+                9 => s.starting_vault_cone,
+                10 => s.starting_mask,
+                11 => s.starting_vault_mask,
+                12 => c.cells,
+                13 => c.pyramids,
+                14 => c.spots,
+                15 => c.spots_inv,
+                16 => c.blanks,
+                17 => c.mesa,
+                18 => c.sprawl,
+                19 => c.vaults,
+                20 => c.vaults_and_starting_vault,
+                21 => e.basis,
+                22 => e.basis_oil,
+                23 => e.rock,
+                24 => e.dunes,
+                25 => e.scrap_medium,
+                26 => e.natural,
+                27 => e.sprawl_pyramids,
+                28 => e.vault_pyramids,
+                29 => e.vault_pyramids_and_start,
+                30 => e.moats,
+                31 => e.mix_pyramids,
+                32 => e.mix_natural,
+                33 => e.mix_moats,
+                34 => e.vault_spots,
+                35 => e.mix_spots,
+                36 => e.oil_mask,
+                37 => e.mix_oil,
+                38 => e.sand_basins,
+                39 => e.pre_elevation,
+                40 => e.elevation,
+                // The landmask's own answer: 0 land, 1 shallow, 2 deep. Folded
+                // as a number so it rides the same comparator as the fields it
+                // is derived from.
+                _ => match fulgora_ocean::ocean_tile(&e) {
+                    None => 0.0,
+                    Some(fulgora_ocean::Ocean::Shallow) => 1.0,
+                    Some(fulgora_ocean::Ocean::Deep) => 2.0,
+                },
+            };
+            acc = checksum::fold_f64(acc, v);
+        }
+    }
+    acc
+}
+
+/// How many fields [`checksum_fulgora`] can select, so the spec cannot silently
+/// stop covering one.
+///
+/// Without this the spec would carry its own copy of the count, and adding a
+/// field to the chain would leave the new one untested while every existing
+/// assertion still passed.
+#[unsafe(no_mangle)]
+pub extern "C" fn fulgora_field_count() -> u32 {
+    FIELD_COUNT
+}

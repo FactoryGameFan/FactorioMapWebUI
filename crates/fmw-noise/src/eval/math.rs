@@ -61,6 +61,17 @@ pub fn clamp(v: f64, lo: f64, hi: f64) -> f64 {
 }
 
 /// Linear interpolate: `a` at `t = 0`, `b` at `t = 1`.
+///
+/// **`lerp(a, b, 1.0)` is NOT exactly `b`**, and code downstream has been
+/// written on the assumption that it is. The form is `a + (b - a) * t`, so at
+/// `t = 1` it is `a + (b - a)` - two roundings, not zero. Measured on Fulgora:
+/// `fulgora_mix_oil` is `lerp(s, min(-0.01, ...), oil_mask)`, and inside the
+/// mask (`oil_mask == 1`) it returns `-0.009999999999999995` rather than the
+/// `-0.01` the `min` appears to guarantee.
+///
+/// That is faithful - the TypeScript has the same form and lands on the same
+/// number - so do NOT "fix" it to `if t == 1.0 { b }`. It would change the
+/// output of every field that lerps to a bound.
 #[must_use]
 pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
@@ -225,10 +236,22 @@ mod tests {
     }
 
     #[test]
-    fn lerp_hits_both_endpoints_exactly() {
+    fn lerp_hits_the_left_endpoint_exactly() {
         assert_eq!(lerp(3.0, 7.0, 0.0), 3.0);
-        assert_eq!(lerp(3.0, 7.0, 1.0), 7.0);
         assert_eq!(lerp(3.0, 7.0, 0.5), 5.0);
+    }
+
+    /// **`t = 1` does not return `b` exactly**, and downstream code has assumed
+    /// it does. See the docblock - this is the Fulgora `mix_oil` case, reduced.
+    #[test]
+    fn lerp_at_one_is_not_exactly_the_right_endpoint() {
+        // Exact where the arithmetic happens to be exact...
+        assert_eq!(lerp(3.0, 7.0, 1.0), 7.0);
+        // ...and not, where it is not. These are the real Fulgora values.
+        let a = -0.4066666666666666;
+        let b = -0.01f64;
+        assert_ne!(lerp(a, b, 1.0), b);
+        assert_eq!(lerp(a, b, 1.0), a + (b - a));
     }
 
     /// **The reason `min`/`max` are written out.** `f64::min` discards NaN;

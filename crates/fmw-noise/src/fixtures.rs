@@ -1570,3 +1570,406 @@ fn reproduces_the_games_slider_rescale_at_all_seven_probe_points() {
         7 - fastapprox_misses
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 - Fulgora's landmask chain (#223).
+//
+// ## Why these assert exact counts that are NOT 101 of 101
+//
+// Every other tier-1 test in this file asserts a full exact-match count,
+// because its op is bit-exact against the game. Fulgora's elevation chain is
+// not, and the counts below are the measured truth rather than a target.
+//
+// **Each one was measured against the TypeScript side by side, and all 21
+// agree exactly** - same exact-match count, same worst residual. So these
+// numbers describe the PORT's known distance from the game, which both
+// implementations share, and not anything this Rust port introduced. That
+// symmetry is the reason it is honest to freeze them here: a change to any of
+// them is a change to the port, and the test names the field.
+//
+// #273 records the cause of the largest ones and the measurement that found it:
+// the chain's literals are f64 where the game holds them at f32. Typing two of
+// them takes `fulgora_dunes` from 26/101 to **101/101 with worst error exactly
+// 0** and `fulgora_rock` from 84/101 to 101/101. That fix is a behaviour change
+// to shipped terrain, so it is not made here - see the issue for why, and for
+// what has to be re-measured when it is.
+//
+// If you are here because one of these counts moved: read the number, do not
+// adjust it. Up is a finding worth taking; down is a regression.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::fulgora_cells::FulgoraCells;
+use crate::expressions::fulgora_elevation::FulgoraElevation;
+use crate::expressions::fulgora_shared::{FulgoraCtx, FulgoraShared};
+use crate::expressions::starting_spot_at_angle::{starting_spot_at_angle, AngleTrig, StartingSpot};
+use crate::tiles::fulgora_ocean::{ocean_tile, Ocean};
+
+/// Score one named field against its fixture column, at f32.
+///
+/// Both sides narrow to f32 first, exactly as the TypeScript's own comparator
+/// does: the game reports f32 values and the chain models f32 arithmetic, so an
+/// f64 comparison would measure the host's extra precision rather than the port.
+fn score_fulgora(got: &[f64], want: &[Json], label: &str) -> usize {
+    assert_eq!(got.len(), want.len(), "{label}: length mismatch");
+    let mut exact = 0usize;
+    for (i, w) in want.iter().enumerate() {
+        if (got[i] as f32) == (w.as_f64() as f32) {
+            exact += 1;
+        }
+    }
+    exact
+}
+
+/// Evaluate the whole chain once at every fixture position.
+fn fulgora_sweep(
+    seed0: u32,
+    positions: &[Json],
+) -> (
+    Vec<crate::expressions::fulgora_shared::SharedFields>,
+    Vec<crate::expressions::fulgora_cells::CellFields>,
+    Vec<crate::expressions::fulgora_elevation::ElevationFields>,
+) {
+    let ctx = FulgoraCtx::new(seed0);
+    let shared = FulgoraShared::with_host_trig(&ctx);
+    let mut cells = FulgoraCells::new(&ctx, shared.grid);
+    let elevation = FulgoraElevation::new(&ctx, shared.grid);
+
+    let mut s_out = Vec::with_capacity(positions.len());
+    let mut c_out = Vec::with_capacity(positions.len());
+    let mut e_out = Vec::with_capacity(positions.len());
+    for p in positions {
+        let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+        let s = shared.eval(x, y);
+        let c = cells.eval(&s);
+        let e = elevation.eval(x, y, &s, &c);
+        s_out.push(s);
+        c_out.push(c);
+        e_out.push(e);
+    }
+    (s_out, c_out, e_out)
+}
+
+/// The shared layer: the wobble fields, the offset and distorted coordinates,
+/// and the two starting cones.
+#[test]
+fn reproduces_the_fulgora_shared_layer_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-fulgora-shared.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 101, "fixture size");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let (shared_fields, _, _) = fulgora_sweep(seed0, positions);
+
+    // `fulgora_grid` is a program constant, and the fixture repeats it at every
+    // position - so the check is that it is ONE value and that it is ours.
+    let grids = fixture.get("fulgora_grid").as_f64_array();
+    assert!(grids.iter().all(|g| *g == grids[0]), "grid is not constant");
+    assert_eq!(grids[0], 175.0);
+    assert_eq!(
+        FulgoraShared::with_host_trig(&FulgoraCtx::new(seed0)).grid,
+        175.0
+    );
+
+    type S = crate::expressions::fulgora_shared::SharedFields;
+    for (key, want_exact, select) in [
+        (
+            "fulgora_wobble_influence",
+            101,
+            &(|f: &S| f.wobble_influence) as &dyn Fn(&S) -> f64,
+        ),
+        ("fulgora_wobble_mask", 96, &|f| f.wobble_mask),
+        ("fulgora_wobble_x", 101, &|f| f.wobble_x),
+        ("fulgora_wobble_y", 101, &|f| f.wobble_y),
+        ("fulgora_ox", 101, &|f| f.ox),
+        ("fulgora_oy", 101, &|f| f.oy),
+        ("fulgora_wx", 100, &|f| f.wx),
+        ("fulgora_wy", 99, &|f| f.wy),
+        ("fulgora_starting_cone", 83, &|f| f.starting_cone),
+        ("fulgora_starting_vault_cone", 85, &|f| {
+            f.starting_vault_cone
+        }),
+        ("fulgora_starting_mask", 101, &|f| f.starting_mask),
+        ("fulgora_starting_vault_mask", 101, &|f| {
+            f.starting_vault_mask
+        }),
+    ] {
+        let got: Vec<f64> = shared_fields.iter().map(select).collect();
+        assert_eq!(
+            score_fulgora(&got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 101"
+        );
+    }
+}
+
+/// The Voronoi layer and the island classification.
+///
+/// `fulgora_cells` is exact at 101/101 and that is not luck: `cell_id` is a
+/// DISCRETE lookup, so a sub-ULP coordinate error almost never changes which
+/// cell won. `pyramids` and `spots` read the same coordinates and are
+/// continuous, so the same input error passes straight through - which is why
+/// `pyramids` is one short.
+#[test]
+fn reproduces_the_fulgora_cell_classification_at_every_captured_position() {
+    let shared_fx = load("test/fixtures/oracle-fulgora-shared.seed123456.json");
+    let fixture = load("test/fixtures/oracle-fulgora-cells.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+
+    // The two fixtures are compared field against field, so if their position
+    // lists ever drift apart every such comparison silently stops meaning
+    // anything.
+    let shared_positions = shared_fx.get("positions").as_array();
+    assert_eq!(positions.len(), shared_positions.len());
+    for (a, b) in positions.iter().zip(shared_positions) {
+        assert_eq!(a.get("x").as_f64(), b.get("x").as_f64());
+        assert_eq!(a.get("y").as_f64(), b.get("y").as_f64());
+    }
+
+    let (_, cell_fields, _) = fulgora_sweep(fixture.get("seed0").as_f64() as u32, positions);
+
+    type C = crate::expressions::fulgora_cells::CellFields;
+    for (key, want_exact, select) in [
+        (
+            "fulgora_cells",
+            101,
+            &(|f: &C| f.cells) as &dyn Fn(&C) -> f64,
+        ),
+        ("fulgora_pyramids", 100, &|f| f.pyramids),
+        ("fulgora_spots", 101, &|f| f.spots),
+        ("fulgora_spots_inv", 101, &|f| f.spots_inv),
+        ("fulgora_blanks", 101, &|f| f.blanks),
+        ("fulgora_mesa", 101, &|f| f.mesa),
+        ("fulgora_sprawl", 101, &|f| f.sprawl),
+        ("fulgora_vaults", 101, &|f| f.vaults),
+        ("fulgora_vaults_and_starting_vault", 101, &|f| {
+            f.vaults_and_starting_vault
+        }),
+    ] {
+        let got: Vec<f64> = cell_fields.iter().map(select).collect();
+        assert_eq!(
+            score_fulgora(&got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 101"
+        );
+    }
+
+    // The four classes partition every captured position, which is what makes
+    // defining `vaults` as the remainder safe.
+    for f in &cell_fields {
+        assert_eq!(f.blanks + f.sprawl + f.mesa + f.vaults, 1.0);
+    }
+}
+
+/// The elevation mix chain, all 20 named expressions.
+///
+/// The two INTERNAL nodes - `fulgora_vault_pyramids_and_start` and
+/// `fulgora_pre_elevation` - are captured and graded here even though nothing
+/// outside the chain reads them, so a transcription error in either localises
+/// instead of arriving blended into `elevation`.
+#[test]
+fn reproduces_the_fulgora_elevation_chain_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-fulgora-elevation.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 101, "fixture size");
+    let (_, _, e) = fulgora_sweep(fixture.get("seed0").as_f64() as u32, positions);
+
+    type E = crate::expressions::fulgora_elevation::ElevationFields;
+    for (key, want_exact, select) in [
+        (
+            "fulgora_basis",
+            98,
+            &(|f: &E| f.basis) as &dyn Fn(&E) -> f64,
+        ),
+        ("fulgora_basis_oil", 97, &|f| f.basis_oil),
+        ("fulgora_rock", 84, &|f| f.rock),
+        ("fulgora_dunes", 26, &|f| f.dunes),
+        ("fulgora_scrap_medium", 101, &|f| f.scrap_medium),
+        ("fulgora_natural", 51, &|f| f.natural),
+        ("fulgora_sprawl_pyramids", 99, &|f| f.sprawl_pyramids),
+        ("fulgora_vault_pyramids", 85, &|f| f.vault_pyramids),
+        ("fulgora_vault_pyramids_and_start", 77, &|f| {
+            f.vault_pyramids_and_start
+        }),
+        ("fulgora_moats", 68, &|f| f.moats),
+        ("fulgora_mix_pyramids", 93, &|f| f.mix_pyramids),
+        ("fulgora_mix_natural", 55, &|f| f.mix_natural),
+        ("fulgora_mix_moats", 39, &|f| f.mix_moats),
+        ("fulgora_vault_spots", 67, &|f| f.vault_spots),
+        ("fulgora_mix_spots", 42, &|f| f.mix_spots),
+        ("fulgora_oil_mask", 101, &|f| f.oil_mask),
+        ("fulgora_mix_oil", 48, &|f| f.mix_oil),
+        ("fulgora_sand_basins", 45, &|f| f.sand_basins),
+        ("fulgora_pre_elevation", 44, &|f| f.pre_elevation),
+        ("fulgora_elevation", 39, &|f| f.elevation),
+    ] {
+        let got: Vec<f64> = e.iter().map(select).collect();
+        assert_eq!(
+            score_fulgora(&got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 101"
+        );
+    }
+}
+
+/// **The control for #273, and the reason `fulgora_dunes`' 26/101 is a finding
+/// rather than a floor.**
+///
+/// `fulgora_scrap_medium` is the same op family as `dunes` - same octaves, same
+/// persistence, different input scale - with NO added constant, and it scores
+/// 101/101. So the multioctave underneath `dunes` is already exact and the
+/// entire gap is the `0.66`.
+///
+/// This test plants the fix and asserts it reaches **exactly 0**, which is the
+/// standard `src/noise/eval/f32.ts` sets for confirming a mechanism. It is here
+/// rather than in the issue because a measurement nobody runs goes stale.
+#[test]
+fn typing_the_dunes_constant_f32_reaches_exactly_zero_residual() {
+    use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
+    let fixture = load("test/fixtures/oracle-fulgora-elevation.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    let want = fixture.get("fulgora_dunes").as_array();
+    let params = MultioctaveParams {
+        seed0: fixture.get("seed0").as_f64() as u32,
+        seed1: 1_783_911_317,
+        octaves: 3.0,
+        persistence: 0.7,
+        input_scale: 1.0 / 6.0,
+        output_scale: 1.0,
+    };
+
+    let mut exact_f32_constant = 0usize;
+    let mut exact_f64_constant = 0usize;
+    let mut worst_f32_constant = 0.0f64;
+    for (i, w) in want.iter().enumerate() {
+        let p = &positions[i];
+        let v = multioctave_noise(p.get("x").as_f64(), p.get("y").as_f64(), &params);
+        let b = w.as_f64() as f32;
+
+        // Case 2 of the two-case rule: the CONSTANT is typed f32, so the
+        // subtraction happens at f32 against the value the engine holds.
+        let with_f32 = 0.66f32 - v.abs();
+        worst_f32_constant = worst_f32_constant.max(f64::from((with_f32 - b).abs()));
+        if with_f32 == b {
+            exact_f32_constant += 1;
+        }
+
+        // What ships today: f64 throughout, narrowed once at the comparison.
+        if ((0.66 - f64::from(v.abs())) as f32) == b {
+            exact_f64_constant += 1;
+        }
+    }
+
+    assert_eq!(
+        exact_f32_constant, 101,
+        "typing 0.66 as f32 should be exact"
+    );
+    assert_eq!(worst_f32_constant, 0.0, "and reach a residual of exactly 0");
+    assert_eq!(
+        exact_f64_constant, 26,
+        "the shipped f64 constant should still score 26 - if this moved, #273 \
+         was fixed and the elevation chain's counts above need re-measuring"
+    );
+}
+
+/// `starting_spot_at_angle` against the game, at all four captured cases.
+///
+/// The fixture is a Vulcanus capture, which is fine and deliberate: the
+/// expression is planet-independent and Vulcanus is where it was first
+/// recovered. Fulgora reads the same one.
+#[test]
+fn reproduces_the_games_starting_spot_at_angle_at_every_case() {
+    let fixture = load("test/fixtures/oracle-starting-spot.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(positions.len(), 38, "fixture size");
+    assert_eq!(cases.len(), 4, "case count");
+
+    let mut compared = 0usize;
+    let mut exact = 0usize;
+    for case in cases {
+        let spot = StartingSpot {
+            trig: AngleTrig::from_degrees(case.get("angle").as_f64()),
+            distance: case.get("distance").as_f64(),
+            radius: case.get("radius").as_f64(),
+        };
+        let (dx, dy) = (
+            case.get("xDistortion").as_f64(),
+            case.get("yDistortion").as_f64(),
+        );
+        let values = case.get("values").as_array();
+        for (i, w) in values.iter().enumerate() {
+            let p = &positions[i];
+            let got =
+                starting_spot_at_angle(&spot, p.get("x").as_f64(), p.get("y").as_f64(), dx, dy);
+            if (got as f32) == (w.as_f64() as f32) {
+                exact += 1;
+            }
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, 152, "4 cases x 38 positions");
+    // 88, measured against the TypeScript side by side rather than assumed -
+    // it scores 88 too, with the same 2.384e-7 worst residual. It is not 152
+    // because the expression is f64 throughout while the game evaluates in f32,
+    // the same known port gap the elevation chain carries.
+    //
+    // The four captured angles are 0, 45, 90 and 180, so this test says nothing
+    // about a libm disagreement at an arbitrary bearing. Nothing here has to:
+    // the trig is an INPUT to this function, and tier 2 hands both ports the
+    // identical values. See `starting_spot_at_angle`'s module docs and #270.
+    assert_eq!(exact, 88, "exact f32 matches out of 152");
+}
+
+/// **The end-to-end gate: does the port put land and ocean where the GAME puts
+/// them?**
+///
+/// Every other test here compares an expression against the same expression
+/// evaluated by the game. This one compares against `surface.get_tile(x, y).name`
+/// after real chunk generation - the tile the game actually placed. That is a
+/// different and stronger question: the elevation chain can agree to 1e-7
+/// everywhere and still put the coastline in the wrong place.
+///
+/// The two counts are the same ones `test/fulgoraAgreement.spec.ts` asserts,
+/// and its header explains at length why they are not zero: the seven
+/// land-versus-ocean misses are positions where the GAME's own expressions
+/// score every ocean tile unplaceable, so no transcription of them can
+/// reproduce it. All 18 sit at Chebyshev distance exactly 1 from a tile this
+/// port already classes the game's way, which points at a post-argmax
+/// correction pass rather than at the expressions.
+#[test]
+fn puts_fulgora_land_and_ocean_where_the_game_puts_them() {
+    let fixture = load("test/fixtures/oracle-fulgora-tiles.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    let names = fixture.get("tileNames").as_array();
+    assert_eq!(positions.len(), 5057, "fixture size");
+
+    let (_, _, elevation_fields) = fulgora_sweep(fixture.get("seed0").as_f64() as u32, positions);
+
+    let mut binary_misses = 0usize;
+    let mut shallow_deep_misses = 0usize;
+    let mut ocean_tiles = 0usize;
+    for (i, name) in names.iter().enumerate() {
+        let game = name.as_str();
+        let game_is_ocean = game.starts_with("oil-ocean");
+        let game_is_deep = game.starts_with("oil-ocean-deep");
+        if game_is_ocean {
+            ocean_tiles += 1;
+        }
+
+        let ours = ocean_tile(&elevation_fields[i]);
+        if ours.is_some() != game_is_ocean {
+            binary_misses += 1;
+        } else if let Some(kind) = ours {
+            // Only meaningful where both agree it is ocean.
+            if (kind == Ocean::Deep) != game_is_deep {
+                shallow_deep_misses += 1;
+            }
+        }
+    }
+
+    assert_eq!(ocean_tiles, 2796, "ocean tiles in the fixture");
+    assert_eq!(binary_misses, 7, "land/ocean disagreements out of 5057");
+    assert_eq!(
+        shallow_deep_misses, 11,
+        "shallow/deep disagreements among tiles both sides call ocean"
+    );
+}

@@ -50,12 +50,37 @@ describe("the committed WASM engine", () => {
     expect(a).not.toBe(b);
   });
 
+  /**
+   * **NOT a budget.** A hard assertion at the measured size would be a number to
+   * widen every phase, which is the habit this repo has been burned by. It is a
+   * tripwire for something UNINTENDED getting linked in.
+   *
+   * Its first form read "anything past 64 KB **before the noise math lands**",
+   * and that premise expired rather than the tripwire being wrong: the noise
+   * math is landing, which is the whole project. It fired at 70,189 bytes on
+   * phase 3.
+   *
+   * | phase | bytes | what arrived |
+   * | --- | ---: | --- |
+   * | 0c (#219) | 599 | the boundary, empty |
+   * | 1 (#220) | 50,193 | twelve primitives |
+   * | 2 (#221) | 63,846 | the `eval` layer |
+   * | 3 (#223) | 70,189 | Fulgora's landmask chain |
+   *
+   * **The one non-obvious contributor was measured, not guessed**: stubbing
+   * `f64::log2` and `f64::powf` out of `eval/math.rs` and rebuilding gives
+   * 65,030 bytes, so the libm those two pull in from `compiler_builtins` costs
+   * **5,159 bytes**. #221's pull request said "most of" its 13,653-byte growth
+   * was libm; that was an assumption and it was wrong - libm is 38% of it and
+   * the rest is the ported code and its tier-2 exports.
+   *
+   * 128 KB keeps roughly 1.8x headroom over the current size, which is the
+   * order of magnitude a stray dependency or a panic-formatting path would add.
+   * If this fires again, measure what grew before moving it - the stub-and-
+   * rebuild above is the method, and it takes a minute.
+   */
   it("is small enough that the size trend stays worth watching", () => {
-    // NOT a budget. A hard assertion at the measured size would be a number to
-    // widen every phase, which is the habit this repo has been burned by. It is
-    // a tripwire: phase 0c's module measures 599 bytes, so anything past 64 KB
-    // before the noise math lands means something unintended got linked in.
     const bytes = readFileSync(wasmPath).byteLength;
-    expect(bytes).toBeLessThan(64 * 1024);
+    expect(bytes).toBeLessThan(128 * 1024);
   });
 });
