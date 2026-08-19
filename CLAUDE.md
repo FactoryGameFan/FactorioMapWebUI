@@ -1142,10 +1142,10 @@ the gate always knows the right number even when this file does not. Get it with
 `shasum -a 256 src/noise/wasm/engine.wasm`, and do not add a new count here
 without deciding it is worth maintaining.
 
-Ported so far: `taus88`, `fast_approx`, `basis_noise` and its gradient table, the
-four multioctave ops, `random_penalty`, `spot_candidates`, `spot_selection`,
-`distance_from_nearest_point` and `starting_lakes`. `voronoi_noise` is what
-remains of phase 1 (#220). `checksum` holds the tier-2 parity fold; **`fold_f64`
+**Phase 1 is complete** (#220): `taus88`, `fast_approx`, `basis_noise` and its
+gradient table, the four multioctave ops, `random_penalty`, `spot_candidates`,
+`spot_selection`, `distance_from_nearest_point`, `starting_lakes` and
+`voronoi_noise`. Phase 2 is the `eval` layer (#221). `checksum` holds the tier-2 parity fold; **`fold_f64`
 folds RAW BITS and must stay order-sensitive**, because an XOR fold is blind to
 order and cancels pairs, so swapping two points or breaking two identically would
 leave it unchanged. `the_fold_is_order_sensitive` makes that load-bearing rather
@@ -1168,7 +1168,9 @@ than a claim in a comment, and it was watched failing against a planted XOR fold
   a suite-level "did anything fail" check looked sufficient. The five primitives
   added in #220's second batch compose it in none of their paths, and that check
   would have passed with five ports carrying no control at all. Adding an op
-  means adding its hook and its test name to `POISONED_TESTS`.
+  means adding its hook and its test name to `POISONED_TESTS`. That list has
+  already earned itself: it caught `voronoi_noise`'s `cell_random` shipping
+  with no hook, on the first run of the gate after the port landed.
 - **The determinism rules are what protect that**, and each is written where it
   is enforced: no `mul_add` or fast-math, `clippy::suboptimal_flops` explicitly
   allowed so turning `nursery` on later cannot push the port toward FMA, no

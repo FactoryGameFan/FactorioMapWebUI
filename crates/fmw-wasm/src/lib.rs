@@ -243,6 +243,7 @@ pub extern "C" fn checksum_quick_multioctave(
 
 use fmw_noise::{
     distance_from_nearest_point, random_penalty, spot_candidates, spot_selection, starting_lakes,
+    voronoi_noise,
 };
 
 /// The shared spawn list for the two lake exports.
@@ -455,6 +456,114 @@ pub extern "C" fn checksum_distance_from_nearest_point(
                     maximum_distance,
                 )),
             );
+        }
+    }
+    acc
+}
+
+/// Tier 2 for the four `voronoi_*` ops.
+///
+/// One export rather than four, selected by `op`, because the four share a
+/// field and building it is most of the call. `op` is 0 cell_id, 1 spot,
+/// 2 facet, 3 pyramid; `distance_type` is 0 chebyshev, 1 manhattan,
+/// 2 euclidean, 3 minkowski3 - the game's own `DistanceType` order, which is
+/// what indexes its jump table.
+///
+/// Same contract as [`checksum_basis_noise`]: rows outer, order-sensitive fold,
+/// strict bit equality rather than a tolerance, the signed-BigInt caveat, and
+/// the same limit - it detects divergence, it does not establish correctness.
+///
+/// **The field is rebuilt once and swept, so the caches are inside the
+/// comparison.** A cache that returned another cell's point - the shape the Go
+/// spike shipped, where a zero-initialised tag array made cell (0, 0) read
+/// uninitialised offsets - would move this checksum and nothing else in the
+/// gate would notice.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn checksum_voronoi(
+    seed0: u32,
+    seed1: u32,
+    grid_size: f64,
+    jitter: f64,
+    distance_type: u32,
+    op: u32,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    n: u32,
+) -> u64 {
+    let dt = match distance_type {
+        0 => voronoi_noise::VoronoiDistanceType::Chebyshev,
+        1 => voronoi_noise::VoronoiDistanceType::Manhattan,
+        2 => voronoi_noise::VoronoiDistanceType::Euclidean,
+        _ => voronoi_noise::VoronoiDistanceType::Minkowski3,
+    };
+    let mut v = voronoi_noise::Voronoi::new(&voronoi_noise::VoronoiParams {
+        seed0,
+        seed1,
+        grid_size,
+        jitter,
+        distance_type: dt,
+        search_range_override: None,
+    });
+    let mut acc = 0u64;
+    for j in 0..n {
+        let y = y0 + f64::from(j) * step;
+        for i in 0..n {
+            let x = x0 + f64::from(i) * step;
+            let value = match op {
+                0 => v.cell_id(x, y),
+                1 => v.spot_noise(x, y),
+                2 => v.facet_noise(x, y),
+                _ => v.pyramid_noise(x, y),
+            };
+            acc = checksum::fold_f64(acc, f64::from(value));
+        }
+    }
+    acc
+}
+
+/// Tier 2 for `voronoi` cell INDICES - the stable `(cellX, cellY)` identity,
+/// which [`checksum_voronoi`]'s `cell_id` hashes away and can collide on.
+///
+/// Worth its own export because two distinct cells CAN share a `cell_id` - the
+/// XOR combine forces exactly two colliding pairs - so a port that returned the
+/// wrong cell could still produce the right float.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn checksum_voronoi_cell_index(
+    seed0: u32,
+    seed1: u32,
+    grid_size: f64,
+    jitter: f64,
+    distance_type: u32,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    n: u32,
+) -> u64 {
+    let dt = match distance_type {
+        0 => voronoi_noise::VoronoiDistanceType::Chebyshev,
+        1 => voronoi_noise::VoronoiDistanceType::Manhattan,
+        2 => voronoi_noise::VoronoiDistanceType::Euclidean,
+        _ => voronoi_noise::VoronoiDistanceType::Minkowski3,
+    };
+    let mut v = voronoi_noise::Voronoi::new(&voronoi_noise::VoronoiParams {
+        seed0,
+        seed1,
+        grid_size,
+        jitter,
+        distance_type: dt,
+        search_range_override: None,
+    });
+    let mut acc = 0u64;
+    for j in 0..n {
+        let y = y0 + f64::from(j) * step;
+        for i in 0..n {
+            let x = x0 + f64::from(i) * step;
+            let (cx, cy) = v.cell_index(x, y);
+            acc = checksum::fold_f64(acc, f64::from(cx));
+            acc = checksum::fold_f64(acc, f64::from(cy));
         }
     }
     acc
