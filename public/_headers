@@ -5,6 +5,20 @@
 #   ESM with no eval and no asm.js. Verified per build - `grep 'eval(' dist/`
 #   over the emitted bundle finds nothing.
 #
+#   'wasm-unsafe-eval' IS present, and it is a DIFFERENT token (#222). It permits
+#   WebAssembly compilation and instantiation and nothing else - no `eval`, no
+#   `new Function`, no inline script. The noise engine
+#   (`src/noise/wasm/engine.wasm`) needs it; without it `WebAssembly.compile`
+#   throws a CSP error and the engine cannot start.
+#
+#   The two tokens look alike and the older guard could not tell them apart: it
+#   asserted the policy did not CONTAIN the substring `unsafe-eval`, which
+#   `'wasm-unsafe-eval'` also contains. `test/buildStamp.spec.ts` now splits
+#   script-src on whitespace and compares whole tokens, so it rejects
+#   `'unsafe-eval'` and REQUIRES `'wasm-unsafe-eval'` - the second half matters
+#   too, because dropping the narrow token would break the app rather than
+#   loosen it, which is a failure nobody would read as a security change.
+#
 #   This line used to carry a much longer caveat, because the codec was backed
 #   by `zlib-asm`, an asm.js port that shipped three eval sites (2016 Emscripten
 #   runtime glue, none of them compression) and needed a local patch to strip
@@ -35,7 +49,7 @@
 #   to this site's own /cdn-cgi/rum, which 'self' already covers; the separate
 #   cloudflareinsights.com endpoint applies only to manual embedding.
 /*
-  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://fmw-preview.wormeyman.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' https://static.cloudflareinsights.com
+  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://fmw-preview.wormeyman.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com
 
 # /version.json carries the git build stamp and exists to answer "did my deploy
 # land?" (`pnpm run verify:deploy`). A cached copy would answer that question

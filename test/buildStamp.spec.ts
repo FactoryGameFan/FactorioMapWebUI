@@ -187,16 +187,58 @@ describe("version.json cache headers", () => {
     expect(rule).toMatch(/Cache-Control:\s*no-store/);
   });
 
-  it("still has no 'unsafe-eval' in script-src", () => {
-    // Guard, not decoration: unsafe-eval was deliberately removed (3770a32) and
-    // must not come back through an unrelated edit to this file. Matched on the
-    // POLICY line only - the surrounding comments discuss unsafe-eval at length,
-    // and a grep over the whole file would be a test of the prose.
+  /**
+   * The `script-src` directive, as a list of whole tokens.
+   *
+   * Whole tokens, not a substring search, and that distinction is the reason
+   * this helper exists. `'wasm-unsafe-eval'` CONTAINS the string
+   * `unsafe-eval`, so the guard this replaced - `expect(policy).not.toContain(
+   * "unsafe-eval")` - could not tell the dangerous token from the narrow one.
+   * It would have failed the moment #222 landed, for the wrong reason.
+   *
+   * Read off the POLICY line only. The surrounding comments discuss both tokens
+   * at length, so a search over the whole file would be a test of the prose.
+   */
+  const scriptSrcTokens = (): string[] => {
     const policy = headers
       .split("\n")
       .filter((l) => !l.trimStart().startsWith("#"))
       .find((l) => l.includes("Content-Security-Policy:"));
     expect(policy, "public/_headers has no Content-Security-Policy line").toBeDefined();
-    expect(policy).not.toContain("unsafe-eval");
+    const directive = policy
+      ?.split(";")
+      .map((d) => d.trim())
+      .find((d) => d.startsWith("script-src"));
+    expect(directive, "the policy has no script-src directive").toBeDefined();
+    return (directive ?? "").split(/\s+/).slice(1);
+  };
+
+  it("still has no 'unsafe-eval' in script-src", () => {
+    // Guard, not decoration: unsafe-eval was deliberately removed (3770a32) and
+    // must not come back through an unrelated edit to this file. Nothing the app
+    // bundles uses `eval` at all.
+    expect(scriptSrcTokens()).not.toContain("'unsafe-eval'");
+  });
+
+  it("DOES have 'wasm-unsafe-eval', which the noise engine needs to start", () => {
+    // The other half of the same guard, and it is not symmetry for its own sake
+    // (#222). Dropping this token does not loosen the policy, it BREAKS the app:
+    // `WebAssembly.compile` throws a CSP error and `src/noise/wasm/engine.wasm`
+    // never runs. That failure would arrive as "the preview is broken in
+    // production", which is not how anyone would search for a CSP problem.
+    expect(scriptSrcTokens()).toContain("'wasm-unsafe-eval'");
+  });
+
+  it("distinguishes the two tokens by whole-token comparison, not by substring", () => {
+    // The assertion that makes the two above non-vacuous, because they can BOTH
+    // be satisfied by a broken reading. `'wasm-unsafe-eval'` contains the string
+    // `unsafe-eval`, so a substring guard would report the current, correct
+    // policy as having unsafe-eval. This pins that the tokeniser sees them apart.
+    const tokens = scriptSrcTokens();
+    expect(tokens).toContain("'wasm-unsafe-eval'");
+    expect(tokens).not.toContain("'unsafe-eval'");
+    // And the substring reading, spelled out, so the difference is executable
+    // rather than asserted in a comment.
+    expect(tokens.join(" ")).toContain("unsafe-eval");
   });
 });
