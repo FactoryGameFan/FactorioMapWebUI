@@ -29,6 +29,7 @@
  * checked against the exact argmax the game chose.
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -1113,7 +1114,37 @@ export const DEFAULT_FACTORIO_BIN =
 
 /** Bundled data dir sits next to the binary (`Contents/MacOS/factorio` -> `Contents/data`). */
 export function defaultDataDir(bin: string): string {
-  return join(dirname(bin), "..", "data");
+  return process.env.FACTORIO_DATA_DIR ?? join(dirname(bin), "..", "data");
+}
+
+/** The default {@link OracleOptions.pathForGame}: the two processes agree. */
+const identityPath = (p: string): string => p;
+
+/**
+ * {@link OracleOptions.pathForGame} for a WSL process driving a WINDOWS
+ * Factorio, via `wslpath -w`.
+ *
+ * Anything that is not an absolute POSIX path is passed through untouched, so
+ * the `__PATH__executable__/../data` token and any already-Windows path survive.
+ *
+ * Synchronous on purpose: it is called a handful of times per run, at setup,
+ * and an async hook would force every call site through a promise for nothing.
+ */
+export function wslPathForGame(p: string): string {
+  if (!p.startsWith("/")) return p;
+  return execFileSync("wslpath", ["-w", p], { encoding: "utf8" }).trim();
+}
+
+/**
+ * The translator to use when a caller does not supply one, chosen from the
+ * environment so that no capture call site needs to know where it is running.
+ *
+ * `FACTORIO_PATH_STYLE=windows` selects {@link wslPathForGame}. Anything else,
+ * including unset, is the identity - so this is inert for everyone on macOS or
+ * native Linux.
+ */
+function defaultPathForGame(): (p: string) => string {
+  return process.env.FACTORIO_PATH_STYLE === "windows" ? wslPathForGame : identityPath;
 }
 
 /** True when a runnable Factorio binary is present, for gating the integration tests. */
@@ -1154,6 +1185,23 @@ export interface OracleOptions {
   mapGenOverrides?: Record<string, unknown>;
   /** Injectable spawn (default: real `node:child_process`). */
   spawnFn?: SpawnFn;
+  /**
+   * Translate a path THIS process can see into the form the GAME process needs.
+   * Default identity, so every existing caller is unaffected.
+   *
+   * It exists because the two processes do not have to share a filesystem view.
+   * Running under WSL against a Windows Factorio is the case that motivated it:
+   * `wslpath -w` turns `/mnt/c/...` into `C:\...`, which is the same directory
+   * seen from the other side, so the game writes its dump where Node then reads
+   * it. Without this the harness passes `/mnt/c/...` into `config.ini` and
+   * Factorio fails with `weakly_canonical: Access is denied`.
+   *
+   * It must reach the CONFIG FILE as well as the argument vector. `write-data`
+   * lives inside `config.ini`, so translating only argv gets you a run that
+   * starts and then cannot write its output - which is the failure this hook
+   * was added to fix, found that way round.
+   */
+  pathForGame?: (p: string) => string;
   /**
    * Route the probe through a Space-Age planet surface instead of the default
    * Nauvis surface at `game.surfaces[1]`. Enables `space-age`/`elevated-rails`/
@@ -1351,9 +1399,16 @@ export async function sampleExpression(
     mapGenPath,
     JSON.stringify(buildMapGenSettings({ seed, property, overrides: opts.mapGenOverrides })),
   );
-  await writeFile(configPath, buildConfigIni(writeDataDir, dataDir));
+  const toGame = opts.pathForGame ?? defaultPathForGame();
+  await writeFile(configPath, buildConfigIni(toGame(writeDataDir), toGame(dataDir)));
 
-  const args = buildFactorioArgs({ savePath, mapGenPath, seed, modDir, configPath });
+  const args = buildFactorioArgs({
+    savePath: toGame(savePath),
+    mapGenPath: toGame(mapGenPath),
+    seed,
+    modDir: toGame(modDir),
+    configPath: toGame(configPath),
+  });
   const { stderr } = await spawnFn(factorioBin, args).done();
 
   const dumpPath = join(writeDataDir, "script-output", DUMP_FILE);
@@ -1488,9 +1543,16 @@ export async function sampleTileNamesFull(
     ),
   );
   await writeFile(mapGenPath, JSON.stringify(buildTileMapGenSettings(seed)));
-  await writeFile(configPath, buildConfigIni(writeDataDir, dataDir));
+  const toGame = opts.pathForGame ?? defaultPathForGame();
+  await writeFile(configPath, buildConfigIni(toGame(writeDataDir), toGame(dataDir)));
 
-  const args = buildFactorioArgs({ savePath, mapGenPath, seed, modDir, configPath });
+  const args = buildFactorioArgs({
+    savePath: toGame(savePath),
+    mapGenPath: toGame(mapGenPath),
+    seed,
+    modDir: toGame(modDir),
+    configPath: toGame(configPath),
+  });
   const { stderr } = await spawnFn(factorioBin, args).done();
 
   const dumpPath = join(writeDataDir, "script-output", TILE_DUMP_FILE);
@@ -1595,9 +1657,16 @@ export async function sampleCliffEntitiesFull(
     ),
   );
   await writeFile(mapGenPath, JSON.stringify(buildTileMapGenSettings(seed)));
-  await writeFile(configPath, buildConfigIni(writeDataDir, dataDir));
+  const toGame = opts.pathForGame ?? defaultPathForGame();
+  await writeFile(configPath, buildConfigIni(toGame(writeDataDir), toGame(dataDir)));
 
-  const args = buildFactorioArgs({ savePath, mapGenPath, seed, modDir, configPath });
+  const args = buildFactorioArgs({
+    savePath: toGame(savePath),
+    mapGenPath: toGame(mapGenPath),
+    seed,
+    modDir: toGame(modDir),
+    configPath: toGame(configPath),
+  });
   const { stderr } = await spawnFn(factorioBin, args).done();
 
   const dumpPath = join(writeDataDir, "script-output", CLIFF_DUMP_FILE);

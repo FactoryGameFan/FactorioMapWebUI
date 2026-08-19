@@ -20,6 +20,7 @@ import {
   sampleExpression,
   sampleTileNames,
   type SpawnResult,
+  wslPathForGame,
 } from "./oracle";
 import tileNamesFixture from "../fixtures/oracle-tile-names.seed123456.json";
 import tileNamesFixture654321 from "../fixtures/oracle-tile-names.seed654321.json";
@@ -142,6 +143,107 @@ describe("oracle harness - sampleExpression wiring", () => {
     } finally {
       await rm(workDir, { recursive: true, force: true });
     }
+  });
+
+  it("pathForGame translates the argument vector AND config.ini, not just argv", async () => {
+    // The bug this exists to catch is specific and was hit for real: translating
+    // only the argument vector produces a run that STARTS and then cannot write
+    // its dump, because `write-data` lives inside config.ini. Factorio reports
+    // that as `weakly_canonical: Access is denied`, which reads like a
+    // permissions problem rather than a path-translation one.
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-xlate-"));
+    try {
+      // A stand-in for `wslpath -w`: unambiguous, reversible, and it leaves
+      // anything that is not an absolute POSIX path alone, exactly as the real
+      // translator does for the `__PATH__executable__` token.
+      const toGame = (p: string): string => (p.startsWith("/") ? `X:${p}` : p);
+
+      let seenArgs: readonly string[] = [];
+      const fakeSpawn = (_bin: string, args: readonly string[]) => ({
+        async done(): Promise<SpawnResult> {
+          seenArgs = args;
+          // Write the dump where the UNtranslated path says, because that is
+          // where this process can actually see it - which is the whole point
+          // of the two views being different.
+          const { mkdir, writeFile } = await import("node:fs/promises");
+          const writeDir = join(workDir, "write");
+          await mkdir(join(writeDir, "script-output"), { recursive: true });
+          await writeFile(
+            join(writeDir, "script-output", DUMP_FILE),
+            JSON.stringify({ values: [7], positions: [{ x: 0.5, y: 0.5 }] }),
+          );
+          return { code: 1, stderr: "control.lua:13: DUMPED-OK" };
+        },
+      });
+
+      const values = await sampleExpression(
+        "basis_noise{x = x, y = y, seed0 = map_seed, seed1 = 0, input_scale = 0.125}",
+        [{ x: 0.5, y: 0.5 }],
+        {
+          workDir,
+          factorioBin: "/fake/factorio",
+          dataDir: "/fake/data",
+          spawnFn: fakeSpawn,
+          pathForGame: toGame,
+        },
+      );
+      expect(values).toEqual([7]);
+
+      // Every path in argv is in the GAME's view.
+      for (const flag of ["--create", "--map-gen-settings", "--mod-directory", "--config"]) {
+        const value = seenArgs[seenArgs.indexOf(flag) + 1];
+        expect(value.startsWith("X:")).toBe(true);
+      }
+      // The seed is not a path and must survive untouched.
+      expect(seenArgs[seenArgs.indexOf("--map-gen-seed") + 1]).toBe("123456");
+
+      // And the half that argv-only translation would miss: config.ini.
+      const configPath = join(workDir, "config.ini");
+      const config = await readFile(configPath, "utf8");
+      expect(config).toContain(`write-data=X:${join(workDir, "write")}`);
+      expect(config).toContain("read-data=X:/fake/data");
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("pathForGame defaults to the identity, so nothing changes off WSL", async () => {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-identity-"));
+    try {
+      let seenArgs: readonly string[] = [];
+      const fakeSpawn = (_bin: string, args: readonly string[]) => ({
+        async done(): Promise<SpawnResult> {
+          seenArgs = args;
+          const { mkdir, writeFile } = await import("node:fs/promises");
+          const writeDir = join(workDir, "write");
+          await mkdir(join(writeDir, "script-output"), { recursive: true });
+          await writeFile(
+            join(writeDir, "script-output", DUMP_FILE),
+            JSON.stringify({ values: [7], positions: [{ x: 0.5, y: 0.5 }] }),
+          );
+          return { code: 1, stderr: "control.lua:13: DUMPED-OK" };
+        },
+      });
+
+      await sampleExpression(
+        "basis_noise{x = x, y = y, seed0 = map_seed, seed1 = 0, input_scale = 0.125}",
+        [{ x: 0.5, y: 0.5 }],
+        { workDir, factorioBin: "/fake/factorio", dataDir: "/fake/data", spawnFn: fakeSpawn },
+      );
+
+      expect(seenArgs[seenArgs.indexOf("--create") + 1]).toBe(join(workDir, "write", "probe.zip"));
+      const config = await readFile(join(workDir, "config.ini"), "utf8");
+      expect(config).toContain(`write-data=${join(workDir, "write")}`);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("wslPathForGame leaves anything that is not an absolute POSIX path alone", () => {
+    // No `wslpath` is invoked for these, so the assertion holds on any platform.
+    expect(wslPathForGame("__PATH__executable__/../data")).toBe("__PATH__executable__/../data");
+    expect(wslPathForGame("V:\\factorio-2.1.14\\data")).toBe("V:\\factorio-2.1.14\\data");
+    expect(wslPathForGame("relative/path")).toBe("relative/path");
   });
 });
 
