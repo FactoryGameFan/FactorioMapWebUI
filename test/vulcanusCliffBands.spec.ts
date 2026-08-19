@@ -302,6 +302,26 @@ describe("the grid-4 cliff-elevation channel, corner by corner", () => {
    * It is not: not one disputed cell has a code our repair changed, so all of
    * them are raw `crossesCliff` disagreements and the per-edge reading below is
    * about the field at that edge.
+   *
+   * **Carries an explicit 120s budget because it timed out on CI at the 30s
+   * global**, on PR #253 (a change measured not to affect it). This test calls
+   * `place()` twice per case - once with the repair and once without - so it is
+   * the second-heaviest in the file, and the heaviest that had no annotation.
+   *
+   * Measured on a dev machine, three runs each, to establish it was the budget
+   * and not a regression:
+   *
+   * | | run 1 | run 2 | run 3 |
+   * | --- | --- | --- | --- |
+   * | with #253's f32 `quick_multioctave_noise` | 5952ms | 5955ms | 5954ms |
+   * | with the previous f64 one | 6163ms | 6206ms | 6012ms |
+   *
+   * So ~6s here, which is a 5x margin locally and none at all on a 4-core
+   * runner: roughly 3x slower, times a documented ~40% run-to-run spread, on a
+   * shard whose import time alone was 514s. 120000 matches the only other
+   * annotated test in this file. Do not reach for `retry` if it reddens again -
+   * nothing here is nondeterministic, so a retry would only hide a real
+   * slowdown. Read the duration the reporter prints first.
    */
   it("no disputed cell's code is one the repair touched", () => {
     let disputed = 0;
@@ -323,7 +343,7 @@ describe("the grid-4 cliff-elevation channel, corner by corner", () => {
     }
     expect(disputed).toBe(73);
     expect(touched).toBe(0);
-  });
+  }, 120000);
 
   /**
    * **The disagreement is nowhere near a band boundary**, so it is not float

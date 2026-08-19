@@ -26,13 +26,42 @@
  * The temperature / moisture / aux climate trees use this op (each passes
  * `offset_x = <big> / var('control:<name>:frequency')`).
  *
- * Verified against the game to the basis floor (~3e-7) for small coordinates,
- * loosening to ~7e-4 where a large `offset_x` pushes the noise-space coordinate to
- * thousands of tiles (the documented f32 floor; see basis-noise-NOTES.md). NOT
- * wired into the app - a building block for a client-side map preview.
+ * **The arithmetic is f32, rounded after every operation.** This op used to
+ * evaluate in pure f64 and score 38 of 190 exact against the committed oracle,
+ * with a near/far split its spec blamed on "the game's f32 coordinate pipeline
+ * diverges from our f64 - the documented f32 floor". There was no floor. The op
+ * is now **190/190 bit-exact, worst error exactly 0**, and the near/far split is
+ * gone with it - the same correction the plain and variable-persistence relatives
+ * already took (see their notes, and `src/noise/eval/f32.ts`).
+ *
+ * Four ingredients, each measured load-bearing by turning it off alone and
+ * re-scoring the whole fixture:
+ *
+ * | leave one out | exact |
+ * | --- | --- |
+ * | all four | **190/190** |
+ * | params not narrowed to f32 | 109/190 |
+ * | `amp * basis` not rounded before the add | 132/190 |
+ * | scale/amp by `OISM**k` instead of a running chain | 143/190 |
+ * | scale/amp chain steps not rounded | 137/190 |
+ * | none of them (the old f64 shape) | 38/190 |
+ *
+ * Narrowing params matters because the callers' values have no exact f32 form -
+ * `octave_output_scale_multiplier` 0.6/0.65/0.7, `input_scale` 0.1/0.08/(1/6),
+ * `octave_input_scale_multiplier` 0.55. That is `f32.ts`'s "narrow the CONSTANT"
+ * case, and no amount of rounding the result recovers it.
+ *
+ * Note what an error bound could not see here: dropping only the `amp * basis`
+ * rounding leaves the worst residual at 4.8e-7 - visually perfect - while 58
+ * points stop being bit-exact. Exact-match counting is the only scoring that
+ * discriminates, which is why this op's spec now asserts counts and zeros.
+ *
+ * NOT wired into the app - a building block for a client-side map preview.
  */
 
 import { basisNoise, basisNoiseTablesFromSeed, type BasisNoiseTables } from "./basisNoise";
+import { f32 } from "./eval/f32";
+import { fastPow } from "./fastApprox";
 
 export interface QuickMultioctaveParams {
   /** Map seed (basis seed word). */
@@ -84,78 +113,144 @@ function octaveSeed0(seed0: number, _seed1: number, k: number): number {
   return (seed0 + k) >>> 0;
 }
 
+/** The per-octave tables, input scales and amplitudes, plus the f32 x offset. */
+interface QuickOctaves {
+  readonly tables: BasisNoiseTables[];
+  readonly scales: number[];
+  readonly amps: number[];
+  readonly offsetX: number;
+}
+
 /**
- * Evaluate `quick_multioctave_noise` at world coordinates `(x, y)`. Every octave now
- * gets its own distinct seed word (flat `seed0 + k`), so the `s0 !== prevSeed0`
- * cache below is effectively dead - consecutive octaves never share a word, and the
- * branch is always taken. It is left in place (cheap, harmless, and a safety net if
- * the derivation ever changes back to something that repeats a word) rather than
- * removed. The derivation itself is cheap either way. Sweeping many points at one
- * seed still benefits from caching the tables by octave - see
- * {@link makeQuickMultioctaveNoise}.
+ * Derive the per-octave terms exactly as `QuickMultioctaveNoise::run` emits them.
+ *
+ * `run` is a register-program builder, not a runtime loop: it unrolls N explicit
+ * `BasisNoise` ops, multiplying the running input scale (`s8 *= s12`) and output
+ * scale (`s9 *= s13`) per octave. Those registers are **f32**, so the chain is a
+ * chain - each step rounds, and the k-th scale is not `input_scale * OISM**k`.
+ * That distinction is worth 143/190 against 190/190, so it is measured rather
+ * than stylistic; see the table in the module header.
+ *
+ * The four incoming parameters are narrowed here because the game holds them in
+ * f32 constant slots, and the values callers actually pass (0.6, 0.65, 0.7, 0.1,
+ * 0.08, 1/6, 0.55) have no exact f32 form.
+ *
+ * Every octave gets its own distinct seed word (flat `seed0 + k`), so the tables
+ * are built once per octave here rather than cached against the previous word -
+ * consecutive octaves never share one. See {@link octaveSeed0}.
+ */
+function octaveTerms(params: QuickMultioctaveParams): QuickOctaves {
+  const { seed0, seed1, octaves } = params;
+  const oism = f32(params.octaveInputScaleMultiplier);
+  const oosm = f32(params.octaveOutputScaleMultiplier);
+
+  const tables: BasisNoiseTables[] = [];
+  const scales: number[] = [];
+  const amps: number[] = [];
+  let scale = f32(params.inputScale);
+  let amp = f32(params.outputScale);
+  for (let k = 0; k < octaves; k++) {
+    tables.push(basisNoiseTablesFromSeed(octaveSeed0(seed0, seed1, k), seed1));
+    scales.push(scale);
+    amps.push(amp);
+    scale = f32(scale * oism);
+    amp = f32(amp * oosm);
+  }
+  return { tables, scales, amps, offsetX: f32(params.offsetX) };
+}
+
+/**
+ * Sum the octaves in the game's order, rounding to f32 after every operation.
+ *
+ * Two roundings here carry the bulk of the fix, and both were confirmed by
+ * removing them one at a time and re-scoring the whole fixture:
+ *
+ * - **`amp * basis(...)` is rounded before it is added.** Each is its own
+ *   register op, so the product lands in f32 before the accumulate. Dropping
+ *   just this one costs 58 exact matches (190 -> 132) while leaving the worst
+ *   residual at 4.768e-7 - which is exactly why this op is scored by exact
+ *   count and not by a bound.
+ * - **The running total is f32.** `out[i] = out[i] + ...` in the vector kernel,
+ *   never an f64 accumulator narrowed once on return.
+ *
+ * `x + offset_x` is hoisted out of the loop because it does not depend on k;
+ * that is the same arithmetic, not a shortcut. **Whether the game rounds that
+ * add before the multiply is NOT resolved by this fixture** - narrowing only
+ * the product scores 190/190 and worst 0 as well, because every
+ * `(position + offset_x)` the fixture uses is already exact in f32. The inner
+ * narrowing is kept because it is what a register machine does and what
+ * {@link variablePersistenceMultioctaveNoise}'s identical `(x + offset_x)`
+ * step does; a caller passing a derived x is where the two forms would part,
+ * and no fixture covers that yet.
+ *
+ * The incoming `x`/`y` are narrowed for the reason #191 gives - the noise
+ * machine hands every expression an f32 - but note this fixture cannot see
+ * that either: all 38 of its positions are already on the f32 grid, and
+ * turning the narrowing off leaves the score at 190/190.
+ */
+function sumOctaves(x: number, y: number, t: QuickOctaves): number {
+  const xo = f32(f32(x) + t.offsetX);
+  const yf = f32(y);
+  let sum = 0;
+  for (let k = 0; k < t.scales.length; k++) {
+    const s = t.scales[k];
+    sum = f32(sum + f32(t.amps[k] * basisNoise(f32(xo * s), f32(yf * s), t.tables[k])));
+  }
+  return sum;
+}
+
+/**
+ * Evaluate `quick_multioctave_noise` at world coordinates `(x, y)`. Bit-exact
+ * against the committed oracle: 190/190, worst error 0.
  */
 export function quickMultioctaveNoise(
   x: number,
   y: number,
   params: QuickMultioctaveParams,
 ): number {
-  const { seed0, seed1, octaves, inputScale, outputScale } = params;
-  const oism = params.octaveInputScaleMultiplier;
-  const oosm = params.octaveOutputScaleMultiplier;
-  const offsetX = params.offsetX;
-
-  let sum = 0;
-  let scale = inputScale;
-  let amp = outputScale;
-  let prevSeed0 = NaN;
-  let tables: BasisNoiseTables | null = null;
-  for (let k = 0; k < octaves; k++) {
-    const s0 = octaveSeed0(seed0, seed1, k);
-    if (s0 !== prevSeed0) {
-      tables = basisNoiseTablesFromSeed(s0, seed1);
-      prevSeed0 = s0;
-    }
-    sum += amp * basisNoise((x + offsetX) * scale, y * scale, tables as BasisNoiseTables);
-    scale *= oism;
-    amp *= oosm;
-  }
-  return sum;
+  return sumOctaves(x, y, octaveTerms(params));
 }
 
 /**
  * Build a closure that evaluates `quick_multioctave_noise` for a fixed parameter set,
- * with the per-octave basis tables derived once up front (the common case for
- * rendering a grid at one seed). Returns `(x, y) => number`.
+ * with the per-octave basis tables, input scales and amplitudes derived once up front
+ * (the common case for rendering a grid at one seed). Returns `(x, y) => number`,
+ * numerically identical to {@link quickMultioctaveNoise} - both route through the same
+ * {@link octaveTerms} / {@link sumOctaves} pair, so they cannot drift apart.
  */
 export function makeQuickMultioctaveNoise(
   params: QuickMultioctaveParams,
 ): (x: number, y: number) => number {
-  const { seed0, seed1, octaves, inputScale, outputScale } = params;
-  const oism = params.octaveInputScaleMultiplier;
-  const oosm = params.octaveOutputScaleMultiplier;
-  const offsetX = params.offsetX;
+  const t = octaveTerms(params);
+  return (x: number, y: number): number => sumOctaves(x, y, t);
+}
 
-  const octaveTables: BasisNoiseTables[] = [];
-  const octaveScale: number[] = [];
-  const octaveAmp: number[] = [];
-  let scale = inputScale;
-  let amp = outputScale;
-  for (let k = 0; k < octaves; k++) {
-    octaveTables.push(basisNoiseTablesFromSeed(octaveSeed0(seed0, seed1, k), seed1));
-    octaveScale.push(scale);
-    octaveAmp.push(amp);
-    scale *= oism;
-    amp *= oosm;
+/**
+ * The noise machine's `^`, in f32.
+ *
+ * It is **three different functions**, dispatched on the exponent - exact
+ * exponentiation by squaring for an integer, exact `sqrt` for 0.5, and
+ * fastapprox (`Math::powSafe`) otherwise. That was settled against
+ * `oracle-fastpow.seed123456.json` at 123/123 per branch (#161, #163), and the
+ * 0.5 case was a refutation of the then-current model rather than a
+ * confirmation - do not collapse these back into one call.
+ *
+ * Only the integral branch is exercised by anything here (`octaves` is a whole
+ * number in every base-game caller), but the other two are spelled out because
+ * a wrong branch is silent: it returns a plausible number.
+ */
+function noiseMachinePow(base: number, exponent: number): number {
+  if (exponent === 0.5) return f32(Math.sqrt(f32(base)));
+  if (!Number.isInteger(exponent) || exponent < 0) return f32(fastPow(f32(base), f32(exponent)));
+  let result = 1;
+  let b = f32(base);
+  let e = exponent;
+  while (e > 0) {
+    if (e & 1) result = f32(result * b);
+    b = f32(b * b);
+    e >>= 1;
   }
-
-  return (x: number, y: number): number => {
-    let sum = 0;
-    for (let k = 0; k < octaves; k++) {
-      const s = octaveScale[k];
-      sum += octaveAmp[k] * basisNoise((x + offsetX) * s, y * s, octaveTables[k]);
-    }
-    return sum;
-  };
+  return result;
 }
 
 export interface QuickMultioctavePersistenceParams {
@@ -188,6 +283,24 @@ export interface QuickMultioctavePersistenceParams {
  *
  * so the finest octave lands at `input_scale` and the sum is `2^(N-1)`-scaled. The
  * elevation tree's `starting_lake_noise` uses this. `offset_x` defaults to 0.
+ *
+ * **The transform is f32, not f64, and that is worth 1.964e-3.** It is tempting
+ * to read "Lua wrapper" as "Lua arithmetic, therefore doubles". It is not: the
+ * wrapper is a `noise-function` whose body is an *expression string*
+ * (`core/prototypes/noise-functions.lua`), which the game's noise machine
+ * compiles and folds - in f32, one operation at a time, like everything else it
+ * evaluates. Doing the transform in f64 left this wrapper at 114/152 exact and
+ * worst 1.964e-3 even after the op underneath it became bit-exact; doing it in
+ * f32 makes it **152/152, worst 0**.
+ *
+ * `^` here has an integral exponent, and the noise machine's `^` is three
+ * different functions selected by that exponent - exact exponentiation by
+ * squaring for integers, exact `sqrt` for 0.5, fastapprox otherwise (#161,
+ * #163). {@link noiseMachinePow} implements that dispatch. **This fixture cannot
+ * discriminate the integral branch**: `Math.pow` narrowed to f32 also scores
+ * 152/152 here, because the only bases are 0.5 and 0.6 at exponents 0, 2, 3 and
+ * 4. Squaring is used because it is what the game does, not because the fixture
+ * chose it.
  */
 export function quickMultioctaveNoisePersistence(
   x: number,
@@ -208,14 +321,15 @@ export function makeQuickMultioctaveNoisePersistence(
   params: QuickMultioctavePersistenceParams,
 ): (x: number, y: number) => number {
   const { octaves, octaveInputScaleMultiplier: oism } = params;
+  const oismF = f32(oism);
   return makeQuickMultioctaveNoise({
     seed0: params.seed0,
     seed1: params.seed1,
     octaves,
-    inputScale: params.inputScale * oism ** (octaves - 1),
-    outputScale: params.outputScale * 2 ** (octaves - 1),
-    octaveOutputScaleMultiplier: params.persistence,
-    octaveInputScaleMultiplier: 1 / oism,
+    inputScale: f32(f32(params.inputScale) * noiseMachinePow(oismF, octaves - 1)),
+    outputScale: f32(f32(params.outputScale) * noiseMachinePow(2, octaves - 1)),
+    octaveOutputScaleMultiplier: f32(params.persistence),
+    octaveInputScaleMultiplier: f32(1 / oismF),
     offsetX: 0,
   });
 }

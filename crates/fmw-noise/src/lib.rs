@@ -15,7 +15,11 @@
 pub mod basis_gradient_table;
 pub mod basis_noise;
 pub mod checksum;
+pub mod fast_approx;
+pub mod multioctave_noise;
+pub mod quick_multioctave_noise;
 pub mod taus88;
+pub mod variable_persistence_multioctave_noise;
 
 #[cfg(test)]
 mod test_json;

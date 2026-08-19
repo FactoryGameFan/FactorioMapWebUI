@@ -175,3 +175,202 @@ fn the_scorer_resolves_a_single_wrong_point() {
         "one ULP on one point must cost exactly one match"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The multioctave family.
+//
+// Each test reads the same file its TypeScript counterpart reads and asserts
+// the same numbers. All four ops are bit-exact, so every assertion is an exact
+// count plus `worst == 0` - no bounds. Three of these four had a bound until
+// 2026-08-18, and defects were measured that passed every one of them while
+// destroying bit-exactness (see the tables in the TypeScript specs).
+// ---------------------------------------------------------------------------
+
+use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
+use crate::quick_multioctave_noise::{
+    quick_multioctave_noise, quick_multioctave_noise_persistence, QuickMultioctaveParams,
+    QuickPersistenceParams,
+};
+use crate::variable_persistence_multioctave_noise::{
+    variable_persistence_multioctave_noise, VariablePersistenceParams,
+};
+
+/// Score one fixture case, returning (exact matches, worst absolute error).
+fn score_case(values: &[Json], mut eval: impl FnMut(usize) -> f32) -> (usize, f64) {
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for (i, expected) in values.iter().enumerate() {
+        let want = expected.as_f64();
+        let got = f64::from(eval(i));
+        worst = worst.max((got - want).abs());
+        if got == want {
+            exact += 1;
+        }
+    }
+    (exact, worst)
+}
+
+/// Every value a fixture grades must be exactly f32, or an exact-match count is
+/// unreachable by construction and the temptation is to loosen the score rather
+/// than read it. Asserted rather than assumed, per case.
+fn assert_all_f32(values: &[Json], label: &str) {
+    for (i, v) in values.iter().enumerate() {
+        let value = v.as_f64();
+        assert_eq!(
+            f64::from(value as f32),
+            value,
+            "{label} value {i} is not exactly f32"
+        );
+    }
+}
+
+#[test]
+fn reproduces_the_multioctave_fixture_exactly() {
+    let fixture = load("test/fixtures/oracle-multioctave.seed123456.json");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = fixture.get("positions").as_array();
+
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    for case in fixture.get("cases").as_array() {
+        let values = case.get("values").as_array();
+        assert_all_f32(values, "multioctave");
+        let params = MultioctaveParams {
+            seed0,
+            seed1: case.get("seed1").as_f64() as u32,
+            octaves: case.get("octaves").as_f64(),
+            persistence: case.get("persistence").as_f64(),
+            input_scale: case.get("inputScale").as_f64(),
+            output_scale: case.get("outputScale").as_f64(),
+        };
+        let (exact, worst) = score_case(values, |i| {
+            let p = &positions[i];
+            multioctave_noise(p.get("x").as_f64(), p.get("y").as_f64(), &params)
+        });
+        assert_eq!(worst, 0.0, "worst absolute error");
+        total += values.len();
+        exact_total += exact;
+    }
+
+    // test/multioctaveNoise.spec.ts asserts the same 266 and the same 0.
+    assert_eq!(total, 266, "fixture size");
+    assert_eq!(exact_total, 266, "exact f32 matches");
+}
+
+#[test]
+fn reproduces_the_variable_persistence_fixture_exactly() {
+    let fixture = load("test/fixtures/oracle-variable-persistence-multioctave.seed123456.json");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = fixture.get("positions").as_array();
+    // The per-tile value of the persistence expression, captured alongside the
+    // op and fed back in as the model's `p`.
+    let persistence = fixture.get("persistenceField").as_f64_array();
+
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    for case in fixture.get("cases").as_array() {
+        let values = case.get("values").as_array();
+        assert_all_f32(values, "variablePersistence");
+        let params = VariablePersistenceParams {
+            seed0,
+            seed1: case.get("seed1").as_f64() as u32,
+            octaves: case.get("octaves").as_f64() as u32,
+            input_scale: case.get("inputScale").as_f64(),
+            output_scale: case.get("outputScale").as_f64(),
+            offset_x: case.get("offsetX").as_f64(),
+        };
+        let (exact, worst) = score_case(values, |i| {
+            let p = &positions[i];
+            variable_persistence_multioctave_noise(
+                p.get("x").as_f64(),
+                p.get("y").as_f64(),
+                persistence[i] as f32,
+                &params,
+            )
+        });
+        assert_eq!(worst, 0.0, "worst absolute error");
+        total += values.len();
+        exact_total += exact;
+    }
+
+    // test/variablePersistenceMultioctaveNoise.spec.ts asserts the same.
+    assert_eq!(total, 266, "fixture size");
+    assert_eq!(exact_total, 266, "exact f32 matches");
+}
+
+#[test]
+fn reproduces_the_quick_multioctave_fixture_exactly() {
+    let fixture = load("test/fixtures/oracle-quick-multioctave.seed123456.json");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = fixture.get("positions").as_array();
+
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    for case in fixture.get("cases").as_array() {
+        let values = case.get("values").as_array();
+        assert_all_f32(values, "quickMultioctave");
+        let params = QuickMultioctaveParams {
+            seed0,
+            seed1: case.get("seed1").as_f64() as u32,
+            octaves: case.get("octaves").as_f64() as u32,
+            input_scale: case.get("inputScale").as_f64(),
+            output_scale: case.get("outputScale").as_f64(),
+            octave_output_scale_multiplier: case.get("oosm").as_f64(),
+            octave_input_scale_multiplier: case.get("oism").as_f64(),
+            offset_x: case.get("offsetX").as_f64(),
+        };
+        let (exact, worst) = score_case(values, |i| {
+            let p = &positions[i];
+            quick_multioctave_noise(p.get("x").as_f64(), p.get("y").as_f64(), &params)
+        });
+        assert_eq!(worst, 0.0, "worst absolute error");
+        total += values.len();
+        exact_total += exact;
+    }
+
+    // test/quickMultioctaveNoise.spec.ts asserts the same 190 and the same 0.
+    // It was 38 until 2026-08-18, when the TypeScript stopped evaluating this
+    // op in f64. This port never had that defect, and the count is what proves
+    // it rather than a bound that both shapes would have passed.
+    assert_eq!(total, 190, "fixture size");
+    assert_eq!(exact_total, 190, "exact f32 matches");
+}
+
+#[test]
+fn reproduces_the_quick_persistence_wrapper_exactly() {
+    let fixture = load("test/fixtures/oracle-multioctave-wrappers.seed123456.json");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = fixture.get("positions").as_array();
+
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    for case in fixture.get("quick").as_array() {
+        let values = case.get("values").as_array();
+        assert_all_f32(values, "quickPersistence");
+        let params = QuickPersistenceParams {
+            seed0,
+            seed1: case.get("seed1").as_f64() as u32,
+            octaves: case.get("octaves").as_f64() as u32,
+            input_scale: case.get("inputScale").as_f64(),
+            output_scale: case.get("outputScale").as_f64(),
+            octave_input_scale_multiplier: case.get("oism").as_f64(),
+            persistence: case.get("persistence").as_f64(),
+        };
+        let (exact, worst) = score_case(values, |i| {
+            let p = &positions[i];
+            quick_multioctave_noise_persistence(p.get("x").as_f64(), p.get("y").as_f64(), &params)
+        });
+        assert_eq!(worst, 0.0, "worst absolute error");
+        total += values.len();
+        exact_total += exact;
+    }
+
+    // test/multioctaveWrappers.spec.ts asserts the same 152 and the same 0.
+    // `amplitude_corrected_multioctave_noise`, the other wrapper in that
+    // fixture, is deliberately NOT ported yet: it sits at 81/152 in the
+    // TypeScript with a bit-exact op underneath and an unexplained residual
+    // (#254). Porting it now would mean porting a known-wrong model and
+    // enshrining its wrongness in a Rust assertion.
+    assert_eq!(total, 152, "fixture size");
+    assert_eq!(exact_total, 152, "exact f32 matches");
+}

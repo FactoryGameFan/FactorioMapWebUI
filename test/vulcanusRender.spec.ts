@@ -330,6 +330,22 @@ describe("runRenderRequest planet dispatch", () => {
   // Both counts are asserted below, so if placement ever shifts the test fails
   // loudly rather than passing vacuously. It runs five full Vulcanus renders,
   // hence the explicit timeout.
+  /**
+   * **Explicit 120s budget: this test has no headroom under the 30s global on a
+   * contended CI shard.** Measured 7990ms on a dev machine. That looks safe and is
+   * not: on PR #253 a 5952ms test in test/vulcanusCliffBands.spec.ts blew the
+   * 30000ms global on shard 3, so the
+   * real multiplier for a contended 4-core runner is above 5x rather than the
+   * ~3x a core-count comparison suggests - that shard's import time alone was
+   * 514s. 7990ms x 5 lands past 30s.
+   *
+   * It renders the same 'all' view four times over - once composited and once per
+   * overlay - so it is the heaviest test in this file by a wide margin.
+   *
+   * Not `retry` if it reddens anyway: nothing here is nondeterministic, these
+   * tests compare pixels against captured game output, so a retry would only
+   * hide a real slowdown. Read the duration the reporter prints first.
+   */
   it("composites Vulcanus rocks and cliffs ON TOP of resource patches in view:'all'", () => {
     const common = {
       id: 9,
@@ -380,5 +396,5 @@ describe("runRenderRequest planet dispatch", () => {
       0,
     );
     expect(overRocks, "window must have pixels both rocks and resources paint").toBeGreaterThan(0);
-  });
+  }, 120000);
 });

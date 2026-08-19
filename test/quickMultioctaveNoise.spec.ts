@@ -34,38 +34,49 @@ function paramsFor(seed0: number, c: QuickCase) {
 describe("quickMultioctaveNoise reproduces the game", () => {
   // Ground truth: test/fixtures/oracle-quick-multioctave.seed123456.json, captured
   // via the oracle harness. Regenerate with test/oracle/capture.ts.
-  it("matches quick_multioctave_noise across octaves / multipliers / offset / seeds", () => {
-    // Two domains, split by the octave-0 sampled coordinate |(x + offset_x)*IS|.
-    // Where that is small the match is the basis floor (~1e-6). A large offset_x (the
-    // climate-tree values, e.g. 40000) or a far world point pushes the sampled
-    // coordinate to hundreds/thousands of noise units, where the game's f32 coordinate
-    // pipeline diverges from our f64 - the documented f32 floor (basis-noise-NOTES.md),
-    // invisible in a downsampled preview.
-    let worstNear = 0;
-    let worstNearLabel = "";
-    let worstFar = 0;
+  //
+  // Scored by EXACT f32 match count, not by an error bound. Every one of the 190
+  // values in the fixture is exactly representable in f32 (asserted below, so the
+  // scoring cannot quietly stop being valid), which makes "identical" a question
+  // the fixture can answer - and a bound cannot.
+  //
+  // This spec used to assert `worstNear < 5e-5` and `worstFar < 3e-3`, and
+  // explained the gap as "the game's f32 coordinate pipeline diverges from our
+  // f64 - the documented f32 floor". There was no floor: the op was evaluating in
+  // f64 and the game evaluates in f32. It scored 38/190 then and scores 190/190
+  // now, so the near/far split those two bounds described no longer exists and
+  // both are gone. Do not reintroduce a bound here; a miss is a finding.
+  it("matches quick_multioctave_noise bit-for-bit across octaves / multipliers / offset / seeds", () => {
+    let exact = 0;
+    let total = 0;
+    let worst = 0;
+    let worstLabel = "";
     for (const c of fixture.cases as QuickCase[]) {
       const params = paramsFor(fixture.seed0, c);
       for (let i = 0; i < fixture.positions.length; i++) {
         const p = fixture.positions[i];
         const got = quickMultioctaveNoise(p.x, p.y, params);
+        total++;
+        if (got === c.values[i]) exact++;
         const err = Math.abs(got - c.values[i]);
-        const noiseX = Math.abs((p.x + c.offsetX) * c.inputScale);
-        if (noiseX < 500) {
-          if (err > worstNear) {
-            worstNear = err;
-            worstNearLabel = `octaves=${c.octaves} offset=${c.offsetX} seed1=${c.seed1} @(${p.x},${p.y})`;
-          }
-        } else {
-          worstFar = Math.max(worstFar, err);
+        if (err > worst) {
+          worst = err;
+          worstLabel = `octaves=${c.octaves} offset=${c.offsetX} seed1=${c.seed1} @(${p.x},${p.y})`;
         }
       }
     }
-    // 5e-5 near / 3e-3 far: the same f32 pipeline floor the plain multioctave op sits
-    // at (multioctave-noise-NOTES.md), reached here by 6-octave accumulation at
-    // moderately-far points and by large-offset_x sampled coordinates respectively.
-    expect(worstNear, `worst near-field at ${worstNearLabel}`).toBeLessThan(5e-5);
-    expect(worstFar, "worst far-field").toBeLessThan(3e-3);
+    expect(total).toBe(190);
+    expect(worst, `worst residual at ${worstLabel}`).toBe(0);
+    expect(exact).toBe(190);
+  });
+
+  // The exact-count assertion above is only meaningful if the fixture really is
+  // all-f32; against an f64 ground truth a bit-exact f32 port could never reach
+  // it, and the temptation would be to loosen the score instead of reading it.
+  it("every fixture value is exactly representable in f32", () => {
+    for (const c of fixture.cases as QuickCase[]) {
+      for (const v of c.values) expect(Math.fround(v)).toBe(v);
+    }
   });
 
   it("makeQuickMultioctaveNoise (prebuilt tables) agrees with the direct form", () => {

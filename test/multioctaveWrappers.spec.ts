@@ -26,8 +26,10 @@ interface AcCase {
 describe("the multioctave Lua wrappers reproduce the game", () => {
   // Ground truth: test/fixtures/oracle-multioctave-wrappers.seed123456.json.
   // Regenerate with `test/oracle/capture.ts multioctave-wrappers`.
-  it("quick_multioctave_noise_persistence matches the game", () => {
+  it("quick_multioctave_noise_persistence matches the game bit-for-bit", () => {
     let worst = 0;
+    let exact = 0;
+    let n = 0;
     for (const c of fixture.quick as QuickCase[]) {
       for (let i = 0; i < fixture.positions.length; i++) {
         const p = fixture.positions[i];
@@ -40,12 +42,28 @@ describe("the multioctave Lua wrappers reproduce the game", () => {
           octaveInputScaleMultiplier: c.oism,
           persistence: c.persistence,
         });
+        n++;
+        if (got === c.values[i]) exact++;
         worst = Math.max(worst, Math.abs(got - c.values[i]));
       }
     }
-    // Basis floor near-field, loosening to the f32 coordinate floor at the far
-    // fixture points (see quick-multioctave-noise-NOTES.md).
-    expect(worst).toBeLessThan(3e-3);
+    // Bit-exact: 152/152, worst 0. The bound here was `< 3e-3` and blamed "the
+    // f32 coordinate floor at the far fixture points"; there was no such floor.
+    // Two separate f64 evaluations were, and both are fixed:
+    //
+    // | | worst | exact |
+    // | --- | --- | --- |
+    // | the op itself in f64 | 1.964e-3 | 38/152 |
+    // | op fixed, transform still f64 | 1.964e-3 | 114/152 |
+    // | **both in f32** | **0** | **152/152** |
+    //
+    // The second row is the interesting one. This wrapper is a `noise-function`
+    // whose body is an expression STRING, so the game's noise machine folds it
+    // in f32 - "Lua wrapper" does not mean "Lua doubles". See
+    // quick-multioctave-noise-NOTES.md.
+    expect(n).toBe(152);
+    expect(worst).toBe(0);
+    expect(exact).toBe(152);
   });
 
   it("amplitude_corrected_multioctave_noise matches the game", () => {
@@ -65,7 +83,17 @@ describe("the multioctave Lua wrappers reproduce the game", () => {
         worst = Math.max(worst, Math.abs(got - c.values[i]));
       }
     }
-    // 2^N gain amplifies the f32 coordinate floor at far points / large offset_x.
-    expect(worst).toBeLessThan(5e-3);
+    // Measured 1.7881e-7, against a bound that was `< 5e-3` - roughly 28,000x
+    // slack, inherited from the era when the ops underneath were f64. Tightened
+    // to the measurement.
+    //
+    // **This one is NOT bit-exact and is not yet explained: 81/152.** Its sibling
+    // above reached 152/152 by running the wrapper's transform in the noise
+    // machine's f32, and the same treatment here does NOT fix it - f32 per-op
+    // with the game's integral `^` scores 84/152 with worst 3.576e-7, no better
+    // than the f64 form it would replace. So the shipped f64 transform stays
+    // until there is evidence for a different one, and this bound records what
+    // ships. Open question, deliberately not closed by guesswork.
+    expect(worst).toBeLessThan(2.5e-7);
   });
 });

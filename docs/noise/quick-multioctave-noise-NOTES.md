@@ -49,12 +49,25 @@ a runtime loop) the op emits N explicit `BasisNoise` ops, multiplying the runnin
 input scale (`s8 *= s12`) and output scale (`s9 *= s13`) per octave and advancing a
 seed accumulator (`w21 += w28`). "Quick" = the octaves are unrolled at compile time.
 
-Verified against the game to the basis floor (~1e-6) for small sampled coordinates,
-loosening to ~3e-3 where a large `offset_x` (e.g. temperature's 40000) or a far world
-point pushes the sampled coordinate to thousands of noise units - the documented f32
-floor (see `basis-noise-NOTES.md` / `multioctave-noise-NOTES.md`), invisible in a
-downsampled preview. Across octaves 1..6, both per-octave multipliers, offset_x in
-{0, 12000, 40000}, several input/output scales and seven seed1 values.
+**Bit-exact against the game: 190/190, worst error exactly 0**, across octaves
+1..6, both per-octave multipliers, offset_x in {0, 12000, 40000}, several
+input/output scales and seven seed1 values.
+
+That is a correction. This paragraph used to read "verified to the basis floor
+(~1e-6) for small sampled coordinates, loosening to ~3e-3 where a large
+`offset_x` ... or a far world point pushes the sampled coordinate to thousands of
+noise units - the documented f32 floor", and the spec carried two tolerances to
+match. **There was no floor.** The op was evaluating in f64 while the game
+evaluates in f32; it scored 38/190 exact. See "The f32 correction" below.
+
+Note the shape of the wrong belief, because it is now the third time this exact
+one has been recorded in these notes. A distance-dependent residual was read as
+evidence of a precision limit inherent to the coordinate magnitude. In all three
+cases - the plain op's aliased `-1774.83`, the variable-persistence op's aliased
+`-7936`, and this one - the residual grew with |coordinate| because the port was
+computing in the wrong precision, not because large coordinates cost accuracy.
+The tell each time was that the "floor" was never derived from anything; it was
+named after the symptom.
 
 ## The per-octave seed (the whole subtlety)
 
@@ -105,11 +118,29 @@ seed1 masks it. See the seed section above.
 
 ## Still open
 
+Nothing on the arithmetic: the op is bit-exact.
+
+One thing this fixture cannot answer, recorded so nobody reads 190/190 as
+covering it. **Whether the game rounds `x + offset_x` to f32 before multiplying
+by the input scale is not resolved here.** Narrowing only the product scores
+190/190 with worst 0 as well, because every `(position + offset_x)` the fixture
+uses is already exact in f32. The port narrows both, matching what a register
+machine does and what `variable_persistence_multioctave_noise` does at its
+identical `(x + offset_x)` step. A caller passing a DERIVED x - Fulgora-style,
+off the f32 grid - is where the two forms would part, and no fixture covers
+that. If one is ever captured, this is the question to ask of it.
+
+The same caveat applies to narrowing the incoming `x`/`y` at all (#191): all 38
+fixture positions are already on the f32 grid, so turning that narrowing off
+also leaves the score at 190/190.
+
 `quick_multioctave_noise_persistence` (`noise-functions.lua`) is a thin Lua wrapper
 over this op (pre-scaling input/output scale and mapping persistence ->
-`octave_output_scale_multiplier`); it needs no new RE, just porting the wrapper. The
+`octave_output_scale_multiplier`); it is ported. Its Lua-side arithmetic stays in
+f64 - Lua numbers are doubles - and the results land in the op's f32 constant
+slots, which is where the port narrows them. The
 `variable_persistence_multioctave_noise` op (used by the elevation tree) is a
-*different* primitive - see `multioctave-noise-NOTES.md` "Still open".
+*different* primitive - see `multioctave-noise-NOTES.md`.
 
 ## Correction (2026-07-19, M2 Task 10): the "+2 per pair" rule was a masked over-fit
 
@@ -156,3 +187,135 @@ This is left in place above (not deleted) as a worked example of how an
 even/odd-masking RNG detail can hide a wrong derivation behind a coincidence -
 worth remembering the next time a new op is pinned against a single seed
 fixture.
+
+## Correction (2026-08-18): the "f32 floor" was the port evaluating in f64
+
+The op is now **190/190 bit-exact against the committed oracle, worst error
+exactly 0**. It was 38/190. Nothing about the structure above changed - the
+octave shape, `offset_x` semantics and the flat `seed0 + k` seed rule are all
+as documented. What changed is the precision the arithmetic runs in.
+
+### How it was found
+
+Not by a scan or a fit. `src/noise/quickMultioctaveNoise.ts` imported no `f32`
+helper at all, while both of its relatives narrow after every operation - so the
+first thing measured was simply whether that was the whole story.
+
+Two hypotheses were on the table. The other one, an aliased `offset_x` in the
+`-1774.83` / `-7936` family, was **refuted before any sweep was run**: the file
+contains no fitted constant to alias. Its only numeric literals are `0`, `NaN`
+and the Lua wrapper's `1/oism` and `2**(N-1)`. `offset_x` arrives from the
+caller, and the fixture's values (0, 12000, 40000) are the game's own. There was
+nothing there to be aliased, and the 190/190 result confirms it - an aliasing
+defect cannot coexist with a residual of exactly zero.
+
+### The four ingredients, each measured load-bearing
+
+Scored by exact f32 match count over all 190 fixture values (all of which are
+exactly f32 - checked, not assumed). Each row turns off ONE thing and re-scores:
+
+| variant | exact | worst |
+| --- | --- | --- |
+| **all four (shipped)** | **190/190** | **0** |
+| params not narrowed to f32 | 109/190 | 1.098e-3 |
+| `amp * basis` not rounded before the add | 132/190 | 4.768e-7 |
+| scale/amp by `OISM**k` instead of a running chain | 143/190 | 4.971e-5 |
+| scale/amp chain steps not rounded | 137/190 | 1.206e-4 |
+| none of them (the old f64 shape) | 38/190 | 1.057e-3 |
+
+The 38 the old shape got right are exactly the one-octave case, where
+`output_scale = 1`, `offset_x = 0` and `input_scale = 0.125` are all exact in
+f32 and there is no chain to accumulate error along.
+
+**Narrowing the parameters is the single biggest term**, and it is `f32.ts`'s
+"narrow the CONSTANT" case rather than its "narrow the product" case. The values
+callers pass have no exact f32 form: `octave_output_scale_multiplier` 0.6, 0.65,
+0.7; `input_scale` 0.1, 0.08, 1/6; `octave_input_scale_multiplier` 0.55. The
+game holds these in f32 constant slots. No amount of rounding the result
+recovers the difference.
+
+**Two of the four were only visible to exact-match counting.** Dropping just the
+`amp * basis` rounding leaves the worst residual at 4.768e-7 - indistinguishable
+from correct by any bound anyone would write - while 58 points stop being
+bit-exact. This is #162's thesis reproduced on a new op.
+
+### What the old bounds would have accepted
+
+The spec's old assertions were `worstNear < 5e-5` and `worstFar < 3e-3`. The
+"scale/amp by powers" defect above measures **4.971e-5**, at a point the old
+split classified as far-field. **The old spec passes that defect on both
+counts.** The spec now asserts `toBe(0)` and `toBe(190)`, with an accompanying
+test that every fixture value is f32-exact so the scoring cannot silently stop
+being valid.
+
+### Op order, as ported
+
+```
+scale_0 = f32(input_scale)      amp_0 = f32(output_scale)
+OFF = f32(offset_x)             OISM  = f32(oism)   OOSM = f32(oosm)
+
+per octave k:
+  xk    = f32(f32(x + OFF) * scale)          # inner rounding: see "Still open"
+  yk    = f32(y * scale)
+  sum   = f32(sum + f32(amp * basis(xk, yk, tables(seed0 + k, seed1))))
+  scale = f32(scale * OISM)
+  amp   = f32(amp * OOSM)
+```
+
+The scale and amplitude chains are chains, not powers - `s8 *= s12` / `s9 *= s13`
+per octave in `QuickMultioctaveNoise::run`, in f32 registers. Deriving the k-th
+term as `input_scale * OISM**k` instead costs 47 exact matches.
+
+### The Lua wrapper was a SECOND f64 evaluation, worth 1.964e-3
+
+Fixing the op did not fix `quick_multioctave_noise_persistence`. It went from
+38/152 to **114/152** and its worst error did not move at all - still 1.964e-3.
+
+The reason is a trap worth naming, because "Lua wrapper" invites exactly the
+wrong inference. The wrapper is a **`noise-function` whose body is an expression
+STRING**:
+
+```lua
+name = "quick_multioctave_noise_persistence",
+expression = "quick_multioctave_noise{...
+              input_scale = input_scale * octave_input_scale_multiplier ^ (octaves - 1),
+              output_scale = output_scale * 2 ^ (octaves - 1),
+              octave_input_scale_multiplier = 1 / octave_input_scale_multiplier}"
+```
+
+Lua never evaluates that arithmetic. The **noise machine** compiles and folds it,
+in f32, one operation at a time, like everything else it evaluates. Doing the
+transform in f64 and narrowing only at the op boundary rounds the wrong quantity.
+In f32 per operation the wrapper is **152/152, worst 0**.
+
+`^` has an integral exponent here, and the noise machine's `^` is three functions
+selected by the exponent - exact exponentiation by squaring for an integer, exact
+`sqrt` for 0.5, fastapprox otherwise (#161, #163). `noiseMachinePow` implements
+the dispatch. **This fixture cannot discriminate the integral branch**: `Math.pow`
+narrowed to f32 also scores 152/152, because the only bases are 0.5 and 0.6 at
+exponents 0, 2, 3 and 4. Squaring is used because it is what the game does.
+
+### Open: amplitude_corrected_multioctave_noise is 81/152 and the same fix does NOT work
+
+`amplitude_corrected_multioctave_noise` is the same shape of wrapper - a
+`noise-function` expression over `variable_persistence_multioctave_noise`:
+
+```lua
+output_scale = (1 - persistence) / 2 ^ octaves / (1 - persistence ^ octaves) * amplitude
+```
+
+Its op underneath is bit-exact (266/266) and its own fixture is all-f32 with all
+38 positions on the 1/256 grid, so the fixture can grade it. It measures
+**1.788e-7 worst, 81/152 exact**.
+
+**Rewriting its transform f32-per-op with the integral `^` does not fix it:**
+84/152 exact, worst 3.576e-7 - three more exact matches and a worse worst. So
+the shipped f64 transform stays, and its spec bound is set to the measured
+1.788e-7 rather than the `< 5e-3` it carried before (~28,000x slack).
+
+That is left explicitly open rather than closed by picking whichever variant
+scored higher. Three more exact matches out of 152 is not a mechanism, and the
+lesson from `-1774.83` and `-7936` is that a small improvement in a fit is the
+easiest thing in this codebase to mistake for a finding. Whoever picks this up:
+the association order of the two divisions, and whether `1 - persistence ^ N`
+folds at compile time or per tile, are the two things not yet tested.

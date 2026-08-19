@@ -26,8 +26,20 @@ describe("Vulcanus cliffs", () => {
     }
     // Measured worst residual, not a loosened tolerance. `cliffiness_basic` is a
     // single 2-octave quick_multioctave through a clamp, so the residual is the
-    // primitive's own fastapprox floor (~2e-6) with nothing compounding it.
-    expect(worst).toBeLessThan(5e-6);
+    // primitive's own accuracy with nothing compounding it.
+    //
+    // **That residual fell 33x on 2026-08-18** - 2e-6 to 5.960e-8 - when
+    // `quick_multioctave_noise` stopped evaluating in f64 and took the game's own
+    // f32 operation order. 341 of these 434 points are now bit-exact, up from
+    // essentially none. The old comment here called 2e-6 "the primitive's own
+    // fastapprox floor"; it was not a floor, it was the port computing in the
+    // wrong precision. See docs/noise/quick-multioctave-noise-NOTES.md.
+    //
+    // Bound tightened to match the new measurement. Every one of this fixture's
+    // 434 positions IS on the 1/256 grid (checked), so unlike the climate
+    // fixtures there is no capture artifact inflating it - this number grades
+    // the port and nothing else.
+    expect(worst).toBeLessThan(8e-8);
   });
 
   it("the game reports cliff_richness = 1, which is what the port assumes", () => {

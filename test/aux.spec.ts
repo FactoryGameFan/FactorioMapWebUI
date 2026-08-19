@@ -24,6 +24,60 @@ describe("makeAux reproduces the game's aux (aux_nauvis) tree", () => {
     // observed-worst measurement to justify it.
     expect(worst, `worst ${worstLabel}`).toBeLessThan(2e-5);
   });
+
+  // **14 of this fixture's 26 positions are NOT on the 1/256 grid, and they carry
+  // essentially the whole residual above.** A capture coordinate that is not a
+  // multiple of 1/256 makes the game sample a slightly different point than the
+  // fixture records (#186), so those 14 rows grade the capture as much as the
+  // port and no port can ever be exact on them. Split out, measured 2026-08-18:
+  //
+  // | subset | worst |
+  // | --- | --- |
+  // | on the 1/256 grid (12 points) | 6.923e-8 |
+  // | off it (14 points) | 1.262e-5 |
+  //
+  // So the 2e-5 bound above is calibrated against a capture artifact. It stays,
+  // because the off-grid rows are still in the fixture - but it is not a
+  // statement about this tree's accuracy, and reading it as one is how the
+  // gradeable half stayed invisible. This second assertion is the real one: on
+  // the points the fixture can legitimately grade, aux sits ~288x tighter than
+  // the headline bound suggests.
+  //
+  // The right repair is to re-capture on the 1/256 grid, which needs a Factorio
+  // install and is separate work. Until then, do not tighten the bound above and
+  // do not loosen this one.
+  //
+  // **Do not try to make this bound discriminate `quick_multioctave_noise`'s
+  // precision - measured, it cannot.** Reverting that op to f64 entirely moves
+  // aux's on-grid worst from 6.9231e-8 to 7.1443e-8, a 3% change, where the same
+  // revert moves moisture 17x and temperature 154x past their bounds. The reason
+  // is structural rather than lucky: all four parameters aux passes are already
+  // exactly representable in f32 (input_scale 1/2048, output_scale 0.25,
+  // octave_output_scale_multiplier 0.5, octave_input_scale_multiplier 3), its
+  // output_scale is small, and the result is clamped to [0,1]. So this assertion
+  // is a genuine bound with modest headroom, NOT a guard on that op - the guards
+  // that bite live in test/quickMultioctaveNoise.spec.ts, test/moisture.spec.ts
+  // and test/vulcanusCliffs.spec.ts.
+  it("matches the game on the positions the fixture can actually grade", () => {
+    let worst = 0;
+    let worstLabel = "";
+    let graded = 0;
+    for (let i = 0; i < fixture.positions.length; i++) {
+      const p = fixture.positions[i];
+      if (Math.round(p.x * 256) !== p.x * 256 || Math.round(p.y * 256) !== p.y * 256) continue;
+      graded++;
+      const err = Math.abs(evalAt(p.x, p.y) - fixture.aux[i]);
+      if (err > worst) {
+        worst = err;
+        worstLabel = `@(${p.x},${p.y})`;
+      }
+    }
+    // Anti-vacuity: if a future re-capture puts every position on the grid this
+    // still grades them all, but if one puts NONE on it the loop would silently
+    // assert nothing.
+    expect(graded).toBe(12);
+    expect(worst, `worst on-grid ${worstLabel}`).toBeLessThan(2e-7);
+  });
 });
 
 describe("makeAux bias and frequency parameters", () => {
