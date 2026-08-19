@@ -14,7 +14,7 @@ import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
  * **The integration check #223 asks for: the island finder, run against the
  * Rust engine, agrees with the TypeScript one exactly.**
  *
- * `test/wasmLandmaskParity.spec.ts` already proves the two renderers produce
+ * `test/wasmFulgoraRenderParity.spec.ts` already proves the two renderers produce
  * byte-identical RGBA over four windows. This is a different question and a
  * stronger one, because the finder is not a unit test: it renders candidate
  * windows, re-renders any whose island mask touches the border at a doubled

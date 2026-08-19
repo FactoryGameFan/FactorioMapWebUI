@@ -11,7 +11,7 @@ import type { EngineExports } from "../wasm/engine";
  * once and reuses; anything else is a render request.
  *
  * **A render that arrives before the engine message is not a bug.** The two
- * render paths are byte-identical (`test/wasmLandmaskParity.spec.ts`), so a
+ * render paths are byte-identical (`test/wasmFulgoraRenderParity.spec.ts`), so a
  * request that lands first simply takes the TypeScript path. That is what makes
  * the whole cutover safe: there is no window in which the worker is wrong, only
  * one in which it is slower.
