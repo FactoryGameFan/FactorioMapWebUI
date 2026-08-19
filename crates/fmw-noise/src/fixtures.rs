@@ -374,3 +374,497 @@ fn reproduces_the_quick_persistence_wrapper_exactly() {
     assert_eq!(total, 152, "fixture size");
     assert_eq!(exact_total, 152, "exact f32 matches");
 }
+
+// ---------------------------------------------------------------------------
+// random_penalty.
+// ---------------------------------------------------------------------------
+
+use crate::random_penalty::{
+    random_penalty_batch, random_penalty_word, RandomPenaltyParams, RandomPenaltyPosition,
+};
+
+/// Rebuild `source[i]` from a case's `sourceKind`, exactly as
+/// `test/randomPenalty.spec.ts` does. The fixture keeps the source values out
+/// of the file so that the expression under test is named rather than copied.
+fn random_penalty_source(kind: &str, positions: &[RandomPenaltyPosition]) -> Vec<f64> {
+    match kind {
+        "const1" => positions.iter().map(|_| 1.0).collect(),
+        "x" => positions.iter().map(|p| p.x).collect(),
+        other => panic!("unknown sourceKind {other:?}"),
+    }
+}
+
+#[test]
+fn reproduces_the_random_penalty_fixture_exactly() {
+    let fixture = load("test/fixtures/oracle-random-penalty.seed123456.json");
+    let positions: Vec<RandomPenaltyPosition> = fixture
+        .get("positions")
+        .as_array()
+        .iter()
+        .map(|p| RandomPenaltyPosition {
+            x: p.get("x").as_f64(),
+            y: p.get("y").as_f64(),
+        })
+        .collect();
+
+    let mut total = 0usize;
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for case in fixture.get("cases").as_array() {
+        let values = case.get("values").as_array();
+        assert_all_f32(values, "randomPenalty");
+        let source = random_penalty_source(case.get("sourceKind").as_str(), &positions);
+        let got = random_penalty_batch(
+            &positions,
+            &source,
+            &RandomPenaltyParams {
+                seed: case.get("rpSeed").as_f64(),
+                amplitude: case.get("amplitude").as_f64(),
+            },
+        );
+        assert_eq!(got.len(), values.len(), "batch length");
+        for (i, expected) in values.iter().enumerate() {
+            let want = expected.as_f64();
+            total += 1;
+            worst = worst.max((got[i] - want).abs());
+            if got[i] == want {
+                exact += 1;
+            }
+        }
+    }
+
+    assert_eq!(total, 40, "fixture size");
+    assert_eq!(exact, 40, "exact f32 matches");
+    assert_eq!(worst, 0.0, "worst absolute error");
+}
+
+#[test]
+fn the_random_penalty_seed_word_matches_the_measured_formula() {
+    // test/randomPenalty.spec.ts asserts the same three.
+    assert_eq!(random_penalty_word(0.0, 0.0, 1.0), 0x3f_be2c + 7907);
+    // The seed folds into y BEFORE truncation, and coordinates truncate toward
+    // zero rather than flooring.
+    assert_eq!(random_penalty_word(0.9, 0.9, 0.0), 0x3f_be2c);
+    assert_eq!(
+        random_penalty_word(-1.5, 0.0, 0.0),
+        (0x3f_be2c_u32).wrapping_add((-1i32 as u32).wrapping_mul(7919))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// distance_from_nearest_point, and the starting lakes that feed it.
+// ---------------------------------------------------------------------------
+
+use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
+
+/// The Rust half of `test/captureGrid.ts`.
+///
+/// Factorio's `MapPosition` is fixed point - `int32 / 256` - and every
+/// coordinate handed to `surface.calculate_tile_properties` is converted on the
+/// way in. A capture that RECORDS a coordinate off that grid made the game
+/// evaluate a slightly different point than the fixture says (#186). The snap
+/// is truncation TOWARD ZERO, which was measured over all 17 affected fixtures
+/// rather than assumed: on rows with a negative coordinate, truncating is exact
+/// where flooring is not 6 times in `oracle-temperature` alone, and flooring
+/// never wins.
+///
+/// It applies to the SAMPLE POSITION only, never to a fixture's recorded
+/// values.
+fn snap_coord(v: f64) -> f64 {
+    (v * 256.0).trunc() / 256.0
+}
+
+/// How many of a fixture's positions were recorded off the 1/256 grid. Asserted
+/// so a re-capture cannot silently empty the set the snap exists for.
+fn count_off_grid(positions: &[(f64, f64)]) -> usize {
+    positions
+        .iter()
+        .filter(|(x, y)| (x * 256.0).fract() != 0.0 || (y * 256.0).fract() != 0.0)
+        .count()
+}
+
+/// The 26 capture positions of `oracle-elevation-lakes`, snapped.
+fn lakes_fixture_positions(fixture: &Json) -> Vec<(f64, f64)> {
+    fixture
+        .get("positions")
+        .as_array()
+        .iter()
+        .map(|p| (p.get("x").as_f64(), p.get("y").as_f64()))
+        .collect()
+}
+
+#[test]
+fn reproduces_the_games_distance_from_nearest_point_at_all_26_positions() {
+    // `distance` is 26 values of `distance_from_nearest_point{x = x, y = y,
+    // points = starting_positions}` captured straight from the game. The
+    // EvalCtx default spawn is the origin, which is what `starting_positions`
+    // resolved to for this capture (confirmed by `distance[0] == hypot`).
+    let fixture = load("test/fixtures/oracle-elevation-lakes.seed123456.json");
+    let positions = lakes_fixture_positions(&fixture);
+    let expected = fixture.get("distance").as_f64_array();
+    let spawn = [Point { x: 0.0, y: 0.0 }];
+
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    // Anti-vacuity for the snap: 14 of the 26 far-ring positions were captured
+    // off the grid. Without it this scores 18/26 at worst 4.639e-3.
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+    assert_all_f32(fixture.get("distance").as_array(), "distance");
+
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for (i, (x, y)) in positions.iter().enumerate() {
+        // No narrowing at the comparison: the op returns f32 because the
+        // game's does. Until 2026-08-18 both ports returned raw f64 and their
+        // specs narrowed HERE instead, which scored 26/26 while the op itself
+        // scored 0/26 - the shape #260 found in `random_penalty` (#220).
+        let got = f64::from(distance_from_nearest_point(
+            snap_coord(*x),
+            snap_coord(*y),
+            &spawn,
+            f64::INFINITY,
+        ));
+        worst = worst.max((got - expected[i]).abs());
+        if got == expected[i] {
+            exact += 1;
+        }
+    }
+
+    // test/distanceFromNearestPoint.spec.ts asserts the same 26 and the same 0.
+    assert_eq!(exact, 26, "exact f32 matches");
+    assert_eq!(worst, 0.0, "worst absolute error");
+}
+
+use crate::starting_lakes::starting_lake_positions;
+
+#[test]
+fn computes_the_games_real_starting_lake_for_seed_123456() {
+    // Trilaterated exactly, with zero residual, from the fixture's 9 near-spawn
+    // `startingLakeDistance` values - so this is ground truth derived from the
+    // game's own numbers rather than from either port.
+    //
+    // It is also the ONE assertion in this file that reaches
+    // `starting_lake_positions` without going through
+    // `distance_from_nearest_point`, which is what lets the poison build
+    // attribute a failure here to this op alone.
+    let spawn = [Point { x: 0.0, y: 0.0 }];
+    let lakes = starting_lake_positions(123_456, &spawn);
+    assert_eq!(lakes, vec![Point { x: 45.0, y: -59.0 }]);
+}
+
+#[test]
+fn reproduces_every_starting_lake_distance_in_the_fixture() {
+    let fixture = load("test/fixtures/oracle-elevation-lakes.seed123456.json");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = lakes_fixture_positions(&fixture);
+    let expected = fixture.get("startingLakeDistance").as_f64_array();
+    assert_all_f32(
+        fixture.get("startingLakeDistance").as_array(),
+        "startingLakeDistance",
+    );
+
+    let lakes = starting_lake_positions(seed0, &[Point { x: 0.0, y: 0.0 }]);
+
+    let mut exact = 0usize;
+    let mut saturated = 0usize;
+    let mut worst = 0.0f64;
+    for (i, (x, y)) in positions.iter().enumerate() {
+        if expected[i] == 1024.0 {
+            saturated += 1;
+        }
+        // No narrowing at the comparison - see the sibling test above.
+        let got = f64::from(distance_from_nearest_point(
+            snap_coord(*x),
+            snap_coord(*y),
+            &lakes,
+            1024.0,
+        ));
+        worst = worst.max((got - expected[i]).abs());
+        if got == expected[i] {
+            exact += 1;
+        }
+    }
+
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(exact, 26, "exact f32 matches");
+    assert_eq!(worst, 0.0, "worst absolute error");
+    // **Only 9 of these 26 discriminate anything.** The other 17 sit at exactly
+    // 1024, the `maximum_distance` cap, and would match any lake far enough
+    // from them - including a lake this port placed on the wrong side of the
+    // map. Asserted so the discriminating subset cannot silently shrink.
+    assert_eq!(saturated, 17, "rows pinned at the 1024 cap");
+    assert_eq!(positions.len() - saturated, 9, "discriminating rows");
+}
+
+#[test]
+fn the_capture_grid_snap_is_inert_on_starting_lake_distance_and_that_is_measured() {
+    // 14 of the 26 positions ARE off the 1/256 grid, so the snap is applied
+    // above for the same reason it is applied to `distance`. It changes nothing
+    // here, and that is worth pinning rather than leaving as an unexamined
+    // habit: all 14 off-grid rows are far-field rows saturated at the 1024 cap,
+    // and a displacement under 1/256 cannot unsaturate one. The 9 rows that DO
+    // discriminate are all on-grid already.
+    //
+    // If a re-capture ever moves an off-grid position into the near field, this
+    // test goes red and the snap stops being decoration.
+    let fixture = load("test/fixtures/oracle-elevation-lakes.seed123456.json");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = lakes_fixture_positions(&fixture);
+    let expected = fixture.get("startingLakeDistance").as_f64_array();
+    let lakes = starting_lake_positions(seed0, &[Point { x: 0.0, y: 0.0 }]);
+
+    for (i, (x, y)) in positions.iter().enumerate() {
+        let snapped = distance_from_nearest_point(snap_coord(*x), snap_coord(*y), &lakes, 1024.0);
+        let raw = distance_from_nearest_point(*x, *y, &lakes, 1024.0);
+        let off_grid = (x * 256.0).fract() != 0.0 || (y * 256.0).fract() != 0.0;
+        if off_grid {
+            assert_eq!(expected[i], 1024.0, "off-grid row {i} is not saturated");
+        }
+        assert_eq!(snapped, raw, "the snap moved row {i}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// spot_noise: the candidate stream.
+// ---------------------------------------------------------------------------
+
+use crate::spot_candidates::{spot_candidate_points, spot_seed_word, SpotPoint, SpotRegionKey};
+
+/// A fixture's candidate list, sorted the way the fixtures record them.
+/// Generation order is not recoverable from `spot-candidates.game.json` - the
+/// apexes were trilaterated out of single-cone fields - so both sides sort.
+fn sorted(mut points: Vec<SpotPoint>) -> Vec<SpotPoint> {
+    points.sort_by(|a, b| a.x.cmp(&b.x).then(a.y.cmp(&b.y)));
+    points
+}
+
+#[test]
+fn reproduces_the_recovered_candidate_draw_stream_bit_exactly() {
+    // The raw 32-bit draws, recovered from the game by CRT across region sizes
+    // 2048/2050/2058/2066. Reproducing them checks the full u32 output rather
+    // than a mod-region_size shadow of it.
+    //
+    // **These are compared as integers, never as floats.** The largest draw
+    // here is 4,192,399,414, where the spacing between adjacent f32 values is
+    // 256 - so narrowing this comparison would score 1 of 40 on values that are
+    // 40 of 40 equal.
+    let fixture = load("docs/noise/spot-candidate-stream.seed123456.json");
+    let key = SpotRegionKey {
+        seed0: 123_456,
+        seed1: 0,
+        region_x: 0,
+        region_y: 0,
+    };
+    assert_eq!(spot_seed_word(&key), 0x3e_5c6c);
+
+    // A region the size of the whole u32 range makes `draw % region_size` the
+    // identity, so the world coordinate is the raw draw shifted by half.
+    let points = spot_candidate_points(&key, 1 << 32, 20);
+    let rows = fixture.get("candidate_index_to_Vx_Vy").as_array();
+    assert_eq!(rows.len(), 20, "a regen cannot empty the loop");
+    for row in rows {
+        let row = row.as_array();
+        let i = row[0].as_f64() as usize;
+        let vx = row[1].as_f64() as i64;
+        let vy = row[2].as_f64() as i64;
+        assert_eq!(points[i].x + (1 << 31), vx, "draw {i} x");
+        assert_eq!(points[i].y + (1 << 31), vy, "draw {i} y");
+    }
+}
+
+#[test]
+fn reproduces_every_game_captured_candidate_set() {
+    let fixture = load("test/fixtures/spot-candidates.game.json");
+    let cases = fixture.get("cases").as_array();
+
+    let mut total = 0usize;
+    let mut exact = 0usize;
+    for case in cases {
+        let key = SpotRegionKey {
+            seed0: case.get("seed0").as_f64() as u32,
+            seed1: case.get("seed1").as_f64() as u32,
+            region_x: case.get("regionX").as_f64() as i64,
+            region_y: case.get("regionY").as_f64() as i64,
+        };
+        let region_size = case.get("regionSize").as_f64() as u64;
+        let expected = case.get("candidates").as_array();
+        let got = sorted(spot_candidate_points(&key, region_size, expected.len()));
+        for (i, want) in expected.iter().enumerate() {
+            let want = want.as_array();
+            total += 2;
+            if got[i].x == want[0].as_f64() as i64 {
+                exact += 1;
+            }
+            if got[i].y == want[1].as_f64() as i64 {
+                exact += 1;
+            }
+        }
+    }
+
+    // test/spotCandidates.spec.ts asserts the same sets, across seeds up to
+    // 4,294,967,295, negative region indices and two region sizes.
+    assert_eq!(cases.len(), 11, "fixture cases");
+    assert_eq!(total, 132, "fixture size");
+    assert_eq!(exact, 132, "exact integer matches");
+}
+
+// ---------------------------------------------------------------------------
+// spot_noise: selection.
+// ---------------------------------------------------------------------------
+
+use crate::spot_selection::{select_spots, SelectedSpot, SpotSelectParams};
+use std::f64::consts::PI;
+
+/// The probes fixed `spot_radius_expression = 20` and read the cone peak at the
+/// apex, so the fixture's third column is `3q / (pi * (20*coneScale)^2)`.
+fn peak_of(s: &SelectedSpot) -> f64 {
+    let r = 20.0 * s.cone_scale;
+    (3.0 * s.quantity) / (PI * r * r)
+}
+
+/// Decode one of the fixture's expression descriptors. The same seven kinds
+/// `test/spotSelection.spec.ts` decodes, kept as descriptors rather than as
+/// captured values so that the expression under test is named.
+fn decode_expression(e: &Json) -> Box<dyn Fn(f64, f64) -> f64> {
+    let value = |k: &str| -> f64 {
+        match e.get_opt(k) {
+            Some(v) => v.as_f64(),
+            None => 0.0,
+        }
+    };
+    match e.get("kind").as_str() {
+        "const" => {
+            let v = value("value");
+            Box::new(move |_, _| v)
+        }
+        "x" => Box::new(|x, _| x),
+        "negx" => Box::new(|x, _| -x),
+        "xminus" => {
+            let offset = value("offset");
+            Box::new(move |x, _| x - offset)
+        }
+        "xplus" => {
+            let base = value("base");
+            Box::new(move |x, _| base + x)
+        }
+        "x2" => {
+            let scale = if e.get_opt("scale").is_some() {
+                value("scale")
+            } else {
+                1.0
+            };
+            Box::new(move |x, _| x * x * scale)
+        }
+        "stepx" => {
+            let v = value("value");
+            Box::new(move |x, _| if x > 0.0 { v } else { 0.0 })
+        }
+        other => panic!("unknown expression kind {other:?}"),
+    }
+}
+
+#[test]
+fn reproduces_every_game_captured_spot_selection_probe() {
+    let fixture = load("test/fixtures/spot-selection.game.json");
+    let cases = fixture.get("cases").as_array();
+
+    let mut rows = 0usize;
+    let mut xy_exact = 0usize;
+    let mut peaks_that_are_f32 = 0usize;
+    let mut worst_peak = 0.0f64;
+    let mut worst_label = String::new();
+    // The two rows #257 records as contradicting the fixture's own other 404.
+    let mut over_half_a_milli = Vec::<String>::new();
+
+    for case in cases {
+        let name = case.get("name").as_str();
+        let key = SpotRegionKey {
+            seed0: case.get("seed0").as_f64() as u32,
+            seed1: case.get("seed1").as_f64() as u32,
+            region_x: case.get("regionX").as_f64() as i64,
+            region_y: case.get("regionY").as_f64() as i64,
+        };
+        let density = decode_expression(case.get("density"));
+        let quantity = decode_expression(case.get("quantity"));
+        let favorability = decode_expression(case.get("favorability"));
+        let params = SpotSelectParams {
+            region_size: case.get("regionSize").as_f64() as u64,
+            candidate_spot_count: case.get("count").as_f64() as usize,
+            spacing: case.get("spacing").as_f64(),
+            skip_span: case.get("skipSpan").as_f64() as usize,
+            skip_offset: case.get("skipOffset").as_f64() as usize,
+            hard_region_target_quantity: case.get("hard").as_bool(),
+            density: density.as_ref(),
+            quantity: quantity.as_ref(),
+            favorability: favorability.as_ref(),
+            quantity_batch: None,
+        };
+
+        let mut got = select_spots(&key, &params);
+        got.sort_by(|a, b| a.x.cmp(&b.x).then(a.y.cmp(&b.y)));
+        let expected = case.get("spots").as_array();
+        assert_eq!(got.len(), expected.len(), "spot count for {name:?}");
+
+        for (i, want) in expected.iter().enumerate() {
+            let want = want.as_array();
+            rows += 1;
+            if got[i].x == want[0].as_f64() as i64 {
+                xy_exact += 1;
+            }
+            if got[i].y == want[1].as_f64() as i64 {
+                xy_exact += 1;
+            }
+            let want_peak = want[2].as_f64();
+            if f64::from(want_peak as f32) == want_peak {
+                peaks_that_are_f32 += 1;
+            }
+            let err = (peak_of(&got[i]) - want_peak).abs();
+            if err > worst_peak {
+                worst_peak = err;
+                worst_label = format!("{name}[{i}]");
+            }
+            if err >= 5e-4 {
+                over_half_a_milli.push(format!("{name}[{i}] err {err:e}"));
+            }
+        }
+    }
+
+    assert_eq!(cases.len(), 55, "fixture cases");
+    assert_eq!(rows, 413, "fixture size");
+
+    // **x and y are exact, and they are the whole selection algorithm.** Which
+    // candidates survive the dart throw, which skip set they land in, how the
+    // favorability sort orders them and where the target cuts the list all show
+    // up here as a changed coordinate list.
+    assert_eq!(xy_exact, 826, "exact integer matches on x and y");
+
+    // The peak column CANNOT be scored exactly, and that is a property of the
+    // capture rather than of either port: it was read off the rendered field
+    // with deliberate 3-decimal rounding, so **0 of 413 values are
+    // f32-representable**. Asserted rather than assumed, because if a
+    // re-capture ever records full precision the right response is to score
+    // this exactly, not to keep the tolerance.
+    assert_eq!(peaks_that_are_f32, 0, "f32-representable fixture peaks");
+
+    // 5e-4 is half of the last recorded digit - the largest error a correctly
+    // rounded 3-decimal capture can produce - so it is the capture's own
+    // resolution rather than a number chosen to fit. 411 of 413 rows sit under
+    // it, at worst 4.488e-4.
+    //
+    // The two that do not are `hard1[0]` and `hard1[2]`, both at 1.2415e-3, and
+    // they are a contradiction INSIDE the fixture rather than a port error:
+    // both compute 23.8732414637843, which 404 other rows record as `23.873`
+    // and these two record as `23.872`. That is #257. Pinned by name and by
+    // value so it cannot spread.
+    assert_eq!(
+        over_half_a_milli,
+        vec![
+            "hard1[0] err 1.241463784300123e-3".to_string(),
+            "hard1[2] err 1.241463784300123e-3".to_string(),
+        ],
+        "rows outside the capture's own 3-decimal resolution"
+    );
+    assert!(
+        worst_peak < 1.25e-3,
+        "worst peak error {worst_peak:e} at {worst_label}"
+    );
+}

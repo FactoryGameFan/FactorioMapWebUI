@@ -15,9 +15,15 @@
 pub mod basis_gradient_table;
 pub mod basis_noise;
 pub mod checksum;
+pub mod distance_from_nearest_point;
 pub mod fast_approx;
 pub mod multioctave_noise;
+pub mod poison;
 pub mod quick_multioctave_noise;
+pub mod random_penalty;
+pub mod spot_candidates;
+pub mod spot_selection;
+pub mod starting_lakes;
 pub mod taus88;
 pub mod variable_persistence_multioctave_noise;
 

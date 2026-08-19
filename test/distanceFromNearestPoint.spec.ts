@@ -68,8 +68,17 @@ describe("distanceFromNearestPoint reproduces the game's geometry", () => {
 // it discriminates a wrong kernel (Chebyshev scores 8/26, Manhattan 0/26,
 // squared-distance 0/26, a 0.4-tile point shift 4/26), but it CANNOT separate
 // `sqrt(dx*dx + dy*dy)` from `Math.hypot` - those differ on 8 of 26 in raw f64 and
-// on 0 of 26 after rounding to f32 - and both point lists here are integer-valued,
-// so it cannot see inside `quantise()` either.
+// on 0 of 26 in f32 - and both point lists here are integer-valued, so it cannot
+// see inside `quantise()` either.
+//
+// **This comparison used to wrap the result in `Math.fround`, and that was
+// hiding a real defect (#220).** The op returned a raw f64; the fround at the
+// comparison site scored it 26/26 while the op itself scored **0/26**. That is
+// the shape #260 found in `random_penalty`, where the raw op at least still
+// scored 4/40. `NoiseOperations::DistanceFromNearestPoint::run` is f32 from end
+// to end - the disassembly is transcribed in the op's own header - so the op
+// now returns f32 and this compares it raw. Do not reintroduce a narrowing
+// here: it would make this test unable to see the op's precision at all.
 describe("distanceFromNearestPoint against the game", () => {
   // The EvalCtx default spawn is the origin, which is what `starting_positions`
   // resolved to for this capture.
@@ -81,9 +90,8 @@ describe("distanceFromNearestPoint against the game", () => {
     let worstLabel = "";
     for (const [i, raw] of lakesFixture.positions.entries()) {
       const p = snapPosition(raw);
-      const err = Math.abs(
-        Math.fround(distanceFromNearestPoint(p.x, p.y, spawn)) - lakesFixture.distance[i],
-      );
+      // Compared RAW - see the note above.
+      const err = Math.abs(distanceFromNearestPoint(p.x, p.y, spawn) - lakesFixture.distance[i]);
       if (err === 0) exact++;
       if (err > worst) {
         worst = err;
@@ -93,6 +101,21 @@ describe("distanceFromNearestPoint against the game", () => {
     expect(lakesFixture.positions.length).toBe(26); // a regen cannot empty the loop
     expect(exact, `worst ${worstLabel}`).toBe(26);
     expect(worst).toBe(0);
+  });
+
+  it("returns f32 values, because the op stores one", () => {
+    // The planted-break guard for the precision fix. Drop the narrowing in
+    // `distanceFromNearestPoint` and the test above goes to 0/26, but a bound
+    // would absorb that - the worst raw residual is 3.935e-4 - so the return
+    // type is asserted directly, the same way test/randomPenalty.spec.ts does.
+    let checked = 0;
+    for (const raw of lakesFixture.positions) {
+      const p = snapPosition(raw);
+      const got = distanceFromNearestPoint(p.x, p.y, spawn);
+      checked++;
+      expect(Math.fround(got), `@(${raw.x},${raw.y})`).toBe(got);
+    }
+    expect(checked).toBe(26);
   });
 
   it("every compared fixture value is exactly f32, which is what makes exact scoring legal", () => {

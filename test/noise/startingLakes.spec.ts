@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import fixture from "../fixtures/oracle-elevation-lakes.seed123456.json";
 import { startingLakePositions } from "../../src/noise/startingLakes";
 import { distanceFromNearestPoint } from "../../src/noise/distanceFromNearestPoint";
+import { snapPosition } from "../captureGrid";
 
 describe("startingLakePositions (RE of MapGenSettings::getStartingLakePositions)", () => {
   it("computes the game's real starting lake for seed 123456", () => {
@@ -9,19 +10,33 @@ describe("startingLakePositions (RE of MapGenSettings::getStartingLakePositions)
     expect(startingLakePositions(123456, [{ x: 0, y: 0 }])).toEqual([{ x: 45, y: -59 }]);
   });
 
-  it("reproduces every near-spawn startingLakeDistance in the fixture", () => {
+  it("reproduces every startingLakeDistance in the fixture exactly", () => {
+    // This was a `toBeLessThan(2e-5)` bound until 2026-08-18, explained as
+    // "f64-vs-f32 rounding is the floor here". That explanation was wrong: the
+    // floor was `distanceFromNearestPoint` returning a raw f64 when the game's
+    // op stores an f32 (#220). With that corrected there is no floor, so this
+    // is an exact count - a bound cannot tell "close" from "identical", and
+    // 17 of these 26 rows are pinned at the 1024 cap where any bound passes.
     const lakes = startingLakePositions(fixture.seed0, [{ x: 0, y: 0 }]);
+    let exact = 0;
     let worst = 0;
     for (let i = 0; i < fixture.positions.length; i++) {
-      const p = fixture.positions[i];
+      const p = snapPosition(fixture.positions[i]);
       const d = distanceFromNearestPoint(p.x, p.y, lakes, 1024);
+      if (d === fixture.startingLakeDistance[i]) exact++;
       worst = Math.max(worst, Math.abs(d - fixture.startingLakeDistance[i]));
     }
-    // The fixture stores distances as f32 (game dump), so f64-vs-f32 rounding
-    // (~1 f32 ulp, ~1e-5 at these ~90-tile magnitudes) is the floor here; the
-    // lake POSITION itself is exact (see the (45,-59) case above). A 1-tile miss
-    // would show O(1) error, four orders of magnitude above this bound.
-    expect(worst).toBeLessThan(2e-5);
+    expect(fixture.positions.length).toBe(26); // a regen cannot empty the loop
+    expect(exact).toBe(26);
+    expect(worst).toBe(0);
+  });
+
+  it("has only 9 rows that discriminate anything - the other 17 sit at the cap", () => {
+    // Worth pinning because it bounds what the test above can prove: a lake
+    // placed anywhere far enough away reproduces a saturated row.
+    const saturated = fixture.startingLakeDistance.filter((v) => v === 1024).length;
+    expect(saturated).toBe(17);
+    expect(fixture.startingLakeDistance.length - saturated).toBe(9);
   });
 
   it("places each lake at radius 75 from its spawn (pre-truncation invariant)", () => {

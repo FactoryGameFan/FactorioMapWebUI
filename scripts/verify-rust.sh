@@ -28,20 +28,55 @@ cargo test --locked --workspace
 echo "==> anti-vacuity: the gate must FAIL against a deliberately broken port"
 # A parity test that passes against a broken port is worth nothing, so the gate
 # proves it can fail rather than asserting it can (#220). `--features poison`
-# bends every non-zero basis_noise result by one ULP; the tier-1 fixture tests
-# must go red.
+# perturbs every op's returned value; each op's tier-1 fixture test must go red.
 #
-# `set -e` is why this is written with `if !` rather than a bare command: a
-# non-zero exit is the PASS here, and an unguarded call would abort the script
-# on success.
-if cargo test --locked -p fmw-noise --features poison >/dev/null 2>&1; then
+# `set -e` is why the run is written with a trailing `|| true`: a non-zero exit
+# is the PASS here, and an unguarded call would abort the script on success.
+POISON_OUT=$(cargo test --locked -p fmw-noise --features poison 2>&1 || true)
+
+if ! grep -q "^test result: FAILED" <<<"$POISON_OUT"; then
   echo "ERROR: the port's tests PASSED with --features poison." >&2
   echo "       The gate cannot see a one-ULP error, so it is not a gate." >&2
-  echo "       See the poison() note in crates/fmw-noise/src/basis_noise.rs -" >&2
-  echo "       an earlier version of this control perturbed a gradient-table" >&2
-  echo "       slot instead, and the fixtures could not resolve it." >&2
+  echo "       See crates/fmw-noise/src/poison.rs - an earlier version of this" >&2
+  echo "       control perturbed a gradient-table slot instead, and the" >&2
+  echo "       fixtures could not resolve it." >&2
   exit 1
 fi
+
+# And it must be red for the RIGHT reason, per op.
+#
+# "the suite went red" is too weak a check, which is measured rather than
+# assumed: until #220's second batch, `basis_noise` carried the only poison
+# hook, and because every ported op composed it, one hook reddened everything.
+# The five primitives added in that batch compose it in NONE of their paths, so
+# a suite-level check would have passed while five ports had no anti-vacuity
+# control at all.
+#
+# Adding an op therefore means adding its tier-1 test here. A list rather than a
+# pattern, for the same reason `SUPPORTED_VERSIONS` is a list rather than a
+# range: a pattern silently accepts something nobody checked.
+POISONED_TESTS=(
+  reproduces_all_512_points_of_the_basis_noise_fixture_exactly
+  reproduces_the_multioctave_fixture_exactly
+  reproduces_the_variable_persistence_fixture_exactly
+  reproduces_the_quick_multioctave_fixture_exactly
+  reproduces_the_quick_persistence_wrapper_exactly
+  reproduces_the_random_penalty_fixture_exactly
+  reproduces_the_games_distance_from_nearest_point_at_all_26_positions
+  computes_the_games_real_starting_lake_for_seed_123456
+  reproduces_every_starting_lake_distance_in_the_fixture
+  reproduces_the_recovered_candidate_draw_stream_bit_exactly
+  reproduces_every_game_captured_candidate_set
+  reproduces_every_game_captured_spot_selection_probe
+)
+for t in "${POISONED_TESTS[@]}"; do
+  if ! grep -q "^test fixtures::${t} \.\.\. FAILED" <<<"$POISON_OUT"; then
+    echo "ERROR: fixtures::${t} stayed GREEN under --features poison." >&2
+    echo "       Its op has no live poison hook, so nothing proves that test" >&2
+    echo "       can fail. Add one - see crates/fmw-noise/src/poison.rs." >&2
+    exit 1
+  fi
+done
 
 echo "==> zero dependencies in anything that ships"
 # `--edges normal` excludes dev- and build-dependencies, so this is a statement
