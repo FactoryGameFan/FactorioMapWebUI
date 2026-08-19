@@ -17,6 +17,8 @@
  * its own loads - so nothing swaps on any host.
  */
 
+import { f32 } from "../eval/f32";
+
 /** `'FMWR'` little-endian. Must equal `fmw_wasm::abi::MAGIC`. */
 export const MAGIC = 0x52574d46;
 
@@ -65,15 +67,23 @@ export interface WasmRenderRequest {
 /**
  * The two bearings' sine and cosine, computed HERE and sent as values.
  *
- * `startingSpotAtAngle` is plain f64 arithmetic with no narrowing, so a
- * one-ULP `sin` difference would land straight in the result - and #270
+ * A one-ULP `sin` difference lands straight in `startingSpotAtAngle`, and #270
  * measured that V8 and the libm `wasm32-unknown-unknown` links really do
  * disagree, in a place `cargo test` on the host cannot see. Every call site's
  * angle is a per-render constant, so lifting the trig out costs nothing and
  * closes the question instead of bounding it.
  *
- * The bearing is `seed0 / 360` degrees and the vault sits opposite it, exactly
- * as `fulgoraShared.ts` computes them.
+ * **Every step is narrowed to f32, and this must stay token-for-token identical
+ * to `fulgoraShared.ts` and `vulcanusShared.ts`** (#279). The Rust side reads
+ * `spot.trig.sin` straight into the arithmetic without re-narrowing, so an
+ * un-narrowed value sent from here would make the WASM render differ from the
+ * TypeScript one - which is precisely what tier 3's byte-identical RGBA
+ * comparison exists to catch, and it would be a real divergence rather than a
+ * test problem.
+ *
+ * The bearing is `f32(seed0 / 360)` degrees and the vault sits at
+ * `f32(angle + 180)`, and `(a / 180) * PI32` is in that order on purpose -
+ * `a * (PI32 / 180)` is a different number.
  */
 export function bearingTrig(seed0: number): {
   sinStart: number;
@@ -81,15 +91,15 @@ export function bearingTrig(seed0: number): {
   sinVault: number;
   cosVault: number;
 } {
-  const angle = seed0 / 360;
-  // `(a / 180) * PI`, in that order - `a * (PI / 180)` is a different number.
-  const start = (angle / 180) * Math.PI;
-  const vault = ((angle + 180) / 180) * Math.PI;
+  const angle = f32(seed0 / 360);
+  const radians = (a: number): number => f32(f32(a / 180) * f32(Math.PI));
+  const start = radians(angle);
+  const vault = radians(f32(angle + 180));
   return {
-    sinStart: Math.sin(start),
-    cosStart: Math.cos(start),
-    sinVault: Math.sin(vault),
-    cosVault: Math.cos(vault),
+    sinStart: f32(Math.sin(start)),
+    cosStart: f32(Math.cos(start)),
+    sinVault: f32(Math.sin(vault)),
+    cosVault: f32(Math.cos(vault)),
   };
 }
 

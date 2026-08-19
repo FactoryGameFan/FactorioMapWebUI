@@ -141,7 +141,7 @@ export function makeFulgoraShared(ctx: FulgoraCtx): FulgoraShared {
 
   // Both cones are placed by map_seed alone, so the starting island sits at a
   // seed-determined bearing from the origin. The vault sits opposite it (+180).
-  const angle = seed0 / 360;
+  const angle = f32(seed0 / 360);
 
   // startingCone is max(0, A, B) over TWO discs: a wide one offset a little way
   // out, and a tight one at distance 1 whose distortion is damped to a quarter.
@@ -152,8 +152,8 @@ export function makeFulgoraShared(ctx: FulgoraCtx): FulgoraShared {
     const dy = wobbleY(x, y);
     const wide = startingSpotAtAngle({
       angle,
-      distance: grid / 30,
-      radius: grid / 1.8,
+      distance: f32(grid / 30),
+      radius: f32(grid / 1.8),
       xDistortion: 1 * dx,
       yDistortion: 1 * dy,
       xFromStart: x,
@@ -162,7 +162,7 @@ export function makeFulgoraShared(ctx: FulgoraCtx): FulgoraShared {
     const tight = startingSpotAtAngle({
       angle,
       distance: 1,
-      radius: grid / 4,
+      radius: f32(grid / 4),
       xDistortion: 0.25 * dx,
       yDistortion: 0.25 * dy,
       xFromStart: x,
@@ -175,9 +175,9 @@ export function makeFulgoraShared(ctx: FulgoraCtx): FulgoraShared {
     Math.max(
       0,
       startingSpotAtAngle({
-        angle: angle + 180,
-        distance: grid / 1.8,
-        radius: grid / 1.8,
+        angle: f32(angle + 180),
+        distance: f32(grid / 1.8),
+        radius: f32(grid / 1.8),
         xDistortion: 1 * wobbleX(x, y),
         yDistortion: 1 * wobbleY(x, y),
         xFromStart: x,

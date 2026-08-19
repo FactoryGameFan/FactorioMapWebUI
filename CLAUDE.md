@@ -1471,21 +1471,64 @@ bound on the worst residual, so improving a residual keeps it under the bound;
 89 of 89 Fulgora tests passed before and after. Only the Rust port's frozen
 exact counts could see the change, and they named every field that moved.
 
-**The remaining inexact fields are blocked on `starting_spot_at_angle`**, which
-evaluates in f64 and is SHARED with Vulcanus. Narrowing it takes both Fulgora
-starting cones to 101/101 - but only with all five of per-op narrowing, an f32
-`pi`, f32 `sin`/`cos`, f32 radius/distance and an f32 angle, and no subset does
-it. It also regresses `vulcanus_starting_calcite` past its bound, because
-Vulcanus's call sites were not narrowed to match. That is **#279**, and it
-belongs with #225, not with a Fulgora change.
+**`starting_spot_at_angle` was the block, and #279 removed it.** It evaluated in
+f64 and is SHARED with Vulcanus, so it could not ride along with a Fulgora-only
+change. Narrowing it needs all five of per-operation narrowing, an f32 `pi`, f32
+`sin`/`cos`, f32 radius/distance and an f32 angle - **no subset works**, and an
+f32 `pi` on its own helps the vault cone and HURTS the main one until the angle
+is narrowed too. The last two live at the CALL SITES (`grid / 1.8`,
+`seed0 / 360`, `angle + 180`), not in the function.
 
-**#270 landing does NOT move that on its own**, and the note here used to imply
-it might by blaming the calcite radius on "the un-narrowed `sliderRescale` of
-#270". The radius is `(35 / 1.5) * sliderRescale(calcite.size, 2)`, and at the
-default `size = 1` **both** forms return exactly 1 - so the value that reaches
-`startingCalcite` in every fixture is unchanged. What is still un-narrowed there
-is the `35 / 1.5` and the multiply, which is #279's own per-operation lattice.
-Read that as the remaining work, not as a dependency that has now cleared.
+What it bought, all re-measured on the shipped tree:
+
+- **`starting_spot_at_angle` itself: 88 -> 152 of 152.** The direct oracle test,
+  against values the game produced, is now exact at every captured case. That is
+  the strongest statement in tier 1 about this expression, and it is what makes
+  everything below a consequence rather than a coincidence. The comment on that
+  assertion used to explain the 88 away as "the same known port gap the elevation
+  chain carries" - it was not a gap in the chain, it was this expression.
+- Both Fulgora cones **83/101 and 85/101 -> 101/101 at residual exactly 0**, and
+  `fulgora_vault_pyramids` 85 -> 101 and `vault_pyramids_and_start` 77 -> 101
+  behind them. **13 frozen counts up, 1 down** (`fulgoran_rock_probability`
+  80 -> 79, recorded at the assertion the way #273 recorded its two).
+- **The terrain PNG 34,977 -> 34,788 differing pixels of 1,048,576.** #273 moved
+  this by one pixel in the wrong direction; this moves it by **189** the right
+  way, because the cones feed the `mix_*` chain the image is made of. So "this
+  class of fix buys bit-exactness, not a better picture" is not a rule - it
+  depends on whether the field is upstream of what the image is made of.
+- The scrap footprint's one stray game pixel is gone: `outside` 1 -> **0**.
+
+**On Vulcanus it is a large improvement that a BOUND reported as a regression**,
+which is #162 with the sign flipped. Exact f32 matches out of 1085:
+`startingTungsten` 614 -> 1082, `startingCoal` 611 -> 974, `startingCalcite`
+547 -> 969, `startingSulfur` 618 -> 1049. The only thing that got worse was
+calcite's single worst residual, 2.2888e-5 -> 3.0518e-5, tripping a 3e-5 bound.
+That outlier sits at `(-2332.9, 2333.7)` where the field's own value is
+**-133.94**, so one f32 ULP there is 1.53e-5 and the bound is a TWO-ULP bound at
+that magnitude; exactly 2 of 1085 positions exceed it. Those four assertions are
+now **frozen exact counts** with the residual kept underneath - a replacement,
+not a widening, and proven strictly stronger by planting: un-narrowing the
+calcite radius drops the count 969 -> 669 while the residual bound passes
+unchanged.
+
+The Vulcanus call-site audit is done (5 resource sites, 3 spawn sites, the three
+spawn angles). It took calcite 669 -> 969 and did not move those 2 deep-field
+points, which is the far-from-origin f32 coordinate floor the other Vulcanus
+specs document rather than anything in the expression.
+
+**#270 did NOT clear this**, and a note here used to imply it might by blaming
+the calcite radius on "the un-narrowed `sliderRescale` of #270". The radius is
+`(35 / 1.5) * sliderRescale(calcite.size, 2)`, and at the default `size = 1`
+**both** forms return exactly 1 - so the value reaching `startingCalcite` in
+every fixture never changed. What was un-narrowed there is the `35 / 1.5` and the
+multiply, which is #279's own lattice.
+
+**The 12 candidates #279 lists are still unapplied**, and the issue's prediction
+about them is NOT confirmed. It expected `moats`, `vaultSpots` and
+`spotsPrebanding` to reach 101/101 once the cones moved; measured, they reach
+69, 69 and 98. They improved, they did not close. Those candidates are their own
+per-operation narrowings and still have to be applied and re-scored one at a
+time, under the greedy-accept rule.
 
 - **`src/noise/wasm/engine.wasm` is a COMMITTED artifact.**
   `scripts/build-wasm.sh` produces it; `verify:rust` rebuilds and compares bytes

@@ -68,10 +68,17 @@ impl AngleTrig {
     /// oracle without a fixture having to carry pre-computed trig.
     #[must_use]
     pub fn from_degrees(angle: f64) -> Self {
-        let radians = (angle / 180.0) * std::f64::consts::PI;
+        // f32 `pi`, and per-operation narrowing, matching `PI32` and
+        // `startingSpotAtAngle` in `src/noise/expressions/vulcanusShared.ts`
+        // (#279). An f64 `pi` here is one of the five narrowings the two Fulgora
+        // cones need, and it is the one that reads backwards on its own: it
+        // helps the vault cone and HURTS the main one until the angle is also
+        // narrowed at the call site.
+        let pi32 = f64::from(std::f64::consts::PI as f32);
+        let radians = f64::from(((angle / 180.0) as f32 as f64 * pi32) as f32);
         Self {
-            sin: radians.sin(),
-            cos: radians.cos(),
+            sin: f64::from(radians.sin() as f32),
+            cos: f64::from(radians.cos() as f32),
         }
     }
 }
@@ -97,9 +104,22 @@ pub fn starting_spot_at_angle(
     x_distortion: f64,
     y_distortion: f64,
 ) -> f64 {
-    let delta_x = spot.distance * spot.trig.sin - x_from_start + x_distortion;
-    let delta_y = -spot.distance * spot.trig.cos - y_from_start + y_distortion;
-    crate::poison::f64_result(1.0 - (delta_x * delta_x + delta_y * delta_y).sqrt() / spot.radius)
+    // Per-operation f32, token for token against
+    // `src/noise/expressions/vulcanusShared.ts` (#279). Left in f64 this scored
+    // 83/101 and 85/101 on Fulgora's two cones; narrowed, both reach 101/101 at
+    // a residual of exactly 0. `spot.trig`, `spot.distance` and `spot.radius`
+    // arrive already f32-valued - see `AngleTrig` and `FulgoraShared::new`.
+    let dx = ((f64::from((spot.distance * spot.trig.sin) as f32) - x_from_start) as f32) as f64;
+    let delta_x = (dx + x_distortion) as f32;
+    let dy = ((f64::from((-spot.distance * spot.trig.cos) as f32) - y_from_start) as f32) as f64;
+    let delta_y = (dy + y_distortion) as f32;
+    let sq_x = (f64::from(delta_x) * f64::from(delta_x)) as f32;
+    let sq_y = (f64::from(delta_y) * f64::from(delta_y)) as f32;
+    let sum_sq = (f64::from(sq_x) + f64::from(sq_y)) as f32;
+    // `^0.5` is the machine's EXACT sqrt, not its fastapprox `^`.
+    let root = f64::from(sum_sq).sqrt() as f32;
+    let scaled = (f64::from(root) / spot.radius) as f32;
+    crate::poison::f64_result(f64::from((1.0 - f64::from(scaled)) as f32))
 }
 
 #[cfg(test)]

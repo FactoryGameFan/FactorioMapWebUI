@@ -320,14 +320,24 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     // and not merely under a bound. If it moves, one of those two facts
     // changed and the test names which.
     //
-    // **34,976 before #273 and 34,977 after - this fix moved the whole image by
-    // ONE pixel, in the wrong direction.** It is still the right change: it took
-    // 13 named fields to bit-exact against the game. But the image is dominated
-    // by the `mix_*` chain, which #273 could not reach, so nothing here should
-    // be read as a rendering improvement. The tile argmax did not move at all
-    // (4,915 of 5,057, same 7 land/ocean misses). Narrowing the starting cones
-    // as well - #279 - takes this to 34,788, measured.
-    expect(differing).toBe(34977);
+    // The history of this number is the point, so it is kept:
+    //
+    //   34,976  before #273
+    //   34,977  after  #273 - typing Fulgora's f32 constants took 13 named
+    //           fields to bit-exact and moved the IMAGE by one pixel, in the
+    //           wrong direction. Still the right change; the image is dominated
+    //           by the `mix_*` chain, which #273 could not reach.
+    //   34,788  after  #279 - narrowing `starting_spot_at_angle` per operation.
+    //           **-189 pixels, and this is the change that reaches the
+    //           picture**, because both starting cones feed that same `mix_*`
+    //           chain. The comment above this line predicted 34,788 before the
+    //           work was done, and the measurement landed on it exactly.
+    //
+    // So the lesson #273 recorded still stands - bit-exactness on named fields
+    // is not the same thing as a better image - but it is not a rule that this
+    // class of fix never helps. It depends on whether the field is upstream of
+    // what the image is made of.
+    expect(differing).toBe(34788);
     expect(differing / (SIZE * SIZE)).toBeLessThan(0.04);
   }, 300000);
 
@@ -431,10 +441,20 @@ describe("the WASM engine's scrap footprint contains the game's scrap", () => {
       if (footprint[i * 4] === 0) outside++;
     }
 
-    // The same numbers `previewAgreement.spec.ts` measures for the TypeScript:
-    // 1825 game scrap pixels, 1 of them outside the model's footprint.
+    // The same numbers `previewAgreement.spec.ts` measures for the TypeScript.
+    //
+    // `gameScrap` is a property of the PNG pair alone - it counts pixels the
+    // game's own two renders differ on - so no change to this port can move it.
+    // It is 1825 and must stay 1825; if it ever moves, a fixture changed.
+    //
+    // **`outside` went 1 -> 0 with #279.** Narrowing `starting_spot_at_angle`
+    // moved the starting cones onto the game's own values, and the single game
+    // scrap pixel that used to fall outside the model's footprint is now inside
+    // it. The footprint is a superset of the game's scrap with nothing left
+    // over - which is the strongest form this assertion can take, so it is
+    // pinned at 0 rather than at "at most 1".
     expect(gameScrap).toBe(1825);
-    expect(outside).toBe(1);
+    expect(outside).toBe(0);
   }, 300000);
 
   it("the footprint is neither empty nor everything, so the superset is not free", async () => {

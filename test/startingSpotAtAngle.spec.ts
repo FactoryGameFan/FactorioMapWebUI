@@ -57,7 +57,20 @@ describe("startingSpotAtAngle reproduces starting_spot_at_angle", () => {
       xFromStart: 5,
       yFromStart: 4,
     });
-    expect(result).toBeCloseTo(0.4, 9);
+    // EXACT, because the expression now narrows every operation (#279).
+    //
+    // The answer is 0.3999999761581421 - one f32 ULP BELOW `f32(0.4)`, which is
+    // 0.4000000059604645. It is not `f32(0.4)` and it is not 0.4: the chain
+    // rounds eight times on the way here, and the accumulated result lands a
+    // ULP short. That is the arithmetic being pinned, so it is asserted as the
+    // one value it can be.
+    //
+    // This used to be `toBeCloseTo(0.4, 9)`, which the f32 form misses by
+    // 2.384e-8. Exact equality is TIGHTER than that tolerance, not looser - it
+    // admits one value where the tolerance admitted a range. What the case is
+    // FOR is unchanged: a flipped sign on either delta, or `radius` applied the
+    // wrong way, moves this nowhere near 0.4.
+    expect(result).toBe(0.3999999761581421);
   });
 });
 
@@ -68,6 +81,8 @@ describe("startingSpotAtAngle against the oracle (Factorio 2.1.12, Space Age, Vu
     // position itself for both.
     let worst = 0;
     let worstLabel = "";
+    let exact = 0;
+    let compared = 0;
     for (const c of fixture.cases) {
       for (let i = 0; i < fixture.positions.length; i++) {
         const p = fixture.positions[i];
@@ -80,19 +95,28 @@ describe("startingSpotAtAngle against the oracle (Factorio 2.1.12, Space Age, Vu
           xFromStart: p.x,
           yFromStart: p.y,
         });
-        const err = Math.abs(result - c.values[i]);
+        compared++;
+        if (Math.fround(result) === Math.fround(c.values[i])) exact++;
+        const err = Math.abs(Math.fround(result) - Math.fround(c.values[i]));
         if (err > worst) {
           worst = err;
           worstLabel = `angle=${c.angle} distance=${c.distance} @(${p.x},${p.y})`;
         }
       }
     }
-    // No fastapprox noise term here (pure arithmetic + real sin/cos), so the
-    // residual is far below the elevation f32-coordinate floor (8e-3) used
-    // elsewhere in this preview. Observed worst here is ~1.41e-6
-    // (@(12345.75, 6789.125), the deep-field point, angle=0/distance=100);
-    // calibrated just above it - never loosen this without a new
-    // observed-worst measurement to justify it.
-    expect(worst, `worst ${worstLabel}`).toBeLessThan(3e-6);
+    // **EXACT at every one of the 152 captured cases** (#279). This was 88 of
+    // 152 while the expression evaluated in f64; narrowing per operation, with
+    // an f32 `pi` and f32 `sin`/`cos`, closes it completely. The Rust port's
+    // tier-1 test asserts the identical count from the identical fixture, so
+    // the two ports are graded against the same number - see
+    // `crates/fmw-noise/src/fixtures.rs`.
+    //
+    // The residual bound is kept underneath, now at 0. It used to be 3e-6
+    // against an observed worst of ~1.41e-6, and a bound is what let 64 of these
+    // cases sit inexact without anything saying so (#162). Do not let either
+    // assertion move: below 152 means the narrowing has been disturbed.
+    expect(compared, "4 cases x 38 positions").toBe(152);
+    expect(exact, `exact f32 matches`).toBe(152);
+    expect(worst, `worst ${worstLabel}`).toBe(0);
   });
 });

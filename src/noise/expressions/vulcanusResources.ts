@@ -138,11 +138,11 @@ export function makeVulcanusResources(
   // spawn (the Task 2 finding recorded in vulcanusShared.ts).
   const startingTungsten = memoXY((x, y) =>
     startingSpotAtAngle({
-      angle: spawn.basaltsAngle - 10 * dir,
-      distance: 450 * r,
+      angle: f32(spawn.basaltsAngle - f32(10 * dir)),
+      distance: f32(450 * r),
       // Deliberately NOT slider-scaled in the source: "don't use the slider for
       // radius because it can make tungsten in the safe area".
-      radius: 30 / 1.5,
+      radius: f32(30 / 1.5),
       xDistortion: 0.5 * wobbleX(x, y),
       yDistortion: 0.5 * wobbleY(x, y),
       xFromStart: x,
@@ -152,9 +152,9 @@ export function makeVulcanusResources(
 
   const startingCoal = memoXY((x, y) =>
     startingSpotAtAngle({
-      angle: spawn.ashlandsAngle + 15 * dir,
-      distance: 180 * r,
-      radius: 30 * coalSize,
+      angle: f32(spawn.ashlandsAngle + f32(15 * dir)),
+      distance: f32(180 * r),
+      radius: f32(30 * coalSize),
       xDistortion: 0.5 * wobbleX(x, y),
       yDistortion: 0.5 * wobbleY(x, y),
       xFromStart: x,
@@ -164,9 +164,9 @@ export function makeVulcanusResources(
 
   const startingCalcite = memoXY((x, y) =>
     startingSpotAtAngle({
-      angle: spawn.mountainsAngle - 20 * dir,
-      distance: 350 * r,
-      radius: (35 / 1.5) * calciteSize,
+      angle: f32(spawn.mountainsAngle - f32(20 * dir)),
+      distance: f32(350 * r),
+      radius: f32(f32(35 / 1.5) * calciteSize),
       xDistortion: 0.5 * wobbleX(x, y),
       yDistortion: 0.5 * wobbleY(x, y),
       xFromStart: x,
@@ -177,8 +177,8 @@ export function makeVulcanusResources(
   const startingSulfur = memoXY((x, y) =>
     max(
       startingSpotAtAngle({
-        angle: spawn.mountainsAngle + 10 * dir,
-        distance: 590 * r,
+        angle: f32(spawn.mountainsAngle + f32(10 * dir)),
+        distance: f32(590 * r),
         radius: 30,
         xDistortion: 0.75 * wobbleX(x, y),
         yDistortion: 0.75 * wobbleY(x, y),
@@ -186,9 +186,9 @@ export function makeVulcanusResources(
         yFromStart: y,
       }),
       startingSpotAtAngle({
-        angle: spawn.mountainsAngle + 30 * dir,
-        distance: 200 * r,
-        radius: 25 * sulfurSize,
+        angle: f32(spawn.mountainsAngle + f32(30 * dir)),
+        distance: f32(200 * r),
+        radius: f32(25 * sulfurSize),
         xDistortion: 0.75 * wobbleX(x, y),
         yDistortion: 0.75 * wobbleY(x, y),
         xFromStart: x,
