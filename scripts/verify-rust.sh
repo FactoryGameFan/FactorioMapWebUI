@@ -101,6 +101,10 @@ POISONED_TESTS=(
   fixtures::reproduces_the_vulcanus_helper_layer_at_every_captured_position
   fixtures::reproduces_the_vulcanus_crack_layer_at_every_captured_position
   fixtures::reproduces_the_vulcanus_climate_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_spawn_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_biome_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_elevation_surface_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_temperature_at_every_captured_position
 
   tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order
 )

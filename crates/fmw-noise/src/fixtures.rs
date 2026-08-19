@@ -2506,3 +2506,247 @@ fn reproduces_the_vulcanus_climate_layer_at_every_captured_position() {
         );
     }
 }
+
+use crate::expressions::vulcanus_spawn::{SpawnFields, VulcanusSpawn, WobbleSums};
+
+/// Evaluate the spawn layer at every fixture position.
+fn vulcanus_spawn_sweep(seed0: u32, positions: &[Json]) -> Vec<SpawnFields> {
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let spawn = VulcanusSpawn::with_host_trig(&ctx);
+    positions
+        .iter()
+        .map(|p| {
+            let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+            spawn.eval(x, y, WobbleSums::at(&helpers, x, y))
+        })
+        .collect()
+}
+
+/// The seed-derived radial spawn geometry.
+///
+/// The fixture captures three of the five fields. `ashlands_start` is the one
+/// that grades the `starting_spot_at_angle` call directly - the other two are
+/// composites - so it is the field that would move if #279's narrowing were
+/// ever undone.
+#[test]
+fn reproduces_the_vulcanus_spawn_layer_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-vulcanus-spawn.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 410, "fixture size");
+    let fields = vulcanus_spawn_sweep(fixture.get("seed0").as_f64() as u32, positions);
+
+    // Frozen exact counts, measured 2026-08-19 and matched by the TypeScript at
+    // 371, 247 and 61 with the same worst residuals: 7.153e-7, 7.019e-7 and
+    // 3.815e-6.
+    //
+    // Those residuals are two to three orders of magnitude SMALLER than the
+    // crack layer's and the exact counts are still far from full - 61 of 410 on
+    // `ashlandsStart`. It is the same reading `detailNoise` gives in the helper
+    // layer, from a completely different expression: closeness and exactness are
+    // not the same measurement, and only one of them is a port score.
+    //
+    // `startingArea` scores highest of the three and that is expected rather
+    // than good: it is CLAMPED to [0, 1] and most of the map sits at 0, where
+    // both ports and the game agree for free. Compare `ashlandsStart`, which is
+    // the same geometry unclamped and unmultiplied, for what the arithmetic
+    // actually reaches.
+    type S = SpawnFields;
+    for (key, want_exact, select) in [
+        (
+            "startingArea",
+            371usize,
+            &(|f: &S| f.starting_area) as &dyn Fn(&S) -> f64,
+        ),
+        ("startingCircle", 247, &|f| f.starting_circle),
+        ("ashlandsStart", 61, &|f| f.ashlands_start),
+    ] {
+        let got: Vec<f64> = fields.iter().map(select).collect();
+        assert_eq!(
+            score_vulcanus(&got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 410"
+        );
+    }
+}
+
+use crate::expressions::vulcanus_biomes::{BiomeFields, VulcanusBiomes};
+
+/// The biome system: the three-way radial chain and the volcano spot field.
+///
+/// All eight captured fields are graded, including the two `*_raw_volcano` and
+/// `*_biome_full` internals nothing outside the layer reads, so a transcription
+/// error localises instead of arriving blended into `elevation`.
+///
+/// The fixture nests its columns under `values`, unlike the other Vulcanus
+/// fixtures which put them at the top level.
+#[test]
+fn reproduces_the_vulcanus_biome_layer_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-vulcanus-biomes.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 434, "fixture size");
+    let values = fixture.get("values");
+
+    let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let spawn = VulcanusSpawn::with_host_trig(&ctx);
+    let biomes = VulcanusBiomes::with_host_trig(&ctx, &helpers, &spawn);
+
+    let fields: Vec<BiomeFields> = positions
+        .iter()
+        .map(|p| biomes.eval(p.get("x").as_f64(), p.get("y").as_f64()))
+        .collect();
+
+    // Frozen exact counts, measured 2026-08-19 and matched by the TypeScript on
+    // all eight with the same worst residuals: 3.821e-5, 1.122e-4, 1.546e-4,
+    // 1.546e-4, 1.655e-4, 8.955e-5, 3.092e-4, 4.069e-5.
+    //
+    // **The three clamped biomes score roughly three times their own unclamped
+    // sources** - 403, 402 and 408 against 128, 107 and 127 - and they are the
+    // same quantity times 2, clamped. Nothing improved between them: the clamp
+    // saturates at 0 or 1 across most of the map, and a saturated position is
+    // exact for free because both ports and the game return the bound. Read the
+    // `*_biome_full` row as the port's real score and the `*_biome` row as what
+    // the consumer happens to need. If a future change moves `*_biome` without
+    // moving `*_biome_full`, it moved the clamp, not the arithmetic.
+    //
+    // `mountain_volcano_spots` at 359 is the highest UNCLAMPED count in the
+    // Vulcanus port so far, and that fits the pattern `CLAUDE.md` records for
+    // `voronoi_cell_id`: the spot pipeline's output is dominated by a DISCRETE
+    // choice - which candidate survives per region - and a sub-ULP error almost
+    // never changes which one that is. The residual it does carry comes from the
+    // cone arithmetic afterwards.
+    type B = BiomeFields;
+    for (key, want_exact, select) in [
+        (
+            "mountain_volcano_spots",
+            359usize,
+            &(|f: &B| f.mountain_volcano_spots) as &dyn Fn(&B) -> f64,
+        ),
+        ("vulcanus_mountains_raw_volcano", 163, &|f| {
+            f.mountains_raw_volcano
+        }),
+        ("vulcanus_mountains_biome_full", 128, &|f| {
+            f.mountains_biome_full
+        }),
+        ("vulcanus_ashlands_biome_full", 107, &|f| {
+            f.ashlands_biome_full
+        }),
+        ("vulcanus_basalts_biome_full", 127, &|f| {
+            f.basalts_biome_full
+        }),
+        ("vulcanus_mountains_biome", 403, &|f| f.mountains_biome),
+        ("vulcanus_ashlands_biome", 402, &|f| f.ashlands_biome),
+        ("vulcanus_basalts_biome", 408, &|f| f.basalts_biome),
+    ] {
+        let got: Vec<f64> = fields.iter().map(select).collect();
+        assert_eq!(
+            score_vulcanus(&got, values.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 434"
+        );
+    }
+}
+
+use crate::expressions::vulcanus_elevation::{ElevationFields, VulcanusElevation};
+
+/// The elevation surface: `vulcanus_elev` and `vulcanus_elevation`.
+///
+/// This is the deepest composite in the Vulcanus port - it reads the helper,
+/// crack, climate, spawn and biome layers, all of which are graded separately
+/// above. That is the point of grading them separately: a number that moves here
+/// can be traced to the layer that moved rather than investigated from scratch.
+#[test]
+fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-vulcanus-elevation.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 434, "fixture size");
+
+    let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let cracks = VulcanusCracks::new(&helpers);
+    let spawn = VulcanusSpawn::with_host_trig(&ctx);
+    let biomes = VulcanusBiomes::with_host_trig(&ctx, &helpers, &spawn);
+    let climate = VulcanusClimate::new(ctx.seed0);
+    let elevation = VulcanusElevation::new(&ctx, &helpers, &cracks, &biomes, &climate);
+
+    let fields: Vec<ElevationFields> = positions
+        .iter()
+        .map(|p| elevation.eval(p.get("x").as_f64(), p.get("y").as_f64()))
+        .collect();
+
+    // Frozen exact counts, measured 2026-08-19 and matched by the TypeScript at
+    // 113 and 113, worst residual 1.332e-1 on both.
+    //
+    // **The two columns are the same field in this fixture, and that is a gap
+    // in the fixture rather than a result.** `vulcanus_elevation` is
+    // `max(-500, elev)`, and the captured `elev` never goes below -500: its
+    // minimum over all 434 positions is -58.77. So `elev` equals `elevation` at
+    // every position, the clamp is never exercised, and a port that dropped the
+    // `max` entirely would score 113 here too. Checked rather than assumed -
+    // 0 of 434 positions differ between the two columns.
+    //
+    // Grading both anyway, because the cost is nothing and the day a capture
+    // reaches a deep enough lake the two counts separate on their own. The
+    // clamp itself is held up by `the_clamped_elevation_is_not_the_raw_elev` in
+    // the elevation module, which constructs the case the oracle does not.
+    //
+    // The residual is 1.332e-1, which looks alarming next to the other layers
+    // until you read the scale: elevation spans -58 to +1024 here, so that is
+    // about 1.3e-4 relative - the same order as everything upstream. An absolute
+    // bound would have to be re-tuned per field for that reason alone, which is
+    // the third argument for counting matches instead.
+    type E = ElevationFields;
+    for (key, want_exact, select) in [
+        ("elev", 113usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
+        ("elevation", 113, &|f| f.elevation),
+    ] {
+        let got: Vec<f64> = fields.iter().map(select).collect();
+        assert_eq!(
+            score_vulcanus(&got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 434"
+        );
+    }
+}
+
+/// `vulcanus_temperature`, which the climate layer deferred until `elev` existed.
+///
+/// It reads the RAW `elev`, so a port that wired it to the clamped
+/// `vulcanus_elevation` would agree everywhere above -500 and diverge only in
+/// the deep lakes. The fixture spans those.
+#[test]
+fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-vulcanus-temperature.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+
+    let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let cracks = VulcanusCracks::new(&helpers);
+    let spawn = VulcanusSpawn::with_host_trig(&ctx);
+    let biomes = VulcanusBiomes::with_host_trig(&ctx, &helpers, &spawn);
+    let climate = VulcanusClimate::new(ctx.seed0);
+    let elevation = VulcanusElevation::new(&ctx, &helpers, &cracks, &biomes, &climate);
+
+    let got: Vec<f64> = positions
+        .iter()
+        .map(|p| {
+            elevation.temperature(
+                p.get("x").as_f64(),
+                p.get("y").as_f64(),
+                ctx.temperature_bias,
+            )
+        })
+        .collect();
+
+    // Frozen exact count, matched by the TypeScript at 196 with the same worst
+    // residual of 1.327e-1. Higher than `elev`'s 113 despite reading it,
+    // because temperature scales it by 1/100 above zero - `min(e, e / 100)` -
+    // so most of `elev`'s residual is divided away before it lands here.
+    assert_eq!(
+        score_vulcanus(&got, fixture.get("temperature").as_array(), "temperature"),
+        196,
+        "temperature exact f32 matches out of {}",
+        positions.len()
+    );
+}
