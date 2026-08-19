@@ -137,9 +137,34 @@ dense-grid points) the worst residual is **1.69e-4** - in family with every
 other expression above. **All top-10 residuals are among the 22 ring
 positions with irrational coordinates**, with an implied positional offset of
 2.3e-3 to 3.7e-3 tiles (i.e. the game evaluated at a marginally different
-point than we did, most likely because a ring position's exact float
-representation differs by a ULP or two through the coordinate's construction
-path).
+point than we did).
+
+**SOLVED 2026-08-18, and the mechanism guessed here was wrong.** The offset was
+real and its size was right, but it is not a float-representation difference.
+The parenthetical used to read "most likely because a ring position's exact
+float representation differs by a ULP or two through the coordinate's
+construction path". At `354.0533905932738` one f32 ulp is **3.052e-5** and one
+f64 ulp is **5.684e-14**, against a measured displacement of **2.609e-3** -
+86x and 4.6e10x too large. No accumulation of ulps gets there.
+
+The real mechanism is that Factorio's `MapPosition` is fixed point, `int32 /
+256`, so every coordinate is truncated toward zero on the way in. The capture
+built these rings as `r * Math.cos(a) + 0.5`, which is not a multiple of 1/256,
+so the game sampled a snapped point and the fixture recorded the unsnapped one
+(#186). That is also why every measured displacement falls inside
+`[0, 1/256) = [0, 3.906e-3)` - the range truncation produces and nothing else
+does, and the range this note already reported without noticing what it meant.
+
+Snapping the sample coordinate at read time (`test/captureGrid.ts`) takes
+`sulfuric_acid_patches` from **2.942e-3 to 7.153e-8, a factor of 41,100**, and
+for 13 of the 14 arrays in this fixture the post-snap worst now equals the
+on-grid-only worst exactly - the off-grid excess is gone rather than reduced.
+Seventeen committed fixtures were affected; all 17 improved and none got worse.
+
+Note what this does NOT overturn: the `input_scale = 1/3` argument below is
+still why this expression showed it most clearly. A higher-frequency field
+amplifies a fixed positional mismatch, which is exactly why an error common to
+seventeen fixtures surfaced here first and at 2.9e-3 rather than 1e-4.
 
 `input_scale = 1/3` makes this the **highest-frequency multioctave anywhere in
 this port** - about 1.7x outside the primitive's oracle-verified envelope

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/oracle-trees.seed123456.json";
 import controlFixture from "./fixtures/oracle-trees-controls.seed123456.json";
+import { countOffGrid, snapPosition } from "./captureGrid";
 import { makeTreeShared } from "../src/noise/trees/treeShared";
 import { makeTreeSpeciesFields } from "../src/noise/trees/treeField";
 
@@ -12,8 +13,14 @@ const { seed0, positions, values } = fixture as {
 
 /**
  * Tolerance idiom borrowed from test/resourcePatches.spec.ts: an absolute bound
- * for near-spawn points plus a relative escape for the known far-field basisNoise
- * f32 floor, so the far ring cannot mask a real near-field error.
+ * plus a relative escape, so a large-magnitude point cannot mask a small one.
+ *
+ * The "far-field basisNoise f32 floor" this used to guard against was mostly not
+ * a precision floor at all. 14 of these 26 positions were CAPTURED off the game's
+ * 1/256 MapPosition grid, so the game evaluated at a different point than the
+ * fixture records (#186). Every sample coordinate below is snapped the way the
+ * game does before evaluation - see test/captureGrid.ts - and the bounds fell by
+ * 76x to 356x as a result.
  */
 const agrees = (actual: number, expected: number, abs: number, rel: number): boolean =>
   Math.abs(actual - expected) < abs || Math.abs(actual - expected) < rel * Math.abs(expected);
@@ -27,18 +34,21 @@ describe("tree shared fields match the game", () => {
   ] as const)("reproduces %s to the noise floor", (name, evalAt) => {
     let worst = 0;
     let label = "";
-    positions.forEach((p, i) => {
+    positions.forEach((raw, i) => {
+      const p = snapPosition(raw);
       const err = Math.abs(evalAt(p.x, p.y) - values[name][i]);
       if (err > worst) {
         worst = err;
         label = `@(${p.x},${p.y})`;
       }
     });
-    // Observed worst (2026-07-21, Factorio 2.1.11, seed 123456): tree_small_noise
-    // 9.20e-4 (at the deepest far-ring point, where the f32 coordinate floor inside
-    // basisNoise bites hardest), trees_forest_path_cutout_faded 5.65e-5. Do not
-    // loosen above 1e-3.
-    expect(worst, `${name} worst ${label}`).toBeLessThan(1e-3);
+    // Re-measured 2026-08-18 with the sample coordinate snapped onto the game's
+    // 1/256 grid: **tree_small_noise is now bit-exact at all 26 positions, worst
+    // 0**, and trees_forest_path_cutout_faded is 4.071e-8. Before the snap they
+    // were 9.233e-4 and 6.012e-5, and the worst sat on an off-grid ring point -
+    // which the old comment read as "where the f32 coordinate floor inside
+    // basisNoise bites hardest". It was the capture, not basisNoise.
+    expect(worst, `${name} worst ${label}`).toBeLessThan(6e-8);
   });
 });
 
@@ -60,7 +70,8 @@ describe("every tree species matches the game", () => {
     (name, field) => {
       let worst = 0;
       let label = "";
-      positions.forEach((p, i) => {
+      positions.forEach((raw, i) => {
+        const p = snapPosition(raw);
         const err = Math.abs(field.evalAt(p.x, p.y) - values[name][i]);
         if (err > worst) {
           worst = err;
@@ -68,19 +79,20 @@ describe("every tree species matches the game", () => {
         }
       });
       // Species values live in roughly [-3, 0.45]; the dominant error source is
-      // the f32 coordinate floor inside basisNoise. Observed worst across all 15
-      // species (2026-07-21, Factorio 2.1.11, seed 123456), after fixing the
-      // per-species sizeOffset (tree_05/tree_07 = 0.45, the rest = 0.5): 7.71e-4
-      // (tree_02, @(0.5,-799.75)). tree_05 and tree_07 themselves land at
-      // 3.15e-4 and 2.92e-4 respectively - the same noise floor as everyone
-      // else. Calibrated just above the observed worst; do not loosen above
-      // 9e-4 without a new observed-worst measurement to justify it.
-      expect(worst, `${name} worst ${label}`).toBeLessThan(9e-4);
+      // Re-measured 2026-08-18 with the sample coordinate snapped onto the
+      // game's 1/256 grid (test/captureGrid.ts): worst across all 15 species is
+      // 2.593e-6 (tree_05), against 7.443e-4 before. For every one of the 17
+      // arrays in this fixture the pre-snap worst sat on an off-grid row; the
+      // per-species on-grid worst ran 4.1e-7 to 2.2e-6 while the off-grid worst
+      // ran 2.0e-4 to 7.4e-4. Calibrated just above the measured worst; do not
+      // loosen without a new measurement.
+      expect(worst, `${name} worst ${label}`).toBeLessThan(4e-6);
     },
   );
 
   it("agrees on the composed max at every sampled point", () => {
-    positions.forEach((p, i) => {
+    positions.forEach((raw, i) => {
+      const p = snapPosition(raw);
       const expected = Math.min(1, Math.max(0, ...fields.map((f) => values[f.species.name][i])));
       const actual = Math.min(1, Math.max(0, ...fields.map((f) => f.evalAt(p.x, p.y))));
       // Observed worst absolute gap (2026-07-21, all 15 species incl. tree_05/
@@ -88,7 +100,7 @@ describe("every tree species matches the game", () => {
       // far-ring basisNoise f32 floor the same way as the per-species checks
       // above. Calibrated just above the observed worst; do not loosen the
       // absolute bound above 2e-4 without a new observed-worst measurement.
-      expect(agrees(actual, expected, 2e-4, 1e-2), `@(${p.x},${p.y})`).toBe(true);
+      expect(agrees(actual, expected, 3e-7, 1e-2), `@(${p.x},${p.y})`).toBe(true);
     });
   });
 });
@@ -111,7 +123,8 @@ describe("control:trees levers match the game", () => {
     const field = fields.find((x) => x.species.name === name)!;
     let worst = 0;
     let label = "";
-    f.positions.forEach((p, i) => {
+    f.positions.forEach((raw, i) => {
+      const p = snapPosition(raw);
       const err = Math.abs(field.evalAt(p.x, p.y) - f.values[name][i]);
       if (err > worst) {
         worst = err;
@@ -123,7 +136,7 @@ describe("control:trees levers match the game", () => {
     // tree_09_red 1.01e-4 - the same basisNoise f32-floor order of magnitude as
     // the default-lever fixture. Calibrated just above the observed worst
     // (tree_01); do not loosen above 1e-3.
-    expect(worst, `${name} worst ${label}`).toBeLessThan(1e-3);
+    expect(worst, `${name} worst ${label}`).toBeLessThan(2e-5);
   });
 
   it("differs from the default-lever field, so the levers are actually live", () => {
@@ -133,5 +146,19 @@ describe("control:trees levers match the game", () => {
     const b = fields.find((x) => x.species.name === name)!;
     const differs = f.positions.some((p) => a.evalAt(p.x, p.y) !== b.evalAt(p.x, p.y));
     expect(differs).toBe(true);
+  });
+});
+
+// Anti-vacuity for the 1/256 capture-grid snap applied above. These fixtures
+// record sample coordinates the game never evaluated at (#186); `snapPosition`
+// recovers where it did. If a re-capture ever lands every position on the grid
+// these counts reach 0, at which point the snap is the identity and should be
+// deleted rather than left looking load-bearing. See test/captureGrid.ts.
+describe("capture-grid snap is not vacuous", () => {
+  it("oracle-trees still has off-grid positions", () => {
+    expect(countOffGrid(positions)).toBe(14);
+  });
+  it("oracle-trees-controls still has off-grid positions", () => {
+    expect(countOffGrid(controlFixture.positions)).toBe(7);
   });
 });

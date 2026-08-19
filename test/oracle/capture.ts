@@ -350,11 +350,22 @@ async function captureElevationLakes(): Promise<void> {
   }
   // Far rings: large enough radius that starting_lake_distance saturates at 1024
   // (empty-lake ctx is then exact), in many directions. Two radii + fractional
-  // offsets keep points off the lattice. These are the parity-tested points.
+  // offsets keep points off the INTEGER lattice, which is the point - a formula
+  // that only fits at integer coordinates should not survive.
+  //
+  // They are snapped onto the 1/256 MapPosition grid, which is NOT the same thing
+  // and was missing until 2026-08-18. `Math.cos` output is not a multiple of
+  // 1/256, so the game converted it on the way in and evaluated somewhere the
+  // fixture did not record (#186). Seventeen committed fixtures carry ring
+  // positions captured that way; `test/captureGrid.ts` recovers them at read
+  // time and holds the measurements. New captures do not need recovering.
   for (const r of [2200, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   // One deep-field point (stresses the f32 coordinate floor hardest).
@@ -412,7 +423,10 @@ async function captureElevationNauvis(): Promise<void> {
   for (const r of [2200, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -469,7 +483,10 @@ async function captureElevationNauvisNoCliff(): Promise<void> {
   for (const r of [2200, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -532,7 +549,10 @@ async function captureElevationIsland(): Promise<void> {
   for (const r of [2200, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -592,7 +612,10 @@ async function captureTemperature(): Promise<void> {
   for (const r of [2200, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -635,7 +658,10 @@ async function captureAux(): Promise<void> {
   for (const r of [2200, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -679,7 +705,10 @@ async function captureTrees(): Promise<void> {
   for (const r of [800, 2400]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -727,7 +756,10 @@ async function captureTreesControls(): Promise<void> {
   }
   for (let k = 0; k < 8; k++) {
     const a = (k * Math.PI) / 4;
-    positions.push({ x: 1200 * Math.cos(a) + 0.5, y: 1200 * Math.sin(a) + 0.25 });
+    positions.push({
+      x: snapToMapPosition(1200 * Math.cos(a) + 0.5),
+      y: snapToMapPosition(1200 * Math.sin(a) + 0.25),
+    });
   }
 
   const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
@@ -782,7 +814,10 @@ async function captureMoisture(): Promise<void> {
   for (const r of [2200, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -1222,7 +1257,10 @@ async function captureResourceStarting(): Promise<void> {
   for (const r of [1500, 2500]) {
     for (let k = 0; k < 12; k++) {
       const a = (k * Math.PI) / 6;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
 
@@ -1482,7 +1520,10 @@ async function captureRocks(): Promise<void> {
   for (const r of [2200, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -2005,7 +2046,10 @@ async function captureVulcanusCracks(): Promise<void> {
   for (const r of [500, 1500, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -2064,7 +2108,10 @@ async function captureVulcanusResources(): Promise<void> {
   for (const r of [500, 1500, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -2161,7 +2208,10 @@ async function captureVulcanusBiomes(): Promise<void> {
   for (const r of [1500, 3000]) {
     for (let k = 0; k < 12; k++) {
       const a = (k * Math.PI) / 6;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
 
@@ -2227,7 +2277,10 @@ async function captureVulcanusClimate(): Promise<void> {
   for (const r of [500, 1500, 3300]) {
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
   positions.push({ x: 12345.75, y: 6789.125 });
@@ -2291,7 +2344,10 @@ async function captureVulcanusElevation(): Promise<void> {
   for (const r of [1500, 3000]) {
     for (let k = 0; k < 12; k++) {
       const a = (k * Math.PI) / 6;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
 
@@ -2352,7 +2408,10 @@ async function captureVulcanusTemperature(): Promise<void> {
   for (const r of [1500, 3000]) {
     for (let k = 0; k < 12; k++) {
       const a = (k * Math.PI) / 6;
-      positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
     }
   }
 
@@ -2520,7 +2579,10 @@ async function captureVulcanusTileNames(): Promise<void> {
     const t = (i + 0.5) / count;
     const r = 120 + t * (2600 - 120);
     const a = i * GOLDEN_ANGLE;
-    positions.push({ x: r * Math.cos(a) + 0.5, y: r * Math.sin(a) + 0.25 });
+    positions.push({
+      x: snapToMapPosition(r * Math.cos(a) + 0.5),
+      y: snapToMapPosition(r * Math.sin(a) + 0.25),
+    });
   }
 
   const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
@@ -2741,6 +2803,22 @@ const VORONOI_OPS = [
 function snapToMapPosition(t: number): number {
   return Math.floor(t * 256) / 256;
 }
+
+/*
+ * `Math.floor` above, but `test/captureGrid.ts` recovers a recorded coordinate
+ * with `Math.trunc`. Both are right, for different jobs.
+ *
+ * Here the job is to PRODUCE a coordinate that is already a multiple of 1/256.
+ * Any rounding does that, and the game's own conversion is then a no-op, so
+ * floor and trunc are interchangeable at this end.
+ *
+ * There the job is to REPRODUCE what the game did to a coordinate that was
+ * recorded off the grid. That is one specific conversion - `fcvtzs`, truncation
+ * toward zero - and it is measurably not flooring: across the affected fixtures
+ * flooring is worse than applying no snap at all in several arrays, while
+ * truncation is exact where flooring is not on six of the ten rows that have a
+ * negative coordinate, and never the reverse.
+ */
 
 /**
  * Positions for the jitter-0 voronoi capture.

@@ -1,20 +1,33 @@
 import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/oracle-resource-starting.seed123456.json";
+import { countOffGrid, snapPosition } from "./captureGrid";
 import { RESOURCE_CATALOG } from "../src/noise/resources/resourceCatalog";
 import { makeResourcePatches } from "../src/noise/resources/resourcePatches";
 
 const paramsByName = new Map(RESOURCE_CATALOG.map((r) => [r.name, r]));
 const relErr = (port: number, game: number) => Math.abs(port - game) / Math.max(1, Math.abs(game));
-const ABS_TOL = 1.0;
+const ABS_TOL = 0.7;
 const REL_TOL = 1e-2;
 
 // This fixture samples both the near-spawn starting patches (the feature under
 // test) AND the pre-existing far field (d=1500-2500), at large fractional
-// coordinates. The starting patches match the game to well under 1.0 abs, but
-// the far-field regular basisNoise term hits its inherent f32 (single-precision)
-// coordinate-precision floor out there: absolute error up to ~5.3 on field
-// values of ~10,000, i.e. relative error <= ~5e-4. That is 20x-200x inside the
-// 1e-2 relative gate but busts a flat 1.0 absolute gate.
+// coordinates.
+//
+// That far field used to measure "absolute error up to ~5.3 on field values of
+// ~10,000", attributed to "the inherent f32 (single-precision) coordinate-precision
+// floor". It was not a precision floor. 22 of these 3745 positions were CAPTURED
+// off the game's 1/256 MapPosition grid, so the game evaluated at a different
+// point than the fixture records (#186). Snapping the sample coordinate the way
+// the game does (test/captureGrid.ts) takes the worst absolute error from
+// 4.899 / 4.340 / 5.270 / 4.673 across the four cases to 0.641 / 0.388 / 0.626 /
+// 0.376 - and in all four the post-snap worst equals the on-grid-only worst to
+// every digit, so the off-grid excess is gone rather than merely smaller.
+//
+// What remains is a systematic ~0.61 offset present at EVERY point, on-grid ones
+// included, on field values near -12,300. That is a real and separate accuracy
+// question, invisible to exact-match scoring (0 of 14,980 values match bit-for-bit
+// before or after). ABS_TOL is now 0.7 rather than 1.0 - enough for that offset and
+// nothing more.
 //
 // A single f32 noise field spanning ~[-14000, +thousands] needs a COMBINED
 // tolerance: an absolute floor for small-magnitude values (catches real bugs
@@ -40,7 +53,7 @@ describe("makeResourcePatches (all_patches = max(starting, regular) vs oracle)",
         [];
       const offenders: (typeof mism)[number][] = [];
       for (let i = 0; i < fixture.positions.length; i++) {
-        const p = fixture.positions[i];
+        const p = snapPosition(fixture.positions[i]);
         const game = c.values[i];
         const port = patches.field(p.x, p.y);
         const abs = Math.abs(port - game);
@@ -65,4 +78,15 @@ describe("makeResourcePatches (all_patches = max(starting, regular) vs oracle)",
       expect(offenders.length).toBe(0);
     });
   }
+});
+
+// Anti-vacuity for the 1/256 capture-grid snap applied above. These fixtures
+// record sample coordinates the game never evaluated at (#186); `snapPosition`
+// recovers where it did. If a re-capture ever lands every position on the grid
+// these counts reach 0, at which point the snap is the identity and should be
+// deleted rather than left looking load-bearing. See test/captureGrid.ts.
+describe("capture-grid snap is not vacuous", () => {
+  it("oracle-resource-starting still has off-grid positions", () => {
+    expect(countOffGrid(fixture.positions)).toBe(22);
+  });
 });

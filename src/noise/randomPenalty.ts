@@ -21,7 +21,47 @@
  * So the value at a given (x, y) depends on the whole batch and its order - which
  * is why a bare `calculate_tile_properties` probe cannot oracle this in isolation.
  * Callers must supply the batch in the same order the game evaluates it.
+ *
+ * ## This op computes in f64 and narrows ONCE - it is the exception to the f32 rule
+ *
+ * Everywhere else in `src/noise/` the rule is f32 after every operation (see
+ * `eval/f32.ts`). Here it would produce a WRONG answer. `RandomPenalty::run`
+ * widens both f32 inputs to double, runs the whole chain in double, and narrows
+ * a single time at the store:
+ *
+ *   +348  ldr   s6, [x11, x8, lsl #2]   // source, f32 in the register buffer
+ *   +352  fcvt  d5, s6                  // widened to DOUBLE
+ *   +416  ucvtf d6, w14                 // the u32 draw -> DOUBLE
+ *   +424  fmul  d6, d6, d7              // * -2^-32 (a DOUBLE constant, 0xBDF0...)
+ *   +432  fcvt  d7, s7                  // amplitude, f32 constant -> DOUBLE
+ *   +436  fmul  d6, d6, d7              // * amplitude, in DOUBLE
+ *   +440  fadd  d5, d5, d6              // + source, in DOUBLE
+ *   +328  fcvt  s5, d5                  // narrowed to f32 exactly once
+ *   +332  str   s5, [x10, x8, lsl #2]   // and stored as f32
+ *
+ * So a Rust port must use `f64` internally and cast to `f32` on the way out.
+ * Writing this one in f32 throughout is the mistake this comment exists to stop.
+ *
+ * The `f32` on the store is load-bearing and was missing until 2026-08-18: 36 of
+ * the fixture's 40 values are not f32 without it, worst gap 1.668e-5, and the
+ * only consumer (`resources/regularPatches.ts`) multiplies the returned value.
+ * Narrowing first changes that product in 1240 of 5840 swept cases, worst 1.19e-7
+ * relative. `test/randomPenalty.spec.ts` asserts the return is f32 directly, so
+ * removing the narrowing goes red rather than being absorbed by a bound.
+ *
+ * Two narrowings the binary also does are deliberately NOT reproduced, because
+ * nothing can currently observe them and an unobservable change is
+ * indistinguishable from a mistake (the rule #191 sets out):
+ *
+ * - `source` is read as f32 at +348. Every shipped source value is f32-exact.
+ * - `amplitude` is read as f32 at +428. `random_penalty_between(min, max, 1)`
+ *   gives 2-0.25, 1-1 and 4-2 across the whole resource catalog, and
+ *   `random_penalty_at(6, 1)` gives 6 - all f32-exact. Only
+ *   `random_penalty_inverse`, whose amplitude is `1/penalty`, could produce a
+ *   non-f32 amplitude, and nothing in base or space-age calls it. Measured: at
+ *   amplitude 1/3 the two readings differ on 1 of 8 outputs by 5.96e-8.
  */
+import { f32 } from "./eval/f32";
 import { seededState, taus88Next } from "./taus88";
 
 /** 2^32, the normalization the binary applies (int32 draw * 2^-32 -> [0,1)). */
@@ -71,8 +111,12 @@ export function randomPenaltyBatch(
     const s = source[i];
     if (s > 0) {
       const u = taus88Next(st) / TWO_POW_32;
-      out[i] = s - amplitude * u;
+      // The chain above is f64 on purpose (see the header). The `f32` here is
+      // the op's single narrowing - `fcvt s5, d5` at +328, then `str s5`.
+      out[i] = f32(s - amplitude * u);
     } else {
+      // The pass-through path stores `source` unchanged, and `source` was read
+      // from an f32 register slot, so this needs no narrowing of its own.
       out[i] = s;
     }
   }

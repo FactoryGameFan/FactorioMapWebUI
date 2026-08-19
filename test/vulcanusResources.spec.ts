@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-vulcanus-resources.seed123456.json";
+import { countOffGrid, snapPosition } from "./captureGrid";
 import { withCtxDefaults } from "../src/noise/eval/ctx";
 import { makeVulcanusBiomes } from "../src/noise/expressions/vulcanusBiomes";
 import { makeVulcanusCracks } from "../src/noise/expressions/vulcanusCracks";
@@ -17,98 +18,105 @@ describe("makeVulcanusResources", () => {
   const resources = makeVulcanusResources(ctx, helpers, spawn, biomes, cracks);
   const positions = fixture.positions;
 
-  // Bounds are the measured worst residual (over all 1085 fixture points) with
-  // modest headroom - f32 rounding noise, same floor documented across the other
-  // vulcanus specs. Measured worst residuals (2026-07-24):
-  //   basaltsFavorability          2.4e-5
-  //   mountainsFavorability        2.7e-4
-  //   mountainsSulfurFavorability  2.7e-4
-  //   ashlandsFavorability         1.4e-4
-  //   startingTungsten             3.1e-4
-  //   startingCoal                 1.9e-4
-  //   startingCalcite              3.0e-4
-  //   startingSulfur               3.2e-4
-  //   tungstenRegion               1.8e-5
-  //   coalRegion                   2.9e-5
-  //   calciteRegion                1.7e-4
-  //   sulfuricAcidRegion           1.6e-4
-  //   sulfuricAcidPatches          2.9e-3 over ALL 1085 points, but only 1.7e-4 over
-  //     the 1063 with exactly-representable coordinates (including all 1024 dense-grid
-  //     points) - in family with every other expression above. The outliers are all
-  //     among the 22 ring positions with irrational coordinates (e.g. 354.0533905932738):
-  //     input_scale = 1/3 here is the highest-frequency multioctave anywhere in this
-  //     port (~3-tile features, ~1.7x past the oracle-verified envelope, which tops out
-  //     at input_scale 0.2 - see multioctaveNoise.ts / oracle/capture.ts), so a tiny
-  //     positional mismatch on those irrational coordinates (implied offset 2.3e-3 to
-  //     3.7e-3 tiles - the game evaluated at a marginally different point than we do)
-  //     shows up here and nowhere else. Ruled out as a model bug: f32-rounding the
-  //     composed octave coordinates moves the value only ~1e-4, and the local gradient
-  //     at the outlier points is unremarkable (0.94 vs. a 0.50 median). Bound stays
-  //     3.5e-3 to cover the full fixture, not just the clean-coordinate subset.
-  //   sulfuricAcidRegionPatchy     3.9e-4
+  // Bounds are the measured worst residual over all 1085 fixture points, with
+  // modest headroom. Re-measured 2026-08-18 after the sample coordinate was
+  // snapped onto the game's 1/256 MapPosition grid (see test/captureGrid.ts):
+  //
+  //   array                        before      after
+  //   basaltsFavorability          3.351e-6    3.351e-6
+  //   mountainsFavorability        2.775e-4    6.536e-5
+  //   mountainsSulfurFavorability  2.775e-4    3.674e-5
+  //   ashlandsFavorability         1.356e-4    3.733e-6
+  //   startingTungsten             3.135e-4    2.743e-5
+  //   startingCoal                 1.911e-4    1.418e-5
+  //   startingCalcite              3.003e-4    2.230e-5
+  //   startingSulfur               3.216e-4    1.397e-5
+  //   tungstenRegion               3.745e-6    3.745e-6
+  //   coalRegion                   5.525e-6    5.525e-6
+  //   calciteRegion                1.656e-4    6.757e-6
+  //   sulfuricAcidRegion           1.627e-4    6.781e-6
+  //   sulfuricAcidPatches          2.942e-3    7.153e-8      (41,100x)
+  //   sulfuricAcidRegionPatchy     3.941e-4    4.336e-6
+  //
+  // 21 of the 1085 positions were CAPTURED off the 1/256 grid, so the game
+  // evaluated at a different point than the fixture records (#186). Before the
+  // snap, 10 of these 14 arrays had their worst residual on one of those 21 rows;
+  // after it, one does. For 13 of the 14 the post-snap worst now equals the
+  // on-grid-only worst exactly - the off-grid excess is gone rather than reduced.
+  //
+  // The previous comment here explained the sulfuricAcidPatches outlier as "a tiny
+  // positional mismatch on those irrational coordinates (implied offset 2.3e-3 to
+  // 3.7e-3 tiles ... most likely because a ring position's exact float
+  // representation differs by a ULP or two through the coordinate's construction
+  // path)". The offset was real and the size was right, but the mechanism was not:
+  // at 354.0533905932738 one f32 ulp is 3.052e-5 and one f64 ulp is 5.684e-14,
+  // against a measured displacement of 2.609e-3 - 86x and 4.6e10x too large. It is
+  // the game's int32/256 fixed-point truncation, which is also why every measured
+  // displacement falls inside [0, 1/256) = [0, 3.906e-3). The old bound of 3.5e-3
+  // was covering exactly that.
   const check = (field: (x: number, y: number) => number, want: number[], bound: number): void => {
     let worst = 0;
     for (let i = 0; i < positions.length; i++) {
-      const p = positions[i];
+      const p = snapPosition(positions[i]);
       worst = Math.max(worst, Math.abs(field(p.x, p.y) - want[i]));
     }
-    expect(worst).toBeLessThan(bound);
+    expect(worst, `worst ${worst.toExponential(4)}`).toBeLessThan(bound);
   };
 
   it("vulcanus_basalts_resource_favorability matches the oracle", () => {
-    check(resources.basaltsFavorability, fixture.basaltsFavorability, 1e-4);
+    check(resources.basaltsFavorability, fixture.basaltsFavorability, 4e-6);
   });
 
   it("vulcanus_mountains_resource_favorability matches the oracle", () => {
-    check(resources.mountainsFavorability, fixture.mountainsFavorability, 5e-4);
+    check(resources.mountainsFavorability, fixture.mountainsFavorability, 8e-5);
   });
 
   it("vulcanus_mountains_sulfur_favorability matches the oracle", () => {
-    check(resources.mountainsSulfurFavorability, fixture.mountainsSulfurFavorability, 5e-4);
+    check(resources.mountainsSulfurFavorability, fixture.mountainsSulfurFavorability, 5e-5);
   });
 
   it("vulcanus_ashlands_resource_favorability matches the oracle", () => {
-    check(resources.ashlandsFavorability, fixture.ashlandsFavorability, 3e-4);
+    check(resources.ashlandsFavorability, fixture.ashlandsFavorability, 5e-6);
   });
 
   it("vulcanus_starting_tungsten matches the oracle", () => {
-    check(resources.startingTungsten, fixture.startingTungsten, 5e-4);
+    check(resources.startingTungsten, fixture.startingTungsten, 4e-5);
   });
 
   it("vulcanus_starting_coal matches the oracle", () => {
-    check(resources.startingCoal, fixture.startingCoal, 3e-4);
+    check(resources.startingCoal, fixture.startingCoal, 2e-5);
   });
 
   it("vulcanus_starting_calcite matches the oracle", () => {
-    check(resources.startingCalcite, fixture.startingCalcite, 5e-4);
+    check(resources.startingCalcite, fixture.startingCalcite, 3e-5);
   });
 
   it("vulcanus_starting_sulfur matches the oracle", () => {
-    check(resources.startingSulfur, fixture.startingSulfur, 5e-4);
+    check(resources.startingSulfur, fixture.startingSulfur, 2e-5);
   });
 
   it("vulcanus_tungsten_ore_region matches the oracle", () => {
-    check(resources.tungstenRegion, fixture.tungstenRegion, 6e-5);
+    check(resources.tungstenRegion, fixture.tungstenRegion, 5e-6);
   });
 
   it("vulcanus_coal_region matches the oracle", () => {
-    check(resources.coalRegion, fixture.coalRegion, 1e-4);
+    check(resources.coalRegion, fixture.coalRegion, 7e-6);
   });
 
   it("vulcanus_calcite_region matches the oracle", () => {
-    check(resources.calciteRegion, fixture.calciteRegion, 3e-4);
+    check(resources.calciteRegion, fixture.calciteRegion, 9e-6);
   });
 
   it("vulcanus_sulfuric_acid_region matches the oracle", () => {
-    check(resources.sulfuricAcidRegion, fixture.sulfuricAcidRegion, 3e-4);
+    check(resources.sulfuricAcidRegion, fixture.sulfuricAcidRegion, 9e-6);
   });
 
   it("vulcanus_sulfuric_acid_patches matches the oracle", () => {
-    check(resources.sulfuricAcidPatches, fixture.sulfuricAcidPatches, 3.5e-3);
+    check(resources.sulfuricAcidPatches, fixture.sulfuricAcidPatches, 1e-7);
   });
 
   it("vulcanus_sulfuric_acid_region_patchy matches the oracle", () => {
-    check(resources.sulfuricAcidRegionPatchy, fixture.sulfuricAcidRegionPatchy, 6e-4);
+    check(resources.sulfuricAcidRegionPatchy, fixture.sulfuricAcidRegionPatchy, 6e-6);
   });
 
   // AMENDED 2026-07-24 after Task 1's fixture landed. The original plan asserted
@@ -128,7 +136,7 @@ describe("makeVulcanusResources", () => {
     let violations = 0;
     let worstBelow = 0;
     for (let i = 0; i < positions.length; i++) {
-      const p = positions[i];
+      const p = snapPosition(positions[i]);
       const region = resources.tungstenRegion(p.x, p.y);
       const lo = Math.max(0, 1000 * ((1 + region) * 0.9 - 1));
       const hi = Math.max(0, 1000 * ((1 + region) * 1.0 - 1));
@@ -190,5 +198,16 @@ describe("makeVulcanusResources at a non-default frequency (smoke test)", () => 
     // satisfy the finite/envelope checks above without proving the region logic
     // (spot selection, cone placement) still runs at a fractional region_size.
     expect(sawNonBasement).toBe(true);
+  });
+});
+
+// Anti-vacuity for the 1/256 capture-grid snap applied above. These fixtures
+// record sample coordinates the game never evaluated at (#186); `snapPosition`
+// recovers where it did. If a re-capture ever lands every position on the grid
+// these counts reach 0, at which point the snap is the identity and should be
+// deleted rather than left looking load-bearing. See test/captureGrid.ts.
+describe("capture-grid snap is not vacuous", () => {
+  it("oracle-vulcanus-resources still has off-grid positions", () => {
+    expect(countOffGrid(fixture.positions)).toBe(21);
   });
 });

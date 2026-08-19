@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-vulcanus-elevation.seed123456.json";
 import temperatureFixture from "./fixtures/oracle-vulcanus-temperature.seed123456.json";
+import { countOffGrid, snapPosition } from "./captureGrid";
 import { withCtxDefaults } from "../src/noise/eval/ctx";
 import { makeVulcanusBiomes } from "../src/noise/expressions/vulcanusBiomes";
 import { makeVulcanusClimate } from "../src/noise/expressions/vulcanusClimate";
@@ -25,20 +26,31 @@ describe("makeVulcanusElevation", () => {
 
   // Each bound is the MEASURED worst residual (rounded up with modest headroom),
   // NOT a loosened tolerance. Elevation is an amplified sum (the mountains blend
-  // reaches ~1000, ashlands ~300), so the same far-from-origin f32 coordinate floor
-  // that shows up at ~1e-4 in the unit-scale climate/biome fields is scaled up here.
-  // The proof this is the coordinate floor (not a blend/multisample bug): near-spawn
-  // (r < 300) matches to 7.2e-3 on values up to ~1000 (relative ~1e-5), and every
-  // worst point is a far ring point (r=1500/3000); the single worst (1.33e-1) sits at
-  // a lerp near-cancellation (answer ~-12) where f32 input error is amplified. A
-  // mis-ordered lerp or wrong multisample neighbours would break near-spawn too - so
-  // NEAR and FAR get separate bounds below, instead of one bound loose enough to hide
-  // a near-spawn regression.
-  // Measured worst: 1.33e-1 (both elev and its max(-500,...) clamp coincide - the
-  // clamp never triggers on this grid, min elev ~-59).
+  // reaches ~1000, ashlands ~300), so any coordinate-level error is scaled up here.
+  //
+  // This block used to argue that the far-field residual proved "the coordinate
+  // floor (not a blend/multisample bug)". The residual was indeed positional, but
+  // it was not a precision floor: 22 of these 434 positions were CAPTURED off the
+  // game's 1/256 MapPosition grid, so the game evaluated at a different point than
+  // the fixture records (#186). Snapping the coordinate the way the game does takes
+  // the far bound from 1.332e-1 to 5.234e-3.
+  //
+  // The rest of that argument still holds and is why NEAR and FAR keep separate
+  // bounds: a mis-ordered lerp or wrong multisample neighbours would break near
+  // spawn too, and one bound loose enough to cover the far field would hide it.
+  // The near set contains no off-grid positions, so its number is unchanged by the
+  // snap - the control that says the snap moved only what it should have.
   const NEAR_RADIUS = 300;
-  const NEAR_BOUND = 1e-2; // measured near worst 7.23e-3 (elev/elevation) and 1.4e-3 (temperature)
-  const FAR_BOUND = 1.5e-1;
+  // Measured post-snap worsts: elev/elevation 1.869e-3 near and 5.234e-3 far;
+  // temperature 5.471e-4 near and 2.639e-3 far. The far numbers were 1.332e-1 and
+  // 1.327e-1 before the sample coordinates were snapped onto the game's 1/256
+  // MapPosition grid - 25x and 50x - because 22 of these 434 positions were
+  // CAPTURED off that grid, so the game evaluated at a different point than the
+  // fixture records (#186). See test/captureGrid.ts. The near sets contain no
+  // off-grid positions, so the snap is the identity there and their numbers are
+  // unchanged by it, which is the control that says it moved only what it should.
+  const NEAR_BOUND = 2e-3;
+  const FAR_BOUND = 6e-3;
 
   const partitionByRadius = (
     positions: { x: number; y: number }[],
@@ -61,10 +73,10 @@ describe("makeVulcanusElevation", () => {
   ): void => {
     let worst = 0;
     for (const i of indices) {
-      const p = positions[i];
+      const p = snapPosition(positions[i]);
       worst = Math.max(worst, Math.abs(fn(p.x, p.y) - want[i]));
     }
-    expect(worst).toBeLessThan(bound);
+    expect(worst, `worst ${worst.toExponential(4)}`).toBeLessThan(bound);
   };
 
   const { near, far } = partitionByRadius(positions);
@@ -101,5 +113,19 @@ describe("makeVulcanusElevation", () => {
     expect(tFar.length).toBeGreaterThan(0);
     check(temperature, tPositions, tWant, tNear, NEAR_BOUND);
     check(temperature, tPositions, tWant, tFar, FAR_BOUND);
+  });
+});
+
+// Anti-vacuity for the 1/256 capture-grid snap applied above. These fixtures
+// record sample coordinates the game never evaluated at (#186); `snapPosition`
+// recovers where it did. If a re-capture ever lands every position on the grid
+// these counts reach 0, at which point the snap is the identity and should be
+// deleted rather than left looking load-bearing. See test/captureGrid.ts.
+describe("capture-grid snap is not vacuous", () => {
+  it("oracle-vulcanus-elevation still has off-grid positions", () => {
+    expect(countOffGrid(fixture.positions)).toBe(22);
+  });
+  it("oracle-vulcanus-temperature still has off-grid positions", () => {
+    expect(countOffGrid(temperatureFixture.positions)).toBe(22);
   });
 });
