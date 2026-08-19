@@ -43,10 +43,33 @@ impl Json {
         }
     }
 
+    /// Look up an OPTIONAL key. The spot-selection expression descriptors omit
+    /// the fields a given kind does not use, so `get` would panic on them.
+    pub fn get_opt(&self, key: &str) -> Option<&Json> {
+        match self {
+            Json::Obj(entries) => entries.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            other => panic!("get_opt({key:?}) on non-object {other:?}"),
+        }
+    }
+
+    pub fn as_bool(&self) -> bool {
+        match self {
+            Json::Bool(b) => *b,
+            other => panic!("not a boolean: {other:?}"),
+        }
+    }
+
     pub fn as_f64(&self) -> f64 {
         match self {
             Json::Num(n) => *n,
             other => panic!("not a number: {other:?}"),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Json::Str(s) => s,
+            other => panic!("not a string: {other:?}"),
         }
     }
 

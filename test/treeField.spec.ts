@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { asymmetricRamps } from "../src/noise/trees/asymmetricRamps";
+import { f32 } from "../src/noise/eval/f32";
 import { makeMoisture } from "../src/noise/expressions/moisture";
 import { makeMultioctaveNoise } from "../src/noise/multioctaveNoise";
 import { makeTemperature } from "../src/noise/expressions/temperature";
@@ -39,7 +40,12 @@ describe("makeTreeSpeciesFields", () => {
     });
 
     const expected = (x: number, y: number): number => {
-      const distance = Math.hypot(x, y);
+      // `distance_from_nearest_point` against the origin spawn, in the f32 the
+      // game's op computes and stores. Written out rather than calling the op,
+      // so this stays an independent re-implementation - but with the same
+      // arithmetic, because `Math.hypot` in f64 is a different number
+      // (see src/noise/distanceFromNearestPoint.ts, corrected 2026-08-18).
+      const distance = f32(Math.sqrt(f32(f32(f32(x) * f32(x)) + f32(f32(y) * f32(y)))));
       const climate = Math.min(
         0,
         asymmetricRamps(temperature(x, y), ...row.tempRamp),

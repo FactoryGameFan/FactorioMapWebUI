@@ -1126,7 +1126,7 @@ Field labels carry in-game tooltip text via `FInfo` (an `info` prop on
 `EnemyValueRow`, an `info:` entry in `controlCatalog.ts` for the enemy-base
 autoplace rows).
 
-### The Rust/WASM noise engine (`crates/`) - phase 0 only so far
+### The Rust/WASM noise engine (`crates/`) - phase 1 in progress
 
 A Cargo workspace at the repository root, landed empty on purpose (#219) so the
 gate was proven green on `main` before any port code depended on it. Two crates:
@@ -1134,21 +1134,41 @@ gate was proven green on `main` before any port code depended on it. Two crates:
 boundary. The design record is
 `docs/superpowers/specs/2026-08-16-rust-wasm-noise-engine-design.md`.
 
-Today it holds `fnv1a64` and `fold_f64` - the tier-2 parity checksum, not a
-placeholder. **`fold_f64` folds RAW BITS and must stay order-sensitive**: an
-XOR fold is blind to order and cancels pairs, so swapping two points or
-breaking two identically would leave it unchanged. `the_fold_is_order_sensitive`
-is what makes that load-bearing rather than a claim in a comment, and it was
-watched failing against a planted XOR fold.
+**Do not read the byte counts in this section as current.** They have gone stale
+twice already, because every ported op changes them: 599 bytes at phase 0, 23,363
+after `basis_noise` and the multioctave family, 42,952 after the phase-1
+primitives. `verify:rust` compares the committed module against a fresh build, so
+the gate always knows the right number even when this file does not. Get it with
+`shasum -a 256 src/noise/wasm/engine.wasm`, and do not add a new count here
+without deciding it is worth maintaining.
 
-- **`src/noise/wasm/engine.wasm` is a COMMITTED artifact**, 599 bytes, sha256
-  `3b2752f6...`. `scripts/build-wasm.sh` produces it; `verify:rust` rebuilds and
-  compares bytes rather than regenerating. That is what keeps `vp build` free of
-  any non-JS step and lets `deploy:app` run on a machine with no Rust at all.
+Ported so far: `taus88`, `fast_approx`, `basis_noise` and its gradient table, the
+four multioctave ops, `random_penalty`, `spot_candidates`, `spot_selection`,
+`distance_from_nearest_point` and `starting_lakes`. `voronoi_noise` is what
+remains of phase 1 (#220). `checksum` holds the tier-2 parity fold; **`fold_f64`
+folds RAW BITS and must stay order-sensitive**, because an XOR fold is blind to
+order and cancels pairs, so swapping two points or breaking two identically would
+leave it unchanged. `the_fold_is_order_sensitive` makes that load-bearing rather
+than a claim in a comment, and it was watched failing against a planted XOR fold.
+
+- **`src/noise/wasm/engine.wasm` is a COMMITTED artifact.**
+  `scripts/build-wasm.sh` produces it; `verify:rust` rebuilds and compares bytes
+  rather than regenerating. That is what keeps `vp build` free of any non-JS step
+  and lets `deploy:app` run on a machine with no Rust at all. **Any change to a
+  Rust source means rerunning that script and committing the result**, or the
+  gate fails as "stale".
 - **Byte identity across machines is measured, not hoped for** (#218): the same
-  source, profile and pinned toolchain give the same 599 bytes and the same
-  sha256 on macOS/aarch64 and on an ubuntu x86_64 runner. That is why the gate
-  can use `cmp` instead of rebuild-and-retest.
+  source, profile and pinned toolchain give the same bytes and the same sha256 on
+  macOS/aarch64 and on an ubuntu x86_64 runner. That is why the gate can use
+  `cmp` instead of rebuild-and-retest.
+- **The `poison` feature is the gate's anti-vacuity control, and it needs ONE
+  HOOK PER OP.** It perturbs an op's returned value; `verify:rust` builds with it
+  and asserts a **named list** of tier-1 tests goes red. The list is why: while
+  every ported op composed `basis_noise`, its single hook reddened everything, so
+  a suite-level "did anything fail" check looked sufficient. The five primitives
+  added in #220's second batch compose it in none of their paths, and that check
+  would have passed with five ports carrying no control at all. Adding an op
+  means adding its hook and its test name to `POISONED_TESTS`.
 - **The determinism rules are what protect that**, and each is written where it
   is enforced: no `mul_add` or fast-math, `clippy::suboptimal_flops` explicitly
   allowed so turning `nursery` on later cannot push the port toward FMA, no
