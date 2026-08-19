@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeFulgoraOceanTestFrom, makeFulgoraStack } from "../src/noise/tiles/fulgoraCatalog";
+import { makeFulgoraScrap } from "../src/noise/expressions/fulgoraScrap";
+import {
+  type FulgoraTile,
+  makeFulgoraLandProbabilities,
+  makeFulgoraOceanTestFrom,
+  makeFulgoraStack,
+  makeFulgoraTileResolverFrom,
+} from "../src/noise/tiles/fulgoraCatalog";
 
 /**
  * Tier 2 of the Rust port's gate for Fulgora's landmask chain (#223): strict
@@ -120,8 +127,23 @@ function tsFields(c: Case): number[][] {
   // the same memo caches - the individual accessors below read. Building a
   // second set would be correct and would evaluate the whole chain twice.
   const stack = makeFulgoraStack(ctx);
-  const { shared, cells, chain: elevation } = stack;
+  const { shared, cells, chain: elevation, masks, roads, ruins } = stack;
   const ocean = makeFulgoraOceanTestFrom(stack);
+  const scrap = makeFulgoraScrap(stack);
+  const resolve = makeFulgoraTileResolverFrom(stack);
+  const landProbabilities = makeFulgoraLandProbabilities(ctx);
+  const TILE_CODE: Record<string, number> = {
+    "fulgoran-dust": 0,
+    "fulgoran-dunes": 1,
+    "fulgoran-sand": 2,
+    "fulgoran-rock": 3,
+    "fulgoran-paving": 4,
+    "fulgoran-walls": 5,
+    "fulgoran-conduit": 6,
+    "fulgoran-machinery": 7,
+    shallow: 8,
+    deep: 9,
+  };
 
   const accessors: ((x: number, y: number) => number)[] = [
     shared.wobbleInfluence,
@@ -169,6 +191,38 @@ function tsFields(c: Case): number[][] {
       const wet = ocean(x, y);
       return wet === undefined ? 0 : wet === "shallow" ? 1 : 2;
     },
+    masks.naturalMask,
+    masks.naturalAndMesaMask,
+    masks.artificialMask,
+    roads.roadCells,
+    roads.roadPyramids,
+    roads.pyramidsBanding,
+    roads.spotsPrebanding,
+    roads.spotsBanding,
+    roads.structureCells,
+    roads.structureSubnoise,
+    roads.structureFacets,
+    roads.roadPavingThin,
+    roads.roadPaving2,
+    roads.roadPaving2b,
+    roads.roadPaving2c,
+    roads.roadDust,
+    ruins.ruinsWalls,
+    ruins.ruinsPaving,
+    ruins.tileRuinPaving,
+    ruins.tileRuinWalls,
+    ruins.tileRuinConduit,
+    ruins.tileRuinMachinery,
+    scrap.probability,
+    scrap.structTerm,
+    scrap.vaultTerm,
+    ...Array.from(
+      { length: 8 },
+      (_, k) =>
+        (x: number, y: number): number =>
+          landProbabilities(x, y)[k] as number,
+    ),
+    (x, y): number => TILE_CODE[resolve(x, y) as FulgoraTile] as number,
   ];
 
   const out: number[][] = accessors.map(() => []);
@@ -233,6 +287,40 @@ const FIELD_NAMES = [
   "preElevation",
   "elevation",
   "oceanTile",
+  "naturalMask",
+  "naturalAndMesaMask",
+  "artificialMask",
+  "roadCells",
+  "roadPyramids",
+  "pyramidsBanding",
+  "spotsPrebanding",
+  "spotsBanding",
+  "structureCells",
+  "structureSubnoise",
+  "structureFacets",
+  "roadPavingThin",
+  "roadPaving2",
+  "roadPaving2b",
+  "roadPaving2c",
+  "roadDust",
+  "ruinsWalls",
+  "ruinsPaving",
+  "tileRuinPaving",
+  "tileRuinWalls",
+  "tileRuinConduit",
+  "tileRuinMachinery",
+  "scrapProbability",
+  "scrapStructTerm",
+  "scrapVaultTerm",
+  "landDust",
+  "landDunes",
+  "landSand",
+  "landRock",
+  "landPaving",
+  "landWalls",
+  "landConduit",
+  "landMachinery",
+  "resolvedTile",
 ];
 
 describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain", () => {
@@ -241,7 +329,7 @@ describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain"
     expect(FIELD_NAMES).toHaveLength(engine.fulgora_field_count());
   });
 
-  it("folds 676 grid points identically for all 42 fields, at two slider settings", async () => {
+  it("folds 676 grid points identically for all 76 fields, at two slider settings", async () => {
     const engine = await instantiate();
     const [sinStart, cosStart, sinVault, cosVault] = trig();
     let compared = 0;
@@ -270,7 +358,7 @@ describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain"
         compared++;
       }
     }
-    expect(compared).toBe(84);
+    expect(compared).toBe(FIELD_NAMES.length * CASES.length);
   });
 
   it("the second slider case really is a different chain, so running both says something", () => {

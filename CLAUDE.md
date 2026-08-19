@@ -1238,6 +1238,19 @@ real browser path ever reaches the network.
 The in-browser measurement is done - see the speedup table below. #223 is
 complete.
 
+**Phase 4 (#224) adds the rest of Fulgora**: `fulgora_masks`, `fulgora_roads`,
+`fulgora_ruins`, `fulgora_scrap`, `tiles/fulgora_catalog` with the eight land
+formulas and the argmax, and `fulgora_stack` composing the whole graph. Tier 1
+grades 26 more named fields plus the scrap probability, and the FULL tile argmax
+against the tile the game placed - **4,915 of 5,057**, the same count the
+TypeScript reaches. Tier 2 folds 76 fields at two slider settings.
+
+`poison::index_result` is the argmax's own control, and it needed one: under
+poison the ocean hook flips every position's answer, so the tile test would have
+been red whether or not the argmax had a control at all. `POISONED_TESTS` now
+carries FULL test paths rather than bare `fixtures::` names, so a control can
+live beside its op.
+
 **`multioctave_noise(x, y, &params)` REBUILDS its seed tables on every call, and
 that cost 20x before it was measured.** `tables_from_seed` runs a PRNG over
 three 256-byte permutation tables, and `octave_terms` re-derives the octave
@@ -1331,6 +1344,24 @@ tier 2, which is the whole point of having tier 2.
   so the whole gap is the literal. `crates/fmw-noise/src/fixtures.rs` carries
   the planted fix as a live test rather than leaving it in the issue, because a
   measurement nobody runs goes stale.
+
+**`f64::max` is NOT `Math.max`, and only a raw-bits fold can see the
+difference** (found 2026-08-19, #224). They differ two ways: on NaN, where
+`f64::max` returns the non-NaN operand and `Math.max` propagates - and on
+**signed zero**, where `Math.max(-0, +0)` is `+0` while `f64::max` follows IEEE
+754-2019 `maximumNumber`, whose result for two operands that compare equal is
+explicitly _either input, non-deterministically_.
+
+That is not theoretical here. Fulgora's `tile_ruin_paving` folded to a different
+tier-2 checksum than the TypeScript because both of its `max` arms were zero
+with different signs. Phase 3 had shipped 27 such sites and its parity passed
+only because those windows never hit the case.
+
+Every `min`/`max` in a ported expression now goes through
+`eval::math::{min2, max2}` - and the **argument order is kept as the TypeScript
+writes it**, for the same reason. Reach for `f64::min`/`f64::max` in ported
+arithmetic and the divergence is invisible to every tolerance and to tier 1; it
+takes an order-sensitive fold over raw bits to find.
 
 **The Fulgora tier-1 counts are NOT 101/101 and that is deliberate.** Each was
 measured against the TypeScript side by side and all 21 agree exactly - same

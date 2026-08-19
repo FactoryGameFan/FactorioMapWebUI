@@ -1,8 +1,10 @@
-//! The tile layer: the helpers each tile's probability expression composes, and
-//! the Fulgora ocean test the land mask is built on.
+//! The tile layer: the helpers each tile's probability expression composes, the
+//! Fulgora ocean test the land mask is built on, and Fulgora's full tile
+//! catalog.
 //!
-//! Phase 3 lands only what the Fulgora LAND MASK needs (#223). The eight land
-//! tile formulas and the argmax between them arrive with phase 4 (#224).
+//! Phase 3 landed only what the land mask needs (#223); phase 4 added the eight
+//! land formulas and the argmax between them (#224).
 
+pub mod fulgora_catalog;
 pub mod fulgora_ocean;
 pub mod helpers;

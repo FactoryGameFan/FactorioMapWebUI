@@ -22,8 +22,8 @@
 //! them look like part of the chain, but nothing here reads them - they feed
 //! the deferred tile layer.
 
-use crate::eval::math::lerp;
 use crate::eval::math::slider_rescale;
+use crate::eval::math::{lerp, max2, min2};
 use crate::expressions::fulgora_cells::CellFields;
 use crate::expressions::fulgora_shared::Prepared;
 use crate::expressions::fulgora_shared::{FulgoraCtx, SharedFields};
@@ -175,26 +175,32 @@ impl FulgoraElevation {
         // take it whole; every other class takes none of it. `sprawl` and `mesa`
         // are mutually exclusive 0/1 flags, so the bracket is one or the other.
         let sprawl_pyramids = cells.pyramids
-            * (cells.sprawl + cells.mesa * (0.9 - 0.2 * basis_oil + 0.05 * rock).abs().min(1.0));
+            * (cells.sprawl + cells.mesa * min2(1.0, (0.9 - 0.2 * basis_oil + 0.05 * rock).abs()));
 
-        let vault_pyramids = (cells.vaults * cells.pyramids).max(0.5 * shared.starting_vault_cone);
-        let vault_pyramids_and_start = vault_pyramids.max(0.5 * shared.starting_cone);
+        let vault_pyramids = max2(
+            cells.vaults * cells.pyramids,
+            0.5 * shared.starting_vault_cone,
+        );
+        let vault_pyramids_and_start = max2(vault_pyramids, 0.5 * shared.starting_cone);
 
         // The moat is a V cut around the pyramid: the first arm falls away below
         // the island, the second rises with it, and `max` takes whichever is
         // nearer the surface. The -0.05 floor is what guarantees some oil ocean
         // in the moat.
-        let moats = ARTIFICIAL_CAP.min(
-            1.5 * (-0.05 - vault_pyramids_and_start * 2.0)
-                .max((vault_pyramids_and_start - 0.35) * 2.0),
+        let moats = min2(
+            ARTIFICIAL_CAP,
+            1.5 * max2(
+                -0.05 - vault_pyramids_and_start * 2.0,
+                (vault_pyramids_and_start - 0.35) * 2.0,
+            ),
         );
 
-        let mix_pyramids = ARTIFICIAL_CAP.min((sprawl_pyramids - 0.185) * 4.0);
-        let mix_natural = natural.max(mix_pyramids);
+        let mix_pyramids = min2(ARTIFICIAL_CAP, (sprawl_pyramids - 0.185) * 4.0);
+        let mix_natural = max2(natural, mix_pyramids);
         let mix_moats = lerp(
             mix_natural,
             moats,
-            cells.vaults_and_starting_vault.max(shared.starting_mask),
+            max2(cells.vaults_and_starting_vault, shared.starting_mask),
         );
 
         // "normal spot inverse is roughly 0.5 to 1, but the lower bound can be a
@@ -202,7 +208,8 @@ impl FulgoraElevation {
         // turns that narrow band into a plateau with near-vertical sides before
         // the cap flattens its top. The two starting terms carry a +0.5 bump so
         // spawn blends in.
-        let vault_spots = ARTIFICIAL_CAP.min(
+        let vault_spots = min2(
+            ARTIFICIAL_CAP,
             -10.0
                 + 11.5
                     * crate::eval::math::max(&[
@@ -212,7 +219,7 @@ impl FulgoraElevation {
                     ]),
         );
 
-        let mix_spots = mix_moats.max(vault_spots) + (shared.starting_cone - 0.8).max(0.0);
+        let mix_spots = max2(mix_moats, vault_spots) + max2(0.0, shared.starting_cone - 0.8);
 
         // Comparisons yield 1 or 0, matching the engine's convention.
         let oil_mask = f64::from(u8::from(mix_spots < 0.0));
@@ -223,7 +230,7 @@ impl FulgoraElevation {
         // was chosen by.
         let mix_oil = lerp(
             mix_spots,
-            (-0.01f64).min(mix_spots - 0.4 + 0.6 * basis_oil),
+            min2(-0.01, mix_spots - 0.4 + 0.6 * basis_oil),
             oil_mask,
         );
 
@@ -232,7 +239,7 @@ impl FulgoraElevation {
         // inland sand areas negative, and why the tile layer needs `oil_mask`
         // rather than a plain "elevation < coastline" test to decide where
         // liquid goes.
-        let sand_basins = mix_oil.min(0.6 - mix_oil);
+        let sand_basins = min2(mix_oil, 0.6 - mix_oil);
 
         let pre_elevation = sand_basins * 60.0 + COASTLINE;
 

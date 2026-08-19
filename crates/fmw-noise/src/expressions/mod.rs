@@ -8,6 +8,11 @@
 
 pub mod fulgora_cells;
 pub mod fulgora_elevation;
+pub mod fulgora_masks;
+pub mod fulgora_roads;
+pub mod fulgora_ruins;
+pub mod fulgora_scrap;
 pub mod fulgora_shared;
+pub mod fulgora_stack;
 pub mod starting_spot_at_angle;
 pub mod vulcanus_seed;

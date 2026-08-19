@@ -118,6 +118,32 @@ pub fn max(xs: &[f64]) -> f64 {
     acc
 }
 
+/// Two-argument `Math.min`, the form almost every ported expression uses.
+///
+/// **NOT `f64::min`.** The two differ in two ways that a raw-bits comparison
+/// can see and a tolerance cannot:
+///
+/// - NaN. `f64::min` returns the non-NaN operand; `Math.min` propagates.
+/// - **Signed zero.** `Math.min(+0, -0)` is `-0`, and `f64::min` follows IEEE
+///   754-2019 `minimumNumber`, whose result for two operands that compare equal
+///   is explicitly *either input, non-deterministically*.
+///
+/// That second one is not theoretical. It was measured on 2026-08-19: Fulgora's
+/// `tile_ruin_paving` folded to a different checksum than the TypeScript in
+/// tier 2, because both of its `max` arms were zero with different signs. Every
+/// `min`/`max` in the ported expressions goes through these, and the ARGUMENT
+/// ORDER is kept as the TypeScript writes it for the same reason.
+#[must_use]
+pub fn min2(a: f64, b: f64) -> f64 {
+    min(&[a, b])
+}
+
+/// Two-argument `Math.max`. See [`min2`] - `Math.max(-0, +0)` is `+0`.
+#[must_use]
+pub fn max2(a: f64, b: f64) -> f64 {
+    max(&[a, b])
+}
+
 /// Base-2 log (the DSL's `log2`).
 ///
 /// Exact math, not `fast_approx::fast_log2`. The noise machine's own `log2` IS
@@ -265,6 +291,22 @@ mod tests {
         // The control: `f64::min` is the thing being avoided, and it really
         // does return the other operand.
         assert_eq!(1.0f64.min(f64::NAN), 1.0);
+    }
+
+    /// The two-argument helpers inherit the slice versions' semantics, which is
+    /// the point of routing every ported expression through them.
+    #[test]
+    fn the_two_argument_helpers_are_not_f64_min_and_f64_max() {
+        assert!(min2(0.0, -0.0).is_sign_negative());
+        assert!(min2(-0.0, 0.0).is_sign_negative());
+        assert!(max2(0.0, -0.0).is_sign_positive());
+        assert!(max2(-0.0, 0.0).is_sign_positive());
+        assert!(min2(1.0, f64::NAN).is_nan());
+        assert!(max2(1.0, f64::NAN).is_nan());
+        // The control: `f64::min`/`f64::max` do neither, which is why this
+        // module exists.
+        assert_eq!(1.0f64.min(f64::NAN), 1.0);
+        assert_eq!(1.0f64.max(f64::NAN), 1.0);
     }
 
     #[test]
