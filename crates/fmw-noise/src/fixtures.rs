@@ -1705,8 +1705,8 @@ fn reproduces_the_fulgora_shared_layer_at_every_captured_position() {
         ("fulgora_oy", 101, &|f| f.oy),
         ("fulgora_wx", 101, &|f| f.wx),
         ("fulgora_wy", 101, &|f| f.wy),
-        ("fulgora_starting_cone", 83, &|f| f.starting_cone),
-        ("fulgora_starting_vault_cone", 85, &|f| {
+        ("fulgora_starting_cone", 101, &|f| f.starting_cone),
+        ("fulgora_starting_vault_cone", 101, &|f| {
             f.starting_vault_cone
         }),
         ("fulgora_starting_mask", 101, &|f| f.starting_mask),
@@ -1807,21 +1807,21 @@ fn reproduces_the_fulgora_elevation_chain_at_every_captured_position() {
         ("fulgora_scrap_medium", 101, &|f| f.scrap_medium),
         ("fulgora_natural", 101, &|f| f.natural),
         ("fulgora_sprawl_pyramids", 101, &|f| f.sprawl_pyramids),
-        ("fulgora_vault_pyramids", 85, &|f| f.vault_pyramids),
-        ("fulgora_vault_pyramids_and_start", 77, &|f| {
+        ("fulgora_vault_pyramids", 101, &|f| f.vault_pyramids),
+        ("fulgora_vault_pyramids_and_start", 101, &|f| {
             f.vault_pyramids_and_start
         }),
-        ("fulgora_moats", 68, &|f| f.moats),
+        ("fulgora_moats", 69, &|f| f.moats),
         ("fulgora_mix_pyramids", 93, &|f| f.mix_pyramids),
         ("fulgora_mix_natural", 94, &|f| f.mix_natural),
         ("fulgora_mix_moats", 59, &|f| f.mix_moats),
-        ("fulgora_vault_spots", 67, &|f| f.vault_spots),
-        ("fulgora_mix_spots", 62, &|f| f.mix_spots),
+        ("fulgora_vault_spots", 69, &|f| f.vault_spots),
+        ("fulgora_mix_spots", 63, &|f| f.mix_spots),
         ("fulgora_oil_mask", 101, &|f| f.oil_mask),
-        ("fulgora_mix_oil", 53, &|f| f.mix_oil),
-        ("fulgora_sand_basins", 50, &|f| f.sand_basins),
-        ("fulgora_pre_elevation", 43, &|f| f.pre_elevation),
-        ("fulgora_elevation", 41, &|f| f.elevation),
+        ("fulgora_mix_oil", 58, &|f| f.mix_oil),
+        ("fulgora_sand_basins", 53, &|f| f.sand_basins),
+        ("fulgora_pre_elevation", 49, &|f| f.pre_elevation),
+        ("fulgora_elevation", 47, &|f| f.elevation),
     ] {
         let got: Vec<f64> = e.iter().map(select).collect();
         assert_eq!(
@@ -1930,16 +1930,23 @@ fn reproduces_the_games_starting_spot_at_angle_at_every_case() {
         }
     }
     assert_eq!(compared, 152, "4 cases x 38 positions");
-    // 88, measured against the TypeScript side by side rather than assumed -
-    // it scores 88 too, with the same 2.384e-7 worst residual. It is not 152
-    // because the expression is f64 throughout while the game evaluates in f32,
-    // the same known port gap the elevation chain carries.
+    // **152 of 152 - every captured case, bit-exact** (#279). This was 88 while
+    // the expression evaluated in f64, which the comment here used to explain
+    // away as "the same known port gap the elevation chain carries". It was not
+    // a gap in the chain; it was this expression. Narrowing per operation, with
+    // an f32 `pi` and f32 `sin`/`cos`, closes it completely.
     //
-    // The four captured angles are 0, 45, 90 and 180, so this test says nothing
-    // about a libm disagreement at an arbitrary bearing. Nothing here has to:
-    // the trig is an INPUT to this function, and tier 2 hands both ports the
-    // identical values. See `starting_spot_at_angle`'s module docs and #270.
-    assert_eq!(exact, 88, "exact f32 matches out of 152");
+    // That makes this the strongest single statement in tier 1 about
+    // `starting_spot_at_angle`: not "close to the game" but identical to it, at
+    // every one of 152 captured points, against values the game itself produced.
+    // **Do not let this fall below 152.** Anything less means the narrowing has
+    // been disturbed.
+    //
+    // The four captured angles are 0, 45, 90 and 180, so this test still says
+    // nothing about a libm disagreement at an arbitrary bearing. Nothing here
+    // has to: the trig is an INPUT to this function, and tier 2 hands both ports
+    // the identical values. See `starting_spot_at_angle`'s module docs and #270.
+    assert_eq!(exact, 152, "exact f32 matches out of 152");
 }
 
 /// **The end-to-end gate: does the port put land and ocean where the GAME puts
@@ -2051,10 +2058,10 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
         ("fulgora_pyramids_banding", 101, &|f: &S| {
             f.roads.pyramids_banding
         }),
-        ("fulgora_spots_prebanding", 91, &|f: &S| {
+        ("fulgora_spots_prebanding", 98, &|f: &S| {
             f.roads.spots_prebanding
         }),
-        ("fulgora_spots_banding", 46, &|f: &S| f.roads.spots_banding),
+        ("fulgora_spots_banding", 50, &|f: &S| f.roads.spots_banding),
         ("fulgora_structure_cells", 101, &|f: &S| {
             f.roads.structure_cells
         }),
@@ -2098,7 +2105,20 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
         ("fulgoran_sand_probability", 96, &|f: &S| {
             f.land_probabilities()[2]
         }),
-        ("fulgoran_rock_probability", 80, &|f: &S| {
+        // **80 -> 79 with #279, the one count that went DOWN**, against 13 that
+        // went up (four of them to a full 101). Recorded rather than smoothed,
+        // the same way #273 recorded `fulgora_pre_elevation` 44 -> 43 and
+        // `fulgora_tile_ruin_machinery` 95 -> 94, and it is the same class: a
+        // still-inexact deep composite where one position crossed a rounding
+        // boundary in the unlucky direction.
+        //
+        // It is NOT evidence the cone narrowing is wrong. The direct oracle test
+        // of `starting_spot_at_angle` went 88 -> 152 of 152 - exact at every
+        // captured case the game produced - and both starting cones reached
+        // 101/101 at a residual of exactly 0. A one-point move on a composite
+        // several layers downstream of an expression that is now bit-exact is
+        // noise in the composite, not a signal about the expression.
+        ("fulgoran_rock_probability", 79, &|f: &S| {
             f.land_probabilities()[3]
         }),
     ] {

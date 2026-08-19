@@ -196,18 +196,18 @@ impl FulgoraShared {
             // strength.
             starting_wide: StartingSpot {
                 trig: starting_trig,
-                distance: grid / 30.0,
-                radius: grid / 1.8,
+                distance: f64::from((grid / 30.0) as f32),
+                radius: f64::from((grid / 1.8) as f32),
             },
             starting_tight: StartingSpot {
                 trig: starting_trig,
                 distance: 1.0,
-                radius: grid / 4.0,
+                radius: f64::from((grid / 4.0) as f32),
             },
             starting_vault: StartingSpot {
                 trig: vault_trig,
-                distance: grid / 1.8,
-                radius: grid / 1.8,
+                distance: f64::from((grid / 1.8) as f32),
+                radius: f64::from((grid / 1.8) as f32),
             },
         }
     }
@@ -218,11 +218,13 @@ impl FulgoraShared {
     /// bearing is `seed0 / 360` degrees, and the vault sits opposite it.
     #[must_use]
     pub fn with_host_trig(ctx: &FulgoraCtx) -> Self {
-        let angle = f64::from(ctx.seed0) / 360.0;
+        // f32 at both points, mirroring `const angle = f32(seed0 / 360)` and
+        // `angle: f32(angle + 180)` in `fulgoraShared.ts` (#279).
+        let angle = f64::from((f64::from(ctx.seed0) / 360.0) as f32);
         Self::new(
             ctx,
             AngleTrig::from_degrees(angle),
-            AngleTrig::from_degrees(angle + 180.0),
+            AngleTrig::from_degrees(f64::from((angle + 180.0) as f32)),
         )
     }
 

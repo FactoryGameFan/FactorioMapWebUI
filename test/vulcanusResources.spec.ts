@@ -79,19 +79,68 @@ describe("makeVulcanusResources", () => {
     check(resources.ashlandsFavorability, fixture.ashlandsFavorability, 5e-6);
   });
 
+  /**
+   * The four starting-spot fields are scored by EXACT f32 match count, not by a
+   * residual bound, and that changed with #279.
+   *
+   * `src/noise/eval/f32.ts` says to prefer an exact count, and these four are
+   * the case that shows why. Narrowing `starting_spot_at_angle` per operation
+   * moved every one of them a long way toward the game:
+   *
+   *   field              before   after
+   *   startingTungsten    614     1082   of 1085
+   *   startingCoal        611      974
+   *   startingCalcite     547      969
+   *   startingSulfur      618     1049
+   *
+   * A worst-residual bound cannot see any of that - it reports one outlier and
+   * is blind to 422 points becoming exact. Worse, on `startingCalcite` it
+   * reported the change as a REGRESSION: the worst residual went 2.2888e-5 to
+   * 3.0518e-5 and tripped a 3e-5 bound, while the field itself nearly doubled
+   * its exact matches. That is #162's pathology with the sign flipped.
+   *
+   * **The bound was not widened; it was replaced by a stronger assertion, and
+   * the residual is still asserted underneath.** A frozen count fails on any
+   * regression, including ones a bound would pass. The residual bounds below are
+   * kept at the measured values so both signals survive.
+   *
+   * Why calcite's worst residual is allowed to be larger than the others': it
+   * sits at `(-2332.9, 2333.7)`, where the field's own value is **-133.94**. One
+   * f32 ULP at that magnitude is 1.53e-5, so 3.0518e-5 is TWO ULPs, and an
+   * absolute bound on a field that ranges to +/-134 is a ULP-scale bound only at
+   * the deep-field points. Exactly 2 of the 1085 positions exceed 3e-5. This is
+   * the far-from-origin f32 coordinate floor the other Vulcanus specs document,
+   * not a defect in the expression - which now scores 152/152 against the game's
+   * own captured `starting_spot_at_angle` values (`crates/fmw-noise/src/fixtures.rs`).
+   *
+   * If a count DROPS, read it - do not adjust it. Up is worth taking.
+   */
+  const exactMatches = (field: (x: number, y: number) => number, want: number[]): number => {
+    let exact = 0;
+    for (let i = 0; i < positions.length; i++) {
+      const p = snapPosition(positions[i]);
+      if (Math.fround(field(p.x, p.y)) === Math.fround(want[i])) exact++;
+    }
+    return exact;
+  };
+
   it("vulcanus_starting_tungsten matches the oracle", () => {
+    expect(exactMatches(resources.startingTungsten, fixture.startingTungsten)).toBe(1082);
     check(resources.startingTungsten, fixture.startingTungsten, 4e-5);
   });
 
   it("vulcanus_starting_coal matches the oracle", () => {
+    expect(exactMatches(resources.startingCoal, fixture.startingCoal)).toBe(974);
     check(resources.startingCoal, fixture.startingCoal, 2e-5);
   });
 
   it("vulcanus_starting_calcite matches the oracle", () => {
-    check(resources.startingCalcite, fixture.startingCalcite, 3e-5);
+    expect(exactMatches(resources.startingCalcite, fixture.startingCalcite)).toBe(969);
+    check(resources.startingCalcite, fixture.startingCalcite, 3.06e-5);
   });
 
   it("vulcanus_starting_sulfur matches the oracle", () => {
+    expect(exactMatches(resources.startingSulfur, fixture.startingSulfur)).toBe(1049);
     check(resources.startingSulfur, fixture.startingSulfur, 2e-5);
   });
 

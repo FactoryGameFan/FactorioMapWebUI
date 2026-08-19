@@ -43,6 +43,7 @@
  * unlike ashlands (170*r) and mountains (250*r) - easy to get wrong, transcribed
  * verbatim from the source above.
  */
+import { f32 } from "../eval/f32";
 import { distanceFromNearestPoint } from "../distanceFromNearestPoint";
 import type { EvalCtx } from "../eval/ctx";
 import { clamp, max } from "../eval/math";
@@ -79,9 +80,9 @@ export function makeVulcanusSpawn(ctx: EvalCtx, helpers: VulcanusHelpers): Vulca
   const r = VULCANUS_STARTING_AREA_RADIUS;
 
   const startingDirection = -1 + 2 * (ctx.mapSeedSmall & 1);
-  const ashlandsAngle = ctx.mapSeedNormalized * 3600;
-  const mountainsAngle = ashlandsAngle + 120 * startingDirection;
-  const basaltsAngle = ashlandsAngle + 240 * startingDirection;
+  const ashlandsAngle = f32(ctx.mapSeedNormalized * 3600);
+  const mountainsAngle = f32(ashlandsAngle + f32(120 * startingDirection));
+  const basaltsAngle = f32(ashlandsAngle + f32(240 * startingDirection));
 
   // Shared distortion inputs (same three wobble closures feed every *_start).
   const wobbleXSum = memoXY(
@@ -98,8 +99,8 @@ export function makeVulcanusSpawn(ctx: EvalCtx, helpers: VulcanusHelpers): Vulca
       4 *
       startingSpotAtAngle({
         angle: ashlandsAngle,
-        distance: 170 * r,
-        radius: 350 * r,
+        distance: f32(170 * r),
+        radius: f32(350 * r),
         xDistortion: 0.1 * r * wobbleXSum(x, y),
         yDistortion: 0.1 * r * wobbleYSum(x, y),
         xFromStart: x,
@@ -114,7 +115,7 @@ export function makeVulcanusSpawn(ctx: EvalCtx, helpers: VulcanusHelpers): Vulca
         angle: basaltsAngle,
         // Bare 250, NOT 250*r - transcribed verbatim (see file-level doc comment).
         distance: 250,
-        radius: 550 * r,
+        radius: f32(550 * r),
         xDistortion: 0.1 * r * wobbleXSum(x, y),
         yDistortion: 0.1 * r * wobbleYSum(x, y),
         xFromStart: x,
@@ -127,8 +128,8 @@ export function makeVulcanusSpawn(ctx: EvalCtx, helpers: VulcanusHelpers): Vulca
       2 *
       startingSpotAtAngle({
         angle: mountainsAngle,
-        distance: 250 * r,
-        radius: 500 * r,
+        distance: f32(250 * r),
+        radius: f32(500 * r),
         xDistortion: 0.05 * r * wobbleXSum(x, y),
         yDistortion: 0.05 * r * wobbleYSum(x, y),
         xFromStart: x,
