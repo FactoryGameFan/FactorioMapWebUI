@@ -915,7 +915,9 @@ compares the commit against local `HEAD`: 0 = live is your HEAD, 1 = it is not
 constant across deploys, unlike the hashed bundles, so without that the edge
 would happily answer with the previous deploy's stamp - an authoritative-looking
 wrong answer. The rule sets no CSP, so the `/*` policy still applies unchanged;
-`script-src` must never regain `'unsafe-eval'` and the spec asserts it hasn't.
+`script-src` must never regain `'unsafe-eval'` and the spec asserts it hasn't -
+by whole TOKEN now, not by substring, because `'wasm-unsafe-eval'` contains the
+string `unsafe-eval` (see below).
 
 Preview-service stack (optional feature, needs Docker): **`pnpm localpreview`**
 (memorable alias for `pnpm preview:dev`) runs the Worker (`:8787`) + app
@@ -982,6 +984,22 @@ Consequences that constrain any change here:
   that shipped three `eval` sites and needed a local `patches/zlib-asm.patch`
   to strip them. That dependency, its patch, and both of its `vite.config.ts`
   build-warning suppressions are gone.
+
+  **It DOES carry `'wasm-unsafe-eval'` as of #222, and that is a different
+  token.** It permits WebAssembly compilation and instantiation and nothing
+  else - no `eval`, no `new Function`, no inline script - and the Rust noise
+  engine cannot start without it: `WebAssembly.compile` throws a CSP error.
+
+  The two names are the trap. The guard in `test/buildStamp.spec.ts` used to
+  assert the policy did not CONTAIN the substring `unsafe-eval`, and
+  `'wasm-unsafe-eval'` contains it, so that guard would have gone red on the
+  correct policy. It now splits `script-src` on whitespace and compares whole
+  tokens, asserting both directions: no `'unsafe-eval'`, and `'wasm-unsafe-eval'`
+  present. **The second half is not symmetry** - dropping the narrow token does
+  not loosen the policy, it breaks the app in production, and that failure
+  arrives looking like "the preview stopped working" rather than like a CSP
+  change. Both halves were proven by planting them and watching each go red.
+
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
   known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`), never a range - the
   schemas here are empirical, so accepting an unseen format would decode a
