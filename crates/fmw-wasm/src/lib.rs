@@ -10,6 +10,9 @@
 //! path was proven - compile the module, instantiate it, write into linear
 //! memory, read a result back - before any noise math depended on it.
 
+pub mod abi;
+pub mod render;
+
 use fmw_noise::{
     basis_noise, checksum, multioctave_noise, quick_multioctave_noise,
     variable_persistence_multioctave_noise,
@@ -914,4 +917,69 @@ pub extern "C" fn checksum_fulgora(
 #[unsafe(no_mangle)]
 pub extern "C" fn fulgora_field_count() -> u32 {
     FIELD_COUNT
+}
+
+// ---------------------------------------------------------------------------
+// The render boundary (#223). See `abi.rs` for the request layout and
+// `render.rs` for what it does.
+// ---------------------------------------------------------------------------
+
+/// The render output buffer.
+///
+/// 1024x1024 RGBA, which is the largest window the app or the benchmark asks
+/// for. Static rather than allocated: the module's lifecycle is "instantiate
+/// once per worker, fill a buffer per call", so an allocator would exist only
+/// to hand back memory nothing ever frees.
+///
+/// **It costs nothing in the committed file.** A zero-initialised static lives
+/// in WebAssembly's memory section, not its data section, so this is 4 MB of
+/// declared linear memory and 0 bytes of `engine.wasm`.
+const RENDER_BYTES: usize = 1024 * 1024 * 4;
+static mut RENDER: [u8; RENDER_BYTES] = [0; RENDER_BYTES];
+
+/// Offset of the render output buffer in linear memory.
+#[unsafe(no_mangle)]
+pub extern "C" fn render_ptr() -> u32 {
+    core::ptr::addr_of!(RENDER) as u32
+}
+
+/// Capacity of the render output buffer, in bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn render_len() -> u32 {
+    RENDER_BYTES as u32
+}
+
+/// Size of the fixed request header, so the TypeScript writer cannot drift from
+/// it.
+#[unsafe(no_mangle)]
+pub extern "C" fn request_bytes() -> u32 {
+    abi::REQUEST_BYTES as u32
+}
+
+/// The ABI version this module speaks.
+#[unsafe(no_mangle)]
+pub extern "C" fn abi_version() -> u32 {
+    abi::ABI_VERSION
+}
+
+/// Render the request sitting in the first `len` bytes of the scratch region
+/// into the render buffer.
+///
+/// Returns a status code; **it does not trap**. A trap would poison the
+/// instance for every later request in that worker, and the errors here are all
+/// things a caller can cause - see spec section 6.5. `panic = "abort"` stays on
+/// for genuine bugs.
+///
+/// 0 is success. The rest are [`abi::Status`]: 1 short buffer, 2 bad magic,
+/// 3 bad version, 4 unsupported planet or view, 5 output too large,
+/// 6 reserved word not zero.
+#[unsafe(no_mangle)]
+pub extern "C" fn render_request(len: u32) -> u32 {
+    let request = unsafe {
+        core::slice::from_raw_parts(core::ptr::addr_of!(SCRATCH).cast::<u8>(), len as usize)
+    };
+    let out = unsafe {
+        core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(RENDER).cast::<u8>(), RENDER_BYTES)
+    };
+    render::render(request, out) as u32
 }

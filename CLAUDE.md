@@ -1189,16 +1189,53 @@ shipped in phase 1 with **no tier-1 test and no poison hook** of its own.
 `eval/f32.ts` has no Rust counterpart on purpose - the narrowing is the type -
 and `eval/mod.rs` carries the two-case rule in its place.
 
-**Phase 3's EXPRESSION half is complete; the ABI and the execute seam are
+**Phase 3's EXPRESSION half and its BOUNDARY are complete; the cutover is
 not** (#223). Landed: `expressions/fulgora_shared`, `fulgora_cells`,
 `fulgora_elevation`, `starting_spot_at_angle`, and `tiles/` with `water_base`,
 `best_probability` and the ocean test the land mask is built on. Tier 1 grades
 all 41 named fields against `oracle-fulgora-{shared,cells,elevation}` plus
 `oracle-starting-spot`, and the whole chain end to end against
 `oracle-fulgora-tiles` - 5,057 tiles the game actually placed. Tier 2 folds all
-42 fields at two slider settings. Still to do in #223: the request encoding, the
-module/instance lifetime, `catalog_names`, tier-3 whole-image parity, and the
-in-browser measurement. The CSP change (#222) has landed.
+42 fields at two slider settings. The CSP change (#222) has landed.
+
+Part 2 added the boundary: `crates/fmw-wasm/src/abi.rs` (a 104-byte fixed
+request header, little-endian, with a magic word, a version word and a reserved
+word that is asserted zero), `render.rs`, and `src/noise/wasm/{request,engine}.ts`.
+**Tier 3 is byte-identical RGBA** against `renderFulgoraLandMask` across four
+windows that vary width, height, origin, tiles-per-pixel and both sliders
+independently. `test/fixtures/wasm-request.v1.json` pins the encoding; it is
+declared under `notFixtures` because it is our own ABI rather than Factorio
+ground truth, and its bytes were checked by an independent Python decode rather
+than by re-running the writer under test.
+
+Errors return a **status code and do not trap**, because a trap would poison the
+instance for every later request in that worker; a spec sends a bad magic and
+then renders successfully through the same instance.
+
+Still to do in #223: the cutover itself - `elevationRenderRequest` dispatching
+`view: "landmask"` on Fulgora to the module, the worker plumbing that compiles
+once on the main thread and instantiates per worker, `findIslands.spec.ts`
+passing against it, and the in-browser measurement.
+
+**`multioctave_noise(x, y, &params)` REBUILDS its seed tables on every call, and
+that cost 20x before it was measured.** `tables_from_seed` runs a PRNG over
+three 256-byte permutation tables, and `octave_terms` re-derives the octave
+list; Fulgora's chain makes eight such calls per pixel. Hoisting them into a
+`Prepared` built once per render - which is exactly what the TypeScript's
+`makeMultioctaveNoise` closure has always done - moved a 256x256 landmask render
+from **1152.2ms to 50.7ms**, so the port went from **1.15x to 22.71x** against
+the TypeScript. Method: warmed, interleaved arms, min of 9, one process; a
+single shot right after a build measures the machine (see the E-core note in
+#215). Nothing in tiers 1-3 could see this, because the results are identical
+either way - only a benchmark can. The wrapper now carries the warning in its
+own docs.
+
+Read 22.71x beside the spike's 7.5-13.2x rather than instead of it: the spike
+measured the leaf kernel and one composition, this is a whole composed render
+where the TypeScript also pays `memoXY` closure overhead per field per pixel.
+And **it is a Node measurement, not a browser one** - the browser number the
+issue asks for belongs with the cutover, since nothing in the app calls the
+module yet.
 
 **No memo in the Rust chain, and that is not a shortcut.** The TypeScript wraps
 every field in `memoXY` because it builds a DAG of lazy closures; the Rust

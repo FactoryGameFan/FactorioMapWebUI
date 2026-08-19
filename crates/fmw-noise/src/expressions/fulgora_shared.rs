@@ -22,9 +22,10 @@
 //! evaluated, checked field by field, which is what makes the substitution
 //! legitimate; a field that read a neighbour would need the cache back.
 
+use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::eval::math::{clamp, slider_to_linear};
 use crate::expressions::starting_spot_at_angle::{starting_spot_at_angle, AngleTrig, StartingSpot};
-use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
+use crate::multioctave_noise::{octave_terms, sum_octaves, MultioctaveParams, OctaveTerms};
 use crate::poison;
 
 /// `seed1` for `fulgora_wobble_x`: `crc32(utf8("fulgora_wobble_x"))`.
@@ -83,8 +84,41 @@ pub struct SharedFields {
     pub starting_vault_mask: f64,
 }
 
+/// One multioctave call with its seed tables and octave terms already derived.
+///
+/// **This is the shape every renderer needs, and its absence was a measured
+/// bug.** `multioctave_noise(x, y, &params)` re-derives both on every call, and
+/// `tables_from_seed` runs a PRNG over three 256-byte tables; Fulgora's chain
+/// makes eight such calls per pixel. Building them per point measured **1.15x**
+/// against the TypeScript, which builds them once in a closure. Hoisting is
+/// what the ratio in phase 3's pull request is.
+///
+/// Results are identical either way, so nothing in tiers 1 to 3 could see it.
+///
+/// No `Debug` or `Clone`: `OctaveTerms` has neither, and deriving them here
+/// would mean giving them to derived state whose shape is an implementation
+/// detail.
+pub struct Prepared {
+    terms: OctaveTerms,
+    tables: BasisNoiseTables,
+}
+
+impl Prepared {
+    #[must_use]
+    pub fn new(params: &MultioctaveParams) -> Self {
+        Self {
+            terms: octave_terms(params),
+            tables: tables_from_seed(params.seed0, params.seed1),
+        }
+    }
+
+    #[must_use]
+    pub fn eval(&self, x: f64, y: f64) -> f32 {
+        sum_octaves(x, y, &self.terms, &self.tables)
+    }
+}
+
 /// The per-render constants of Fulgora's shared layer.
-#[derive(Debug, Clone)]
 pub struct FulgoraShared {
     /// `fulgora_grid` - the Voronoi cell size in tiles.
     ///
@@ -95,9 +129,9 @@ pub struct FulgoraShared {
     /// denominator of every input scale below, so an un-narrowed grid would
     /// push a small error into every noise field at once.
     pub grid: f64,
-    wobble_influence: MultioctaveParams,
-    wobble_x: MultioctaveParams,
-    wobble_y: MultioctaveParams,
+    wobble_influence: Prepared,
+    wobble_x: Prepared,
+    wobble_y: Prepared,
     /// The wide disc of `fulgora_starting_cone`.
     starting_wide: StartingSpot,
     /// The tight disc of `fulgora_starting_cone`, whose distortion is damped.
@@ -153,9 +187,9 @@ impl FulgoraShared {
 
         Self {
             grid,
-            wobble_influence,
-            wobble_x: wobble_common(SEED1_WOBBLE_X),
-            wobble_y: wobble_common(SEED1_WOBBLE_Y),
+            wobble_influence: Prepared::new(&wobble_influence),
+            wobble_x: Prepared::new(&wobble_common(SEED1_WOBBLE_X)),
+            wobble_y: Prepared::new(&wobble_common(SEED1_WOBBLE_Y)),
             // The wide disc is offset a little way out; the tight one sits at
             // distance 1 with its distortion damped to a quarter, which is what
             // keeps the very centre of spawn solid when the wobble runs at full
@@ -195,9 +229,9 @@ impl FulgoraShared {
     /// Evaluate every field of this layer at one position.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> SharedFields {
-        let wobble_influence = f64::from(multioctave_noise(x, y, &self.wobble_influence));
-        let wobble_x = f64::from(multioctave_noise(x, y, &self.wobble_x));
-        let wobble_y = f64::from(multioctave_noise(x, y, &self.wobble_y));
+        let wobble_influence = f64::from(self.wobble_influence.eval(x, y));
+        let wobble_x = f64::from(self.wobble_x.eval(x, y));
+        let wobble_y = f64::from(self.wobble_y.eval(x, y));
 
         // "We usually want a lot of wobble or none at all, so influence has a
         // high output scale and then we clamp it." The +0.6 biases most of the
