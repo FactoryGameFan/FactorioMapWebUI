@@ -1258,7 +1258,7 @@ compares against the images Factorio itself produced:
 | comparison                                              | result                                                              |
 | ------------------------------------------------------- | ------------------------------------------------------------------- |
 | WASM vs TypeScript, landmask AND terrain, four windows  | byte-identical                                                      |
-| WASM vs `oracle-preview-fulgora-terrain.png`, 1024x1024 | **34,976** differing pixels (3.34%) - the TypeScript's exact number |
+| WASM vs `oracle-preview-fulgora-terrain.png`, 1024x1024 | **34,977** differing pixels (3.34%) - the TypeScript's exact number |
 | WASM scrap footprint vs the scrap PNG                   | **1,825** game scrap pixels, **1** outside the footprint            |
 
 The terrain figure is an EXACT count rather than a bound, because the two
@@ -1388,12 +1388,58 @@ writes it**, for the same reason. Reach for `f64::min`/`f64::max` in ported
 arithmetic and the divergence is invisible to every tolerance and to tier 1; it
 takes an order-sensitive fold over raw bits to find.
 
-**The Fulgora tier-1 counts are NOT 101/101 and that is deliberate.** Each was
-measured against the TypeScript side by side and all 21 agree exactly - same
-count, same worst residual - so they describe the port's known distance from the
-game, which both implementations share. Freezing them is what makes a change to
-any of them a finding. If one moves: read the number, do not adjust it. Up is
-worth taking; down is a regression.
+**The Fulgora tier-1 counts are frozen exact numbers, and 13 of them reached
+101/101 when #273 landed.** Each was measured against the TypeScript side by side
+and they agree exactly - same count, same worst residual - so they describe the
+port's remaining distance from the game, which both implementations share.
+Freezing them is what makes a change to any of them a finding. If one moves: read
+the number, do not adjust it. Up is worth taking; down is a regression.
+
+**#273 is the worked example of how to move them, and its method is the
+transferable part.** Fulgora's chain held f64 literals where the game holds f32,
+plus intermediates rounded once at the end rather than per operation. Three
+things about how it was settled:
+
+- **Accept only a field that reaches a FULL exact count.** Every candidate was
+  applied to the real tree, scored against the oracle fixture, and reverted;
+  one was taken only when its own field hit 101/101 at a residual of exactly 0.
+  Twelve candidates that merely improved were **rejected and written up**, not
+  committed - `fulgoran_dunes_probability` 75 -> 98 and `fulgora_mix_oil`
+  48 -> 53 among them. "It got smaller" stays a hypothesis.
+- **Measure cumulatively, because the chain is a DAG.** Scored one at a time
+  against a fixed baseline, `natural` looks capped at 99/101 and the issue
+  predicted exactly that. It reaches **101/101** once `wobble_mask` is fixed,
+  because `natural` reads `basis` and `basis` was the second cause. A candidate
+  sweep that does not re-baseline after each accept will under-report.
+- **The same literal wants opposite fixes in different arities.** Typing the
+  three constants in `sprawl_pyramids` REGRESSES it 99 -> 97; narrowing every
+  operation takes it to 101/101. A one-term `a OP constant` recovers at the
+  comparison's own rounding and a three-term sum does not.
+
+**What #273 did NOT change is the tile argmax** - 4,915 of 5,057 before and
+after, same 7 land/ocean and 11 shallow/deep misses, so those really are
+boundary-exclusive. **And the whole-image terrain preview went 34,976 -> 34,977
+differing pixels of 1,048,576 - one pixel WORSE.** That is the honest number and
+it is worth stating plainly: this class of fix buys bit-exactness on named
+fields, not visible accuracy, because the image is dominated by the `mix_*`
+chain that #273 could not reach. A draft of this paragraph claimed a 25-pixel
+improvement, measured on a tree carrying three candidates that were later
+dropped for failing the accept rule. Re-measure on the tree you actually ship.
+
+**The whole TypeScript suite stayed GREEN through all of it, and that is the
+#162 pathology, not luck.** Every Fulgora assertion on that side is an upper
+bound on the worst residual, so improving a residual keeps it under the bound;
+89 of 89 Fulgora tests passed before and after. Only the Rust port's frozen
+exact counts could see the change, and they named every field that moved.
+
+**The remaining inexact fields are blocked on `starting_spot_at_angle`**, which
+evaluates in f64 and is SHARED with Vulcanus. Narrowing it takes both Fulgora
+starting cones to 101/101 - but only with all five of per-op narrowing, an f32
+`pi`, f32 `sin`/`cos`, f32 radius/distance and an f32 angle, and no subset does
+it. It also regresses `vulcanus_starting_calcite` past its bound, because
+Vulcanus's call sites were not narrowed to match and its `startingCalcite`
+radius reads the un-narrowed `sliderRescale` of #270. That is **#279**, and it
+belongs with #270 and #225, not with a Fulgora change.
 
 - **`src/noise/wasm/engine.wasm` is a COMMITTED artifact.**
   `scripts/build-wasm.sh` produces it; `verify:rust` rebuilds and compares bytes

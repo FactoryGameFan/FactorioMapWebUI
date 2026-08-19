@@ -1587,12 +1587,34 @@ fn reproduces_the_games_slider_rescale_at_all_seven_probe_points() {
 // symmetry is the reason it is honest to freeze them here: a change to any of
 // them is a change to the port, and the test names the field.
 //
-// #273 records the cause of the largest ones and the measurement that found it:
-// the chain's literals are f64 where the game holds them at f32. Typing two of
-// them takes `fulgora_dunes` from 26/101 to **101/101 with worst error exactly
-// 0** and `fulgora_rock` from 84/101 to 101/101. That fix is a behaviour change
-// to shipped terrain, so it is not made here - see the issue for why, and for
-// what has to be re-measured when it is.
+// **#273 has landed, and these counts are its result.** The chain's literals
+// were f64 where the game holds them at f32, and a further set of intermediates
+// were rounded once at the end rather than per operation. Eight fixes were
+// taken, each one accepted ONLY because its own field reached a full 101/101 at
+// a residual of exactly 0 - never because a count merely improved. Thirteen
+// fields went from inexact to bit-exact: `wobble_mask`, `wx`, `wy`, `basis`,
+// `basis_oil`, `rock`, `dunes`, `natural`, `sprawl_pyramids`, `pyramids`,
+// `pyramids_banding`, `ruins_walls` and `tile_ruin_walls`.
+//
+// **Two counts went DOWN by one and that is recorded rather than hidden**:
+// `fulgora_pre_elevation` 44 -> 43 and `fulgora_tile_ruin_machinery` 95 -> 94.
+// Both are deep composites that are still inexact, so their inputs moving
+// closer to the game reshuffles which individual positions happen to round the
+// same way. That is expected churn in an unconverged chain, not a regression in
+// any op - every field feeding them improved or held.
+//
+// **What did NOT move is the tile argmax**: 4,915 of 5,057 before and after,
+// with the same 7 land/ocean and 11 shallow/deep misses. Those are
+// boundary-exclusive and this was never their cause. The whole-image terrain
+// preview went 34,976 -> 34,977 differing pixels of 1,048,576 - one pixel
+// WORSE. This class of fix buys bit-exactness on named fields, not a better
+// picture; the image is dominated by the `mix_*` chain #273 could not reach.
+//
+// The remaining inexact fields are the `mix_*` chain and everything downstream
+// of the two starting cones. Their blocker is `starting_spot_at_angle`, which
+// evaluates in f64 and is shared with Vulcanus - narrowing it takes both cones
+// to 101/101 but regresses `vulcanus_starting_calcite`, so it is #279 and
+// belongs with #270 and #225.
 //
 // If you are here because one of these counts moved: read the number, do not
 // adjust it. Up is a finding worth taking; down is a regression.
@@ -1676,13 +1698,13 @@ fn reproduces_the_fulgora_shared_layer_at_every_captured_position() {
             101,
             &(|f: &S| f.wobble_influence) as &dyn Fn(&S) -> f64,
         ),
-        ("fulgora_wobble_mask", 96, &|f| f.wobble_mask),
+        ("fulgora_wobble_mask", 101, &|f| f.wobble_mask),
         ("fulgora_wobble_x", 101, &|f| f.wobble_x),
         ("fulgora_wobble_y", 101, &|f| f.wobble_y),
         ("fulgora_ox", 101, &|f| f.ox),
         ("fulgora_oy", 101, &|f| f.oy),
-        ("fulgora_wx", 100, &|f| f.wx),
-        ("fulgora_wy", 99, &|f| f.wy),
+        ("fulgora_wx", 101, &|f| f.wx),
+        ("fulgora_wy", 101, &|f| f.wy),
         ("fulgora_starting_cone", 83, &|f| f.starting_cone),
         ("fulgora_starting_vault_cone", 85, &|f| {
             f.starting_vault_cone
@@ -1733,7 +1755,7 @@ fn reproduces_the_fulgora_cell_classification_at_every_captured_position() {
             101,
             &(|f: &C| f.cells) as &dyn Fn(&C) -> f64,
         ),
-        ("fulgora_pyramids", 100, &|f| f.pyramids),
+        ("fulgora_pyramids", 101, &|f| f.pyramids),
         ("fulgora_spots", 101, &|f| f.spots),
         ("fulgora_spots_inv", 101, &|f| f.spots_inv),
         ("fulgora_blanks", 101, &|f| f.blanks),
@@ -1776,30 +1798,30 @@ fn reproduces_the_fulgora_elevation_chain_at_every_captured_position() {
     for (key, want_exact, select) in [
         (
             "fulgora_basis",
-            98,
+            101,
             &(|f: &E| f.basis) as &dyn Fn(&E) -> f64,
         ),
-        ("fulgora_basis_oil", 97, &|f| f.basis_oil),
-        ("fulgora_rock", 84, &|f| f.rock),
-        ("fulgora_dunes", 26, &|f| f.dunes),
+        ("fulgora_basis_oil", 101, &|f| f.basis_oil),
+        ("fulgora_rock", 101, &|f| f.rock),
+        ("fulgora_dunes", 101, &|f| f.dunes),
         ("fulgora_scrap_medium", 101, &|f| f.scrap_medium),
-        ("fulgora_natural", 51, &|f| f.natural),
-        ("fulgora_sprawl_pyramids", 99, &|f| f.sprawl_pyramids),
+        ("fulgora_natural", 101, &|f| f.natural),
+        ("fulgora_sprawl_pyramids", 101, &|f| f.sprawl_pyramids),
         ("fulgora_vault_pyramids", 85, &|f| f.vault_pyramids),
         ("fulgora_vault_pyramids_and_start", 77, &|f| {
             f.vault_pyramids_and_start
         }),
         ("fulgora_moats", 68, &|f| f.moats),
         ("fulgora_mix_pyramids", 93, &|f| f.mix_pyramids),
-        ("fulgora_mix_natural", 55, &|f| f.mix_natural),
-        ("fulgora_mix_moats", 39, &|f| f.mix_moats),
+        ("fulgora_mix_natural", 94, &|f| f.mix_natural),
+        ("fulgora_mix_moats", 59, &|f| f.mix_moats),
         ("fulgora_vault_spots", 67, &|f| f.vault_spots),
-        ("fulgora_mix_spots", 42, &|f| f.mix_spots),
+        ("fulgora_mix_spots", 62, &|f| f.mix_spots),
         ("fulgora_oil_mask", 101, &|f| f.oil_mask),
-        ("fulgora_mix_oil", 48, &|f| f.mix_oil),
-        ("fulgora_sand_basins", 45, &|f| f.sand_basins),
-        ("fulgora_pre_elevation", 44, &|f| f.pre_elevation),
-        ("fulgora_elevation", 39, &|f| f.elevation),
+        ("fulgora_mix_oil", 53, &|f| f.mix_oil),
+        ("fulgora_sand_basins", 50, &|f| f.sand_basins),
+        ("fulgora_pre_elevation", 43, &|f| f.pre_elevation),
+        ("fulgora_elevation", 41, &|f| f.elevation),
     ] {
         let got: Vec<f64> = e.iter().map(select).collect();
         assert_eq!(
@@ -1810,17 +1832,18 @@ fn reproduces_the_fulgora_elevation_chain_at_every_captured_position() {
     }
 }
 
-/// **The control for #273, and the reason `fulgora_dunes`' 26/101 is a finding
-/// rather than a floor.**
+/// **The regression guard for #273's `fulgora_dunes` fix, which has landed.**
 ///
 /// `fulgora_scrap_medium` is the same op family as `dunes` - same octaves, same
-/// persistence, different input scale - with NO added constant, and it scores
-/// 101/101. So the multioctave underneath `dunes` is already exact and the
-/// entire gap is the `0.66`.
+/// persistence, different input scale - with NO added constant, and it scored
+/// 101/101 throughout. So the multioctave underneath `dunes` was always exact
+/// and the entire gap was the `0.66`.
 ///
-/// This test plants the fix and asserts it reaches **exactly 0**, which is the
-/// standard `src/noise/eval/f32.ts` sets for confirming a mechanism. It is here
-/// rather than in the issue because a measurement nobody runs goes stale.
+/// This test holds BOTH forms side by side and asserts the typed one reaches
+/// **exactly 0**, the standard `src/noise/eval/f32.ts` sets for confirming a
+/// mechanism. It was written as a planted fix while #273 was open; now that the
+/// fix ships it is what stops anyone "simplifying" the literal back, and the
+/// 26 below is the cost of doing so rather than a description of the port.
 #[test]
 fn typing_the_dunes_constant_f32_reaches_exactly_zero_residual() {
     use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
@@ -1860,13 +1883,13 @@ fn typing_the_dunes_constant_f32_reaches_exactly_zero_residual() {
 
     assert_eq!(
         exact_f32_constant, 101,
-        "typing 0.66 as f32 should be exact"
+        "typing 0.66 as f32 should be exact - this is the form that ships"
     );
     assert_eq!(worst_f32_constant, 0.0, "and reach a residual of exactly 0");
     assert_eq!(
         exact_f64_constant, 26,
-        "the shipped f64 constant should still score 26 - if this moved, #273 \
-         was fixed and the elevation chain's counts above need re-measuring"
+        "an f64 `0.66` scores 26 - this is what reverting the #273 fix would \
+         cost, not what the port does"
     );
 }
 
@@ -2025,7 +2048,7 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
         ("fulgora_artificial_mask", 101, &|f: &S| f.masks.artificial),
         ("fulgora_road_cells", 101, &|f: &S| f.roads.road_cells),
         ("fulgora_road_pyramids", 101, &|f: &S| f.roads.road_pyramids),
-        ("fulgora_pyramids_banding", 100, &|f: &S| {
+        ("fulgora_pyramids_banding", 101, &|f: &S| {
             f.roads.pyramids_banding
         }),
         ("fulgora_spots_prebanding", 91, &|f: &S| {
@@ -2052,30 +2075,30 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
             f.roads.road_paving_2c
         }),
         ("fulgora_road_dust", 101, &|f: &S| f.roads.road_dust),
-        ("fulgora_ruins_walls", 19, &|f: &S| f.ruins.ruins_walls),
+        ("fulgora_ruins_walls", 101, &|f: &S| f.ruins.ruins_walls),
         ("fulgora_ruins_paving", 101, &|f: &S| f.ruins.ruins_paving),
         ("fulgora_tile_ruin_paving", 97, &|f: &S| {
             f.ruins.tile_ruin_paving
         }),
-        ("fulgora_tile_ruin_walls", 75, &|f: &S| {
+        ("fulgora_tile_ruin_walls", 101, &|f: &S| {
             f.ruins.tile_ruin_walls
         }),
-        ("fulgora_tile_ruin_conduit", 94, &|f: &S| {
+        ("fulgora_tile_ruin_conduit", 96, &|f: &S| {
             f.ruins.tile_ruin_conduit
         }),
-        ("fulgora_tile_ruin_machinery", 95, &|f: &S| {
+        ("fulgora_tile_ruin_machinery", 94, &|f: &S| {
             f.ruins.tile_ruin_machinery
         }),
-        ("fulgoran_dust_probability", 33, &|f: &S| {
+        ("fulgoran_dust_probability", 45, &|f: &S| {
             f.land_probabilities()[0]
         }),
-        ("fulgoran_dunes_probability", 75, &|f: &S| {
+        ("fulgoran_dunes_probability", 98, &|f: &S| {
             f.land_probabilities()[1]
         }),
-        ("fulgoran_sand_probability", 60, &|f: &S| {
+        ("fulgoran_sand_probability", 96, &|f: &S| {
             f.land_probabilities()[2]
         }),
-        ("fulgoran_rock_probability", 78, &|f: &S| {
+        ("fulgoran_rock_probability", 80, &|f: &S| {
             f.land_probabilities()[3]
         }),
     ] {
@@ -2089,13 +2112,12 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
 }
 
 /// `fulgora_ruins_walls` is the SAME `0.66 - abs(v)` shape as `fulgora_dunes`,
-/// and it scores 19/101 for the same reason - #273.
+/// and it scored 19/101 for the same reason before #273 typed the literal.
 ///
 /// Recorded as its own test rather than folded into the table above, because
-/// the point is not the count: it is that the count has a known cause and a
-/// known fix, and that a second field carrying the identical shape scores badly
-/// in the identical way. That is what makes #273 a pattern rather than one
-/// field's bad luck.
+/// the point is not the count: it is that a second field carrying the identical
+/// shape failed in the identical way. That is what turned #273 from three edits
+/// into a sweep of the whole chain.
 #[test]
 fn the_ruins_walls_constant_is_the_same_f32_case_as_dunes() {
     use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
@@ -2127,12 +2149,15 @@ fn the_ruins_walls_constant_is_the_same_f32_case_as_dunes() {
             with_f64 += 1;
         }
     }
-    assert_eq!(with_f32, 101, "typing 0.66 as f32 should be exact here too");
+    assert_eq!(
+        with_f32, 101,
+        "typing 0.66 as f32 should be exact here too - this is the form that ships"
+    );
     assert_eq!(worst_f32, 0.0, "and reach a residual of exactly 0");
     assert_eq!(
         with_f64, 19,
-        "the shipped f64 constant should still score 19 - if this moved, #273 \
-         was fixed and this file's counts need re-measuring"
+        "an f64 `0.66` scores 19 - this is what reverting the #273 fix would \
+         cost, not what the port does"
     );
 }
 

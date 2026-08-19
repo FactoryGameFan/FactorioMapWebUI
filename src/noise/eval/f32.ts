@@ -59,6 +59,42 @@
  * field's `basisNoise` floor, which is a known, separately documented limit
  * rather than an open question.
  *
+ * ## Which case applies depends on the ARITY, not just the constant
+ *
+ * The two cases above are about which TERM is wrong. #273 added a third thing
+ * to check, and it is about how many terms there are.
+ *
+ * `fulgora_rock` is `0.33 + abs(v)` and `fulgora_dunes` is `0.66 - abs(v)`.
+ * Both are pure case 2: type the literal and each goes 84/101 and 26/101 to
+ * **101/101** at a residual of exactly 0. Narrowing the operations as well buys
+ * nothing, because with one operation the comparison's own `Math.fround` is
+ * already rounding in the same place the engine does.
+ *
+ * `fulgora_sprawl_pyramids` reads `abs(0.9 - 0.2 * basisOil + 0.05 * rock)`.
+ * Typing those three constants and stopping there makes it **worse** - 99/101
+ * down to 97/101 - while narrowing every intermediate takes it to 101/101. With
+ * three terms there are two intermediate sums the engine rounds and the port
+ * did not, and typing the literals moves the inputs to those unrounded sums
+ * without fixing the sums.
+ *
+ * So: a one-operation expression usually needs only the constant. Anything with
+ * an intermediate result needs the constant AND the narrowing, and doing half of
+ * it can score worse than doing none. Measure both forms rather than assuming
+ * the fix that worked on the neighbouring field transfers.
+ *
+ * ## Measure cumulatively - an upstream fix can be a downstream field's cause
+ *
+ * #273 predicted `fulgora_natural` would stall at 99/101 with its `0.85` typed,
+ * and it was right about the measurement and wrong about the conclusion. Scored
+ * against a fixed baseline the field really does stop at 99. It reaches
+ * **101/101** once `fulgora_wobble_mask`'s `0.6` is typed, because `natural`
+ * reads `basis`, and `basis` was itself only 98/101 until then.
+ *
+ * A field that improves without reaching 0 is evidence of another term, and
+ * that term is often UPSTREAM rather than in the expression you are reading.
+ * Re-score the whole chain after each accepted fix; a one-at-a-time sweep
+ * against a frozen baseline under-reports what the fix is worth.
+ *
  * ## Do not widen a bound instead
  *
  * A bound in a spec is the measured worst residual for that one field, with

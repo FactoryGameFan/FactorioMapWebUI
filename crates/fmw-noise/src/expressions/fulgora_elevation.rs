@@ -160,22 +160,53 @@ impl FulgoraElevation {
         // The distortion here is 1.5x the wobble and does NOT go through
         // `wobble_mask` - so unlike `wx`/`wy`, the oil noise is displaced even
         // where the mask has turned the island distortion off.
-        let basis_oil = f64::from(
-            self.basis_oil
-                .eval(x + 1.5 * shared.wobble_x, y + 1.5 * shared.wobble_y),
-        );
+        // Case 1: the distortion multiply is its own f32 operation and the sum
+        // is narrowed before it reaches the primitive. `1.5` is exact at f32, so
+        // the constant is not the problem here. 97/101 -> **101/101**, residual
+        // exactly 0 (#273).
+        let basis_oil = f64::from(self.basis_oil.eval(
+            f64::from((x + f64::from((1.5 * shared.wobble_x) as f32)) as f32),
+            f64::from((y + f64::from((1.5 * shared.wobble_y) as f32)) as f32),
+        ));
 
-        let rock = 0.33 + f64::from(self.rock.eval(x, y)).abs();
-        let dunes = 0.66 - f64::from(self.dunes.eval(x, y)).abs();
+        // Case 2: the multioctave underneath each of these is already bit-exact,
+        // so the whole residual was the literal. Residual exactly 0 for both
+        // (#273):
+        //
+        // | field | f64 literal | f32 literal |
+        // | --- | --- | --- |
+        // | `fulgora_rock` | 84/101 | **101/101** |
+        // | `fulgora_dunes` | 26/101 | **101/101** |
+        //
+        // `scrap_medium` below is the control: same op family, same octaves and
+        // persistence, no added constant, 101/101 both before and after.
+        let rock = f64::from(0.33f32) + f64::from(self.rock.eval(x, y)).abs();
+        let dunes = f64::from(0.66f32) - f64::from(self.dunes.eval(x, y)).abs();
         let scrap_medium = f64::from(self.scrap_medium.eval(x, y));
 
-        let natural = basis * 2.0 * self.size_rescale - 0.85;
+        // 51/101 -> **101/101**, residual exactly 0. #273 predicted this would
+        // stall at 99/101; it does not, because that prediction was measured
+        // before `wobble_mask` was narrowed and `natural` reads `basis`, which
+        // was itself only 98/101 then. A field that improves without reaching 0
+        // usually has another term upstream rather than a floor.
+        let natural = basis * 2.0 * self.size_rescale - f64::from(0.85f32);
 
         // Mesas take the pyramid relief scaled by an oil/rock term; sprawl cells
         // take it whole; every other class takes none of it. `sprawl` and `mesa`
         // are mutually exclusive 0/1 flags, so the bracket is one or the other.
-        let sprawl_pyramids = cells.pyramids
-            * (cells.sprawl + cells.mesa * min2(1.0, (0.9 - 0.2 * basis_oil + 0.05 * rock).abs()));
+        // Both cases at once, and the ORDER of fixes matters: typing only the
+        // three constants REGRESSES this field 99 -> 97, while narrowing every
+        // operation takes it to **101/101** at a residual of exactly 0. Both
+        // were measured. A single `a OP constant` recovers at the comparison's
+        // own rounding; a three-term sum does not, so each intermediate has to
+        // round where the engine rounds (#273).
+        let mesa_term = f64::from(
+            (f64::from(
+                (f64::from(0.9f32) - f64::from((f64::from(0.2f32) * basis_oil) as f32)) as f32,
+            ) + f64::from((f64::from(0.05f32) * rock) as f32)) as f32,
+        );
+        let sprawl_pyramids =
+            cells.pyramids * (cells.sprawl + cells.mesa * min2(1.0, mesa_term.abs()));
 
         let vault_pyramids = max2(
             cells.vaults * cells.pyramids,

@@ -227,7 +227,9 @@ describe("preview agreement with the game", () => {
       if (!same(rgbAt(game.rgb, i), oursAt(ours, i))) differing++;
     }
     // Fulgora has no enemy bases, so unlike the Nauvis case there is nothing to
-    // exclude. Measured: 34,976 of 1,048,576 pixels differ (3.34%). V1/V2
+    // exclude. Measured: 34,977 of 1,048,576 pixels differ (3.34%), against
+    // 34,976 before #273 typed Fulgora's f32 constants - that fix moved 13
+    // fields to bit-exact and the image by one pixel. V1/V2
     // report 99.86% get_tile agreement and 94.5% on the land argmax from
     // sampled points, so a whole-image number in the low single-digit percent
     // is the expected shape, not a regression. The bound is set just above the

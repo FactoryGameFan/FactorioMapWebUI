@@ -78,7 +78,12 @@ impl FulgoraRuins {
         masks: &MaskFields,
         roads: &RoadFields,
     ) -> RuinFields {
-        let ruins_walls = 0.66 - f64::from(self.walls.eval(x, y)).abs();
+        // The same `0.66 - abs(v)` shape as `fulgora_dunes`, on a different
+        // seed, and it failed the same way: 19/101 with the f64 literal,
+        // **101/101** with it typed, residual exactly 0. Two fields with one
+        // shape failing identically is what turned #273 from three edits into a
+        // sweep of the whole chain.
+        let ruins_walls = f64::from(0.66f32) - f64::from(self.walls.eval(x, y)).abs();
         let ruins_paving = f64::from(self.paving.eval(x, y)).abs();
 
         let tile_ruin_paving = max2(
@@ -86,14 +91,41 @@ impl FulgoraRuins {
             masks.artificial * (4.0 * roads.road_paving_2c + ruins_paving - 1.0),
         );
 
-        let tile_ruin_walls = max2(
-            masks.natural_and_mesa * (2.0 * ruins_walls + ruins_paving - 0.5),
-            masks.artificial
-                * (0.25 * ruins_walls + 0.25 * roads.structure_subnoise
-                    - 4.0 * roads.structure_facets
-                    - roads.road_paving_2c
-                    + 2.5),
+        // Per-operation narrowing throughout, matching the engine's evaluation
+        // order: 88/101 -> **101/101**, residual exactly 0 (#273). Every literal
+        // here (0.5, 0.25, 4, 2, 2.5) is already exact at f32, so this is case 1
+        // only - the rounding of the intermediates, not of any constant.
+        //
+        // `max2` keeps the TypeScript's argument order, which is load-bearing:
+        // `f64::max` follows IEEE 754-2019 `maximumNumber` and may return either
+        // input when both compare equal, so a swapped pair can diverge on signed
+        // zero and no tolerance would show it.
+        //
+        // **Narrow at the TypeScript's narrowing points, not earlier.** A first
+        // draft bound `let rw = ruins_walls as f32` and reused it, which reads
+        // as tidier and is a different computation: the fields in this chain are
+        // held as f64 that have NOT been rounded to f32 (`ruins_walls` is an f64
+        // subtraction of two f32 values, which needs more than 24 bits), so
+        // rounding one before use discards bits the TypeScript still has. Tier 1
+        // scored 101/101 either way and only tier 2's fold over 676 grid points
+        // caught it - the two ports agreed at every fixture position and
+        // disagreed off them.
+        let a = f64::from((2.0 * ruins_walls) as f32);
+        let arm_natural = f64::from(
+            (masks.natural_and_mesa
+                * f64::from((f64::from((a + ruins_paving) as f32) - 0.5) as f32))
+                as f32,
         );
+
+        let t3 = f64::from(
+            (f64::from((0.25 * ruins_walls) as f32)
+                + f64::from((0.25 * roads.structure_subnoise) as f32)) as f32,
+        );
+        let t5 = f64::from((t3 - f64::from((4.0 * roads.structure_facets) as f32)) as f32);
+        let t7 = f64::from((f64::from((t5 - roads.road_paving_2c) as f32) + 2.5) as f32);
+        let arm_artificial = f64::from((masks.artificial * t7) as f32);
+
+        let tile_ruin_walls = max2(arm_natural, arm_artificial);
 
         // The second `- road_paving_2c` sits OUTSIDE the mask product, which is
         // what lets these two go negative on open ground rather than to zero.

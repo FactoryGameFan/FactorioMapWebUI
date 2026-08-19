@@ -315,11 +315,19 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     }
 
     // An EXACT count, not a bound. `test/previewAgreement.spec.ts` bounds the
-    // TypeScript's same comparison at < 4% and records 34,976 as the measured
+    // TypeScript's same comparison at < 4% and records 34,977 as the measured
     // value; the two renders are byte-identical, so this must be that number
     // and not merely under a bound. If it moves, one of those two facts
     // changed and the test names which.
-    expect(differing).toBe(34976);
+    //
+    // **34,976 before #273 and 34,977 after - this fix moved the whole image by
+    // ONE pixel, in the wrong direction.** It is still the right change: it took
+    // 13 named fields to bit-exact against the game. But the image is dominated
+    // by the `mix_*` chain, which #273 could not reach, so nothing here should
+    // be read as a rendering improvement. The tile argmax did not move at all
+    // (4,915 of 5,057, same 7 land/ocean misses). Narrowing the starting cones
+    // as well - #279 - takes this to 34,788, measured.
+    expect(differing).toBe(34977);
     expect(differing / (SIZE * SIZE)).toBeLessThan(0.04);
   }, 300000);
 
