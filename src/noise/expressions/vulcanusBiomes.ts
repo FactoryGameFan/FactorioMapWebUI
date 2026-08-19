@@ -75,7 +75,7 @@ import { distanceFromNearestPoint } from "../distanceFromNearestPoint";
 import { f32 } from "../eval/f32";
 import { clamp, lerp, max } from "../eval/math";
 import { memoXY } from "../eval/memoXY";
-import { sliderRescale } from "../eval/sliderRescale";
+import { sliderRescale } from "../eval/math";
 import { selectSpots, type SelectedSpot } from "../spotSelection";
 import type { SpotRegionKey } from "../spotCandidates";
 import type { VulcanusCracks } from "./vulcanusCracks";

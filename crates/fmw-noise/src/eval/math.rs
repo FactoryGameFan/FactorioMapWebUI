@@ -1,5 +1,4 @@
-//! The noise DSL's math operators, ported from `src/noise/eval/math.ts` and
-//! `src/noise/eval/sliderRescale.ts`.
+//! The noise DSL's math operators, ported from `src/noise/eval/math.ts`.
 //!
 //! These exist so a hand-ported named expression reads 1:1 with the Lua -
 //! `min(a, b, c)`, `clamp(x, lo, hi)` - rather than being rewritten into Rust
@@ -31,12 +30,24 @@
 //!
 //! So this module calls `f64::log2` and `f64::powf`, which reach libm - the same
 //! class of function the game itself reaches from Lua. **What is graded is 7
-//! probe points and a tier-2 sweep, not every input.** Two ports calling two
-//! different libms could in principle disagree at some slider value neither is
-//! graded at; the f32 narrowing on every intermediate makes that need a ~2^-29
-//! coincidence, and `checksum_slider_rescale` sweeps for it on every CI run.
-//! Recorded because it is the one open determinism question in this phase, not
-//! because it has been observed.
+//! probe points and a tier-2 sweep, not every input.**
+//!
+//! **That risk was OBSERVED, and the f32 narrowing is what contains it** (#270,
+//! measured 2026-08-19). Sweeping 600 slider positions through the WASM module:
+//! both per-operation forms agree with V8 600/600, and a third form that
+//! evaluated the whole chain in f64 and rounded ONCE agreed only 599/600 - one
+//! position each at `s = 3.5435` (n = 2) and `s = 6.3657` (n = 3). Native Rust
+//! matched V8 at both, same 64 bits, so the divergence belonged to the
+//! `wasm32-unknown-unknown` libm rather than to this source.
+//!
+//! Two consequences worth keeping separate. `cargo test` runs on the HOST libm
+//! and cannot see this class of bug at all, so only a spec that instantiates the
+//! WASM can find it. And the per-operation forms survive **because** they
+//! narrow: one f64 ULP is about 29 bits below what an f32 narrowing keeps. The
+//! un-narrowed form had nothing to absorb it - and the oracle says it also
+//! disagreed with the game - so it was deleted rather than worked around.
+//! Anything new here that reaches a transcendental needs a tier-2 sweep, not
+//! just a fixture.
 
 use crate::poison;
 
@@ -223,28 +234,38 @@ fn slider_ratio(s: f64) -> f32 {
     (f64::from(log2(s) as f32) / f64::from(log2(6.0) as f32)) as f32
 }
 
-/// `slider_rescale` evaluated in f64 with a single rounding, from
-/// `src/noise/eval/sliderRescale.ts`.
+/// `slider_rescale` evaluated in f64 with a single rounding - **TEST-ONLY, and
+/// deliberately not part of this crate's surface** (#270, resolved).
 ///
-/// **Two implementations of one Lua function ship, and that is a known
-/// inconsistency rather than a design.** This one short-circuits `v == 1` to
-/// exactly 1 and otherwise rounds once at the end; [`slider_rescale`] rounds
-/// every operation. The oracle says the per-operation form is the game's - it
-/// matches all 7 probe points where this one misses `s = 0.5` and `s = 5` by
-/// one ULP each.
+/// Two implementations of one Lua function used to ship. This one
+/// short-circuits `v == 1` to exactly 1 and otherwise rounds once at the end;
+/// [`slider_rescale`] rounds every operation, which is what the noise machine
+/// does - `slider_rescale` is a **noise-function** in
+/// `core/prototypes/noise-functions.lua:16`, not a Lua function, so the machine
+/// evaluates it. The oracle settles which is the game's: the per-operation form
+/// matches all 7 probe points and this one misses `s = 0.5` and `s = 5` by one
+/// ULP each.
 ///
-/// It is ported anyway because its consumers ship: `vulcanus_resources`,
-/// `vulcanus_biomes` and `vulcanus_helpers` all import it, and phase 5 must
-/// reproduce what those currently compute rather than quietly fixing them
-/// underneath their own fixtures. **Do not "unify" these two by deleting this
-/// one** - that is a behaviour change to four Vulcanus fields, and it needs its
-/// own measurement against their fixtures. Tracked as part of #225.
+/// It was ported originally because its consumers shipped -
+/// `vulcanus_resources`, `vulcanus_biomes` and `vulcanus_helpers` on the
+/// TypeScript side, plus Nauvis rock size. Those all moved onto the
+/// per-operation form, `src/noise/eval/sliderRescale.ts` is deleted, and this
+/// is what is left: a control. Keeping it lets
+/// `the_two_slider_rescale_forms_disagree_at_the_measured_points` below, and
+/// the fixture test in `fixtures.rs`, show that the shipped form is the one the
+/// game matches - rather than asserting that against nothing.
+///
+/// **Do not make this `pub` again.** It is the form the
+/// `wasm32-unknown-unknown` libm disagreed with V8 on, at 1 of 600 slider
+/// positions, and it is also the form that disagrees with the game. There is no
+/// configuration in which shipping it is right.
+#[cfg(test)]
 #[must_use]
-pub fn slider_rescale_f64(v: f64, n: f64) -> f64 {
+pub(crate) fn slider_rescale_rounded_once(v: f64, n: f64) -> f64 {
     if v == 1.0 {
         return 1.0;
     }
-    poison::f64_result(2.0f64.powf((log2(v) / log2(6.0)) * log2(n)))
+    2.0f64.powf((log2(v) / log2(6.0)) * log2(n))
 }
 
 #[cfg(test)]
@@ -344,14 +365,17 @@ mod tests {
         for s in [0.5, 5.0] {
             assert_ne!(
                 slider_rescale(s, 2.0),
-                slider_rescale_f64(s, 2.0) as f32,
+                slider_rescale_rounded_once(s, 2.0) as f32,
                 "s = {s} is one of the two points the oracle says discriminates"
             );
         }
         // And they agree where the oracle says they agree, so the assertion
         // above is about those two points rather than about everything.
         for s in [1.0, 2.0, 3.0, 4.0, 6.0] {
-            assert_eq!(slider_rescale(s, 2.0), slider_rescale_f64(s, 2.0) as f32);
+            assert_eq!(
+                slider_rescale(s, 2.0),
+                slider_rescale_rounded_once(s, 2.0) as f32
+            );
         }
     }
 }

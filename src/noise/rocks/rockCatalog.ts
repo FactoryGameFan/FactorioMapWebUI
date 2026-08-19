@@ -2,12 +2,18 @@
 // factorio-data @ 2.1.11 (base/prototypes/decorative/decoratives.lua and
 // base/prototypes/noise-expressions.lua). All three charted rock prototypes
 // (huge-rock, big-rock, big-sand-rock) share this map_color.
-import { sliderRescale } from "../eval/sliderRescale";
+import { sliderRescale } from "../eval/math";
 
 // Re-exported for existing callers/tests (`sliderRescale` used to be defined
-// here); the implementation now lives in `../eval/sliderRescale` so
-// non-rocks callers (e.g. Vulcanus's `starting_spot_at_angle` siblings) can
-// use it without a `rocks/`-flavored import.
+// here). The implementation lives in `../eval/math` beside the other DSL
+// operations, so non-rocks callers can use it without a `rocks/`-flavored
+// import.
+//
+// It moved here from `../eval/sliderRescale`, which held a SECOND, different
+// implementation - the whole chain in f64, rounded once at the end. The oracle
+// says that one is not the game's: it misses two of the seven probe positions
+// the per-operation form matches (#270). Re-export, never re-implement;
+// `test/sliderRescale.spec.ts` asserts this is the same function object.
 export { sliderRescale };
 
 export const ROCK_SEED1 = 137;
