@@ -1,69 +1,52 @@
 import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/oracle-temperature.seed123456.json";
+import { countOffGrid, snapPosition } from "./captureGrid";
 import { makeTemperature } from "../src/noise/expressions/temperature";
 
 describe("makeTemperature reproduces the game's temperature (temperature_basic) tree", () => {
   const evalAt = makeTemperature({ seed0: fixture.seed0 });
 
-  it("matches the numeric temperature to the f32 coordinate floor", () => {
+  it("matches the game bit-for-bit at every position", () => {
+    // Compared by exact f32 match count, not a bound. Every value in this
+    // fixture satisfies `Math.fround(v) === v`, so a bound could not tell
+    // "close" from "identical" (#256).
+    //
+    // This used to be two assertions behind a `< 1e-4` bound, with a long
+    // comment blaming 14 off-grid positions and calling for a re-capture. No
+    // re-capture was needed: the game truncated those coordinates onto its
+    // 1/256 `MapPosition` grid, and snapping them the same way grades the port
+    // at the point the game actually sampled. That took this fixture from
+    // 17/26 exact at worst 5.817e-5 to 26/26 at worst 0 - watched failing with
+    // the snap removed, reporting exactly 17. See `test/captureGrid.ts` for the
+    // evidence and the controls.
+    //
+    // `Math.fround` on the port's output is the house convention for an
+    // exact-match comparison (test/voronoiNoise.spec.ts:85): the tree evaluates
+    // in f32 internally but the entry point returns a JS number, so the
+    // narrowing belongs at the boundary. It is not slack - every fixture value
+    // is already f32, so this compares bit patterns.
+    let exact = 0;
     let worst = 0;
     let worstLabel = "";
-    for (let i = 0; i < fixture.positions.length; i++) {
-      const p = fixture.positions[i];
-      const err = Math.abs(evalAt(p.x, p.y) - fixture.temperature[i]);
+    for (const [i, p] of fixture.positions.entries()) {
+      const s = snapPosition(p);
+      const err = Math.abs(Math.fround(evalAt(s.x, s.y)) - fixture.temperature[i]);
+      if (err === 0) exact++;
       if (err > worst) {
         worst = err;
         worstLabel = `@(${p.x},${p.y})`;
       }
     }
-    // Starting floor for this milestone is 8e-3 (the elevation f32-coordinate
-    // floor), but temperature's output_scale of 1/20 shrinks any f32 divergence
-    // by the same factor, so the observed worst here (~7.07e-5) is far tighter.
-    // Calibrated just above that observed worst - never loosen this without a
-    // new observed-worst measurement to justify it.
-    expect(worst, `worst ${worstLabel}`).toBeLessThan(1e-4);
+    expect(fixture.positions.length).toBe(26); // a regen cannot empty the loop
+    expect(exact, `worst ${worstLabel}`).toBe(26);
+    expect(worst).toBe(0);
   });
 
-  // **14 of this fixture's 26 positions are NOT on the 1/256 grid, and they carry
-  // essentially the whole residual above.** A capture coordinate that is not a
-  // multiple of 1/256 makes the game sample a slightly different point than the
-  // fixture records (#186), so those 14 rows grade the capture as much as the
-  // port and no port can ever be exact on them. Split out, measured 2026-08-18:
-  //
-  // | subset | worst |
-  // | --- | --- |
-  // | on the 1/256 grid (12 points) | 9.537e-7 |
-  // | off it (14 points) | 5.805e-5 |
-  //
-  // So the 1e-4 bound above is calibrated against a capture artifact. It stays,
-  // because the off-grid rows are still in the fixture - but it is not a
-  // statement about this tree's accuracy, and reading it as one is how the
-  // gradeable half stayed invisible. This second assertion is the real one: on
-  // the points the fixture can legitimately grade, temperature sits ~104x tighter than
-  // the headline bound suggests.
-  //
-  // The right repair is to re-capture on the 1/256 grid, which needs a Factorio
-  // install and is separate work. Until then, do not tighten the bound above and
-  // do not loosen this one.
-  it("matches the game on the positions the fixture can actually grade", () => {
-    let worst = 0;
-    let worstLabel = "";
-    let graded = 0;
-    for (let i = 0; i < fixture.positions.length; i++) {
-      const p = fixture.positions[i];
-      if (Math.round(p.x * 256) !== p.x * 256 || Math.round(p.y * 256) !== p.y * 256) continue;
-      graded++;
-      const err = Math.abs(evalAt(p.x, p.y) - fixture.temperature[i]);
-      if (err > worst) {
-        worst = err;
-        worstLabel = `@(${p.x},${p.y})`;
-      }
-    }
-    // Anti-vacuity: if a future re-capture puts every position on the grid this
-    // still grades them all, but if one puts NONE on it the loop would silently
-    // assert nothing.
-    expect(graded).toBe(12);
-    expect(worst, `worst on-grid ${worstLabel}`).toBeLessThan(2e-6);
+  it("still has off-grid positions for the snap to correct", () => {
+    // Anti-vacuity for the snap itself. If a future re-capture lands every
+    // position on the 1/256 grid, `snapPosition` becomes the identity here and
+    // should be deleted rather than left looking load-bearing.
+    expect(countOffGrid(fixture.positions)).toBe(14);
   });
 });
 

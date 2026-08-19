@@ -88,15 +88,26 @@ data port.
       2026-07-19 as `makeElevationNauvis` (`src/noise/expressions/elevationNauvis.ts`,
       merged f95594f) - a 1:1 hand-port of `elevation_nauvis_function` from
       `core/prototypes/noise-programs.lua`, validated against the oracle to the f32
-      floor (worst far-field 4.08e-3, near-spawn 2.87e-6). KEY finding: it needs NO
+      floor (worst far-field 3.86e-4, near-spawn 1.91e-6 - see the note below). KEY finding: it needs NO
       new primitive - `ridge`/`terrace` (rated "small" below) are used by NO
       elevation tree (every apparent "ridge" was the `b`ridge`` substring). The
       Island variant (`elevation_island`, a trivial `bias=-1000` lakes variant)
       shipped 2026-07-19 as `makeElevationIsland` (`src/noise/expressions/elevationIsland.ts`)
       - a thin wrapper over `makeElevationLakes` with `bias=-1000` and
       `segmentation_multiplier/4`, validated against the oracle to the f32 floor
-      (worst far-field 6.66e-3, near-spawn 5.2e-7). All three base map types
+      (worst far-field 3.05e-5, near-spawn 4.77e-7 - see the note below). All three base map types
       (Nauvis, Lakes, Island) now render client-side; they dispatch via a `mapType` selector.
+
+      **The far-field figures above were re-measured 2026-08-18 and both dropped
+      by 10x-219x, with no change to the port.** They were never an "f32 floor".
+      14 of each fixture's 26 positions were CAPTURED off the game's 1/256
+      `MapPosition` grid, so the game evaluated somewhere the fixture did not
+      record (#186). Snapping the sample coordinate the way the game does
+      (truncation toward zero, `test/captureGrid.ts`) took nauvis far-field from
+      3.92e-3 to 3.86e-4 and island from 6.67e-3 to 3.05e-5. The near-spawn
+      positions were already on the grid, so their numbers are unchanged - which
+      is the control saying the snap moved only what it should. Seventeen
+      committed fixtures carried this; all 17 improved and none got worse.
 - [x] **Render**: `elevation < 0` -> water (deep vs shallow by threshold), else
       land; draw to a `<canvas>` at a chosen scale. Coastline falls out.
 - [x] **Validate**: sample the game's `elevation` at a grid for a few seeds; diff

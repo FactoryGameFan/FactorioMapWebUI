@@ -21,6 +21,14 @@ function sourceValues(kind: string, positions: readonly { x: number; y: number }
 
 describe("randomPenalty", () => {
   it("reproduces the game's own values across seeds, amplitudes and the source<=0 guard", () => {
+    // Compared with NO `Math.fround` on `got`. This assertion used to wrap the
+    // result in one, which scored 40/40 while the op itself returned f64 - it was
+    // the comparison recovering the value, not the op producing it. Raw, that
+    // same tree scores 4/40 at worst 1.668e-5. All 40 fixture values are exactly
+    // f32-representable, so an exact count is legal and a bound would be blind
+    // between "close" and "identical" (#256).
+    let exact = 0;
+    let total = 0;
     let worst = 0;
     for (const c of fixture.cases) {
       const source = sourceValues(c.sourceKind, fixture.positions);
@@ -29,12 +37,36 @@ describe("randomPenalty", () => {
         amplitude: c.amplitude,
       });
       for (let i = 0; i < got.length; i++) {
-        // The game stores the result as f32 (fcvt s5, d5); the arithmetic is
-        // otherwise exact (integer taus88), so fround(got) should match bit-for-bit.
-        worst = Math.max(worst, Math.abs(Math.fround(got[i]) - c.values[i]));
+        total++;
+        if (got[i] === c.values[i]) exact++;
+        worst = Math.max(worst, Math.abs(got[i] - c.values[i]));
       }
     }
-    expect(worst).toBeLessThan(1e-6);
+    expect(total).toBe(40); // anti-vacuity: a fixture regen cannot empty the loop
+    expect(exact).toBe(40);
+    expect(worst).toBe(0);
+  });
+
+  it("returns f32 values, because the op narrows once at the store", () => {
+    // `RandomPenalty::run` ends `fcvt s5, d5; str s5` - the value LEAVES the op as
+    // f32, and `resources/regularPatches.ts` multiplies what it gets back. This is
+    // the planted-break guard for that narrowing: drop the `f32` in
+    // randomPenaltyBatch and 36 of these 40 stop being f32. No bound can see it -
+    // regularPatches.spec.ts grades at ABS_TOL 1.0 / REL_TOL 1e-2 and the change is
+    // worth 1.19e-7 relative - so it has to be asserted directly.
+    let checked = 0;
+    for (const c of fixture.cases) {
+      const source = sourceValues(c.sourceKind, fixture.positions);
+      const got = randomPenaltyBatch(fixture.positions, source, {
+        seed: c.rpSeed,
+        amplitude: c.amplitude,
+      });
+      for (const [i, v] of got.entries()) {
+        checked++;
+        expect(Math.fround(v), `case ${c.sourceKind} seed=${c.rpSeed} index ${String(i)}`).toBe(v);
+      }
+    }
+    expect(checked).toBe(40);
   });
 
   it("passes source<=0 through unchanged (the 'source must be > 0' guard)", () => {

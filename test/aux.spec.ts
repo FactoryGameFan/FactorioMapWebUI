@@ -1,82 +1,62 @@
 import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/oracle-aux.seed123456.json";
+import { countOffGrid, snapPosition } from "./captureGrid";
 import { makeAux } from "../src/noise/expressions/aux";
 
 describe("makeAux reproduces the game's aux (aux_nauvis) tree", () => {
   const evalAt = makeAux({ seed0: fixture.seed0 });
 
-  it("matches the numeric aux to the f32 coordinate floor", () => {
+  it("matches the game at every position, scored by exact f32 match count", () => {
+    // Scored by exact match count, not a bound: every value in this fixture
+    // satisfies `Math.fround(v) === v`, so a bound cannot tell "close" from
+    // "identical" (#256).
+    //
+    // The sample coordinates are snapped onto the game's 1/256 `MapPosition`
+    // grid first. This replaces a `< 2e-5` bound and a second on-grid-only
+    // assertion that together blamed 14 off-grid positions and asked for a
+    // re-capture. No re-capture was needed - see `test/captureGrid.ts` for the
+    // evidence, the trunc-vs-floor control and the full 17-fixture table.
+    // Snapping took this fixture from 10/26 at worst 1.262e-5 to 14/26 at
+    // worst 5.960e-8.
+    //
+    // **The remaining 12 misses are unexplained**, and they are NOT the snap's
+    // doing: they sit 1 and 4 f32 ulps out, and 3 of them are at positions that
+    // were already on the grid. Narrowing the incoming coordinates in
+    // `basisNoise` and `variablePersistenceMultioctaveNoise` (the remaining
+    // scope of #191) was measured against this and moved the count not at all.
+    // Tracked in #255.
+    //
+    // The old comment here called (-2332.95, -2333.20) "the deep-field point".
+    // It is not - the deep-field point is (12345.75, 6789.125), which is ON the
+    // 1/256 grid. That was an off-grid ring point, which is exactly why it
+    // carried the worst residual.
+    //
+    // `Math.fround` on the port's output is the house convention for an exact
+    // comparison (test/voronoiNoise.spec.ts:85), not slack: the tree evaluates
+    // in f32 internally but the entry point returns a JS number.
+    let exact = 0;
     let worst = 0;
     let worstLabel = "";
-    for (let i = 0; i < fixture.positions.length; i++) {
-      const p = fixture.positions[i];
-      const err = Math.abs(evalAt(p.x, p.y) - fixture.aux[i]);
+    for (const [i, p] of fixture.positions.entries()) {
+      const s = snapPosition(p);
+      const err = Math.abs(Math.fround(evalAt(s.x, s.y)) - fixture.aux[i]);
+      if (err === 0) exact++;
       if (err > worst) {
         worst = err;
         worstLabel = `@(${p.x},${p.y})`;
       }
     }
-    // Starting floor for this milestone is 8e-3 (the elevation f32-coordinate
-    // floor), but aux's noise term has output_scale 0.25 and the whole result
-    // is clamped to [0,1], so any f32 divergence is shrunk well below that.
-    // Observed worst here is ~1.01e-5 (@(-2332.95, -2333.20), the deep-field
-    // far ring); calibrated just above it - never loosen this without a new
-    // observed-worst measurement to justify it.
-    expect(worst, `worst ${worstLabel}`).toBeLessThan(2e-5);
+    expect(fixture.positions.length).toBe(26); // a regen cannot empty the loop
+    expect(exact, `worst ${worstLabel}`).toBe(14);
+    // 2^-24 is one f32 ulp for a value in [0.5, 1). Do not raise it.
+    expect(worst, `worst ${worstLabel}`).toBeLessThanOrEqual(2 ** -24);
   });
 
-  // **14 of this fixture's 26 positions are NOT on the 1/256 grid, and they carry
-  // essentially the whole residual above.** A capture coordinate that is not a
-  // multiple of 1/256 makes the game sample a slightly different point than the
-  // fixture records (#186), so those 14 rows grade the capture as much as the
-  // port and no port can ever be exact on them. Split out, measured 2026-08-18:
-  //
-  // | subset | worst |
-  // | --- | --- |
-  // | on the 1/256 grid (12 points) | 6.923e-8 |
-  // | off it (14 points) | 1.262e-5 |
-  //
-  // So the 2e-5 bound above is calibrated against a capture artifact. It stays,
-  // because the off-grid rows are still in the fixture - but it is not a
-  // statement about this tree's accuracy, and reading it as one is how the
-  // gradeable half stayed invisible. This second assertion is the real one: on
-  // the points the fixture can legitimately grade, aux sits ~288x tighter than
-  // the headline bound suggests.
-  //
-  // The right repair is to re-capture on the 1/256 grid, which needs a Factorio
-  // install and is separate work. Until then, do not tighten the bound above and
-  // do not loosen this one.
-  //
-  // **Do not try to make this bound discriminate `quick_multioctave_noise`'s
-  // precision - measured, it cannot.** Reverting that op to f64 entirely moves
-  // aux's on-grid worst from 6.9231e-8 to 7.1443e-8, a 3% change, where the same
-  // revert moves moisture 17x and temperature 154x past their bounds. The reason
-  // is structural rather than lucky: all four parameters aux passes are already
-  // exactly representable in f32 (input_scale 1/2048, output_scale 0.25,
-  // octave_output_scale_multiplier 0.5, octave_input_scale_multiplier 3), its
-  // output_scale is small, and the result is clamped to [0,1]. So this assertion
-  // is a genuine bound with modest headroom, NOT a guard on that op - the guards
-  // that bite live in test/quickMultioctaveNoise.spec.ts, test/moisture.spec.ts
-  // and test/vulcanusCliffs.spec.ts.
-  it("matches the game on the positions the fixture can actually grade", () => {
-    let worst = 0;
-    let worstLabel = "";
-    let graded = 0;
-    for (let i = 0; i < fixture.positions.length; i++) {
-      const p = fixture.positions[i];
-      if (Math.round(p.x * 256) !== p.x * 256 || Math.round(p.y * 256) !== p.y * 256) continue;
-      graded++;
-      const err = Math.abs(evalAt(p.x, p.y) - fixture.aux[i]);
-      if (err > worst) {
-        worst = err;
-        worstLabel = `@(${p.x},${p.y})`;
-      }
-    }
-    // Anti-vacuity: if a future re-capture puts every position on the grid this
-    // still grades them all, but if one puts NONE on it the loop would silently
-    // assert nothing.
-    expect(graded).toBe(12);
-    expect(worst, `worst on-grid ${worstLabel}`).toBeLessThan(2e-7);
+  it("still has off-grid positions for the snap to correct", () => {
+    // Anti-vacuity for the snap. If a re-capture lands every position on the
+    // 1/256 grid this reaches 0, and `snapPosition` should then be deleted here
+    // rather than left looking load-bearing.
+    expect(countOffGrid(fixture.positions)).toBe(14);
   });
 });
 

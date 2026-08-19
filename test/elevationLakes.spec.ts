@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/oracle-elevation-lakes.seed123456.json";
+import { countOffGrid, snapPosition } from "./captureGrid";
 import { makeElevationLakes } from "../src/noise/expressions/elevationLakes";
 
 // Task 0 confirmed: starting_positions = origin spawn (distance == hypot), so the
@@ -20,8 +21,8 @@ describe("elevationLakes reproduces the game's elevation_lakes tree (far from sp
       if (!SATURATED(i)) continue;
       const exp = fixture.elevation[i];
       if (Math.abs(exp) < 1e-3) continue; // coastline: sign is ambiguous within the floor
-      const p = fixture.positions[i];
-      expect(evalAt(p.x, p.y) < 0).toBe(exp < 0);
+      const s = snapPosition(fixture.positions[i]);
+      expect(evalAt(s.x, s.y) < 0).toBe(exp < 0);
     }
   });
 
@@ -31,16 +32,25 @@ describe("elevationLakes reproduces the game's elevation_lakes tree (far from sp
     for (let i = 0; i < fixture.positions.length; i++) {
       if (!SATURATED(i)) continue;
       const p = fixture.positions[i];
-      const err = Math.abs(evalAt(p.x, p.y) - fixture.elevation[i]);
+      const s = snapPosition(p);
+      const err = Math.abs(Math.fround(evalAt(s.x, s.y)) - fixture.elevation[i]);
       if (err > worst) {
         worst = err;
         worstLabel = `@(${p.x},${p.y})`;
       }
     }
-    // offset_x = 10000 puts every point in the f32 regime; the game's f32 coordinate
-    // pipeline diverges from our f64 (see variablePersistence spec's far-field bound).
-    // Calibrated just above the observed worst (~7.37e-3).
-    expect(worst, `worst ${worstLabel}`).toBeLessThan(8e-3);
+    // This bound was 8e-3, explained as "the game's f32 coordinate pipeline
+    // diverges from our f64". That explanation was wrong. The 14 far-ring
+    // positions were CAPTURED off the game's 1/256 MapPosition grid, so the game
+    // sampled a different point than the fixture recorded (#186). Snapping the
+    // sample coordinate the way the game does takes this set from 6/17 exact at
+    // worst 7.372e-3 to 13/17 at worst 3.815e-6 - a 1,933x drop, and the largest
+    // single correction of the 17 affected fixtures after rock-density and the
+    // vulcanus resources. See `test/captureGrid.ts`.
+    //
+    // Calibrated just above the measured post-snap worst. The 4 remaining misses
+    // are unexplained and tracked in #255; do not raise this to accommodate them.
+    expect(worst, `worst ${worstLabel}`).toBeLessThan(4e-6);
   });
 
   it("now matches near-spawn elevation too (computed starting lakes)", () => {
@@ -53,7 +63,8 @@ describe("elevationLakes reproduces the game's elevation_lakes tree (far from sp
     for (let i = 0; i < fixture.positions.length; i++) {
       if (SATURATED(i)) continue; // the previously-unassertable near-spawn band
       const p = fixture.positions[i];
-      const err = Math.abs(evalAt(p.x, p.y) - fixture.elevation[i]);
+      const s = snapPosition(p);
+      const err = Math.abs(Math.fround(evalAt(s.x, s.y)) - fixture.elevation[i]);
       checked++;
       if (err > worst) {
         worst = err;
@@ -61,11 +72,21 @@ describe("elevationLakes reproduces the game's elevation_lakes tree (far from sp
       }
     }
     expect(checked).toBeGreaterThanOrEqual(9);
-    // Same 8e-3 f32 floor as the far field (offset_x=10000 shifts the varPers
-    // sampling into the f32 regime everywhere). The point is that terms 2-4, which
-    // consume starting_lake_distance, now use the CORRECT near-spawn lakes - so
-    // near spawn stays within that floor instead of diverging as it did with [].
-    expect(worst, `worst ${worstLabel}`).toBeLessThan(8e-3);
+    // All 9 near-spawn positions are already ON the 1/256 grid, so the snap is
+    // the identity here and this number is unchanged by it - which is the control
+    // that says the snap only moved rows it should have. The old bound was the
+    // far field's 8e-3, which was ~16,000x the measured worst; it is now
+    // calibrated to that worst instead. The point of the test is unchanged: terms
+    // 2-4 consume starting_lake_distance, so this asserts they use the CORRECT
+    // near-spawn lakes rather than diverging as they did with [].
+    expect(worst, `worst ${worstLabel}`).toBeLessThan(5e-7);
+  });
+
+  it("still has off-grid positions for the snap to correct", () => {
+    // Anti-vacuity for the snap. All 14 are in the far set; if a re-capture ever
+    // lands them on the grid this reaches 0 and `snapPosition` should be deleted
+    // here rather than left looking load-bearing.
+    expect(countOffGrid(fixture.positions)).toBe(14);
   });
 });
 

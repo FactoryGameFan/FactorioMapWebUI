@@ -83,6 +83,55 @@ as noted in `noise-oracle-basis-measurements`). Key instructions:
   seed const `+0x18`, amplitude const `+0x1c` (matches `ComplexExpression<...,3,2,0>`:
   3 register inputs + 2 constants).
 
+## The precision: f64 throughout, narrowed ONCE - the exception to the f32 rule
+
+Read off the same disassembly on 2026-08-18, because "f32 after every operation"
+is the rule everywhere else in `src/noise/` and here it gives the wrong answer.
+The register widths settle it - `d` registers are doubles, `s` are floats:
+
+```
++348  ldr   s6, [x11, x8, lsl #2]   // source, f32 in the register buffer
++352  fcvt  d5, s6                  // widened to DOUBLE
++416  ucvtf d6, w14                 // the u32 draw -> DOUBLE
++420  fmov  d7, x12                 // x12 = 0xBDF0000000000000 = -2^-32, a DOUBLE
++424  fmul  d6, d6, d7              // in DOUBLE
++428  ldr   s7, [x19, #0x1c]        // amplitude, an f32 constant
++432  fcvt  d7, s7                  // widened to DOUBLE
++436  fmul  d6, d6, d7              // in DOUBLE
++440  fadd  d5, d5, d6              // in DOUBLE
++328  fcvt  s5, d5                  // ONE narrowing
++332  str   s5, [x10, x8, lsl #2]   // stored as f32
+```
+
+The `mov x12, #-0x4210000000000000` in the older notes above is the disassembler
+printing the 64-bit immediate `0xBDF0000000000000` as a signed integer. As an f64
+that bit pattern is exactly `-2^-32`, which is why the multiply is a double one.
+
+Three consequences:
+
+- **A Rust port must compute in `f64` and cast to `f32` on return.** Porting this
+  one in f32 throughout would be wrong, and it is the only op in the phase-1 set
+  where that is true.
+- **The op's own store narrowing was missing from the TypeScript until
+  2026-08-18.** `randomPenaltyBatch` returned the raw f64. 36 of the fixture's 40
+  values are not f32 without the narrowing, worst gap 1.668e-5.
+- **The fixture could not see it, because the spec did the narrowing instead.**
+  `test/randomPenalty.spec.ts` compared `Math.fround(got[i])`, which scored 40/40
+  while the raw return scored **4/40**. The only consumer,
+  `src/noise/resources/regularPatches.ts`, multiplies the raw value: narrowing
+  first changes that product in **1240 of 5840** swept cases, worst 1.19e-7
+  relative, and `regularPatches.spec.ts` grades at `ABS_TOL = 1.0` /
+  `REL_TOL = 1e-2`, so nothing in the suite could ever have caught it. The spec
+  now compares raw and asserts the return is f32 directly; both assertions were
+  watched failing against a build with the narrowing removed (4/40, and a named
+  index).
+
+The op reads `source` and `amplitude` as f32 too (+348, +428). Neither narrowing
+is reproduced, because nothing observable reaches them: every shipped amplitude is
+`2-0.25`, `1-1`, `4-2` or `6`, all f32-exact, and only `random_penalty_inverse`
+(amplitude `1/penalty`) could produce a non-f32 one - nothing in base or space-age
+calls it. At amplitude `1/3` the two readings differ on 1 of 8 outputs by 5.96e-8.
+
 ## Composition inside spot selection - RESOLVED (2026-07-19, M3a Task 4)
 
 How the game batches `random_penalty` inside the spot expressions is now pinned

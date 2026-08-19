@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import fixture from "./fixtures/oracle-elevation-island.seed123456.json";
+import { countOffGrid, snapPosition } from "./captureGrid";
 import { makeElevationIsland, elevationIsland } from "../src/noise/expressions/elevationIsland";
 import { makeElevationLakes } from "../src/noise/expressions/elevationLakes";
 
@@ -53,8 +54,8 @@ describe("elevationIsland reproduces the game's elevation_island tree", () => {
       if (!SATURATED(i)) continue;
       const exp = fixture.elevation[i];
       if (Math.abs(exp) < 1e-3) continue; // coastline: sign ambiguous within the floor
-      const p = fixture.positions[i];
-      expect(evalAt(p.x, p.y) < 0).toBe(exp < 0);
+      const s = snapPosition(fixture.positions[i]);
+      expect(evalAt(s.x, s.y) < 0).toBe(exp < 0);
     }
   });
 
@@ -64,15 +65,18 @@ describe("elevationIsland reproduces the game's elevation_island tree", () => {
     for (let i = 0; i < fixture.positions.length; i++) {
       if (!SATURATED(i)) continue;
       const p = fixture.positions[i];
-      const err = Math.abs(evalAt(p.x, p.y) - fixture.elevation[i]);
+      const s = snapPosition(p);
+      const err = Math.abs(Math.fround(evalAt(s.x, s.y)) - fixture.elevation[i]);
       if (err > worst) {
         worst = err;
         worstLabel = `@(${p.x},${p.y})`;
       }
     }
-    // Same f32 regime as lakes (offset_x=10000, worst observed ~6.66e-3 vs lakes'
-    // ~7.37e-3). Calibrated just above the observed worst, same 8e-3 bound as lakes.
-    expect(worst, `worst ${worstLabel}`).toBeLessThan(8e-3);
+    // Was 8e-3, blamed on "the same f32 regime as lakes (offset_x=10000)". The
+    // real cause was the off-grid capture coordinates: snapping them takes this
+    // set from 4/17 exact at worst 6.673e-3 to 10/17 at worst 3.052e-5, a 219x
+    // drop. Calibrated just above the measured post-snap worst.
+    expect(worst, `worst ${worstLabel}`).toBeLessThan(4e-5);
   });
 
   it("matches near-spawn elevation too (computed starting lakes)", () => {
@@ -82,7 +86,8 @@ describe("elevationIsland reproduces the game's elevation_island tree", () => {
     for (let i = 0; i < fixture.positions.length; i++) {
       if (SATURATED(i)) continue;
       const p = fixture.positions[i];
-      const err = Math.abs(evalAt(p.x, p.y) - fixture.elevation[i]);
+      const s = snapPosition(p);
+      const err = Math.abs(Math.fround(evalAt(s.x, s.y)) - fixture.elevation[i]);
       checked++;
       if (err > worst) {
         worst = err;
@@ -90,6 +95,12 @@ describe("elevationIsland reproduces the game's elevation_island tree", () => {
       }
     }
     expect(checked).toBeGreaterThanOrEqual(9);
-    expect(worst, `worst ${worstLabel}`).toBeLessThan(8e-3);
+    expect(worst, `worst ${worstLabel}`).toBeLessThan(5e-7);
+  });
+
+  it("still has off-grid positions for the snap to correct", () => {
+    // Anti-vacuity for the snap: if a re-capture lands every position on the
+    // 1/256 grid this reaches 0 and `snapPosition` should be deleted here.
+    expect(countOffGrid(fixture.positions)).toBe(14);
   });
 });
