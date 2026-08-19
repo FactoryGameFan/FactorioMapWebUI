@@ -2385,3 +2385,124 @@ fn reproduces_the_vulcanus_helper_layer_at_every_captured_position() {
     assert_eq!(multipliers[0], 1.0);
     assert_eq!(helpers.scale_multiplier, 1.0);
 }
+
+use crate::expressions::vulcanus_climate::{ClimateFields, VulcanusClimate};
+use crate::expressions::vulcanus_cracks::{CrackFields, VulcanusCracks};
+
+/// Evaluate the Vulcanus helper, crack and climate layers once at every
+/// fixture position, in dependency order.
+///
+/// One sweep rather than one per fixture, because climate reads the crack
+/// fields at the SAME point and recomputing them would be both slower and a
+/// second place for the wiring to be wrong.
+fn vulcanus_sweep(seed0: u32, positions: &[Json]) -> (Vec<CrackFields>, Vec<ClimateFields>) {
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let cracks = VulcanusCracks::new(&helpers);
+    let climate = VulcanusClimate::new(seed0);
+
+    let mut c_out = Vec::with_capacity(positions.len());
+    let mut k_out = Vec::with_capacity(positions.len());
+    for p in positions {
+        let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+        let c = cracks.eval(x, y);
+        k_out.push(climate.eval(x, y, &c));
+        c_out.push(c);
+    }
+    (c_out, k_out)
+}
+
+/// The crack and flood layer, all five named expressions.
+///
+/// `flood_basalts_func` is the composite the elevation chain samples and the
+/// other four are its inputs, so all five are graded rather than just the
+/// composite: a transcription error in one input localises here instead of
+/// arriving blended into the field elevation reads.
+#[test]
+fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
+    let fixture = load("test/fixtures/oracle-vulcanus-cracks.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 61, "fixture size");
+    let (cracks, _) = vulcanus_sweep(fixture.get("seed0").as_f64() as u32, positions);
+
+    // Frozen exact counts, measured 2026-08-19 against the oracle and matched
+    // field for field against the TypeScript on the same fixture - 3, 15, 40,
+    // 10 and 8, with the same worst residuals. They are the distance BOTH ports
+    // sit from the game, not a gap between them.
+    //
+    // Worst residuals, in the same order: 1.853e-3, 4.440e-4, 1.122e-4,
+    // 5.460e-4, 6.387e-4.
+    //
+    // `hairlineCracks` at 3 of 61 is the weakest and it is the SHALLOWEST
+    // expression in the layer - a bare `plasma` with nothing composed on top.
+    // That points at the plasma adapter rather than at anything this file
+    // builds, and specifically at #269: `basis_noise_expr` returns an
+    // un-narrowed f64 product where the game narrows to f32, and `plasma` is
+    // two of those subtracted. The crack layer's scales are 0.3 * 0.325 and
+    // 0.6 * 0.325, neither exact in f32, so this layer is exactly the case the
+    // #269 comment says the existing `oracle-basis` fixture is blind to. Do not
+    // chase these five counts before that one is settled.
+    type C = CrackFields;
+    for (key, want_exact, select) in [
+        (
+            "hairlineCracks",
+            3usize,
+            &(|f: &C| f.hairline_cracks) as &dyn Fn(&C) -> f64,
+        ),
+        ("floodCracksA", 15, &|f| f.flood_cracks_a),
+        ("floodCracksB", 40, &|f| f.flood_cracks_b),
+        ("floodPaths", 10, &|f| f.flood_paths),
+        ("floodBasaltsFunc", 8, &|f| f.flood_basalts_func),
+    ] {
+        let got: Vec<f64> = cracks.iter().map(select).collect();
+        assert_eq!(
+            score_vulcanus(&got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 61"
+        );
+    }
+}
+
+/// The climate layer: `vulcanus_aux` and `vulcanus_moisture`.
+///
+/// `vulcanus_temperature` is not here because it is not ported - it reads
+/// `vulcanus_elev`, which arrives with the elevation chain.
+#[test]
+fn reproduces_the_vulcanus_climate_layer_at_every_captured_position() {
+    let cracks_fx = load("test/fixtures/oracle-vulcanus-cracks.seed123456.json");
+    let fixture = load("test/fixtures/oracle-vulcanus-climate.seed123456.json");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 61, "fixture size");
+
+    // Climate is graded against crack values evaluated at these positions, so
+    // if the two fixtures' position lists ever drift apart the comparison
+    // silently stops meaning anything.
+    let crack_positions = cracks_fx.get("positions").as_array();
+    assert_eq!(positions.len(), crack_positions.len());
+    for (a, b) in positions.iter().zip(crack_positions) {
+        assert_eq!(a.get("x").as_f64(), b.get("x").as_f64());
+        assert_eq!(a.get("y").as_f64(), b.get("y").as_f64());
+    }
+
+    let (_, climate) = vulcanus_sweep(fixture.get("seed0").as_f64() as u32, positions);
+
+    // Frozen exact counts, measured as above and matched by the TypeScript at
+    // 40 and 20. Worst residuals 4.584e-4 and 1.117e-4.
+    //
+    // Both are CLAMPED to [0, 1], which flatters them: every position the clamp
+    // saturates is exact for free, because both ports and the game all return
+    // the bound itself. Read 40 of 61 as an upper bound on what the arithmetic
+    // achieves rather than as a measure of it.
+    type K = ClimateFields;
+    for (key, want_exact, select) in [
+        ("aux", 40usize, &(|f: &K| f.aux) as &dyn Fn(&K) -> f64),
+        ("moisture", 20, &|f| f.moisture),
+    ] {
+        let got: Vec<f64> = climate.iter().map(select).collect();
+        assert_eq!(
+            score_vulcanus(&got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 61"
+        );
+    }
+}

@@ -99,6 +99,8 @@ POISONED_TESTS=(
   # Phase 5 (#225), Vulcanus. Its hook is `poison::f64_result` on the plasma
   # output; the two multioctave fields inherit `basis_noise`'s own hook.
   fixtures::reproduces_the_vulcanus_helper_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_crack_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_climate_layer_at_every_captured_position
 
   tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order
 )
