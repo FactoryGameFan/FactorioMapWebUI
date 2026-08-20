@@ -144,6 +144,49 @@ cat /tmp/w/write/script-output/oracle-dump.json
 cd ~/GitHub/factorio-oracle && cargo install --path .
 ```
 
+### Running captures from WSL against a WINDOWS Factorio
+
+**WSL2 executes the Windows binary directly, so a WSL box with Factorio on a
+Windows drive can capture.** A session handoff once recorded the opposite -
+"Factorio is a Windows executable and WSL cannot run it" - and planned a
+Windows-native Node environment on that basis. Measured, it just runs:
+
+```bash
+/mnt/v/factorio-2.1.14/bin/x64/factorio.exe --version
+# Version: 2.1.14 (build 87180, win64, full)
+```
+
+The only real obstacle is that the harness hands the game **Linux paths**.
+`OracleOptions.pathForGame` translates them; `FACTORIO_PATH_STYLE=windows`
+selects the `wslpath -w` implementation, so **no capture call site changes**:
+
+```bash
+TMPDIR=/mnt/c/Users/<you>/AppData/Local/Temp/fmw \
+FACTORIO_BIN=/mnt/v/factorio-2.1.14/bin/x64/factorio.exe \
+FACTORIO_DATA_DIR=/mnt/v/factorio-2.1.14/data \
+FACTORIO_PATH_STYLE=windows \
+node --experimental-strip-types test/oracle/capture.ts <probe>
+```
+
+Three things about that command are load-bearing, each found by it failing:
+
+- **`TMPDIR` must be on a Windows-visible drive.** `capture.ts` builds its work
+  dir from `os.tmpdir()`, which honours `TMPDIR`, so this needs no code change -
+  but the default `/tmp` is inside the WSL filesystem, and Factorio **cannot
+  write there**. `wslpath` renders it as `\\wsl.localhost\...` and the run dies
+  with no dump and an empty stderr, which is the least helpful failure of the
+  three.
+- **The translation has to reach `config.ini`, not just the argument vector.**
+  `write-data` lives in that file. Translating only argv gives a run that starts
+  and then cannot write its output, reported as
+  `weakly_canonical: Access is denied`.
+- **`FACTORIO_DATA_DIR` is needed because the Windows layout differs.**
+  `defaultDataDir` derives `<bin>/../data`, which is right for the macOS bundle
+  and wrong for `bin/x64/factorio.exe`, where the data sits two levels up.
+
+Everything here is inert off WSL: `FACTORIO_PATH_STYLE` unset means the
+identity, so macOS and native Linux behave exactly as before.
+
 ### The rule is new probes only
 
 **`test/oracle/` stays.** It is 9,593 lines, it works, and nothing in it gets
