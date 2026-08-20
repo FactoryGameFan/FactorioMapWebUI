@@ -3690,6 +3690,109 @@ async function captureBasisInputScale(): Promise<void> {
   console.log(`wrote ${out} (${positions.length} points, ${cases.length} input scales)`);
 }
 
+/**
+ * #290 at the REAL call sites, not at round literals.
+ *
+ * `oracle-basis-input-scale` answered the modelling question and answered it
+ * cleanly - `basis_noise(f32(x * f32(input_scale)), ...)` is 196 of 196 at seven
+ * scales. But applying that to `basisNoiseExpr` and re-scoring made three fields
+ * WORSE: `vulcanus_hairline_cracks` (worst 3e-4 -> 5.272e-4),
+ * `vulcanus_flood_basalts_func` (7e-5 -> 1.582e-4) and `mountain_plasma`
+ * (4e-3 -> 4.784e-3, exact 11 -> 10 of 38), while `vulcanus_elev` improved
+ * sharply, 116 -> 136 of 434.
+ *
+ * A model that is exact at 196 of 196 does not make a field worse by accident,
+ * so something about those call sites differs from the probe. Two candidates,
+ * and this capture separates them:
+ *
+ * 1. **The scales are computed, not written.** `hairline_cracks` does not pass
+ *    0.0975; it passes `1 / 50 / (0.3 * 0.325)`, which is
+ *    0.20512820512820512. The first probe used the truncated literal
+ *    `0.205128205128` - a DIFFERENT f64, though the same f32. So the earlier
+ *    capture may have been grading a neighbouring point.
+ * 2. **The output scale is not 1 here.** The first probe pinned it at 1 to
+ *    isolate the input side. Every real call pairs a non-trivial input scale
+ *    with a non-trivial OUTPUT scale, and #269 established that the output side
+ *    narrows too. The two narrowings have never been graded TOGETHER.
+ *
+ * So this captures the exact `(input_scale, output_scale)` pairs the three
+ * regressing fields actually use, at full f64 precision, with nothing rounded:
+ *
+ *   0.20512820512820512  x 0.6    hairline_cracks term A
+ *   0.10256410256410256  x 1      hairline_cracks term B
+ *   0.008                x 125    mountain_plasma term A
+ *   0.002                x 625    mountain_plasma term B
+ *   0.002                x 250    mountain_basis_noise
+ *
+ * `hairline_cracks` is `abs(A - B)` of the first two and `mountain_plasma` is
+ * `abs(A - B)` of the next two, so between them these five leaves are the whole
+ * of both regressing fields plus the elevation term that improved. If the
+ * combined model reproduces all five, the regression is in how the port
+ * composes them, not in the narrowing - and that is a different bug with a
+ * different fix.
+ */
+async function captureBasisCallerScales(): Promise<void> {
+  const seed = 123456;
+
+  // The same scattered grid the other two basis probes use, so the three are
+  // directly comparable. Every coordinate is an exact binary fraction.
+  const positions: Position[] = [];
+  for (let i = 0; i < 14; i++) {
+    for (let j = 0; j < 14; j++) {
+      positions.push({ x: -400.5 + i * 57.25, y: -400.75 + j * 57.5 });
+    }
+  }
+
+  const cs = 0.325;
+  const leaves = [
+    { name: "hairline_cracks A", seed1: 12643, inputScale: 1 / 50 / (0.3 * cs), outputScale: 0.6 },
+    {
+      name: "hairline_cracks B",
+      seed1: 13423 + 15223,
+      inputScale: 1 / 50 / (0.6 * cs),
+      outputScale: 1,
+    },
+    { name: "mountain_plasma A", seed1: 12643, inputScale: 1 / 50 / 2.5, outputScale: 125 },
+    { name: "mountain_plasma B", seed1: 13423 + 102, inputScale: 1 / 50 / 10, outputScale: 625 },
+    { name: "mountain_basis_noise", seed1: 13423, inputScale: 1 / 500, outputScale: 250 },
+  ];
+
+  const cases: {
+    name: string;
+    seed1: number;
+    inputScale: number;
+    outputScale: number;
+    values: number[];
+  }[] = [];
+
+  for (const leaf of leaves) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      // Full f64 precision on both scales - String() on a JS number round-trips
+      // the double exactly, so the game receives the same number the port holds.
+      const expression =
+        `basis_noise{x = x, y = y, seed0 = map_seed, seed1 = ${leaf.seed1}, ` +
+        `input_scale = ${String(leaf.inputScale)}, output_scale = ${String(leaf.outputScale)}}`;
+      const values = await sampleExpression(expression, positions, { workDir, seed });
+      cases.push({ ...leaf, values });
+      console.log(`  captured basis-caller-scales ${leaf.name}`);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 (build 87180, win64) via the test/oracle harness. #290 at the REAL call sites: the exact (input_scale, output_scale) pairs vulcanus_hairline_cracks, mountain_plasma and mountain_basis_noise use, at full f64 precision. oracle-basis-input-scale graded the input narrowing at round literals with output_scale pinned to 1; applying that model made three fields WORSE, so this grades the input and output narrowings TOGETHER at the scales that actually regressed. hairline_cracks is abs(A - B) of the first two cases and mountain_plasma is abs(A - B) of the next two, so these five leaves are the whole of both fields. Captured from WSL against the Windows install, which needs FACTORIO_PATH_STYLE=windows and a TMPDIR on a Windows-visible drive. Regenerate: node --experimental-strip-types test/oracle/capture.ts basis-caller-scales",
+    seed0: seed,
+    positions,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-basis-caller-scales.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${positions.length} points, ${cases.length} leaves)`);
+}
+
 const only = process.argv.slice(2);
 const want = (name: string) => only.length === 0 || only.includes(name);
 
@@ -7120,3 +7223,4 @@ if (want("vulcanus-cliffs")) await captureVulcanusCliffs();
 if (want("vulcanus-rocks")) await captureVulcanusRocks();
 if (want("basis-output-scale")) await captureBasisOutputScale();
 if (want("basis-input-scale")) await captureBasisInputScale();
+if (want("basis-caller-scales")) await captureBasisCallerScales();
