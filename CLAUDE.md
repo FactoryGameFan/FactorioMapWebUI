@@ -1458,6 +1458,34 @@ landed as their own changes**, which is the intended path, not an exception:
   are all exposed, while the eleven `plasma` sites the crack layer calls at
   1, 0.5 and 0.25 are blind by construction and did not move.
 
+- **#269's SECOND question - MEASURED, NOT FIXED.** The output scale was only
+  half of it. The game also holds `input_scale` at f32 **and** narrows the
+  coordinate product: `basis_noise(f32(x * f32(input_scale)), ...)` reproduces
+  it at **196 of 196** at all seven captured scales.
+  `test/basisInputScale.spec.ts` is the grade,
+  `test/fixtures/oracle-basis-input-scale.seed123456.json` the capture, taken
+  with `output_scale` pinned at 1 so the settled question cannot leak in.
+
+  | model                      | 0.125   | 0.5     | 0.205128... | 0.0975  | 0.195   | 0.02    | 0.002   |
+  | -------------------------- | ------- | ------- | ----------- | ------- | ------- | ------- | ------- |
+  | `basis(x*s)` - shipped     | 196     | 196     | 3           | 4       | 3       | 20      | 79      |
+  | `basis(x*f32(s))`          | 196     | 196     | 5           | 8       | 7       | 17      | 118     |
+  | `basis(f32(x*s))`          | 196     | 196     | 99          | 71      | 70      | 104     | 107     |
+  | **`basis(f32(x*f32(s)))`** | **196** | **196** | **196**     | **196** | **196** | **196** | **196** |
+
+  **This is bigger than the half that landed, and the reason is structural.**
+  #269's fix could only reach call sites whose `output_scale` was not a power of
+  two, because multiplying an f32 by one is a pure exponent shift. **No such
+  shortcut exists on the input side** - the coordinate is not an f32 to begin
+  with, so no input scale is blind by construction. It reaches EVERY
+  `basis_noise` call, including the eleven `plasma` calls Vulcanus's crack layer
+  makes at output scales 1, 0.5 and 0.25 that the output-side fix could not
+  touch. 0.0975 and 0.195 above are both terms of `vulcanus_hairline_cracks`,
+  the field that went 3 -> 2 when the output side was fixed.
+
+  The fix is deliberately not written yet: it would move counts across the whole
+  tree, and this project fixes a port finding in a change graded on its own.
+
 - **#270 - FIXED.** The wasm libm question above. Closed by deleting the
   un-narrowed `slider_rescale` and moving all five callers onto the
   per-operation form the oracle says the game uses.

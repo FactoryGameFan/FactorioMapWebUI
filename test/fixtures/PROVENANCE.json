@@ -464,6 +464,10 @@
     "oracle-basis-output-scale.seed123456.json": {
       "factorioVersion": "2.1.14",
       "evidence": "stated in the fixture's own _comment"
+    },
+    "oracle-basis-input-scale.seed123456.json": {
+      "factorioVersion": "2.1.14",
+      "evidence": "stated in the fixture's own _comment"
     }
   },
   "notFixtures": {
