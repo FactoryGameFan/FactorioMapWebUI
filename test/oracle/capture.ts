@@ -3518,6 +3518,88 @@ async function captureFulgoraShared(): Promise<void> {
 
 // Optional CLI filter: names on argv restrict which fixtures regenerate (so a new
 // capture need not re-run the others). No args = capture everything.
+
+/**
+ * #269: does the game narrow `output_scale * basis_noise(...)` to f32, and is
+ * narrowing the product enough on its own?
+ *
+ * `oracle-basis.seed123456.json` cannot answer either question, and the reason
+ * is exact rather than incidental: it was captured at `output_scale = 1`.
+ * `basis_noise` returns an f32, so multiplying by a POWER OF TWO is a pure
+ * exponent shift and can never leave the f32 grid - narrowing that product is
+ * the identity, and 0 of 200,000 sampled products differ. Any other output
+ * scale can leave the grid. Measured over 90,000 samples at a fixed input
+ * scale: output scales 1, 0.5, 0.25, 2, 4 and 64 change 0.00% of products,
+ * while 0.6 changes 79.88%, 0.75 and 3 change 56.32%, 150 changes 97.46% and
+ * 125 changes 98.38%.
+ *
+ * The INPUT scale is not the discriminator, which is worth stating because it
+ * is the number that looks inexact: holding `output_scale = 1` and sweeping the
+ * input scale over 0.125, 0.205, 0.51, 0.6, 1.5 and 0.002 changes 0.00% every
+ * time. The input scale decides WHICH noise value you get, never whether the
+ * product is representable.
+ *
+ * So this captures one control and four discriminating output scales:
+ *
+ * - `1` - a power of two. Every candidate model agrees here by construction, so
+ *   if the control is not unanimous the harness is wrong and nothing below
+ *   means anything.
+ * - `0.6` - `nauvis_shared`'s own output scale.
+ * - `0.51` - `cliff_fields`' low-frequency cliffiness.
+ * - `0.75` - a two-bit mantissa, the mildest non-power-of-two in the tree.
+ * - `125` - `mountain_plasma`'s first term, where nearly every product differs.
+ *
+ * `input_scale` is held at **0.125** throughout, which is exact in f32, so the
+ * sample POINT is unambiguous and the only thing varying between cases is the
+ * output scale. That matters: an earlier run at `input_scale = 0.205128205128`
+ * had the port disagreeing with the game at 193 of 196 positions even at
+ * `output_scale = 1`, where all models coincide - consistent with the game
+ * holding `input_scale` at f32 as well, which is a SEPARATE question about the
+ * coordinate product and is deliberately not asked here.
+ */
+async function captureBasisOutputScale(): Promise<void> {
+  const seed = 123456;
+  const seed1 = 12643;
+  const inputScale = 0.125;
+
+  // A scattered grid, deliberately off the integer lattice where basis_noise
+  // returns exactly zero and every candidate model agrees for free.
+  const positions: Position[] = [];
+  for (let i = 0; i < 14; i++) {
+    for (let j = 0; j < 14; j++) {
+      positions.push({ x: -400.5 + i * 57.25, y: -400.75 + j * 57.5 });
+    }
+  }
+
+  const cases: { outputScale: number; values: number[] }[] = [];
+  for (const outputScale of [1, 0.6, 0.51, 0.75, 125]) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const expression =
+        `basis_noise{x = x, y = y, seed0 = map_seed, seed1 = ${seed1}, ` +
+        `input_scale = ${inputScale}, output_scale = ${outputScale}}`;
+      const values = await sampleExpression(expression, positions, { workDir, seed });
+      cases.push({ outputScale, values });
+      console.log(`  captured basis-output-scale output_scale=${outputScale}`);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 (build 87180, win64) via the test/oracle harness. The discriminating capture for #269: basis_noise routed onto elevation at a FIXED input_scale of 0.125 (exact in f32, so the sample point is unambiguous) and five output scales - 1 as the control, then 0.6, 0.51, 0.75 and 125. oracle-basis.seed123456.json cannot answer #269 because it was captured at output_scale = 1, a power of two, where narrowing the product is the identity; any non-power-of-two output scale discriminates. Captured from WSL against the Windows install, which needs FACTORIO_PATH_STYLE=windows and a TMPDIR on a Windows-visible drive. Regenerate: node --experimental-strip-types test/oracle/capture.ts basis-output-scale",
+    seed0: seed,
+    seed1,
+    inputScale,
+    positions,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-basis-output-scale.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${positions.length} points, ${cases.length} output scales)`);
+}
+
 const only = process.argv.slice(2);
 const want = (name: string) => only.length === 0 || only.includes(name);
 
@@ -6946,3 +7028,4 @@ if (want("vulcanus-tile-names")) await captureVulcanusTileNames();
 if (want("vulcanus-lava-boundary")) await captureVulcanusLavaBoundary();
 if (want("vulcanus-cliffs")) await captureVulcanusCliffs();
 if (want("vulcanus-rocks")) await captureVulcanusRocks();
+if (want("basis-output-scale")) await captureBasisOutputScale();
