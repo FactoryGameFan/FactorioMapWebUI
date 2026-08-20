@@ -2346,20 +2346,25 @@ fn reproduces_the_vulcanus_helper_layer_at_every_captured_position() {
         detail_out.push(f64::from(detail.eval(x, y)));
     }
 
-    // Frozen exact counts, measured 2026-08-19 and matched field for field
-    // against the TypeScript on the same fixture - 38, 7 and 1, with the same
-    // worst residuals. They describe the distance BOTH ports still sit from the
-    // game, not a gap between them.
+    // Frozen exact counts, matched field for field against the TypeScript on
+    // the same fixture - 38, 11 and 1. They describe the distance BOTH ports
+    // still sit from the game, not a gap between them.
+    //
+    // `mountainPlasma` was 7 before #269 narrowed `basis_noise`'s output scale;
+    // it reads two basis calls at magnitudes 125 and 625, neither a power of
+    // two, so it is directly exposed. The other two are unaffected: `wobbleX`
+    // and `detailNoise` are `detail_noise` calls and never touch that term.
     for (key, want_exact, got) in [
         // Bit-exact at all 38, worst residual exactly 0, deep-field point
         // included. Two octaves at magnitude 4 is the shallowest call the
         // fixture grades and nothing accumulates.
         ("wobbleX", 38usize, &wobble_x),
         // `abs(A - B)` of two basis calls at magnitudes 125 and 625; worst
-        // residual 2.807e-3. The output scales amplify the coordinate floor,
+        // residual 2.815e-3 (2.807e-3 before #269). The output scales amplify
+        // the coordinate floor,
         // which is why this is the loosest of the three in absolute terms while
         // still beating `detailNoise` on exact matches.
-        ("mountainPlasma", 7, &plasma),
+        ("mountainPlasma", 11, &plasma),
         // Four octaves at input scale 0.8; worst residual 7.778e-5. The
         // SMALLEST residual of the three and the FEWEST exact matches, which is
         // the whole argument for counting matches rather than bounding error:
@@ -2425,15 +2430,16 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
     assert_eq!(positions.len(), 61, "fixture size");
     let (cracks, _) = vulcanus_sweep(fixture.get("seed0").as_f64() as u32, positions);
 
-    // Frozen exact counts, measured 2026-08-19 against the oracle and matched
-    // field for field against the TypeScript on the same fixture - 3, 15, 40,
-    // 10 and 8, with the same worst residuals. They are the distance BOTH ports
-    // sit from the game, not a gap between them.
+    // Frozen exact counts, matched field for field against the TypeScript on
+    // the same fixture - 2, 15, 40, 10 and 9. They are the distance BOTH ports
+    // sit from the game, not a gap between them. Before #269 they were 3, 15,
+    // 40, 10 and 8; the block below is the full account of what moved and why.
     //
-    // Worst residuals, in the same order: 1.853e-3, 4.440e-4, 1.122e-4,
-    // 5.460e-4, 6.387e-4.
+    // Worst residuals as measured 2026-08-19, BEFORE #269, in the same order:
+    // 1.853e-3, 4.440e-4, 1.122e-4, 5.460e-4, 6.387e-4. Only the counts were
+    // re-measured after the fix.
     //
-    // `hairlineCracks` at 3 of 61 is the weakest and it is the SHALLOWEST
+    // `hairlineCracks` at 2 of 61 is the weakest and it is the SHALLOWEST
     // expression in the layer - a bare `plasma` with nothing composed on top -
     // so the weakness cannot come from anything this file builds. It points at
     // the plasma adapter, and specifically at #269: `basis_noise_expr` returns
@@ -2452,16 +2458,53 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
     // time - the input scale decides which noise value you get, never whether
     // the product is representable.
     //
-    // So of the twelve `basis_noise_expr` calls this layer makes, exactly ONE
-    // is exposed: `hairline_cracks`'s first term, at output scale 0.6, where
-    // 80.10% of products differ. The other eleven sit at 1, 0.5 or 0.25 and are
-    // blind by construction. That is a one-term explanation for the one bad
-    // count here, and it is why the four fields built only from power-of-two
-    // sites score 15, 40, 10 and 8 rather than 3.
+    // So of the twelve DIRECT `basis_noise_expr` calls this layer makes,
+    // exactly ONE is exposed: `hairline_cracks`'s first term, at output scale
+    // 0.6, where 80.10% of products differ. The other eleven sit at 1, 0.5 or
+    // 0.25 and are blind by construction.
     //
     // It also explains why `oracle-basis` cannot grade this: that fixture was
-    // captured at output scale 1. Do not chase `hairlineCracks` before #269 is
-    // settled, and do not expect the other four to move when it is.
+    // captured at output scale 1.
+    //
+    // ## What happened when #269 landed, and where the paragraph above was wrong
+    //
+    // This comment used to end "do not expect the other four to move when it
+    // is". Three of the four held. `floodBasaltsFunc` did not, and the reason
+    // is a real correction rather than noise: **exposure is transitive through
+    // composition, and counting DIRECT call sites misses that.** This layer's
+    // own verbatim transcription says so at the top of
+    // `src/noise/expressions/vulcanusCracks.ts`:
+    //
+    //   flood_basalts_func = min(max(flood_cracks_a - 0.125, flood_paths),
+    //                            flood_cracks_b)
+    //                        + 0.3 * min(0.5, hairline_cracks)
+    //
+    // `flood_basalts_func` READS `hairline_cracks`, so the one exposed term
+    // reaches it. `flood_cracks_a`, `flood_cracks_b` and `flood_paths` do not
+    // read it, and those are exactly the three that did not move. The rule is
+    // therefore: a field is exposed if it reads an exposed site DIRECTLY OR
+    // THROUGH ANY FIELD IT COMPOSES.
+    //
+    // Measured across the #269 fix:
+    //
+    //   hairlineCracks     3 -> 2    directly exposed  (0.6)
+    //   floodCracksA      15 -> 15   not exposed
+    //   floodCracksB      40 -> 40   not exposed
+    //   floodPaths        10 -> 10   not exposed
+    //   floodBasaltsFunc   8 -> 9    exposed VIA hairline_cracks
+    //
+    // **`hairlineCracks` went DOWN, from 3 to 2.** That is not evidence the fix
+    // is wrong - the primitive is graded 196/196 against the game at five
+    // output scales in `test/basisOutputScale.spec.ts`, which is as settled as
+    // this project gets. It is the both-directions movement #273 measured:
+    // these are deep composed chains whose remaining error comes from other
+    // unported narrowings, so correcting one term shifts values slightly and a
+    // position that happened to land exactly right can stop doing so. A count
+    // dropping by one at 61 positions says the field is still wrong for
+    // reasons this change does not address, not that the change hurt it.
+    //
+    // Do not "fix" `hairlineCracks` by reverting anything here. The next term
+    // to look at is the `input_scale` question recorded on #269.
     //
     // An earlier draft of this comment blamed the layer's INPUT scales
     // (0.3 * 0.325 and 0.6 * 0.325, neither exact in f32). That was wrong, and
@@ -2471,13 +2514,13 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
     for (key, want_exact, select) in [
         (
             "hairlineCracks",
-            3usize,
+            2usize,
             &(|f: &C| f.hairline_cracks) as &dyn Fn(&C) -> f64,
         ),
         ("floodCracksA", 15, &|f| f.flood_cracks_a),
         ("floodCracksB", 40, &|f| f.flood_cracks_b),
         ("floodPaths", 10, &|f| f.flood_paths),
-        ("floodBasaltsFunc", 8, &|f| f.flood_basalts_func),
+        ("floodBasaltsFunc", 9, &|f| f.flood_basalts_func),
     ] {
         let got: Vec<f64> = cracks.iter().map(select).collect();
         assert_eq!(
@@ -2700,15 +2743,17 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
         .map(|p| elevation.eval(p.get("x").as_f64(), p.get("y").as_f64()))
         .collect();
 
-    // Frozen exact counts, measured 2026-08-19 and matched by the TypeScript at
-    // 113 and 113, worst residual 1.332e-1 on both.
+    // Frozen exact counts, matched by the TypeScript at 115 and 115 (113 and
+    // 113 before #269), worst residual 1.332e-1 on both as measured before it.
+    // The chain reads basis calls at output scales 250 and 150 plus both
+    // `plasma` pairs, so it is directly exposed.
     //
     // **The two columns are the same field in this fixture, and that is a gap
     // in the fixture rather than a result.** `vulcanus_elevation` is
     // `max(-500, elev)`, and the captured `elev` never goes below -500: its
     // minimum over all 434 positions is -58.77. So `elev` equals `elevation` at
     // every position, the clamp is never exercised, and a port that dropped the
-    // `max` entirely would score 113 here too. Checked rather than assumed -
+    // `max` entirely would score 115 here too. Checked rather than assumed -
     // 0 of 434 positions differ between the two columns.
     //
     // Grading both anyway, because the cost is nothing and the day a capture
@@ -2723,8 +2768,8 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     // the third argument for counting matches instead.
     type E = ElevationFields;
     for (key, want_exact, select) in [
-        ("elev", 113usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
-        ("elevation", 113, &|f| f.elevation),
+        ("elev", 115usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
+        ("elevation", 115, &|f| f.elevation),
     ] {
         let got: Vec<f64> = fields.iter().map(select).collect();
         assert_eq!(
@@ -2765,7 +2810,7 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
         .collect();
 
     // Frozen exact count, matched by the TypeScript at 196 with the same worst
-    // residual of 1.327e-1. Higher than `elev`'s 113 despite reading it,
+    // residual of 1.327e-1. Higher than `elev`'s 115 despite reading it,
     // because temperature scales it by 1/100 above zero - `min(e, e / 100)` -
     // so most of `elev`'s residual is divided away before it lands here.
     assert_eq!(

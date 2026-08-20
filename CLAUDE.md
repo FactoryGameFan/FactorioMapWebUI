@@ -1308,14 +1308,41 @@ are the distance BOTH ports sit from the game rather than a gap between them.
 
 **Four things this phase measured that are worth more than the counts:**
 
-- **A second, independent fixture points at #269.** `hairline_cracks` scores
-  **3 of 61** and is the shallowest expression in its layer - a bare `plasma`,
-  nothing composed on top - so the weakness cannot come from the crack file.
-  `plasma` subtracts two `basis_noise_expr` results, and that adapter returns
-  the un-narrowed f64 product #269 is about. The crack layer calls it at
-  `0.3 * 0.325` and `0.6 * 0.325`, neither exact in f32, which is exactly the
-  case #269 records `oracle-basis` as blind to by construction. Do not chase
-  the five crack counts before #269 is settled.
+- **A second, independent fixture pointed at #269, and #269 has since landed.**
+  `hairline_cracks` is the shallowest expression in its layer - a bare `plasma`,
+  nothing composed on top - so its weakness could not come from the crack file.
+  `plasma` subtracts two `basis_noise_expr` results, and that adapter returned
+  the un-narrowed f64 product. Fixed in `df3e39e`, and this branch re-scored
+  against it:
+
+  | field                | before  | after       | exposed?                      |
+  | -------------------- | ------- | ----------- | ----------------------------- |
+  | `hairlineCracks`     | 3/61    | **2/61**    | directly, at output scale 0.6 |
+  | `floodCracksA`       | 15/61   | 15/61       | no                            |
+  | `floodCracksB`       | 40/61   | 40/61       | no                            |
+  | `floodPaths`         | 10/61   | 10/61       | no                            |
+  | `floodBasaltsFunc`   | 8/61    | **9/61**    | via `hairline_cracks`         |
+  | `mountainPlasma`     | 7/38    | **11/38**   | directly, at 125 and 625      |
+  | `elev` / `elevation` | 113/434 | **115/434** | directly, at 250 and 150      |
+
+  **Two corrections came out of that, and both are worth more than the counts.**
+
+  First, **exposure is transitive.** `fixtures.rs` predicted the four flood
+  fields would not move, on the grounds that eleven of the layer's twelve DIRECT
+  `basis_noise_expr` calls sit at power-of-two output scales. Three held.
+  `floodBasaltsFunc` did not, because it READS `hairline_cracks` -
+  `+ 0.3 * min(0.5, hairline_cracks)`, right there in the layer's own verbatim
+  transcription. The three that held are exactly the three that never touch it.
+  Count composition, not call sites.
+
+  Second, **`hairlineCracks` went DOWN, 3 to 2.** That is not evidence against
+  the fix: the primitive is graded 196/196 against the game at five output
+  scales. It is the both-directions movement #273 measured. These chains carry
+  other unported narrowings, so correcting one term shifts values slightly and a
+  position that happened to land exactly right can stop doing so. A count
+  falling by one at 61 positions says the field is still wrong for reasons this
+  change does not address.
+
 - **A clamp flatters a count, and here it is measurable.** The three clamped
   biomes score 403, 402 and 408 of 434 against their own unclamped sources at
   128, 107 and 127 - the same quantity, times 2, clamped. Nothing improved
@@ -1327,7 +1354,7 @@ are the distance BOTH ports sit from the game rather than a gap between them.
   rather than assumed. `vulcanus_elevation` is `max(-500, elev)` and the
   captured `elev` bottoms out at **-58.77**, so the two columns are the same
   field at all 434 positions - 0 of 434 differ - and a port that dropped the
-  `max` would score 113 either way. Both are graded anyway; the clamp's real
+  `max` would score 115 either way. Both are graded anyway; the clamp's real
   test lives in the module, constructing the case the fixture does not.
 - **A discrete output scores like one.** `mountain_volcano_spots` at 359 of 434
   is the highest UNCLAMPED count in the Vulcanus port, because it is dominated
@@ -1336,7 +1363,7 @@ are the distance BOTH ports sit from the game rather than a gap between them.
 
 **`detailNoise` is the reading to carry out of this phase.** It has the
 SMALLEST residual of its three helper fields (7.778e-5) and the FEWEST exact
-matches (**1 of 38**), where `mountainPlasma` has 2.807e-3 and 7 of 38. A field
+matches (**1 of 38**), where `mountainPlasma` has 2.815e-3 and 11 of 38. A field
 can be uniformly close and almost never right, which is the argument for
 counting matches rather than bounding error, stated in one number.
 
