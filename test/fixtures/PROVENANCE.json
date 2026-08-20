@@ -460,6 +460,10 @@
     "basis-gradient-table.json": {
       "factorioVersion": "2.1.14",
       "evidence": "DERIVED 2026-08-18 from oracle-basis-gradient.seed123456.json by scripts/recover-gradient-table.ts, which inverts the falloff over the two contributing corners. Not a capture and not a formula: it is what the game's own gradient table has to be for the captured samples to come out as they did. Reproduces 4,086 of 4,096 x samples and 4,092 of 4,096 y; the misses are the four near-zero slots, whose ULP is 3.6e-15 and which no f32 output can resolve - perturbing them by 1.0e-9, 280x the residual, changes 0 of the 512 values in basis-noise.seed123456.json. Scores 512/512 exact against that fixture, worst error 0, where the previous formula-derived table scored 473. See issue #234"
+    },
+    "oracle-basis-output-scale.seed123456.json": {
+      "factorioVersion": "2.1.14",
+      "evidence": "stated in the fixture's own _comment"
     }
   },
   "notFixtures": {
