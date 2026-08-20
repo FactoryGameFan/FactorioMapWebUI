@@ -3600,6 +3600,96 @@ async function captureBasisOutputScale(): Promise<void> {
   console.log(`wrote ${out} (${positions.length} points, ${cases.length} output scales)`);
 }
 
+/**
+ * #269's second half: does the game hold `input_scale` at f32 too, and does it
+ * narrow the coordinate PRODUCT?
+ *
+ * `oracle-basis-output-scale` settled the output side and deliberately did not
+ * ask this: it held `input_scale` at 0.125, exact in f32, so the sample point
+ * was unambiguous. This probe is the mirror image. `output_scale` is pinned at
+ * **1** throughout - a power of two, where every output-side model is provably
+ * the identity - so nothing the previous capture measured can leak in here.
+ *
+ * The reason to ask is a measurement, not a hunch. An early run at
+ * `input_scale = 0.205128205128` had the port disagreeing with the game at
+ * **193 of 196** positions even at `output_scale = 1`, where all four
+ * output-side candidates coincide. Something else was wrong, and the coordinate
+ * product is the only term left.
+ *
+ * This is the two-case rule from `src/noise/eval/f32.ts` applied to the INPUT
+ * side, so there are four candidates for `basis_noise(x * input_scale, ...)`:
+ *
+ *   basis(x * s)              the shipped port - f64 constant, f64 product
+ *   basis(x * f32(s))         narrow the CONSTANT only
+ *   basis(f32(x * s))         narrow the PRODUCT only
+ *   basis(f32(x * f32(s)))    both, which is what an f32 machine does
+ *
+ * Unlike the output side there is no "power of two is immune" shortcut that
+ * makes a scale blind, because the coordinate is not an f32 to begin with - but
+ * an f32-EXACT scale does collapse the constant half to the identity, which is
+ * what the controls below are for.
+ *
+ * The scales, and why each is here:
+ *
+ * - `0.125` and `0.5` - **controls.** Exact in f32, so `f32(s) === s` and the
+ *   constant half cannot move. Any disagreement between the two remaining
+ *   models here is the product half alone, isolated.
+ * - `0.205128205128` - the scale that produced the 193-of-196 finding.
+ * - `0.0975` (`0.3 * 0.325`) and `0.195` (`0.6 * 0.325`) - both terms of
+ *   `vulcanus_hairline_cracks`, the field that scores worst in its layer and
+ *   got WORSE (3 -> 2 of 61) when the output side was fixed.
+ * - `0.02` (`1/50`) - the base scale of every `vulcanus_plasma` call.
+ * - `0.002` (`1/500`) - `mountain_basis_noise`, the smallest in the tree.
+ *
+ * If the game holds `input_scale` at f32, this touches EVERY `basis_noise` call
+ * in the port rather than only the non-power-of-two output scales #269 reached,
+ * so it is potentially larger than the issue it came from.
+ */
+async function captureBasisInputScale(): Promise<void> {
+  const seed = 123456;
+  const seed1 = 12643;
+  const outputScale = 1;
+
+  // The same scattered grid the output-scale probe used, deliberately off the
+  // integer lattice where basis_noise returns exactly zero and every candidate
+  // agrees for free. Every coordinate is an exact binary fraction, so the only
+  // thing varying between cases is the scale.
+  const positions: Position[] = [];
+  for (let i = 0; i < 14; i++) {
+    for (let j = 0; j < 14; j++) {
+      positions.push({ x: -400.5 + i * 57.25, y: -400.75 + j * 57.5 });
+    }
+  }
+
+  const cases: { inputScale: number; values: number[] }[] = [];
+  for (const inputScale of [0.125, 0.5, 0.205128205128, 0.0975, 0.195, 0.02, 0.002]) {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      const expression =
+        `basis_noise{x = x, y = y, seed0 = map_seed, seed1 = ${seed1}, ` +
+        `input_scale = ${inputScale}, output_scale = ${outputScale}}`;
+      const values = await sampleExpression(expression, positions, { workDir, seed });
+      cases.push({ inputScale, values });
+      console.log(`  captured basis-input-scale input_scale=${inputScale}`);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 (build 87180, win64) via the test/oracle harness. The discriminating capture for #269's SECOND question: does the game hold basis_noise's input_scale at f32, and does it narrow the coordinate product? output_scale is pinned at 1 (a power of two, where every output-side model is the identity) so the settled output-side question cannot leak in. Seven input scales - 0.125 and 0.5 as f32-exact controls that collapse the constant half, then 0.205128205128 (the scale behind the 193-of-196 finding), 0.0975 and 0.195 (both terms of vulcanus_hairline_cracks), 0.02 (1/50, every vulcanus_plasma) and 0.002 (1/500, mountain_basis_noise). Captured from WSL against the Windows install, which needs FACTORIO_PATH_STYLE=windows and a TMPDIR on a Windows-visible drive. Regenerate: node --experimental-strip-types test/oracle/capture.ts basis-input-scale",
+    seed0: seed,
+    seed1,
+    outputScale,
+    positions,
+    cases,
+  };
+  const out = join(FIXTURES, "oracle-basis-input-scale.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${positions.length} points, ${cases.length} input scales)`);
+}
+
 const only = process.argv.slice(2);
 const want = (name: string) => only.length === 0 || only.includes(name);
 
@@ -7029,3 +7119,4 @@ if (want("vulcanus-lava-boundary")) await captureVulcanusLavaBoundary();
 if (want("vulcanus-cliffs")) await captureVulcanusCliffs();
 if (want("vulcanus-rocks")) await captureVulcanusRocks();
 if (want("basis-output-scale")) await captureBasisOutputScale();
+if (want("basis-input-scale")) await captureBasisInputScale();
