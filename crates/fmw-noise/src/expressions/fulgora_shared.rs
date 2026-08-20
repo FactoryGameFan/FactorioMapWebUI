@@ -22,10 +22,9 @@
 //! evaluated, checked field by field, which is what makes the substitution
 //! legitimate; a field that read a neighbour would need the cache back.
 
-use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::eval::math::{clamp, slider_to_linear};
 use crate::expressions::starting_spot_at_angle::{starting_spot_at_angle, AngleTrig, StartingSpot};
-use crate::multioctave_noise::{octave_terms, sum_octaves, MultioctaveParams, OctaveTerms};
+use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::poison;
 
 /// `seed1` for `fulgora_wobble_x`: `crc32(utf8("fulgora_wobble_x"))`.
@@ -82,40 +81,6 @@ pub struct SharedFields {
     pub starting_vault_cone: f64,
     pub starting_mask: f64,
     pub starting_vault_mask: f64,
-}
-
-/// One multioctave call with its seed tables and octave terms already derived.
-///
-/// **This is the shape every renderer needs, and its absence was a measured
-/// bug.** `multioctave_noise(x, y, &params)` re-derives both on every call, and
-/// `tables_from_seed` runs a PRNG over three 256-byte tables; Fulgora's chain
-/// makes eight such calls per pixel. Building them per point measured **1.15x**
-/// against the TypeScript, which builds them once in a closure. Hoisting is
-/// what the ratio in phase 3's pull request is.
-///
-/// Results are identical either way, so nothing in tiers 1 to 3 could see it.
-///
-/// No `Debug` or `Clone`: `OctaveTerms` has neither, and deriving them here
-/// would mean giving them to derived state whose shape is an implementation
-/// detail.
-pub struct Prepared {
-    terms: OctaveTerms,
-    tables: BasisNoiseTables,
-}
-
-impl Prepared {
-    #[must_use]
-    pub fn new(params: &MultioctaveParams) -> Self {
-        Self {
-            terms: octave_terms(params),
-            tables: tables_from_seed(params.seed0, params.seed1),
-        }
-    }
-
-    #[must_use]
-    pub fn eval(&self, x: f64, y: f64) -> f32 {
-        sum_octaves(x, y, &self.terms, &self.tables)
-    }
 }
 
 /// The per-render constants of Fulgora's shared layer.

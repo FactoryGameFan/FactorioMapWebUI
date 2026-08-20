@@ -34,8 +34,9 @@
 
 use crate::eval::math::lerp;
 use crate::expressions::fulgora_cells::CellFields;
-use crate::expressions::fulgora_shared::{FulgoraCtx, Prepared, SharedFields};
+use crate::expressions::fulgora_shared::{FulgoraCtx, SharedFields};
 use crate::multioctave_noise::MultioctaveParams;
+use crate::multioctave_noise::Prepared;
 use crate::voronoi_noise::{Voronoi, VoronoiDistanceType, VoronoiParams};
 
 /// `seed1` values, computed with CRC32 over the UTF-8 bytes of the name in the

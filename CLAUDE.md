@@ -1202,7 +1202,7 @@ Field labels carry in-game tooltip text via `FInfo` (an `info` prop on
 `EnemyValueRow`, an `info:` entry in `controlCatalog.ts` for the enemy-base
 autoplace rows).
 
-### The Rust/WASM noise engine (`crates/`) - phases 1-3 expressions landed
+### The Rust/WASM noise engine (`crates/`) - phases 1-4 landed, phase 5 in progress
 
 A Cargo workspace at the repository root, landed empty on purpose (#219) so the
 gate was proven green on `main` before any port code depended on it. Two crates:
@@ -1293,6 +1293,112 @@ poison the ocean hook flips every position's answer, so the tile test would have
 been red whether or not the argmax had a control at all. `POISONED_TESTS` now
 carries FULL test paths rather than bare `fixtures::` names, so a control can
 live beside its op.
+
+**Phase 5 (#225) ports Vulcanus, and its EXPRESSION chain down to elevation is
+in.** Landed: `vulcanus_helpers`, `vulcanus_cracks`, `vulcanus_climate`,
+`vulcanus_spawn`, `vulcanus_biomes`, `vulcanus_elevation`, plus
+`vulcanus_temperature` on the elevation module. `vulcanus_shared` needed no
+port - it is `starting_spot_at_angle`, done in #279 - and `vulcanus_seed`
+landed in phase 2. Still out: `vulcanus_resources`, `tiles/vulcanus_catalog`,
+and the cliff, resource and rock stacks.
+
+Tier 1 grades **24 named fields** across six fixtures. Every count was measured
+again on the TypeScript side against the same fixture and all 24 agree, so they
+are the distance BOTH ports sit from the game rather than a gap between them.
+
+**Four things this phase measured that are worth more than the counts:**
+
+- **A second, independent fixture pointed at #269, and #269 has since landed.**
+  `hairline_cracks` is the shallowest expression in its layer - a bare `plasma`,
+  nothing composed on top - so its weakness could not come from the crack file.
+  `plasma` subtracts two `basis_noise_expr` results, and that adapter returned
+  the un-narrowed f64 product. Fixed in `df3e39e`, and this branch re-scored
+  against it:
+
+  | field                | before  | after       | exposed?                      |
+  | -------------------- | ------- | ----------- | ----------------------------- |
+  | `hairlineCracks`     | 3/61    | **2/61**    | directly, at output scale 0.6 |
+  | `floodCracksA`       | 15/61   | 15/61       | no                            |
+  | `floodCracksB`       | 40/61   | 40/61       | no                            |
+  | `floodPaths`         | 10/61   | 10/61       | no                            |
+  | `floodBasaltsFunc`   | 8/61    | **9/61**    | via `hairline_cracks`         |
+  | `mountainPlasma`     | 7/38    | **11/38**   | directly, at 125 and 625      |
+  | `elev` / `elevation` | 113/434 | **115/434** | directly, at 250 and 150      |
+
+  **Two corrections came out of that, and both are worth more than the counts.**
+
+  First, **exposure is transitive.** `fixtures.rs` predicted the four flood
+  fields would not move, on the grounds that eleven of the layer's twelve DIRECT
+  `basis_noise_expr` calls sit at power-of-two output scales. Three held.
+  `floodBasaltsFunc` did not, because it READS `hairline_cracks` -
+  `+ 0.3 * min(0.5, hairline_cracks)`, right there in the layer's own verbatim
+  transcription. The three that held are exactly the three that never touch it.
+  Count composition, not call sites.
+
+  Second, **`hairlineCracks` went DOWN, 3 to 2.** That is not evidence against
+  the fix: the primitive is graded 196/196 against the game at five output
+  scales. It is the both-directions movement #273 measured. These chains carry
+  other unported narrowings, so correcting one term shifts values slightly and a
+  position that happened to land exactly right can stop doing so. A count
+  falling by one at 61 positions says the field is still wrong for reasons this
+  change does not address.
+
+- **A clamp flatters a count, and here it is measurable.** The three clamped
+  biomes score 403, 402 and 408 of 434 against their own unclamped sources at
+  128, 107 and 127 - the same quantity, times 2, clamped. Nothing improved
+  between them: the clamp saturates at 0 or 1 over most of the map and a
+  saturated position is exact for free. Read `*_biome_full` as the port's score
+  and `*_biome` as what the consumer needs. Same effect in `starting_area`
+  (371 of 410) against the unclamped `ashlands_start` (61) feeding it.
+- **The oracle cannot see elevation's `-500` clamp**, and that was checked
+  rather than assumed. `vulcanus_elevation` is `max(-500, elev)` and the
+  captured `elev` bottoms out at **-58.77**, so the two columns are the same
+  field at all 434 positions - 0 of 434 differ - and a port that dropped the
+  `max` would score 115 either way. Both are graded anyway; the clamp's real
+  test lives in the module, constructing the case the fixture does not.
+- **A discrete output scores like one.** `mountain_volcano_spots` at 359 of 434
+  is the highest UNCLAMPED count in the Vulcanus port, because it is dominated
+  by which single candidate survives per region - a choice a sub-ULP error
+  almost never changes. The same property `voronoi_cell_id` has.
+
+**`detailNoise` is the reading to carry out of this phase.** It has the
+SMALLEST residual of its three helper fields (7.778e-5) and the FEWEST exact
+matches (**1 of 38**), where `mountainPlasma` has 2.815e-3 and 11 of 38. A field
+can be uniformly close and almost never right, which is the argument for
+counting matches rather than bounding error, stated in one number.
+
+Read elevation's worst residual of 1.332e-1 against its scale before reacting:
+the field spans -58 to +1024, so that is ~1.3e-4 relative, the same order as
+every layer above it. An absolute bound would need re-tuning per field for
+scale alone - a third reason not to use one.
+
+**`vulcanus_biomes` keeps a REAL cache, and it is the only layer that does.**
+Every other ported layer evaluates top to bottom into locals, because every read
+is at the same `(x, y)`. `raw_spots` is not: it reads selected spots from up to
+four neighbouring regions, which is genuine cross-position state. The region
+cache is a `RefCell<BTreeMap>` so `eval` can stay `&self` while the density and
+favorability closures handed to `select_spots` borrow it. `BTreeMap` rather than
+`HashMap` deliberately - nothing iterates it today, but a determinism-critical
+port should not carry a container whose iteration order is unspecified.
+
+`volcano_area` is evaluated at every spot candidate and pulls the whole
+pre-volcano chain at that candidate; the TypeScript memoizes those and the port
+recomputes them. **Nothing on the render path reaches this layer yet**, so it is
+correct-first on purpose. If it ever joins a per-pixel render that is the first
+measurement to take - `multioctave_noise`'s own docs record what happened last
+time a per-call rebuild went unmeasured, which was 20x.
+
+**The mountains pre-volcano split is load-bearing.** `mountain_volcano_spots`
+depends on the mountains biome and the mountains biome folds the volcano field
+back in; the Lua breaks that with a PRE-volcano stage that `volcano_area` reads.
+Collapsing the two is an infinite recursion, which announces itself - reading
+`volcano_area` off the POST-volcano raw does not.
+
+**`cliff_elevation` is a separate entry point, not a convenience.**
+`multisample`'s offsets are in the CONSUMING program's grid units, so the cliff
+generator's 4-tile lattice moves the field 16 tiles for a `dx` of 4 (#83). The
+tile and terrain channels pass 1; cliffs pass 4; both go through one code path
+with the grid as a parameter.
 
 **Tier 3 now covers both preview PNGs**, which is what #224's gate asks for.
 `test/wasmFulgoraRenderParity.spec.ts` renders through the real boundary and

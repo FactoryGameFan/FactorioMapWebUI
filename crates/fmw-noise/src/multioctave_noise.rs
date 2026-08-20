@@ -165,3 +165,43 @@ pub fn multioctave_noise(x: f64, y: f64, params: &MultioctaveParams) -> f32 {
     let tables = tables_from_seed(params.seed0, params.seed1);
     sum_octaves(x, y, &octave_terms(params), &tables)
 }
+
+/// One multioctave call with its seed tables and octave terms already derived.
+///
+/// **This is the shape every renderer needs, and its absence was a measured
+/// bug.** [`multioctave_noise`] re-derives both on every call, and
+/// [`tables_from_seed`] runs a PRNG over three 256-byte tables; Fulgora's chain
+/// makes eight such calls per pixel. Building them per point measured **1.15x**
+/// against the TypeScript, which builds them once in a closure. Hoisting is
+/// what the ratio in phase 3's pull request is.
+///
+/// Results are identical either way, so nothing in tiers 1 to 3 could see it.
+///
+/// No `Debug` or `Clone`: [`OctaveTerms`] has neither, and deriving them here
+/// would mean giving them to derived state whose shape is an implementation
+/// detail.
+///
+/// Lives here rather than beside the first planet that needed it. It landed in
+/// `expressions::fulgora_shared` in phase 3 and four Fulgora modules already
+/// imported it from there; Vulcanus (#225) needs it too, and a Vulcanus module
+/// reaching into a Fulgora one for a general multioctave utility would be the
+/// wrong shape. Nothing about it is planet-specific.
+pub struct Prepared {
+    terms: OctaveTerms,
+    tables: BasisNoiseTables,
+}
+
+impl Prepared {
+    #[must_use]
+    pub fn new(params: &MultioctaveParams) -> Self {
+        Self {
+            terms: octave_terms(params),
+            tables: tables_from_seed(params.seed0, params.seed1),
+        }
+    }
+
+    #[must_use]
+    pub fn eval(&self, x: f64, y: f64) -> f32 {
+        sum_octaves(x, y, &self.terms, &self.tables)
+    }
+}

@@ -20,8 +20,9 @@ use crate::eval::math::max2;
 use crate::expressions::fulgora_cells::CellFields;
 use crate::expressions::fulgora_masks::MaskFields;
 use crate::expressions::fulgora_roads::RoadFields;
-use crate::expressions::fulgora_shared::{FulgoraCtx, Prepared};
+use crate::expressions::fulgora_shared::FulgoraCtx;
 use crate::multioctave_noise::MultioctaveParams;
+use crate::multioctave_noise::Prepared;
 
 const SEED1_RUINS_WALLS: u32 = 2_307_136_174; // crc32("fulgora_ruins_walls")  = 0x89841AAE
 const SEED1_RUINS_PAVING: u32 = 3_946_133_559; // crc32("fulgora_ruins_paving") = 0xEB353837

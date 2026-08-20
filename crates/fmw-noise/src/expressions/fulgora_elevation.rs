@@ -25,9 +25,9 @@
 use crate::eval::math::slider_rescale;
 use crate::eval::math::{lerp_f32, max2, min2};
 use crate::expressions::fulgora_cells::CellFields;
-use crate::expressions::fulgora_shared::Prepared;
 use crate::expressions::fulgora_shared::{FulgoraCtx, SharedFields};
 use crate::multioctave_noise::MultioctaveParams;
+use crate::multioctave_noise::Prepared;
 use crate::poison;
 
 /// `seed1` for each multioctave call: `crc32` of the Lua's string seed.

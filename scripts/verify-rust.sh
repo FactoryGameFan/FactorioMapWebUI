@@ -96,6 +96,16 @@ POISONED_TESTS=(
   fixtures::reproduces_the_fulgora_scrap_probability_at_every_captured_position
   fixtures::puts_every_fulgora_tile_where_the_game_puts_it
 
+  # Phase 5 (#225), Vulcanus. Its hook is `poison::f64_result` on the plasma
+  # output; the two multioctave fields inherit `basis_noise`'s own hook.
+  fixtures::reproduces_the_vulcanus_helper_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_crack_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_climate_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_spawn_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_biome_layer_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_elevation_surface_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_temperature_at_every_captured_position
+
   tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order
 )
 for t in "${POISONED_TESTS[@]}"; do
