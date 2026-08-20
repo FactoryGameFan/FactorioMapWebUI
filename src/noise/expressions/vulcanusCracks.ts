@@ -38,6 +38,7 @@
  */
 import type { EvalCtx } from "../eval/ctx";
 import { clamp, lerp, max, min } from "../eval/math";
+import { f32 } from "../eval/f32";
 import { memoXY } from "../eval/memoXY";
 import type { VulcanusHelpers } from "./vulcanusHelpers";
 
@@ -59,22 +60,28 @@ export interface VulcanusCracks {
 
 /** Build the Vulcanus crack/flood closures for one seed/ctx. */
 export function makeVulcanusCracks(_ctx: EvalCtx, helpers: VulcanusHelpers): VulcanusCracks {
-  const cs = VULCANUS_CRACKS_SCALE;
+  // `vulcanus_cracks_scale` is a noise-EXPRESSION, not a Lua number, so every
+  // `k * vulcanus_cracks_scale` below is an f32 multiply inside the noise
+  // machine (#293). 0.325 has no exact f32 form, so holding it and narrowing
+  // each product is what takes `hairlineCracks` from 2 of 61 to 61 of 61 with
+  // worst residual exactly 0. `scaled` is that multiply, written once.
+  const cs = f32(VULCANUS_CRACKS_SCALE);
+  const scaled = (k: number): number => f32(f32(k) * cs);
   const { plasma, detailNoise } = helpers;
 
   // Pre-build the plasma/detail closures once (each captures its own seed tables).
-  const hairline = plasma(15223, 0.3 * cs, 0.6 * cs, 0.6, 1);
+  const hairline = plasma(15223, scaled(0.3), scaled(0.6), 0.6, 1);
 
-  const crackA1 = plasma(7543, 2.5 * cs, 4 * cs, 0.5, 1);
-  const crackA2 = plasma(7443, 1.5 * cs, 3.5 * cs, 0.5, 1);
-  const crackAMix = detailNoise(241, 2 * cs, 2, 0.25);
+  const crackA1 = plasma(7543, scaled(2.5), scaled(4), 0.5, 1);
+  const crackA2 = plasma(7443, scaled(1.5), scaled(3.5), 0.5, 1);
+  const crackAMix = detailNoise(241, scaled(2), 2, 0.25);
 
-  const crackB1 = plasma(12223, 2 * cs, 3 * cs, 0.5, 1);
-  const crackB2 = plasma(152, 1 * cs, 1.5 * cs, 0.25, 0.5);
-  const crackBMix = detailNoise(821, 6 * cs, 2, 0.5);
+  const crackB1 = plasma(12223, scaled(2), scaled(3), 0.5, 1);
+  const crackB2 = plasma(152, scaled(1), scaled(1.5), 0.25, 0.5);
+  const crackBMix = detailNoise(821, scaled(6), 2, 0.5);
 
-  const pathPlasma = plasma(1543, 1.5 * cs, 3 * cs, 0.5, 1);
-  const pathDetail = detailNoise(121, cs * 4, 2, 0.5);
+  const pathPlasma = plasma(1543, scaled(1.5), scaled(3), 0.5, 1);
+  const pathDetail = detailNoise(121, scaled(4), 2, 0.5);
 
   const hairlineCracks = memoXY((x: number, y: number): number => hairline(x, y));
 

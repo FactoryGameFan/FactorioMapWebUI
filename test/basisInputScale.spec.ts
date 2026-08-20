@@ -148,7 +148,7 @@ describe("basis_noise input_scale narrowing (#269, second question)", () => {
    * When it does, replace these with a full house rather than loosening
    * anything.
    */
-  it("the shipped basisNoiseExpr scores this, today", () => {
+  it("the shipped basisNoiseExpr reproduces the game at every input scale", () => {
     const got = fixture.cases.map((c) => {
       let exact = 0;
       for (let i = 0; i < fixture.positions.length; i++) {
@@ -168,12 +168,16 @@ describe("basis_noise input_scale narrowing (#269, second question)", () => {
       }
       return exact;
     });
-    expect(got).toEqual([196, 196, 3, 4, 3, 20, 79]);
+    expect(got).toEqual([N, N, N, N, N, N, N]);
 
-    // The control that keeps the paragraph above honest: the port and the
-    // formula ARE the same function today, so this file's other counts describe
-    // the port too. #290 is what breaks the tie.
-    expect(got).toEqual(fixture.cases.map((_c, i) => score(MODELS.unnarrowed, i)));
+    // The port and the `unnarrowed` formula have now SEPARATED, which is the
+    // whole of #290: the shipped adapter reaches the game everywhere while the
+    // un-narrowed formula still scores [196, 196, 3, 4, 3, 20, 79]. Asserting
+    // the split keeps this file honest in the other direction - it is the port
+    // that moved, not the fixture.
+    expect(fixture.cases.map((_c, i) => score(MODELS.unnarrowed, i))).toEqual([
+      196, 196, 3, 4, 3, 20, 79,
+    ]);
   });
 
   /**

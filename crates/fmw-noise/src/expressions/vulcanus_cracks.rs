@@ -70,17 +70,23 @@ impl VulcanusCracks {
     /// Build the layer from the helper closures it stacks on.
     #[must_use]
     pub fn new(helpers: &VulcanusHelpers) -> Self {
-        let cs = VULCANUS_CRACKS_SCALE;
+        // `vulcanus_cracks_scale` is a noise-EXPRESSION, not a Lua number, so
+        // every `k * vulcanus_cracks_scale` below is an f32 multiply inside the
+        // noise machine (#293). 0.325 has no exact f32 form, so holding it and
+        // narrowing each product is what takes `hairline_cracks` from 2 of 61 to
+        // 61 of 61 with worst residual exactly 0.
+        let cs = VULCANUS_CRACKS_SCALE as f32;
+        let scaled = |k: f64| f64::from((k as f32) * cs);
         Self {
-            hairline: helpers.plasma(15_223, 0.3 * cs, 0.6 * cs, 0.6, 1.0),
-            crack_a1: helpers.plasma(7_543, 2.5 * cs, 4.0 * cs, 0.5, 1.0),
-            crack_a2: helpers.plasma(7_443, 1.5 * cs, 3.5 * cs, 0.5, 1.0),
-            crack_a_mix: helpers.detail_noise(241, 2.0 * cs, 2.0, 0.25),
-            crack_b1: helpers.plasma(12_223, 2.0 * cs, 3.0 * cs, 0.5, 1.0),
-            crack_b2: helpers.plasma(152, 1.0 * cs, 1.5 * cs, 0.25, 0.5),
-            crack_b_mix: helpers.detail_noise(821, 6.0 * cs, 2.0, 0.5),
-            path_plasma: helpers.plasma(1_543, 1.5 * cs, 3.0 * cs, 0.5, 1.0),
-            path_detail: helpers.detail_noise(121, cs * 4.0, 2.0, 0.5),
+            hairline: helpers.plasma(15_223, scaled(0.3), scaled(0.6), 0.6, 1.0),
+            crack_a1: helpers.plasma(7_543, scaled(2.5), scaled(4.0), 0.5, 1.0),
+            crack_a2: helpers.plasma(7_443, scaled(1.5), scaled(3.5), 0.5, 1.0),
+            crack_a_mix: helpers.detail_noise(241, scaled(2.0), 2.0, 0.25),
+            crack_b1: helpers.plasma(12_223, scaled(2.0), scaled(3.0), 0.5, 1.0),
+            crack_b2: helpers.plasma(152, scaled(1.0), scaled(1.5), 0.25, 0.5),
+            crack_b_mix: helpers.detail_noise(821, scaled(6.0), 2.0, 0.5),
+            path_plasma: helpers.plasma(1_543, scaled(1.5), scaled(3.0), 0.5, 1.0),
+            path_detail: helpers.detail_noise(121, scaled(4.0), 2.0, 0.5),
         }
     }
 
@@ -152,14 +158,13 @@ mod tests {
     #[test]
     fn the_flood_path_detail_term_never_adds() {
         let (helpers, cracks) = layer();
-        let detail = helpers.detail_noise(121, VULCANUS_CRACKS_SCALE * 4.0, 2.0, 0.5);
-        let plasma = helpers.plasma(
-            1_543,
-            1.5 * VULCANUS_CRACKS_SCALE,
-            3.0 * VULCANUS_CRACKS_SCALE,
-            0.5,
-            1.0,
-        );
+        // Rebuild the two terms with the SAME f32 scale chain the layer uses
+        // (#293). Reconstructing them in f64 samples a different point, which
+        // is what this test caught when the chain changed.
+        let cs = VULCANUS_CRACKS_SCALE as f32;
+        let scaled = |k: f64| f64::from((k as f32) * cs);
+        let detail = helpers.detail_noise(121, scaled(4.0), 2.0, 0.5);
+        let plasma = helpers.plasma(1_543, scaled(1.5), scaled(3.0), 0.5, 1.0);
         let mut saw_negative_detail = 0usize;
         for (x, y) in grid() {
             let d = f64::from(detail.eval(x, y));

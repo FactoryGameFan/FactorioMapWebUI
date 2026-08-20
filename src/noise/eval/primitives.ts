@@ -62,8 +62,9 @@ export function basisNoiseExpr(
   tables: BasisNoiseTables = basisNoiseTablesFromSeed(params.seed0, params.seed1),
 ): number {
   const offsetX = params.offsetX ?? 0;
+  const inputScale = f32(params.inputScale);
   return f32(
     f32(params.outputScale) *
-      basisNoise((x + offsetX) * params.inputScale, y * params.inputScale, tables),
+      basisNoise(f32((x + offsetX) * inputScale), f32(y * inputScale), tables),
   );
 }

@@ -52,6 +52,7 @@
 import { basisNoiseTablesFromSeed } from "../basisNoise";
 import type { EvalCtx } from "../eval/ctx";
 import { clamp } from "../eval/math";
+import { f32 } from "../eval/f32";
 import { memoXY } from "../eval/memoXY";
 import { basisNoiseExpr } from "../eval/primitives";
 import { sliderRescale } from "../eval/math";
@@ -93,13 +94,28 @@ export interface VulcanusHelpers {
 export function makeVulcanusHelpers(ctx: EvalCtx): VulcanusHelpers {
   const seed0 = ctx.seed0;
 
+  /**
+   * `1 / 50 / scale`, as the NOISE PROGRAM computes it (#293).
+   *
+   * `vulcanus_detail_noise` and `vulcanus_plasma` are noise-FUNCTIONS, so this
+   * division happens inside the noise machine in f32, one operation at a time -
+   * not in Lua at data-load time. Computing it in f64 and narrowing once is a
+   * different number, and it is the difference between `mountain_plasma`
+   * scoring 10 of 38 and scoring 38 of 38 with worst residual exactly 0.
+   *
+   * Neither `1 / 50` nor most callers' `scale` is exact in f32, so both
+   * operations matter. Graded in `test/basisCallerScales.spec.ts` and
+   * `test/vulcanusPlasmaDecomposition.spec.ts`.
+   */
+  const inputScaleOver50 = (scale: number): number => f32(f32(f32(1) / f32(50)) / f32(scale));
+
   const detailNoise: VulcanusHelpers["detailNoise"] = (seed1, scale, octaves, magnitude) =>
     makeMultioctaveNoise({
       seed0,
       seed1: seed1 + 12243,
       octaves,
       persistence: 0.6,
-      inputScale: 1 / 50 / scale,
+      inputScale: inputScaleOver50(scale),
       outputScale: magnitude,
     });
 
@@ -113,7 +129,7 @@ export function makeVulcanusHelpers(ctx: EvalCtx): VulcanusHelpers {
         basisNoiseExpr(
           x,
           y,
-          { seed0, seed1: 12643, inputScale: 1 / 50 / scale, outputScale: magnitude1 },
+          { seed0, seed1: 12643, inputScale: inputScaleOver50(scale), outputScale: magnitude1 },
           tablesA,
         ) -
           basisNoiseExpr(
@@ -122,7 +138,7 @@ export function makeVulcanusHelpers(ctx: EvalCtx): VulcanusHelpers {
             {
               seed0,
               seed1: 13423 + seed,
-              inputScale: 1 / 50 / scale2,
+              inputScale: inputScaleOver50(scale2),
               outputScale: magnitude2,
             },
             tablesB,
@@ -143,7 +159,7 @@ export function makeVulcanusHelpers(ctx: EvalCtx): VulcanusHelpers {
       seed1,
       octaves: 5,
       persistence: 0.65,
-      inputScale: scaleMultiplier / scale,
+      inputScale: f32(f32(scaleMultiplier) / f32(scale)),
       outputScale: 1,
     });
 
