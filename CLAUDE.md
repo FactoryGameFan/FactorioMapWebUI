@@ -1133,6 +1133,33 @@ This exists because version skew is invisible from inside: the Vulcanus
 surface-seed bug passed every internal check for weeks because the fixture and
 the code agreed with each other while both disagreed with the game.
 
+### Diff artifacts are NOT fixtures - `test-output/` vs `test/fixtures/`
+
+When an image comparison in `test/previewAgreement.spec.ts` fails,
+`test/diffArtifacts.ts` writes the reference, our render, a magenta mask, a
+false-coloured magnitude view and a `stats.json` into
+`test-output/preview-diffs/<spec>/<case>/`, and the assertion message names that
+directory (#252). A scalar like `expected 237 to be less than 200` says a render
+moved without saying where, and where has repeatedly been the answer here.
+
+Three rules, and the first is the one that matters:
+
+- **They never get committed and never get a `PROVENANCE.json` entry.** A
+  fixture is ground truth captured from the game; an artifact is a photograph of
+  a failure taken by this repo. `test-output/` is gitignored precisely so the
+  two cannot be confused.
+- **They are written only when an assertion has already thrown.** A green run
+  writes nothing. `withDiffArtifacts` wraps the `expect` calls and re-throws the
+  same error rather than re-testing the bound, so no bound is ever stated twice.
+- **Nothing in there asserts anything, and no bound moved to add it.** The
+  artifacts answer "where", after a bound that already exists has failed.
+
+`test/diffArtifacts.spec.ts` is the guard on the writer itself - the machinery
+runs only when something else is broken, which is the worst time to find out it
+is broken too. It also pins the palette: a 1-count channel delta must come back
+clearly visible, not near-black, which is why the amplification is a lifted log
+ramp and not the `delta * 5` the prior art uses.
+
 ### Two representations, bridged by `convert.ts`
 
 The codec speaks `DecodedExchange` (raw wire shape). The app speaks `Preset`
