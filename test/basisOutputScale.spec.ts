@@ -86,16 +86,17 @@ describe("basis_noise output_scale narrowing (#269)", () => {
   });
 
   /**
-   * And the current port is the worst of the four wherever the question can be
-   * asked at all. These counts are what #269 is asking to change.
+   * **#269 is fixed, and this is the assertion that graded it.** Before the fix
+   * `basisNoiseExpr` returned the un-narrowed product and scored
+   * `[196, 28, 6, 96, 1]` - the worst of the four models wherever the question
+   * can be asked at all. It now IS `f32ScaleAndProduct`, so it reproduces the
+   * game at every position of every case.
    *
-   * **This assertion is expected to go GREEN-to-RED when #269 is fixed**, and
-   * that is deliberate: the fix turns `basisNoiseExpr` into
-   * `f32ScaleAndProduct`, and the whole point of a frozen count is that the
-   * change announces itself. When it does, replace these with `[196, 196, 196,
-   * 196, 196]` rather than loosening anything.
+   * The count was frozen rather than bounded precisely so the change would
+   * announce itself here, and it did. If it ever moves off a full house again,
+   * read it - do not loosen it.
    */
-  it("the shipped basisNoiseExpr scores this, today", () => {
+  it("the shipped basisNoiseExpr reproduces the game at every output scale", () => {
     const got = fixture.cases.map((c) => {
       let exact = 0;
       for (let i = 0; i < fixture.positions.length; i++) {
@@ -115,7 +116,7 @@ describe("basis_noise output_scale narrowing (#269)", () => {
       }
       return exact;
     });
-    expect(got).toEqual([196, 28, 6, 96, 1]);
+    expect(got).toEqual([N, N, N, N, N]);
   });
 
   /**

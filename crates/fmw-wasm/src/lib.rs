@@ -744,9 +744,10 @@ pub extern "C" fn checksum_eval_pipeline(
         offset_x,
     };
     let tables = basis_noise::tables_from_seed(seed0, seed1);
-    // f64, not f32: `basis_noise_expr` returns the un-narrowed f64 product
-    // that the TypeScript returns, and the TypeScript memos hold a `number`.
-    // See the note on `basis_noise_expr` and #269.
+    // f64, not f32: `basis_noise_expr` narrows the product to f32 (#269) but
+    // returns it widened, exactly as the TypeScript does, and the TypeScript
+    // memos hold a `number`. The memo element type tracks the memo, not the
+    // arithmetic. See the note on `basis_noise_expr`.
     let mut region = MemoRegion::<f64>::new();
     let mut slot = MemoXy::<f64>::new();
 
