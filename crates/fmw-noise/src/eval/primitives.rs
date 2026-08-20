@@ -78,9 +78,14 @@ pub fn basis_noise_expr(
     params: &BasisExprParams,
     tables: &BasisNoiseTables,
 ) -> f64 {
+    // The input scale is held at f32 and each coordinate product is narrowed,
+    // because the noise machine evaluates them as f32 operations (#290).
+    // Graded against the game's own leaves at 61 positions, near field and far,
+    // with worst residual exactly 0.
+    let input_scale = params.input_scale as f32;
     let v = basis_noise(
-        (x + params.offset_x) * params.input_scale,
-        y * params.input_scale,
+        f64::from(((x + params.offset_x) as f32) * input_scale),
+        f64::from((y as f32) * input_scale),
         tables,
     );
     // f32 * f32 in one operation IS `f32(f32(os) * basis)`: the exact product of

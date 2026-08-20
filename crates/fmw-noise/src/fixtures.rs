@@ -2364,12 +2364,12 @@ fn reproduces_the_vulcanus_helper_layer_at_every_captured_position() {
         // the coordinate floor,
         // which is why this is the loosest of the three in absolute terms while
         // still beating `detailNoise` on exact matches.
-        ("mountainPlasma", 11, &plasma),
+        ("mountainPlasma", 38, &plasma),
         // Four octaves at input scale 0.8; worst residual 7.778e-5. The
         // SMALLEST residual of the three and the FEWEST exact matches, which is
         // the whole argument for counting matches rather than bounding error:
         // a field can be uniformly close and almost never right.
-        ("detailNoise", 1, &detail_out),
+        ("detailNoise", 38, &detail_out),
     ] {
         assert_eq!(
             score_vulcanus(got, fixture.get(key).as_array(), key),
@@ -2514,13 +2514,13 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
     for (key, want_exact, select) in [
         (
             "hairlineCracks",
-            2usize,
+            50usize,
             &(|f: &C| f.hairline_cracks) as &dyn Fn(&C) -> f64,
         ),
-        ("floodCracksA", 15, &|f| f.flood_cracks_a),
-        ("floodCracksB", 40, &|f| f.flood_cracks_b),
-        ("floodPaths", 10, &|f| f.flood_paths),
-        ("floodBasaltsFunc", 9, &|f| f.flood_basalts_func),
+        ("floodCracksA", 45, &|f| f.flood_cracks_a),
+        ("floodCracksB", 43, &|f| f.flood_cracks_b),
+        ("floodPaths", 28, &|f| f.flood_paths),
+        ("floodBasaltsFunc", 31, &|f| f.flood_basalts_func),
     ] {
         let got: Vec<f64> = cracks.iter().map(select).collect();
         assert_eq!(
@@ -2563,8 +2563,8 @@ fn reproduces_the_vulcanus_climate_layer_at_every_captured_position() {
     // achieves rather than as a measure of it.
     type K = ClimateFields;
     for (key, want_exact, select) in [
-        ("aux", 40usize, &(|f: &K| f.aux) as &dyn Fn(&K) -> f64),
-        ("moisture", 20, &|f| f.moisture),
+        ("aux", 41usize, &(|f: &K| f.aux) as &dyn Fn(&K) -> f64),
+        ("moisture", 29, &|f| f.moisture),
     ] {
         let got: Vec<f64> = climate.iter().map(select).collect();
         assert_eq!(
@@ -2768,8 +2768,8 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     // the third argument for counting matches instead.
     type E = ElevationFields;
     for (key, want_exact, select) in [
-        ("elev", 115usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
-        ("elevation", 115, &|f| f.elevation),
+        ("elev", 169usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
+        ("elevation", 169, &|f| f.elevation),
     ] {
         let got: Vec<f64> = fields.iter().map(select).collect();
         assert_eq!(
@@ -2815,7 +2815,7 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
     // so most of `elev`'s residual is divided away before it lands here.
     assert_eq!(
         score_vulcanus(&got, fixture.get("temperature").as_array(), "temperature"),
-        196,
+        244,
         "temperature exact f32 matches out of {}",
         positions.len()
     );

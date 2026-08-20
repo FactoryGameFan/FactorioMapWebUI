@@ -114,6 +114,21 @@ pub struct VulcanusHelpers {
     wobble_huge_y: Prepared,
 }
 
+/// `1 / 50 / scale`, as the NOISE PROGRAM computes it (#293).
+///
+/// `vulcanus_detail_noise` and `vulcanus_plasma` are noise-FUNCTIONS, so this
+/// division happens inside the noise machine in f32, one operation at a time -
+/// not in Lua at data-load time. Computing it in f64 and narrowing once is a
+/// different number, and it is the difference between `mountain_plasma` scoring
+/// 10 of 38 and scoring 38 of 38 with worst residual exactly 0.
+///
+/// Neither `1 / 50` nor most callers' `scale` is exact in f32, so both
+/// operations matter.
+#[must_use]
+fn input_scale_over_50(scale: f64) -> f64 {
+    f64::from((1.0_f32 / 50.0_f32) / (scale as f32))
+}
+
 impl VulcanusHelpers {
     /// Build the layer for one evaluation context.
     #[must_use]
@@ -160,7 +175,7 @@ impl VulcanusHelpers {
             seed1,
             octaves: 5.0,
             persistence: 0.65,
-            input_scale: self.scale_multiplier / scale,
+            input_scale: f64::from((self.scale_multiplier as f32) / (scale as f32)),
             output_scale: 1.0,
         })
     }
@@ -179,14 +194,14 @@ impl VulcanusHelpers {
             a: BasisExprParams {
                 seed0: self.seed0,
                 seed1: PLASMA_SEED1_A,
-                input_scale: 1.0 / 50.0 / scale,
+                input_scale: input_scale_over_50(scale),
                 output_scale: magnitude1,
                 offset_x: 0.0,
             },
             b: BasisExprParams {
                 seed0: self.seed0,
                 seed1: PLASMA_SEED1_B_BASE + seed,
-                input_scale: 1.0 / 50.0 / scale2,
+                input_scale: input_scale_over_50(scale2),
                 output_scale: magnitude2,
                 offset_x: 0.0,
             },
@@ -243,7 +258,7 @@ fn detail_noise_params(
         seed1: seed1 + DETAIL_NOISE_SEED_OFFSET,
         octaves,
         persistence: 0.6,
-        input_scale: 1.0 / 50.0 / scale,
+        input_scale: input_scale_over_50(scale),
         output_scale: magnitude,
     }
 }
@@ -295,8 +310,15 @@ mod tests {
     #[test]
     fn the_input_scale_is_the_reciprocal_of_fifty_times_scale() {
         let p = detail_noise_params(1, 0, 1.0 / 8.0, 2.0, 4.0);
-        assert_eq!(p.input_scale, 1.0 / 50.0 / (1.0 / 8.0));
+        // The noise program computes `1 / 50 / scale` in f32, one operation at
+        // a time (#293), so this is 0.15999999642372131 and not 0.16.
+        assert_eq!(p.input_scale, f64::from((1.0_f32 / 50.0_f32) / 0.125_f32));
+        // Still discriminating: inverting the division lands somewhere else.
         assert_ne!(p.input_scale, (1.0 / 8.0) / 50.0);
+        // And the f64 form this used to assert is a DIFFERENT number. That gap
+        // is the whole of #293 - `1 / 8` is exact in f32, so the divisor is not
+        // what moved; `1 / 50` is not, and neither is the quotient.
+        assert_ne!(p.input_scale, 1.0 / 50.0 / (1.0 / 8.0));
     }
 
     /// `threshold` maps its own threshold to 0 and 1 to 1, which is the

@@ -1564,33 +1564,80 @@ landed as their own changes**, which is the intended path, not an exception:
   are all exposed, while the eleven `plasma` sites the crack layer calls at
   1, 0.5 and 0.25 are blind by construction and did not move.
 
-- **#269's SECOND question - MEASURED, NOT FIXED.** The output scale was only
-  half of it. The game also holds `input_scale` at f32 **and** narrows the
-  coordinate product: `basis_noise(f32(x * f32(input_scale)), ...)` reproduces
-  it at **196 of 196** at all seven captured scales.
-  `test/basisInputScale.spec.ts` is the grade,
-  `test/fixtures/oracle-basis-input-scale.seed123456.json` the capture, taken
-  with `output_scale` pinned at 1 so the settled question cannot leak in.
+- **#290 and #293 - BOTH LANDED, together.** The output scale was only a third
+  of it. Two more terms were wrong, and neither could be graded without the
+  other, so they landed as one change.
 
-  | model                      | 0.125   | 0.5     | 0.205128... | 0.0975  | 0.195   | 0.02    | 0.002   |
-  | -------------------------- | ------- | ------- | ----------- | ------- | ------- | ------- | ------- |
-  | `basis(x*s)` - shipped     | 196     | 196     | 3           | 4       | 3       | 20      | 79      |
-  | `basis(x*f32(s))`          | 196     | 196     | 5           | 8       | 7       | 17      | 118     |
-  | `basis(f32(x*s))`          | 196     | 196     | 99          | 71      | 70      | 104     | 107     |
-  | **`basis(f32(x*f32(s)))`** | **196** | **196** | **196**     | **196** | **196** | **196** | **196** |
+  **#290 - the input side.** The game holds `input_scale` at f32 **and**
+  narrows the coordinate product:
+  `basis_noise(f32(x * f32(input_scale)), ...)`. Graded 196 of 196 at seven
+  scales (`test/basisInputScale.spec.ts`) and again at the five real caller
+  `(input_scale, output_scale)` pairs (`test/basisCallerScales.spec.ts`), then
+  confirmed against the game's OWN leaves at 61 of 61 with **worst residual
+  exactly 0**, near field and far.
 
-  **This is bigger than the half that landed, and the reason is structural.**
-  #269's fix could only reach call sites whose `output_scale` was not a power of
-  two, because multiplying an f32 by one is a pure exponent shift. **No such
-  shortcut exists on the input side** - the coordinate is not an f32 to begin
-  with, so no input scale is blind by construction. It reaches EVERY
-  `basis_noise` call, including the eleven `plasma` calls Vulcanus's crack layer
-  makes at output scales 1, 0.5 and 0.25 that the output-side fix could not
-  touch. 0.0975 and 0.195 above are both terms of `vulcanus_hairline_cracks`,
-  the field that went 3 -> 2 when the output side was fixed.
+  **#293 - the scale arguments.** `vulcanus_cracks_scale` is a
+  **noise-EXPRESSION, not a Lua number**, so `0.3 * vulcanus_cracks_scale` is an
+  f32 multiply inside the noise machine. So is `1 / 50 / scale` inside
+  `vulcanus_plasma` and `vulcanus_detail_noise`, and
+  `vulcanus_scale_multiplier / scale` inside `vulcanus_biome_noise`. The port
+  computed all of them in f64 and narrowed once, which is a different number.
 
-  The fix is deliberately not written yet: it would move counts across the whole
-  tree, and this project fixes a port finding in a change graded on its own.
+  **Every count improved and not one regressed:**
+
+  | field                | before  | after                                  |
+  | -------------------- | ------- | -------------------------------------- |
+  | `detailNoise`        | 1/38    | **38/38**                              |
+  | `mountainPlasma`     | 11/38   | **38/38**                              |
+  | `hairlineCracks`     | 2/61    | **50/61** (61/61 at 2.1.14, see below) |
+  | `floodCracksA`       | 15/61   | **45/61**                              |
+  | `floodCracksB`       | 40/61   | **43/61**                              |
+  | `floodPaths`         | 10/61   | **28/61**                              |
+  | `floodBasaltsFunc`   | 9/61    | **31/61**                              |
+  | `aux`                | 40/61   | **41/61**                              |
+  | `moisture`           | 20/61   | **29/61**                              |
+  | `elev` / `elevation` | 115/434 | **169/434**                            |
+  | `temperature`        | 196/434 | **244/434**                            |
+
+  `detailNoise` is the one to notice. This file used to hold it up as the
+  argument for counting matches rather than bounding error - smallest residual
+  of its three helper fields, fewest exact matches, 1 of 38. It is now 38 of 38.
+  The bound never moved; the port did.
+
+- **The technique that solved #293 is worth more than the fix: capture the
+  INTERMEDIATES, at the SAME positions.** `basisCallerScales` graded the two
+  leaves at 196 positions on a +/-400 grid and got 196 of 196.
+  `oracle-vulcanus-cracks` graded the composed field at 61 different positions
+  and got 2 of 61. Nothing had measured one position end to end, so "leaves
+  right, composition wrong" was an inference across disjoint sample sets.
+
+  Capturing `vulcanus_hairline_cracks` AND both of its leaves together settled
+  it in two steps:
+
+  1. **Game against game, with the port removed entirely.**
+     `abs(gameLeafA - gameLeafB)` reproduces the game's own `hairline_cracks` at
+     only **7 of 61**, worst 5.272e-4. The expression was wrong, and no line of
+     our code was involved in showing it.
+  2. **Our leaf model against the game's own leaves: 61 of 61, worst exactly 0.**
+
+  Leaves provably exact plus composed field provably wrong localises the fault
+  to the ARGUMENTS - which is what sent us to the game's Lua. The oracle harness
+  samples named noise expressions by name, so any intermediate the game names
+  can be captured this way. `test/vulcanusPlasmaDecomposition.spec.ts` keeps
+  both steps as assertions.
+
+  That 5.272e-4 was also the number that breached `vulcanusCracks.spec.ts`'s
+  3e-4 bound when #290 was first tried ALONE. Fixing the leaves converged the
+  port onto `abs(gameA - gameB)` - the wrong target - which is what made the
+  argument error visible at all. A partial fix exposing a deeper one is a
+  finding, not a regression.
+
+- **The game's own Lua is on the capture machine**, under
+  `<install>/data/space-age/prototypes/planet/`. Read it before inferring a
+  formula from residuals. #293 was three hours of numerical archaeology that one
+  `grep` of `planet-vulcanus-map-gen.lua` would have shortened, because the
+  answer - `vulcanus_cracks_scale` being a noise-expression - is visible in the
+  prototype's own `type` field.
 
 - **#270 - FIXED.** The wasm libm question above. Closed by deleting the
   un-narrowed `slider_rescale` and moving all five callers onto the

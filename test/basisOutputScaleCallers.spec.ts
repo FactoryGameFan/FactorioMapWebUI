@@ -62,11 +62,11 @@ describe("#269's narrowing, scored on the shipped fields that read it", () => {
    * scales 125 and 625, with nothing composed on top - the shallowest exposed
    * expression in the tree, so it shows the term most directly. 7 -> 11 of 38.
    */
-  it("vulcanus mountain_plasma improves and holds at 11 of 38", () => {
+  it("vulcanus mountain_plasma reaches 38 of 38", () => {
     const helpers = makeVulcanusHelpers(withCtxDefaults({ seed0: helpersFixture.seed0 }));
     const mountainPlasma = helpers.plasma(102, 2.5, 10, 125, 625);
     const got = helpersFixture.positions.map((p) => mountainPlasma(p.x, p.y));
-    expect(scoreExact(got, helpersFixture.mountainPlasma)).toBe(11);
+    expect(scoreExact(got, helpersFixture.mountainPlasma)).toBe(38);
   });
 
   /**
@@ -79,7 +79,7 @@ describe("#269's narrowing, scored on the shipped fields that read it", () => {
    * 434 were captured off it, so the game evaluated a different point than the
    * fixture records (#186).
    */
-  it("vulcanus elev and elevation improve and hold at 116 of 434", () => {
+  it("vulcanus elev and elevation improve and hold at 171 of 434", () => {
     const ctx = withCtxDefaults({ seed0: velevFixture.seed0 });
     const helpers = makeVulcanusHelpers(ctx);
     const spawn = makeVulcanusSpawn(ctx, helpers);
@@ -94,13 +94,13 @@ describe("#269's narrowing, scored on the shipped fields that read it", () => {
         snapped.map((s) => elevation.elev(s.x, s.y)),
         velevFixture.elev,
       ),
-    ).toBe(116);
+    ).toBe(171);
     expect(
       scoreExact(
         snapped.map((s) => elevation.elevation(s.x, s.y)),
         velevFixture.elevation,
       ),
-    ).toBe(116);
+    ).toBe(171);
   });
 
   /**

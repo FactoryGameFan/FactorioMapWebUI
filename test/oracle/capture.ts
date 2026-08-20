@@ -3793,6 +3793,113 @@ async function captureBasisCallerScales(): Promise<void> {
   console.log(`wrote ${out} (${positions.length} points, ${cases.length} leaves)`);
 }
 
+/**
+ * #293: decompose `vulcanus_hairline_cracks` into its two leaves, at the SAME
+ * positions, so the formula can be tested against the game with the port taken
+ * out of the picture entirely.
+ *
+ * The gap this fills is a methodology one. `oracle-basis-caller-scales` grades
+ * the two leaves at 196 positions on a +/-400 grid and gets 196 of 196.
+ * `oracle-vulcanus-cracks` grades the composed field at 61 DIFFERENT positions
+ * and gets 6 of 61 even with those exact leaves. Nothing yet has measured a
+ * single position end to end, so "the leaves are right and the composition is
+ * wrong" is an inference across two disjoint sample sets, not an observation.
+ *
+ * Two things could break it, and this separates them:
+ *
+ * 1. **The formula.** If `vulcanus_plasma` is not `abs(A - B)` of these two
+ *    leaves with these seeds and scales, the port is reconstructing the wrong
+ *    expression. Testing this needs no port at all: capture the leaves and the
+ *    composed field together and ask whether
+ *    `hairline_cracks == abs(leafA - leafB)` in the GAME's own numbers.
+ * 2. **The far field.** The 196-position grid spans about +/-400 and every
+ *    coordinate on it is an exact binary fraction. These 61 positions reach
+ *    r = 3300 and include (12345.75, 6789.125), where an f32 ulp is ~1e-3 and
+ *    the coordinate pipeline is under real strain. A leaf model can be complete
+ *    near the origin and incomplete out there, and the existing grade could not
+ *    have seen it.
+ *
+ * The positions are `captureVulcanusCracks`'s, verbatim, so every value here
+ * lines up index-for-index with `oracle-vulcanus-cracks.seed123456.json`.
+ *
+ *   leafA = basis_noise{seed1 = 12643, input_scale = 1/50/(0.3*0.325), output_scale = 0.6}
+ *   leafB = basis_noise{seed1 = 28646, input_scale = 1/50/(0.6*0.325), output_scale = 1}
+ *
+ * 28646 is `13423 + 15223`, the second term's seed rule applied to
+ * `hairline_cracks`'s own seed. `vulcanus_hairline_cracks` is re-captured in
+ * the same run rather than read from the older fixture, so a version or surface
+ * difference cannot masquerade as a formula error.
+ */
+async function captureVulcanusPlasmaDecomposition(): Promise<void> {
+  const seed = 123456;
+  const planet = "vulcanus";
+
+  // Verbatim from captureVulcanusCracks, so indices line up with that fixture.
+  const positions: Position[] = [];
+  for (let gy = 0; gy < 6; gy++) {
+    for (let gx = 0; gx < 6; gx++) {
+      positions.push({ x: gx * 13 - 30 + 0.5, y: gy * 17 - 40 + 0.25 });
+    }
+  }
+  for (const r of [500, 1500, 3300]) {
+    for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4;
+      positions.push({
+        x: snapToMapPosition(r * Math.cos(a) + 0.5),
+        y: snapToMapPosition(r * Math.sin(a) + 0.25),
+      });
+    }
+  }
+  positions.push({ x: 12345.75, y: 6789.125 });
+
+  const sample = async (expression: string): Promise<number[]> => {
+    const workDir = await mkdtemp(join(tmpdir(), "oracle-capture-"));
+    try {
+      return await sampleExpression(expression, positions, {
+        workDir,
+        seed,
+        spaceAge: true,
+        planet,
+      });
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  };
+
+  const cs = 0.325;
+  const leafAScale = 1 / 50 / (0.3 * cs);
+  const leafBScale = 1 / 50 / (0.6 * cs);
+
+  const leafA = await sample(
+    `basis_noise{x = x, y = y, seed0 = map_seed, seed1 = 12643, ` +
+      `input_scale = ${String(leafAScale)}, output_scale = 0.6}`,
+  );
+  console.log("  captured plasma-decomposition leafA");
+  const leafB = await sample(
+    `basis_noise{x = x, y = y, seed0 = map_seed, seed1 = ${String(13423 + 15223)}, ` +
+      `input_scale = ${String(leafBScale)}, output_scale = 1}`,
+  );
+  console.log("  captured plasma-decomposition leafB");
+  const hairlineCracks = await sample("vulcanus_hairline_cracks");
+  console.log("  captured plasma-decomposition vulcanus_hairline_cracks");
+
+  const fixture = {
+    _comment:
+      "Ground truth from Factorio 2.1.14 (build 87180, win64), Space Age, on a real Vulcanus surface, via the test/oracle harness. The decomposition probe for #293: vulcanus_hairline_cracks and BOTH basis_noise leaves the port believes it is built from, captured at the SAME 61 positions (captureVulcanusCracks's grid, verbatim) so the formula hairline_cracks == abs(leafA - leafB) can be tested game-value against game-value, with the port removed. leafA is seed1 12643 at input_scale 1/50/(0.3*0.325) and output_scale 0.6; leafB is seed1 28646 (13423 + 15223) at input_scale 1/50/(0.6*0.325) and output_scale 1. These positions reach r = 3300 and (12345.75, 6789.125), unlike oracle-basis-caller-scales' +/-400 grid, so they also test whether the leaf model survives the far field. Captured from WSL against the Windows install, which needs FACTORIO_PATH_STYLE=windows and a TMPDIR on a Windows-visible drive. Regenerate: node --experimental-strip-types test/oracle/capture.ts vulcanus-plasma-decomposition",
+    seed0: seed,
+    planet,
+    leafA: { seed1: 12643, inputScale: leafAScale, outputScale: 0.6 },
+    leafB: { seed1: 13423 + 15223, inputScale: leafBScale, outputScale: 1 },
+    positions,
+    leafAValues: leafA,
+    leafBValues: leafB,
+    hairlineCracks,
+  };
+  const out = join(FIXTURES, "oracle-vulcanus-plasma-decomposition.seed123456.json");
+  await writeFile(out, JSON.stringify(fixture, null, 2) + "\n");
+  console.log(`wrote ${out} (${positions.length} positions)`);
+}
+
 const only = process.argv.slice(2);
 const want = (name: string) => only.length === 0 || only.includes(name);
 
@@ -7224,3 +7331,4 @@ if (want("vulcanus-rocks")) await captureVulcanusRocks();
 if (want("basis-output-scale")) await captureBasisOutputScale();
 if (want("basis-input-scale")) await captureBasisInputScale();
 if (want("basis-caller-scales")) await captureBasisCallerScales();
+if (want("vulcanus-plasma-decomposition")) await captureVulcanusPlasmaDecomposition();
