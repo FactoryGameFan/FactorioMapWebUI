@@ -35,22 +35,42 @@ pub struct BasisExprParams {
 /// there, and narrowing it here would evaluate a DIFFERENT point. This is the
 /// same reading `fixtures::score` records for the raw kernel.
 ///
-/// ## It returns f64, and the missing narrowing is DELIBERATE (#269)
+/// ## The output scale is narrowed twice, and both are needed (#269)
 ///
-/// The game's noise machine evaluates `output_scale * basis_noise(...)` as one
-/// f32 operation. The TypeScript does not narrow it - it returns the plain f64
-/// product - and neither do any of its five callers: `nauvis_shared` writes
-/// `0.65 + basisNoiseExpr(...)`, `elevation_lakes` writes
-/// `basisNoiseExpr(...) + sld/4 - 4`, both in f64.
+/// The game evaluates this as `f32(f32(output_scale) * basis)`. That is BOTH
+/// cases of the two-case rule at one call site, which is why neither half alone
+/// reaches the game:
 ///
-/// So this port returns f64 too. **Narrowing here would be a silent behaviour
-/// change to five shipped expression files**, every one of them currently
-/// passing its own oracle fixture, and this phase has no fixture that can grade
-/// the difference. The two-case rule in [`super`] says isolate the term and
-/// measure before fixing it; #269 tracks doing exactly that against those five
-/// fixtures. Until then the port carries the same approximation the TypeScript
-/// carries, on purpose, because tier 2 compares the two ports and a unilateral
-/// "fix" here would read as a port bug.
+/// - **The CONSTANT.** `output_scale` is a program literal the engine holds at
+///   f32. The f64 `0.6` is 0.59999999999999997780 and no amount of rounding the
+///   product recovers the difference.
+/// - **The PRODUCT.** `basis_noise` returns an f32 and the multiply is its own
+///   f32 operation, so its result is f32 before anything downstream reads it.
+///
+/// Graded against the game at 196 positions and five output scales in
+/// `test/basisOutputScale.spec.ts`. Exact equality, never a bound (#162):
+///
+/// ```text
+/// f32(f32(output_scale) * basis)   196/196 at all five scales   <- the game
+/// f32(output_scale * basis)        196, 110, 151, 196, 196      <- #269's proposal
+/// output_scale * basis             196,  28,   6,  96,   1      <- what shipped
+/// f32(output_scale) * basis        196,   0,   0,   0,   1
+/// ```
+///
+/// **A power-of-two `output_scale` is immune** and cannot grade this: multiplying
+/// an f32 by one is a pure exponent shift, so the product can never leave the
+/// f32 grid. That is why the older `oracle-basis` fixture, captured at
+/// `output_scale = 1`, could not answer the question and a new capture had to.
+///
+/// An earlier revision of this comment argued at length that NOT narrowing was
+/// deliberate, because no fixture could grade the difference and a unilateral
+/// change here would read as a port bug against the TypeScript. That reasoning
+/// was sound and it is now spent: #287 captured the discriminating fixture, the
+/// TypeScript changed in the same commit as this, and the two ports still agree.
+///
+/// The `input_scale` product is deliberately NOT narrowed. It decides which
+/// point gets sampled rather than what the product rounds to. Whether the game
+/// holds `input_scale` at f32 too is a separate, unmeasured question on #269.
 #[must_use]
 pub fn basis_noise_expr(
     x: f64,
@@ -63,7 +83,10 @@ pub fn basis_noise_expr(
         y * params.input_scale,
         tables,
     );
-    params.output_scale * f64::from(v)
+    // f32 * f32 in one operation IS `f32(f32(os) * basis)`: the exact product of
+    // two f32s fits in an f64 mantissa, so there is no double rounding to dodge
+    // and this matches `Math.fround(Math.fround(os) * basis)` bit for bit.
+    f64::from((params.output_scale as f32) * v)
 }
 
 #[cfg(test)]
@@ -111,49 +134,77 @@ mod tests {
         assert_ne!(got, wrong);
     }
 
-    /// `output_scale` multiplies the RESULT, in f64, with NO narrowing - see
-    /// the docblock and #269.
+    /// `output_scale` is narrowed to f32 and so is the product: the game
+    /// evaluates `f32(f32(output_scale) * basis)` (#269).
     ///
-    /// The second half is what makes this test say something: it picks an
-    /// output scale whose product is NOT f32-representable, so a port that
-    /// narrowed would return a different number. Without it the assertion would
-    /// hold for either reading.
+    /// The scans are what make this test say something. A hand-picked point
+    /// proves nothing here - at (3.25, -7.5) with a scale of 0.1 the f64 product
+    /// happens to land exactly on an f32, so it cannot tell the readings apart.
+    /// That was found by an assertion failing, not by reading the code, which is
+    /// why both halves scan and then assert they FOUND discriminating points.
     #[test]
-    fn the_output_scale_multiplies_the_result_once() {
+    fn the_output_scale_and_the_product_are_both_narrowed() {
         let tables = tables_from_seed(123_456, 123);
         let mut p = params();
+
+        // Half one: an f32-exact scale, so only the PRODUCT narrowing can show.
         p.output_scale = 7.5;
-        let raw = basis_noise((3.25) / 32.0, (-7.5) / 32.0, &tables);
+        let raw = basis_noise(3.25 / 32.0, -7.5 / 32.0, &tables);
         assert_eq!(
             basis_noise_expr(3.25, -7.5, &p, &tables),
-            7.5 * f64::from(raw)
+            f64::from(7.5_f32 * raw)
         );
 
-        // And the discriminating half. A single hand-picked point is not
-        // enough: at (3.25, -7.5) with a scale of 0.1 the f64 product happens
-        // to land exactly on an f32, so it cannot tell the two readings apart.
-        // That was found by the assertion below failing, not by reading the
-        // code, which is why this scans instead.
+        // Half two: a scale that is NOT f32-exact, so the CONSTANT narrowing
+        // shows too. `vs_unnarrowed` counts points that separate the shipped
+        // model from this one; `vs_product_only` counts points that separate
+        // narrowing the product ALONE from narrowing the constant as well -
+        // which is the half #269 itself does not say.
         p.output_scale = 1.0 / 3.0;
-        let mut discriminating = 0usize;
+        let mut vs_unnarrowed = 0usize;
+        let mut vs_product_only = 0usize;
         for k in 0..64 {
             let (x, y) = (f64::from(k) * 3.25 - 40.0, f64::from(k) * -1.75 + 11.0);
-            let want = p.output_scale
-                * f64::from(basis_noise(
-                    (x + p.offset_x) * p.input_scale,
-                    y * p.input_scale,
-                    &tables,
-                ));
+            let basis = basis_noise((x + p.offset_x) * p.input_scale, y * p.input_scale, &tables);
+            let want = f64::from((p.output_scale as f32) * basis);
             assert_eq!(basis_noise_expr(x, y, &p, &tables), want);
-            if want != f64::from(want as f32) {
-                discriminating += 1;
+
+            let unnarrowed = p.output_scale * f64::from(basis);
+            if want != unnarrowed {
+                vs_unnarrowed += 1;
+            }
+            if want != f64::from((p.output_scale * f64::from(basis)) as f32) {
+                vs_product_only += 1;
             }
         }
         assert!(
-            discriminating > 32,
-            "only {discriminating} of 64 points can tell the un-narrowed f64 \
-             product from its f32 narrowing, so the assertions above mostly \
-             hold for either reading"
+            vs_unnarrowed > 32,
+            "only {vs_unnarrowed} of 64 points separate this from the un-narrowed              f64 product, so the assertions above mostly hold for either reading"
         );
+        assert!(
+            vs_product_only > 0,
+            "no point separates narrowing the product alone from also holding              output_scale at f32, so this scan cannot see the second half of #269"
+        );
+    }
+
+    /// A power-of-two `output_scale` cannot grade any of this: multiplying an
+    /// f32 by one is a pure exponent shift, so every candidate model coincides.
+    /// This is why the older `oracle-basis` fixture, captured at
+    /// `output_scale = 1`, could not answer #269.
+    #[test]
+    fn a_power_of_two_output_scale_is_blind_to_the_narrowing() {
+        let tables = tables_from_seed(123_456, 123);
+        let mut p = params();
+        for os in [1.0, 0.5, 0.25, 2.0, 4.0, 64.0] {
+            p.output_scale = os;
+            for k in 0..64 {
+                let (x, y) = (f64::from(k) * 3.25 - 40.0, f64::from(k) * -1.75 + 11.0);
+                let basis =
+                    basis_noise((x + p.offset_x) * p.input_scale, y * p.input_scale, &tables);
+                // The un-narrowed product and the fully narrowed one are the
+                // same number here, so the adapter matches both at once.
+                assert_eq!(basis_noise_expr(x, y, &p, &tables), os * f64::from(basis));
+            }
+        }
     }
 }

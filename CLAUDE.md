@@ -1432,11 +1432,32 @@ shipped call sites.
 port.** All were behaviour changes to shipped fields that passed their own
 fixtures, so each got an issue instead. The port reproduces the TypeScript
 exactly in every case - a unilateral "fix" on the Rust side would read as a port
-bug in tier 2, which is the whole point of having tier 2. **Two have since
+bug in tier 2, which is the whole point of having tier 2. **All three have since
 landed as their own changes**, which is the intended path, not an exception:
 
-- **#269 - STILL OPEN.** `basisNoiseExpr` returns an un-narrowed f64 product
-  where the game narrows to f32, and none of its five callers narrow either.
+- **#269 - LANDED.** `basisNoiseExpr` returned an un-narrowed f64 product where
+  the game evaluates `f32(f32(output_scale) * basis)`, and none of its five
+  callers narrowed either. Settled against the game at 196 positions and five
+  output scales (the fixture is #287's): the shipped form scored
+  `[196, 28, 6, 96, 1]` and the game's form scores **196 of 196 at every scale**.
+  **Narrowing the product is necessary and NOT sufficient** - the `output_scale`
+  CONSTANT is held at f32 as well, the same shape as #273, and that is the half
+  the issue itself does not say.
+
+  Re-scored on every field that reads it, because a green gate proves nothing
+  here (see below): `mountain_plasma` **7 -> 11 of 38**, Vulcanus `elev` and
+  `elevation` **114 -> 116 of 434**, and `elevation_lakes` (13/17),
+  `elevation_nauvis` (3/17) and both `cliffiness` gates (1024/1024) unmoved.
+  Nothing regressed - unlike #273, which moved counts in both directions.
+
+  **A power-of-two `output_scale` is immune** and cannot grade any of this:
+  multiplying an f32 by one is a pure exponent shift. Which sites the fix can
+  reach is decided by the output scale alone - `cliff_fields` (0.51),
+  `nauvis_shared` (0.6), `elevation_lakes` (1.5), `vulcanus_elevation`
+  (250, 150) and the `plasma` magnitudes routed into it (125/625, 0.15/0.75)
+  are all exposed, while the eleven `plasma` sites the crack layer calls at
+  1, 0.5 and 0.25 are blind by construction and did not move.
+
 - **#270 - FIXED.** The wasm libm question above. Closed by deleting the
   un-narrowed `slider_rescale` and moving all five callers onto the
   per-operation form the oracle says the game uses.
@@ -1451,6 +1472,17 @@ landed as their own changes**, which is the intended path, not an exception:
 
 The shape to copy: find it while porting, reproduce it faithfully so tier 2 stays
 honest, open an issue, and fix it in a change graded on its own.
+
+**A green `pnpm run verify` cannot see a change of this class - measured, not
+assumed (#256).** When #269's fix landed, the full TypeScript suite passed with
+**zero failures** even though the model under seven call sites had changed,
+because the oracle specs that cover those callers assert combined abs/rel bounds
+rather than exact f32 matches. The bounds are wide enough to swallow the whole
+difference. The only spec that noticed was `test/basisOutputScale.spec.ts`,
+which freezes exact counts on purpose. So when you change an op that shipped
+fields read, **re-score those fields exactly before and after** - the gate going
+green is not evidence, and #162 is the standing record of a tolerance hiding a
+real bug for a year.
 
 **`f64::max` is NOT `Math.max`, and only a raw-bits fold can see the
 difference** (found 2026-08-19, #224). They differ two ways: on NaN, where
