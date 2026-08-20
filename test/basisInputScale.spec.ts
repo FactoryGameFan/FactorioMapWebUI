@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-basis-input-scale.seed123456.json";
 import { basisNoise, basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
+import { basisNoiseExpr } from "../src/noise/eval/primitives";
 import { f32 } from "../src/noise/eval/f32";
 
 /**
@@ -131,14 +132,48 @@ describe("basis_noise input_scale narrowing (#269, second question)", () => {
    * 0.02 is the base of every `vulcanus_plasma` call, and 0.002 is
    * `mountain_basis_noise`.
    *
-   * This assertion is expected to go GREEN-to-RED when this is fixed, the same
-   * way `basisOutputScale.spec.ts` froze `[196, 28, 6, 96, 1]` before #269
-   * landed. When it does, replace these with a full house rather than loosening
+   * This reads `basisNoiseExpr` - the function a fix would change - rather than
+   * the `unnarrowed` formula above, and the distinction is not cosmetic. The
+   * first version of this assertion scored the formula, which meant it would
+   * have stayed GREEN through the very fix it claimed to be a tripwire for. A
+   * frozen count is only a tripwire if it is wired to the thing that moves.
+   *
+   * The two agree today, and that is itself the point: `basisNoiseExpr` at
+   * `output_scale = 1` reduces to `f32(basis_noise(x * input_scale, ...))`, so
+   * the formula and the port are the same function until the coordinate
+   * arithmetic changes. #290 is what separates them.
+   *
+   * Expected to go GREEN-to-RED when #290 lands, the same way
+   * `basisOutputScale.spec.ts` froze `[196, 28, 6, 96, 1]` before #269 did.
+   * When it does, replace these with a full house rather than loosening
    * anything.
    */
-  it("the shipped basisNoise scores this, today", () => {
-    const got = fixture.cases.map((_c, i) => score(MODELS.unnarrowed, i));
+  it("the shipped basisNoiseExpr scores this, today", () => {
+    const got = fixture.cases.map((c) => {
+      let exact = 0;
+      for (let i = 0; i < fixture.positions.length; i++) {
+        const p = fixture.positions[i];
+        const v = basisNoiseExpr(
+          p.x,
+          p.y,
+          {
+            seed0: fixture.seed0,
+            seed1: fixture.seed1,
+            inputScale: c.inputScale,
+            outputScale: fixture.outputScale,
+          },
+          tables,
+        );
+        if (c.values[i] === v) exact++;
+      }
+      return exact;
+    });
     expect(got).toEqual([196, 196, 3, 4, 3, 20, 79]);
+
+    // The control that keeps the paragraph above honest: the port and the
+    // formula ARE the same function today, so this file's other counts describe
+    // the port too. #290 is what breaks the tie.
+    expect(got).toEqual(fixture.cases.map((_c, i) => score(MODELS.unnarrowed, i)));
   });
 
   /**
