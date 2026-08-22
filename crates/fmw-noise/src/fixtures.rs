@@ -542,16 +542,6 @@ fn count_off_grid(positions: &[(f64, f64)]) -> usize {
         .count()
 }
 
-/// The 26 capture positions of `oracle-elevation-lakes`, snapped.
-fn lakes_fixture_positions(fixture: &Json) -> Vec<(f64, f64)> {
-    fixture
-        .get("positions")
-        .as_array()
-        .iter()
-        .map(|p| (p.get("x").as_f64(), p.get("y").as_f64()))
-        .collect()
-}
-
 #[test]
 fn reproduces_the_games_distance_from_nearest_point_at_all_26_positions() {
     // `distance` is 26 values of `distance_from_nearest_point{x = x, y = y,
@@ -562,7 +552,7 @@ fn reproduces_the_games_distance_from_nearest_point_at_all_26_positions() {
         "test/fixtures/oracle-elevation-lakes.seed123456.json",
         "2.1.11",
     );
-    let positions = lakes_fixture_positions(&fixture);
+    let positions = fixture_positions(&fixture, "positions");
     let expected = fixture.get("distance").as_f64_array();
     let spawn = [Point { x: 0.0, y: 0.0 }];
 
@@ -620,7 +610,7 @@ fn reproduces_every_starting_lake_distance_in_the_fixture() {
         "2.1.11",
     );
     let seed0 = fixture.get("seed0").as_f64() as u32;
-    let positions = lakes_fixture_positions(&fixture);
+    let positions = fixture_positions(&fixture, "positions");
     let expected = fixture.get("startingLakeDistance").as_f64_array();
     assert_all_f32(
         fixture.get("startingLakeDistance").as_array(),
@@ -676,7 +666,7 @@ fn the_capture_grid_snap_is_inert_on_starting_lake_distance_and_that_is_measured
         "2.1.11",
     );
     let seed0 = fixture.get("seed0").as_f64() as u32;
-    let positions = lakes_fixture_positions(&fixture);
+    let positions = fixture_positions(&fixture, "positions");
     let expected = fixture.get("startingLakeDistance").as_f64_array();
     let lakes = starting_lake_positions(seed0, &[Point { x: 0.0, y: 0.0 }]);
 
@@ -1046,6 +1036,11 @@ fn score_voronoi_series(
     (values.len(), exact)
 }
 
+/// A fixture's recorded capture positions, as `(x, y)` pairs.
+///
+/// It READS them and nothing more. Snapping onto the game's 1/256 grid is the
+/// caller's job, because not every caller wants it - the anti-vacuity tests for
+/// that snap deliberately score both ways (#186, #294).
 fn fixture_positions(fixture: &Json, key: &str) -> Vec<(f64, f64)> {
     fixture
         .get(key)
@@ -2872,6 +2867,14 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 434, "fixture size");
+    // The snap below is applied for these 22 and no others. Asserted so a
+    // re-capture that lands everything on-grid cannot leave it looking
+    // load-bearing; `test/vulcanusElevation.spec.ts` pins the same 22.
+    assert_eq!(
+        count_off_grid(&fixture_positions(&fixture, "positions")),
+        22,
+        "off-grid positions"
+    );
 
     let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
     let helpers = VulcanusHelpers::new(&ctx);
@@ -2883,20 +2886,42 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
 
     let fields: Vec<ElevationFields> = positions
         .iter()
-        .map(|p| elevation.eval(p.get("x").as_f64(), p.get("y").as_f64()))
+        .map(|p| {
+            elevation.eval(
+                snap_coord(p.get("x").as_f64()),
+                snap_coord(p.get("y").as_f64()),
+            )
+        })
         .collect();
 
-    // Frozen exact counts, matched by the TypeScript at 115 and 115 (113 and
-    // 113 before #269), worst residual 1.332e-1 on both as measured before it.
-    // The chain reads basis calls at output scales 250 and 150 plus both
-    // `plasma` pairs, so it is directly exposed.
+    // Frozen exact counts, graded at coordinates SNAPPED onto the game's 1/256
+    // MapPosition grid. 22 of these 434 positions were captured off that grid,
+    // so for those the game evaluated a different point than the fixture
+    // records (#186). Scoring them raw is what #294 was filed over: it reads as
+    // a port gap and is a harness gap. Unsnapped these score 169 and 169, and
+    // `the_capture_grid_snap_is_load_bearing_on_the_vulcanus_elevation_surface`
+    // pins both pairs so the snap cannot quietly become decoration.
+    //
+    // **There is no committed TypeScript count for these to match.** A note
+    // here used to claim "matched by the TypeScript at 115 and 115"; the
+    // counterpart, `test/vulcanusElevation.spec.ts`, applies the same snap
+    // through `snapPosition` but grades this field with measured residual
+    // BOUNDS - 2e-3 near spawn, 6e-3 far - not with exact counts. Those 115s
+    // came from an ad-hoc harness rather than from anything in the repo, and
+    // they predate #290/#293 besides. #294's framing that the two ports "freeze
+    // different counts" inherits the same mistake: only one of them freezes a
+    // count at all.
+    //
+    // Graded against a **2.1.12** capture while the binary is 2.1.14 (#295), so
+    // a count short of a full house has one more candidate explanation than the
+    // port being wrong.
     //
     // **The two columns are the same field in this fixture, and that is a gap
     // in the fixture rather than a result.** `vulcanus_elevation` is
     // `max(-500, elev)`, and the captured `elev` never goes below -500: its
     // minimum over all 434 positions is -58.77. So `elev` equals `elevation` at
     // every position, the clamp is never exercised, and a port that dropped the
-    // `max` entirely would score 115 here too. Checked rather than assumed -
+    // `max` entirely would score 171 here too. Checked rather than assumed -
     // 0 of 434 positions differ between the two columns.
     //
     // Grading both anyway, because the cost is nothing and the day a capture
@@ -2904,15 +2929,17 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     // clamp itself is held up by `the_clamped_elevation_is_not_the_raw_elev` in
     // the elevation module, which constructs the case the oracle does not.
     //
-    // The residual is 1.332e-1, which looks alarming next to the other layers
-    // until you read the scale: elevation spans -58 to +1024 here, so that is
-    // about 1.3e-4 relative - the same order as everything upstream. An absolute
-    // bound would have to be re-tuned per field for that reason alone, which is
-    // the third argument for counting matches instead.
+    // On the residual: 1.332e-1 was the pre-snap worst and looked alarming next
+    // to the other layers until you read the scale - elevation spans -58 to
+    // +1024 here, so that is about 1.3e-4 relative. The TypeScript's post-snap
+    // worsts are 1.869e-3 near spawn and 5.234e-3 far, a 25x improvement that
+    // is itself the evidence the off-grid capture, not precision, was the
+    // far-field story. An absolute bound would have to be re-tuned per field
+    // for scale alone, which is the third argument for counting matches.
     type E = ElevationFields;
     for (key, want_exact, select) in [
-        ("elev", 169usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
-        ("elevation", 169, &|f| f.elevation),
+        ("elev", 171usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
+        ("elevation", 171, &|f| f.elevation),
     ] {
         let got: Vec<f64> = fields.iter().map(select).collect();
         assert_eq!(
@@ -2921,6 +2948,83 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
             "{key} exact f32 matches out of 434"
         );
     }
+}
+
+/// Anti-vacuity for the 1/256 capture-grid snap the two elevation tests apply.
+///
+/// The lakes pair has a control of the opposite shape - there the snap is
+/// INERT, and `the_capture_grid_snap_is_inert_on_starting_lake_distance_and_that_is_measured`
+/// pins that inertness. Here it moves real counts, so the control has to score
+/// BOTH ways and assert the snapped run is strictly better. If a re-capture
+/// ever lands every position on the grid the two runs converge, this goes red,
+/// and the snap should be deleted rather than left looking load-bearing.
+///
+/// Measured 2026-08-21, on the tree that carries #290 and #293:
+///
+/// | field | unsnapped | snapped |
+/// | --- | ---: | ---: |
+/// | `elev` (and `elevation`, which equals it here) | 169 | **171** |
+/// | `temperature` | 244 | **252** |
+///
+/// Both move UP, which is the direction that says the snap is recovering the
+/// point the game evaluated rather than perturbing a good answer. It is a small
+/// move because only 22 of 434 positions are off-grid at all, so 412 of these
+/// rows are the same computation either way and the snap can reach at most 22.
+#[test]
+fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_elevation_surface() {
+    let elev_fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-elevation.seed123456.json",
+        "2.1.12",
+    );
+    let temp_fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-temperature.seed123456.json",
+        "2.1.12",
+    );
+
+    let ctx = crate::eval::ctx::EvalCtx::new(elev_fixture.get("seed0").as_f64() as u32);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let cracks = VulcanusCracks::new(&helpers);
+    let spawn = VulcanusSpawn::with_host_trig(&ctx);
+    let biomes = VulcanusBiomes::with_host_trig(&ctx, &helpers, &spawn);
+    let climate = VulcanusClimate::new(ctx.seed0);
+    let elevation = VulcanusElevation::new(&ctx, &helpers, &cracks, &biomes, &climate);
+
+    let maybe_snap = |v: f64, snap: bool| if snap { snap_coord(v) } else { v };
+
+    let score_elev = |snap: bool| {
+        let got: Vec<f64> = fixture_positions(&elev_fixture, "positions")
+            .iter()
+            .map(|(x, y)| {
+                elevation
+                    .eval(maybe_snap(*x, snap), maybe_snap(*y, snap))
+                    .elev
+            })
+            .collect();
+        score_vulcanus(&got, elev_fixture.get("elev").as_array(), "elev")
+    };
+
+    let score_temp = |snap: bool| {
+        let got: Vec<f64> = fixture_positions(&temp_fixture, "positions")
+            .iter()
+            .map(|(x, y)| {
+                elevation.temperature(
+                    maybe_snap(*x, snap),
+                    maybe_snap(*y, snap),
+                    ctx.temperature_bias,
+                )
+            })
+            .collect();
+        score_vulcanus(
+            &got,
+            temp_fixture.get("temperature").as_array(),
+            "temperature",
+        )
+    };
+
+    assert_eq!(score_elev(false), 169, "elev unsnapped");
+    assert_eq!(score_elev(true), 171, "elev snapped");
+    assert_eq!(score_temp(false), 244, "temperature unsnapped");
+    assert_eq!(score_temp(true), 252, "temperature snapped");
 }
 
 /// `vulcanus_temperature`, which the climate layer deferred until `elev` existed.
@@ -2935,6 +3039,12 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
         "2.1.12",
     );
     let positions = fixture.get("positions").as_array();
+    // Its own fixture, its own off-grid count - which happens to also be 22.
+    assert_eq!(
+        count_off_grid(&fixture_positions(&fixture, "positions")),
+        22,
+        "off-grid positions"
+    );
 
     let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
     let helpers = VulcanusHelpers::new(&ctx);
@@ -2948,20 +3058,29 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
         .iter()
         .map(|p| {
             elevation.temperature(
-                p.get("x").as_f64(),
-                p.get("y").as_f64(),
+                snap_coord(p.get("x").as_f64()),
+                snap_coord(p.get("y").as_f64()),
                 ctx.temperature_bias,
             )
         })
         .collect();
 
-    // Frozen exact count, matched by the TypeScript at 196 with the same worst
-    // residual of 1.327e-1. Higher than `elev`'s 115 despite reading it,
-    // because temperature scales it by 1/100 above zero - `min(e, e / 100)` -
-    // so most of `elev`'s residual is divided away before it lands here.
+    // Frozen exact count, at snapped coordinates for the same reason as the
+    // elevation surface above - this fixture carries its own 22 off-grid
+    // positions (#186, #294). Unsnapped it scores 244; the sibling anti-vacuity
+    // test pins both numbers.
+    //
+    // Higher than `elev`'s 171 despite reading it, because temperature scales
+    // it by 1/100 above zero - `min(e, e / 100)` - so most of `elev`'s residual
+    // is divided away before it lands here.
+    //
+    // As with the elevation surface, the TypeScript counterpart grades this
+    // with residual bounds rather than a count, so the "matched by the
+    // TypeScript at 196" this comment used to carry described no committed
+    // assertion. Captured at 2.1.12 against a 2.1.14 binary (#295).
     assert_eq!(
         score_vulcanus(&got, fixture.get("temperature").as_array(), "temperature"),
-        244,
+        252,
         "temperature exact f32 matches out of {}",
         positions.len()
     );
