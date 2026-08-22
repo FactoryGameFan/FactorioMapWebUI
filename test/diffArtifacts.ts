@@ -12,7 +12,7 @@
  * only way to see any of that was a one-off script, thrown away each time
  * (#252).
  *
- * So on failure - and ONLY on failure - four files land in a gitignored
+ * So on failure - and ONLY on failure - five files land in a gitignored
  * directory that the assertion message names:
  *
  *   test-output/preview-diffs/<spec>/<case>/
@@ -38,8 +38,8 @@
  *
  * ## Why diff-magnitude.png is not `delta * 5`
  *
- * M45's FactMapGen writes the same four files (`preview_parity_test.go`), and
- * its amplification is per-channel absolute delta times five, clamped to 255.
+ * M45's FactMapGen writes a comparable set (`preview_parity_test.go`), and its
+ * amplification is per-channel absolute delta times five, clamped to 255.
  * That curve is wrong for our failure mode in both directions: our interesting
  * differences are 1-count channel deltas, which it renders as RGB(5,5,5) -
  * indistinguishable from black, in the exact case we most need to see - and it
@@ -119,9 +119,17 @@ export interface DiffTarget {
   readonly ours: ComparableImage;
   /**
    * Pixels the comparison deliberately does not ask about, by linear index.
-   * The Nauvis case excludes the game's enemy bases; the Vulcanus one excludes
-   * rocks and cliffs. Excluded pixels are drawn navy in the mask so a reader
-   * can tell "we agree here" from "we never looked here".
+   * The Nauvis case excludes the game's enemy bases; the Vulcanus terrain case
+   * excludes rocks and cliffs; the Vulcanus coverage case excludes the ore its
+   * `view: "all"` render draws and the reference cannot contain.
+   *
+   * Excluded pixels are drawn navy in BOTH images, so a reader can tell "we
+   * agree here" from "we never looked here" in either one. Black means agrees,
+   * and it has to keep meaning only that.
+   *
+   * Define the predicate ONCE and pass the same function to the counting loop
+   * and to this field. Two copies of the same mask drift, and then the picture
+   * describes a different comparison than the bound that failed.
    */
   readonly ignore?: (index: number) => boolean;
 }
@@ -129,6 +137,21 @@ export interface DiffTarget {
 /** Repo-relative, so the assertion message is short and the path is pasteable. */
 const ROOT_RELATIVE = join("test-output", "preview-diffs");
 const REPO_ROOT = join(import.meta.dirname, "..");
+
+/**
+ * Where a given case's artifacts live. Exported so the smoke test can ask
+ * rather than rebuild the path by hand: a hand-built copy keeps agreeing with
+ * `ROOT_RELATIVE` right up until somebody changes it, at which point the test
+ * whose entire subject is "nothing was written" starts checking a directory
+ * nothing writes to and passes no matter what the writer did.
+ */
+export function artifactPaths(
+  spec: string,
+  caseName: string,
+): { readonly dir: string; readonly absoluteDir: string } {
+  const dir = join(ROOT_RELATIVE, spec, caseName);
+  return { dir, absoluteDir: join(REPO_ROOT, dir) };
+}
 
 const MASK_CHANGED: readonly [number, number, number] = [255, 0, 255];
 const MASK_IGNORED: readonly [number, number, number] = [0, 0, 80];
@@ -147,17 +170,24 @@ const MAGNITUDE_STOPS: readonly (readonly [number, number, number])[] = [
 ];
 
 /**
- * The floor that makes the low end steep. A delta of 1 enters the palette at
- * 35% rather than at 0, so the smallest difference we can have is immediately
- * visible; the remaining 65% is log-spread over 1..255 so larger deltas still
- * separate from each other.
+ * The floor that makes the low end steep. Any nonzero delta starts 35% up the
+ * palette rather than at 0, so the smallest difference we can have is
+ * immediately visible; the remaining 65% is log-spread over 1..255 so larger
+ * deltas still separate from each other.
+ *
+ * This is the FLOOR, not where delta 1 lands. Delta 1 lands a little above it,
+ * at `0.35 + 0.65 * (log2(2) / 8)` = 43.125%, which is the number the module
+ * header quotes and `diffArtifacts.spec.ts` pins through RGB(40,128,140). A
+ * comment here used to say delta 1 entered "at 35%", which reads as the lift
+ * not being applied and invites a fix to a curve that is already correct.
  */
 const MAGNITUDE_FLOOR = 0.35;
 
 const LEGEND =
   "diff-mask.png: magenta = differs, black = agrees, navy = excluded by the test. " +
-  "diff-magnitude.png: black = 0, then viridis over log2(1 + maxChannelDelta) " +
-  "lifted to start 35% up the ramp, so delta 1 is already clearly visible.";
+  "diff-magnitude.png: same navy for excluded, black = agrees, otherwise viridis " +
+  "over log2(1 + maxChannelDelta) lifted to start 35% up the ramp, so delta 1 is " +
+  "already clearly visible.";
 
 /** Black at delta 0, then a lifted log ramp through viridis. */
 export function magnitudeColor(delta: number): [number, number, number] {
@@ -177,8 +207,28 @@ export function magnitudeColor(delta: number): [number, number, number] {
 }
 
 function toRgb(image: ComparableImage): Uint8Array {
-  if ("rgb" in image) return image.rgb;
+  // The declared size is checked against the OTHER image by the caller; this
+  // checks it against the buffer actually handed over. Without it a short
+  // buffer reads `undefined` past the end, writes 0, and produces an artifact
+  // that is black over the tail of the frame with a `changedPixels` count near
+  // `comparedPixels` - a picture of a catastrophic regression that is really a
+  // wrong-sized argument. A diagnostic that lies is worse than no diagnostic.
+  if ("rgb" in image) {
+    if (image.rgb.length < image.width * image.height * 3) {
+      throw new Error(
+        `rgb buffer too short: ${String(image.rgb.length)} bytes for ` +
+          `${String(image.width)}x${String(image.height)}`,
+      );
+    }
+    return image.rgb;
+  }
   const { width, height, rgba } = image;
+  if (rgba.length < width * height * 4) {
+    throw new Error(
+      `rgba buffer too short: ${String(rgba.length)} bytes for ` +
+        `${String(width)}x${String(height)}`,
+    );
+  }
   const out = new Uint8Array(width * height * 3);
   for (let i = 0; i < width * height; i++) {
     out[i * 3] = rgba[i * 4];
@@ -189,7 +239,7 @@ function toRgb(image: ComparableImage): Uint8Array {
 }
 
 /**
- * Write the four files and return where they went.
+ * Write the five files and return where they went.
  *
  * Exported for the smoke test in `test/diffArtifacts.spec.ts`. Specs should
  * call `withDiffArtifacts` instead, so the write cannot happen on a green run.
@@ -221,7 +271,14 @@ export function writeDiffArtifacts(target: DiffTarget): {
   for (let i = 0; i < total; i++) {
     if (target.ignore?.(i) === true) {
       ignored++;
+      // Navy in BOTH images, not just the mask. Left black in the magnitude
+      // view, an excluded pixel is drawn exactly like one that agrees, so the
+      // image asserts agreement over a region the test never looked at - the
+      // Nauvis case would claim it about all 1,189 enemy-base pixels. That is
+      // the confusion `diff-mask.png` exists to remove, reintroduced one file
+      // over.
       mask.set(MASK_IGNORED, i * 3);
+      magnitude.set(MASK_IGNORED, i * 3);
       continue;
     }
     const dr = Math.abs(game[i * 3] - ours[i * 3]);
@@ -253,8 +310,7 @@ export function writeDiffArtifacts(target: DiffTarget): {
     legend: LEGEND,
   };
 
-  const dir = join(ROOT_RELATIVE, target.spec, target.case);
-  const absoluteDir = join(REPO_ROOT, dir);
+  const { dir, absoluteDir } = artifactPaths(target.spec, target.case);
   // Cleared first. A stale image left by an earlier run, sitting beside a fresh
   // stats.json, is exactly the trap a diagnostic must not set.
   rmSync(absoluteDir, { recursive: true, force: true });
@@ -291,9 +347,15 @@ export function withDiffArtifacts(target: DiffTarget, assertions: () => void): v
     if (!(error instanceof Error)) throw error;
     let note: string;
     try {
-      const { dir, stats } = writeDiffArtifacts(target);
+      const { dir, absoluteDir, stats } = writeDiffArtifacts(target);
+      // BOTH paths. The repo-relative one is what a reader pastes into a commit
+      // message or greps for across runs; the absolute one is the only form
+      // that resolves from a CI log, from another machine, or from a shell that
+      // is not sitting at the repo root - which is most of the times anybody
+      // reads this line.
       note =
         `Diff artifacts: ${dir}\n` +
+        `  ${absoluteDir}\n` +
         `  changed ${String(stats.changedPixels)} of ${String(stats.comparedPixels)} compared ` +
         `pixels (${stats.changedPercent.toFixed(4)}%), ` +
         `maxChannelDelta ${String(stats.maxChannelDelta)}, ` +
@@ -301,7 +363,16 @@ export function withDiffArtifacts(target: DiffTarget, assertions: () => void): v
     } catch (writerError) {
       note = `Diff artifacts NOT written, the writer itself failed: ${String(writerError)}`;
     }
-    error.message = `${error.message}\n\n${note}`;
+    // Guarded for the same reason the writer above is: a diagnostic must never
+    // be the thing that fails. `message` is writable on every Error the test
+    // runner throws, but a sealed custom error or a getter-backed `message`
+    // would make this assignment throw a TypeError in strict mode and lose the
+    // real actual/expected pair behind it.
+    try {
+      error.message = `${error.message}\n\n${note}`;
+    } catch {
+      /* keep the original error intact; the note is not worth losing it over */
+    }
     throw error;
   }
 }

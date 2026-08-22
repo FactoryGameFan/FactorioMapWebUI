@@ -1,10 +1,16 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { inflateSync } from "node:zlib";
-import { describe, expect, it } from "vite-plus/test";
+import { deflateSync, inflateSync } from "node:zlib";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
-import { magnitudeColor, withDiffArtifacts, writeDiffArtifacts } from "./diffArtifacts";
+import {
+  artifactPaths,
+  magnitudeColor,
+  withDiffArtifacts,
+  writeDiffArtifacts,
+} from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
+import { encodePng } from "./oracle/encodePng";
 
 /**
  * The guard on the diagnostic itself.
@@ -48,6 +54,15 @@ function readPng(absoluteDir: string, name: string): Uint8Array {
 }
 
 describe("image diff artifacts", () => {
+  // This spec calls `writeDiffArtifacts` DIRECTLY, so unlike every real caller
+  // it writes on a green run. Without this the suite leaves five populated
+  // directories behind and contradicts CLAUDE.md's "a green run writes
+  // nothing" - a reader who has just read that line sees them and reasonably
+  // concludes something failed.
+  afterAll(() => {
+    rmSync(artifactPaths(SPEC, "").absoluteDir, { recursive: true, force: true });
+  });
+
   it("counts one changed pixel and writes all five files", () => {
     const { dir, absoluteDir, stats } = writeDiffArtifacts({
       spec: SPEC,
@@ -144,11 +159,67 @@ describe("image diff artifacts", () => {
 
     const mask = readPng(absoluteDir, "diff-mask.png");
     expect([...mask.subarray(3, 6)]).toEqual([0, 0, 80]);
+
+    // Navy in the MAGNITUDE image too, not black. Black there means "agrees",
+    // so an excluded pixel left black makes the image assert agreement over a
+    // region the test never looked at - 1,189 enemy-base pixels in the real
+    // Nauvis case. That is the confusion `diff-mask.png` exists to remove.
+    const magnitude = readPng(absoluteDir, "diff-magnitude.png");
+    expect([...magnitude.subarray(3, 6)]).toEqual([0, 0, 80]);
+    // The compared-and-agreeing pixel stays black, so the two states remain
+    // distinguishable rather than both becoming navy.
+    expect([...magnitude.subarray(0, 3)]).toEqual([0, 0, 0]);
+  });
+
+  /**
+   * The guard on `encodePng`'s own claim.
+   *
+   * That header says the `decodePng` round-trip makes "a mangled chunk length
+   * or a wrong CRC a test failure rather than a corrupt artifact". It was false
+   * when written: `decodePng` advanced by `12 + len` and never read the four
+   * CRC bytes, so breaking `chunk()` left every test here green while every
+   * artifact the feature writes would be rejected by Preview and Chrome - at
+   * the one moment somebody is already looking at one because something else
+   * broke. `decodePng` verifies now; this keeps that from silently lapsing.
+   */
+  it("rejects a PNG whose chunk CRC is wrong", () => {
+    const good = encodePng(twoPixels([10, 20, 30]), (b) => deflateSync(b));
+    expect(() => decodePng(good, (b) => new Uint8Array(inflateSync(b)))).not.toThrow();
+
+    // IHDR is the first chunk: 8-byte signature, 4 length, 4 type, 13 payload,
+    // then its CRC. Flip one bit of it.
+    const bad = good.slice();
+    bad[8 + 4 + 4 + 13] ^= 0xff;
+    expect(() => decodePng(bad, (b) => new Uint8Array(inflateSync(b)))).toThrow(/bad CRC in IHDR/);
+
+    // And a corrupted PAYLOAD, which is the failure a length-only check misses.
+    const corruptPayload = good.slice();
+    corruptPayload[8 + 8] ^= 0xff;
+    expect(() => decodePng(corruptPayload, (b) => new Uint8Array(inflateSync(b)))).toThrow(
+      /bad CRC/,
+    );
+  });
+
+  it("rejects a buffer that is shorter than its declared size", () => {
+    // `writeDiffArtifacts` already compares the two DECLARED sizes. This is the
+    // other half: the declared size against the bytes actually handed over. A
+    // short buffer used to be zero-filled, producing an artifact black over the
+    // tail of the frame and a changed count near the compared count - a picture
+    // of a catastrophic regression that is really a wrong-sized argument.
+    expect(() =>
+      writeDiffArtifacts({
+        spec: SPEC,
+        case: "short-buffer",
+        game: twoPixels([10, 20, 30]),
+        ours: { width: 2, height: 1, rgba: new Uint8ClampedArray(4) },
+      }),
+    ).toThrow(/rgba buffer too short/);
   });
 
   it("writes nothing when the assertions pass", () => {
-    const dir = join("test-output", "preview-diffs", SPEC, "green");
-    const absoluteDir = join(import.meta.dirname, "..", dir);
+    // Asked for, not rebuilt - see `artifactPaths`. Hand-building it here is
+    // what would let this test go vacuously green if the writer moved.
+    const { absoluteDir } = artifactPaths(SPEC, "green");
     rmSync(absoluteDir, { recursive: true, force: true });
 
     withDiffArtifacts(

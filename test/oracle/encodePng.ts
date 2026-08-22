@@ -18,6 +18,13 @@
  * Round-tripped through `decodePng` by `test/diffArtifacts.spec.ts`, so a
  * mangled chunk length or a wrong CRC is a test failure rather than a corrupt
  * artifact that a viewer refuses to open at the moment somebody needs it.
+ *
+ * That sentence was false when it was first written: `decodePng` stepped over
+ * the CRC bytes entirely, so the round-trip could not see a wrong one, and
+ * breaking `chunk()` left all seven smoke tests green. `decodePng` verifies
+ * every chunk CRC now, and `diffArtifacts.spec.ts` plants a flipped byte to
+ * keep that guard from going vacuous again. Do not restore the claim without
+ * the check.
  */
 
 import { crc32 } from "../../src/codec/crc32";

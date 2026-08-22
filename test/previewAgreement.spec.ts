@@ -12,6 +12,7 @@ import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
 import { makeFulgoraStack } from "../src/noise/tiles/fulgoraCatalog";
 import { makeFulgoraScrap } from "../src/noise/expressions/fulgoraScrap";
 import { SCRAP_MAP_COLOR } from "../src/noise/resources/fulgoraResourceCatalog";
+import { VULCANUS_RESOURCE_CATALOG } from "../src/noise/resources/vulcanusResourceCatalog";
 
 /**
  * Compare our render against the game's OWN `--generate-map-preview` output.
@@ -154,15 +155,20 @@ describe("preview agreement with the game", () => {
     // while our terrain view does not draw it. Those pixels are excluded rather
     // than tolerated, and counted so the exclusion cannot quietly grow.
     const ENEMY = [255, 25, 25];
+    // ONE definition, handed to both the counting loop and the artifact writer.
+    // Written out twice - once here, once as `ignore` - the two copies are free
+    // to drift, and then the artifacts describe a different comparison than the
+    // bound that failed. That is exactly the objection `diffArtifacts.ts` raises
+    // against re-testing the bound, so the mask must not repeat the mistake.
+    const ignore = (i: number): boolean => same(rgbAt(game.rgb, i), ENEMY);
     let enemyPx = 0;
     let differing = 0;
     for (let i = 0; i < SIZE * SIZE; i++) {
-      const g = rgbAt(game.rgb, i);
-      if (same(g, ENEMY)) {
+      if (ignore(i)) {
         enemyPx++;
         continue;
       }
-      if (!same(g, oursAt(ours, i))) differing++;
+      if (!same(rgbAt(game.rgb, i), oursAt(ours, i))) differing++;
     }
     const compared = SIZE * SIZE - enemyPx;
 
@@ -175,7 +181,7 @@ describe("preview agreement with the game", () => {
         case: "nauvis-terrain",
         game,
         ours: { width: SIZE, height: SIZE, rgba: ours },
-        ignore: (i) => same(rgbAt(game.rgb, i), ENEMY),
+        ignore,
       },
       () => {
         expect(enemyPx).toBeLessThan(3000);
@@ -193,15 +199,22 @@ describe("preview agreement with the game", () => {
     // those two cannot be disabled in the capture - they are in the reference
     // whatever we do. Masking them isolates the terrain layer; their coverage is
     // asserted separately below, which is where the real finding was.
+    //
+    // ONE definition, shared by the loop and the artifact writer - see the note
+    // on the Nauvis case above. This mask has two clauses rather than one, so a
+    // third would be that much easier to add here and forget over there.
+    const ignore = (i: number): boolean => {
+      const g = rgbAt(game.rgb, i);
+      return same(g, ROCK_MAP_COLOR) || same(g, CLIFF_MAP_COLOR);
+    };
     let masked = 0;
     let differing = 0;
     for (let i = 0; i < SIZE * SIZE; i++) {
-      const g = rgbAt(game.rgb, i);
-      if (same(g, ROCK_MAP_COLOR) || same(g, CLIFF_MAP_COLOR)) {
+      if (ignore(i)) {
         masked++;
         continue;
       }
-      if (!same(g, oursAt(ours, i))) differing++;
+      if (!same(rgbAt(game.rgb, i), oursAt(ours, i))) differing++;
     }
     const rel = differing / (SIZE * SIZE - masked);
     // Measured 98.664% over 929,686 compared pixels. Notably worse than Nauvis's
@@ -213,10 +226,7 @@ describe("preview agreement with the game", () => {
         case: "vulcanus-terrain",
         game,
         ours: { width: SIZE, height: SIZE, rgba: ours },
-        ignore: (i) => {
-          const g = rgbAt(game.rgb, i);
-          return same(g, ROCK_MAP_COLOR) || same(g, CLIFF_MAP_COLOR);
-        },
+        ignore,
       },
       () => {
         expect(rel).toBeLessThan(0.02);
@@ -252,14 +262,34 @@ describe("preview agreement with the game", () => {
     // placement DENSITY was correct to 0.2-7.5% the whole time. No entity oracle
     // could see it; only the rendered image can. Measured now: 0.65x.
     //
-    // No `ignore` here, unlike the two tests above: this one is about coverage
-    // of the whole image, so the artifacts should show the whole image.
+    // This one renders `view: "all"` and the reference does NOT contain the
+    // resources that view draws: `previewCompare.ts` captures Vulcanus with
+    // `calcite`, `tungsten_ore`, `vulcanus_coal` and `sulfuric_acid_geyser` all
+    // forced to `size: 0`. Left unmasked, every ore patch and every geyser mark
+    // we paint reads as `changed`, so `diff-mask.png` comes back speckled with
+    // ore the game never drew and the reported `changedPixels` says nothing
+    // about the rock or cliff ratio that actually failed. That is worth getting
+    // right here specifically: cliffs sit at a known-bad 2.28x against a 2.5
+    // bound, so this is the comparison most likely to trip.
+    //
+    // Matched on OUR pixel rather than the game's, and only where the game
+    // disagrees. `coal`'s map_color is pure black, so a blanket colour match
+    // would also swallow any genuinely black reference pixel; requiring a
+    // disagreement means a position where both are black still counts as
+    // agreeing, which it does.
+    const resourceOnly = (i: number): boolean => {
+      const o = oursAt(ours, i);
+      const g = rgbAt(game.rgb, i);
+      if (same(o, g)) return false;
+      return VULCANUS_RESOURCE_CATALOG.some((r) => same(o, r.mapColor));
+    };
     withDiffArtifacts(
       {
         spec: "previewAgreement",
         case: "vulcanus-rock-and-cliff-coverage",
         game,
         ours: { width: SIZE, height: SIZE, rgba: ours },
+        ignore: resourceOnly,
       },
       () => {
         expect(ourRock / gameRock).toBeGreaterThan(0.4);
@@ -283,9 +313,14 @@ describe("preview agreement with the game", () => {
       if (!same(rgbAt(game.rgb, i), oursAt(ours, i))) differing++;
     }
     // Fulgora has no enemy bases, so unlike the Nauvis case there is nothing to
-    // exclude. Measured: 34,977 of 1,048,576 pixels differ (3.34%), against
-    // 34,976 before #273 typed Fulgora's f32 constants - that fix moved 13
-    // fields to bit-exact and the image by one pixel. V1/V2
+    // exclude. Measured: 34,788 of 1,048,576 pixels differ (3.32%). The history
+    // is 34,976 -> 34,977 when #273 typed Fulgora's f32 constants (13 fields to
+    // bit-exact, the image one pixel WORSE) -> 34,788 when #279 narrowed
+    // `starting_spot_at_angle` per operation, which moved it 189 pixels the
+    // right way because the cones feed the `mix_*` chain the image is made of.
+    // `test/wasmFulgoraRenderParity.spec.ts` pins the same number exactly at
+    // `toBe(34788)` and carries that table; this bound is the loose twin, so if
+    // the two ever disagree the exact one is right. V1/V2
     // report 99.86% get_tile agreement and 94.5% on the land argmax from
     // sampled points, so a whole-image number in the low single-digit percent
     // is the expected shape, not a regression. The bound is set just above the

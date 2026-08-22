@@ -1135,12 +1135,14 @@ the code agreed with each other while both disagreed with the game.
 
 ### Diff artifacts are NOT fixtures - `test-output/` vs `test/fixtures/`
 
-When an image comparison in `test/previewAgreement.spec.ts` fails,
-`test/diffArtifacts.ts` writes the reference, our render, a magenta mask, a
-false-coloured magnitude view and a `stats.json` into
-`test-output/preview-diffs/<spec>/<case>/`, and the assertion message names that
-directory (#252). A scalar like `expected 237 to be less than 200` says a render
-moved without saying where, and where has repeatedly been the answer here.
+When an image comparison in `test/previewAgreement.spec.ts` or
+`test/wasmFulgoraRenderParity.spec.ts` fails, `test/diffArtifacts.ts` writes the
+reference, our render, a magenta mask, a false-coloured magnitude view and a
+`stats.json` into `test-output/preview-diffs/<spec>/<case>/`, and the assertion
+message names that directory - both repo-relative and absolute, because the
+relative form does not resolve from a CI log (#252). A scalar like
+`expected 237 to be less than 200` says a render moved without saying where, and
+where has repeatedly been the answer here.
 
 Three rules, and the first is the one that matters:
 
@@ -1151,14 +1153,37 @@ Three rules, and the first is the one that matters:
 - **They are written only when an assertion has already thrown.** A green run
   writes nothing. `withDiffArtifacts` wraps the `expect` calls and re-throws the
   same error rather than re-testing the bound, so no bound is ever stated twice.
+  The one caller that writes unconditionally is the smoke spec itself, which
+  calls `writeDiffArtifacts` directly and therefore carries an `afterAll` -
+  without it a fully green `verify` leaves five populated directories behind and
+  makes this very sentence read as a lie.
 - **Nothing in there asserts anything, and no bound moved to add it.** The
   artifacts answer "where", after a bound that already exists has failed.
+
+**The exclusion mask must be defined once and passed to both** the counting loop
+and the wrapper's `ignore`. Written out twice the copies drift, and then the
+artifacts describe a different comparison than the bound that failed - the same
+objection that made wrapping the assertions the right shape in the first place.
+Excluded pixels are navy in **both** images: left black in `diff-magnitude.png`
+they are drawn exactly like pixels that agree, so the picture claims agreement
+over a region nothing looked at.
 
 `test/diffArtifacts.spec.ts` is the guard on the writer itself - the machinery
 runs only when something else is broken, which is the worst time to find out it
 is broken too. It also pins the palette: a 1-count channel delta must come back
 clearly visible, not near-black, which is why the amplification is a lifted log
-ramp and not the `delta * 5` the prior art uses.
+ramp and not the `delta * 5` the prior art uses. (35% is the ramp's FLOOR; delta
+1 lands at 43.1%.)
+
+**`decodePng` verifies every chunk CRC, and that is load-bearing rather than
+tidy.** `encodePng`'s header claims the round-trip through it turns a wrong CRC
+into a test failure. That claim shipped false: the decoder advanced by
+`12 + len` and never read the CRC bytes, so breaking the chunk writer left all
+seven smoke tests green while every artifact the feature writes would have been
+rejected by Preview, Chrome and ImageMagick - discovered at the one moment
+somebody is already looking at one because something else broke. The spec now
+plants a flipped CRC byte and a corrupted payload so the guard cannot lapse back
+into a claim.
 
 ### Two representations, bridged by `convert.ts`
 
