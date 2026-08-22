@@ -12,7 +12,7 @@
     "check": "vp check --fix",
     "check:vue": "vue-tsc --noEmit",
     "types:sync": "pnpm --filter @fmw/preview-worker exec wrangler types && pnpm vp check --fix",
-    "refs:sync": "bash scripts/sync-factorio-refs.sh",
+    "refs:sync": "node scripts/sync-factorio-refs.ts",
     "verify:deploy": "node scripts/verify-deploy.ts",
     "verify:lint": "vp check && pnpm run check:vue",
     "verify:static": "pnpm run verify:lint && pnpm run preview:test",

@@ -2,63 +2,85 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Factorio reference material - run `pnpm refs:sync` first
+## Factorio reference material - read it with `factorio-oracle refs`
 
-Two local references back every Factorio question in this repo, and both are
-git-ignored, so a fresh clone has neither:
+Two references back every Factorio question here: the Lua API **docs** and the
+game **data** Lua (the map-gen source). Neither is pinned into this repo any
+more, and neither should be.
 
-|                          |                                        |         |
-| ------------------------ | -------------------------------------- | ------- |
-| `factorioLuaAPI/`        | Lua API **docs**                       | ~286 MB |
-| `~/GitHub/factorio-data` | game **data** Lua (the map-gen source) | ~17 MB  |
+**`factorio-oracle refs` reads both at a version without changing anything.**
+That replaces a 254-line `refs:sync` shell script which used to `git checkout` a
+tag inside the shared `~/GitHub/factorio-data` clone and download ~290 MB of API
+docs into a `factorioLuaAPI/` directory. Three measurements retired it:
 
-**`pnpm refs:sync` creates and pins both** to the version your installed
-Factorio binary reports (~6 s from nothing, ~0.5 s when already in sync).
-`pnpm refs:sync --check` reports drift without changing anything, and
-`pnpm refs:sync 2.1.11` pins to an explicit version instead. If either
-directory is missing or a grep turns up empty, run it before concluding
-anything is absent.
+- **The clone is shared by four repos**, so pinning its HEAD to whatever THIS
+  repo's binary reports raced every other consumer. `refs grep` and `refs show`
+  move no HEAD, which is checked in their own output.
+- **`factorioLuaAPI/` duplicated the installed game.** Factorio ships
+  `factorio.app/Contents/doc-html` - 330 MB, every entry point below present,
+  `control:temperature:frequency` included. The download re-fetched what was
+  already on disk.
+- **Pinning cannot answer the version-skew question at all**, because it shows
+  one version at a time. `refs grep --tag A --tag B` shows both at once.
 
-Why pinned to the binary rather than latest: Steam updates the binary without
-asking, so it is the one version you do not control. Fetching "latest" for the
-references races that updater and leaves them describing a different game than
-the one your fixtures were captured against - which is exactly how
-`factorio-data` ended up sitting at 2.1.11 under a 2.1.12 binary.
+```bash
+# ~/.cargo/bin is on no PATH here, so spell it out.
+O=~/.cargo/bin/factorio-oracle
+$O refs grep --tag 2.1.14 'vulcanus_cracks_scale'   # search the data Lua
+$O refs show 2.1.14 core/prototypes/noise-functions.lua
+$O refs docs 2.1.14 auxiliary/noise-expressions.html
+$O refs docs 2.1.14 runtime-api.json --which        # where it lives, for a grep
+$O installs list                                     # JSON: version, docDir, dataDir
+```
 
-### The API docs (`factorioLuaAPI/`)
+`pnpm refs:sync` still exists and is now a thin wrapper
+(`scripts/sync-factorio-refs.ts`): it reports what is readable at the installed
+binary's version, `--check` exits 1 when that version cannot be read, and
+`--fixtures` reports which fixtures predate the binary. It pins nothing.
+
+The binary stays the authority on which version is meant. Steam updates it
+without asking, so it is the one version you do not control; reading "latest"
+instead races that updater and describes a different game than your fixtures
+were captured against.
+
+### The API docs
 
 **Before answering any Factorio API question or WebFetching
-lua-api.factorio.com / wiki.factorio.com, grep this directory.** It is the
+lua-api.factorio.com / wiki.factorio.com, read these.** They are the
 authoritative source for how the map generator, noise expressions, and map-gen
-settings work. `pnpm refs:sync` populates it from the official archive at
-`https://lua-api.factorio.com/<version>/static/archive.zip`, flattened so the
-paths below resolve; `factorioLuaAPI/VERSION` records which version it holds.
+settings work. `refs docs <version> <path>` prints one; it uses the installed
+game before the network, and caches under `~/.cache/factorio-oracle/docs/` only
+when you ask for a version the installed game is not.
 
-Useful entry points:
+Useful entry points (the `<path>` argument):
 
-- `factorioLuaAPI/auxiliary/noise-expressions.html` - named noise expressions and
-  the `control:<name>:frequency|size|richness|bias` constants (e.g.
+- `auxiliary/noise-expressions.html` - named noise expressions and the
+  `control:<name>:frequency|size|richness|bias` constants (e.g.
   `control:moisture:frequency`, `control:aux:bias`, `control:temperature:*` - the
   exact keys this app's `property_expression_names` codec round-trips).
-- `factorioLuaAPI/types/MapGenSettings.html`, `types/FrequencySizeRichness.html`,
+- `types/MapGenSettings.html`, `types/FrequencySizeRichness.html`,
   `types/AutoplaceControlID.html` - map-gen settings structure and autoplace controls.
-- `factorioLuaAPI/runtime-api.json` and `prototype-api.json` - machine-readable
-  dumps; grep these for a signature/field faster than the HTML.
+- `runtime-api.json` and `prototype-api.json` - machine-readable dumps; grep
+  these for a signature/field faster than the HTML.
 
 The JSON dumps are not a superset of the HTML - `control:temperature:frequency`
-is in `noise-expressions.html` and nowhere in `runtime-api.json` - so grep the
-whole directory, not just the JSON. Only fall back to WebFetch if something
-genuinely is not in this mirror.
+is in `noise-expressions.html` and nowhere in `runtime-api.json` - so search the
+whole tree, not just the JSON. To grep across all of it, get the directory from
+`--which` (or `installs list`'s `docDir`) and grep that:
 
-### Game _data_ (prototype Lua) for noise/autoplace RE - `~/GitHub/factorio-data`
+```bash
+grep -rn 'control:temperature' "$(dirname "$($O refs docs 2.1.14 runtime-api.json --which)")"
+```
 
-`factorioLuaAPI/` above is the API _docs_. For the actual base-game map-gen
-**source** (the noise expression trees, autoplace utils, resource prototypes)
-that the client-side preview ports, read `~/GitHub/factorio-data` - a clone of
-the official `wube/factorio-data` repo with per-version git tags. `pnpm
-refs:sync` clones it if absent and checks out the tag matching the binary,
-then verifies `base/info.json` actually reads that version (a checkout is not
-proof; `master` may sit a few commits ahead of the newest tag).
+Only fall back to WebFetch if something genuinely is not there.
+
+### Game _data_ (prototype Lua) for noise/autoplace RE
+
+For the actual base-game map-gen **source** (the noise expression trees,
+autoplace utils, resource prototypes) that the client-side preview ports, read
+`wube/factorio-data` through `refs grep` / `refs show` / `refs worktree`. It is
+cloned at `~/GitHub/factorio-data` with per-version git tags; the oracle reads
+at a tag and leaves HEAD alone, so it is safe to use from several repos at once.
 
 Key files, in rough order of how often they matter here:
 `core/prototypes/noise-programs.lua` (most named expressions - elevation,
@@ -71,7 +93,7 @@ else, grep for its **definition** rather than guessing the file - a bare name
 grep returns every caller too:
 
 ```bash
-grep -rlE 'name *= *"<expression>"' ~/GitHub/factorio-data/{core,base,space-age} --include="*.lua"
+$O refs grep --tag 2.1.14 'name = "<expression>"'
 ```
 
 **Version skew here is a real, silent hazard, not a formality.**
@@ -80,7 +102,17 @@ grep -rlE 'name *= *"<expression>"' ~/GitHub/factorio-data/{core,base,space-age}
 favorability term removed, a new 40-tile `origin_excluder`, and the lake mask
 switched from a hardcoded `elevation_lakes` to the planet's own `elevation`.
 Reading the wrong version's Lua produces a port that passes its own tests and
-disagrees with the game. `pnpm refs:sync --check` before trusting a reading.
+disagrees with the game.
+
+**Ask both versions at once rather than trusting a pin** - this is the single
+biggest reason the pinning script is gone, because it could not do this:
+
+```bash
+$O refs grep --tag 2.0.77 --tag 2.1.14 'starting_patches'
+```
+
+Each hit is prefixed with its tag, so a difference is visible rather than
+inferred, and you never have to remember which version the tree is currently on.
 
 Note where that change lived: `core/prototypes/noise-functions.lua`. Neither
 `core/lualib/resource-autoplace.lua` nor `base/prototypes/entity/resources.lua`
@@ -103,13 +135,13 @@ makes it the fastest oracle for a short generator function; see
 Steam keeps it updated, which is fine: `factorio.com/download/archive/` carries
 every release from 0.6.4 onward, so reproducing an old measurement means
 recording the version, not hoarding installs. Set `FACTORIO_BIN` to point
-`refs:sync` at a different install.
+`refs:sync` and `factorio-oracle` at a different install.
 
 ### Automate with the Factorio headless CLI
 
 A lot can be driven from the command line - see
 https://wiki.factorio.com/Command_line_parameters (the game's own binary; this
-is a wiki page, not in the `factorioLuaAPI/` mirror). Relevant here:
+is a wiki page, not in the shipped API docs). Relevant here:
 
 - **Map-gen testing / validation:** `factorio --create <save> --map-gen-settings
 <json> --map-gen-seed <n> --mod-directory <dir>` runs headless and exits
@@ -482,10 +514,12 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   (`test/findIslands.spec.ts`, 162.11s against 43.63s pre-bundled, 11 tests
   passing both ways), which is reachable without changing runtime at all.
 
-- `pnpm refs:sync` - pin `factorioLuaAPI/` + `~/GitHub/factorio-data` to the
-  installed binary's version (`--check` reports drift only; `--fixtures` reports
-  which oracle fixtures predate the binary). Deliberately **not** part of
-  `verify`, which must pass on machines with no Factorio installed.
+- `pnpm refs:sync` - report which reference material is readable at the
+  installed binary's version (`--check` exits 1 when it is not; `--fixtures`
+  reports which oracle fixtures predate the binary). A thin wrapper over
+  `factorio-oracle` that **pins nothing** - see the reference section at the top
+  of this file. Deliberately **not** part of `verify`, which must pass on
+  machines with no Factorio installed, and it now also needs the oracle.
 - `pnpm run deploy` - **verify** + build + `wrangler pages deploy` to Cloudflare Pages
 - `pnpm run verify:deploy` - after deploying, confirm the live site is running
   local `HEAD` (see below). Takes an optional origin argument.
@@ -1911,8 +1945,8 @@ machine; a reachable registry that disagrees is a genuine failure.
 Two things it deliberately does not do: it does not build the image (that is
 `pnpm --filter @fmw/preview-container run test:integration`, which needs Docker
 and takes ~17s), and it cannot tell you the container and your local Factorio
-have drifted apart. **`refs:sync` pins to the local Steam binary and the
-container pins to a registry tag; either can move independently**, so check
+have drifted apart. **`refs:sync` reports against the local Steam binary and
+the container pins to a registry tag; either can move independently**, so check
 which one actually changed before assuming the container is stale.
 
 **The container's sizing is a measured cost decision, not a default** (#116).
