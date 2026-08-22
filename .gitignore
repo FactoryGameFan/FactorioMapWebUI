@@ -21,6 +21,13 @@ vite.config.ts.timestamp-*
 coverage/
 test-results/
 
+# Diff artifacts written by `test/diffArtifacts.ts` when an image comparison
+# fails - the two images it was looking at, a mask, a magnitude view and the
+# numbers (#252). They are a CAPTURE OF A FAILURE, not ground truth: they never
+# get committed, and they must never acquire a `test/fixtures/PROVENANCE.json`
+# entry, which is why they land here rather than beside the fixtures.
+test-output/
+
 # Vitest blob reports. Nothing here uses `--reporter=blob` - the sharded CI path
 # deliberately does not, because `vp test --merge-reports` does not merge, it
 # re-runs (measured: a 57-file shard's blob came back reporting 114 files). This
