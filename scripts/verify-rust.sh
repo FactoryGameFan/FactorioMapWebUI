@@ -132,6 +132,15 @@ echo "==> committed engine.wasm matches its source"
 # Byte identity rather than a rebuild-and-retest fallback, because #218
 # measured it holding: the same source and profile built on macOS/aarch64 and
 # on an ubuntu x86_64 runner produce the same 599 bytes and the same sha256.
+#
+# That property was conditional on something #218 could not have known, because
+# the module had no generic std code in it yet: whether `rust-src` is installed.
+# `wasm-rustflags.sh` carries the measurement and the fix, and is sourced by
+# `build-wasm.sh` too - the producer and the checker must pass identical flags
+# or this comparison fails against a module that is perfectly current (#299).
+# shellcheck source=scripts/wasm-rustflags.sh
+. "$(dirname "$0")/wasm-rustflags.sh"
+
 cargo build --locked --release --target wasm32-unknown-unknown -p fmw-wasm
 if ! cmp -s target/wasm32-unknown-unknown/release/fmw_wasm.wasm \
              src/noise/wasm/engine.wasm; then
