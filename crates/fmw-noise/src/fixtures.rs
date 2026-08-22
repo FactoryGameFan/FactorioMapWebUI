@@ -22,11 +22,17 @@ use crate::test_json::{load, Json};
 ///
 /// The frozen exact counts in this file all describe "this port against game
 /// version X", and until #295 not one of them said which X. That is not
-/// bookkeeping: `vulcanus_hairline_cracks` scores 48 of 61 against the 2.1.12
+/// bookkeeping: `vulcanus_hairline_cracks` scores 50 of 61 against the 2.1.12
 /// capture and 61 of 61 against a 2.1.14 one, at the SAME 61 positions with the
-/// SAME model - so 13 of those apparent port errors were the game changing
+/// SAME model - so 11 of those apparent port errors were the game changing
 /// under the fixture. 84% of the corpus predates the capture binary, so any
 /// count short of a full house has that as a live candidate explanation.
+///
+/// Read those two numbers off `hairlineCracks`'s own frozen count below, which
+/// is 50, rather than off #295's text, which says 48. The first draft of this
+/// comment quoted the issue and was wrong by 2 - in a change whose entire
+/// subject is that a number needs to say what it was measured against. The
+/// count in this file is the measurement; prose about it is not.
 ///
 /// Writing the version in a comment would go stale the first time somebody
 /// re-captures. This reads `PROVENANCE.json`, so the claim is CHECKED:
