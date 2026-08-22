@@ -8,7 +8,19 @@
  * palette and their alpha variants, with all five scanline filters and no
  * interlacing - if a future capture is interlaced this throws rather than
  * silently returning garbage.
+ *
+ * **Every chunk CRC is verified**, which matters for a reason that has nothing
+ * to do with the fixtures: this decoder is the round-trip half of
+ * `encodePng.ts`, so it is the only thing standing between a broken chunk
+ * writer and a directory of diagnostic images no viewer will open (#252). That
+ * header used to promise a wrong CRC was "a test failure"; the check it named
+ * did not exist, and the four CRC bytes were stepped over by `pos += 12 + len`.
+ * A corrupt artifact is discovered at the worst possible moment - somebody is
+ * already looking at it because something else is broken - so the cost of
+ * hashing a few megabytes on a path that reads committed fixtures is worth it.
  */
+
+import { crc32 } from "../../src/codec/crc32";
 
 /** Decoded image: row-major RGB triples, `width * height * 3` bytes. */
 export interface DecodedImage {
@@ -47,6 +59,16 @@ export function decodePng(bytes: Uint8Array, inflate: (b: Uint8Array) => Uint8Ar
     const len = view.getUint32(pos);
     const type = String.fromCharCode(...bytes.subarray(pos + 4, pos + 8));
     const data = bytes.subarray(pos + 8, pos + 8 + len);
+    // Over type + payload, and NOT over the length field - that boundary is the
+    // easiest one to get wrong in a writer, so it is the one worth checking.
+    if (pos + 12 + len > bytes.length) throw new Error(`truncated ${type} chunk`);
+    const want = view.getUint32(pos + 8 + len);
+    const got = crc32(bytes.subarray(pos + 4, pos + 8 + len));
+    if (got !== want) {
+      throw new Error(
+        `bad CRC in ${type} chunk: got ${got.toString(16)}, expected ${want.toString(16)}`,
+      );
+    }
     if (type === "IHDR") {
       width = view.getUint32(pos + 8);
       height = view.getUint32(pos + 12);

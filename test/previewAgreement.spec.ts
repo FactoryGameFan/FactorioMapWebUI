@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
 
+import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
 import { runRenderRequest } from "../src/noise/preview/elevationRenderRequest";
 import type { ElevationRenderRequest } from "../src/noise/preview/elevationRenderRequest";
@@ -11,6 +12,7 @@ import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
 import { makeFulgoraStack } from "../src/noise/tiles/fulgoraCatalog";
 import { makeFulgoraScrap } from "../src/noise/expressions/fulgoraScrap";
 import { SCRAP_MAP_COLOR } from "../src/noise/resources/fulgoraResourceCatalog";
+import { VULCANUS_RESOURCE_CATALOG } from "../src/noise/resources/vulcanusResourceCatalog";
 
 /**
  * Compare our render against the game's OWN `--generate-map-preview` output.
@@ -66,6 +68,23 @@ import { SCRAP_MAP_COLOR } from "../src/noise/resources/fulgoraResourceCatalog";
  * spread on identical code is about 40%. 300s gives the worst run yet a 2x
  * margin. If it ever trips again, read the duration the reporter prints before
  * assuming a hang - no assertion in this file has ever failed on CI.
+ *
+ * ---
+ *
+ * **`withDiffArtifacts` writes pictures when a bound trips.** Every comparison
+ * below reports a scalar, and `expected 237 to be less than 200` says a render
+ * moved without saying where, by how much, or in what shape. The wrapper runs
+ * the same assertions unchanged and, only if one throws, dumps the two images
+ * plus a mask and a magnitude view into `test-output/preview-diffs/` and names
+ * that directory in the failure message (#252, `test/diffArtifacts.ts`). It
+ * moves no bound and it costs a green run nothing.
+ *
+ * The two scrap tests below are deliberately NOT wrapped. Neither compares a
+ * render against the reference: the footprint test asks a model predicate about
+ * the game's own pixels, and the map_color test only counts pixels in one
+ * fixture. There is no "ours" image for the writer to put beside "game".
+ *
+ * ---
  *
  * Kept as a bare literal rather than a named constant on purpose: any longer
  * token pushes `}, 300000);` past the formatter's line budget, and oxfmt then
@@ -136,24 +155,40 @@ describe("preview agreement with the game", () => {
     // while our terrain view does not draw it. Those pixels are excluded rather
     // than tolerated, and counted so the exclusion cannot quietly grow.
     const ENEMY = [255, 25, 25];
+    // ONE definition, handed to both the counting loop and the artifact writer.
+    // Written out twice - once here, once as `ignore` - the two copies are free
+    // to drift, and then the artifacts describe a different comparison than the
+    // bound that failed. That is exactly the objection `diffArtifacts.ts` raises
+    // against re-testing the bound, so the mask must not repeat the mistake.
+    const ignore = (i: number): boolean => same(rgbAt(game.rgb, i), ENEMY);
     let enemyPx = 0;
     let differing = 0;
     for (let i = 0; i < SIZE * SIZE; i++) {
-      const g = rgbAt(game.rgb, i);
-      if (same(g, ENEMY)) {
+      if (ignore(i)) {
         enemyPx++;
         continue;
       }
-      if (!same(g, oursAt(ours, i))) differing++;
+      if (!same(rgbAt(game.rgb, i), oursAt(ours, i))) differing++;
     }
     const compared = SIZE * SIZE - enemyPx;
 
     // Measured 2026-07-28: 1189 enemy pixels, and 10 of the remaining 1,047,387
     // disagree - 99.999%. Bounds are drift guards a little above that; the render
     // is deterministic, so any movement here is a real change.
-    expect(enemyPx).toBeLessThan(3000);
-    expect(differing).toBeLessThan(200);
-    expect(differing / compared).toBeLessThan(0.0002);
+    withDiffArtifacts(
+      {
+        spec: "previewAgreement",
+        case: "nauvis-terrain",
+        game,
+        ours: { width: SIZE, height: SIZE, rgba: ours },
+        ignore,
+      },
+      () => {
+        expect(enemyPx).toBeLessThan(3000);
+        expect(differing).toBeLessThan(200);
+        expect(differing / compared).toBeLessThan(0.0002);
+      },
+    );
   }, 300000);
 
   it("Vulcanus terrain agrees once rocks and cliffs are masked", () => {
@@ -164,21 +199,39 @@ describe("preview agreement with the game", () => {
     // those two cannot be disabled in the capture - they are in the reference
     // whatever we do. Masking them isolates the terrain layer; their coverage is
     // asserted separately below, which is where the real finding was.
+    //
+    // ONE definition, shared by the loop and the artifact writer - see the note
+    // on the Nauvis case above. This mask has two clauses rather than one, so a
+    // third would be that much easier to add here and forget over there.
+    const ignore = (i: number): boolean => {
+      const g = rgbAt(game.rgb, i);
+      return same(g, ROCK_MAP_COLOR) || same(g, CLIFF_MAP_COLOR);
+    };
     let masked = 0;
     let differing = 0;
     for (let i = 0; i < SIZE * SIZE; i++) {
-      const g = rgbAt(game.rgb, i);
-      if (same(g, ROCK_MAP_COLOR) || same(g, CLIFF_MAP_COLOR)) {
+      if (ignore(i)) {
         masked++;
         continue;
       }
-      if (!same(g, oursAt(ours, i))) differing++;
+      if (!same(rgbAt(game.rgb, i), oursAt(ours, i))) differing++;
     }
     const rel = differing / (SIZE * SIZE - masked);
     // Measured 98.664% over 929,686 compared pixels. Notably worse than Nauvis's
     // 99.999% and NOT yet diagnosed - the bound guards against drift, it does not
     // bless the gap.
-    expect(rel).toBeLessThan(0.02);
+    withDiffArtifacts(
+      {
+        spec: "previewAgreement",
+        case: "vulcanus-terrain",
+        game,
+        ours: { width: SIZE, height: SIZE, rgba: ours },
+        ignore,
+      },
+      () => {
+        expect(rel).toBeLessThan(0.02);
+      },
+    );
   }, 300000);
 
   it("Vulcanus rock and cliff coverage stays in the game's neighbourhood", () => {
@@ -208,14 +261,47 @@ describe("preview agreement with the game", () => {
     // for.** Rocks painted 1x1 gave 0.37% against the game's 5.17% - 0.07x - while
     // placement DENSITY was correct to 0.2-7.5% the whole time. No entity oracle
     // could see it; only the rendered image can. Measured now: 0.65x.
-    expect(ourRock / gameRock).toBeGreaterThan(0.4);
-    expect(ourRock / gameRock).toBeLessThan(1.5);
+    //
+    // This one renders `view: "all"` and the reference does NOT contain the
+    // resources that view draws: `previewCompare.ts` captures Vulcanus with
+    // `calcite`, `tungsten_ore`, `vulcanus_coal` and `sulfuric_acid_geyser` all
+    // forced to `size: 0`. Left unmasked, every ore patch and every geyser mark
+    // we paint reads as `changed`, so `diff-mask.png` comes back speckled with
+    // ore the game never drew and the reported `changedPixels` says nothing
+    // about the rock or cliff ratio that actually failed. That is worth getting
+    // right here specifically: cliffs sit at a known-bad 2.28x against a 2.5
+    // bound, so this is the comparison most likely to trip.
+    //
+    // Matched on OUR pixel rather than the game's, and only where the game
+    // disagrees. `coal`'s map_color is pure black, so a blanket colour match
+    // would also swallow any genuinely black reference pixel; requiring a
+    // disagreement means a position where both are black still counts as
+    // agreeing, which it does.
+    const resourceOnly = (i: number): boolean => {
+      const o = oursAt(ours, i);
+      const g = rgbAt(game.rgb, i);
+      if (same(o, g)) return false;
+      return VULCANUS_RESOURCE_CATALOG.some((r) => same(o, r.mapColor));
+    };
+    withDiffArtifacts(
+      {
+        spec: "previewAgreement",
+        case: "vulcanus-rock-and-cliff-coverage",
+        game,
+        ours: { width: SIZE, height: SIZE, rgba: ours },
+        ignore: resourceOnly,
+      },
+      () => {
+        expect(ourRock / gameRock).toBeGreaterThan(0.4);
+        expect(ourRock / gameRock).toBeLessThan(1.5);
 
-    // Cliffs are KNOWN BAD at 2.28x (issue #18, corroborating the entity-level
-    // 1.1-1.6x over-placement by an independent route). The bound is pinned just
-    // above the current value so it cannot get worse unnoticed; tighten it when
-    // #18 lands rather than leaving this as a permanent blessing.
-    expect(ourCliff / gameCliff).toBeLessThan(2.5);
+        // Cliffs are KNOWN BAD at 2.28x (issue #18, corroborating the entity-level
+        // 1.1-1.6x over-placement by an independent route). The bound is pinned just
+        // above the current value so it cannot get worse unnoticed; tighten it when
+        // #18 lands rather than leaving this as a permanent blessing.
+        expect(ourCliff / gameCliff).toBeLessThan(2.5);
+      },
+    );
   }, 300000);
 
   it("Fulgora terrain is pixel-identical to the game's own preview", () => {
@@ -227,9 +313,14 @@ describe("preview agreement with the game", () => {
       if (!same(rgbAt(game.rgb, i), oursAt(ours, i))) differing++;
     }
     // Fulgora has no enemy bases, so unlike the Nauvis case there is nothing to
-    // exclude. Measured: 34,977 of 1,048,576 pixels differ (3.34%), against
-    // 34,976 before #273 typed Fulgora's f32 constants - that fix moved 13
-    // fields to bit-exact and the image by one pixel. V1/V2
+    // exclude. Measured: 34,788 of 1,048,576 pixels differ (3.32%). The history
+    // is 34,976 -> 34,977 when #273 typed Fulgora's f32 constants (13 fields to
+    // bit-exact, the image one pixel WORSE) -> 34,788 when #279 narrowed
+    // `starting_spot_at_angle` per operation, which moved it 189 pixels the
+    // right way because the cones feed the `mix_*` chain the image is made of.
+    // `test/wasmFulgoraRenderParity.spec.ts` pins the same number exactly at
+    // `toBe(34788)` and carries that table; this bound is the loose twin, so if
+    // the two ever disagree the exact one is right. V1/V2
     // report 99.86% get_tile agreement and 94.5% on the land argmax from
     // sampled points, so a whole-image number in the low single-digit percent
     // is the expected shape, not a regression. The bound is set just above the
@@ -242,7 +333,17 @@ describe("preview agreement with the game", () => {
     // are deep ocean. Fixed there, not here - see the comment on `COLORS.deep`
     // in that file for the evidence. The 3.34% left over after that fix is the
     // land-argmax residual this comment already expected.
-    expect(differing / (SIZE * SIZE)).toBeLessThan(0.04);
+    withDiffArtifacts(
+      {
+        spec: "previewAgreement",
+        case: "fulgora-terrain",
+        game,
+        ours: { width: SIZE, height: SIZE, rgba: ours },
+      },
+      () => {
+        expect(differing / (SIZE * SIZE)).toBeLessThan(0.04);
+      },
+    );
   }, 300000);
 
   it("every scrap pixel the game drew is inside our model's footprint", () => {
