@@ -59,6 +59,11 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+# Vestigial as of the refs:sync rewrite - nothing populates this any more.
+# `factorio-oracle refs docs` reads the API docs out of the installed game
+# instead (factorio.app/Contents/doc-html), so an existing ~290 MB copy here is
+# now a duplicate and safe to delete. The rule stays only so that deleting it is
+# your choice rather than a surprise diff.
 /factorioLuaAPI
 /perf-result.txt
 
