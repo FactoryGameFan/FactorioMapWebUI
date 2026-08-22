@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
 
+import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
 import { compileEngine, instantiateEngine, renderThroughWasm } from "../src/noise/wasm/engine";
 import { ABI_VERSION, encodeRenderRequest, MAGIC, REQUEST_BYTES } from "../src/noise/wasm/request";
@@ -315,10 +316,10 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     }
 
     // An EXACT count, not a bound. `test/previewAgreement.spec.ts` bounds the
-    // TypeScript's same comparison at < 4% and records 34,977 as the measured
-    // value; the two renders are byte-identical, so this must be that number
-    // and not merely under a bound. If it moves, one of those two facts
-    // changed and the test names which.
+    // TypeScript's same comparison at < 4% and records the same 34,788; the two
+    // renders are byte-identical, so this must be that number and not merely
+    // under a bound. If it moves, one of those two facts changed and the test
+    // names which.
     //
     // The history of this number is the point, so it is kept:
     //
@@ -337,8 +338,25 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     // is not the same thing as a better image - but it is not a rule that this
     // class of fix never helps. It depends on whether the field is upstream of
     // what the image is made of.
-    expect(differing).toBe(34788);
-    expect(differing / (SIZE * SIZE)).toBeLessThan(0.04);
+    // Wrapped for the same reason previewAgreement's comparisons are, and with
+    // MORE reason: this is the tighter of the two. An exact `toBe` trips on a
+    // one-pixel move, where its twin one file over needs 0.04 of the image to
+    // shift - and per CLAUDE.md the frozen-exact assertions are the only ones
+    // that can see this class of change at all. Unwrapped, the entire report
+    // for the most sensitive image assertion in the suite is
+    // `expected 34789 to be 34788`.
+    withDiffArtifacts(
+      {
+        spec: "wasmFulgoraRenderParity",
+        case: "fulgora-terrain-vs-game",
+        game,
+        ours: { width: SIZE, height: SIZE, rgba: wasm },
+      },
+      () => {
+        expect(differing).toBe(34788);
+        expect(differing / (SIZE * SIZE)).toBeLessThan(0.04);
+      },
+    );
   }, 300000);
 
   it("the surface seed is what makes that comparison work at all", async () => {
