@@ -18,6 +18,53 @@ use crate::basis_gradient_table::{GRADIENT_X, GRADIENT_Y};
 use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
 use crate::test_json::{load, Json};
 
+/// Load a fixture and pin the game version its ground truth was captured from.
+///
+/// The frozen exact counts in this file all describe "this port against game
+/// version X", and until #295 not one of them said which X. That is not
+/// bookkeeping: `vulcanus_hairline_cracks` scores 50 of 61 against the 2.1.12
+/// capture and 61 of 61 against a 2.1.14 one, at the SAME 61 positions with the
+/// SAME model - so 11 of those apparent port errors were the game changing
+/// under the fixture. 84% of the corpus predates the capture binary, so any
+/// count short of a full house has that as a live candidate explanation.
+///
+/// Read those two numbers off `hairlineCracks`'s own frozen count below, which
+/// is 50, rather than off #295's text, which says 48. The first draft of this
+/// comment quoted the issue and was wrong by 2 - in a change whose entire
+/// subject is that a number needs to say what it was measured against. The
+/// count in this file is the measurement; prose about it is not.
+///
+/// Writing the version in a comment would go stale the first time somebody
+/// re-captures. This reads `PROVENANCE.json`, so the claim is CHECKED:
+/// re-capture a fixture at a new version and every test that freezes a count
+/// against it goes red, naming both versions. That red is the signal to
+/// re-score the count - which is precisely the moment a comment would have gone
+/// quietly wrong instead.
+///
+/// It deliberately does not accept "whatever PROVENANCE says". The version is
+/// written at the call site so the two can disagree; a helper that just read
+/// the file would assert nothing.
+fn load_captured_at(relative: &str, captured_at: &str) -> Json {
+    let name = relative
+        .rsplit('/')
+        .next()
+        .unwrap_or_else(|| panic!("fixture path has no file name: {relative}"));
+    let provenance = load("test/fixtures/PROVENANCE.json");
+    let entry = provenance
+        .get("fixtures")
+        .get_opt(name)
+        .unwrap_or_else(|| panic!("{name} has no PROVENANCE.json entry (#295)"));
+    let recorded = entry.get("factorioVersion").as_str();
+    assert_eq!(
+        recorded, captured_at,
+        "{name} is recorded as a {recorded} capture, but the counts graded \
+         against it here were measured at {captured_at}. If it was re-captured, \
+         re-score every frozen count that reads it rather than editing this \
+         string (#295)."
+    );
+    load(relative)
+}
+
 /// Rebuild the tables a fixture supplies directly.
 fn tables_from_fixture(fixture: &Json) -> BasisNoiseTables {
     let to_array = |key: &str| -> [u8; 256] {
@@ -63,7 +110,7 @@ fn the_gradient_table_is_the_one_recovered_from_the_game() {
     // test is what makes that a fact rather than a claim in a header: it goes
     // red if the generated Rust is ever hand-edited, or regenerated from a
     // different fixture, or left stale after the fixture is re-captured.
-    let fixture = load("test/fixtures/basis-gradient-table.json");
+    let fixture = load_captured_at("test/fixtures/basis-gradient-table.json", "2.1.14");
     let gx = fixture.get("gradientX").as_f64_array();
     let gy = fixture.get("gradientY").as_f64_array();
 
@@ -80,7 +127,7 @@ fn the_gradient_table_is_the_one_recovered_from_the_game() {
 
 #[test]
 fn reproduces_all_512_points_of_the_basis_noise_fixture_exactly() {
-    let fixture = load("test/fixtures/basis-noise.seed123456.json");
+    let fixture = load_captured_at("test/fixtures/basis-noise.seed123456.json", "2.1.12");
     let tables = tables_from_fixture(&fixture);
     let (exact, worst) = score(&fixture, &tables);
 
@@ -99,7 +146,7 @@ fn reproduces_the_seed_derived_oracle_basis_fixture_exactly() {
     // This one also exercises `tables_from_seed`, so it grades the taus88
     // stream, the seed-word clamp, the salt and the four shuffles as well as
     // the kernel. The fixture above supplies its tables directly and cannot.
-    let fixture = load("test/fixtures/oracle-basis.seed123456.json");
+    let fixture = load_captured_at("test/fixtures/oracle-basis.seed123456.json", "2.1.12");
     let seed0 = fixture.get("seed0").as_f64() as u32;
     let seed1 = fixture.get("seed1").as_f64() as u32;
     let tables = tables_from_seed(seed0, seed1);
@@ -147,7 +194,7 @@ fn the_scorer_resolves_a_single_wrong_point() {
     // being blind to one bad point among 512 - which is the shape a real
     // regression takes. Here the port is left alone and the EXPECTATION is
     // moved by one ULP, so the assertion under test is the scorer's.
-    let fixture = load("test/fixtures/basis-noise.seed123456.json");
+    let fixture = load_captured_at("test/fixtures/basis-noise.seed123456.json", "2.1.12");
     let tables = tables_from_fixture(&fixture);
     let input_scale = fixture.get("inputScale").as_f64();
 
@@ -226,7 +273,7 @@ fn assert_all_f32(values: &[Json], label: &str) {
 
 #[test]
 fn reproduces_the_multioctave_fixture_exactly() {
-    let fixture = load("test/fixtures/oracle-multioctave.seed123456.json");
+    let fixture = load_captured_at("test/fixtures/oracle-multioctave.seed123456.json", "2.1.12");
     let seed0 = fixture.get("seed0").as_f64() as u32;
     let positions = fixture.get("positions").as_array();
 
@@ -259,7 +306,10 @@ fn reproduces_the_multioctave_fixture_exactly() {
 
 #[test]
 fn reproduces_the_variable_persistence_fixture_exactly() {
-    let fixture = load("test/fixtures/oracle-variable-persistence-multioctave.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-variable-persistence-multioctave.seed123456.json",
+        "2.1.12",
+    );
     let seed0 = fixture.get("seed0").as_f64() as u32;
     let positions = fixture.get("positions").as_array();
     // The per-tile value of the persistence expression, captured alongside the
@@ -300,7 +350,10 @@ fn reproduces_the_variable_persistence_fixture_exactly() {
 
 #[test]
 fn reproduces_the_quick_multioctave_fixture_exactly() {
-    let fixture = load("test/fixtures/oracle-quick-multioctave.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-quick-multioctave.seed123456.json",
+        "2.1.12",
+    );
     let seed0 = fixture.get("seed0").as_f64() as u32;
     let positions = fixture.get("positions").as_array();
 
@@ -338,7 +391,10 @@ fn reproduces_the_quick_multioctave_fixture_exactly() {
 
 #[test]
 fn reproduces_the_quick_persistence_wrapper_exactly() {
-    let fixture = load("test/fixtures/oracle-multioctave-wrappers.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-multioctave-wrappers.seed123456.json",
+        "2.1.12",
+    );
     let seed0 = fixture.get("seed0").as_f64() as u32;
     let positions = fixture.get("positions").as_array();
 
@@ -396,7 +452,10 @@ fn random_penalty_source(kind: &str, positions: &[RandomPenaltyPosition]) -> Vec
 
 #[test]
 fn reproduces_the_random_penalty_fixture_exactly() {
-    let fixture = load("test/fixtures/oracle-random-penalty.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-random-penalty.seed123456.json",
+        "2.1.11",
+    );
     let positions: Vec<RandomPenaltyPosition> = fixture
         .get("positions")
         .as_array()
@@ -489,7 +548,10 @@ fn reproduces_the_games_distance_from_nearest_point_at_all_26_positions() {
     // points = starting_positions}` captured straight from the game. The
     // EvalCtx default spawn is the origin, which is what `starting_positions`
     // resolved to for this capture (confirmed by `distance[0] == hypot`).
-    let fixture = load("test/fixtures/oracle-elevation-lakes.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-lakes.seed123456.json",
+        "2.1.11",
+    );
     let positions = fixture_positions(&fixture, "positions");
     let expected = fixture.get("distance").as_f64_array();
     let spawn = [Point { x: 0.0, y: 0.0 }];
@@ -543,7 +605,10 @@ fn computes_the_games_real_starting_lake_for_seed_123456() {
 
 #[test]
 fn reproduces_every_starting_lake_distance_in_the_fixture() {
-    let fixture = load("test/fixtures/oracle-elevation-lakes.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-lakes.seed123456.json",
+        "2.1.11",
+    );
     let seed0 = fixture.get("seed0").as_f64() as u32;
     let positions = fixture_positions(&fixture, "positions");
     let expected = fixture.get("startingLakeDistance").as_f64_array();
@@ -596,7 +661,10 @@ fn the_capture_grid_snap_is_inert_on_starting_lake_distance_and_that_is_measured
     //
     // If a re-capture ever moves an off-grid position into the near field, this
     // test goes red and the snap stops being decoration.
-    let fixture = load("test/fixtures/oracle-elevation-lakes.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-lakes.seed123456.json",
+        "2.1.11",
+    );
     let seed0 = fixture.get("seed0").as_f64() as u32;
     let positions = fixture_positions(&fixture, "positions");
     let expected = fixture.get("startingLakeDistance").as_f64_array();
@@ -663,7 +731,7 @@ fn reproduces_the_recovered_candidate_draw_stream_bit_exactly() {
 
 #[test]
 fn reproduces_every_game_captured_candidate_set() {
-    let fixture = load("test/fixtures/spot-candidates.game.json");
+    let fixture = load_captured_at("test/fixtures/spot-candidates.game.json", "2.1.11");
     let cases = fixture.get("cases").as_array();
 
     let mut total = 0usize;
@@ -754,7 +822,7 @@ fn decode_expression(e: &Json) -> Box<dyn Fn(f64, f64) -> f64> {
 
 #[test]
 fn reproduces_every_game_captured_spot_selection_probe() {
-    let fixture = load("test/fixtures/spot-selection.game.json");
+    let fixture = load_captured_at("test/fixtures/spot-selection.game.json", "2.1.11");
     let cases = fixture.get("cases").as_array();
 
     let mut rows = 0usize;
@@ -867,7 +935,10 @@ use crate::voronoi_noise::{cell_random, CELL_DRAW_ID};
 
 #[test]
 fn reproduces_the_games_per_cell_voronoi_draw_across_all_nine_seed_series() {
-    let fixture = load("test/fixtures/oracle-voronoi-cellid.multiseed.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-voronoi-cellid.multiseed.json",
+        "2.1.12",
+    );
     let cells: Vec<(i32, i32)> = fixture
         .get("cells")
         .as_array()
@@ -997,7 +1068,10 @@ fn reproduces_the_jitter_zero_voronoi_fixture_exactly() {
     // algorithms collapse onto identical numbers. It is the jittered fixture
     // below that discriminates. Kept because it is free and because a
     // regression would show here first.
-    let fixture = load("test/fixtures/oracle-voronoi-jitter0.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-voronoi-jitter0.seed123456.json",
+        "2.1.12",
+    );
     let seed0 = fixture.get("seed").as_f64() as u32;
     let seed1 = fixture.get("seed1").as_f64() as u32;
     let grid_size = fixture.get("gridSize").as_f64();
@@ -1032,7 +1106,10 @@ fn reproduces_the_jittered_voronoi_fixture_exactly() {
     // The rung that actually discriminates: 45 series at jitter 0.6, 0.8 and
     // 1.0. The pyramid's old jitter-0 formula scored 0 of 175 at every one of
     // these, which is what the degenerate rung above could never have shown.
-    let fixture = load("test/fixtures/oracle-voronoi-points.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-voronoi-points.seed123456.json",
+        "2.1.12",
+    );
     let seed0 = fixture.get("seed").as_f64() as u32;
     let seed1 = fixture.get("seed1").as_f64() as u32;
     let grid_size = fixture.get("gridSize").as_f64();
@@ -1072,7 +1149,10 @@ fn reproduces_the_voronoi_point_inversion_lattice_exactly() {
     // output: 6 series x 4,096 samples of `spot_noise` and `cell_id` around one
     // cell, at three jitters and two distance types. This is what pins
     // `point_offset_in_cell` directly instead of through an argmin.
-    let fixture = load("test/fixtures/oracle-voronoi-points.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-voronoi-points.seed123456.json",
+        "2.1.12",
+    );
     let seed0 = fixture.get("seed").as_f64() as u32;
     let seed1 = fixture.get("seed1").as_f64() as u32;
     let grid_size = fixture.get("gridSize").as_f64();
@@ -1114,7 +1194,10 @@ fn reproduces_the_voronoi_search_range_fixture_and_rejects_the_wrong_ring() {
     // passed 95/95. This fixture is what ended that, and it is the only place
     // the ring is observable at all - so the anti-vacuity half (the planted
     // wrong ring must FAIL) is the point of the test, not a garnish.
-    let fixture = load("test/fixtures/oracle-voronoi-search-range.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-voronoi-search-range.seed123456.json",
+        "2.1.12",
+    );
     let seed0 = fixture.get("seed").as_f64() as u32;
     let seed1 = fixture.get("seed1").as_f64() as u32;
     let grid_size = fixture.get("gridSize").as_f64();
@@ -1209,7 +1292,7 @@ fn pow_series<'a>(fixture: &'a Json, exponent: &str) -> &'a [Json] {
 /// three rather than a copy of that one.
 #[test]
 fn reproduces_the_games_pow_operator_at_every_position() {
-    let fixture = load("test/fixtures/oracle-fastpow.seed123456.json");
+    let fixture = load_captured_at("test/fixtures/oracle-fastpow.seed123456.json", "2.1.12");
     let positions = fixture.get("positions").as_array();
     let xs: Vec<f32> = positions
         .iter()
@@ -1250,7 +1333,7 @@ fn reproduces_the_games_pow_operator_at_every_position() {
 /// them.
 #[test]
 fn the_pow_fixture_still_discriminates_between_the_three_branches() {
-    let fixture = load("test/fixtures/oracle-fastpow.seed123456.json");
+    let fixture = load_captured_at("test/fixtures/oracle-fastpow.seed123456.json", "2.1.12");
     let xs: Vec<f32> = fixture
         .get("positions")
         .as_array()
@@ -1341,7 +1424,7 @@ fn the_pow_fixture_still_discriminates_between_the_three_branches() {
 /// `test/multisample.spec.ts` asserts the same.
 #[test]
 fn reproduces_the_native_multisample_shift_at_all_150_comparisons() {
-    let fixture = load("test/fixtures/oracle-multisample.seed123456.json");
+    let fixture = load_captured_at("test/fixtures/oracle-multisample.seed123456.json", "2.1.12");
     let positions = fixture.get("positions").as_array();
     let cases = fixture.get("cases").as_array();
 
@@ -1385,7 +1468,10 @@ fn reproduces_the_native_multisample_shift_at_all_150_comparisons() {
 /// that should be rewritten - not deleted.
 #[test]
 fn the_multisample_port_implements_the_one_tile_channel_only() {
-    let fixture = load("test/fixtures/oracle-multisample-grid.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-multisample-grid.seed123456.json",
+        "2.1.12",
+    );
     let cases = fixture.get("cases").as_array();
     assert_eq!(cases.len(), 4, "four arms");
 
@@ -1450,7 +1536,7 @@ fn the_multisample_port_implements_the_one_tile_channel_only() {
 /// the f32 narrowing reaches the oracle's exact 1.
 #[test]
 fn reproduces_every_game_captured_seed_variable() {
-    let fixture = load("test/fixtures/oracle-seed-vars.multi.json");
+    let fixture = load_captured_at("test/fixtures/oracle-seed-vars.multi.json", "2.1.12");
     let rows = fixture.get("seeds").as_array();
     assert_eq!(rows.len(), 12, "fixture size");
 
@@ -1487,7 +1573,7 @@ fn reproduces_every_game_captured_seed_variable() {
 /// it and this fixture is where that would show up.
 #[test]
 fn the_from_start_vars_are_the_identity_at_the_default_spawn() {
-    let fixture = load("test/fixtures/oracle-seed-vars.multi.json");
+    let fixture = load_captured_at("test/fixtures/oracle-seed-vars.multi.json", "2.1.12");
     let point = fixture.get("point");
     let (x, y) = (point.get("x").as_f64(), point.get("y").as_f64());
     for row in fixture.get("seeds").as_array() {
@@ -1510,7 +1596,10 @@ fn the_from_start_vars_are_the_identity_at_the_default_spawn() {
 /// candidates passes.
 #[test]
 fn reproduces_the_games_slider_rescale_at_all_seven_probe_points() {
-    let fixture = load("test/fixtures/oracle-fulgora-elevation.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-elevation.seed123456.json",
+        "2.1.14",
+    );
     let probe = fixture.get("sliderRescaleProbe");
 
     let points = ["0.5", "1", "2", "3", "4", "5", "6"];
@@ -1670,7 +1759,10 @@ fn fulgora_sweep(
 /// and the two starting cones.
 #[test]
 fn reproduces_the_fulgora_shared_layer_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-fulgora-shared.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-shared.seed123456.json",
+        "2.1.14",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 101, "fixture size");
     let seed0 = fixture.get("seed0").as_f64() as u32;
@@ -1727,8 +1819,14 @@ fn reproduces_the_fulgora_shared_layer_at_every_captured_position() {
 /// `pyramids` is one short.
 #[test]
 fn reproduces_the_fulgora_cell_classification_at_every_captured_position() {
-    let shared_fx = load("test/fixtures/oracle-fulgora-shared.seed123456.json");
-    let fixture = load("test/fixtures/oracle-fulgora-cells.seed123456.json");
+    let shared_fx = load_captured_at(
+        "test/fixtures/oracle-fulgora-shared.seed123456.json",
+        "2.1.14",
+    );
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-cells.seed123456.json",
+        "2.1.14",
+    );
     let positions = fixture.get("positions").as_array();
 
     // The two fixtures are compared field against field, so if their position
@@ -1784,7 +1882,10 @@ fn reproduces_the_fulgora_cell_classification_at_every_captured_position() {
 /// instead of arriving blended into `elevation`.
 #[test]
 fn reproduces_the_fulgora_elevation_chain_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-fulgora-elevation.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-elevation.seed123456.json",
+        "2.1.14",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 101, "fixture size");
     let (_, _, e) = fulgora_sweep(fixture.get("seed0").as_f64() as u32, positions);
@@ -1842,7 +1943,10 @@ fn reproduces_the_fulgora_elevation_chain_at_every_captured_position() {
 #[test]
 fn typing_the_dunes_constant_f32_reaches_exactly_zero_residual() {
     use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
-    let fixture = load("test/fixtures/oracle-fulgora-elevation.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-elevation.seed123456.json",
+        "2.1.14",
+    );
     let positions = fixture.get("positions").as_array();
     let want = fixture.get("fulgora_dunes").as_array();
     let params = MultioctaveParams {
@@ -1895,7 +1999,10 @@ fn typing_the_dunes_constant_f32_reaches_exactly_zero_residual() {
 /// recovered. Fulgora reads the same one.
 #[test]
 fn reproduces_the_games_starting_spot_at_angle_at_every_case() {
-    let fixture = load("test/fixtures/oracle-starting-spot.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-starting-spot.seed123456.json",
+        "2.1.12",
+    );
     let positions = fixture.get("positions").as_array();
     let cases = fixture.get("cases").as_array();
     assert_eq!(positions.len(), 38, "fixture size");
@@ -1962,7 +2069,10 @@ fn reproduces_the_games_starting_spot_at_angle_at_every_case() {
 /// correction pass rather than at the expressions.
 #[test]
 fn puts_fulgora_land_and_ocean_where_the_game_puts_them() {
-    let fixture = load("test/fixtures/oracle-fulgora-tiles.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-tiles.seed123456.json",
+        "2.1.14",
+    );
     let positions = fixture.get("positions").as_array();
     let names = fixture.get("tileNames").as_array();
     assert_eq!(positions.len(), 5057, "fixture size");
@@ -2032,7 +2142,10 @@ fn fulgora_stack_sweep(seed0: u32, positions: &[Json]) -> Vec<StackFields> {
 /// 131x respectively. If either regresses, this is where it shows.
 #[test]
 fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-fulgora-ruins.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-ruins.seed123456.json",
+        "2.1.14",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 101, "fixture size");
     let f = fulgora_stack_sweep(fixture.get("seed0").as_f64() as u32, positions);
@@ -2142,7 +2255,10 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
 #[test]
 fn the_ruins_walls_constant_is_the_same_f32_case_as_dunes() {
     use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
-    let fixture = load("test/fixtures/oracle-fulgora-ruins.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-ruins.seed123456.json",
+        "2.1.14",
+    );
     let positions = fixture.get("positions").as_array();
     let want = fixture.get("fulgora_ruins_walls").as_array();
     let params = MultioctaveParams {
@@ -2192,7 +2308,10 @@ fn the_ruins_walls_constant_is_the_same_f32_case_as_dunes() {
 /// own unit test carries the numbers.
 #[test]
 fn reproduces_the_fulgora_scrap_probability_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-fulgora-scrap.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-scrap.seed123456.json",
+        "2.1.14",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 101, "fixture size");
 
@@ -2239,7 +2358,10 @@ fn reproduces_the_fulgora_scrap_probability_at_every_captured_position() {
 /// base tile before comparing.
 #[test]
 fn puts_every_fulgora_tile_where_the_game_puts_it() {
-    let fixture = load("test/fixtures/oracle-fulgora-tiles.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-fulgora-tiles.seed123456.json",
+        "2.1.14",
+    );
     let positions = fixture.get("positions").as_array();
     let names = fixture.get("tileNames").as_array();
     assert_eq!(positions.len(), 5057, "fixture size");
@@ -2321,7 +2443,10 @@ fn score_vulcanus(got: &[f64], want: &[Json], label: &str) -> usize {
 /// and rewriting it belongs to #256 with the other 86.
 #[test]
 fn reproduces_the_vulcanus_helper_layer_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-vulcanus-helpers.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-helpers.seed123456.json",
+        "2.1.12",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 38, "fixture size");
     let seed0 = fixture.get("seed0").as_f64() as u32;
@@ -2420,7 +2545,10 @@ fn vulcanus_sweep(seed0: u32, positions: &[Json]) -> (Vec<CrackFields>, Vec<Clim
 /// arriving blended into the field elevation reads.
 #[test]
 fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-vulcanus-cracks.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cracks.seed123456.json",
+        "2.1.12",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 61, "fixture size");
     let (cracks, _) = vulcanus_sweep(fixture.get("seed0").as_f64() as u32, positions);
@@ -2532,8 +2660,14 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
 /// `vulcanus_elev`, which arrives with the elevation chain.
 #[test]
 fn reproduces_the_vulcanus_climate_layer_at_every_captured_position() {
-    let cracks_fx = load("test/fixtures/oracle-vulcanus-cracks.seed123456.json");
-    let fixture = load("test/fixtures/oracle-vulcanus-climate.seed123456.json");
+    let cracks_fx = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cracks.seed123456.json",
+        "2.1.12",
+    );
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-climate.seed123456.json",
+        "2.1.12",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 61, "fixture size");
 
@@ -2594,7 +2728,10 @@ fn vulcanus_spawn_sweep(seed0: u32, positions: &[Json]) -> Vec<SpawnFields> {
 /// ever undone.
 #[test]
 fn reproduces_the_vulcanus_spawn_layer_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-vulcanus-spawn.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-spawn.seed123456.json",
+        "2.1.11",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 410, "fixture size");
     let fields = vulcanus_spawn_sweep(fixture.get("seed0").as_f64() as u32, positions);
@@ -2645,7 +2782,10 @@ use crate::expressions::vulcanus_biomes::{BiomeFields, VulcanusBiomes};
 /// fixtures which put them at the top level.
 #[test]
 fn reproduces_the_vulcanus_biome_layer_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-vulcanus-biomes.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-biomes.seed123456.json",
+        "2.1.12",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 434, "fixture size");
     let values = fixture.get("values");
@@ -2721,7 +2861,10 @@ use crate::expressions::vulcanus_elevation::{ElevationFields, VulcanusElevation}
 /// can be traced to the layer that moved rather than investigated from scratch.
 #[test]
 fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-vulcanus-elevation.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-elevation.seed123456.json",
+        "2.1.12",
+    );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 434, "fixture size");
     // The snap below is applied for these 22 and no others. Asserted so a
@@ -2829,8 +2972,14 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
 /// rows are the same computation either way and the snap can reach at most 22.
 #[test]
 fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_elevation_surface() {
-    let elev_fixture = load("test/fixtures/oracle-vulcanus-elevation.seed123456.json");
-    let temp_fixture = load("test/fixtures/oracle-vulcanus-temperature.seed123456.json");
+    let elev_fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-elevation.seed123456.json",
+        "2.1.12",
+    );
+    let temp_fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-temperature.seed123456.json",
+        "2.1.12",
+    );
 
     let ctx = crate::eval::ctx::EvalCtx::new(elev_fixture.get("seed0").as_f64() as u32);
     let helpers = VulcanusHelpers::new(&ctx);
@@ -2885,7 +3034,10 @@ fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_elevation_surface() {
 /// the deep lakes. The fixture spans those.
 #[test]
 fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
-    let fixture = load("test/fixtures/oracle-vulcanus-temperature.seed123456.json");
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-temperature.seed123456.json",
+        "2.1.12",
+    );
     let positions = fixture.get("positions").as_array();
     // Its own fixture, its own off-grid count - which happens to also be 22.
     assert_eq!(
