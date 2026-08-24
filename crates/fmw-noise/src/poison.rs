@@ -171,3 +171,51 @@ pub fn index_result(index: usize, len: usize) -> usize {
     let _ = len;
     index
 }
+
+/// Rotate a tri-state CROSSING to the next value.
+///
+/// `CliffGenerator::crossesCliff` answers "no crossing", "crossing up" or
+/// "crossing down", and four of those answers assemble into the cell code the
+/// orientation table keys on. That is a classification, so the numeric hooks
+/// cannot reach it for the reason [`bool_result`] and [`index_result`] record:
+/// a one-ULP nudge to an elevation changes which side of a band boundary it
+/// falls on essentially never.
+///
+/// It rotates rather than negating because negating `0` is `0` - the answer
+/// most edges give - so a sign flip would leave most of the lattice untouched
+/// and the end-to-end cliff test could stay green. Rotating moves every edge.
+#[inline]
+#[must_use]
+pub fn crossing_result(value: i8) -> i8 {
+    #[cfg(feature = "poison")]
+    return match value {
+        0 => 1,
+        1 => -1,
+        _ => 0,
+    };
+    #[cfg(not(feature = "poison"))]
+    value
+}
+
+/// Rotate the edge order the cliff repair sweep tries.
+///
+/// `fixImpossibleCellsSweep` has no numeric output to bend and no single choice
+/// to flip: it is an algorithm over discrete inputs whose only observable is
+/// which edge it cleared. The engine's order is `L, T, R, B`, and clearing a
+/// different one leaves a different - usually still legal - cell code, which is
+/// precisely the wrong answer a mis-ported sweep gives.
+///
+/// **It needs its own hook even though the end-to-end cliff test already goes
+/// red**, for the reason [`index_result`] records: under poison
+/// [`crossing_result`] moves every edge in the lattice, so
+/// `places_every_vulcanus_cliff_where_the_game_places_it` would be red whether
+/// or not the sweep had a control at all. A gate satisfiable by an unrelated
+/// part of the system is not a gate for the new part.
+#[inline]
+#[must_use]
+pub fn sweep_order(order: [usize; 4]) -> [usize; 4] {
+    #[cfg(feature = "poison")]
+    return [order[1], order[2], order[3], order[0]];
+    #[cfg(not(feature = "poison"))]
+    order
+}

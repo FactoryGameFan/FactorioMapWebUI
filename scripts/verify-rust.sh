@@ -117,6 +117,26 @@ POISONED_TESTS=(
   tiles::vulcanus_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_order
 
   tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order
+
+  # Phase 5's second half (#225), the cliff stack. Three hooks, because three
+  # ops here can be wrong independently and one red test would otherwise stand
+  # in for all of them:
+  #
+  #   - `poison::f64_result` on `cliffiness_basic`, the only numeric field;
+  #   - `poison::crossing_result` on `crosses_cliff`, whose output is a
+  #     TRI-STATE classification a numeric hook cannot reach;
+  #   - `poison::sweep_order` on `fixImpossibleCells`, which has no value to
+  #     bend at all - only a choice of which edge to clear;
+  #   - `poison::bool_result` on `isCliffConnected` and the ore rejection.
+  #
+  # The two `cliffs::placement` tests are here rather than only the fixtures:
+  # under poison the crossing hook moves every edge in the lattice, so the
+  # end-to-end test is red whether or not the sweep has a control.
+  fixtures::places_every_vulcanus_cliff_where_the_game_places_it
+  fixtures::reproduces_the_vulcanus_cliff_fields_at_every_captured_corner
+  cliffs::placement::tests::a_crossing_needs_a_band_a_sign_and_the_cliffiness_gate
+  cliffs::placement::tests::the_sweep_clears_the_first_clearable_edge_in_l_t_r_b_order
+  cliffs::connections::tests::connection_is_a_parity_test_and_not_a_do_they_touch_test
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then
