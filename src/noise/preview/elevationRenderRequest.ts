@@ -297,6 +297,47 @@ export function placementMarkSweepBox(req: ElevationRenderRequest): WorldBox {
 }
 
 /**
+ * The Rust engine's Vulcanus path - terrain only.
+ *
+ * Vulcanus has no ocean and no scrap, so the land mask and the scrap footprint
+ * are meaningless there rather than merely unimplemented; the module rejects
+ * them by status. Its rock, cliff and resource OVERLAYS are still TypeScript
+ * (#225 is not finished), so only the bare `terrain` view routes here - the
+ * composite views below build the stack and paint the overlays as before.
+ *
+ * The copy note on the Fulgora function below applies here identically.
+ */
+function renderVulcanusThroughWasm(
+  req: ElevationRenderRequest,
+  engine: EngineExports,
+): ElevationRenderResult {
+  const levers = (c: { frequency?: number; size?: number } | undefined) => ({
+    frequency: c?.frequency ?? 1,
+    size: c?.size ?? 1,
+  });
+  const controls = req.vulcanusResourceControls;
+  const view = renderThroughWasm(engine, {
+    planet: "vulcanus",
+    view: "terrain",
+    seed0: req.seed0,
+    width: req.width,
+    height: req.height,
+    originX: req.originX,
+    originY: req.originY,
+    tilesPerPixel: req.tilesPerPixel,
+    volcanismFrequency: 1,
+    volcanismSize: 1,
+    temperatureBias: 0,
+    tungstenOre: levers(controls?.tungstenOre),
+    vulcanusCoal: levers(controls?.vulcanusCoal),
+    calcite: levers(controls?.calcite),
+    sulfuricAcidGeyser: levers(controls?.sulfuricAcidGeyser),
+  });
+  const owned = new Uint8ClampedArray(view);
+  return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
+}
+
+/**
  * The Rust engine's Fulgora path - the land mask, and now the full terrain
  * render too.
  *
@@ -367,6 +408,14 @@ export function runRenderRequest(
       // terrain-family view that asks for one still gets plain terrain rather
       // than a Nauvis field composited onto Vulcanus colors.
       const wantsResources = req.view === "resources" || req.view === "all";
+      // Checked BEFORE the TypeScript stack is built, for the reason the
+      // Fulgora branch gives: `makeVulcanusStack` derives seed tables for the
+      // whole biome, crack, climate and elevation chain, and building them only
+      // to throw them away would be most of the saving. Bare `terrain` only -
+      // every other Vulcanus view still needs the stack for its overlays.
+      if (engine !== undefined && req.view === "terrain") {
+        return renderVulcanusThroughWasm(req, engine);
+      }
       // ONE stack for the whole composite. Two things make this pay, and both
       // are needed: the overlays reuse the field objects terrain built, and
       // those objects carry a cross-traversal cache (`memoRegion`), so a pass

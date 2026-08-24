@@ -66,6 +66,8 @@ describe("the committed WASM engine", () => {
    * | 1 (#220) | 50,193 | twelve primitives |
    * | 2 (#221) | 63,846 | the `eval` layer |
    * | 3 (#223) | 70,189 | Fulgora's landmask chain |
+   * | 4-5 (#224, #225) | 84,171 | the rest of Fulgora, then Vulcanus to elevation |
+   * | 5 (#225) | 138,642 | Vulcanus's resources, tiles and render path |
    *
    * **The one non-obvious contributor was measured, not guessed**: stubbing
    * `f64::log2` and `f64::powf` out of `eval/math.rs` and rebuilding gives
@@ -74,13 +76,33 @@ describe("the committed WASM engine", () => {
    * was libm; that was an assumption and it was wrong - libm is 38% of it and
    * the rest is the ported code and its tier-2 exports.
    *
-   * 128 KB keeps roughly 1.8x headroom over the current size, which is the
-   * order of magnitude a stray dependency or a panic-formatting path would add.
+   * **It fired again at 138,642 on phase 5, and the growth was measured before
+   * the ceiling moved** - which is the whole point of the instruction below, so
+   * here is the measurement rather than an assurance:
+   *
+   * | build | bytes | delta |
+   * | --- | ---: | ---: |
+   * | phase 4 baseline | 84,171 | - |
+   * | + ABI v2, Vulcanus sweep stubbed out | 86,243 | +2,072 |
+   * | + the Vulcanus chain | 138,642 | +52,399 |
+   *
+   * The middle row is the method: stubbing the `render_vulcanus` arm of the
+   * dispatch dead-code-eliminates the whole Vulcanus chain, so what is left is
+   * the boundary change alone. **The per-planet request block cost 2,072 bytes
+   * and the ported math cost 52,399**, which is the shape a phase of ported
+   * expressions should have. Nothing unaccounted for got linked in.
+   *
+   * 256 KB keeps the same roughly 1.8x headroom over the current size that
+   * 128 KB kept over phase 3's, which is the order of magnitude a stray
+   * dependency or a panic-formatting path would add. Phase 6 is Nauvis and is
+   * about the same size again by line count, so expect this to fire once more
+   * and expect the same measurement to be taken.
+   *
    * If this fires again, measure what grew before moving it - the stub-and-
    * rebuild above is the method, and it takes a minute.
    */
   it("is small enough that the size trend stays worth watching", () => {
     const bytes = readFileSync(wasmPath).byteLength;
-    expect(bytes).toBeLessThan(128 * 1024);
+    expect(bytes).toBeLessThan(256 * 1024);
   });
 });
