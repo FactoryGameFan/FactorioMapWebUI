@@ -37,9 +37,19 @@
 //! `volcano_area` is evaluated at every spot candidate, and it pulls the whole
 //! pre-volcano chain - six biome-noise octave stacks and the three spawn cones -
 //! at that candidate's position. The TypeScript memoizes each of those; this
-//! recomputes them. Nothing on the render path reaches this yet (`fmw-wasm`
-//! exports nothing that does), so it is correct-first by choice. If this layer
-//! ever joins a per-pixel render, that is the measurement to take first, and
+//! recomputes them.
+//!
+//! **This layer joined a render path with the cliff view, and the measurement
+//! its own caveat asked for has been taken.** The ore -> cliff rejection reads
+//! `vulcanus_resources`, whose `select_spots` pulls this chain. Measured at
+//! 256x256, 1 tile/px, the cliff overlay costs **1.10x** the terrain sweep in
+//! the WASM arm against **1.28x** in the TypeScript arm - so the un-memoized
+//! chain is proportionally cheaper here than the memoized one is there, because
+//! the cliff pass walks a 4-tile lattice rather than every pixel. The full table
+//! and the reason only WITHIN-arm ratios are readable are in
+//! `vulcanus_resources`' own cost section.
+//!
+//! It is still correct-first by choice for any PER-PIXEL consumer, and
 //! `multioctave_noise`'s own docs record what happened last time a per-call
 //! rebuild went unmeasured: 20x.
 

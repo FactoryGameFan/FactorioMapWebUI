@@ -117,6 +117,42 @@ POISONED_TESTS=(
   tiles::vulcanus_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_order
 
   tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order
+
+  # Phase 5's second half (#225), the cliff stack. Three hooks, because three
+  # ops here can be wrong independently and one red test would otherwise stand
+  # in for all of them:
+  #
+  #   - `poison::f64_result` on `cliffiness_basic`, the only numeric field;
+  #   - `poison::crossing_result` on `crosses_cliff`, whose output is a
+  #     TRI-STATE classification a numeric hook cannot reach;
+  #   - `poison::sweep_order` on `fixImpossibleCells`, which has no value to
+  #     bend at all - only a choice of which edge to clear;
+  #   - `poison::bool_result` on `isCliffConnected` and the ore rejection.
+  #
+  # The two `cliffs::placement` tests are here rather than only the fixtures:
+  # under poison the crossing hook moves every edge in the lattice, so the
+  # end-to-end test is red whether or not the sweep has a control.
+  fixtures::places_every_vulcanus_cliff_where_the_game_places_it
+  fixtures::reproduces_the_vulcanus_cliff_fields_at_every_captured_corner
+  cliffs::placement::tests::a_crossing_needs_a_band_a_sign_and_the_cliffiness_gate
+  cliffs::placement::tests::the_sweep_clears_the_first_clearable_edge_in_l_t_r_b_order
+  cliffs::connections::tests::connection_is_a_parity_test_and_not_a_do_they_touch_test
+
+  # The only grading of `cliffs::connections` against anything - that module is
+  # on no render path, so without this it would be a 445-line port with unit
+  # tests and no measurement.
+  #
+  # It is also the most expensive test in the crate by a wide margin, and that
+  # is worth knowing before anyone adds a second like it. Measured: 33s in the
+  # normal arm and 93s under poison, which took this whole script from a few
+  # seconds to **1m50s** wall. Poisoning is the expensive half because
+  # `crossing_result` turns every lattice edge into a crossing, so far more
+  # cells place and the onDestroy cascade recurses over a dense set.
+  #
+  # `verify:rust` is therefore NO LONGER the cheapest job in the workflow. It is
+  # still far under the test shards (300s+), so it does not move the gate wall -
+  # but the line in CLAUDE.md calling it 19s and the cheapest job expired here.
+  fixtures::the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then

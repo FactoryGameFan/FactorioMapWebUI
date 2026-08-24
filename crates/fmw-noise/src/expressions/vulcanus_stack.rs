@@ -45,7 +45,7 @@ use crate::expressions::vulcanus_climate::VulcanusClimate;
 use crate::expressions::vulcanus_cracks::VulcanusCracks;
 use crate::expressions::vulcanus_elevation::VulcanusElevation;
 use crate::expressions::vulcanus_helpers::VulcanusHelpers;
-use crate::expressions::vulcanus_resources::{ResourceFields, VulcanusResources};
+use crate::expressions::vulcanus_resources::{OreRegions, ResourceFields, VulcanusResources};
 use crate::expressions::vulcanus_spawn::VulcanusSpawn;
 use crate::multioctave_noise::Prepared;
 use crate::tiles::vulcanus_catalog::{
@@ -207,6 +207,36 @@ impl<'a> VulcanusStack<'a> {
     #[must_use]
     pub fn resources(&self, x: f64, y: f64) -> ResourceFields {
         self.resources.eval(x, y)
+    }
+
+    /// The three solid ores' region fields, which is all the ore -> cliff
+    /// rejection reads. A projection of [`VulcanusStack::resources`], not a
+    /// second model of it - see [`VulcanusResources::ore_regions`].
+    #[must_use]
+    pub fn ore_regions(&self, x: f64, y: f64) -> OreRegions {
+        self.resources.ore_regions(x, y)
+    }
+
+    /// `vulcanus_elevation` in the TILE channel - the 1-tile grid every
+    /// per-tile consumer walks, and what `calculate_tile_properties` reports.
+    ///
+    /// Distinct from [`VulcanusStack::cliff_elevation`] by exactly the amount
+    /// `multisample` shifts between grids (#83), which is not a rounding
+    /// difference: the two disagree by tens of tiles over most of a region.
+    #[must_use]
+    pub fn elevation(&self, x: f64, y: f64) -> f64 {
+        self.elevation.eval(x, y).elevation
+    }
+
+    /// `cliff_elevation`, the elevation field the CLIFF generator samples.
+    ///
+    /// Distinct from the `elevation` the tile generator reads, because
+    /// `multisample`'s offsets are in the consuming program's grid units and
+    /// the cliff generator walks a 4-tile lattice (#83). Both hang off this one
+    /// stack and share every sub-expression below the multisample.
+    #[must_use]
+    pub fn cliff_elevation(&self, x: f64, y: f64) -> f64 {
+        self.elevation.cliff_elevation(x, y)
     }
 
     /// Every field the 19 tile expressions read, at one position.

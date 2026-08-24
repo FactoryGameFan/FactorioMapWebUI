@@ -41,10 +41,41 @@
 //!
 //! `select_spots` evaluates density and favorability at accepted candidates,
 //! and both pull a whole biome-full chain at that candidate. The TypeScript
-//! memoizes those; this recomputes them. Nothing on the render path reaches
-//! this layer yet, so it is correct-first by choice - the same call this layer's
-//! neighbour made. `multioctave_noise`'s docs record what happened the last time
-//! a per-call rebuild went unmeasured, which was 20x.
+//! memoizes those; this recomputes them.
+//!
+//! **This layer IS on a render path now, and the recomputation was measured
+//! rather than left as a caveat.** The ore -> cliff rejection reaches it through
+//! [`VulcanusResources::ore_regions`], so the `cliffs` view evaluates this
+//! chain a couple of tiles per placed cell. This comment used to say "nothing
+//! on the render path reaches this layer yet, so it is correct-first by choice",
+//! and its own next sentence said what to do when that stopped being true.
+//!
+//! Measured at 256x256, 1 tile/px, seed 123456, min of 5 after a warm pass,
+//! three separate runs agreeing to the second decimal - as the cost of the
+//! cliff OVERLAY relative to the terrain sweep in the SAME arm:
+//!
+//! | arm | terrain | cliffs | overlay |
+//! | --- | ---: | ---: | ---: |
+//! | TypeScript | 33.10 us/px | 42.41 us/px | 1.28x |
+//! | WASM | 8.64 us/px | 9.52 us/px | **1.10x** |
+//!
+//! So the un-memoized chain costs proportionally LESS here than the memoized
+//! one does in the TypeScript. The reason is that the cliff pass is not
+//! per-pixel: it walks a 4-tile lattice and touches two tiles per placed cell,
+//! so this layer is evaluated a few thousand times against the terrain sweep's
+//! 65,536. A memo would be optimising something that is already 10% of the
+//! render.
+//!
+//! **Read the RATIOS, not the microseconds.** Those absolutes are from a run
+//! inside vitest, where the TypeScript arm pays #267's per-module transform and
+//! the WASM arm does not - `docs/noise/vulcanus-cliffs-NOTES.md` measures the
+//! same TypeScript terrain view at 12.68 us/px outside it. A ratio between the
+//! two arms would be measuring the harness; a ratio WITHIN one arm cancels it,
+//! which is the only reading this table supports.
+//!
+//! `multioctave_noise`'s docs record what happened the last time a per-call
+//! rebuild went unmeasured, which was 20x - that is why this was measured, and
+//! the answer this time is that it does not matter.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -139,6 +170,15 @@ impl SpotSpec {
     fn region_index(self, c: f64) -> i64 {
         ((c + self.half() as f64) / self.floored_region_size() as f64).floor() as i64
     }
+}
+
+/// The three solid ores' region fields - the projection of [`ResourceFields`]
+/// that the ore -> cliff rejection reads.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OreRegions {
+    pub tungsten: f64,
+    pub coal: f64,
+    pub calcite: f64,
 }
 
 /// Every named expression this layer's oracle fixture grades, at one position.
@@ -568,6 +608,47 @@ impl<'a> VulcanusResources<'a> {
         max2(starting, min2(1.0 - starting_circle, placed))
     }
 
+    /// The three SOLID ores' region fields, and nothing else.
+    ///
+    /// The ore -> cliff rejection asks only "does a solid-ore entity stand on
+    /// this tile", which needs `tungsten_region`, `coal_region` and
+    /// `calcite_region`. Going through [`VulcanusResources::eval`] for that
+    /// would also evaluate the two sulfur cones, the sulfur spot selection and
+    /// the patch noise, none of which any consumer of this projection reads -
+    /// and the rejection runs on every placed cell of every chunk a render
+    /// touches, so it is the one call site where that matters.
+    ///
+    /// **A projection, not a second model.** Each line here is the same
+    /// expression `eval` uses, and
+    /// [`tests::the_ore_region_projection_agrees_with_the_full_eval_bit_for_bit`]
+    /// asserts the two agree on raw bits rather than approximately. Two
+    /// implementations that could drift apart would be worse than the work
+    /// saved, which is the standing objection to a fast path.
+    #[must_use]
+    pub fn ore_regions(&self, x: f64, y: f64) -> OreRegions {
+        let wobble = WobbleSums::at(self.helpers, x, y);
+        let starting_circle = self.spawn.eval(x, y, wobble).starting_circle;
+        let (wx, wy) = self.resource_wobble(x, y);
+        let cone = |spot: &StartingSpot| starting_spot_at_angle(spot, x, y, 0.5 * wx, 0.5 * wy);
+        OreRegions {
+            tungsten: Self::region(
+                cone(&self.spot_tungsten),
+                starting_circle,
+                self.place_metal_spots(x, y),
+            ),
+            coal: Self::region(
+                cone(&self.spot_coal),
+                starting_circle,
+                self.place_capped_spots(self.coal_spots, x, y),
+            ),
+            calcite: Self::region(
+                cone(&self.spot_calcite),
+                starting_circle,
+                self.place_capped_spots(self.calcite_spots, x, y),
+            ),
+        }
+    }
+
     /// Evaluate every graded field of this layer at one position.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> ResourceFields {
@@ -647,6 +728,60 @@ impl<'a> VulcanusResources<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The [`VulcanusResources::ore_regions`] fast path against the full
+    /// [`VulcanusResources::eval`] it projects, on RAW BITS rather than a
+    /// tolerance.
+    ///
+    /// Two implementations of the same three expressions is exactly the shape
+    /// that drifts silently - the ore -> cliff rejection would then reject
+    /// against a footprint the resource overlay does not draw, and neither
+    /// render would show it. This is what makes the projection a projection.
+    #[test]
+    fn the_ore_region_projection_agrees_with_the_full_eval_bit_for_bit() {
+        let ctx = EvalCtx::new(123_456);
+        let base = crate::expressions::vulcanus_stack::VulcanusBase::with_host_trig(&ctx);
+        let biomes = base.biomes_with_host_trig();
+        let stack =
+            crate::expressions::vulcanus_stack::VulcanusStack::with_host_trig(&base, &biomes);
+
+        // Spread across the three regions the cliff fixture covers, plus the
+        // starting area, where the four cones dominate rather than the spots.
+        let mut nonzero = 0usize;
+        for (x0, y0) in [(0.0, 0.0), (1500.0, 1500.0), (-1200.0, 800.0)] {
+            for i in 0..12 {
+                for j in 0..12 {
+                    let (x, y) = (x0 + f64::from(i) * 19.0, y0 + f64::from(j) * 23.0);
+                    let full = stack.resources(x, y);
+                    let proj = stack.ore_regions(x, y);
+                    assert_eq!(
+                        proj.tungsten.to_bits(),
+                        full.tungsten_region.to_bits(),
+                        "tungsten at ({x}, {y})"
+                    );
+                    assert_eq!(
+                        proj.coal.to_bits(),
+                        full.coal_region.to_bits(),
+                        "coal at ({x}, {y})"
+                    );
+                    assert_eq!(
+                        proj.calcite.to_bits(),
+                        full.calcite_region.to_bits(),
+                        "calcite at ({x}, {y})"
+                    );
+                    if proj.tungsten != 0.0 || proj.coal != 0.0 || proj.calcite != 0.0 {
+                        nonzero += 1;
+                    }
+                }
+            }
+        }
+        // Without this the comparison could pass on three fields that are zero
+        // everywhere sampled.
+        assert!(
+            nonzero > 100,
+            "only {nonzero} of 432 positions had any ore signal"
+        );
+    }
 
     fn layer_at(seed0: u32) -> (EvalCtx, VulcanusHelpers) {
         let ctx = EvalCtx::new(seed0);

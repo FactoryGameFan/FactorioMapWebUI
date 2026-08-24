@@ -555,8 +555,21 @@ Add future phases the same way.
 
 Two more things about that job, both measured on its first run (#230):
 
-- **It is 19s**, of which `scripts/verify-rust.sh` is 2s, the pinned-toolchain
-  sync is 10s and cargo-deny is 1s. It is the cheapest job in the workflow.
+- **It WAS 19s and is not any more.** On its first run (#230) it was 19s, of
+  which `scripts/verify-rust.sh` was 2s, the pinned-toolchain sync 10s and
+  cargo-deny 1s, and it was the cheapest job in the workflow. #225's cliff half
+  ended that: `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_
+loses_on_none` is 33s in the normal arm and **93s under poison**, taking the
+  script alone to **1m50s** locally. Poison is the expensive half because
+  `crossing_result` turns every lattice edge into a crossing, so far more cells
+  place and the `onDestroy` cascade recurses over a dense set.
+
+  It is kept because it is the ONLY grading of `cliffs::connections`, a
+  445-line module on no render path - without it that port would have unit tests
+  and no measurement against anything. It is still far under the test shards, so
+  it does not move the gate wall; it is simply no longer free. Anyone adding a
+  second fixture test of that shape should re-measure this job first.
+
 - **It runs `bash scripts/verify-rust.sh` directly**, the one deviation from
   "the YAML names only package.json scripts". That does not reopen the drift
   the rule guards against, because `verify:rust` _is_ that one line, so the
@@ -1409,16 +1422,89 @@ engine.** Landed: `vulcanus_helpers`, `vulcanus_cracks`, `vulcanus_climate`,
 `tiles/vulcanus_catalog`, `vulcanus_stack`, and the `terrain` render path
 behind ABI v2. `vulcanus_shared` needed no port - it is
 `starting_spot_at_angle`, done in #279 - and `vulcanus_seed` landed in phase 2.
-Still out: the cliff, resource and rock OVERLAY stacks, so every composite view
-keeps the TypeScript path and a test asserts that rather than assuming it.
+
+**Phase 5's second half adds the CLIFF stack, and `cliffs` renders through the
+engine too.** `cliffs/{catalog,placement,connections,vulcanus_fields,
+vulcanus_ore_rejection}` plus the ore footprint slice of
+`resources/vulcanus_catalog`. Still out: the resource and rock OVERLAY stacks,
+so `rocks`, `resources` and `all` keep the TypeScript path and a test asserts
+that rather than assuming it.
+
+**Three of the nine TypeScript files in that directory pair were NOT ported, and
+each for its own reason.** Read this before "finishing" them:
+
+- `cliffFields.ts` and `rocks/rockField.ts` are NAUVIS. They need
+  `nauvis_shared`, `elevation_nauvis`, `aux` and `moisture` - 464 more lines
+  that are the core of #226 - and neither reaches a Vulcanus view. They belong
+  to phase 6.
+- `cliffConnections.ts` WAS ported, and it is the odd one: it has **zero `src/`
+  consumers**. `grep -rln` finds it imported by 23 investigation specs and by
+  nothing the renderer runs. It models `Cliff::updateConnections` /
+  `onDestroy`, which is #84's subject, and it was ported so that investigation
+  can be run against the engine rather than only against the TypeScript.
 
 **Tier 3 for Vulcanus** (`test/wasmVulcanusRenderParity.spec.ts`) is
-byte-identical against the TypeScript across four windows, and **12,423 of
-929,686** compared pixels against the game's own 1024x1024 PNG - 98.664%, which
-is the TypeScript's own number to four decimal places, reached through a
-separate path. It is asserted as an EXACT count where
-`previewAgreement.spec.ts` uses a 2% bound, because byte-identity means it can
-be.
+byte-identical against the TypeScript across four windows for BOTH the `terrain`
+and the `cliffs` view, and **12,423 of 929,686** compared pixels against the
+game's own 1024x1024 PNG - 98.664%, which is the TypeScript's own number to four
+decimal places, reached through a separate path. It is asserted as an EXACT
+count where `previewAgreement.spec.ts` uses a 2% bound, because byte-identity
+means it can be.
+
+**The cliff stack's tier 1 is the game's own cliff entities, four columns, both
+rejection arms** - and every one of the 24 numbers was measured on the
+TypeScript side too and agrees exactly, so they describe the distance BOTH ports
+sit from the game:
+
+| arm       | game |     ours | matched | orientation |
+| --------- | ---: | -------: | ------: | ----------: |
+| lava only | 1569 |     1570 |    1525 |        1492 |
+| shipping  | 1569 | **1547** |    1525 |    **1504** |
+
+`orientation` is four bits per cell against `LuaEntity.cliff_orientation` where
+position is one, and it is what says the two ports produce the same cell CODES
+rather than merely the same positions. The ore rejection removes 23 cells, none
+of them a cliff the game kept, and takes wrong orientations **33 -> 21** - which
+is exactly the figure `renderVulcanusCliffs.ts` records having measured, reached
+through a separate implementation.
+
+**`cliffiness_basic` is exact at all 12,675 captured corners**, with the clamp
+saturating at 8,431 of them - read the count with its clamp, the way
+`vulcanus_biomes`' three clamped biomes are read.
+
+**The corner fixture's `elevation` column is the TILE channel, and grading
+`cliff_elevation` against it is a category error worth 60.6 tiles.** That is
+issue #83 - `multisample`'s offsets are in the consuming program's grid units,
+so the 4-tile cliff lattice and the 1-tile tile lattice read different values.
+Both ports score the same 419 of 12,675 against it, because both read the right
+field and the fixture holds the other one. The test now grades the TILE-channel
+field (786 of 12,675, worst 4.393e-2, identical on both sides) and asserts the
+two grids DISAGREE at 2,519 corners - turning #83 from a comment into a live
+assertion. The gap is **sparse and large** rather than a uniform offset, which
+is why the wrong channel cost seven points of recall instead of being obvious.
+
+**The cliff pass needed THREE poison hooks, not one.** `crosses_cliff` returns a
+tri-state classification a numeric hook cannot reach (`poison::crossing_result`,
+which ROTATES rather than negating - negating `0` is `0`, the answer most edges
+give, so a sign flip would leave most of the lattice untouched). And
+`fixImpossibleCells` has no value to bend at all, only a choice of which edge to
+clear, so it gets `poison::sweep_order`. Both have their own test in
+`POISONED_TESTS`, because under poison the crossing hook moves every edge in the
+lattice and the end-to-end test would be red whether or not the sweep had a
+control.
+
+**ABI v2's Vulcanus block grew 248 -> 280 bytes with NO version bump**, and that
+is the per-planet split working rather than a shortcut: the prefix declares its
+own block length, `BadParamsLength` refuses a writer that disagrees, and
+Fulgora's request did not move a byte. A version bump is for a change to the
+COMMON prefix, which every planet reads. The new field is the cliff
+`cell_query_box`, four `f64`, and it is **sent rather than derived** - the halo
+is asymmetric, its two directions CROSS, and it needs the FULL image's geometry,
+which the prefix does not carry and only the tiled renderer knows.
+`test/fixtures/verify-wasm-request.py` grew five more planted breaks for it, all
+caught by its per-edge value check; its two structural checks (four distinct
+edges, not inverted) constrain the FIXTURE rather than catching a break, and the
+comment says so rather than claiming credit for the five.
 
 **`vulcanus_stack` is TWO structs, and that is ownership rather than taste.**
 `VulcanusBiomes`, `VulcanusElevation` and `VulcanusResources` all borrow the
@@ -1931,6 +2017,27 @@ time, under the greedy-accept rule.
   source, profile and pinned toolchain give the same bytes and the same sha256 on
   macOS/aarch64 and on an ubuntu x86_64 runner. That is why the gate can use
   `cmp` instead of rebuild-and-retest.
+- **A `engine.wasm` diff can be pure LINE NUMBERS, and a DOC COMMENT is enough
+  to cause one.** Seen twice while landing #225's cliff half: a 9-line struct
+  added to `vulcanus_resources.rs` moved 2 bytes (two `core::panic::Location`
+  line numbers for that file's `RefCell` borrow sites, 427 -> 436 and 469 ->
+  478), and a **19-line `///` block on its own** in `cliffs/placement.rs` moved
+  9 bytes - six Locations in that file, every one shifted by exactly 19. No code
+  byte moved either time and every section kept its exact size. So a
+  comment-only edit in a reachable file makes `verify-rust.sh` report "stale",
+  and that is the gate working rather than a false positive.
+
+  The fingerprint: tiny `cmp -l` count, every changed offset inside the `data`
+  section, all section sizes identical, and a `u32` delta equal to the lines you
+  inserted. **The trap is alignment** - the record is `{file_ptr, file_len,
+line, col}` and it is NOT 4-byte aligned in the data image, so reading a `u32`
+  at `offset - (offset % 4)` gave "delta 4864" and looked like a moved string
+  table; realigned, the same field is 716 -> 735 and 4864 is just `19 << 8`.
+  Locate the record from its file pointer and length, not from alignment. The
+  build itself is deterministic - a no-change rebuild reproduces the bytes
+  exactly, checked while chasing this - so a diff after an edit is always the
+  edit.
+
 - **The `poison` feature is the gate's anti-vacuity control, and it needs ONE
   HOOK PER OP.** It perturbs an op's returned value; `verify:rust` builds with it
   and asserts a **named list** of tier-1 tests goes red. The list is why: while

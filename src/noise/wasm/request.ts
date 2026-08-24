@@ -40,7 +40,7 @@ export const COMMON_BYTES = 56;
 export const FULGORA_PARAMS_BYTES = 48;
 
 /** Must equal `fmw_wasm::abi::VULCANUS_PARAMS_BYTES`. */
-export const VULCANUS_PARAMS_BYTES = 248;
+export const VULCANUS_PARAMS_BYTES = 280;
 
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
@@ -55,7 +55,7 @@ export const REQUEST_BYTES = COMMON_BYTES + VULCANUS_PARAMS_BYTES;
 export const PLANET = { fulgora: 0, vulcanus: 1 } as const;
 
 /** The `view` codes the module understands. */
-export const VIEW = { landmask: 0, terrain: 1, scrapFootprint: 2 } as const;
+export const VIEW = { landmask: 0, terrain: 1, scrapFootprint: 2, cliffs: 3 } as const;
 
 /**
  * The status codes `render_request` returns. Mirrors `fmw_wasm::abi::Status`.
@@ -108,6 +108,24 @@ export interface VulcanusRenderRequest extends CommonRenderRequest {
   readonly vulcanusCoal: ResourceLevers;
   readonly calcite: ResourceLevers;
   readonly sulfuricAcidGeyser: ResourceLevers;
+  /**
+   * The world box to enumerate cliff cells over, for the `cliffs` view.
+   * Defaults to the request's own pixel box, which is what an untiled render
+   * wants.
+   *
+   * **Computed here rather than in the module**, because the halo is
+   * asymmetric, its two directions CROSS, and it needs the FULL image's
+   * geometry - which the common prefix does not carry and only the tiled
+   * renderer knows. `cliffCellQueryBox` is the one place that arithmetic lives
+   * and `test/tiledEquality.spec.ts` is what guards it; the module reads the
+   * answer.
+   */
+  readonly cellQueryBox?: {
+    readonly x0: number;
+    readonly y0: number;
+    readonly x1: number;
+    readonly y1: number;
+  };
 }
 
 export type WasmRenderRequest = FulgoraRenderRequest | VulcanusRenderRequest;
@@ -212,7 +230,7 @@ export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }
  * Write a request into `target`, returning the bytes written.
  *
  * The return value is the LENGTH of this request, not the buffer's capacity -
- * a Fulgora request is 104 bytes and a Vulcanus one is 304, and the module is
+ * a Fulgora request is 104 bytes and a Vulcanus one is 336, and the module is
  * handed the length so it can check the declared block against what arrived.
  */
 export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest): number {
@@ -277,4 +295,18 @@ function writeVulcanusParams(view: DataView, req: VulcanusRenderRequest): void {
     view.setFloat64(p + 88 + i * 16, t.sin, true);
     view.setFloat64(p + 96 + i * 16, t.cos, true);
   });
+  // The cliff cell query box, defaulting to the request's own pixel box. Only
+  // the `cliffs` view reads it; every other view leaves it inert rather than
+  // absent, so the block has one length per planet and `BadParamsLength` stays
+  // a real check.
+  const box = req.cellQueryBox ?? {
+    x0: req.originX,
+    y0: req.originY,
+    x1: req.originX + req.width * req.tilesPerPixel,
+    y1: req.originY + req.height * req.tilesPerPixel,
+  };
+  view.setFloat64(p + 248, box.x0, true);
+  view.setFloat64(p + 256, box.y0, true);
+  view.setFloat64(p + 264, box.x1, true);
+  view.setFloat64(p + 272, box.y1, true);
 }

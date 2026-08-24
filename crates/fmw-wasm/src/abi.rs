@@ -76,7 +76,7 @@
 //! +32  f64  sin_vault      sine of the vault bearing (the starting one + 180)
 //! +40  f64  cos_vault
 //!
-//! vulcanus block (248 bytes, so a Vulcanus request is 304)
+//! vulcanus block (280 bytes, so a Vulcanus request is 336)
 //!  +0  f64  volcanism_frequency
 //!  +8  f64  volcanism_size
 //! +16  f64  temperature_bias
@@ -89,7 +89,18 @@
 //! +72  f64  sulfur_frequency
 //! +80  f64  sulfur_size
 //! +88  f64 x 20  trig, as ten (sin, cos) pairs in TRIG ORDER below
+//! +248 f64 x 4   cell_query_box: x0, y0, x1, y1
 //! ```
+//!
+//! **The Vulcanus block grew from 248 to 280 when the cliff view landed, with
+//! no version bump, and that is the split working rather than a shortcut.** The
+//! prefix declares its own block length, [`Status::BadParamsLength`] refuses a
+//! writer that disagrees with it, and Fulgora's request did not move a byte.
+//! Both halves ship together in this repository and
+//! `test/fixtures/wasm-request.v2.json` pins the encoding for each planet, so
+//! there is no third party whose old requests could still be in flight. A
+//! version bump is for a change to the COMMON prefix, which every planet
+//! reads.
 //!
 //! **The trig fields are the unusual part and they are deliberate.** Every angle
 //! is a per-render constant at every call site, and `starting_spot_at_angle` has
@@ -113,7 +124,7 @@ pub const COMMON_BYTES: usize = 56;
 pub const FULGORA_PARAMS_BYTES: usize = 48;
 
 /// Size of Vulcanus's parameter block.
-pub const VULCANUS_PARAMS_BYTES: usize = 248;
+pub const VULCANUS_PARAMS_BYTES: usize = 280;
 
 /// The largest request the module can accept, which is what `request_bytes()`
 /// reports so a caller can size one buffer for every planet.
@@ -187,7 +198,15 @@ pub struct Request {
 }
 
 /// The planet-specific half.
+///
+/// `large_enum_variant` is allowed rather than obeyed. Its advice is to box the
+/// Vulcanus block, which would put an allocation and a pointer indirection on
+/// the render path to save 232 bytes of stack in a function that runs ONCE per
+/// request - and it would make [`Request`] no longer `Copy`, which the render
+/// loop relies on. The asymmetry is the planets', not a modelling mistake:
+/// Vulcanus genuinely needs ten bearings where Fulgora needs two.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Params {
     Fulgora(FulgoraParams),
     Vulcanus(VulcanusParams),
@@ -220,6 +239,25 @@ pub struct VulcanusParams {
     pub sulfur_size: f64,
     /// Ten `(sin, cos)` pairs, indexed by [`VulcanusBearing`].
     pub trig: [(f64, f64); VULCANUS_BEARINGS],
+    /// The world box to enumerate cliff cells over, as `[x0, y0, x1, y1]`.
+    ///
+    /// **Sent rather than derived, and that is not laziness.** A cliff cell
+    /// paints a 4px block spanning `px - 2 ..= px + 1`, so a cell centred just
+    /// outside a worker tile still owes that tile pixels - and the halo is
+    /// ASYMMETRIC and the two directions CROSS: a mark reaching far backwards
+    /// has to be caught from ahead of the tile. Deriving that here would need
+    /// the full image's geometry, which the common prefix does not carry and
+    /// which only the tiled renderer knows.
+    ///
+    /// It is also where the tiled-vs-whole cost lives. The cliff pass quantises
+    /// its enumeration to 32-tile chunks, so one surplus tile of halo can pull
+    /// in a whole extra chunk per axis - a symmetric 2/2 halo measured 24,336
+    /// cliffiness evaluations against 17,424 for the exact 1/2 one, 1.40x for
+    /// zero pixels of difference. Keeping the exact box on the TypeScript side
+    /// keeps that in the one place `test/tiledEquality.spec.ts` already guards.
+    ///
+    /// For an untiled render this is the pixel box itself.
+    pub cell_query_box: [f64; 4],
 }
 
 impl VulcanusParams {
@@ -296,6 +334,10 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
                 let at = p + 88 + i * 16;
                 *slot = (f64_at(bytes, at), f64_at(bytes, at + 8));
             }
+            let mut cell_query_box = [0.0; 4];
+            for (i, slot) in cell_query_box.iter_mut().enumerate() {
+                *slot = f64_at(bytes, p + 248 + i * 8);
+            }
             Params::Vulcanus(VulcanusParams {
                 volcanism_frequency: f64_at(bytes, p),
                 volcanism_size: f64_at(bytes, p + 8),
@@ -309,6 +351,7 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
                 sulfur_frequency: f64_at(bytes, p + 72),
                 sulfur_size: f64_at(bytes, p + 80),
                 trig,
+                cell_query_box,
             })
         }
     };
@@ -381,11 +424,18 @@ mod tests {
     /// Not a coincidence worth relying on, but worth pinning: it means the
     /// v2 split cost Fulgora nothing, and if someone later "tidies" the common
     /// prefix this says so.
+    ///
+    /// **Vulcanus's block grew 304 -> 336 when the cliff view landed**, and no
+    /// version bump came with it. That is what a per-planet block is FOR: the
+    /// prefix declares its own length, `BadParamsLength` refuses a writer that
+    /// disagrees, and Fulgora's request did not move a byte. The two halves ship
+    /// together and `test/fixtures/wasm-request.v2.json` pins the encoding, so
+    /// there is no third party to keep compatible.
     #[test]
     fn the_split_left_a_fulgora_request_the_size_it_was_in_v1() {
         assert_eq!(COMMON_BYTES + FULGORA_PARAMS_BYTES, 104);
-        assert_eq!(COMMON_BYTES + VULCANUS_PARAMS_BYTES, 304);
-        assert_eq!(REQUEST_BYTES, 304);
+        assert_eq!(COMMON_BYTES + VULCANUS_PARAMS_BYTES, 336);
+        assert_eq!(REQUEST_BYTES, 336);
     }
 
     /// Each failure mode has its OWN code, so a caller can tell "you sent an
@@ -468,7 +518,7 @@ mod tests {
         );
     }
 
-    /// The same for Vulcanus's 31 fields, which is where a duplicated offset is
+    /// The same for Vulcanus's 35 fields, which is where a duplicated offset is
     /// most likely and least visible.
     ///
     /// A distinct value into every slot, all read back - so a pair of fields
@@ -476,8 +526,8 @@ mod tests {
     #[test]
     fn no_two_vulcanus_fields_share_an_offset() {
         let mut b = good_vulcanus();
-        // 31 distinct values: 11 scalars then 20 trig components.
-        for i in 0..31 {
+        // 35 distinct values: 11 scalars, 20 trig components, 4 box edges.
+        for i in 0..35 {
             let at = COMMON_BYTES + i * 8;
             let v = 100.0f64 + i as f64;
             b[at..at + 8].copy_from_slice(&v.to_le_bytes());
@@ -503,7 +553,8 @@ mod tests {
             got.push(sin);
             got.push(cos);
         }
-        let want: Vec<f64> = (0..31).map(|i| 100.0 + i as f64).collect();
+        got.extend_from_slice(&v.cell_query_box);
+        let want: Vec<f64> = (0..35).map(|i| 100.0 + i as f64).collect();
         assert_eq!(got, want);
     }
 
