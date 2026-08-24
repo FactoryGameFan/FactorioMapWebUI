@@ -6,7 +6,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
 import { compileEngine, instantiateEngine, renderThroughWasm } from "../src/noise/wasm/engine";
-import { ABI_VERSION, encodeRenderRequest, MAGIC, REQUEST_BYTES } from "../src/noise/wasm/request";
+import {
+  ABI_VERSION,
+  COMMON_BYTES,
+  encodeRenderRequest,
+  FULGORA_PARAMS_BYTES,
+  MAGIC,
+  REQUEST_BYTES,
+  VULCANUS_PARAMS_BYTES,
+  type WasmRenderRequest,
+} from "../src/noise/wasm/request";
 import {
   renderFulgoraLandMask,
   renderFulgoraTerrain,
@@ -204,19 +213,41 @@ describe("the request encoding is pinned on both sides", () => {
    * than being produced by the writer under test, so a change to either side of
    * the layout goes red instead of silently agreeing with itself.
    */
-  it("writes exactly the committed bytes for a known request", async () => {
-    const fixture = (await import("./fixtures/wasm-request.v1.json")).default;
-    const target = new Uint8Array(REQUEST_BYTES);
-    const written = encodeRenderRequest(target, fixture.request);
-    expect(written).toBe(REQUEST_BYTES);
-    expect(Array.from(target)).toEqual(fixture.bytes);
+  it("writes exactly the committed bytes for a known request of each planet", async () => {
+    const fixture = (await import("./fixtures/wasm-request.v2.json")).default;
     expect(fixture.magic).toBe(MAGIC);
     expect(fixture.abiVersion).toBe(ABI_VERSION);
+    expect(fixture.commonBytes).toBe(COMMON_BYTES);
+
+    for (const planet of ["fulgora", "vulcanus"] as const) {
+      const arm = fixture[planet];
+      const target = new Uint8Array(REQUEST_BYTES);
+      const written = encodeRenderRequest(target, arm.request as WasmRenderRequest);
+      expect(written, `${planet}: bytes written`).toBe(arm.totalBytes);
+      expect(Array.from(target.slice(0, written)), `${planet}: bytes`).toEqual(arm.bytes);
+    }
   });
 
-  it("refuses a target buffer too small to hold the header", () => {
+  /**
+   * A Fulgora request is 104 bytes and a Vulcanus one is 304, so the encoder
+   * returns a LENGTH rather than the buffer's capacity.
+   *
+   * Asserted because v1 had one size and the two were interchangeable there;
+   * a reader who remembers that would take `REQUEST_BYTES` for the length of
+   * every request, which is now only true of the largest one.
+   */
+  it("returns each planet's own request length, not the buffer capacity", async () => {
+    const fixture = (await import("./fixtures/wasm-request.v2.json")).default;
+    expect(fixture.fulgora.totalBytes).toBe(COMMON_BYTES + FULGORA_PARAMS_BYTES);
+    expect(fixture.vulcanus.totalBytes).toBe(COMMON_BYTES + VULCANUS_PARAMS_BYTES);
+    expect(fixture.fulgora.totalBytes).toBe(104);
+    expect(REQUEST_BYTES).toBe(fixture.vulcanus.totalBytes);
+    expect(REQUEST_BYTES).toBeGreaterThan(fixture.fulgora.totalBytes);
+  });
+
+  it("refuses a target buffer too small to hold the request", () => {
     expect(() =>
-      encodeRenderRequest(new Uint8Array(REQUEST_BYTES - 1), {
+      encodeRenderRequest(new Uint8Array(103), {
         seed0: 1,
         width: 1,
         height: 1,
@@ -226,7 +257,28 @@ describe("the request encoding is pinned on both sides", () => {
         islandsFrequency: 1,
         islandsSize: 1,
       }),
-    ).toThrow(/needs 104 bytes/);
+    ).toThrow(/fulgora request needs 104 bytes/);
+
+    // A Vulcanus request does not fit in a buffer that a Fulgora one does, and
+    // the message says which planet - the whole point of the per-planet length.
+    expect(() =>
+      encodeRenderRequest(new Uint8Array(104), {
+        planet: "vulcanus",
+        seed0: 1,
+        width: 1,
+        height: 1,
+        originX: 0,
+        originY: 0,
+        tilesPerPixel: 1,
+        volcanismFrequency: 1,
+        volcanismSize: 1,
+        temperatureBias: 0,
+        tungstenOre: { frequency: 1, size: 1 },
+        vulcanusCoal: { frequency: 1, size: 1 },
+        calcite: { frequency: 1, size: 1 },
+        sulfuricAcidGeyser: { frequency: 1, size: 1 },
+      }),
+    ).toThrow(/vulcanus request needs 304 bytes/);
   });
 
   it("reports a bad request by status rather than trapping", async () => {

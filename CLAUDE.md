@@ -1327,15 +1327,37 @@ all 41 named fields against `oracle-fulgora-{shared,cells,elevation}` plus
 `oracle-fulgora-tiles` - 5,057 tiles the game actually placed. Tier 2 folds all
 42 fields at two slider settings. The CSP change (#222) has landed.
 
-Part 2 added the boundary: `crates/fmw-wasm/src/abi.rs` (a 104-byte fixed
-request header, little-endian, with a magic word, a version word and a reserved
-word that is asserted zero), `render.rs`, and `src/noise/wasm/{request,engine}.ts`.
-**Tier 3 is byte-identical RGBA** against `renderFulgoraLandMask` across four
-windows that vary width, height, origin, tiles-per-pixel and both sliders
-independently. `test/fixtures/wasm-request.v1.json` pins the encoding; it is
+Part 2 added the boundary: `crates/fmw-wasm/src/abi.rs`, `render.rs`, and
+`src/noise/wasm/{request,engine}.ts`. **Tier 3 is byte-identical RGBA** against
+`renderFulgoraLandMask` across four windows that vary width, height, origin,
+tiles-per-pixel and both sliders independently.
+
+**The request layout is at ABI v2 and is now per-planet** (#225). v1 was one
+fixed 104-byte struct with Fulgora's two island sliders and four trig values
+baked into it; v2 is a 56-byte common prefix followed by a block whose length
+the prefix declares. v1's `reserved` word became `params_bytes` - what its own
+comment said it was for - and its `ReservedNotZero` status became
+`BadParamsLength`. A Fulgora request is still exactly 104 bytes; a Vulcanus one
+is 304, most of that being ten `(sin, cos)` pairs against Fulgora's two. Nauvis
+gets a third block in phase 6 with no further version bump.
+
+`test/fixtures/wasm-request.v2.json` pins the encoding for both planets. It is
 declared under `notFixtures` because it is our own ABI rather than Factorio
-ground truth, and its bytes were checked by an independent Python decode rather
-than by re-running the writer under test.
+ground truth, and its bytes were checked by
+`test/fixtures/verify-wasm-request.py` - a third implementation, not the writer
+under test - which is committed beside it so a future version is re-verified the
+same way rather than regenerated from the encoder.
+
+**That checker was measured MISSING a real defect, which is why it has three
+trig checks and not one.** It cannot reproduce the trig VALUES, because those are
+V8's `Math.sin` after an f32 narrowing and a second libm is exactly the
+disagreement #270 measured. Checking each pair for `sin^2 + cos^2 = 1` catches a
+shifted or half-shifted block - and **passed a planted swap of two bearings**,
+which is the failure that renders a plausible planet with its biomes rotated. It
+now also recovers each angle with `atan2` and checks it against the offset the
+game's Lua gives it from the ashlands bearing. Seven planted breaks are caught,
+up from four. A property check is not a structural check; this is the cheap way
+to find out which one you wrote.
 
 Errors return a **status code and do not trap**, because a trap would poison the
 instance for every later request in that worker; a spec sends a bad magic and
@@ -1380,13 +1402,40 @@ been red whether or not the argmax had a control at all. `POISONED_TESTS` now
 carries FULL test paths rather than bare `fixtures::` names, so a control can
 live beside its op.
 
-**Phase 5 (#225) ports Vulcanus, and its EXPRESSION chain down to elevation is
-in.** Landed: `vulcanus_helpers`, `vulcanus_cracks`, `vulcanus_climate`,
+**Phase 5 (#225) ports Vulcanus, and the planet now RENDERS through the
+engine.** Landed: `vulcanus_helpers`, `vulcanus_cracks`, `vulcanus_climate`,
 `vulcanus_spawn`, `vulcanus_biomes`, `vulcanus_elevation`, plus
-`vulcanus_temperature` on the elevation module. `vulcanus_shared` needed no
-port - it is `starting_spot_at_angle`, done in #279 - and `vulcanus_seed`
-landed in phase 2. Still out: `vulcanus_resources`, `tiles/vulcanus_catalog`,
-and the cliff, resource and rock stacks.
+`vulcanus_temperature` on the elevation module; then `vulcanus_resources`,
+`tiles/vulcanus_catalog`, `vulcanus_stack`, and the `terrain` render path
+behind ABI v2. `vulcanus_shared` needed no port - it is
+`starting_spot_at_angle`, done in #279 - and `vulcanus_seed` landed in phase 2.
+Still out: the cliff, resource and rock OVERLAY stacks, so every composite view
+keeps the TypeScript path and a test asserts that rather than assuming it.
+
+**Tier 3 for Vulcanus** (`test/wasmVulcanusRenderParity.spec.ts`) is
+byte-identical against the TypeScript across four windows, and **12,423 of
+929,686** compared pixels against the game's own 1024x1024 PNG - 98.664%, which
+is the TypeScript's own number to four decimal places, reached through a
+separate path. It is asserted as an EXACT count where
+`previewAgreement.spec.ts` uses a 2% bound, because byte-identity means it can
+be.
+
+**`vulcanus_stack` is TWO structs, and that is ownership rather than taste.**
+`VulcanusBiomes`, `VulcanusElevation` and `VulcanusResources` all borrow the
+layers beneath them, so one struct owning the whole graph would be
+self-referential. `VulcanusBase` owns everything that owns its data; the biome
+layer is a named local because two layers borrow it; `VulcanusStack` holds the
+rest. Three lines of construction instead of one, and honest about it.
+
+**Every one of the 20 frozen counts this phase added agrees with the
+TypeScript**, measured on both sides against the same fixtures with the same
+1/256 capture-grid snap - the same count AND the same worst residual to every
+printed digit. The four starting spots are the load-bearing agreement: 1082,
+974, 969 and 1049 of 1085 are the only counts `test/vulcanusResources.spec.ts`
+freezes rather than bounds, and the port reproduced all four without having seen
+them. Tile placement is 374 of 381 at the forced surface seed and 368 at a real
+save's, both matching the TypeScript, with the raw map seed scoring 37 as the
+control.
 
 Tier 1 grades **24 named fields** across six fixtures. Every count was measured
 again on the TypeScript side against the same fixture and all 24 agree, so they

@@ -20,5 +20,7 @@ pub mod vulcanus_climate;
 pub mod vulcanus_cracks;
 pub mod vulcanus_elevation;
 pub mod vulcanus_helpers;
+pub mod vulcanus_resources;
 pub mod vulcanus_seed;
 pub mod vulcanus_spawn;
+pub mod vulcanus_stack;

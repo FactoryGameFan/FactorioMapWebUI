@@ -4,16 +4,22 @@
 //! shape that made WASM measure well in the #215 spike, and the reason
 //! `runRenderRequest`'s signature does not change.
 
-use crate::abi::{self, Request, Status};
+use crate::abi::{self, FulgoraParams, Params, Request, Status, VulcanusBearing, VulcanusParams};
+use fmw_noise::eval::ctx::{EvalCtx, ResourceLevers, VulcanusResourceControls};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::FulgoraStack;
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
+use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::tiles::fulgora_catalog::FulgoraTile;
 use fmw_noise::tiles::fulgora_ocean::{ocean_tile, Ocean};
+use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
 
-/// `planet` code for Fulgora. The only one ported so far.
+/// `planet` code for Fulgora.
 pub const PLANET_FULGORA: u32 = 0;
+
+/// `planet` code for Vulcanus.
+pub const PLANET_VULCANUS: u32 = 1;
 /// `view` code for the land mask - land versus ocean, no land argmax.
 pub const VIEW_LANDMASK: u32 = 0;
 /// `view` code for the full terrain render, all ten tile colours.
@@ -92,12 +98,18 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         Ok(r) => r,
         Err(status) => return status,
     };
-    if req.planet != PLANET_FULGORA
-        || !matches!(
-            req.view,
+    // The planet/view pair is checked BEFORE the buffer size, so an unsupported
+    // view reports as one rather than as a size problem. Vulcanus serves only
+    // `terrain` so far: it has no ocean and no scrap, so the other two view
+    // codes are meaningless there rather than merely unimplemented.
+    let supported = matches!(
+        (req.planet, req.view),
+        (
+            PLANET_FULGORA,
             VIEW_LANDMASK | VIEW_TERRAIN | VIEW_SCRAP_FOOTPRINT
-        )
-    {
+        ) | (PLANET_VULCANUS, VIEW_TERRAIN)
+    );
+    if !supported {
         return Status::UnsupportedPlanetOrView;
     }
     let Some(needed) = (req.width as usize)
@@ -109,7 +121,15 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
     if needed > out.len() {
         return Status::OutputTooLarge;
     }
-    render_fulgora(&req, &mut out[..needed]);
+    // The decoder already guaranteed the block matches the planet code, so a
+    // mismatch here would be a decoder bug rather than a caller error - which is
+    // why these arms return a status instead of being `unreachable!()`. A trap
+    // would poison the instance for every later request in the worker.
+    match (req.planet, req.params) {
+        (PLANET_FULGORA, Params::Fulgora(p)) => render_fulgora(&req, &p, &mut out[..needed]),
+        (PLANET_VULCANUS, Params::Vulcanus(p)) => render_vulcanus(&req, &p, &mut out[..needed]),
+        _ => return Status::UnsupportedPlanetOrView,
+    }
     Status::Ok
 }
 
@@ -120,19 +140,19 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
 /// land mask skips the eight-way land argmax, which is measured at 15.7% of a
 /// tile pixel at 8 tiles/px and 13.8% at 2 - real, but far from the "cheap
 /// early-out" it looks like.
-fn render_fulgora(req: &Request, out: &mut [u8]) {
+fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
     let ctx = FulgoraCtx {
         seed0: req.seed0,
-        islands_frequency: req.islands_frequency,
-        islands_size: req.islands_size,
+        islands_frequency: p.islands_frequency,
+        islands_size: p.islands_size,
     };
     // ONE stack for the whole window, so the four Voronoi point caches are warm
     // across it - the same reason the TypeScript renderer shares a stack.
     let mut stack = FulgoraStack::new(
         &ctx,
         &ScrapControls::default(),
-        AngleTrig::new(req.sin_start, req.cos_start),
-        AngleTrig::new(req.sin_vault, req.cos_vault),
+        AngleTrig::new(p.sin_start, p.cos_start),
+        AngleTrig::new(p.sin_vault, p.cos_vault),
     );
     let mut offset = 0usize;
     for py in 0..req.height {
@@ -164,23 +184,161 @@ fn render_fulgora(req: &Request, out: &mut [u8]) {
     }
 }
 
+/// The 19 Vulcanus tile colours, from each tile's own `map_color`.
+///
+/// Three of them are the same `[53, 53, 53]` in the game's data, so this is not
+/// injective and nothing downstream may invert it.
+fn vulcanus_tile_color(tile: VulcanusTile) -> [u8; 3] {
+    tile.color()
+}
+
+/// Sweep the window and paint Vulcanus's terrain.
+///
+/// One `VulcanusBase` and one `VulcanusStack` for the whole window, for the same
+/// reason Fulgora shares one: the per-render state is the `Prepared` multioctave
+/// tables, the `Plasma` leaves and the two spot-region caches, and rebuilding
+/// those per pixel is the 20x mistake `multioctave_noise`'s docs record.
+///
+/// **The base and the biome layer are named locals rather than fields of the
+/// stack**, because the layers above them borrow them - see
+/// `vulcanus_stack`'s module docs. That is three lines here instead of one, and
+/// it is the honest shape.
+fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
+    let levers = |frequency: f64, size: f64| ResourceLevers { frequency, size };
+    let mut ctx = EvalCtx::new(req.seed0);
+    ctx.vulcanus_volcanism_frequency = p.volcanism_frequency;
+    ctx.vulcanus_volcanism_size = p.volcanism_size;
+    ctx.temperature_bias = p.temperature_bias;
+    ctx.vulcanus_resource_controls = VulcanusResourceControls {
+        tungsten_ore: levers(p.tungsten_frequency, p.tungsten_size),
+        vulcanus_coal: levers(p.coal_frequency, p.coal_size),
+        calcite: levers(p.calcite_frequency, p.calcite_size),
+        sulfuric_acid_geyser: levers(p.sulfur_frequency, p.sulfur_size),
+    };
+
+    let trig = |which: VulcanusBearing| {
+        let (sin, cos) = p.bearing(which);
+        AngleTrig::new(sin, cos)
+    };
+    let base = VulcanusBase::new(
+        &ctx,
+        [
+            trig(VulcanusBearing::SpawnAshlands),
+            trig(VulcanusBearing::SpawnMountains),
+            trig(VulcanusBearing::SpawnBasalts),
+        ],
+    );
+    let biomes = base.biomes(
+        trig(VulcanusBearing::BiomeVolcanoSpot),
+        trig(VulcanusBearing::BiomeProtector),
+    );
+    let stack = VulcanusStack::new(
+        &base,
+        &biomes,
+        [
+            trig(VulcanusBearing::ResourceTungsten),
+            trig(VulcanusBearing::ResourceCoal),
+            trig(VulcanusBearing::ResourceCalcite),
+            trig(VulcanusBearing::ResourceSulfurFar),
+            trig(VulcanusBearing::ResourceSulfurNear),
+        ],
+    );
+
+    let mut offset = 0usize;
+    for py in 0..req.height {
+        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            let color = vulcanus_tile_color(stack.tile(wx, wy));
+            out[offset] = color[0];
+            out[offset + 1] = color[1];
+            out[offset + 2] = color[2];
+            out[offset + 3] = 255;
+            offset += 4;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::{ABI_VERSION, MAGIC, REQUEST_BYTES};
+    use crate::abi::{
+        ABI_VERSION, COMMON_BYTES, FULGORA_PARAMS_BYTES, MAGIC, VULCANUS_BEARINGS,
+        VULCANUS_PARAMS_BYTES,
+    };
 
-    fn request(width: u32, height: u32) -> Vec<u8> {
-        let mut b = vec![0u8; REQUEST_BYTES];
+    /// A common prefix for `planet`, sized for that planet's block.
+    fn prefix(planet: u32, params_bytes: usize, width: u32, height: u32, seed0: u32) -> Vec<u8> {
+        let mut b = vec![0u8; COMMON_BYTES + params_bytes];
         b[0..4].copy_from_slice(&MAGIC.to_le_bytes());
         b[4..8].copy_from_slice(&ABI_VERSION.to_le_bytes());
-        b[16..20].copy_from_slice(&2_967_702_466u32.to_le_bytes());
+        b[8..12].copy_from_slice(&planet.to_le_bytes());
+        b[16..20].copy_from_slice(&seed0.to_le_bytes());
         b[20..24].copy_from_slice(&width.to_le_bytes());
         b[24..28].copy_from_slice(&height.to_le_bytes());
+        b[28..32].copy_from_slice(&(params_bytes as u32).to_le_bytes());
         b[32..40].copy_from_slice(&(-256.0f64).to_le_bytes());
         b[40..48].copy_from_slice(&(-256.0f64).to_le_bytes());
         b[48..56].copy_from_slice(&8.0f64.to_le_bytes());
+        b
+    }
+
+    fn request(width: u32, height: u32) -> Vec<u8> {
+        let mut b = prefix(
+            PLANET_FULGORA,
+            FULGORA_PARAMS_BYTES,
+            width,
+            height,
+            2_967_702_466,
+        );
         b[56..64].copy_from_slice(&1.0f64.to_le_bytes());
         b[64..72].copy_from_slice(&1.0f64.to_le_bytes());
+        b
+    }
+
+    /// A Vulcanus terrain request at the real surface seed for map seed 123456,
+    /// with the ten bearings computed on the host the way a tier-1 test does.
+    ///
+    /// The trig is host libm here rather than V8's, which is fine for a shape
+    /// test - the point of sending it as values is that the SHIPPED path uses
+    /// V8's, and tier 3 is where that is checked against the TypeScript.
+    fn vulcanus_request(width: u32, height: u32) -> Vec<u8> {
+        let mut b = prefix(
+            PLANET_VULCANUS,
+            VULCANUS_PARAMS_BYTES,
+            width,
+            height,
+            1_249_936_247,
+        );
+        b[12..16].copy_from_slice(&VIEW_TERRAIN.to_le_bytes());
+        // Neutral sliders: frequency and size are 1, temperature bias 0.
+        for at in [56, 64, 80, 88, 96, 104, 112, 120, 128, 136] {
+            b[at..at + 8].copy_from_slice(&1.0f64.to_le_bytes());
+        }
+        let ctx = EvalCtx::new(1_249_936_247);
+        let spawn = fmw_noise::expressions::vulcanus_spawn::VulcanusSpawn::with_host_trig(&ctx);
+        let dir = spawn.starting_direction;
+        let narrowed =
+            |base: f64, offset: f64| f64::from((base + f64::from((offset * dir) as f32)) as f32);
+        let angles = [
+            spawn.ashlands_angle,
+            spawn.mountains_angle,
+            spawn.basalts_angle,
+            spawn.mountains_angle,
+            spawn.mountains_angle + 180.0 * dir,
+            narrowed(spawn.basalts_angle, -10.0),
+            narrowed(spawn.ashlands_angle, 15.0),
+            narrowed(spawn.mountains_angle, -20.0),
+            narrowed(spawn.mountains_angle, 10.0),
+            narrowed(spawn.mountains_angle, 30.0),
+        ];
+        assert_eq!(angles.len(), VULCANUS_BEARINGS);
+        for (i, a) in angles.into_iter().enumerate() {
+            let t = AngleTrig::from_degrees(a);
+            let at = COMMON_BYTES + 88 + i * 16;
+            b[at..at + 8].copy_from_slice(&t.sin.to_le_bytes());
+            b[at + 8..at + 16].copy_from_slice(&t.cos.to_le_bytes());
+        }
         b
     }
 
@@ -243,11 +401,120 @@ mod tests {
     #[test]
     fn refuses_a_planet_or_view_it_cannot_render() {
         let mut out = vec![0u8; 4 * 4 * 4];
+        // An unknown planet code is caught by the decoder, because it cannot
+        // know how long the block should be.
         let mut b = request(4, 4);
-        b[8..12].copy_from_slice(&1u32.to_le_bytes());
+        b[8..12].copy_from_slice(&99u32.to_le_bytes());
         assert_eq!(render(&b, &mut out), Status::UnsupportedPlanetOrView);
+        // An unknown VIEW is caught by the dispatch, after a clean decode.
         let mut b = request(4, 4);
         b[12..16].copy_from_slice(&7u32.to_le_bytes());
         assert_eq!(render(&b, &mut out), Status::UnsupportedPlanetOrView);
+        // Vulcanus has no ocean and no scrap, so the land mask and the scrap
+        // footprint are meaningless there rather than merely unimplemented.
+        let mut b = vulcanus_request(4, 4);
+        b[12..16].copy_from_slice(&VIEW_LANDMASK.to_le_bytes());
+        assert_eq!(render(&b, &mut out), Status::UnsupportedPlanetOrView);
+        let mut b = vulcanus_request(4, 4);
+        b[12..16].copy_from_slice(&VIEW_SCRAP_FOOTPRINT.to_le_bytes());
+        assert_eq!(render(&b, &mut out), Status::UnsupportedPlanetOrView);
+    }
+
+    /// Vulcanus's terrain sweep paints only colours the catalog knows, and more
+    /// than one of them.
+    ///
+    /// The non-vacuity half matters more than it looks: a renderer that painted
+    /// a single colour everywhere would satisfy "every colour is in the
+    /// catalog" perfectly, and that is the failure a wrongly-wired stack
+    /// produces.
+    #[test]
+    fn vulcanus_paints_only_catalogued_colours_and_more_than_one() {
+        use fmw_noise::tiles::vulcanus_catalog::TILE_ORDER;
+        let mut out = vec![0u8; 24 * 12 * 4];
+        assert_eq!(render(&vulcanus_request(24, 12), &mut out), Status::Ok);
+        let known: Vec<[u8; 3]> = TILE_ORDER.iter().map(|t| t.color()).collect();
+        let mut distinct: Vec<[u8; 3]> = Vec::new();
+        for px in out.chunks_exact(4) {
+            assert_eq!(px[3], 255, "alpha must be opaque");
+            let rgb = [px[0], px[1], px[2]];
+            assert!(known.contains(&rgb), "uncatalogued colour {rgb:?}");
+            if !distinct.contains(&rgb) {
+                distinct.push(rgb);
+            }
+        }
+        assert!(
+            distinct.len() > 1,
+            "one colour over the whole window: {distinct:?}"
+        );
+    }
+
+    /// The Vulcanus sweep is row-major with the requested stride, checked the
+    /// same positional way Fulgora's is - a transposed loop gives the same
+    /// histogram.
+    #[test]
+    fn vulcanus_writes_rows_major_with_the_requested_width() {
+        let mut wide = vec![0u8; 8 * 2 * 4];
+        assert_eq!(render(&vulcanus_request(8, 2), &mut wide), Status::Ok);
+        let mut shifted_req = vulcanus_request(8, 1);
+        shifted_req[40..48].copy_from_slice(&(-256.0f64 + 8.0).to_le_bytes());
+        let mut shifted = vec![0u8; 8 * 4];
+        assert_eq!(render(&shifted_req, &mut shifted), Status::Ok);
+        assert_eq!(&wide[32..64], &shifted[..]);
+    }
+
+    /// The rendered colour is the catalogued colour of the tile the stack
+    /// resolves - not some other tile's, and not a palette that drifted from
+    /// the catalog.
+    ///
+    /// Checked against the stack directly rather than against a second copy of
+    /// the colour table, so a mis-wired `vulcanus_tile_color` shows up here.
+    #[test]
+    fn each_vulcanus_pixel_carries_its_own_tiles_colour() {
+        let mut out = vec![0u8; 6 * 6 * 4];
+        let req_bytes = vulcanus_request(6, 6);
+        assert_eq!(render(&req_bytes, &mut out), Status::Ok);
+        let req = abi::decode(&req_bytes).expect("should decode");
+        let Params::Vulcanus(p) = req.params else {
+            panic!("wrong block")
+        };
+        let trig = |which: VulcanusBearing| {
+            let (sin, cos) = p.bearing(which);
+            AngleTrig::new(sin, cos)
+        };
+        let mut ctx = EvalCtx::new(req.seed0);
+        ctx.vulcanus_volcanism_frequency = p.volcanism_frequency;
+        ctx.vulcanus_volcanism_size = p.volcanism_size;
+        let base = VulcanusBase::new(
+            &ctx,
+            [
+                trig(VulcanusBearing::SpawnAshlands),
+                trig(VulcanusBearing::SpawnMountains),
+                trig(VulcanusBearing::SpawnBasalts),
+            ],
+        );
+        let biomes = base.biomes(
+            trig(VulcanusBearing::BiomeVolcanoSpot),
+            trig(VulcanusBearing::BiomeProtector),
+        );
+        let stack = VulcanusStack::new(
+            &base,
+            &biomes,
+            [
+                trig(VulcanusBearing::ResourceTungsten),
+                trig(VulcanusBearing::ResourceCoal),
+                trig(VulcanusBearing::ResourceCalcite),
+                trig(VulcanusBearing::ResourceSulfurFar),
+                trig(VulcanusBearing::ResourceSulfurNear),
+            ],
+        );
+        for py in 0..6u32 {
+            for px in 0..6u32 {
+                let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+                let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+                let want = stack.tile(wx, wy).color();
+                let at = ((py * 6 + px) * 4) as usize;
+                assert_eq!([out[at], out[at + 1], out[at + 2]], want, "at {px},{py}");
+            }
+        }
     }
 }
