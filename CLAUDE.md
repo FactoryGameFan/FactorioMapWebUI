@@ -1099,20 +1099,51 @@ Consequences that constrain any change here:
   change. Both halves were proven by planting them and watching each go red.
 
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
-  known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`), never a range - the
-  schemas here are empirical, so accepting an unseen format would decode a
-  changed layout into plausible wrong values. A version joins the list only with
-  a fixture proving a real string of it round-trips byte-exact
-  (`test/mapExchangeVersions.spec.ts`). This has now been a live bug **twice**:
-  the app rejected every string from Factorio 2.1.12 until 2026-07-28, and every
-  string from 2.1.14 until 2026-08-13. Both were found by a version audit rather
-  than by a user, and both times the game had moved under a Steam auto-update.
-  The UI advertises the target so the next drift is visible, and
-  `test/factorioTarget.spec.ts` fails the build if `FACTORIO_TARGET_VERSION`
-  disagrees with the newest fixture provenance - it is what forced the bump when
-  the 2.1.14 fixture landed, so do not hand-maintain that constant.
+  known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`), never a range
+  - the schemas here are empirical, so accepting an unseen format would decode a
+    changed layout into plausible wrong values. A version joins the list only with
+    a fixture proving a real string of it round-trips byte-exact
+    (`test/mapExchangeVersions.spec.ts`). This has now been a live bug **three
+    times**: the app rejected every string from Factorio 2.1.12 until 2026-07-28,
+    from 2.1.14 until 2026-08-13, and from 2.1.15 until 2026-08-24. Every time the
+    game moved under a Steam auto-update, and every time it was found by a version
+    audit rather than by a user. The UI advertises the target so the next drift is
+    visible, and `test/factorioTarget.spec.ts` fails the build if
+    `FACTORIO_TARGET_VERSION` disagrees with the newest fixture provenance - so do
+    not hand-maintain that constant.
 
-- **The tail schema is VERSION-DEPENDENT as of 2.1.14, and that is new.** It was
+  **Read the tag off `factorio --version`, not off the patch number.** The
+  binary prints a `Map output version: X.Y.Z-W` line and that maps 1:1 to the
+  four-part exchange tag - confirmed on a binary whose tag we already knew
+  (2.1.14 prints `2.1.14-1`, and `[2,1,14,1]` is what the list carries), which is
+  a control rather than a pattern match on three data points. The fourth part is
+  NOT monotonic (`.3`, `.2`, `.1`, `.2` across 2.1.9 to 2.1.15), so it cannot be
+  guessed. One `--version` answers "has import broken?" in a second.
+
+- **Capturing a new version is now a script, not a recipe in a comment.**
+  `scripts/probes/exchange-format/capture.ts` does the whole thing through
+  `factorio-oracle`, five cases in about 10 seconds:
+
+  ```bash
+  node --experimental-strip-types scripts/probes/exchange-format/capture.ts 2.1.15
+  ```
+
+  It reads each case's settings back out of the PREVIOUS version's fixture with
+  the game's own `helpers.parse_map_exchange_string`, so "the five cases mirror
+  the last version's setting-for-setting" is a mechanism instead of a claim.
+
+  **The one trap, measured rather than reasoned:** feed a whole parse back as
+  `--map-gen-settings` and every case inflates from 711 bytes to 1387, because
+  the parse fills in all 28 autoplace controls and the exchange string writes
+  every control that was supplied EXPLICITLY. That flattens all five cases to
+  the same length and quietly destroys the only reason there are five - they
+  exist to VARY the layout. Feeding back only the DELTA against the default case
+  reproduces the previous fixture's own sizes exactly, 750-byte `controls-off`
+  included. `autoplace_settings` is dropped outright: the game's parse returns
+  `{}` for it where the live surface has it fully populated, so it is lossy in
+  the parse direction and carries no case information.
+
+- **The tail schema is VERSION-DEPENDENT as of 2.1.14.** It was
   one constant for the format's whole history until `map-settings.lua` gained
   `enemy_expansion.build_base_unit_dispatch_cooldown` (`30 * 60` ticks) between
   2.1.12 and 2.1.14. It serializes in section order, so it lands after
@@ -1120,6 +1151,16 @@ Consequences that constrain any change here:
   after it rather than appending harmlessly at the end. `tailSchemaFor(version)`
   in `src/codec/mapExchangeString.ts` picks the layout, matched on the **exact**
   tag for the same reason `SUPPORTED_VERSIONS` is a list rather than a floor.
+
+  **2.1.15 shares that layout rather than getting its own**, which is why the
+  constants are named for the FIELD (`TAIL_DISPATCH_COOLDOWN_*`) and the selector
+  reads a list of tags. Three independent readings, none of them "it looked the
+  same": `base/prototypes/map-settings.lua` is absent from the 2.1.14 -> 2.1.15
+  diff entirely; all five re-captured cases inflate to the exact byte counts
+  their 2.1.14 counterparts do; and the game's own parse of the new default
+  string is identical across all 186 leaf fields. `map-settings.example.json`
+  DID change in that diff and is a red herring - it was catching up to the 2.1.14
+  default change it had missed.
 
   Two consequences worth knowing before touching this:
   - **A wrong schema choice is loud, not subtle** - decoding a 2.1.14 string
@@ -1135,8 +1176,9 @@ Consequences that constrain any change here:
   The layout was confirmed against the game's own
   `helpers.parse_map_exchange_string`, not just against our own re-encode: all
   81 tail fields agree, and `opaqueTail` decodes to length 0. **Export was never
-  broken** in either incident - 2.1.14 still accepts the `2.1.9.3` strings this
-  app emits, so only import was affected both times.
+  broken** in any of the three incidents - each newer game still accepts the
+  `2.1.9.3` strings this app emits, and 2.1.15 parsed all five `2.1.14.1`
+  captures during its own capture run, so only import was ever affected.
 
 - `src/codec/fieldSchema.ts` (`readFields`/`writeFields`) drives the typed
   binary layout; `binaryReader`/`binaryWriter`/`crc32`/`base64` are the

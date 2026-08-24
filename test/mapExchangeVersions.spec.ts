@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/map-exchange-2.1.12.strings.json";
 import fixture214 from "./fixtures/map-exchange-2.1.14.strings.json";
+import fixture215 from "./fixtures/map-exchange-2.1.15.strings.json";
 import parsed214 from "./fixtures/map-exchange-parsed.2.1.14-default.dump.json";
+import parsed215 from "./fixtures/map-exchange-parsed.2.1.15-default.dump.json";
 import builtins from "./fixtures/builtin-presets.json";
 import {
   SUPPORTED_VERSIONS,
@@ -69,6 +71,7 @@ describe("exchange format versions", () => {
     expect(SUPPORTED_VERSIONS_LABEL).toBe(SUPPORTED_VERSIONS.map((v) => v.join(".")).join(", "));
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.12.2");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.14.1");
+    expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.15.2");
   });
 });
 
@@ -165,5 +168,129 @@ describe("exchange format 2.1.14", () => {
     }
     // Non-vacuity: a typo in the naming above would silently compare nothing.
     expect(compared).toBeGreaterThanOrEqual(40);
+  });
+});
+
+/**
+ * Factorio 2.1.15 moved the tag a THIRD time - to `2.1.15.2` - and this time the
+ * payload did NOT move. Steam auto-updated the binary on 2026-08-24 and import
+ * broke the same morning, which is the same mechanism as 2.1.12 and 2.1.14: the
+ * game is the one version nobody here controls.
+ *
+ * ## Why this reuses the 2.1.14 tail layout rather than getting its own
+ *
+ * Three independent readings, none of which is "it looked the same":
+ *
+ * 1. `base/prototypes/map-settings.lua` is byte-identical 2.1.14 -> 2.1.15 - the
+ *    file is absent from the tag-to-tag diff entirely. `map-settings.example.json`
+ *    DID change, and is a red herring: it was catching up to the 2.1.14 default
+ *    change it had missed.
+ * 2. Every case re-captured at 2.1.15 inflates to exactly the byte count its
+ *    2.1.14 counterpart does, `controls-off`'s odd 750 included. That is pinned
+ *    below rather than described.
+ * 3. The game's own parse of the new default string is identical to the 2.1.14
+ *    parse across all 186 leaf fields.
+ *
+ * ## The five cases MIRROR 2.1.14's, and that is now a mechanism
+ *
+ * `scripts/probes/exchange-format/capture.ts` reads each case's settings back
+ * out of the previous fixture through `helpers.parse_map_exchange_string`, feeds
+ * the DELTA against the default case in as `--map-gen-settings`, and asks the
+ * game for its string. So a case cannot drift from what it was at the previous
+ * version: there is one definition of what `controls-off` means.
+ *
+ * The delta is load-bearing, not tidiness. `parse_map_exchange_string` fills in
+ * all 28 autoplace controls, and the exchange string writes every control that
+ * was supplied EXPLICITLY - so feeding a whole parse back inflates the payload
+ * 711 -> 1387 and flattens all five cases to the same length, destroying the
+ * only reason there are five. Measured, with the table, in the capture script.
+ */
+// Indexed by a computed label in two tests below, which the literal object type
+// the JSON import infers does not allow.
+const CASES_214: Record<string, string> = fixture214.strings;
+const CASES_215: Record<string, string> = fixture215.strings;
+
+describe("exchange format 2.1.15", () => {
+  it("round-trips every 2.1.15 capture byte-for-byte", () => {
+    const entries = Object.entries(fixture215.strings);
+    expect(entries.length).toBeGreaterThanOrEqual(5);
+    for (const [label, s] of entries) {
+      const decoded = decodeExchangeString(s);
+      expect(decoded.version.join("."), `${label} format tag`).toBe("2.1.15.2");
+      expect(encodeExchangeString(decoded), `${label} re-encode`).toBe(s);
+    }
+  });
+
+  it("types the whole 2.1.15 tail - opaqueTail stays empty", () => {
+    for (const [label, s] of Object.entries(fixture215.strings)) {
+      const tail = decodeExchangeString(s).tail;
+      expect((tail.opaqueTail as Uint8Array).length, `${label} opaqueTail`).toBe(0);
+    }
+  });
+
+  it("carries build_base_unit_dispatch_cooldown, so it shares 2.1.14's layout", () => {
+    // Cross-validated against the game's OWN parse of the same string. If 2.1.15
+    // had been given the pre-2.1.14 schema this over-reads the payload end and
+    // throws, so the failure is loud - but that is luck rather than design, and
+    // the assertion is here so it does not have to be.
+    const decoded = decodeExchangeString(fixture215.strings["default-seed123456"]);
+    const game = parsed215.map_settings.enemy_expansion;
+    expect(decoded.tail["enemyExpansion.buildBaseUnitDispatchCooldown"]).toBe(
+      game.build_base_unit_dispatch_cooldown,
+    );
+    expect(decoded.tail["enemyExpansion.maxExpansionCooldown"]).toBe(game.max_expansion_cooldown);
+    expect(decoded.tail["enemyExpansion.settlerGroupMaxSize"]).toBe(game.settler_group_max_size);
+  });
+
+  it("has a payload the same size as 2.1.14's, case for case", () => {
+    // The reading that says the layout did not move. Sizes are pinned exactly,
+    // not bounded: `controls-off` is the case that is a different length from
+    // the other four, and if the capture ever flattens them all to one number
+    // the five cases have stopped varying anything and this goes red.
+    const sizes: Record<string, [number, number]> = {};
+    for (const label of Object.keys(CASES_214)) {
+      sizes[label] = [
+        decodeExchangeString(CASES_214[label]).payload.length,
+        decodeExchangeString(CASES_215[label]).payload.length,
+      ];
+    }
+    for (const [label, [a, b]] of Object.entries(sizes)) {
+      expect(b, `${label} payload size`).toBe(a);
+    }
+    // Non-vacuity: the cases must not all be the same size, or the check above
+    // would pass on a fixture that had lost its layout variation entirely.
+    const distinct = new Set(Object.values(sizes).map(([, b]) => b));
+    expect(distinct.size).toBeGreaterThan(1);
+  });
+
+  it("mirrors the 2.1.14 cases setting-for-setting", () => {
+    // What makes the size comparison above meaningful: the two fixtures have to
+    // be the SAME five cases. Everything outside the version tag must match.
+    let compared = 0;
+    for (const label of Object.keys(CASES_214)) {
+      const a = decodeExchangeString(CASES_214[label]);
+      const b = decodeExchangeString(CASES_215[label]);
+      expect(b.autoplaceControls, `${label} autoplace controls`).toEqual(a.autoplaceControls);
+      expect(b.mid, `${label} mid-block`).toEqual(a.mid);
+      expect(b.propertyExpressionNames, `${label} property expressions`).toEqual(
+        a.propertyExpressionNames,
+      );
+      expect(b.tail, `${label} tail`).toEqual(a.tail);
+      compared++;
+    }
+    expect(compared).toBe(5);
+  });
+
+  it("still parses the older formats, so export was never the broken half", () => {
+    // 2.1.15 accepts the 2.1.14 captures - verified in the capture run itself,
+    // where every case's settings were recovered by handing the game its 2.1.14
+    // string. This is our own decoder's half of that: the older tags keep
+    // working, so adding 2.1.15 did not disturb them.
+    for (const [label, s] of Object.entries(fixture214.strings)) {
+      expect(decodeExchangeString(s).version.join("."), label).toBe("2.1.14.1");
+    }
+    for (const [name, s] of Object.entries(builtins.presets)) {
+      expect(decodeExchangeString(s).version.join("."), name).toBe("2.1.9.3");
+    }
   });
 });

@@ -233,18 +233,27 @@ function writeStartingPoints(writer: BinaryWriter, points: MapPosition[]): void 
  * - `2.1.14.1` - what Factorio 2.1.14 emits. Added 2026-08-13, found the same
  *   way and with the same symptom: the app rejected every string from the
  *   shipping game. Unlike 2.1.12, **the payload moved too** - see
- *   `TAIL_2114_ONLY_FIELD` below.
+ *   `TAIL_DISPATCH_COOLDOWN_FIELD` below.
  *
- * Note the two directions are not symmetric, and only one was ever broken:
- * 2.1.12 accepts a `2.1.9.3` string fine, and 2.1.14 accepts one too (both
- * verified through the game's own `helpers.parse_map_exchange_string`), so
- * EXPORT was never affected - the app's output stayed loadable throughout.
- * Import was the broken half, twice.
+ * - `2.1.15.2` - what Factorio 2.1.15 emits. Added 2026-08-24, found the same
+ *   way a THIRD time, hours after Steam auto-updated the binary. The payload did
+ *   NOT move: all five cases re-captured at 2.1.15 inflate to exactly the byte
+ *   counts their 2.1.14 counterparts do (711/711/750/711/711), and the game's
+ *   own parse of the new default string is identical to the 2.1.14 one across
+ *   all 186 leaf fields. So this is a tag-only move like 2.1.12, and it reuses
+ *   the 2.1.14 tail layout rather than getting one of its own.
+ *
+ * Note the two directions are not symmetric, and only one has ever been broken:
+ * 2.1.12 accepts a `2.1.9.3` string fine, 2.1.14 accepts one too, and 2.1.15
+ * parses all five `2.1.14.1` captures (all verified through the game's own
+ * `helpers.parse_map_exchange_string`), so EXPORT was never affected - the app's
+ * output stayed loadable throughout. Import was the broken half, three times.
  */
 export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 9, 3],
   [2, 1, 12, 2],
   [2, 1, 14, 1],
+  [2, 1, 15, 2],
 ];
 
 /** Human-readable list for UI and error messages, e.g. "2.1.9.3, 2.1.12.2". */
@@ -416,13 +425,19 @@ const TAIL_FIXED_SCHEMA: Schema = TAIL_SCHEMA.filter((f) => f.name !== "opaqueTa
  * which is why the tail schema is selected per version instead of being a
  * single constant. Decoding a 2.1.14 string with the older schema does not
  * merely misread: it over-reads the payload end and throws.
+ *
+ * It is no longer 2.1.14-only. 2.1.15 carries the same field in the same place -
+ * `base/prototypes/map-settings.lua` is byte-identical across the two tags, and
+ * all five 2.1.15 captures inflate to the exact byte counts their 2.1.14
+ * counterparts do. Hence the name is the FIELD rather than the version: a third
+ * version sharing this layout should join the list below, not get a copy.
  */
-const TAIL_2114_ONLY_FIELD = "enemyExpansion.buildBaseUnitDispatchCooldown";
-const TAIL_2114_ANCHOR = "enemyExpansion.maxExpansionCooldown";
+const TAIL_DISPATCH_COOLDOWN_FIELD = "enemyExpansion.buildBaseUnitDispatchCooldown";
+const TAIL_DISPATCH_COOLDOWN_ANCHOR = "enemyExpansion.maxExpansionCooldown";
 
-const TAIL_FIXED_SCHEMA_2114: Schema = TAIL_FIXED_SCHEMA.flatMap((f) =>
-  f.name === TAIL_2114_ANCHOR
-    ? [f, { name: TAIL_2114_ONLY_FIELD, type: { optional: "u32" } } as Schema[number]]
+const TAIL_FIXED_SCHEMA_WITH_DISPATCH_COOLDOWN: Schema = TAIL_FIXED_SCHEMA.flatMap((f) =>
+  f.name === TAIL_DISPATCH_COOLDOWN_ANCHOR
+    ? [f, { name: TAIL_DISPATCH_COOLDOWN_FIELD, type: { optional: "u32" } } as Schema[number]]
     : [f],
 );
 
@@ -432,9 +447,16 @@ const TAIL_FIXED_SCHEMA_2114: Schema = TAIL_FIXED_SCHEMA.flatMap((f) =>
  * rather than a floor: these schemas are empirical, so an unseen version must
  * be rejected outright rather than decoded on a guess.
  */
+const TAIL_DISPATCH_COOLDOWN_VERSIONS: readonly FormatVersion[] = [
+  [2, 1, 14, 1],
+  [2, 1, 15, 2],
+];
+
 function tailSchemaFor(version: FormatVersion): Schema {
-  const is2114 = version[0] === 2 && version[1] === 1 && version[2] === 14 && version[3] === 1;
-  return is2114 ? TAIL_FIXED_SCHEMA_2114 : TAIL_FIXED_SCHEMA;
+  const carriesDispatchCooldown = TAIL_DISPATCH_COOLDOWN_VERSIONS.some((v) =>
+    v.every((part, i) => part === version[i]),
+  );
+  return carriesDispatchCooldown ? TAIL_FIXED_SCHEMA_WITH_DISPATCH_COOLDOWN : TAIL_FIXED_SCHEMA;
 }
 
 function readTail(reader: BinaryReader, version: FormatVersion): TailBlock {
