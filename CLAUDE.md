@@ -1531,6 +1531,90 @@ through a separate path. It is asserted as an EXACT count where
 `previewAgreement.spec.ts` uses a 2% bound, because byte-identity means it can
 be.
 
+**Tier 2 for Vulcanus landed 2026-08-24 and CLOSED #225's last gate item**
+(`test/wasmVulcanusParity.spec.ts` + `checksum_vulcanus`). It folds **74 named
+fields** - helpers, spawn, cracks, climate, biomes, elevation, temperature,
+resources, the geyser probability, the three tile-support fields,
+`cliffiness_basic`, the knockout and the two rock expressions, then the 19 tile
+probabilities and the argmax over them - at two slider settings in two windows,
+296 comparisons of 676 points each, in **7.0s**.
+
+**The parameters cross as a REQUEST, not as arguments**, and that is worth
+copying for Nauvis. Fulgora's `checksum_fulgora` takes its seven parameters in
+its signature; Vulcanus needs 31 more `f64` (three sliders, four resource
+control pairs, ten bearings), so `checksum_vulcanus(request_len, field)` reads
+the request already in the scratch buffer, written by the shipped
+`encodeRenderRequest`. The win is not the shorter signature: the module then
+builds its stack through the same `render::vulcanus_{ctx,base,biomes,stack}`
+helpers the RENDERER uses, so a bearing wired to the wrong layer is INSIDE the
+comparison. A private copy of that wiring would be reproduced identically on
+both sides and stay invisible. The sweep is the request's own pixel grid, swept
+rows-outer exactly as `render_vulcanus` sweeps it, so there is one geometry
+convention rather than two.
+
+**It found a real divergence on its first run, and the divergence is #309.**
+`basisNoiseExpr` forms its coordinate product in f64 and narrows once
+(`primitives.ts:66`); the Rust narrows `x` to f32 first and multiplies two f32s
+(`primitives.rs:87`). They agree at every f32-exact coordinate and differ
+everywhere else - **32 of the 74 fields** on an off-grid sweep, and one
+narrowing takes that to **0 of 74**.
+
+Three blind spots had to line up for that to survive three shipped PRs, and each
+is worth more than the bug:
+
+- **No fixture can grade it.** The game snaps every sample to its own 1/256
+  MapPosition grid before evaluating (#186), and that grid is a subset of the
+  f32-exact grid. At the snapped positions - the points the game actually
+  visited - both forms give `hairline_cracks` **61 of 61 exact, worst residual
+  exactly 0**.
+
+  **Scoring at the RAW fixture coordinates is a trap that returns a confident
+  wrong answer**, and it was walked into while chasing this: it reports 48/61
+  for the TypeScript form and 50/61 for the Rust one, which looks like a
+  measurement settling the question and is really a comparison at 21 points the
+  game never evaluated. `test/captureGrid.ts` exists for exactly this; use
+  `snapPosition` before scoring anything against a fixture.
+
+- **Tier 3 cannot see it.** All four of its windows use binary fractions
+  (origins `512.5` and `3000.75`, `tilesPerPixel` `0.5`, `1`, `8`), so every
+  coordinate is f32-exact and the ports agree by construction.
+
+- **The tile argmax absorbs it.** In the off-grid sweep `resolvedTile` matched at
+  all 676 points while 17 of the 19 probabilities behind it diverged. That is the
+  same property that made `poison::index_result` necessary, and it is the
+  standing answer to "tier 3 is byte-identical, so why build tier 2".
+
+**Which form is right is an internal-consistency argument, not a measurement**,
+which is why #309 is an issue rather than a fix that rode along. Both ports'
+multioctave path already narrows the incoming coordinate
+(`multioctaveNoise.ts:203`, `multioctave_noise.rs:137`) - which is exactly why
+the six `wobble_*` fields MATCHED off-grid in the same sweep where the plasma
+fields did not - and the game holds its noise variables at f32. Applying the
+narrowing was measured to leave the full gate green (**2140 passed, 0 failed**,
+`vulcanusPlasmaDecomposition` still 61/61 at worst residual exactly 0), because
+nothing in the suite scores off the f32 grid.
+
+**So the parity windows sweep ON the f32 grid, deliberately, and the divergence
+is PINNED rather than described.** `the two ports diverge off the f32 grid`
+freezes it at 32 fields and asserts the MECHANISM: `wobbleX` agrees,
+`hairlineCracks` does not, `resolvedTile` agrees. **That test goes red when #309
+is fixed**, which is the prompt to widen the windows back off the grid and delete
+the pin. A second test asserts the two parity windows really are on the grid and
+the pinning window really is not (20 of its 26 x-coordinates), so a step edited
+to something without an exact binary form fails as a window mistake rather than
+as a port bug.
+
+Two anti-vacuity numbers, both frozen: the two windows differ on **all 74**
+fields, and each places **all 19** tiles, so every probability fold is graded
+over a window where its tile actually wins somewhere. The second slider setting
+moves 50 of the 74; that one stays a floor, because which fields read a slider is
+a property of the chain rather than a result.
+
+**Tier 2 has a SHELF LIFE, and #227 is the deadline.** It compares Rust against
+TypeScript, and #227 deletes the TypeScript. It can only ever be written while
+both exist, so Nauvis's (#226) must be written as each layer lands rather than
+at the end.
+
 **The resource overlay has its OWN five windows, and it has to.** Ore patches
 are far sparser than rocks: three of the four windows the rest of that file uses
 contain no ore at all, so a per-window count over them reads `[0, 0, 53, 0]` and
