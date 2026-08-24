@@ -137,13 +137,24 @@ export interface VulcanusResourceParams {
  * The leading `size > 0` factor is applied by the renderer's `enabled` filter,
  * so it is not repeated here.
  *
- * **The peak is not 0.065.** That figure sat in this file as a reasoned bound
- * (assuming `region <= 1` and `patches <= 0.8`) and it is wrong: `region` is a
- * `max` against `vulcanus_starting_sulfur`, which is not capped at 1. Sweeping
- * +/-3000 tiles at seed 123456 on a 7-tile grid and refining around the argmax
- * measures **0.0883** at (2481, -1985), where `patchy` is 1.217. Still two
- * orders of magnitude below calcite's saturated ~1, which is all the catalog
- * ordering argument needs.
+ * **The peak is not 0.065, and it is not 0.0883 either.** 0.065 sat in this
+ * file as a reasoned bound (assuming `region <= 1` and `patches <= 0.8`) and it
+ * is wrong: `region` is a `max` against `vulcanus_starting_sulfur`, which is
+ * not capped at 1. It was replaced by a measurement - sweeping +/-3000 tiles at
+ * seed 123456 on a 7-tile grid and refining around the argmax found the peak at
+ * (2481, -1985), "where `patchy` is 1.217", and recorded **0.0883**.
+ *
+ * Those two numbers do not agree with each other, which the Rust port noticed
+ * (2026-08-24) while pinning the peak as a test. This expression at
+ * `patchy = 1.217` is `0.025 * (1 + 2*1.217) = 0.08585`, and evaluating the
+ * chain at that exact position at seed 123456 gives `patchy = 1.2172893` and
+ * **0.0858645**. So the position and the `patchy` are right and the recorded
+ * probability is not; 0.0883 would need a `patchy` of 1.266.
+ *
+ * Nothing depends on the difference - both are two orders of magnitude below
+ * calcite's saturated ~1, which is all the catalog ordering argument needs.
+ * Corrected rather than left, because a number nobody re-derives is a number
+ * that gets quoted.
  */
 export function sulfuricAcidGeyserProbability(
   r: VulcanusResources,

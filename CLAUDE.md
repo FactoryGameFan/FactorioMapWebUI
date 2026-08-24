@@ -570,6 +570,14 @@ loses_on_none` is 33s in the normal arm and **93s under poison**, taking the
   it does not move the gate wall; it is simply no longer free. Anyone adding a
   second fixture test of that shape should re-measure this job first.
 
+  **#225's third part re-measured it and did not move it: 110.8s warm against
+  the 1m50s above.** That is one run against a figure recorded in another
+  session, so read it as "no measurable movement" rather than as a delta. It
+  stayed flat because the rock and resource overlays deliberately did NOT get a
+  test of that shape - the game's ground truth for the placement roll is a count
+  per 512x512 region, ~33s each in a debug build, and that grading lives on the
+  TypeScript side instead. See the phase-5 notes below for the reasoning.
+
 - **It runs `bash scripts/verify-rust.sh` directly**, the one deviation from
   "the YAML names only package.json scripts". That does not reopen the drift
   the rule guards against, because `verify:rust` _is_ that one line, so the
@@ -1351,8 +1359,11 @@ baked into it; v2 is a 56-byte common prefix followed by a block whose length
 the prefix declares. v1's `reserved` word became `params_bytes` - what its own
 comment said it was for - and its `ReservedNotZero` status became
 `BadParamsLength`. A Fulgora request is still exactly 104 bytes; a Vulcanus one
-is 304, most of that being ten `(sin, cos)` pairs against Fulgora's two. Nauvis
-gets a third block in phase 6 with no further version bump.
+is **368**, most of that being ten `(sin, cos)` pairs against Fulgora's two plus
+two world boxes. It has grown twice since - 304 -> 336 for the cliff view's
+`cell_query_box`, 336 -> 368 for the overlays' `placement_sweep_box` - and
+neither time needed a version bump, which is the split working. Nauvis gets a
+third block in phase 6, also with no bump.
 
 `test/fixtures/wasm-request.v2.json` pins the encoding for both planets. It is
 declared under `notFixtures` because it is our own ABI rather than Factorio
@@ -1426,9 +1437,77 @@ behind ABI v2. `vulcanus_shared` needed no port - it is
 **Phase 5's second half adds the CLIFF stack, and `cliffs` renders through the
 engine too.** `cliffs/{catalog,placement,connections,vulcanus_fields,
 vulcanus_ore_rejection}` plus the ore footprint slice of
-`resources/vulcanus_catalog`. Still out: the resource and rock OVERLAY stacks,
-so `rocks`, `resources` and `all` keep the TypeScript path and a test asserts
-that rather than assuming it.
+`resources/vulcanus_catalog`.
+
+**Phase 5's third part finishes Vulcanus: `rocks`, `resources` and `all` render
+through the engine, so every view the planet has now does.** New modules:
+`placement/roll` (the per-chunk taus88 placement roll and its two gates),
+`rocks/{catalog,vulcanus_field,vulcanus_placement}`,
+`resources/vulcanus_geyser`, and the rest of `resources/vulcanus_catalog` - map
+colours, entry ordering, `sulfuric_acid_geyser_probability`. The routing test in
+`test/wasmVulcanusRenderParity.spec.ts` used to assert those three views stayed
+on the TypeScript path; it now asserts the opposite, and it is what would have
+gone red had they moved ungraded.
+
+**The placement roll is the first ported thing that is not a noise expression**,
+and it is graded differently because of it. There is no per-position fixture:
+the game's ground truth is `oracle-entity-counts.seed123456.json`, which is a
+count per 512x512 region, and scoring one region costs **~33s in a debug
+build** - the same order as the cliff connection test that already took
+`verify:rust` to 1m50s. So the roll is graded against the game on the
+TypeScript side (`test/entityDensity.spec.ts`, three rock regions and three
+geyser regions) and the two ports are tied together by tier 3's byte-identity.
+Its cargo tests are structural: the reverse-engineered chunk seed word, the
+DECREASING tile order (the first draw belongs to tile 1023 - a reversal is
+invisible to any density or uniformity check), salt decorrelation, and the
+order-dependent collision pass.
+
+**Tier 1 for the rock field is `oracle-vulcanus-rocks.seed123456.json` at 434
+positions, and `vulcanus_decorative_knockout` is BIT-EXACT at every one of
+them** - worst residual exactly 0, the strongest tier-1 result any Vulcanus
+field has. It is a bare two-octave `multioctave_noise` at `output_scale = 1`,
+so nothing sits between it and the primitives #290 and #293 fixed. The two
+composites above it carry the biome layer's error: `vulcanus_rock_huge` 178 of
+434, `vulcanus_rock_big` 205. All three counts were measured on the TypeScript
+side too and agree exactly.
+
+Read `density` (412 of 434) with its clamp: **399 of those positions clamp to
+exactly 0** and a saturated position is exact for free, so of the 35 nonzero
+positions only 13 are exact. Same reading `*_biome_full` versus `*_biome` gets
+in the biome layer.
+
+**The TypeScript's own bounds on those three fields are 2e-4 / 5e-4 / 5e-4
+against measured worst residuals of 0, 3.7199e-7 and 2.5693e-7** - the first
+inert outright, the other two 1,300x wider than the thing they bound. That
+side's comment still describes the knockout's residual growing with distance to
+1.18e-4, which was true before #290 and #293 narrowed `basis_noise`'s input
+scale and is not true now. Recorded rather than fixed there; it belongs to #256
+with the other 86.
+
+**ABI v2's Vulcanus block grew again, 280 -> 312, and again with no version
+bump.** The new field is a SECOND world box, `placement_sweep_box`, and it is a
+second box rather than a reuse of `cell_query_box` because the two halos are
+different shapes: the cliff block spans `px - 2 ..= px + 1`, so its halo is
+asymmetric and its two directions cross, while a placement mark is a symmetric
+3x3 centred on its pixel. `test/fixtures/verify-wasm-request.py` grew six more
+planted breaks for it, every one RUN rather than listed - five are caught by
+the per-edge value check (the cliff box written into both slots, the two boxes
+swapped, a block shifted by one f64, one edge wrong, a stale declared length)
+and the sixth is not: a halo one tile wider on the low x side, with the request
+edited to agree, passes every value check and is caught only by asserting the
+placement halo is symmetric about the pixel box. The no-coinciding-edge check
+caught none of the six and is a fixture constraint, which the file now says.
+
+**The measured geyser peak in the TypeScript was wrong, and the two numbers
+recorded beside each other did not agree.** `vulcanusResourceCatalog.ts`
+recorded the sulfuric-acid geyser's peak probability as **0.0883** at
+(2481, -1985) "where `patchy` is 1.217". The expression is
+`0.025 * ((patchy > 0) + 2 * patchy)`, which at 1.217 is 0.08585; evaluating the
+chain at that exact position at seed 123456 gives `patchy = 1.2172893` and
+**0.0858645**. The position and the `patchy` are right and the probability was
+not - 0.0883 would need a `patchy` of 1.266. Nothing depends on the difference
+(both are two orders of magnitude below calcite's saturated ~1, which is all the
+catalog-ordering argument needs), and both sides are corrected.
 
 **Three of the nine TypeScript files in that directory pair were NOT ported, and
 each for its own reason.** Read this before "finishing" them:
@@ -1444,12 +1523,30 @@ each for its own reason.** Read this before "finishing" them:
   can be run against the engine rather than only against the TypeScript.
 
 **Tier 3 for Vulcanus** (`test/wasmVulcanusRenderParity.spec.ts`) is
-byte-identical against the TypeScript across four windows for BOTH the `terrain`
-and the `cliffs` view, and **12,423 of 929,686** compared pixels against the
-game's own 1024x1024 PNG - 98.664%, which is the TypeScript's own number to four
-decimal places, reached through a separate path. It is asserted as an EXACT
-count where `previewAgreement.spec.ts` uses a 2% bound, because byte-identity
-means it can be.
+byte-identical against the TypeScript across four windows for `terrain`,
+`cliffs`, `rocks` and `all`, and across five more for `resources`, and
+**12,423 of 929,686** compared pixels against the game's own 1024x1024 PNG -
+98.664%, which is the TypeScript's own number to four decimal places, reached
+through a separate path. It is asserted as an EXACT count where
+`previewAgreement.spec.ts` uses a 2% bound, because byte-identity means it can
+be.
+
+**The resource overlay has its OWN five windows, and it has to.** Ore patches
+are far sparser than rocks: three of the four windows the rest of that file uses
+contain no ore at all, so a per-window count over them reads `[0, 0, 53, 0]` and
+three quarters of the comparison is vacuous. The five were found by sweeping the
+map for ore and then varying width, height, origin and tiles-per-pixel
+independently across what was left. Only the fifth carries geysers, which is why
+it is there - it is the one window that grades the ROLLED pass, and the one the
+resource halo test runs on, since the three thresholded ores paint a single
+pixel each and ignore the sweep box entirely.
+
+**The composite's paint ORDER is asserted, not described.** Resources first,
+then rocks, then cliffs - so a cliff or a rock crossing an ore patch reads as
+the thing that is in the way. Reordering the three passes changes only the
+pixels where two of them land, which is 208 of 16,384 in the window that grades
+it (2 covered by a rock, 206 by a cliff) - invisible to a whole-image bound, and
+frozen exactly.
 
 **The cliff stack's tier 1 is the game's own cliff entities, four columns, both
 rejection arms** - and every one of the 24 numbers was measured on the
@@ -1493,18 +1590,27 @@ clear, so it gets `poison::sweep_order`. Both have their own test in
 lattice and the end-to-end test would be red whether or not the sweep had a
 control.
 
-**ABI v2's Vulcanus block grew 248 -> 280 bytes with NO version bump**, and that
-is the per-planet split working rather than a shortcut: the prefix declares its
-own block length, `BadParamsLength` refuses a writer that disagrees, and
-Fulgora's request did not move a byte. A version bump is for a change to the
-COMMON prefix, which every planet reads. The new field is the cliff
-`cell_query_box`, four `f64`, and it is **sent rather than derived** - the halo
-is asymmetric, its two directions CROSS, and it needs the FULL image's geometry,
-which the prefix does not carry and only the tiled renderer knows.
-`test/fixtures/verify-wasm-request.py` grew five more planted breaks for it, all
-caught by its per-edge value check; its two structural checks (four distinct
-edges, not inverted) constrain the FIXTURE rather than catching a break, and the
-comment says so rather than claiming credit for the five.
+**ABI v2's Vulcanus block has grown twice with NO version bump - 248 -> 280 for
+the cliff view, 280 -> 312 for the overlays** - and that is the per-planet split
+working rather than a shortcut: the prefix declares its own block length,
+`BadParamsLength` refuses a writer that disagrees, and Fulgora's request has not
+moved a byte through either. A version bump is for a change to the COMMON
+prefix, which every planet reads.
+
+Both new fields are world boxes, and both are **sent rather than derived**,
+because each needs the FULL image's geometry - which the prefix does not carry
+and only the tiled renderer knows. They are two boxes rather than one because
+their halos are different SHAPES: the cliff block spans `px - 2 ..= px + 1`, so
+its halo is asymmetric and its two directions CROSS, while a placement mark is a
+symmetric 3x3 centred on its pixel.
+`test/fixtures/verify-wasm-request.py` grew five planted breaks for the first
+box and six for the second, all RUN rather than listed. Every one of the eleven
+is caught by the per-edge value check except the last: a halo one tile wider on
+the low x side, with the request edited to agree, passes every value check and
+is caught only by asserting the placement halo is symmetric about the pixel box.
+The structural checks (four distinct edges, not inverted, no edge shared between
+the boxes) caught none of them and constrain the FIXTURE, which the file says
+rather than claiming credit.
 
 **`vulcanus_stack` is TWO structs, and that is ownership rather than taste.**
 `VulcanusBiomes`, `VulcanusElevation` and `VulcanusResources` all borrow the

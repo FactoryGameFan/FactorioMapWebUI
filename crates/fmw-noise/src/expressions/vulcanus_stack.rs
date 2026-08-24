@@ -209,6 +209,27 @@ impl<'a> VulcanusStack<'a> {
         self.resources.eval(x, y)
     }
 
+    /// `vulcanus_aux` and `vulcanus_moisture` at one position.
+    ///
+    /// Exposed because the rock probability expressions read both and nothing
+    /// else from the climate layer. Evaluating the crack layer first is not
+    /// optional - climate is defined over it.
+    #[must_use]
+    pub fn climate(&self, x: f64, y: f64) -> crate::expressions::vulcanus_climate::ClimateFields {
+        let cracks = self.base.cracks.eval(x, y);
+        self.base.climate.eval(x, y, &cracks)
+    }
+
+    /// `vulcanus_rock_noise`, the four-octave field both rock expressions add.
+    ///
+    /// Narrowed through `f32` the same way [`VulcanusStack::tile_fields`]
+    /// carries it, because the multioctave returns f32 and the TypeScript's
+    /// `sumOctaves` does too.
+    #[must_use]
+    pub fn rock_noise(&self, x: f64, y: f64) -> f64 {
+        f64::from(self.rock_noise.eval(x, y))
+    }
+
     /// The three solid ores' region fields, which is all the ore -> cliff
     /// rejection reads. A projection of [`VulcanusStack::resources`], not a
     /// second model of it - see [`VulcanusResources::ore_regions`].

@@ -9,6 +9,7 @@ import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tili
 import { compileEngine, instantiateEngine } from "../src/noise/wasm/engine";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
 import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
+import { VULCANUS_RESOURCE_CATALOG } from "../src/noise/resources/vulcanusResourceCatalog";
 import {
   runRenderRequest,
   type ElevationRenderRequest,
@@ -71,6 +72,24 @@ const DIFFERING_PX = 12423;
  * byte-identity.
  */
 const CLIFF_PIXELS_PER_WINDOW = [640, 572, 1379, 48];
+
+/**
+ * Rock pixels the overlay paints over terrain, per window, in `WINDOWS` order.
+ *
+ * Frozen for the same reason the cliff counts are. Unlike the resource overlay
+ * below, rocks are dense enough that every one of the four windows carries
+ * them, so this list needs no window set of its own.
+ */
+const ROCK_PIXELS_PER_WINDOW = [510, 54, 106, 96];
+
+/**
+ * Overlay pixels the `all` composite paints over terrain, per window.
+ *
+ * Larger than the rock and cliff counts added together in the windows where an
+ * overlay covers another's pixels - which is the point of asserting it
+ * separately rather than deriving it.
+ */
+const ALL_PIXELS_PER_WINDOW = [1041, 620, 1440, 124];
 
 let compiled: WebAssembly.Module | undefined;
 async function engine() {
@@ -180,22 +199,22 @@ describe("the WASM engine renders Vulcanus terrain exactly as the TypeScript doe
   }, 300000);
 
   /**
-   * The engine is not consulted for a view it cannot serve.
+   * Every Vulcanus view now goes through the engine, and the ones that do not
+   * are the ones the planet cannot have.
    *
-   * Vulcanus's rock and resource overlays are still TypeScript, so `rocks`,
-   * `resources` and `all` must take the TypeScript path and come back with the
-   * overlays painted. If the dispatch ever routed one of them to the module,
-   * this would come back missing them - which looks like a rendering regression
-   * rather than a routing one.
+   * This test used to assert the opposite - that `rocks`, `resources` and `all`
+   * stayed on the TypeScript path - and it is what would have gone red if they
+   * had moved without being graded. They have moved, and the three describe
+   * blocks below are what grades them.
    *
-   * **`cliffs` is deliberately absent from this list**, because it moved. The
-   * block below is what grades it, and this test would be the thing that went
-   * red if it had moved without being graded.
+   * The land mask and the scrap footprint are still refused, and by STATUS
+   * rather than by falling back: Vulcanus has no ocean and no scrap, so those
+   * views are meaningless here rather than merely unimplemented.
    */
-  it("leaves the un-ported composite views on the TypeScript path", async () => {
+  it("routes every view the planet has through the engine", async () => {
     const e = await engine();
     const w = WINDOWS[0] as Window;
-    for (const view of ["all", "rocks", "resources"] as const) {
+    for (const view of ["terrain", "cliffs", "rocks", "resources", "all"] as const) {
       const composite = { ...request(w), view };
       const withEngine = new Uint8ClampedArray(runRenderRequest(composite, e).buffer);
       const withoutEngine = new Uint8ClampedArray(runRenderRequest(composite).buffer);
@@ -207,6 +226,377 @@ describe("the WASM engine renders Vulcanus terrain exactly as the TypeScript doe
     const all = new Uint8ClampedArray(runRenderRequest({ ...request(w), view: "all" }, e).buffer);
     const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
     expect(Array.from(all)).not.toEqual(Array.from(terrain));
+  }, 300000);
+});
+
+/** How many pixels of `overlay` are not the colour `terrain` has there. */
+function paintedOver(overlay: Uint8ClampedArray, terrain: Uint8ClampedArray): number {
+  let n = 0;
+  for (let i = 0; i < overlay.length; i += 4) {
+    if (
+      overlay[i] !== terrain[i] ||
+      overlay[i + 1] !== terrain[i + 1] ||
+      overlay[i + 2] !== terrain[i + 2]
+    ) {
+      n++;
+    }
+  }
+  return n;
+}
+
+const isColor = (px: Uint8ClampedArray, i: number, c: readonly number[]): boolean =>
+  px[i] === c[0] && px[i + 1] === c[1] && px[i + 2] === c[2];
+
+/**
+ * Tier 3 for the ROCK overlay - the first of the two views that carry the
+ * placement roll across the boundary.
+ *
+ * The roll is what makes this different from every earlier view: the module
+ * seeds taus88 per 32-tile chunk and resolves a whole chunk at a time, so a
+ * mis-ported chunk seed word or draw order gives an overlay that is uniform,
+ * deterministic, plausible, and wrong at every tile. Byte-identity against the
+ * TypeScript is what says the stream and the greedy collision pass agree.
+ */
+describe("the WASM engine renders the Vulcanus rock overlay exactly as the TypeScript does", () => {
+  const rockRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "rocks" });
+
+  it("is byte-identical across four windows", async () => {
+    const e = await engine();
+    for (const w of WINDOWS) {
+      const req = rockRequest(w);
+      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
+      expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+    }
+  }, 300000);
+
+  /**
+   * Anti-vacuity, and the assertion that needs making: byte-identity between
+   * two renders that painted NO rocks would be satisfied by an engine whose
+   * rock pass never ran.
+   *
+   * Counted per window and frozen, so a pass that starts placing more or fewer
+   * is a finding rather than noise. Every rock pixel must also be the rock
+   * colour - a pass that painted the right COUNT of the wrong colour would
+   * otherwise slip through.
+   */
+  it("paints rock pixels in every window, and only rock-coloured ones", async () => {
+    const e = await engine();
+    const counts: number[] = [];
+    for (const w of WINDOWS) {
+      const wasm = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
+      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      let painted = 0;
+      for (let i = 0; i < wasm.length; i += 4) {
+        if (isColor(wasm, i, ROCK_MAP_COLOR) && !isColor(terrain, i, ROCK_MAP_COLOR)) painted++;
+      }
+      expect(painted, `${w.label}: rock pixels`).toBe(paintedOver(wasm, terrain));
+      counts.push(painted);
+    }
+    expect(counts).toEqual(ROCK_PIXELS_PER_WINDOW);
+  }, 300000);
+
+  /**
+   * Rendering the window as tiles must reproduce the single whole-image render
+   * byte for byte, through the ENGINE.
+   *
+   * This is what the placement sweep box exists to provide, and it is a
+   * SECOND box rather than a reuse of the cliff one because the two halos are
+   * different shapes - the cliff block is asymmetric and its directions cross,
+   * a placement mark is a symmetric 3x3.
+   *
+   * The second arm is what stops this being vacuous: dropping `fullImage`
+   * removes the halo and the tiles must come back DIFFERENT. Measured at 92
+   * pixels on this window, so the halo is load-bearing rather than defensive.
+   */
+  it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
+    const e = await engine();
+    const w = WINDOWS[2] as Window; // tall, coarse - 8 tiles per pixel
+    const whole = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
+
+    const full: ImageBox = {
+      originX: w.originX,
+      originY: w.originY,
+      width: w.width,
+      height: w.height,
+      tilesPerPixel: w.tilesPerPixel,
+    };
+    const renderTiled = (halo: boolean): Uint8ClampedArray => {
+      const tiles = planTiles(full, 8).map((t) => {
+        const out = runRenderRequest(
+          {
+            ...rockRequest(w),
+            originX: t.originX,
+            originY: t.originY,
+            width: t.width,
+            height: t.height,
+            ...(halo ? { fullImage: full } : {}),
+          },
+          e,
+        );
+        return {
+          dx: t.dx,
+          dy: t.dy,
+          width: t.width,
+          height: t.height,
+          data: new Uint8ClampedArray(out.buffer),
+        };
+      });
+      return stitchTiles(full, tiles);
+    };
+
+    expect(Array.from(renderTiled(true))).toEqual(Array.from(whole));
+    expect(Array.from(renderTiled(false))).not.toEqual(Array.from(whole));
+  }, 300000);
+});
+
+/**
+ * Tier 3 for the RESOURCE overlay, which has two passes rather than one: the
+ * geyser ROLLS and paints a 3x3 mark, the three solid ores THRESHOLD and paint
+ * a single pixel each.
+ *
+ * **This block has its own windows, and it has to.** Ore patches are far
+ * sparser than rocks: three of the four windows the rest of this file uses
+ * contain no ore at all, so a per-window count over them would read
+ * `[0, 0, 53, 0]` and three quarters of the comparison would be vacuous. These
+ * five were found by sweeping the map for ore and then varying width, height,
+ * origin and tiles-per-pixel independently across what was left, so a swapped
+ * width and height or an origin folded into the wrong axis is still visible.
+ *
+ * Between them the five cover all FOUR catalog entries. Only the last carries
+ * geysers, which is why it is here at all - it is the one window that grades
+ * the rolled pass.
+ */
+describe("the WASM engine renders the Vulcanus resource overlay exactly as the TypeScript does", () => {
+  const ORE_WINDOWS: Window[] = [
+    {
+      label: "square on a coal patch",
+      width: 64,
+      height: 64,
+      originX: -64,
+      originY: -128,
+      tilesPerPixel: 1,
+    },
+    { label: "wide, offset", width: 96, height: 24, originX: -96, originY: -110, tilesPerPixel: 1 },
+    {
+      label: "tall, coarse",
+      width: 24,
+      height: 96,
+      originX: -2048,
+      originY: 768,
+      tilesPerPixel: 8,
+    },
+    {
+      label: "fine, fractional origin",
+      width: 48,
+      height: 32,
+      originX: 140.5,
+      originY: -110.25,
+      tilesPerPixel: 0.5,
+    },
+    {
+      label: "coarse, all four entries",
+      width: 128,
+      height: 128,
+      originX: 0,
+      originY: 0,
+      tilesPerPixel: 8,
+    },
+  ];
+
+  /**
+   * Pixels of each catalog entry's `map_color`, per window, in `ORE_WINDOWS`
+   * order and then catalog order (tungsten, calcite, coal, geyser).
+   *
+   * Frozen exact counts rather than "more than zero", for the reason every
+   * count in this port is frozen: a bound wide enough to be safe is wide enough
+   * to swallow a whole patch. The zeros are real and are what makes the table
+   * worth writing out - each window carries a DIFFERENT ore, so a resolver
+   * wired to one region field for all three would show up as the same column
+   * everywhere.
+   */
+  const ORE_PIXELS = [
+    [0, 0, 2755, 0],
+    [0, 0, 1291, 0],
+    [53, 0, 0, 0],
+    [0, 23, 0, 0],
+    [47, 172, 80, 37],
+  ];
+
+  const oreRequest = (w: Window): ElevationRenderRequest => ({
+    ...request(w),
+    view: "resources",
+    width: w.width,
+    height: w.height,
+    originX: w.originX,
+    originY: w.originY,
+    tilesPerPixel: w.tilesPerPixel,
+  });
+
+  it("is byte-identical across five windows", async () => {
+    const e = await engine();
+    for (const w of ORE_WINDOWS) {
+      const req = oreRequest(w);
+      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
+      expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+    }
+  }, 300000);
+
+  /**
+   * Every catalog entry is painted somewhere, in its OWN colour, at a frozen
+   * count.
+   *
+   * Byte-identity above would be satisfied by two renderers that both painted
+   * nothing, and by two that both painted the wrong ore - this is the assertion
+   * that says which entry landed where.
+   */
+  it("paints each entry's own map colour, at the counts measured", async () => {
+    const e = await engine();
+    const table: number[][] = [];
+    for (const w of ORE_WINDOWS) {
+      const px = new Uint8ClampedArray(runRenderRequest(oreRequest(w), e).buffer);
+      table.push(
+        VULCANUS_RESOURCE_CATALOG.map((entry) => {
+          let n = 0;
+          for (let i = 0; i < px.length; i += 4) if (isColor(px, i, entry.mapColor)) n++;
+          return n;
+        }),
+      );
+    }
+    expect(table).toEqual(ORE_PIXELS);
+    // All four entries reach a pixel somewhere in the set, so no entry is
+    // graded only by its own zeros.
+    const perEntry = VULCANUS_RESOURCE_CATALOG.map((_, i) =>
+      table.reduce((a, row) => a + (row[i] as number), 0),
+    );
+    expect(perEntry.every((n) => n > 0)).toBe(true);
+  }, 300000);
+
+  /**
+   * The geyser's 3x3 mark straddles worker-tile seams, so the resource view
+   * needs the same halo the rock view does - and the same proof that it is
+   * doing something.
+   *
+   * Run on the one window that has geysers. The three thresholded ores paint a
+   * single pixel each and ignore the sweep box entirely, so without a geyser in
+   * frame the second arm below would pass on a window where the halo changes
+   * nothing.
+   */
+  it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
+    const e = await engine();
+    const w = ORE_WINDOWS[4] as Window;
+    const whole = new Uint8ClampedArray(runRenderRequest(oreRequest(w), e).buffer);
+    const full: ImageBox = {
+      originX: w.originX,
+      originY: w.originY,
+      width: w.width,
+      height: w.height,
+      tilesPerPixel: w.tilesPerPixel,
+    };
+    const renderTiled = (halo: boolean): Uint8ClampedArray => {
+      const tiles = planTiles(full, 32).map((t) => {
+        const out = runRenderRequest(
+          {
+            ...oreRequest(w),
+            originX: t.originX,
+            originY: t.originY,
+            width: t.width,
+            height: t.height,
+            ...(halo ? { fullImage: full } : {}),
+          },
+          e,
+        );
+        return {
+          dx: t.dx,
+          dy: t.dy,
+          width: t.width,
+          height: t.height,
+          data: new Uint8ClampedArray(out.buffer),
+        };
+      });
+      return stitchTiles(full, tiles);
+    };
+    expect(Array.from(renderTiled(true))).toEqual(Array.from(whole));
+    expect(Array.from(renderTiled(false))).not.toEqual(Array.from(whole));
+  }, 300000);
+});
+
+/**
+ * Tier 3 for the `all` composite - terrain, then resources, then rocks, then
+ * cliffs, in one request.
+ *
+ * Sent as one request rather than four for the reason `cliffs` is: every
+ * overlay shares the whole field DAG below the tile argmax, so splitting them
+ * would build that chain four times.
+ */
+describe("the WASM engine renders the Vulcanus composite exactly as the TypeScript does", () => {
+  const allRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "all" });
+
+  it("is byte-identical across four windows", async () => {
+    const e = await engine();
+    const counts: number[] = [];
+    for (const w of WINDOWS) {
+      const req = allRequest(w);
+      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
+      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      counts.push(paintedOver(wasm, new Uint8ClampedArray(runRenderRequest(request(w), e).buffer)));
+    }
+    expect(counts).toEqual(ALL_PIXELS_PER_WINDOW);
+  }, 300000);
+
+  /**
+   * The paint ORDER, asserted rather than described.
+   *
+   * Resources paint first and the two obstruction overlays over the top, so a
+   * cliff or a rock crossing an ore patch reads as the thing that is in the
+   * way. Reordering the three passes changes only the pixels where two of them
+   * land, which is a few hundred out of 16,384 here - invisible to a
+   * whole-image bound, and exactly what this counts.
+   *
+   * The numbers are frozen: 208 ore pixels are covered in this window, 2 by a
+   * rock and 206 by a cliff. Painting rocks or cliffs FIRST would take all
+   * three to zero.
+   */
+  it("paints resources first and the obstruction overlays over the top", async () => {
+    const e = await engine();
+    const w: Window = {
+      label: "coarse, all four entries",
+      width: 128,
+      height: 128,
+      originX: 0,
+      originY: 0,
+      tilesPerPixel: 8,
+    };
+    const geometry = {
+      width: w.width,
+      height: w.height,
+      originX: w.originX,
+      originY: w.originY,
+      tilesPerPixel: w.tilesPerPixel,
+    };
+    const all = new Uint8ClampedArray(
+      runRenderRequest({ ...request(w), ...geometry, view: "all" }, e).buffer,
+    );
+    const resources = new Uint8ClampedArray(
+      runRenderRequest({ ...request(w), ...geometry, view: "resources" }, e).buffer,
+    );
+
+    const oreColors = VULCANUS_RESOURCE_CATALOG.map((p) => p.mapColor);
+    let covered = 0;
+    let byRock = 0;
+    let byCliff = 0;
+    for (let i = 0; i < all.length; i += 4) {
+      if (!oreColors.some((c) => isColor(resources, i, c))) continue;
+      if (oreColors.some((c) => isColor(all, i, c))) continue;
+      covered++;
+      if (isColor(all, i, ROCK_MAP_COLOR)) byRock++;
+      if (isColor(all, i, CLIFF_MAP_COLOR)) byCliff++;
+    }
+    expect({ covered, byRock, byCliff }).toEqual({ covered: 208, byRock: 2, byCliff: 206 });
   }, 300000);
 });
 

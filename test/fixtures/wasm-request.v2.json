@@ -1,5 +1,5 @@
 {
-  "_comment": "The WASM render boundary's request encoding at ABI v2, pinned (#225). NOT Factorio ground truth - this is our own ABI, so it has no game version, which is why PROVENANCE.json declares it under notFixtures. It IS read by a spec: test/wasmFulgoraRenderParity.spec.ts asserts src/noise/wasm/request.ts writes exactly these bytes. The layout tables are in crates/fmw-wasm/src/abi.rs. v2 replaced v1's single fixed 104-byte struct with a common 56-byte prefix plus a per-planet block whose length the prefix declares; a Fulgora request is still exactly 104 bytes, and a Vulcanus one is 336 - it grew from 304 when the cliffs view added a cell query box, with no version bump, because the prefix declares its own block length and Fulgora's request did not move a byte. These bytes were checked by an INDEPENDENT Python decoder - a third implementation written from the layout table, not the TypeScript writer under test and not the Rust reader - which agreed on every offset and every scalar field. It deliberately does NOT check the trig VALUES: those are V8's Math.sin after an f32 narrowing, and Python's libm is a different implementation, which is the whole point of #270. It checks the trig block three other ways instead: sin^2+cos^2 = 1 for each pair; exactly one legitimate duplicate pair (the volcano-spot disc sits at the mountains bearing); and - the one that matters - each bearing's angle recovered with atan2 and checked against the OFFSET the Lua gives it from the ashlands bearing, which pins which slot is which. That third check was added because the first two were measured MISSING a planted swap of two bearings: both pairs are still unit-norm, and a swap is the failure that renders a plausible planet with its biomes rotated. Seven planted breaks are now caught - a shifted block, two different bearing swaps, a sin/cos transposition, an offset sign flip, a wrong declared length and a big-endian field. The cell query box added five more, all caught by its per-edge value check: a transposed x0/x1, four identical edges, a block shifted by one f64, a mismatched y0, and a declared length still saying 248. Two further checks on that box - four distinct edges, and not inverted on either axis - constrain the FIXTURE rather than catching a break, because against a degenerate box the value check would stop discriminating. Regenerating these bytes from the encoder would make the fixture agree with itself and prove nothing; if the layout changes, bump ABI_VERSION on both sides and re-verify the same way.",
+  "_comment": "The WASM render boundary's request encoding at ABI v2, pinned (#225). NOT Factorio ground truth - this is our own ABI, so it has no game version, which is why PROVENANCE.json declares it under notFixtures. It IS read by a spec: test/wasmFulgoraRenderParity.spec.ts asserts src/noise/wasm/request.ts writes exactly these bytes. The layout tables are in crates/fmw-wasm/src/abi.rs. v2 replaced v1's single fixed 104-byte struct with a common 56-byte prefix plus a per-planet block whose length the prefix declares; a Fulgora request is still exactly 104 bytes, and a Vulcanus one is 368 - it grew from 304 to 336 when the cliffs view added a cell query box and from 336 to 368 when the rock and resource overlays added a placement sweep box, neither time with a version bump, because the prefix declares its own block length and Fulgora's request has not moved a byte through either. These bytes were checked by an INDEPENDENT Python decoder - a third implementation written from the layout table, not the TypeScript writer under test and not the Rust reader - which agreed on every offset and every scalar field. It deliberately does NOT check the trig VALUES: those are V8's Math.sin after an f32 narrowing, and Python's libm is a different implementation, which is the whole point of #270. It checks the trig block three other ways instead: sin^2+cos^2 = 1 for each pair; exactly one legitimate duplicate pair (the volcano-spot disc sits at the mountains bearing); and - the one that matters - each bearing's angle recovered with atan2 and checked against the OFFSET the Lua gives it from the ashlands bearing, which pins which slot is which. That third check was added because the first two were measured MISSING a planted swap of two bearings: both pairs are still unit-norm, and a swap is the failure that renders a plausible planet with its biomes rotated. Seven planted breaks are now caught - a shifted block, two different bearing swaps, a sin/cos transposition, an offset sign flip, a wrong declared length and a big-endian field. The cell query box added five more, all caught by its per-edge value check: a transposed x0/x1, four identical edges, a block shifted by one f64, a mismatched y0, and a declared length still saying 248. Two further checks on that box - four distinct edges, and not inverted on either axis - constrain the FIXTURE rather than catching a break, because against a degenerate box the value check would stop discriminating. The placement sweep box added five more planted breaks, each run rather than listed: the cliff box written into both slots, the two boxes swapped, a block shifted by one f64, one edge wrong, and a declared length still saying 280. All five are caught by the per-edge value check. A SIXTH is not, and is why the halo is also checked for symmetry: a halo one tile wider on the low x side than the high one, with the request edited to agree, passes every value check - and the placement halo really is symmetric about the pixel box, where the cliff halo is not, which is the whole reason there are two boxes rather than one. The no-coinciding-edge check caught none of the six and is a fixture constraint like the distinctness ones. Regenerating these bytes from the encoder would make the fixture agree with itself and prove nothing; if the layout changes, bump ABI_VERSION on both sides and re-verify the same way.",
   "magic": 1381453126,
   "abiVersion": 2,
   "commonBytes": 56,
@@ -133,8 +133,8 @@
     ]
   },
   "vulcanus": {
-    "paramsBytes": 280,
-    "totalBytes": 336,
+    "paramsBytes": 312,
+    "totalBytes": 368,
     "request": {
       "planet": "vulcanus",
       "seed0": 1249936247,
@@ -168,6 +168,12 @@
         "y0": 255.25,
         "x1": -494.5,
         "y1": 266.75
+      },
+      "placementSweepBox": {
+        "x0": -516.5,
+        "y0": 252.25,
+        "x1": -492.5,
+        "y1": 268.25
       }
     },
     "decoded": {
@@ -218,6 +224,12 @@
         "y0": 255.25,
         "x1": -494.5,
         "y1": 266.75
+      },
+      "placementSweepBox": {
+        "x0": -516.5,
+        "y0": 252.25,
+        "x1": -492.5,
+        "y1": 268.25
       }
     },
     "bytes": [
@@ -249,7 +261,7 @@
       0,
       0,
       0,
-      24,
+      56,
       1,
       0,
       0,
@@ -555,6 +567,38 @@
       0,
       0,
       172,
+      112,
+      64,
+      0,
+      0,
+      0,
+      0,
+      0,
+      36,
+      128,
+      192,
+      0,
+      0,
+      0,
+      0,
+      0,
+      136,
+      111,
+      64,
+      0,
+      0,
+      0,
+      0,
+      0,
+      200,
+      126,
+      192,
+      0,
+      0,
+      0,
+      0,
+      0,
+      196,
       112,
       64
     ]
