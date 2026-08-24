@@ -668,6 +668,25 @@ impl CornerRect {
 /// and simpler. Nothing about the OUTPUT depends on the choice - both fields are
 /// pure functions of position - but the smoothing knots are read repeatedly and
 /// `cliffiness` dominates the pass, so the cache is not optional.
+///
+/// **It allocates for the whole rectangle up front, and there is no cap on
+/// that.** Worth stating rather than leaving to be discovered, because this
+/// module sits behind a boundary whose contract is that errors return a status
+/// and never trap: a caller-supplied query box large enough to exhaust linear
+/// memory would abort the instance instead.
+///
+/// No cap is imposed anyway, and that is a deliberate choice rather than an
+/// oversight. The chunk-structured pass VISITS essentially every corner of its
+/// rectangle, so the TypeScript's `Map` ends up holding the same count - as
+/// string keys and boxed numbers, so strictly more memory for the same query.
+/// A cap here would reject renders the TypeScript performs happily, which is a
+/// behaviour difference, and behaviour parity is the whole point of the port.
+///
+/// The exposure is small in practice and that is measured rather than hoped:
+/// the app tiles cliff renders into 64-pixel workers, so a request's rectangle
+/// is a few thousand corners whatever the zoom. A cap belongs here only if a
+/// whole-image cliff render at a high tiles-per-pixel ever becomes a real call
+/// site, and then it belongs on BOTH sides.
 struct CornerCache<'a, F: CliffFields> {
     fields: &'a F,
     smoothing: f64,

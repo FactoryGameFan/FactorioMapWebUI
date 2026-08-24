@@ -41,10 +41,41 @@
 //!
 //! `select_spots` evaluates density and favorability at accepted candidates,
 //! and both pull a whole biome-full chain at that candidate. The TypeScript
-//! memoizes those; this recomputes them. Nothing on the render path reaches
-//! this layer yet, so it is correct-first by choice - the same call this layer's
-//! neighbour made. `multioctave_noise`'s docs record what happened the last time
-//! a per-call rebuild went unmeasured, which was 20x.
+//! memoizes those; this recomputes them.
+//!
+//! **This layer IS on a render path now, and the recomputation was measured
+//! rather than left as a caveat.** The ore -> cliff rejection reaches it through
+//! [`VulcanusResources::ore_regions`], so the `cliffs` view evaluates this
+//! chain a couple of tiles per placed cell. This comment used to say "nothing
+//! on the render path reaches this layer yet, so it is correct-first by choice",
+//! and its own next sentence said what to do when that stopped being true.
+//!
+//! Measured at 256x256, 1 tile/px, seed 123456, min of 5 after a warm pass,
+//! three separate runs agreeing to the second decimal - as the cost of the
+//! cliff OVERLAY relative to the terrain sweep in the SAME arm:
+//!
+//! | arm | terrain | cliffs | overlay |
+//! | --- | ---: | ---: | ---: |
+//! | TypeScript | 33.10 us/px | 42.41 us/px | 1.28x |
+//! | WASM | 8.64 us/px | 9.52 us/px | **1.10x** |
+//!
+//! So the un-memoized chain costs proportionally LESS here than the memoized
+//! one does in the TypeScript. The reason is that the cliff pass is not
+//! per-pixel: it walks a 4-tile lattice and touches two tiles per placed cell,
+//! so this layer is evaluated a few thousand times against the terrain sweep's
+//! 65,536. A memo would be optimising something that is already 10% of the
+//! render.
+//!
+//! **Read the RATIOS, not the microseconds.** Those absolutes are from a run
+//! inside vitest, where the TypeScript arm pays #267's per-module transform and
+//! the WASM arm does not - `docs/noise/vulcanus-cliffs-NOTES.md` measures the
+//! same TypeScript terrain view at 12.68 us/px outside it. A ratio between the
+//! two arms would be measuring the harness; a ratio WITHIN one arm cancels it,
+//! which is the only reading this table supports.
+//!
+//! `multioctave_noise`'s docs record what happened the last time a per-call
+//! rebuild went unmeasured, which was 20x - that is why this was measured, and
+//! the answer this time is that it does not matter.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

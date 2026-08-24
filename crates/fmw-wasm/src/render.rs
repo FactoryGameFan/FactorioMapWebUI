@@ -5,6 +5,13 @@
 //! `runRenderRequest`'s signature does not change.
 
 use crate::abi::{self, FulgoraParams, Params, Request, Status, VulcanusBearing, VulcanusParams};
+use fmw_noise::cliffs::catalog::{CLIFF_MAP_COLOR, CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX};
+use fmw_noise::cliffs::placement::{CliffBands, CliffPlacement};
+use fmw_noise::cliffs::vulcanus_fields::{
+    VulcanusCliffFields, VulcanusLavaTiles, VULCANUS_CLIFF_ELEVATION_0,
+    VULCANUS_CLIFF_ELEVATION_INTERVAL, VULCANUS_CLIFF_SMOOTHING,
+};
+use fmw_noise::cliffs::vulcanus_ore_rejection::VulcanusOreRejection;
 use fmw_noise::eval::ctx::{EvalCtx, ResourceLevers, VulcanusResourceControls};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
@@ -32,6 +39,13 @@ pub const VIEW_TERRAIN: u32 = 1;
 /// game's drawn pixels measures the salt rather than the model. Whether the
 /// model rolls at the right RATE is a separate question with its own gate.
 pub const VIEW_SCRAP_FOOTPRINT: u32 = 2;
+
+/// Terrain with the cliff footprint painted over it.
+///
+/// A composite rather than a bare field, and the only one so far: the cliff
+/// overlay has nothing to draw on its own, and the two passes share the whole
+/// field DAG below the tile argmax.
+pub const VIEW_CLIFFS: u32 = 3;
 
 /// The land colour, `FULGORA_LANDMASK_LAND_RGB` in
 /// `src/noise/preview/renderFulgoraTerrain.ts`.
@@ -107,7 +121,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         (
             PLANET_FULGORA,
             VIEW_LANDMASK | VIEW_TERRAIN | VIEW_SCRAP_FOOTPRINT
-        ) | (PLANET_VULCANUS, VIEW_TERRAIN)
+        ) | (PLANET_VULCANUS, VIEW_TERRAIN | VIEW_CLIFFS)
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -255,6 +269,81 @@ fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
             out[offset + 2] = color[2];
             out[offset + 3] = 255;
             offset += 4;
+        }
+    }
+
+    if req.view == VIEW_CLIFFS {
+        paint_vulcanus_cliffs(req, p, &ctx, &stack, out);
+    }
+}
+
+/// Composite the Vulcanus cliff footprint over terrain that is already painted.
+///
+/// The whole field DAG is shared with the terrain pass above - the tile resolver
+/// the lava rejection asks and the resource regions the ore rejection asks are
+/// the SAME `VulcanusStack` the argmax just used. Building a private one here
+/// would duplicate the entire chain, which is the mistake the TypeScript's
+/// `sharedStack` plumbing exists to avoid.
+///
+/// Two rejections run, and both act on the CROSSING rather than as a
+/// post-filter: a rejected cell's four edge registers are zeroed, so a surviving
+/// neighbour loses the shared one and changes orientation. The post-filter
+/// reading predicts 1,662 cases of a survivor keeping such an edge and the game
+/// shows 0.
+///
+/// **Lava exclusion happens at PLACEMENT, not at paint time.** The Nauvis
+/// renderer skips water-coloured pixels as it paints; here the cells never
+/// exist, because `tryToAddCliff` runs a real collision test and drops the
+/// entity. A paint-time skip would leave the cell in the placement and every
+/// spec that scores against `find_entities_filtered` would still count it.
+fn paint_vulcanus_cliffs(
+    req: &Request,
+    p: &VulcanusParams,
+    ctx: &EvalCtx,
+    stack: &VulcanusStack<'_>,
+    out: &mut [u8],
+) {
+    let fields = VulcanusCliffFields::new(stack, req.seed0);
+    let lava = VulcanusLavaTiles::new(stack);
+    let ore = VulcanusOreRejection::new(stack, &ctx.vulcanus_resource_controls);
+    let placement = CliffPlacement::new(
+        &fields,
+        CliffBands {
+            elevation0: VULCANUS_CLIFF_ELEVATION_0,
+            interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+            smoothing: VULCANUS_CLIFF_SMOOTHING,
+            reject_at_crossing_stage: true,
+            ..CliffBands::default()
+        },
+    )
+    .with_tile_collision(&lava)
+    .with_cell_rejection(&ore);
+
+    let [x0, y0, x1, y1] = p.cell_query_box;
+    let width = req.width as i64;
+    let height = req.height as i64;
+    let lo = CLIFF_MARK_BACK_PX;
+    let hi = CLIFF_MARK_SIZE_PX - CLIFF_MARK_BACK_PX - 1;
+
+    for cell in placement.placed_cells(x0, y0, x1, y1) {
+        let cx = ((cell.x - req.origin_x) / req.tiles_per_pixel).floor() as i64;
+        let cy = ((cell.y - req.origin_y) / req.tiles_per_pixel).floor() as i64;
+        for dy in -lo..=hi {
+            let y = cy + dy;
+            if y < 0 || y >= height {
+                continue;
+            }
+            for dx in -lo..=hi {
+                let x = cx + dx;
+                if x < 0 || x >= width {
+                    continue;
+                }
+                let o = ((y * width + x) * 4) as usize;
+                out[o] = CLIFF_MAP_COLOR[0];
+                out[o + 1] = CLIFF_MAP_COLOR[1];
+                out[o + 2] = CLIFF_MAP_COLOR[2];
+                out[o + 3] = 255;
+            }
         }
     }
 }

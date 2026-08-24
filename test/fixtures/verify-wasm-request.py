@@ -8,8 +8,9 @@ each other.
 
 What it can and cannot check:
 
-- It CAN check every offset, the endianness, the field order, and the eleven
-  Vulcanus scalars against the request that produced them.
+- It CAN check every offset, the endianness, the field order, the eleven
+  Vulcanus scalars and the four cell-query-box edges against the request that
+  produced them.
 - It CANNOT reproduce the trig VALUES, because those are V8's `Math.sin` after
   an `f32` narrowing and Python's libm is a different implementation - which is
   the whole point of #270 and the reason the trig crosses the boundary as values
@@ -29,9 +30,9 @@ MAGIC = 0x52574D46
 ABI_VERSION = 2
 COMMON_BYTES = 56
 FULGORA_PARAMS_BYTES = 48
-VULCANUS_PARAMS_BYTES = 248
+VULCANUS_PARAMS_BYTES = 280
 PLANET = {"fulgora": 0, "vulcanus": 1}
-VIEW = {"landmask": 0, "terrain": 1, "scrapFootprint": 2}
+VIEW = {"landmask": 0, "terrain": 1, "scrapFootprint": 2, "cliffs": 3}
 
 BEARING_NAMES = [
     "spawnAshlands",
@@ -99,7 +100,7 @@ def decode_fulgora(b, req):
 
 def decode_vulcanus(b, req):
     if len(b) != COMMON_BYTES + VULCANUS_PARAMS_BYTES:
-        raise AssertionError(f"vulcanus request is {len(b)} bytes, expected 304")
+        raise AssertionError(f"vulcanus request is {len(b)} bytes, expected 336")
     decode_common(b, req, VULCANUS_PARAMS_BYTES)
     p = COMMON_BYTES
     check("volcanismFrequency", f64(b, p), req["volcanismFrequency"])
@@ -179,7 +180,27 @@ def decode_vulcanus(b, req):
             raise AssertionError(
                 f"{name}: sits {got:.4f} degrees from ashlands, expected {want:.4f}"
             )
-    return trig
+
+    # The cliff cell query box, appended when the `cliffs` view landed.
+    #
+    # The value check below is what catches a wrong offset, a transposition or a
+    # shifted block - all five planted breaks were caught by it. The two
+    # structural checks after it are constraints on the FIXTURE rather than
+    # break-catchers: they refuse a fixture whose edges repeat or whose box is
+    # inverted, because against such a box the value check would stop
+    # discriminating. Recorded that way round because "five breaks caught" is
+    # true of the value check and would be a false claim about the other two.
+    box = req.get("cellQueryBox")
+    if box is None:
+        raise AssertionError("the vulcanus arm must carry an explicit cellQueryBox")
+    edges = [f64(b, p + 248 + i * 8) for i in range(4)]
+    for i, key in enumerate(["x0", "y0", "x1", "y1"]):
+        check(f"cellQueryBox.{key}", edges[i], box[key])
+    if len(set(edges)) != 4:
+        raise AssertionError(f"cellQueryBox edges are not all distinct: {edges}")
+    if not (edges[0] < edges[2] and edges[1] < edges[3]):
+        raise AssertionError(f"cellQueryBox is inverted on an axis: {edges}")
+    return trig, {"x0": edges[0], "y0": edges[1], "x1": edges[2], "y1": edges[3]}
 
 
 def main():
@@ -188,9 +209,12 @@ def main():
     fb = bytes(d["fulgora"]["bytes"])
     vb = bytes(d["vulcanus"]["bytes"])
     ftrig = decode_fulgora(fb, d["fulgora"]["request"])
-    vtrig = decode_vulcanus(vb, d["vulcanus"]["request"])
+    vtrig, vbox = decode_vulcanus(vb, d["vulcanus"]["request"])
     print("fulgora: all fields agree, both bearings unit-norm")
-    print("vulcanus: all fields agree, ten bearings unit-norm, 1 legitimate duplicate")
+    print(
+        "vulcanus: all fields agree, ten bearings unit-norm, 1 legitimate duplicate, "
+        "cell query box distinct and non-inverted"
+    )
 
     fixture = {
         "_comment": (
@@ -201,7 +225,9 @@ def main():
             "these bytes. The layout tables are in crates/fmw-wasm/src/abi.rs. v2 replaced v1's "
             "single fixed 104-byte struct with a common 56-byte prefix plus a per-planet block "
             "whose length the prefix declares; a Fulgora request is still exactly 104 bytes, and a "
-            "Vulcanus one is 304. These bytes were checked by an INDEPENDENT Python decoder - a "
+            "Vulcanus one is 336 - it grew from 304 when the cliffs view added a cell query "
+            "box, with no version bump, because the prefix declares its own block length and "
+            "Fulgora's request did not move a byte. These bytes were checked by an INDEPENDENT Python decoder - a "
             "third implementation written from the layout table, not the TypeScript writer under "
             "test and not the Rust reader - which agreed on every offset and every scalar field. "
             "It deliberately does NOT check the trig VALUES: those are V8's Math.sin after an f32 "
@@ -215,7 +241,12 @@ def main():
             "a swap is the failure that renders a plausible planet with its biomes rotated. Seven "
             "planted breaks are now caught - a shifted block, two different bearing swaps, a "
             "sin/cos transposition, an offset sign flip, a wrong declared length and a big-endian "
-            "field. Regenerating "
+            "field. The cell query box added five more, all caught by its per-edge value check: a "
+            "transposed x0/x1, four identical edges, a block shifted by one f64, a mismatched y0, "
+            "and a declared length still saying 248. Two further checks on that box - four "
+            "distinct edges, and not inverted on either axis - constrain the FIXTURE rather than "
+            "catching a break, because against a degenerate box the value check would stop "
+            "discriminating. Regenerating "
             "these bytes from the encoder would make the fixture agree with itself and prove "
             "nothing; if the layout changes, bump ABI_VERSION on both sides and re-verify the "
             "same way."
@@ -234,7 +265,7 @@ def main():
             "paramsBytes": VULCANUS_PARAMS_BYTES,
             "totalBytes": len(vb),
             "request": d["vulcanus"]["request"],
-            "decoded": {"trig": vtrig},
+            "decoded": {"trig": vtrig, "cellQueryBox": vbox},
             "bytes": d["vulcanus"]["bytes"],
         },
     }

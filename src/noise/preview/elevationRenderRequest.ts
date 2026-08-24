@@ -297,28 +297,34 @@ export function placementMarkSweepBox(req: ElevationRenderRequest): WorldBox {
 }
 
 /**
- * The Rust engine's Vulcanus path - terrain only.
+ * The Rust engine's Vulcanus path - `terrain`, and now `cliffs` too.
  *
  * Vulcanus has no ocean and no scrap, so the land mask and the scrap footprint
  * are meaningless there rather than merely unimplemented; the module rejects
- * them by status. Its rock, cliff and resource OVERLAYS are still TypeScript
- * (#225 is not finished), so only the bare `terrain` view routes here - the
- * composite views below build the stack and paint the overlays as before.
+ * them by status. Its rock and resource OVERLAYS are still TypeScript (#225 is
+ * not finished), so `rocks`, `resources` and `all` still build the stack here
+ * and paint as before.
+ *
+ * **`cliffs` is a composite, not a field**, and the module renders both halves:
+ * the cliff overlay has nothing to draw on its own, and the two passes share the
+ * whole field DAG below the tile argmax. Sending it as one request is what lets
+ * the engine share that DAG - splitting it would build the chain twice.
  *
  * The copy note on the Fulgora function below applies here identically.
  */
 function renderVulcanusThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
+  view: "terrain" | "cliffs",
 ): ElevationRenderResult {
   const levers = (c: { frequency?: number; size?: number } | undefined) => ({
     frequency: c?.frequency ?? 1,
     size: c?.size ?? 1,
   });
   const controls = req.vulcanusResourceControls;
-  const view = renderThroughWasm(engine, {
+  const pixels = renderThroughWasm(engine, {
     planet: "vulcanus",
-    view: "terrain",
+    view,
     seed0: req.seed0,
     width: req.width,
     height: req.height,
@@ -332,8 +338,11 @@ function renderVulcanusThroughWasm(
     vulcanusCoal: levers(controls?.vulcanusCoal),
     calcite: levers(controls?.calcite),
     sulfuricAcidGeyser: levers(controls?.sulfuricAcidGeyser),
+    // Inert for `terrain`; for `cliffs` it is the halo-widened box, computed by
+    // the same function the TypeScript path passes to `renderVulcanusCliffs`.
+    cellQueryBox: cliffCellQueryBox(req),
   });
-  const owned = new Uint8ClampedArray(view);
+  const owned = new Uint8ClampedArray(pixels);
   return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
 }
 
@@ -411,10 +420,11 @@ export function runRenderRequest(
       // Checked BEFORE the TypeScript stack is built, for the reason the
       // Fulgora branch gives: `makeVulcanusStack` derives seed tables for the
       // whole biome, crack, climate and elevation chain, and building them only
-      // to throw them away would be most of the saving. Bare `terrain` only -
-      // every other Vulcanus view still needs the stack for its overlays.
-      if (engine !== undefined && req.view === "terrain") {
-        return renderVulcanusThroughWasm(req, engine);
+      // to throw them away would be most of the saving. `terrain` and `cliffs`
+      // only - `rocks`, `resources` and `all` still need the stack here,
+      // because their overlays have no Rust port yet (#225).
+      if (engine !== undefined && (req.view === "terrain" || req.view === "cliffs")) {
+        return renderVulcanusThroughWasm(req, engine, req.view);
       }
       // ONE stack for the whole composite. Two things make this pay, and both
       // are needed: the overlays reuse the field objects terrain built, and

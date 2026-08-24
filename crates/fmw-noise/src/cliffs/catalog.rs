@@ -65,6 +65,43 @@ pub const CLIFF_CELL_CENTER_X: f64 = 2.0;
 /// `y mod 4 == 2.5`, which the oracle spec checks on the fixture itself.
 pub const CLIFF_CELL_CENTER_Y: f64 = 2.5;
 
+/// In-game `map_color` for cliff tiles.
+///
+/// `cliff-vulcanus` declares the same `{144, 119, 87}` Nauvis's `cliff` does, so
+/// no second colour is needed.
+pub const CLIFF_MAP_COLOR: [u8; 3] = [144, 119, 87];
+
+/// Side, in pixels, of the block painted per placed cliff cell.
+///
+/// **4 is the size at which cells abut exactly** at the app's 1024px /
+/// 1-tile-per-pixel preview: centres are 4px apart, so 4px blocks tile with
+/// neither gap nor overlap. It replaced a 5x5 centred block, which overlapped
+/// its neighbour by a pixel and read a pixel too thick - and the overlap was
+/// doing no work, because it is the TILING, not the excess, that joins the
+/// stipple into a line.
+///
+/// **Do not drop this to 3.** Measured: at 3px the blocks fall a pixel short of
+/// their neighbour and the ridgelines break into visible dashes. 4 is the floor,
+/// not a preference.
+///
+/// Deliberately in PIXEL space rather than world space. A world-space footprint
+/// would be more faithful at 1 tile/px and would vanish when zoomed out, where a
+/// cell is a fraction of a pixel; the whole point of the block is legibility at
+/// preview scale.
+pub const CLIFF_MARK_SIZE_PX: i64 = 4;
+
+/// How far the block extends BELOW/LEFT of the cell centre pixel.
+///
+/// The block spans `px - CLIFF_MARK_BACK_PX ..= px + CLIFF_MARK_SIZE_PX -
+/// CLIFF_MARK_BACK_PX - 1`, which aligns it with the cell's own footprint rather
+/// than hanging it off one corner: a cell centred at world `cx*4 + 2` spans
+/// `[cx*4, cx*4+4)`, i.e. 2 tiles back and 1 forward from its centre pixel.
+///
+/// Also the halo a tiled renderer must widen its cell enumeration by, since it
+/// is the larger of the two directions - and the two directions CROSS, which is
+/// why the caller sends the query box rather than the engine deriving it.
+pub const CLIFF_MARK_BACK_PX: i64 = 2;
+
 /// Cells (and corners) per chunk axis: a 32-tile chunk over the 4-tile grid.
 pub const CHUNK_CELLS: usize = 8;
 
