@@ -138,6 +138,34 @@ POISONED_TESTS=(
   cliffs::placement::tests::the_sweep_clears_the_first_clearable_edge_in_l_t_r_b_order
   cliffs::connections::tests::connection_is_a_parity_test_and_not_a_do_they_touch_test
 
+  # Phase 5, part 3 (#225) - the rock and resource overlays.
+  #
+  # The rock probability FIELD inherits `basis_noise`'s hook, the way the two
+  # Vulcanus multioctave fields do: `vulcanus_decorative_knockout` is a bare
+  # two-octave call and both rock expressions compose it.
+  fixtures::reproduces_the_vulcanus_rock_fields_at_every_captured_position
+
+  # The placement ROLL's accept is a CLASSIFICATION, so its hook is
+  # `poison::bool_result` rather than a numeric one - a one-ULP nudge to a
+  # probability changes which side of `U < probability` a draw falls on
+  # essentially never. It is hooked inside `resolve_chunk` rather than on
+  # `placed()`'s return so the perturbation also cascades through the
+  # order-dependent collision pass, which is what the second test here sees.
+  #
+  # Neither test reads a game fixture, and that is deliberate rather than a
+  # gap: the game's own entity counts are per 512x512 region, and scoring one
+  # region costs ~33s in a debug build - the same order as the cliff connection
+  # test that already took this script to 1m50s. The roll is graded against
+  # those counts on the TypeScript side (`test/entityDensity.spec.ts`), and the
+  # two ports are byte-identical through `test/wasmVulcanusRenderParity.spec.ts`.
+  placement::roll::tests::with_no_gates_the_set_is_the_bare_roll
+  placement::roll::tests::collision_keeps_the_first_tile_in_the_games_processing_order
+
+  # The geyser's probability is its own small expression over a field the
+  # resource layer already grades, so it gets `poison::f64_result` and the one
+  # test that pins its value.
+  resources::vulcanus_catalog::tests::the_measured_peak_is_far_below_a_solid_ores
+
   # The only grading of `cliffs::connections` against anything - that module is
   # on no render path, so without this it would be a 445-line port with unit
   # tests and no measurement.

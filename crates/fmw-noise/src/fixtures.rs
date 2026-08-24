@@ -3943,3 +3943,125 @@ fn the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none() 
     assert_eq!(totals[1].matched + totals[1].wrong, 1526);
     assert_eq!(totals[0].matched + totals[0].wrong, 1525);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5, part 3 (#225) - the Vulcanus ROCK and RESOURCE overlays.
+//
+// The two probability expressions and the one new noise field they read. The
+// placement roll that turns them into entities has no game fixture of its own -
+// see the note on the test below.
+// ---------------------------------------------------------------------------
+
+use crate::rocks::vulcanus_field::{vulcanus_decorative_knockout, VulcanusRockFields};
+
+/// The Vulcanus rock probability field: `vulcanus_decorative_knockout` and the
+/// two expressions its four rock entities share.
+///
+/// **`vulcanus_decorative_knockout` is BIT-EXACT at all 434 positions**, worst
+/// residual exactly 0 - the strongest tier-1 result any Vulcanus field has. It
+/// is a bare two-octave `multioctave_noise` at `output_scale = 1`, so nothing
+/// sits between it and the primitives #290 and #293 fixed; the two composites
+/// above it carry the biome layer's remaining error and score far lower.
+///
+/// **The TypeScript spec for these same three fields asserts BOUNDS** (2e-4,
+/// 5e-4, 5e-4), which is the #162 pathology and what #256 exists to remove.
+/// Measured on that side at the same 434 positions, the worst residuals are
+/// **0**, 3.7199e-7 and 2.5693e-7 - so the knockout's bound is inert outright
+/// and the other two are 1,300x wider than the thing they bound. That side's
+/// comment still describes the knockout's residual growing with distance to
+/// 1.18e-4, which was true before #290 and #293 narrowed `basis_noise`'s input
+/// scale and is not true now.
+///
+/// All three counts were measured on the TypeScript side too and agree exactly,
+/// so they describe the distance BOTH ports sit from the game rather than a gap
+/// between them.
+#[test]
+fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-rocks.seed123456.json",
+        "2.1.12",
+    );
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 434, "fixture size");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusRockFields::new(&stack, seed0);
+    let knockout = vulcanus_decorative_knockout(seed0);
+
+    let mut knockout_out = Vec::with_capacity(positions.len());
+    let mut huge = Vec::with_capacity(positions.len());
+    let mut big = Vec::with_capacity(positions.len());
+    for p in positions {
+        let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+        knockout_out.push(f64::from(knockout.eval(x, y)));
+        let f = fields.eval(x, y);
+        huge.push(f.rock_huge);
+        big.push(f.rock_big);
+    }
+
+    let values = fixture.get("values");
+    for (key, want_exact, got) in [
+        ("vulcanus_decorative_knockout", 434usize, &knockout_out),
+        ("vulcanus_rock_huge", 178, &huge),
+        ("vulcanus_rock_big", 205, &big),
+    ] {
+        assert_eq!(
+            score_vulcanus(got, values.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 434"
+        );
+    }
+
+    // The density is `clamp(max(huge, big), 0, 1)` of the GAME's own two
+    // columns, which is a statement about the arbitration rather than about the
+    // port: per-tile arbitration among competing autoplacers is by maximum
+    // probability, so taking the max is exact rather than an approximation.
+    // Scored against the game's values so it cannot pass by agreeing with our
+    // own two fields.
+    //
+    // **412 of 434 is the CLAMP, not the arithmetic.** 399 of these positions
+    // clamp to exactly 0 - both rock expressions are negative over most of the
+    // map - and a saturated position is exact for free, because both ports and
+    // the game all return the bound itself. Of the 35 positions where the
+    // density is nonzero, 13 are exact. Read `vulcanus_rock_big` (205 of 434)
+    // as the port's score and this as what the consumer needs, the same way
+    // `*_biome_full` and `*_biome` are read in the biome layer. The TypeScript
+    // measures 412 and 399 here too.
+    let want_huge = values.get("vulcanus_rock_huge").as_array();
+    let want_big = values.get("vulcanus_rock_big").as_array();
+    let mut density_exact = 0usize;
+    let mut clamped_to_zero = 0usize;
+    for (i, p) in positions.iter().enumerate() {
+        let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+        let want = crate::eval::math::clamp(
+            crate::eval::math::max2(want_huge[i].as_f64(), want_big[i].as_f64()),
+            0.0,
+            1.0,
+        );
+        if want == 0.0 {
+            clamped_to_zero += 1;
+        }
+        if (fields.eval(x, y).density as f32) == (want as f32) {
+            density_exact += 1;
+        }
+    }
+    assert_eq!(density_exact, 412, "density exact f32 matches out of 434");
+    assert_eq!(clamped_to_zero, 399, "positions the clamp saturates at 0");
+
+    // Both expressions cap at `0.2 * (1 - k * ashlands_biome)`, so the overlay
+    // cannot use the ores' `>= 0.5` rule - it rolls per tile instead. The game
+    // evaluates the cap in f32, so the captured peak is f32(0.2) rounded up
+    // rather than 0.2 exactly; compared with a tick of slack rather than
+    // pretending the constant comes back exact.
+    let peak = want_huge
+        .iter()
+        .chain(want_big)
+        .map(super::test_json::Json::as_f64)
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!(peak <= 0.2 + 1e-6, "captured peak {peak} exceeds the cap");
+    assert!(peak > 0.05, "the field is empty over this sample");
+}

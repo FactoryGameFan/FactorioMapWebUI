@@ -229,7 +229,7 @@ describe("the request encoding is pinned on both sides", () => {
   });
 
   /**
-   * A Fulgora request is 104 bytes and a Vulcanus one is 336, so the encoder
+   * A Fulgora request is 104 bytes and a Vulcanus one is 368, so the encoder
    * returns a LENGTH rather than the buffer's capacity.
    *
    * Asserted because v1 had one size and the two were interchangeable there;
@@ -278,7 +278,7 @@ describe("the request encoding is pinned on both sides", () => {
         calcite: { frequency: 1, size: 1 },
         sulfuricAcidGeyser: { frequency: 1, size: 1 },
       }),
-    ).toThrow(/vulcanus request needs 336 bytes/);
+    ).toThrow(/vulcanus request needs 368 bytes/);
   });
 
   it("reports a bad request by status rather than trapping", async () => {

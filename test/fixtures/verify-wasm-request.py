@@ -9,8 +9,8 @@ each other.
 What it can and cannot check:
 
 - It CAN check every offset, the endianness, the field order, the eleven
-  Vulcanus scalars and the four cell-query-box edges against the request that
-  produced them.
+  Vulcanus scalars and both world boxes' edges against the request that produced
+  them.
 - It CANNOT reproduce the trig VALUES, because those are V8's `Math.sin` after
   an `f32` narrowing and Python's libm is a different implementation - which is
   the whole point of #270 and the reason the trig crosses the boundary as values
@@ -30,9 +30,17 @@ MAGIC = 0x52574D46
 ABI_VERSION = 2
 COMMON_BYTES = 56
 FULGORA_PARAMS_BYTES = 48
-VULCANUS_PARAMS_BYTES = 280
+VULCANUS_PARAMS_BYTES = 312
 PLANET = {"fulgora": 0, "vulcanus": 1}
-VIEW = {"landmask": 0, "terrain": 1, "scrapFootprint": 2, "cliffs": 3}
+VIEW = {
+    "landmask": 0,
+    "terrain": 1,
+    "scrapFootprint": 2,
+    "cliffs": 3,
+    "rocks": 4,
+    "resources": 5,
+    "all": 6,
+}
 
 BEARING_NAMES = [
     "spawnAshlands",
@@ -100,7 +108,7 @@ def decode_fulgora(b, req):
 
 def decode_vulcanus(b, req):
     if len(b) != COMMON_BYTES + VULCANUS_PARAMS_BYTES:
-        raise AssertionError(f"vulcanus request is {len(b)} bytes, expected 336")
+        raise AssertionError(f"vulcanus request is {len(b)} bytes, expected 368")
     decode_common(b, req, VULCANUS_PARAMS_BYTES)
     p = COMMON_BYTES
     check("volcanismFrequency", f64(b, p), req["volcanismFrequency"])
@@ -200,7 +208,54 @@ def decode_vulcanus(b, req):
         raise AssertionError(f"cellQueryBox edges are not all distinct: {edges}")
     if not (edges[0] < edges[2] and edges[1] < edges[3]):
         raise AssertionError(f"cellQueryBox is inverted on an axis: {edges}")
-    return trig, {"x0": edges[0], "y0": edges[1], "x1": edges[2], "y1": edges[3]}
+    cell_box = {"x0": edges[0], "y0": edges[1], "x1": edges[2], "y1": edges[3]}
+
+    # The placement sweep box, appended when the rock and resource overlays
+    # landed. Same value check, same reasoning.
+    sweep_req = req.get("placementSweepBox")
+    if sweep_req is None:
+        raise AssertionError("the vulcanus arm must carry an explicit placementSweepBox")
+    sweep = [f64(b, p + 280 + i * 8) for i in range(4)]
+    for i, key in enumerate(["x0", "y0", "x1", "y1"]):
+        check(f"placementSweepBox.{key}", sweep[i], sweep_req[key])
+    if len(set(sweep)) != 4:
+        raise AssertionError(f"placementSweepBox edges are not all distinct: {sweep}")
+    if not (sweep[0] < sweep[2] and sweep[1] < sweep[3]):
+        raise AssertionError(f"placementSweepBox is inverted on an axis: {sweep}")
+
+    # The two boxes are adjacent, the same size and the same shape, which makes
+    # them the pair most likely to be wired to one another. The per-edge value
+    # check above already catches every mis-wiring that was planted - the cliff
+    # box in both slots, the two swapped, a block shifted by one f64 - so the
+    # two checks below are here for the one break it CANNOT catch: a halo of the
+    # wrong shape whose request was edited to agree with it. Measured, not
+    # assumed.
+    # This one caught none of the six planted breaks and is a constraint on the
+    # FIXTURE, like the distinctness checks above: it refuses a fixture in which
+    # the two boxes have collapsed onto each other, where the value check would
+    # stop discriminating between them.
+    if any(a == c for a, c in zip(edges, sweep)):
+        raise AssertionError(f"a cell-query edge coincides with a sweep edge: {edges} {sweep}")
+    px0, py0 = req["originX"], req["originY"]
+    px1 = px0 + req["width"] * req["tilesPerPixel"]
+    py1 = py0 + req["height"] * req["tilesPerPixel"]
+    lo_x, hi_x = px0 - sweep[0], sweep[2] - px1
+    lo_y, hi_y = py0 - sweep[1], sweep[3] - py1
+    if not (lo_x == hi_x == lo_y == hi_y > 0):
+        raise AssertionError(
+            f"placementSweepBox is not a symmetric halo: {lo_x}, {hi_x}, {lo_y}, {hi_y}"
+        )
+    # The cliff halo must be asymmetric on at least one axis. `cliffCellQueryBox`
+    # is asymmetric on both, because the block spans `px - 2 ..= px + 1`; this
+    # fixture's box happens to be symmetric on x and asymmetric on y, and one
+    # axis is all the check needs to keep the two boxes distinguishable by
+    # shape.
+    if (px0 - edges[0]) == (edges[2] - px1) and (py0 - edges[1]) == (edges[3] - py1):
+        raise AssertionError(
+            "cellQueryBox is symmetric on both axes - it must not be, or the two "
+            "boxes are indistinguishable by shape"
+        )
+    return trig, cell_box, {"x0": sweep[0], "y0": sweep[1], "x1": sweep[2], "y1": sweep[3]}
 
 
 def main():
@@ -209,11 +264,11 @@ def main():
     fb = bytes(d["fulgora"]["bytes"])
     vb = bytes(d["vulcanus"]["bytes"])
     ftrig = decode_fulgora(fb, d["fulgora"]["request"])
-    vtrig, vbox = decode_vulcanus(vb, d["vulcanus"]["request"])
+    vtrig, vbox, vsweep = decode_vulcanus(vb, d["vulcanus"]["request"])
     print("fulgora: all fields agree, both bearings unit-norm")
     print(
         "vulcanus: all fields agree, ten bearings unit-norm, 1 legitimate duplicate, "
-        "cell query box distinct and non-inverted"
+        "both world boxes distinct and non-inverted, placement halo symmetric"
     )
 
     fixture = {
@@ -225,9 +280,10 @@ def main():
             "these bytes. The layout tables are in crates/fmw-wasm/src/abi.rs. v2 replaced v1's "
             "single fixed 104-byte struct with a common 56-byte prefix plus a per-planet block "
             "whose length the prefix declares; a Fulgora request is still exactly 104 bytes, and a "
-            "Vulcanus one is 336 - it grew from 304 when the cliffs view added a cell query "
-            "box, with no version bump, because the prefix declares its own block length and "
-            "Fulgora's request did not move a byte. These bytes were checked by an INDEPENDENT Python decoder - a "
+            "Vulcanus one is 368 - it grew from 304 to 336 when the cliffs view added a cell query "
+            "box and from 336 to 368 when the rock and resource overlays added a placement sweep "
+            "box, neither time with a version bump, because the prefix declares its own block "
+            "length and Fulgora's request has not moved a byte through either. These bytes were checked by an INDEPENDENT Python decoder - a "
             "third implementation written from the layout table, not the TypeScript writer under "
             "test and not the Rust reader - which agreed on every offset and every scalar field. "
             "It deliberately does NOT check the trig VALUES: those are V8's Math.sin after an f32 "
@@ -246,7 +302,16 @@ def main():
             "and a declared length still saying 248. Two further checks on that box - four "
             "distinct edges, and not inverted on either axis - constrain the FIXTURE rather than "
             "catching a break, because against a degenerate box the value check would stop "
-            "discriminating. Regenerating "
+            "discriminating. The placement sweep box added five more planted breaks, each run "
+            "rather than listed: the cliff box written into both slots, the two boxes swapped, a "
+            "block shifted by one f64, one edge wrong, and a declared length still saying 280. "
+            "All five are caught by the per-edge value check. A SIXTH is not, and is why the "
+            "halo is also checked for symmetry: a halo one tile wider on the low x side than the "
+            "high one, with the request edited to agree, passes every value check - and the "
+            "placement halo really is symmetric about the pixel box, where the cliff halo is not, "
+            "which is the whole reason there are two boxes rather than one. The no-coinciding-edge "
+            "check caught none of the six and is a fixture constraint like the distinctness ones. "
+            "Regenerating "
             "these bytes from the encoder would make the fixture agree with itself and prove "
             "nothing; if the layout changes, bump ABI_VERSION on both sides and re-verify the "
             "same way."
@@ -265,7 +330,11 @@ def main():
             "paramsBytes": VULCANUS_PARAMS_BYTES,
             "totalBytes": len(vb),
             "request": d["vulcanus"]["request"],
-            "decoded": {"trig": vtrig, "cellQueryBox": vbox},
+            "decoded": {
+                "trig": vtrig,
+                "cellQueryBox": vbox,
+                "placementSweepBox": vsweep,
+            },
             "bytes": d["vulcanus"]["bytes"],
         },
     }

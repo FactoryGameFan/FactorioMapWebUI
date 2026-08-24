@@ -18,6 +18,15 @@ use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::FulgoraStack;
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
+use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
+use fmw_noise::resources::vulcanus_catalog::{
+    VulcanusResource, VulcanusResourcePlacement, RESOURCE_PROBABILITY_THRESHOLD,
+    VULCANUS_RESOURCE_CATALOG,
+};
+use fmw_noise::resources::vulcanus_geyser::VulcanusGeyserPlacement;
+use fmw_noise::rocks::catalog::{ROCK_MAP_COLOR, VULCANUS_ROCK_MARK_RADIUS_PX};
+use fmw_noise::rocks::vulcanus_field::VulcanusRockFields;
+use fmw_noise::rocks::vulcanus_placement::VulcanusRockPlacement;
 use fmw_noise::tiles::fulgora_catalog::FulgoraTile;
 use fmw_noise::tiles::fulgora_ocean::{ocean_tile, Ocean};
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
@@ -42,10 +51,26 @@ pub const VIEW_SCRAP_FOOTPRINT: u32 = 2;
 
 /// Terrain with the cliff footprint painted over it.
 ///
-/// A composite rather than a bare field, and the only one so far: the cliff
-/// overlay has nothing to draw on its own, and the two passes share the whole
-/// field DAG below the tile argmax.
+/// A composite rather than a bare field: the cliff overlay has nothing to draw
+/// on its own, and the two passes share the whole field DAG below the tile
+/// argmax. Sending it as one request is what lets the engine share that DAG -
+/// splitting it would build the chain twice.
 pub const VIEW_CLIFFS: u32 = 3;
+
+/// Terrain with the rock overlay painted over it.
+pub const VIEW_ROCKS: u32 = 4;
+
+/// Terrain with the resource overlay painted over it.
+pub const VIEW_RESOURCES: u32 = 5;
+
+/// Terrain with every overlay this planet has, in the renderer's own order.
+///
+/// **The order is resources, then rocks, then cliffs**, which is the
+/// TypeScript's and is not arbitrary: resources paint first so that a cliff or
+/// a rock crossing an ore patch still reads as the thing that is in the way,
+/// and cliffs last matches the Nauvis composite, where the cliff pass is
+/// final.
+pub const VIEW_ALL: u32 = 6;
 
 /// The land colour, `FULGORA_LANDMASK_LAND_RGB` in
 /// `src/noise/preview/renderFulgoraTerrain.ts`.
@@ -113,15 +138,18 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         Err(status) => return status,
     };
     // The planet/view pair is checked BEFORE the buffer size, so an unsupported
-    // view reports as one rather than as a size problem. Vulcanus serves only
-    // `terrain` so far: it has no ocean and no scrap, so the other two view
-    // codes are meaningless there rather than merely unimplemented.
+    // view reports as one rather than as a size problem. Vulcanus has no ocean
+    // and no scrap, so the land mask and the scrap footprint are meaningless
+    // there rather than merely unimplemented.
     let supported = matches!(
         (req.planet, req.view),
         (
             PLANET_FULGORA,
             VIEW_LANDMASK | VIEW_TERRAIN | VIEW_SCRAP_FOOTPRINT
-        ) | (PLANET_VULCANUS, VIEW_TERRAIN | VIEW_CLIFFS)
+        ) | (
+            PLANET_VULCANUS,
+            VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL
+        )
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -272,8 +300,235 @@ fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
         }
     }
 
-    if req.view == VIEW_CLIFFS {
+    // Resources first, then rocks, then cliffs - the TypeScript composite's own
+    // order. Resources paint first so that a cliff or a rock crossing an ore
+    // patch still reads as the thing that is in the way.
+    if matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
+        paint_vulcanus_resources(req, p, &ctx, &stack, out);
+    }
+    if matches!(req.view, VIEW_ROCKS | VIEW_ALL) {
+        paint_vulcanus_rocks(req, p, &stack, out);
+    }
+    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
         paint_vulcanus_cliffs(req, p, &ctx, &stack, out);
+    }
+}
+
+/// JavaScript's `Math.round`, which is NOT Rust's `f64::round`.
+///
+/// Rust rounds a half away from zero; JavaScript rounds it toward positive
+/// infinity, so `Math.round(-0.5)` is `-0` and `(-0.5f64).round()` is `-1`.
+/// The sweep boxes below reach this with negative pixel offsets - a halo
+/// extends one pixel outside the tile by construction - so the two rules are
+/// reachable rather than theoretical, and the render must be byte-identical to
+/// the TypeScript's.
+fn js_round(v: f64) -> f64 {
+    (v + 0.5).floor()
+}
+
+/// The pixel range a world box covers in this request's grid, as the
+/// TypeScript's renderers compute it.
+///
+/// The result may extend OUTSIDE `0..width` / `0..height`, and that is the
+/// point: a mark centred just beyond the tile still paints the part of itself
+/// that falls inside. [`paint_mark`] clips, so a wider sweep can never paint
+/// outside the tile's own bounds.
+fn sweep_pixel_range(req: &Request, world_box: [f64; 4]) -> (i64, i64, i64, i64) {
+    let [x0, y0, x1, y1] = world_box;
+    #[allow(clippy::cast_possible_truncation)]
+    let to_px = |v: f64, origin: f64| js_round((v - origin) / req.tiles_per_pixel) as i64;
+    (
+        to_px(x0, req.origin_x),
+        to_px(x1, req.origin_x),
+        to_px(y0, req.origin_y),
+        to_px(y1, req.origin_y),
+    )
+}
+
+/// Paint a `(2r+1)x(2r+1)` mark centred on one pixel, clipped to the grid.
+///
+/// The counterpart of `paintMark` in `src/noise/preview/renderCliffs.ts`.
+/// Cliffs do NOT use it - their block is the EVEN 4 wide and anchored on the
+/// cell's own footprint, which no radius can express, so they keep their own
+/// painter.
+fn paint_mark(out: &mut [u8], width: i64, height: i64, px: i64, py: i64, color: [u8; 3], r: i64) {
+    for dy in -r..=r {
+        let y = py + dy;
+        if y < 0 || y >= height {
+            continue;
+        }
+        for dx in -r..=r {
+            let x = px + dx;
+            if x < 0 || x >= width {
+                continue;
+            }
+            #[allow(clippy::cast_sign_loss)]
+            let o = ((y * width + x) * 4) as usize;
+            out[o] = color[0];
+            out[o + 1] = color[1];
+            out[o + 2] = color[2];
+            out[o + 3] = 255;
+        }
+    }
+}
+
+/// Composite the Vulcanus rock overlay over terrain that is already painted.
+///
+/// Rolls rather than thresholds: it draws the placement set's per-tile `U` and
+/// places where `U < density(x, y)` AND the tile-restriction and collision
+/// gates pass. Positions are not tile-exact - there is no cross-overlay
+/// arbitration against other autoplacers and no jitter draw within the tile -
+/// but density is the property under test, and this is a faithful roll against
+/// it rather than a threshold on it.
+///
+/// Two differences from the Nauvis renderer, neither of which needs a branch
+/// here: Vulcanus has no water tile to exclude, and it deliberately omits the
+/// `rocks` autoplace control, so there is no frequency or size to thread.
+///
+/// The 3x3 mark can straddle a tile seam, which is why the sweep runs over the
+/// halo-widened `placement_sweep_box` rather than the request's own pixel box.
+fn paint_vulcanus_rocks(
+    req: &Request,
+    p: &VulcanusParams,
+    stack: &VulcanusStack<'_>,
+    out: &mut [u8],
+) {
+    let fields = VulcanusRockFields::new(stack, req.seed0);
+    let placement = VulcanusRockPlacement::new(&fields);
+    let set = placement.placement_set();
+
+    let (px0, px1, py0, py1) = sweep_pixel_range(req, p.placement_sweep_box);
+    let width = i64::from(req.width);
+    let height = i64::from(req.height);
+    for py in py0..py1 {
+        #[allow(clippy::cast_precision_loss)]
+        let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+        for px in px0..px1 {
+            #[allow(clippy::cast_precision_loss)]
+            let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+            if !set.placed(wx, wy) {
+                continue;
+            }
+            paint_mark(
+                out,
+                width,
+                height,
+                px,
+                py,
+                ROCK_MAP_COLOR,
+                VULCANUS_ROCK_MARK_RADIUS_PX,
+            );
+        }
+    }
+}
+
+/// Composite the Vulcanus ore overlay over terrain that is already painted.
+///
+/// **Two placement modes, because Vulcanus has two kinds of resource**, and the
+/// catalog's `placement` picks per entry:
+///
+/// - The three solid ores THRESHOLD. Their probability is
+///   `(size > 0) * 1000 * ((1 + region) * rp - 1)`, which is
+///   `(size > 0) * 1000 * region` once `random_penalty` goes to 1, and it
+///   saturates to ~1 inside a patch and 0 outside - so `probability >= 0.5` is
+///   the patch boundary.
+/// - The sulfuric-acid geyser ROLLS. Its probability peaks below 0.09 anywhere
+///   on the map, so no threshold on it yields a footprint.
+///
+/// **Paint order: geyser marks first, then the three thresholded ores over the
+/// top.** The game arbitrates a tile among competing autoplacers by maximum
+/// probability, and calcite saturates to ~1 against the geyser's <0.09, so a
+/// solid ore must win a shared pixel. Painting the ores last reproduces that
+/// without a colour test: any geyser pixel an ore also claims is simply
+/// overwritten. It also keeps the ore pass a per-pixel pure function of world
+/// position.
+///
+/// **No water exclusion**, unlike the Nauvis renderer: Vulcanus has no water
+/// tile, and ore exclusion is expressed through the biome favorabilities rather
+/// than a tile test. The geyser's roll does carry a lava gate, which is a
+/// different mechanism - a collision mask, not a favorability.
+fn paint_vulcanus_resources(
+    req: &Request,
+    p: &VulcanusParams,
+    ctx: &EvalCtx,
+    stack: &VulcanusStack<'_>,
+    out: &mut [u8],
+) {
+    let controls = &ctx.vulcanus_resource_controls;
+    let active: Vec<VulcanusResource> = VULCANUS_RESOURCE_CATALOG
+        .into_iter()
+        .filter(|r| r.enabled(controls))
+        .collect();
+    if active.is_empty() {
+        return;
+    }
+    let width = i64::from(req.width);
+    let height = i64::from(req.height);
+
+    // Pass 1: the rolled entries, painted as 3x3 marks. Unlike rocks - where a
+    // block would merge scattered rocks into a blob - a geyser is a 2.8 x 2.8
+    // entity placed roughly once per 3000 tiles, so a single pixel disappears.
+    for entry in active
+        .iter()
+        .filter(|r| r.placement() == VulcanusResourcePlacement::Roll)
+    {
+        let geyser = VulcanusGeyserPlacement::new(stack, controls);
+        let set = geyser.placement_set();
+        let (px0, px1, py0, py1) = sweep_pixel_range(req, p.placement_sweep_box);
+        for py in py0..py1 {
+            #[allow(clippy::cast_precision_loss)]
+            let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+            for px in px0..px1 {
+                #[allow(clippy::cast_precision_loss)]
+                let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+                if !set.placed(wx, wy) {
+                    continue;
+                }
+                paint_mark(
+                    out,
+                    width,
+                    height,
+                    px,
+                    py,
+                    entry.map_color(),
+                    PLACEMENT_MARK_RADIUS_PX,
+                );
+            }
+        }
+    }
+
+    // Pass 2: the thresholded ores, over the top. They paint one pixel each and
+    // sweep the request's own box rather than the halo, because there is no
+    // mark to straddle a seam. First in catalog order wins a pixel.
+    let thresholded: Vec<VulcanusResource> = active
+        .into_iter()
+        .filter(|r| r.placement() == VulcanusResourcePlacement::Threshold)
+        .collect();
+    if thresholded.is_empty() {
+        return;
+    }
+    for py in 0..req.height {
+        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            // One evaluation for all three ores rather than one per ore. The
+            // TypeScript asks each entry's own memoised region closure and
+            // stops at the first winner; this reads the same values off one
+            // pass of the layer, which is the same numbers in fewer calls.
+            let regions = stack.resources(wx, wy);
+            for entry in &thresholded {
+                if 1000.0 * entry.region(&regions) < RESOURCE_PROBABILITY_THRESHOLD {
+                    continue;
+                }
+                let color = entry.map_color();
+                let o = ((py * req.width + px) * 4) as usize;
+                out[o] = color[0];
+                out[o + 1] = color[1];
+                out[o + 2] = color[2];
+                out[o + 3] = 255;
+                break; // first in catalog order wins
+            }
+        }
     }
 }
 

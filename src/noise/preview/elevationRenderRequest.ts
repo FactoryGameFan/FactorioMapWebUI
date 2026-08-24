@@ -297,25 +297,27 @@ export function placementMarkSweepBox(req: ElevationRenderRequest): WorldBox {
 }
 
 /**
- * The Rust engine's Vulcanus path - `terrain`, and now `cliffs` too.
+ * The Rust engine's Vulcanus path - every view the planet has.
  *
  * Vulcanus has no ocean and no scrap, so the land mask and the scrap footprint
  * are meaningless there rather than merely unimplemented; the module rejects
- * them by status. Its rock and resource OVERLAYS are still TypeScript (#225 is
- * not finished), so `rocks`, `resources` and `all` still build the stack here
- * and paint as before.
+ * them by status. Everything else - `terrain`, `cliffs`, `rocks`, `resources`
+ * and the `all` composite - now renders through the engine, which is what
+ * completes #225.
  *
- * **`cliffs` is a composite, not a field**, and the module renders both halves:
- * the cliff overlay has nothing to draw on its own, and the two passes share the
- * whole field DAG below the tile argmax. Sending it as one request is what lets
- * the engine share that DAG - splitting it would build the chain twice.
+ * **The composites are single requests, not a terrain render plus overlay
+ * calls.** Each overlay has nothing to draw on its own and shares the whole
+ * field DAG below the tile argmax with terrain, so splitting `all` into four
+ * requests would build that chain four times. The module paints resources, then
+ * rocks, then cliffs over one terrain sweep - the same order this file used when
+ * it composed them itself.
  *
  * The copy note on the Fulgora function below applies here identically.
  */
 function renderVulcanusThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
-  view: "terrain" | "cliffs",
+  view: "terrain" | "cliffs" | "rocks" | "resources" | "all",
 ): ElevationRenderResult {
   const levers = (c: { frequency?: number; size?: number } | undefined) => ({
     frequency: c?.frequency ?? 1,
@@ -338,9 +340,12 @@ function renderVulcanusThroughWasm(
     vulcanusCoal: levers(controls?.vulcanusCoal),
     calcite: levers(controls?.calcite),
     sulfuricAcidGeyser: levers(controls?.sulfuricAcidGeyser),
-    // Inert for `terrain`; for `cliffs` it is the halo-widened box, computed by
-    // the same function the TypeScript path passes to `renderVulcanusCliffs`.
+    // Each is inert for the views that do not read it. Both are computed by the
+    // same functions the TypeScript path passes to its overlay renderers, so
+    // the halo arithmetic lives in one place and `tiledEquality.spec.ts` keeps
+    // guarding it.
     cellQueryBox: cliffCellQueryBox(req),
+    placementSweepBox: placementMarkSweepBox(req),
   });
   const owned = new Uint8ClampedArray(pixels);
   return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
@@ -420,10 +425,20 @@ export function runRenderRequest(
       // Checked BEFORE the TypeScript stack is built, for the reason the
       // Fulgora branch gives: `makeVulcanusStack` derives seed tables for the
       // whole biome, crack, climate and elevation chain, and building them only
-      // to throw them away would be most of the saving. `terrain` and `cliffs`
-      // only - `rocks`, `resources` and `all` still need the stack here,
-      // because their overlays have no Rust port yet (#225).
-      if (engine !== undefined && (req.view === "terrain" || req.view === "cliffs")) {
+      // to throw them away would be most of the saving.
+      //
+      // Every Vulcanus view the planet has is served here now (#225). What is
+      // left below is the TypeScript path, which stays because it is the arm
+      // tier 3 compares against - the two are byte-identical, so an engine that
+      // failed to load is slower and never wrong.
+      if (
+        engine !== undefined &&
+        (req.view === "terrain" ||
+          req.view === "cliffs" ||
+          req.view === "rocks" ||
+          req.view === "resources" ||
+          req.view === "all")
+      ) {
         return renderVulcanusThroughWasm(req, engine, req.view);
       }
       // ONE stack for the whole composite. Two things make this pay, and both

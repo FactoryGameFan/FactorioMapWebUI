@@ -40,7 +40,7 @@ export const COMMON_BYTES = 56;
 export const FULGORA_PARAMS_BYTES = 48;
 
 /** Must equal `fmw_wasm::abi::VULCANUS_PARAMS_BYTES`. */
-export const VULCANUS_PARAMS_BYTES = 280;
+export const VULCANUS_PARAMS_BYTES = 312;
 
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
@@ -54,8 +54,23 @@ export const REQUEST_BYTES = COMMON_BYTES + VULCANUS_PARAMS_BYTES;
 /** The `planet` codes the module understands. */
 export const PLANET = { fulgora: 0, vulcanus: 1 } as const;
 
-/** The `view` codes the module understands. */
-export const VIEW = { landmask: 0, terrain: 1, scrapFootprint: 2, cliffs: 3 } as const;
+/**
+ * The `view` codes the module understands.
+ *
+ * Adding a code is NOT a layout change - `view` is a `u32` in the common prefix
+ * and has been since v1 - so `rocks`, `resources` and `all` arrived without an
+ * ABI bump. What a new code does need is the module's own `supported` match to
+ * name it, or the render comes back `unsupported planet or view`.
+ */
+export const VIEW = {
+  landmask: 0,
+  terrain: 1,
+  scrapFootprint: 2,
+  cliffs: 3,
+  rocks: 4,
+  resources: 5,
+  all: 6,
+} as const;
 
 /**
  * The status codes `render_request` returns. Mirrors `fmw_wasm::abi::Status`.
@@ -121,6 +136,25 @@ export interface VulcanusRenderRequest extends CommonRenderRequest {
    * answer.
    */
   readonly cellQueryBox?: {
+    readonly x0: number;
+    readonly y0: number;
+    readonly x1: number;
+    readonly y1: number;
+  };
+  /**
+   * The world box to sweep for placement-roll hits, for the `rocks`,
+   * `resources` and `all` views. Defaults to the request's own pixel box.
+   *
+   * A second box rather than a reuse of `cellQueryBox`, because the two halos
+   * are different shapes: the cliff block spans `px - 2 ..= px + 1`, which is
+   * asymmetric and whose directions cross, while a placement mark is a 3x3
+   * centred on its pixel. Computed by `placementMarkSweepBox`, the same
+   * function the TypeScript path passes to the two overlay renderers.
+   *
+   * The three THRESHOLDED ores ignore it - they paint one pixel each and sweep
+   * the request's own box.
+   */
+  readonly placementSweepBox?: {
     readonly x0: number;
     readonly y0: number;
     readonly x1: number;
@@ -230,7 +264,7 @@ export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }
  * Write a request into `target`, returning the bytes written.
  *
  * The return value is the LENGTH of this request, not the buffer's capacity -
- * a Fulgora request is 104 bytes and a Vulcanus one is 336, and the module is
+ * a Fulgora request is 104 bytes and a Vulcanus one is 368, and the module is
  * handed the length so it can check the declared block against what arrived.
  */
 export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest): number {
@@ -295,18 +329,22 @@ function writeVulcanusParams(view: DataView, req: VulcanusRenderRequest): void {
     view.setFloat64(p + 88 + i * 16, t.sin, true);
     view.setFloat64(p + 96 + i * 16, t.cos, true);
   });
-  // The cliff cell query box, defaulting to the request's own pixel box. Only
-  // the `cliffs` view reads it; every other view leaves it inert rather than
-  // absent, so the block has one length per planet and `BadParamsLength` stays
-  // a real check.
-  const box = req.cellQueryBox ?? {
+  // The two world boxes, each defaulting to the request's own pixel box. Only
+  // the views that read one consult it; every other view leaves both inert
+  // rather than absent, so the block has one length per planet and
+  // `BadParamsLength` stays a real check.
+  const pixelBox = {
     x0: req.originX,
     y0: req.originY,
     x1: req.originX + req.width * req.tilesPerPixel,
     y1: req.originY + req.height * req.tilesPerPixel,
   };
-  view.setFloat64(p + 248, box.x0, true);
-  view.setFloat64(p + 256, box.y0, true);
-  view.setFloat64(p + 264, box.x1, true);
-  view.setFloat64(p + 272, box.y1, true);
+  const writeBox = (at: number, box: typeof pixelBox): void => {
+    view.setFloat64(at, box.x0, true);
+    view.setFloat64(at + 8, box.y0, true);
+    view.setFloat64(at + 16, box.x1, true);
+    view.setFloat64(at + 24, box.y1, true);
+  };
+  writeBox(p + 248, req.cellQueryBox ?? pixelBox);
+  writeBox(p + 280, req.placementSweepBox ?? pixelBox);
 }
