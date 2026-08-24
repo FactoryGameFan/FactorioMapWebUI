@@ -3365,8 +3365,14 @@ fn puts_every_vulcanus_tile_where_the_game_puts_it_at_a_real_saves_surface_seed(
 // Phase 5, second half (#225): the cliff stack.
 // ---------------------------------------------------------------------------
 
-use crate::cliffs::catalog::{cliff_orientation_for_code, CLIFF_ORIENTATION_NAMES};
-use crate::cliffs::placement::{CliffBands, CliffFields, CliffPlacement, PlacedCliffCell};
+use crate::cliffs::catalog::{
+    cliff_code_for_orientation, cliff_collision_tile_box, cliff_orientation_for_code,
+    CLIFF_ORIENTATION_NAMES,
+};
+use crate::cliffs::connections::{apply_cliff_connections, ApplyCollision, CliffConnectionOptions};
+use crate::cliffs::placement::{
+    CellRejection, CliffBands, CliffFields, CliffPlacement, PlacedCliffCell, TileCollision,
+};
 use crate::cliffs::vulcanus_fields::{
     VulcanusCliffFields, VulcanusLavaTiles, VULCANUS_CLIFF_ELEVATION_0,
     VULCANUS_CLIFF_ELEVATION_INTERVAL, VULCANUS_CLIFF_SMOOTHING,
@@ -3732,4 +3738,208 @@ fn reproduces_the_vulcanus_cliff_fields_at_every_captured_corner() {
         worst_channel_gap > 50.0,
         "the channel gap collapsed to {worst_channel_gap} - has multisample lost its grid?"
     );
+}
+
+/// `Surface::wouldCollide` for a Vulcanus cliff at the APPLY stage: the
+/// orientation's box against the lava tiles, plus the ore removal.
+///
+/// The same geometry `tile_collides` drives through the placement pass - only
+/// the STAGE it runs at is different, which is the whole subject of
+/// [`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`].
+struct LavaAndOre<'a, 'b> {
+    lava: VulcanusLavaTiles<'a, 'b>,
+    ore: VulcanusOreRejection<'a, 'b>,
+}
+
+impl ApplyCollision for LavaAndOre<'_, '_> {
+    fn collides(&self, orientation: u8, x: f64, y: f64) -> bool {
+        let Some(code) = cliff_code_for_orientation(orientation) else {
+            return false;
+        };
+        if let Some(b) = cliff_collision_tile_box(code, x, y) {
+            for tx in b.left..=b.right {
+                for ty in b.top..=b.bottom {
+                    if self.lava.collides(tx, ty) {
+                        return true;
+                    }
+                }
+            }
+        }
+        self.ore.rejects(code, x, y)
+    }
+}
+
+/// How a set of oriented cells scores against the game's own.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct OrientationScore {
+    /// Right place, right orientation.
+    matched: usize,
+    /// Right place, wrong orientation.
+    wrong: usize,
+    /// A cell the game does not have.
+    surplus: usize,
+    /// A cell the game has and this does not.
+    missing: usize,
+}
+
+/// `applyCliffs` against `rejectAtCrossingStage` - the two stages a rejection
+/// could act at, scored on ORIENTATION against the game's own cliffs.
+///
+/// `rejectAtCrossingStage` zeroes a rejected cell's four edges. The real stage
+/// destroys the entity and lets `Cliff::onDestroy` take the facing end of each
+/// CONNECTED neighbour - one or two sides, not four, and by rewriting the
+/// orientation rather than by clearing a crossing.
+///
+/// **This is what grades [`crate::cliffs::connections`] at all.** That module
+/// is on no render path - it is the model #84's investigation is scored with -
+/// so without this it would be a port with unit tests and no measurement
+/// against anything. Here it runs the same three arms the TypeScript's
+/// `cliffConnections.spec.ts` runs, over the same fixture, and must reach the
+/// same numbers:
+///
+/// | model | matched | wrong | surplus | missing |
+/// | --- | ---: | ---: | ---: | ---: |
+/// | `reject_at_crossing_stage` (ships) | 1504 | 21 | 22 | 6 |
+/// | `applyCliffs`, lava + ore | **1508** | **18** | 22 | **5** |
+/// | `applyCliffs`, no cascade | 1500 | 25 | 22 | 6 |
+///
+/// The apply stage is better on three counts and worse on none, and the
+/// no-cascade row is what says the CASCADE rather than the re-staging is doing
+/// it - without that arm "the apply stage is better" would not distinguish the
+/// two explanations.
+///
+/// **It is deliberately not what the renderer runs.** On POSITION alone the two
+/// models are a wash - 1526 against 1525 of 1531 - and the renderer paints
+/// positions and ignores orientation. Adopting it there means running the pass
+/// over a padded query and filtering afterwards, which changes the geometry the
+/// tiled-equals-whole tests pin. That is worth doing on its own evidence, not
+/// smuggled in for one cell.
+///
+/// The 64-tile pad is a HALO, not a margin: a cell on the query's outer chunk
+/// ring reads its neighbour across the boundary, and the `onDestroy` cascade can
+/// reach further still.
+#[test]
+fn the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-entities.seed123456.json",
+        "2.1.12",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = fixture.get("seed").as_f64() as u32;
+
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let lava = VulcanusLavaTiles::new(&stack);
+    let ore = VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls);
+    let apply = LavaAndOre {
+        lava: VulcanusLavaTiles::new(&stack),
+        ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
+    };
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        ..CliffBands::default()
+    };
+
+    let mut totals = [OrientationScore::default(); 3];
+    for case in fixture.get("cases").as_array() {
+        let r = case.get("region");
+        let (x0, y0) = (r.get("x0").as_f64(), r.get("y0").as_f64());
+        let (x1, y1) = (r.get("x1").as_f64(), r.get("y1").as_f64());
+
+        // The game's own cliffs in this region, by position, carrying the
+        // orientation it gave each one.
+        let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+        for e in case.get("cliffs").as_array() {
+            if e.get("name").as_str() != "cliff-vulcanus" {
+                continue;
+            }
+            let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+            if x < x0 || x >= x1 || y < y0 || y >= y1 {
+                continue;
+            }
+            let want = e.get("orientation").as_str();
+            if let Some(id) = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want) {
+                game.insert((x.to_bits(), y.to_bits()), id as u8);
+            }
+        }
+
+        // Arm 0: the shipping model, rejecting at the crossing stage.
+        let shipped: BTreeMap<(u64, u64), u8> = CliffPlacement::new(
+            &fields,
+            CliffBands {
+                reject_at_crossing_stage: true,
+                ..bands
+            },
+        )
+        .with_tile_collision(&lava)
+        .with_cell_rejection(&ore)
+        .placed_cells(x0, y0, x1, y1)
+        .iter()
+        .filter_map(|c| cliff_orientation_for_code(c.code).map(|id| (cell_key(c), id)))
+        .collect();
+
+        // Arms 1 and 2: the crossing field and the repair alone, over a 64-tile
+        // halo, with the rejection moved to the apply stage.
+        let raw = CliffPlacement::new(&fields, bands).placed_cells(
+            x0 - 64.0,
+            y0 - 64.0,
+            x1 + 64.0,
+            y1 + 64.0,
+        );
+        let staged = |no_cascade: bool| -> BTreeMap<(u64, u64), u8> {
+            apply_cliff_connections(
+                &raw,
+                &CliffConnectionOptions {
+                    collides: Some(&apply),
+                    no_cascade,
+                    ..Default::default()
+                },
+            )
+            .iter()
+            .filter(|c| c.x >= x0 && c.x < x1 && c.y >= y0 && c.y < y1)
+            .map(|c| ((c.x.to_bits(), c.y.to_bits()), c.orientation))
+            .collect()
+        };
+
+        for (i, port) in [shipped, staged(false), staged(true)].iter().enumerate() {
+            for (k, id) in port {
+                match game.get(k) {
+                    None => totals[i].surplus += 1,
+                    Some(want) if want == id => totals[i].matched += 1,
+                    Some(_) => totals[i].wrong += 1,
+                }
+            }
+            totals[i].missing += game.keys().filter(|k| !port.contains_key(*k)).count();
+        }
+    }
+
+    let row = |matched, wrong, surplus, missing| OrientationScore {
+        matched,
+        wrong,
+        surplus,
+        missing,
+    };
+    assert_eq!(
+        totals[0],
+        row(1504, 21, 22, 6),
+        "rejectAtCrossingStage (ships)"
+    );
+    assert_eq!(totals[1], row(1508, 18, 22, 5), "applyCliffs, lava + ore");
+    assert_eq!(totals[2], row(1500, 25, 22, 6), "applyCliffs, no cascade");
+
+    // Stated as relations too, so the claim survives a re-measure that moves
+    // every row: better on three counts, worse on none.
+    assert!(totals[1].matched > totals[0].matched);
+    assert!(totals[1].wrong < totals[0].wrong);
+    assert!(totals[1].missing < totals[0].missing);
+    assert_eq!(totals[1].surplus, totals[0].surplus);
+    // And on POSITION alone it is one cell, which is why the renderer is left
+    // alone. The whole gain is in orientation.
+    assert_eq!(totals[1].matched + totals[1].wrong, 1526);
+    assert_eq!(totals[0].matched + totals[0].wrong, 1525);
 }

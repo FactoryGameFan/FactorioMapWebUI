@@ -555,8 +555,21 @@ Add future phases the same way.
 
 Two more things about that job, both measured on its first run (#230):
 
-- **It is 19s**, of which `scripts/verify-rust.sh` is 2s, the pinned-toolchain
-  sync is 10s and cargo-deny is 1s. It is the cheapest job in the workflow.
+- **It WAS 19s and is not any more.** On its first run (#230) it was 19s, of
+  which `scripts/verify-rust.sh` was 2s, the pinned-toolchain sync 10s and
+  cargo-deny 1s, and it was the cheapest job in the workflow. #225's cliff half
+  ended that: `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_
+loses_on_none` is 33s in the normal arm and **93s under poison**, taking the
+  script alone to **1m50s** locally. Poison is the expensive half because
+  `crossing_result` turns every lattice edge into a crossing, so far more cells
+  place and the `onDestroy` cascade recurses over a dense set.
+
+  It is kept because it is the ONLY grading of `cliffs::connections`, a
+  445-line module on no render path - without it that port would have unit tests
+  and no measurement against anything. It is still far under the test shards, so
+  it does not move the gate wall; it is simply no longer free. Anyone adding a
+  second fixture test of that shape should re-measure this job first.
+
 - **It runs `bash scripts/verify-rust.sh` directly**, the one deviation from
   "the YAML names only package.json scripts". That does not reopen the drift
   the rule guards against, because `verify:rust` _is_ that one line, so the
