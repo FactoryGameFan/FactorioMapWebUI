@@ -30,10 +30,21 @@ pub struct BasisExprParams {
 /// The tables are passed in rather than derived per call, which is what the
 /// TypeScript's optional `tables` argument is for when sweeping a grid.
 ///
-/// **The coordinate arithmetic stays in f64**, matching the TypeScript exactly:
-/// JavaScript numbers are f64, so `(x + offsetX) * inputScale` is an f64 product
-/// there, and narrowing it here would evaluate a DIFFERENT point. This is the
-/// same reading `fixtures::score` records for the raw kernel.
+/// **The coordinate arithmetic does NOT stay in f64, and this comment used to
+/// say it did.** It read "narrowing it here would evaluate a DIFFERENT point,
+/// matching the TypeScript exactly" - which #290 made false when it narrowed
+/// `x` below, and which nobody noticed because no fixture can tell the two
+/// apart. That stale sentence is part of why the divergence in the next
+/// paragraph survived three shipped PRs.
+///
+/// **The TypeScript has NOT been narrowed to match, and that is issue #309.**
+/// It computes `f32((x + offset_x) * input_scale)` - the product formed in f64
+/// and narrowed once - where this narrows `x` first and multiplies two f32s.
+/// The two agree at every f32-exact coordinate and differ everywhere else, and
+/// every position the game evaluates is on its own 1/256 MapPosition grid,
+/// which is f32-exact. So no fixture can grade it: both forms score
+/// `hairline_cracks` 61 of 61 with worst residual exactly 0. Vulcanus tier 2
+/// found it off-grid, where 32 of its 74 folded fields disagree, and pins it.
 ///
 /// ## The output scale is narrowed twice, and both are needed (#269)
 ///

@@ -43,7 +43,7 @@ use crate::expressions::starting_spot_at_angle::AngleTrig;
 use crate::expressions::vulcanus_biomes::{BiomeFields, VulcanusBiomes};
 use crate::expressions::vulcanus_climate::VulcanusClimate;
 use crate::expressions::vulcanus_cracks::VulcanusCracks;
-use crate::expressions::vulcanus_elevation::VulcanusElevation;
+use crate::expressions::vulcanus_elevation::{ElevationFields, VulcanusElevation};
 use crate::expressions::vulcanus_helpers::VulcanusHelpers;
 use crate::expressions::vulcanus_resources::{OreRegions, ResourceFields, VulcanusResources};
 use crate::expressions::vulcanus_spawn::VulcanusSpawn;
@@ -236,6 +236,34 @@ impl<'a> VulcanusStack<'a> {
     #[must_use]
     pub fn ore_regions(&self, x: f64, y: f64) -> OreRegions {
         self.resources.ore_regions(x, y)
+    }
+
+    /// `vulcanus_elev` and `vulcanus_elevation` together - the raw field and
+    /// the `max(-500, elev)` clamp over it.
+    ///
+    /// Both at one point rather than two calls, because the tier-2 fold grades
+    /// them as separate fields and the clamp is the only thing between them.
+    /// **No fixture can grade that clamp**: the captured `elev` bottoms out at
+    /// -58.77, so the two columns are the same field at all 434 positions and a
+    /// port that dropped the `max` would score identically. The clamp's real
+    /// test lives in `vulcanus_elevation`, constructing the case the fixture
+    /// does not.
+    #[must_use]
+    pub fn elevation_fields(&self, x: f64, y: f64) -> ElevationFields {
+        self.elevation.eval(x, y)
+    }
+
+    /// `vulcanus_temperature`, at this stack's own `control:temperature:bias`.
+    ///
+    /// Exposed for the tier-2 fold, and it is one of the fields that fold
+    /// exists for: **no render path reads temperature at all**, so tier 3's
+    /// byte-identical pixels say nothing about it. Tier 1 grades it against the
+    /// game (244 of 434) and tier 2 is the only thing that would notice it
+    /// diverging from the TypeScript.
+    #[must_use]
+    pub fn temperature(&self, x: f64, y: f64) -> f64 {
+        self.elevation
+            .temperature(x, y, self.base.ctx.temperature_bias)
     }
 
     /// `vulcanus_elevation` in the TILE channel - the 1-tile grid every

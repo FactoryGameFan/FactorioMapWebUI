@@ -17,6 +17,7 @@ use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::FulgoraStack;
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
+use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
 use fmw_noise::resources::vulcanus_catalog::{
@@ -234,6 +235,86 @@ fn vulcanus_tile_color(tile: VulcanusTile) -> [u8; 3] {
     tile.color()
 }
 
+/// The `EvalCtx` a Vulcanus request describes: its three sliders and its four
+/// resource control pairs.
+///
+/// This and the three functions below are the ONE place a Vulcanus request
+/// becomes a stack. They are factored out because
+/// [`checksum_vulcanus`](crate::checksum_vulcanus) - tier 2 - builds the same
+/// layers, and a second copy of this wiring is precisely what tier 2 cannot
+/// catch: a bearing handed to the wrong layer would be reproduced identically
+/// on both sides of the comparison and stay invisible. Sharing the wiring puts
+/// it inside the comparison instead.
+///
+/// Four functions rather than one because the layers above `base` BORROW it, so
+/// a single constructor returning all of them would be self-referential - see
+/// `vulcanus_stack`'s module docs.
+pub(crate) fn vulcanus_ctx(seed0: u32, p: &VulcanusParams) -> EvalCtx {
+    let levers = |frequency: f64, size: f64| ResourceLevers { frequency, size };
+    let mut ctx = EvalCtx::new(seed0);
+    ctx.vulcanus_volcanism_frequency = p.volcanism_frequency;
+    ctx.vulcanus_volcanism_size = p.volcanism_size;
+    ctx.temperature_bias = p.temperature_bias;
+    ctx.vulcanus_resource_controls = VulcanusResourceControls {
+        tungsten_ore: levers(p.tungsten_frequency, p.tungsten_size),
+        vulcanus_coal: levers(p.coal_frequency, p.coal_size),
+        calcite: levers(p.calcite_frequency, p.calcite_size),
+        sulfuric_acid_geyser: levers(p.sulfur_frequency, p.sulfur_size),
+    };
+    ctx
+}
+
+/// One bearing's `(sin, cos)` as an [`AngleTrig`].
+///
+/// The values are V8's, computed on the TypeScript side and carried in the
+/// request - see `starting_spot_at_angle`'s module docs and #270.
+fn bearing(p: &VulcanusParams, which: VulcanusBearing) -> AngleTrig {
+    let (sin, cos) = p.bearing(which);
+    AngleTrig::new(sin, cos)
+}
+
+/// The owning half of the stack: helpers, spawn, cracks and climate.
+pub(crate) fn vulcanus_base(ctx: &EvalCtx, p: &VulcanusParams) -> VulcanusBase {
+    VulcanusBase::new(
+        ctx,
+        [
+            bearing(p, VulcanusBearing::SpawnAshlands),
+            bearing(p, VulcanusBearing::SpawnMountains),
+            bearing(p, VulcanusBearing::SpawnBasalts),
+        ],
+    )
+}
+
+/// The biome layer, which both the elevation and resource layers borrow.
+pub(crate) fn vulcanus_biomes<'a>(
+    base: &'a VulcanusBase,
+    p: &VulcanusParams,
+) -> VulcanusBiomes<'a> {
+    base.biomes(
+        bearing(p, VulcanusBearing::BiomeVolcanoSpot),
+        bearing(p, VulcanusBearing::BiomeProtector),
+    )
+}
+
+/// The borrowing half: elevation, resources, lava spots and the rock noise.
+pub(crate) fn vulcanus_stack<'a>(
+    base: &'a VulcanusBase,
+    biomes: &'a VulcanusBiomes<'a>,
+    p: &VulcanusParams,
+) -> VulcanusStack<'a> {
+    VulcanusStack::new(
+        base,
+        biomes,
+        [
+            bearing(p, VulcanusBearing::ResourceTungsten),
+            bearing(p, VulcanusBearing::ResourceCoal),
+            bearing(p, VulcanusBearing::ResourceCalcite),
+            bearing(p, VulcanusBearing::ResourceSulfurFar),
+            bearing(p, VulcanusBearing::ResourceSulfurNear),
+        ],
+    )
+}
+
 /// Sweep the window and paint Vulcanus's terrain.
 ///
 /// One `VulcanusBase` and one `VulcanusStack` for the whole window, for the same
@@ -246,45 +327,10 @@ fn vulcanus_tile_color(tile: VulcanusTile) -> [u8; 3] {
 /// `vulcanus_stack`'s module docs. That is three lines here instead of one, and
 /// it is the honest shape.
 fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
-    let levers = |frequency: f64, size: f64| ResourceLevers { frequency, size };
-    let mut ctx = EvalCtx::new(req.seed0);
-    ctx.vulcanus_volcanism_frequency = p.volcanism_frequency;
-    ctx.vulcanus_volcanism_size = p.volcanism_size;
-    ctx.temperature_bias = p.temperature_bias;
-    ctx.vulcanus_resource_controls = VulcanusResourceControls {
-        tungsten_ore: levers(p.tungsten_frequency, p.tungsten_size),
-        vulcanus_coal: levers(p.coal_frequency, p.coal_size),
-        calcite: levers(p.calcite_frequency, p.calcite_size),
-        sulfuric_acid_geyser: levers(p.sulfur_frequency, p.sulfur_size),
-    };
-
-    let trig = |which: VulcanusBearing| {
-        let (sin, cos) = p.bearing(which);
-        AngleTrig::new(sin, cos)
-    };
-    let base = VulcanusBase::new(
-        &ctx,
-        [
-            trig(VulcanusBearing::SpawnAshlands),
-            trig(VulcanusBearing::SpawnMountains),
-            trig(VulcanusBearing::SpawnBasalts),
-        ],
-    );
-    let biomes = base.biomes(
-        trig(VulcanusBearing::BiomeVolcanoSpot),
-        trig(VulcanusBearing::BiomeProtector),
-    );
-    let stack = VulcanusStack::new(
-        &base,
-        &biomes,
-        [
-            trig(VulcanusBearing::ResourceTungsten),
-            trig(VulcanusBearing::ResourceCoal),
-            trig(VulcanusBearing::ResourceCalcite),
-            trig(VulcanusBearing::ResourceSulfurFar),
-            trig(VulcanusBearing::ResourceSulfurNear),
-        ],
-    );
+    let ctx = vulcanus_ctx(req.seed0, p);
+    let base = vulcanus_base(&ctx, p);
+    let biomes = vulcanus_biomes(&base, p);
+    let stack = vulcanus_stack(&base, &biomes, p);
 
     let mut offset = 0usize;
     for py in 0..req.height {
