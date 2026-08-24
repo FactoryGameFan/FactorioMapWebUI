@@ -3085,3 +3085,276 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
         positions.len()
     );
 }
+
+use crate::expressions::vulcanus_resources::{ResourceFields, VulcanusResources};
+
+/// Vulcanus's resource layer: four favorabilities, four starting spots, the four
+/// regions, the sulfuric-acid patchy chain and `vulcanus_metal_tile`.
+///
+/// The fixture is two populations and both are load-bearing. The first 61
+/// positions are a scattered near+far grid that covers the favorabilities, the
+/// starting spots and the far-field f32 floor. The remaining 1,024 are a dense
+/// 32x32 scan at a 137-tile stride, added in a fix round because the original 61
+/// never landed inside a real ore or acid region - `region > 0` nowhere - so the
+/// fixture could not tell a working spot-selection port from a stub that
+/// returned the basement everywhere.
+#[test]
+fn reproduces_the_vulcanus_resource_layer_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-resources.seed123456.json",
+        "2.1.12",
+    );
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 1085, "fixture size");
+    // Asserted so a re-capture that lands everything on the 1/256 grid cannot
+    // leave the snap below looking load-bearing. `test/vulcanusResources.spec.ts`
+    // pins the same number.
+    assert_eq!(
+        count_off_grid(&fixture_positions(&fixture, "positions")),
+        21,
+        "off-grid positions"
+    );
+
+    let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let spawn = VulcanusSpawn::with_host_trig(&ctx);
+    let biomes = VulcanusBiomes::with_host_trig(&ctx, &helpers, &spawn);
+    let cracks = VulcanusCracks::new(&helpers);
+    let resources = VulcanusResources::with_host_trig(&ctx, &helpers, &spawn, &biomes, &cracks);
+
+    let fields: Vec<ResourceFields> = positions
+        .iter()
+        .map(|p| {
+            resources.eval(
+                snap_coord(p.get("x").as_f64()),
+                snap_coord(p.get("y").as_f64()),
+            )
+        })
+        .collect();
+
+    // Frozen exact counts, measured 2026-08-24 at snapped coordinates. **Every
+    // one of the fifteen was measured on the TypeScript side against the same
+    // fixture with the same snap and the same rule, and all fifteen agree - the
+    // same count AND the same worst residual to every printed digit.** So these
+    // describe the distance BOTH ports sit from the game, not a gap between
+    // them. If one moves, read it: up is worth taking, down is a regression, and
+    // neither is a number to edit.
+    //
+    // The four starting spots are the load-bearing agreement, because they are
+    // the only four numbers `test/vulcanusResources.spec.ts` freezes as counts
+    // rather than as bounds - 1082, 974, 969 and 1049, landed with #279. This
+    // port reproduces all four without having seen them, which is a much
+    // stronger statement than the eleven that agree with an implementation
+    // graded only by bounds.
+    //
+    // Three readings worth keeping:
+    //
+    // - **The regions prove the spot pipeline runs.** The fixture's second
+    //   population exists precisely because the original 61 points had
+    //   `region > 0` nowhere, so a stub returning the basement everywhere would
+    //   have scored full marks. At 1033/1026/999/1020 these are scoring real
+    //   cone arithmetic over selected spots.
+    // - **`metalTile`'s worst residual is 1.329e2 and that is not an outlier.**
+    //   It is `1000 * tungsten_region`, so it carries that field's residual
+    //   times a thousand. Read against its own scale it is the tightest field
+    //   here, which is the third time this file has had to say an absolute bound
+    //   needs re-tuning per field for scale alone.
+    // - **`sulfuricAcidPatches` has the SMALLEST residual (7.153e-8) and the
+    //   FEWEST matches (867).** That is `detailNoise`'s property again: a field
+    //   can be uniformly close and rarely exactly right. It is the argument for
+    //   counting matches rather than bounding error, stated in one number, and
+    //   it is why this test freezes counts.
+    //
+    // Graded against a **2.1.12** capture while the binary is 2.1.14 (#295), so
+    // a count short of a full house has one more candidate explanation than the
+    // port being wrong.
+    type R = ResourceFields;
+    for (key, want_exact, select) in [
+        (
+            "basaltsFavorability",
+            994usize,
+            &(|f: &R| f.basalts_favorability) as &dyn Fn(&R) -> f64,
+        ),
+        ("mountainsFavorability", 1004, &|f| f.mountains_favorability),
+        ("mountainsSulfurFavorability", 989, &|f| {
+            f.mountains_sulfur_favorability
+        }),
+        ("ashlandsFavorability", 997, &|f| f.ashlands_favorability),
+        ("startingTungsten", 1082, &|f| f.starting_tungsten),
+        ("startingCoal", 974, &|f| f.starting_coal),
+        ("startingCalcite", 969, &|f| f.starting_calcite),
+        ("startingSulfur", 1049, &|f| f.starting_sulfur),
+        ("tungstenRegion", 1033, &|f| f.tungsten_region),
+        ("coalRegion", 1026, &|f| f.coal_region),
+        ("calciteRegion", 999, &|f| f.calcite_region),
+        ("sulfuricAcidRegion", 1020, &|f| f.sulfuric_acid_region),
+        ("sulfuricAcidPatches", 867, &|f| f.sulfuric_acid_patches),
+        ("sulfuricAcidRegionPatchy", 1020, &|f| {
+            f.sulfuric_acid_region_patchy
+        }),
+        ("metalTile", 1077, &|f| f.metal_tile),
+    ] {
+        let got: Vec<f64> = fields.iter().map(select).collect();
+        assert_eq!(
+            score_vulcanus(&got, fixture.get(key).as_array(), key),
+            want_exact,
+            "{key} exact f32 matches out of 1085"
+        );
+    }
+}
+
+use crate::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
+use crate::tiles::vulcanus_catalog::VulcanusTile;
+
+/// Count how many of a tile-name fixture's positions the port names correctly.
+fn score_vulcanus_tiles(fixture: &Json, seed0: u32) -> usize {
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+
+    let positions = fixture.get("positions").as_array();
+    let want = fixture.get("tileNames").as_array();
+    assert_eq!(positions.len(), want.len(), "fixture columns disagree");
+    positions
+        .iter()
+        .zip(want.iter())
+        .filter(|(p, w)| stack.tile(p.get("x").as_f64(), p.get("y").as_f64()).name() == w.as_str())
+        .count()
+}
+
+/// The 19-way Vulcanus tile argmax against `surface.get_tile(x, y).name` on a
+/// real Vulcanus surface.
+///
+/// **This is the phase-5 counterpart of `puts_every_fulgora_tile_where_the_game
+/// _puts_it`, and like it the count is FROZEN rather than bounded.** The
+/// TypeScript asserts `agreement > 0.978`; a bound that wide cannot see a change
+/// worth six tiles, which is exactly the #162 pathology this port exists to stop
+/// inheriting.
+#[test]
+fn puts_every_vulcanus_tile_where_the_game_puts_it() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-tile-names.seed123456.json",
+        "2.1.12",
+    );
+    assert_eq!(
+        fixture.get("positions").as_array().len(),
+        381,
+        "fixture size"
+    );
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+
+    // Frozen exact count, measured 2026-08-24. The TypeScript scores the same
+    // 374 of 381 (98.16%) against this fixture, so this is the distance BOTH
+    // ports sit from the game.
+    //
+    // **100% is not the target here and that is a documented conclusion, not an
+    // excuse.** Two causes are established, and both are properties of the model
+    // rather than of the transcription:
+    //
+    // 1. `random_penalty_between(0.9, 1, 1)` inside `vulcanus_metal_tile` is
+    //    approximated as 1. `random_penalty` is a whole-batch operation a
+    //    per-pixel renderer cannot reproduce, and at an ore-patch edge where the
+    //    game rolled a low penalty it can flip placement outright.
+    // 2. The far-field f32 coordinate floor tipping a near-tie argmax across a
+    //    range boundary.
+    //
+    // The 7 misses are ADJACENT-tile flips inside one biome family - folds-flat
+    // against folds, smooth-stone against cracks-warm, ash-soil against pumice,
+    // ash-flats against ash-light, cracks-hot against cracks-warm - spread over
+    // radii 192 to 2079. No single range expression is systematically wrong,
+    // which would cluster many cells of one tile instead.
+    //
+    // Captured at 2.1.12 against a 2.1.14 binary (#295).
+    assert_eq!(score_vulcanus_tiles(&fixture, seed0), 374, "of 381");
+}
+
+/// The BINARY lava classification, which is exact where the 19-way argmax is
+/// not.
+///
+/// Graded separately because it is the only thing the cliff collision rejection
+/// reads: `tryToAddCliff` asks whether a tile carries `water_tile`, never which
+/// tile it is, so the argmax can confuse `volcanic-folds` for
+/// `volcanic-folds-flat` all day without moving a cliff.
+///
+/// Asserted in BOTH directions - the count of lava the game placed, the count
+/// the port places, and zero disagreements - so a port that called everything
+/// lava would fail on the second and a port that called nothing lava would fail
+/// on the first.
+#[test]
+fn classifies_every_vulcanus_lava_tile_correctly() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-tile-names.seed123456.json",
+        "2.1.12",
+    );
+    let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+
+    let is_lava = |t: VulcanusTile| matches!(t, VulcanusTile::Lava | VulcanusTile::LavaHot);
+    let want_lava = |name: &str| name == "lava" || name == "lava-hot";
+
+    let positions = fixture.get("positions").as_array();
+    let want = fixture.get("tileNames").as_array();
+    let mut game_lava = 0usize;
+    let mut our_lava = 0usize;
+    let mut mismatch = 0usize;
+    for (p, w) in positions.iter().zip(want.iter()) {
+        let ours = is_lava(stack.tile(p.get("x").as_f64(), p.get("y").as_f64()));
+        let theirs = want_lava(w.as_str());
+        if ours {
+            our_lava += 1;
+        }
+        if theirs {
+            game_lava += 1;
+        }
+        if ours != theirs {
+            mismatch += 1;
+        }
+    }
+    assert_eq!(game_lava, 49, "lava positions the game placed");
+    assert_eq!(our_lava, 49, "lava positions the port places");
+    assert_eq!(mismatch, 0, "lava classification disagreements");
+}
+
+/// The same argmax against the Vulcanus a real save at map seed 123456 produces.
+///
+/// The other fixture FORCES the surface seed to the map seed, which validates
+/// the expressions and is blind to the seed plumbing. This one is captured from
+/// a save with the surface seed left alone, so it records the planet a player
+/// actually lands on.
+///
+/// The Rust side has no port of `surfaceSeedForPlanet` and does not need one -
+/// nothing here derives a surface seed, it is handed one across the ABI. So this
+/// reads the seed the fixture records and grades the expressions at it. The
+/// derivation itself is guarded on the TypeScript side by
+/// `test/vulcanusNaturalSeed.spec.ts`, which is where it lives.
+#[test]
+fn puts_every_vulcanus_tile_where_the_game_puts_it_at_a_real_saves_surface_seed() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-tile-names.natural-mapseed123456.json",
+        "2.1.12",
+    );
+    let map_seed = fixture.get("mapSeed").as_f64() as u32;
+    let surface_seed = fixture.get("seed0").as_f64() as u32;
+    assert_eq!(map_seed, 123_456);
+    assert_eq!(surface_seed, 1_249_936_247, "mapSeed + crc32(\"vulcanus\")");
+
+    // Frozen exact count, measured 2026-08-24, and the TypeScript scores the
+    // same 368 of 381 (96.59%) here. A different 381 points simply catch a few
+    // more of the same boundary flips the forced-seed fixture documents.
+    assert_eq!(score_vulcanus_tiles(&fixture, surface_seed), 368, "of 381");
+
+    // **The contrast is the point of this test, not the 368.** Graded at the RAW
+    // map seed the score collapses, because a wrong surface seed is not a subtle
+    // regression - it is a different planet. Without this arm, 368 of 381 would
+    // look like a strong result for a port that ignored the seed derivation
+    // entirely.
+    let wrong = score_vulcanus_tiles(&fixture, map_seed);
+    assert_eq!(wrong, 37, "of 381 at the raw map seed");
+    assert!(
+        wrong * 5 < 381,
+        "the wrong-seed arm must be near chance, or it is not a control"
+    );
+}

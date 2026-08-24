@@ -105,6 +105,16 @@ POISONED_TESTS=(
   fixtures::reproduces_the_vulcanus_biome_layer_at_every_captured_position
   fixtures::reproduces_the_vulcanus_elevation_surface_at_every_captured_position
   fixtures::reproduces_the_vulcanus_temperature_at_every_captured_position
+  fixtures::reproduces_the_vulcanus_resource_layer_at_every_captured_position
+
+  # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
+  # it - a one-ULP nudge essentially never changes which side of a comparison a
+  # value falls on. Its control is `poison::index_result` in
+  # `tiles::vulcanus_catalog::resolve_tile`, the same hook Fulgora's argmax uses.
+  fixtures::puts_every_vulcanus_tile_where_the_game_puts_it
+  fixtures::classifies_every_vulcanus_lava_tile_correctly
+  fixtures::puts_every_vulcanus_tile_where_the_game_puts_it_at_a_real_saves_surface_seed
+  tiles::vulcanus_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_order
 
   tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order
 )

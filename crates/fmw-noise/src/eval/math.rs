@@ -169,6 +169,26 @@ pub fn max2(a: f64, b: f64) -> f64 {
     max(&[a, b])
 }
 
+/// `range_select_base` (`core/prototypes/noise-functions.lua`): select a
+/// `from`-`to` range, at or above 0 inside it and descending outside when `min`
+/// is negative.
+///
+/// ```text
+/// clamp(min(input - from, to - input) / slope, min, max)
+/// ```
+///
+/// The TypeScript keeps this in `src/noise/rocks/rockCatalog.ts`, where it
+/// arrived first. It is a core noise function rather than a rock one - the
+/// Vulcanus tile catalog is its heaviest consumer - so it lives here, and the
+/// rock port will read it from here rather than restating it.
+///
+/// `min2` rather than `f64::min` for the reason [`min2`] records: this feeds an
+/// argmax whose tie-break is order-sensitive.
+#[must_use]
+pub fn range_select_base(input: f64, from: f64, to: f64, slope: f64, lo: f64, hi: f64) -> f64 {
+    clamp(min2(input - from, to - input) / slope, lo, hi)
+}
+
 /// Base-2 log (the DSL's `log2`).
 ///
 /// Exact math, not `fast_approx::fast_log2`. The noise machine's own `log2` IS
