@@ -18,6 +18,7 @@ pub mod fulgora_ruins;
 pub mod fulgora_scrap;
 pub mod fulgora_shared;
 pub mod fulgora_stack;
+pub mod nauvis_climate;
 pub mod nauvis_shared;
 pub mod starting_spot_at_angle;
 pub mod vulcanus_biomes;

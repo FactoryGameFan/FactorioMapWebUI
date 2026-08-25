@@ -4746,3 +4746,70 @@ fn the_cliff_elevation_term_moves_the_tree_where_the_outer_min_does_not_mask_it(
     );
     assert_eq!(ours_differ, 17, "positions where our two trees differ");
 }
+
+// ---------------------------------------------------------------------------
+// The climate expressions: `aux` (terrain type), `moisture`, `temperature`.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::nauvis_climate::{
+    Aux, AuxParams, Moisture, MoistureParams, Temperature, TemperatureParams,
+};
+
+#[test]
+fn reproduces_the_games_aux_at_every_captured_position() {
+    let fixture = load_captured_at("test/fixtures/oracle-aux.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let aux = Aux::new(&AuxParams::defaults(123_456));
+    let (exact, worst) = score_nauvis(&positions, fixture.get("aux").as_array(), |x, y| {
+        aux.eval(x, y)
+    });
+
+    // `test/aux.spec.ts` asserts the same 14 and bounds the same residual at
+    // 2^-24, which is one f32 ULP at 1.0 - the field's own scale.
+    assert_eq!(exact, 14, "exact f32 matches, worst {worst:e}");
+    assert!(worst <= f64::from(f32::EPSILON) / 2.0, "worst {worst:e}");
+}
+
+#[test]
+fn reproduces_the_games_moisture_at_every_captured_position() {
+    let fixture = load_captured_at("test/fixtures/oracle-moisture.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let moisture = Moisture::new(&MoistureParams::defaults(123_456));
+    let (exact, worst) = score_nauvis(&positions, fixture.get("moisture").as_array(), |x, y| {
+        moisture.eval(x, y)
+    });
+
+    // `test/moisture.spec.ts` asserts the same 18 and the same 2^-24 bound.
+    assert_eq!(exact, 18, "exact f32 matches, worst {worst:e}");
+    assert!(worst <= f64::from(f32::EPSILON) / 2.0, "worst {worst:e}");
+}
+
+#[test]
+fn reproduces_the_games_temperature_bit_for_bit_at_every_captured_position() {
+    let fixture = load_captured_at("test/fixtures/oracle-temperature.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    // The strongest anti-vacuity case for the snap in the whole port: as
+    // recorded these 26 score 17/26 at worst 5.817e-5, and snapped they are
+    // exact. See `test/captureGrid.ts`, where this fixture heads the table.
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let temperature = Temperature::new(&TemperatureParams::defaults(123_456));
+    let (exact, worst) = score_nauvis(&positions, fixture.get("temperature").as_array(), |x, y| {
+        temperature.eval(x, y)
+    });
+
+    // BIT-EXACT, and asserted as such. `temperature_basic` is the shallowest
+    // expression in the Nauvis port - one `quick_multioctave_noise` and a
+    // clamp, with no composed layer under it - so it is the one field here that
+    // reaches the game exactly, and a residual of anything at all would be a
+    // finding. `test/temperature.spec.ts` asserts the same 26 and the same 0.
+    assert_eq!(exact, 26, "exact f32 matches, worst {worst:e}");
+    assert_eq!(worst, 0.0, "worst absolute error");
+}

@@ -216,6 +216,13 @@ POISONED_TESTS=(
   # snap test.
   fixtures::reproduces_the_games_elevation_nauvis_tree_at_every_captured_position
   fixtures::reproduces_the_games_elevation_nauvis_no_cliff_variant_at_both_seeds
+
+  # The three climate expressions. `temperature_basic` composes nothing but
+  # `quick_multioctave_noise`, so it is the shallowest thing in the Nauvis port
+  # - and the only one that reaches the game bit-exactly.
+  fixtures::reproduces_the_games_aux_at_every_captured_position
+  fixtures::reproduces_the_games_moisture_at_every_captured_position
+  fixtures::reproduces_the_games_temperature_bit_for_bit_at_every_captured_position
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then
