@@ -50,10 +50,36 @@ export interface BasisExprParams {
  * That is why the older `oracle-basis` fixture, captured at `output_scale = 1`,
  * could not answer the question and a new capture had to.
  *
- * The `input_scale` product is deliberately NOT narrowed here. It decides which
- * point gets sampled rather than what the product rounds to, and narrowing it
- * would evaluate a DIFFERENT point. Whether the game holds `input_scale` at f32
- * too is a separate, unmeasured question tracked on #269.
+ * ## The incoming coordinate is narrowed too (#309, #191)
+ *
+ * The noise machine holds its coordinate VALUES at f32, so `x` and `y` are
+ * already f32 by the time this op reads them and the `input_scale` multiply is
+ * an f32 operation on both operands. That was settled by measurement rather
+ * than by argument, and by an EXISTING fixture rather than a new capture:
+ * `fulgora_basis` is a multioctave evaluated at Fulgora's distorted coordinate
+ * `wx = ox + wobble_x * wobble_mask`, which leaves the f32 grid at 55 of that
+ * fixture's 101 positions. Scored against the game:
+ *
+ * ```text
+ * narrowed    (f32(x) before the scale)   101/101, worst residual exactly 0
+ * un-narrowed (f64 x)                      81/101, worst 7.0333e-6
+ * ```
+ *
+ * 20 positions discriminate, so this is a measurement and not a preference. It
+ * is also exactly the check #191 asked for in its own words - a caller passing
+ * a DERIVED coordinate - which Fulgora has satisfied since it landed, unnoticed.
+ *
+ * **No fixture can grade this op's narrowing DIRECTLY, and that is the trap.**
+ * The game snaps every sample onto its 1/256 MapPosition grid (#186), and below
+ * |x| = 65536 that grid is a SUBSET of the f32 grid - so at every position a
+ * fixture can offer, the narrowed and un-narrowed forms are bit-identical.
+ * Scoring at the RAW, unsnapped fixture coordinates looks like a discriminating
+ * measurement and is not: those are points the game never evaluated. Snap with
+ * `test/captureGrid.ts` first. The evidence has to come from a caller that
+ * derives its coordinate, which is why it came from Fulgora.
+ *
+ * `offset_x` is 0 at all six call sites, so whether the game narrows before or
+ * after that add is unreachable, and no third variant is invented for it.
  */
 export function basisNoiseExpr(
   x: number,
@@ -65,6 +91,6 @@ export function basisNoiseExpr(
   const inputScale = f32(params.inputScale);
   return f32(
     f32(params.outputScale) *
-      basisNoise(f32((x + offsetX) * inputScale), f32(y * inputScale), tables),
+      basisNoise(f32(f32(x + offsetX) * inputScale), f32(f32(y) * inputScale), tables),
   );
 }

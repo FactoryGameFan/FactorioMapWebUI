@@ -578,6 +578,15 @@ loses_on_none` is 33s in the normal arm and **93s under poison**, taking the
   per 512x512 region, ~33s each in a debug build, and that grading lives on the
   TypeScript side instead. See the phase-5 notes below for the reasoning.
 
+  **Treat this job's cost as a RANGE, not a number: 1m44s to 2m48s.** #310
+  measured 1m44s on CI against the 2m48s recorded here from an earlier run, on
+  code whose Rust half did not change between them. That is the same spread the
+  test shards show (`one-ci-run-measures-the-runner` - identical spec files came
+  in anywhere from 294s to 469s), and the honest response is to widen the figure
+  rather than to replace it: a single run here measures the runner at least as
+  much as the job. Do not "correct" this to whichever number you last saw. If a
+  change to the Rust really does move this job, show it with more than one run.
+
 - **It runs `bash scripts/verify-rust.sh` directly**, the one deviation from
   "the YAML names only package.json scripts". That does not reopen the drift
   the rule guards against, because `verify:rust` _is_ that one line, so the
@@ -1552,7 +1561,26 @@ both sides and stay invisible. The sweep is the request's own pixel grid, swept
 rows-outer exactly as `render_vulcanus` sweeps it, so there is one geometry
 convention rather than two.
 
-**It found a real divergence on its first run, and the divergence is #309.**
+**The field SELECTOR lives in `fmw-noise`, not in the wasm crate, and copy that
+for Nauvis too.** `VulcanusParity` sits beside `VulcanusStack` in
+`expressions/vulcanus_stack.rs`; the wasm export builds the stack through the
+render helpers and then calls `parity.field(field, x, y)`. The reason is
+ownership of test-only API: the selector needs `elevation_fields` and
+`temperature`, which NO render path reads, and reaching them from another crate
+meant two `pub` methods on a library type that existed solely for a test - and a
+`pub` method cannot be `#[cfg(test)]`-gated, because the wasm crate calls it at
+build time. Keeping the selector in the same module makes both private again.
+The field count moved with it (`VulcanusParity::FIELD_COUNT`), so the count and
+the `match` it bounds cannot drift apart.
+
+The move is pure code motion and was checked as such rather than assumed: tier 2
+(74 fields) and tier 3 (byte-identical renders) both pass unchanged. It DOES
+move `engine.wasm` by 142 bytes, because the selector inlines differently once
+it is in the same crate as the layers it reads - which is a reminder that a
+wasm diff is not by itself evidence of a behaviour change.
+
+**It found a real divergence on its first run, and the divergence was #309 -
+now fixed, see below.**
 `basisNoiseExpr` forms its coordinate product in f64 and narrows once
 (`primitives.ts:66`); the Rust narrows `x` to f32 first and multiplies two f32s
 (`primitives.rs:87`). They agree at every f32-exact coordinate and differ
@@ -1584,25 +1612,67 @@ is worth more than the bug:
   same property that made `poison::index_result` necessary, and it is the
   standing answer to "tier 3 is byte-identical, so why build tier 2".
 
-**Which form is right is an internal-consistency argument, not a measurement**,
-which is why #309 is an issue rather than a fix that rode along. Both ports'
-multioctave path already narrows the incoming coordinate
-(`multioctaveNoise.ts:203`, `multioctave_noise.rs:137`) - which is exactly why
-the six `wobble_*` fields MATCHED off-grid in the same sweep where the plasma
-fields did not - and the game holds its noise variables at f32. Applying the
-narrowing was measured to leave the full gate green (**2140 passed, 0 failed**,
-`vulcanusPlasmaDecomposition` still 61/61 at worst residual exactly 0), because
-nothing in the suite scores off the f32 grid.
+**#309 IS FIXED, and it was settled by measurement rather than by the
+internal-consistency argument this file used to record here.** That argument -
+both ports' multioctave already narrows (`multioctaveNoise.ts:203`,
+`multioctave_noise.rs:137`), the game holds its noise variables at f32 - pointed
+the right way but proved nothing, and this section previously said so.
 
-**So the parity windows sweep ON the f32 grid, deliberately, and the divergence
-is PINNED rather than described.** `the two ports diverge off the f32 grid`
-freezes it at 32 fields and asserts the MECHANISM: `wobbleX` agrees,
-`hairlineCracks` does not, `resolvedTile` agrees. **That test goes red when #309
-is fixed**, which is the prompt to widen the windows back off the grid and delete
-the pin. A second test asserts the two parity windows really are on the grid and
-the pinning window really is not (20 of its 26 x-coordinates), so a step edited
-to something without an exact binary form fails as a window mistake rather than
-as a port bug.
+**The measurement came from a fixture already committed, not from a new
+capture.** `fulgora_basis` is a multioctave read at Fulgora's DERIVED coordinate
+`wx = ox + wobble_x * wobble_mask`, computed in f64 and therefore off the f32
+grid at **55 of that fixture's 101 positions**. Scored against the game:
+
+| `sumOctaves` incoming coordinate |       exact | worst residual |
+| -------------------------------- | ----------: | -------------- |
+| **narrowed** (what shipped)      | **101/101** | exactly 0      |
+| un-narrowed (planted)            |      81/101 | 7.0333e-6      |
+
+Twenty positions discriminate, so the game demonstrably narrows the incoming
+coordinate, and the Rust form was the right one. `basisNoiseExpr` now narrows
+`x` and `y` before the `input_scale` multiply.
+
+**That is also the measurement #191 asked for, in its own words** - "a caller
+that passes a derived coordinate" - and Fulgora has satisfied it since it
+landed, unnoticed for months. Two lessons, and the second is the transferable
+one:
+
+- **Fold the fixtures you already HAVE before capturing more.** The plan here
+  was a far-field capture at |x| >= 65536, where the 1/256 grid stops being a
+  subset of the f32 grid. It would have worked and it was unnecessary: a
+  DERIVED coordinate leaves the f32 grid right next to the origin, so the
+  evidence was sitting in `oracle-fulgora-elevation` the whole time.
+- **A "no fixture can grade this" claim is about the fixtures you looked at.**
+  It was true of every Vulcanus fixture and false of a Fulgora one.
+
+**#191 is two-thirds done and its issue text is stale.** Re-read the code, not
+the issue: `quickMultioctaveNoise` ALREADY narrows both coordinates
+(`quickMultioctaveNoise.ts:192-193`), so only one of its three ops was
+outstanding. `variablePersistenceMultioctaveNoise` narrowed `x` and NOT `y` - in
+**both** ports, which is why tier 2 could not see it: the two agreed with each
+other while both disagreed with the game. `x` was narrowed only as a side effect
+of the `f32(x + offset_x)` add; `y` had no add and so was silently multiplied in
+f64. Both ports now narrow it.
+
+The third op, `basisNoise` itself, was deliberately NOT changed. Its disciplined
+callers all narrow before calling, so narrowing inside would be a no-op for
+them - and its remaining direct callers (`nauvisShared.ts:133-134`,
+`startingPatches.ts:185`, `regularPatches.ts:164-165`) are unported NAUVIS
+chains where the whole expression is un-narrowed, not just the coordinate.
+Planting the internal narrowing leaves all 26 of their specs passing, so no
+committed fixture discriminates it. That belongs to #226, scored layer by layer
+under the greedy-accept rule, not to a change that cannot grade it.
+
+**The parity windows still sweep ON the f32 grid, and the pin has been
+INVERTED.** `the two ports agree off the f32 grid` now asserts **0 of 74**
+diverging where the pin froze 32, and reverting `primitives.ts` reproduces
+`[ 'hairlineCracks', ...(31) ]` - checked by planting, not assumed. Its
+anti-vacuity is not optional and is easy to get wrong: "nothing diverges" is
+exactly what a sweep evaluating nothing would report, so the test also asserts
+the off-grid window's folds differ from the on-grid window's on all 74 fields.
+The windows themselves are kept as they are because they are tuned for FIELD
+coverage (the `startingArea` range, all 19 tiles placed), not because the
+restriction is still load-bearing.
 
 Two anti-vacuity numbers, both frozen: the two windows differ on **all 74**
 fields, and each places **all 19** tiles, so every probability fold is graded

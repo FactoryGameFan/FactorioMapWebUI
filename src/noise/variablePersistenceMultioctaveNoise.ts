@@ -115,9 +115,14 @@ export function variablePersistenceMultioctaveNoise(
   const { octaves, inputScale, outputScale, offsetX } = params;
 
   let acc = 0;
+  // `y` is narrowed for the same reason `x` is: the noise machine holds its
+  // coordinate values at f32, so the scale multiply is an f32 operation on both
+  // operands. `x` has always been narrowed here through the `offset_x` add; `y`
+  // had no add to narrow it and so was silently multiplied in f64 (#191).
+  const yf = f32(y);
   let scale = f32(f32(inputScale) * 0.5); // octave 0 = input_scale / 2
   for (let k = 0; k < octaves; k++) {
-    acc = f32(acc + basisNoise(f32(f32(x + offsetX) * scale), f32(y * scale), tables));
+    acc = f32(acc + basisNoise(f32(f32(x + offsetX) * scale), f32(yf * scale), tables));
     if (k < octaves - 1) acc = f32(acc * persistence);
     scale = f32(scale * 0.5);
   }
@@ -146,9 +151,10 @@ export function makeVariablePersistenceMultioctaveNoise(
 
   return (x: number, y: number, persistence: number): number => {
     let acc = 0;
+    const yf = f32(y);
     for (let k = 0; k < octaves; k++) {
       const s = octaveScale[k];
-      acc = f32(acc + basisNoise(f32(f32(x + offsetX) * s), f32(y * s), tables));
+      acc = f32(acc + basisNoise(f32(f32(x + offsetX) * s), f32(yf * s), tables));
       if (k < octaves - 1) acc = f32(acc * persistence);
     }
     return f32(acc * gain);

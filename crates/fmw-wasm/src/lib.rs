@@ -974,18 +974,7 @@ pub extern "C" fn fulgora_field_count() -> u32 {
 // Tier 2 for phase 5 - the whole Vulcanus field graph (#225).
 // ---------------------------------------------------------------------------
 
-use fmw_noise::cliffs::vulcanus_fields::CliffinessBasic;
-use fmw_noise::expressions::vulcanus_spawn::WobbleSums;
-use fmw_noise::resources::vulcanus_catalog::sulfuric_acid_geyser_probability;
-use fmw_noise::rocks::vulcanus_field::{vulcanus_decorative_knockout, VulcanusRockFields};
-use fmw_noise::tiles::vulcanus_catalog::{resolve_tile, tile_probabilities, TILE_ORDER};
-
-/// The named field a [`checksum_vulcanus`] call folds.
-///
-/// The order is the order the chain evaluates in: helpers, spawn, cracks,
-/// climate, biomes, elevation, resources, the tile-support fields, the two
-/// overlay fields, then the 19 tile probabilities and the argmax over them.
-const VULCANUS_FIELD_COUNT: u32 = 74;
+use fmw_noise::expressions::vulcanus_stack::VulcanusParity;
 
 /// Tier 2 for the Vulcanus field graph, one named field at a time.
 ///
@@ -1003,7 +992,7 @@ const VULCANUS_FIELD_COUNT: u32 = 74;
 /// `render_vulcanus` sweeps it, so there is one geometry convention rather than
 /// two. Nothing is written to the render buffer.
 ///
-/// `field` selects which named expression to fold, `0..VULCANUS_FIELD_COUNT`.
+/// `field` selects which named expression to fold, `0..VulcanusParity::FIELD_COUNT`.
 /// Same contract as [`checksum_fulgora`] otherwise: order-sensitive fold over
 /// raw bits, strict bit equality, the signed-BigInt caveat, and the same limit -
 /// it detects divergence, it does not establish correctness.
@@ -1037,120 +1026,17 @@ pub extern "C" fn checksum_vulcanus(request_len: u32, field: u32) -> u64 {
     let base = render::vulcanus_base(&ctx, &p);
     let biomes = render::vulcanus_biomes(&base, &p);
     let stack = render::vulcanus_stack(&base, &biomes, &p);
-
-    // The two overlay fields hang off the same stack rather than rebuilding the
-    // chain, which is what their own constructors are for.
-    let rocks = VulcanusRockFields::new(&stack, req.seed0);
-    let knockout = vulcanus_decorative_knockout(req.seed0);
-    let cliffiness = CliffinessBasic::for_vulcanus(req.seed0);
+    let parity = VulcanusParity::new(&stack, req.seed0);
 
     let mut acc = 0u64;
     for py in 0..req.height {
         let y = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let x = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-
-            // Every layer evaluated once per point and then selected from, the
-            // same shape `checksum_fulgora` uses. Some of these recompute what
-            // another already did - `tile_fields` re-evaluates the biome and
-            // resource layers, for instance - and that is deliberate: this runs
-            // once in a test, and reproducing each layer's own entry point is
-            // worth more here than sharing intermediates would be.
-            let sp = base.spawn.eval(x, y, WobbleSums::at(&base.helpers, x, y));
-            let cr = base.cracks.eval(x, y);
-            let cl = base.climate.eval(x, y, &cr);
-            let bi = biomes.eval(x, y);
-            let el = stack.elevation_fields(x, y);
-            let res = stack.resources(x, y);
-            let tf = stack.tile_fields(x, y);
-            let rk = rocks.eval(x, y);
-
-            let v = match field {
-                0 => base.helpers.wobble_x(x, y),
-                1 => base.helpers.wobble_y(x, y),
-                2 => base.helpers.wobble_large_x(x, y),
-                3 => base.helpers.wobble_large_y(x, y),
-                4 => base.helpers.wobble_huge_x(x, y),
-                5 => base.helpers.wobble_huge_y(x, y),
-                6 => sp.ashlands_start,
-                7 => sp.basalts_start,
-                8 => sp.mountains_start,
-                9 => sp.starting_area,
-                10 => sp.starting_circle,
-                11 => cr.hairline_cracks,
-                12 => cr.flood_cracks_a,
-                13 => cr.flood_cracks_b,
-                14 => cr.flood_paths,
-                15 => cr.flood_basalts_func,
-                16 => cl.aux,
-                17 => cl.moisture,
-                18 => bi.mountain_volcano_spots,
-                19 => bi.mountains_raw_volcano,
-                20 => bi.mountains_biome_full,
-                21 => bi.ashlands_biome_full,
-                22 => bi.basalts_biome_full,
-                23 => bi.mountains_biome,
-                24 => bi.ashlands_biome,
-                25 => bi.basalts_biome,
-                // The RAW `elev` and its clamp, graded separately. No fixture
-                // can tell them apart - see `VulcanusStack::elevation_fields`.
-                26 => el.elev,
-                27 => el.elevation,
-                // A genuinely different field, not a rounding of the one above:
-                // `multisample`'s offsets are in the CONSUMING program's grid
-                // units and the cliff lattice is 4 tiles wide (#83).
-                28 => stack.cliff_elevation(x, y),
-                // Read by no renderer at all, which is half the argument for
-                // this whole export existing.
-                29 => stack.temperature(x, y),
-                30 => res.basalts_favorability,
-                31 => res.mountains_favorability,
-                32 => res.mountains_sulfur_favorability,
-                33 => res.ashlands_favorability,
-                34 => res.starting_tungsten,
-                35 => res.starting_coal,
-                36 => res.starting_calcite,
-                37 => res.starting_sulfur,
-                38 => res.tungsten_region,
-                39 => res.coal_region,
-                40 => res.calcite_region,
-                41 => res.sulfuric_acid_region,
-                42 => res.sulfuric_acid_patches,
-                43 => res.sulfuric_acid_region_patchy,
-                44 => res.metal_tile,
-                45 => sulfuric_acid_geyser_probability(res.sulfuric_acid_region_patchy),
-                46 => tf.mountain_lava_spots,
-                47 => tf.rock_noise,
-                48 => tf.distance,
-                49 => cliffiness.eval(x, y),
-                50 => f64::from(knockout.eval(x, y)),
-                51 => rk.rock_huge,
-                52 => rk.rock_big,
-                53 => rk.density,
-                // The 19 tile probabilities, in `TILE_ORDER`.
-                54..=72 => tile_probabilities(&tf)[(field - 54) as usize],
-                // The resolved tile, as its index in `TILE_ORDER`. A number so
-                // it rides the same comparator as the probabilities it derives
-                // from, and a DISCRETE one, which is why `resolve_tile` carries
-                // `poison::index_result` rather than a numeric hook.
-                _ => tile_index(resolve_tile(&tf)),
-            };
-            acc = checksum::fold_f64(acc, v);
+            acc = checksum::fold_f64(acc, parity.field(field, x, y));
         }
     }
     acc
-}
-
-/// A resolved tile as its position in [`TILE_ORDER`].
-///
-/// A linear scan rather than a second table, so it cannot drift from the order
-/// the argmax resolves against.
-fn tile_index(tile: fmw_noise::tiles::vulcanus_catalog::VulcanusTile) -> f64 {
-    #[allow(clippy::cast_precision_loss)]
-    TILE_ORDER
-        .iter()
-        .position(|&t| t == tile)
-        .map_or(f64::NAN, |i| i as f64)
 }
 
 /// How many fields [`checksum_vulcanus`] can select, so the spec cannot
@@ -1161,7 +1047,7 @@ fn tile_index(tile: fmw_noise::tiles::vulcanus_catalog::VulcanusTile) -> f64 {
 /// assertion still passed.
 #[unsafe(no_mangle)]
 pub extern "C" fn vulcanus_field_count() -> u32 {
-    VULCANUS_FIELD_COUNT
+    VulcanusParity::FIELD_COUNT
 }
 
 // ---------------------------------------------------------------------------

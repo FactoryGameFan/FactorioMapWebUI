@@ -263,14 +263,14 @@ interface Window {
  *
  * Both are off any spot-region lattice, so few samples land on a region centre.
  *
- * **Every coordinate they generate is exactly representable in f32, and that is
- * a deliberate restriction rather than a happy accident.** Off that grid the
- * two ports genuinely disagree - `basisNoiseExpr` narrows the coordinate
- * product once where the Rust narrows `x` first - which is issue
- * {@link OFF_GRID_ISSUE}. `the_two_ports_diverge_off_the_f32_grid` below pins
- * that divergence rather than leaving it to a comment, and it is what should go
- * red when the issue is fixed. At that point these two steps can go back to
- * being arbitrary.
+ * Every coordinate they generate is exactly representable in f32. That was once
+ * a load-bearing restriction, because off that grid the two ports genuinely
+ * disagreed - {@link OFF_GRID_ISSUE}, where `basisNoiseExpr` narrowed the
+ * coordinate product once and the Rust narrowed `x` first. **That issue is
+ * fixed**, so the restriction is now only a convenience: these windows are
+ * tuned for FIELD coverage (the `startingArea` range, all 19 tiles placed) and
+ * are kept as they are because retuning them buys nothing. The off-grid regime
+ * is graded by `the_two_ports_agree_off_the_f32_grid` below, on its own window.
  *
  * The steps are quarters (`29.75`, `61.25`) rather than integers so the sweep
  * still crosses tiles at a non-integer offset.
@@ -281,12 +281,15 @@ const WINDOWS: readonly Window[] = [
 ];
 
 /**
- * A window whose coordinates are NOT f32-exact, used only by the pinning test.
+ * A window whose coordinates are NOT f32-exact.
  *
  * `29.7` has no exact binary form, so `originX + i * 29.7` leaves the f32 grid
- * almost everywhere - which is the regime the game never evaluates in and the
- * shipped app never asks for (`preview/tiling.ts` records that it uses integer
- * origins and `tilesPerPixel` 1).
+ * almost everywhere. The game never evaluates there - it snaps every sample to
+ * its 1/256 MapPosition grid - and the shipped app never asks for it
+ * (`preview/tiling.ts` uses integer origins and `tilesPerPixel` 1). It is swept
+ * anyway because it is the ONLY regime in which the two ports' coordinate
+ * narrowing is observable at all, which is what let #309 hide through three
+ * shipped PRs.
  */
 const OFF_GRID: Window = {
   label: "off the f32 grid",
@@ -296,7 +299,7 @@ const OFF_GRID: Window = {
   size: 26,
 };
 
-/** The issue tracking the off-grid divergence the pinning test freezes. */
+/** The issue that WAS the off-grid divergence, now fixed and guarded below. */
 const OFF_GRID_ISSUE = 309;
 
 function ctxInput(s: Sliders): EvalCtxInput {
@@ -461,29 +464,20 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
     expect(compared).toBe(FIELD_NAMES.length * SLIDERS.length * WINDOWS.length);
   }, 300000);
 
-  it(`the two ports diverge off the f32 grid, which is #${String(OFF_GRID_ISSUE)}`, async () => {
-    // The parity fold above sweeps on the f32-exact grid, and this is why. Off
-    // that grid `basisNoiseExpr` and its Rust port disagree: the TypeScript
-    // forms the coordinate product in f64 and narrows once, the Rust narrows
-    // `x` first and multiplies two f32s.
+  it(`the two ports agree off the f32 grid, which closes #${String(OFF_GRID_ISSUE)}`, async () => {
+    // This test used to assert the OPPOSITE, and freezing it at 32 diverging
+    // fields is what made the fix checkable rather than a matter of taste.
     //
-    // Frozen here rather than described, so it cannot be forgotten and cannot
-    // quietly change. **When #309 is fixed this test goes red**, and that is the
-    // prompt to widen WINDOWS back off the grid and delete this whole block.
-    //
-    // It asserts the MECHANISM, not just the symptom - which is what makes it
-    // worth more than a count:
-    //
-    // - `wobbleX` is a multioctave, and both ports narrow the incoming
-    //   coordinate there (`multioctaveNoise.ts:203`, `multioctave_noise.rs:137`),
-    //   so it AGREES off-grid.
-    // - `hairlineCracks` is a bare `basisNoiseExpr`, narrowed on one side only,
-    //   so it DISAGREES.
-    // - `resolvedTile` AGREES even though 17 of the 19 probabilities behind it
-    //   do not, because a discrete argmax almost never changes which side of a
-    //   comparison a value falls on. That is why tier 3's byte-identical pixels
-    //   could not see any of this, and it is the same property that made
-    //   `poison::index_result` necessary.
+    // #309 was `basisNoiseExpr` forming its coordinate product in f64 and
+    // narrowing once, where the Rust narrowed `x` first. The two agree at every
+    // f32-exact coordinate and differed everywhere else, so no fixture and no
+    // rendered pixel could see it: the game snaps every sample onto its 1/256
+    // MapPosition grid (#186), which below |x| = 65536 is a SUBSET of the f32
+    // grid. It was settled by measuring `fulgora_basis` - a multioctave read at
+    // Fulgora's DERIVED coordinate `wx`, off the f32 grid at 55 of 101 fixture
+    // positions - which scores 101/101 at worst residual exactly 0 narrowed and
+    // 81/101 at 7.0333e-6 un-narrowed. The game narrows. See
+    // `src/noise/eval/primitives.ts`.
     const engine = await instantiate();
     const s = SLIDERS[0] as Sliders;
     const ts = tsFields(s, OFF_GRID);
@@ -492,20 +486,30 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
     const diverging = FIELD_NAMES.filter(
       (_, field) => u64(engine.checksum_vulcanus(len, field)) !== foldAll(ts[field] as number[]),
     );
+    expect(diverging).toEqual([]);
 
-    expect(diverging).toHaveLength(32);
-    expect(diverging, "the multioctave path narrows on both sides").not.toContain("wobbleX");
-    expect(diverging, "basisNoiseExpr narrows on one side only").toContain("hairlineCracks");
-    expect(diverging, "the argmax absorbs it - why tier 3 is blind here").not.toContain(
-      "resolvedTile",
+    // Anti-vacuity, and it is not optional: "nothing diverges" is exactly what a
+    // sweep that evaluated nothing would report. Both sides could fold 0 for
+    // every field and this test would pass. So assert the off-grid window is
+    // really a DIFFERENT sweep from the on-grid one - if the folds matched the
+    // spawn window's, the coordinates never left the grid and the comparison
+    // above would be a re-run of the main fold.
+    const onGrid = tsFields(s, WINDOWS[0] as Window);
+    const moved = FIELD_NAMES.filter(
+      (name, field) =>
+        foldAll(ts[field] as number[]) !== foldAll(onGrid[FIELD_NAMES.indexOf(name)] as number[]),
+    );
+    expect(moved.length, "the off-grid window must sweep different points").toBe(
+      FIELD_NAMES.length,
     );
   }, 300000);
 
-  it("the parity windows really are on the f32 grid, so the sweep above is the on-grid regime", () => {
-    // Anti-vacuity for the restriction itself. If a step were edited to
-    // something without an exact binary form, the fold above would start
-    // comparing the two ports in the regime #309 says they disagree in, and the
-    // failure would look like a port bug rather than a window mistake.
+  it("the parity windows are on the f32 grid and the off-grid window is not", () => {
+    // Anti-vacuity for the two regimes being genuinely different. The main fold
+    // sweeps on the grid and the test above sweeps off it; if the windows drifted
+    // into the same regime, one of the two would silently stop covering anything
+    // the other did not. The `20` below is what makes the agreement test above
+    // meaningful rather than a second run of the main fold.
     const exact = (v: number): boolean => Math.fround(v) === v;
     for (const w of WINDOWS) {
       for (let i = 0; i < w.size; i++) {
@@ -572,10 +576,15 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
     for (const [i] of FIELD_NAMES.entries()) {
       if (foldAll(a[i] as number[]) !== foldAll(b[i] as number[])) differing++;
     }
-    // Measured at 50 of 74. A floor rather than a freeze: the guard's job is
-    // "the second setting is a genuinely different chain", and the exact count
-    // is a property of which fields happen to read a slider, not a result.
-    expect(differing).toBeGreaterThan(40);
+    // Frozen at the measured 50 of 74, like every other count in this file,
+    // rather than left as the floor it started as. The argument for a floor was
+    // that this is "a property of which fields read a slider, not a result" -
+    // but that is true of the window guard's 74 and the tile guard's 19 too,
+    // and those are frozen. A freeze is strictly stronger: it fails if a change
+    // makes FEWER fields read a slider, which a floor of 40 would sit through
+    // for another nine fields, and it fails if a change makes more, which is a
+    // finding either way. If it moves, read it - do not widen it.
+    expect(differing).toBe(50);
   }, 300000);
 
   it("the two windows are different regimes, so running both says something", () => {
