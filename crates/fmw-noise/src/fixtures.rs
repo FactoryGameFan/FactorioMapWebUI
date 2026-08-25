@@ -23,18 +23,34 @@ use std::collections::BTreeMap;
 /// Load a fixture and pin the game version its ground truth was captured from.
 ///
 /// The frozen exact counts in this file all describe "this port against game
-/// version X", and until #295 not one of them said which X. That is not
-/// bookkeeping: `vulcanus_hairline_cracks` scores 50 of 61 against the 2.1.12
-/// capture and 61 of 61 against a 2.1.14 one, at the SAME 61 positions with the
-/// SAME model - so 11 of those apparent port errors were the game changing
-/// under the fixture. 84% of the corpus predates the capture binary, so any
-/// count short of a full house has that as a live candidate explanation.
+/// version X", and until #295 not one of them said which X. Pinning it is still
+/// worth doing - a re-capture at a new version should force a re-score rather
+/// than sliding under a stale number.
 ///
-/// Read those two numbers off `hairlineCracks`'s own frozen count below, which
-/// is 50, rather than off #295's text, which says 48. The first draft of this
-/// comment quoted the issue and was wrong by 2 - in a change whose entire
-/// subject is that a number needs to say what it was measured against. The
-/// count in this file is the measurement; prose about it is not.
+/// **The example this comment used to give was wrong, and the correction is
+/// worth more than the helper.** It read: `vulcanus_hairline_cracks` scores 50
+/// of 61 against the 2.1.12 capture and 61 of 61 against a 2.1.14 one, "at the
+/// SAME 61 positions with the SAME model", so 11 apparent port errors were the
+/// game changing under the fixture. Measured, both halves are false:
+///
+/// - **The positions are not the same.** The 2.1.12 fixture records 21 of its
+///   61 coordinates OFF the 1/256 `MapPosition` grid; the 2.1.14 one was
+///   captured after `snapToMapPosition` landed and has none.
+/// - **The gap is that snap, not the version.** The 2.1.12 fixture SNAPPED
+///   scores 61 of 61 too. What was missing was the snap in `vulcanus_sweep` -
+///   the counts were being scored at 21 points the game never evaluated.
+///
+/// The residual version effect, once both are snapped, is at most 2 counts and
+/// goes BOTH ways (`floodPaths` 34 -> 36 favours the newer capture,
+/// `floodCracksA` 55 -> 54 the older). Real, second-order, not the cause.
+///
+/// Two things generalise from that. **A version difference and a capture-grid
+/// difference look identical from inside a count**, so rule out the grid first -
+/// it is free, and re-capturing to "check" a version hypothesis will confirm it
+/// whether or not it is true. And 2.1.14, 2.1.15 and 2.1.16 are ONE oracle for
+/// map-gen: the data Lua is byte-identical across them and a re-capture at
+/// 2.1.16 matched 2.1.14 on all 305 sampled values, so "predates the installed
+/// binary" overstates staleness by three versions.
 ///
 /// Writing the version in a comment would go stale the first time somebody
 /// re-captures. This reads `PROVENANCE.json`, so the claim is CHECKED:
@@ -2531,7 +2547,13 @@ fn vulcanus_sweep(seed0: u32, positions: &[Json]) -> (Vec<CrackFields>, Vec<Clim
     let mut c_out = Vec::with_capacity(positions.len());
     let mut k_out = Vec::with_capacity(positions.len());
     for p in positions {
-        let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+        // Snapped, like every other sweep in this file. Without it this scored
+        // the crack and climate layers at 21 of 61 coordinates the game never
+        // evaluated - see the note on `snap_coord`.
+        let (x, y) = (
+            snap_coord(p.get("x").as_f64()),
+            snap_coord(p.get("y").as_f64()),
+        );
         let c = cracks.eval(x, y);
         k_out.push(climate.eval(x, y, &c));
         c_out.push(c);
@@ -2555,19 +2577,41 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
     assert_eq!(positions.len(), 61, "fixture size");
     let (cracks, _) = vulcanus_sweep(fixture.get("seed0").as_f64() as u32, positions);
 
-    // Frozen exact counts, matched field for field against the TypeScript on
-    // the same fixture - 2, 15, 40, 10 and 9. They are the distance BOTH ports
-    // sit from the game, not a gap between them. Before #269 they were 3, 15,
-    // 40, 10 and 8; the block below is the full account of what moved and why.
+    // Frozen exact counts, measured with the positions SNAPPED - 61, 55, 51, 34
+    // and 37. They are the distance BOTH ports sit from the game, not a gap
+    // between them: the same five numbers come out of a TypeScript harness
+    // running this side's own comparison.
+    //
+    // **All five moved when the snap landed, and `hairlineCracks` closed.**
+    // This sweep used to read `p.x` raw, and 21 of these 61 positions are
+    // recorded OFF the 1/256 `MapPosition` grid, so a third of the scoring was
+    // done at points the game never evaluated:
+    //
+    //   hairlineCracks    50 -> 61   and 61 of 61 is EXACT
+    //   floodCracksA      45 -> 55
+    //   floodCracksB      43 -> 51
+    //   floodPaths        28 -> 34
+    //   floodBasaltsFunc  31 -> 37
+    //
+    // That also refutes what #295 read into these numbers. The issue took
+    // `hairline_cracks` scoring 50 here and 61 against a 2.1.14 capture as the
+    // game changing under the fixture. It was the missing snap: this fixture
+    // SNAPPED scores 61 too. See `load_captured_at` for the full correction and
+    // for why a version hypothesis is the one you must rule out last.
+    //
+    // ## History: #269, and the exposure rule it established
+    //
+    // The numbers in this section are the pre-snap ones and are kept because
+    // the RULE they establish is still load-bearing. At the time
+    // `hairlineCracks` stood at 2 of 61.
     //
     // Worst residuals as measured 2026-08-19, BEFORE #269, in the same order:
-    // 1.853e-3, 4.440e-4, 1.122e-4, 5.460e-4, 6.387e-4. Only the counts were
-    // re-measured after the fix.
+    // 1.853e-3, 4.440e-4, 1.122e-4, 5.460e-4, 6.387e-4.
     //
-    // `hairlineCracks` at 2 of 61 is the weakest and it is the SHALLOWEST
+    // `hairlineCracks` at 2 of 61 was the weakest and it is the SHALLOWEST
     // expression in the layer - a bare `plasma` with nothing composed on top -
-    // so the weakness cannot come from anything this file builds. It points at
-    // the plasma adapter, and specifically at #269: `basis_noise_expr` returns
+    // so the weakness could not come from anything this file builds. It pointed
+    // at the plasma adapter, and specifically at #269: `basis_noise_expr` returns
     // an un-narrowed f64 product where the game narrows to f32, and `plasma` is
     // two of those subtracted.
     //
@@ -2639,13 +2683,13 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
     for (key, want_exact, select) in [
         (
             "hairlineCracks",
-            50usize,
+            61usize,
             &(|f: &C| f.hairline_cracks) as &dyn Fn(&C) -> f64,
         ),
-        ("floodCracksA", 45, &|f| f.flood_cracks_a),
-        ("floodCracksB", 43, &|f| f.flood_cracks_b),
-        ("floodPaths", 28, &|f| f.flood_paths),
-        ("floodBasaltsFunc", 31, &|f| f.flood_basalts_func),
+        ("floodCracksA", 55, &|f| f.flood_cracks_a),
+        ("floodCracksB", 51, &|f| f.flood_cracks_b),
+        ("floodPaths", 34, &|f| f.flood_paths),
+        ("floodBasaltsFunc", 37, &|f| f.flood_basalts_func),
     ] {
         let got: Vec<f64> = cracks.iter().map(select).collect();
         assert_eq!(
@@ -2694,8 +2738,8 @@ fn reproduces_the_vulcanus_climate_layer_at_every_captured_position() {
     // achieves rather than as a measure of it.
     type K = ClimateFields;
     for (key, want_exact, select) in [
-        ("aux", 41usize, &(|f: &K| f.aux) as &dyn Fn(&K) -> f64),
-        ("moisture", 29, &|f| f.moisture),
+        ("aux", 51usize, &(|f: &K| f.aux) as &dyn Fn(&K) -> f64),
+        ("moisture", 35, &|f| f.moisture),
     ] {
         let got: Vec<f64> = climate.iter().map(select).collect();
         assert_eq!(
@@ -2704,6 +2748,78 @@ fn reproduces_the_vulcanus_climate_layer_at_every_captured_position() {
             "{key} exact f32 matches out of 61"
         );
     }
+}
+
+/// The snap is load-bearing on the crack and climate layers, and by how much.
+///
+/// The companion to `the_capture_grid_snap_is_load_bearing_on_the_vulcanus_
+/// elevation_surface`. It exists because `vulcanus_sweep` shipped WITHOUT the
+/// snap: 21 of these 61 positions are recorded off the 1/256 `MapPosition`
+/// grid, so a third of the scoring happened at points the game never evaluated,
+/// and the frozen counts understated the port by 6 to 11 each.
+///
+/// Both arms are pinned rather than just the snapped one. A test that only
+/// asserted the good number would pass again if the snap were removed and the
+/// counts re-frozen to match - which is exactly how this got shipped the first
+/// time. The gap between the two columns is the thing being guarded.
+///
+/// `hairlineCracks` is the row to read: 61 of 61 snapped, EXACT, against 50
+/// raw. #295 read that same 11-count gap as the game changing between 2.1.12
+/// and 2.1.14 - see `load_captured_at` for why it is not.
+#[test]
+fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_crack_layer() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cracks.seed123456.json",
+        "2.1.12",
+    );
+    let climate_fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-climate.seed123456.json",
+        "2.1.12",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+
+    // Non-vacuity: if a re-capture ever lands these on the grid, the snap
+    // becomes the identity and every assertion below stops discriminating.
+    let off_grid = positions
+        .iter()
+        .filter(|(x, y)| (x * 256.0).fract() != 0.0 || (y * 256.0).fract() != 0.0)
+        .count();
+    assert_eq!(off_grid, 21, "positions recorded off the 1/256 grid");
+
+    let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let cracks = VulcanusCracks::new(&helpers);
+    let climate = VulcanusClimate::new(ctx.seed0);
+    let maybe_snap = |v: f64, snap: bool| if snap { snap_coord(v) } else { v };
+
+    let scored = |snap: bool| {
+        let fields: Vec<(CrackFields, ClimateFields)> = positions
+            .iter()
+            .map(|(x, y)| {
+                let (px, py) = (maybe_snap(*x, snap), maybe_snap(*y, snap));
+                let c = cracks.eval(px, py);
+                let k = climate.eval(px, py, &c);
+                (c, k)
+            })
+            .collect();
+        let hairline: Vec<f64> = fields.iter().map(|(c, _)| c.hairline_cracks).collect();
+        let aux: Vec<f64> = fields.iter().map(|(_, k)| k.aux).collect();
+        (
+            score_vulcanus(
+                &hairline,
+                fixture.get("hairlineCracks").as_array(),
+                "hairline",
+            ),
+            score_vulcanus(&aux, climate_fixture.get("aux").as_array(), "aux"),
+        )
+    };
+
+    assert_eq!(
+        scored(false),
+        (50, 41),
+        "unsnapped - points the game never saw"
+    );
+    assert_eq!(scored(true), (61, 51), "snapped - where the game evaluated");
 }
 
 use crate::expressions::vulcanus_spawn::{SpawnFields, VulcanusSpawn, WobbleSums};
@@ -2799,7 +2915,14 @@ fn reproduces_the_vulcanus_biome_layer_at_every_captured_position() {
 
     let fields: Vec<BiomeFields> = positions
         .iter()
-        .map(|p| biomes.eval(p.get("x").as_f64(), p.get("y").as_f64()))
+        .map(|p| {
+            // Snapped: 22 of these 434 positions were recorded off the 1/256
+            // grid, so the raw coordinate is not where the game evaluated.
+            biomes.eval(
+                snap_coord(p.get("x").as_f64()),
+                snap_coord(p.get("y").as_f64()),
+            )
+        })
         .collect();
 
     // Frozen exact counts, measured 2026-08-19 and matched by the TypeScript on
@@ -2828,20 +2951,20 @@ fn reproduces_the_vulcanus_biome_layer_at_every_captured_position() {
             359usize,
             &(|f: &B| f.mountain_volcano_spots) as &dyn Fn(&B) -> f64,
         ),
-        ("vulcanus_mountains_raw_volcano", 163, &|f| {
+        ("vulcanus_mountains_raw_volcano", 174, &|f| {
             f.mountains_raw_volcano
         }),
-        ("vulcanus_mountains_biome_full", 128, &|f| {
+        ("vulcanus_mountains_biome_full", 135, &|f| {
             f.mountains_biome_full
         }),
-        ("vulcanus_ashlands_biome_full", 107, &|f| {
+        ("vulcanus_ashlands_biome_full", 114, &|f| {
             f.ashlands_biome_full
         }),
-        ("vulcanus_basalts_biome_full", 127, &|f| {
+        ("vulcanus_basalts_biome_full", 134, &|f| {
             f.basalts_biome_full
         }),
-        ("vulcanus_mountains_biome", 403, &|f| f.mountains_biome),
-        ("vulcanus_ashlands_biome", 402, &|f| f.ashlands_biome),
+        ("vulcanus_mountains_biome", 404, &|f| f.mountains_biome),
+        ("vulcanus_ashlands_biome", 404, &|f| f.ashlands_biome),
         ("vulcanus_basalts_biome", 408, &|f| f.basalts_biome),
     ] {
         let got: Vec<f64> = fields.iter().map(select).collect();

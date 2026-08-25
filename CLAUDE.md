@@ -2128,24 +2128,84 @@ landed as their own changes**, which is the intended path, not an exception:
 
   **Every count improved and not one regressed:**
 
-  | field                | before  | after                                  |
-  | -------------------- | ------- | -------------------------------------- |
-  | `detailNoise`        | 1/38    | **38/38**                              |
-  | `mountainPlasma`     | 11/38   | **38/38**                              |
-  | `hairlineCracks`     | 2/61    | **50/61** (61/61 at 2.1.14, see below) |
-  | `floodCracksA`       | 15/61   | **45/61**                              |
-  | `floodCracksB`       | 40/61   | **43/61**                              |
-  | `floodPaths`         | 10/61   | **28/61**                              |
-  | `floodBasaltsFunc`   | 9/61    | **31/61**                              |
-  | `aux`                | 40/61   | **41/61**                              |
-  | `moisture`           | 20/61   | **29/61**                              |
-  | `elev` / `elevation` | 115/434 | **169/434**                            |
-  | `temperature`        | 196/434 | **244/434**                            |
+  | field                | before  | after       |
+  | -------------------- | ------- | ----------- |
+  | `detailNoise`        | 1/38    | **38/38**   |
+  | `mountainPlasma`     | 11/38   | **38/38**   |
+  | `hairlineCracks`     | 2/61    | **50/61**   |
+  | `floodCracksA`       | 15/61   | **45/61**   |
+  | `floodCracksB`       | 40/61   | **43/61**   |
+  | `floodPaths`         | 10/61   | **28/61**   |
+  | `floodBasaltsFunc`   | 9/61    | **31/61**   |
+  | `aux`                | 40/61   | **41/61**   |
+  | `moisture`           | 20/61   | **29/61**   |
+  | `elev` / `elevation` | 115/434 | **169/434** |
+  | `temperature`        | 196/434 | **244/434** |
+
+  **Every number in that "after" column has since been superseded, because all
+  of them were scored at UNSNAPPED coordinates.** The table is kept as the
+  record of what #290/#293 moved; do not read it as current. See the snap
+  section below for the live counts - `hairlineCracks` is 61 of 61.
 
   `detailNoise` is the one to notice. This file used to hold it up as the
   argument for counting matches rather than bounding error - smallest residual
   of its three helper fields, fewest exact matches, 1 of 38. It is now 38 of 38.
   The bound never moved; the port did.
+
+- **Three tier-1 sweeps scored at coordinates the game never evaluated, and
+  fixing it moved 13 frozen counts UP (#295).** `vulcanus_sweep` and the biome
+  test read `p.x` raw, where `oracle-vulcanus-cracks` and
+  `oracle-vulcanus-climate` record **21 of 61** positions off the 1/256
+  `MapPosition` grid and `oracle-vulcanus-biomes` records 22 of 434. The other
+  seven tests over off-grid fixtures already snapped - the practice was
+  established and these three were simply missed.
+
+  | field                   | raw     | snapped     |
+  | ----------------------- | ------- | ----------- |
+  | `hairlineCracks`        | 50/61   | **61/61**   |
+  | `floodCracksA`          | 45/61   | **55/61**   |
+  | `floodCracksB`          | 43/61   | **51/61**   |
+  | `floodPaths`            | 28/61   | **34/61**   |
+  | `floodBasaltsFunc`      | 31/61   | **37/61**   |
+  | `aux`                   | 41/61   | **51/61**   |
+  | `moisture`              | 29/61   | **35/61**   |
+  | `mountains_raw_volcano` | 163/434 | **174/434** |
+  | `mountains_biome_full`  | 128/434 | **135/434** |
+  | `ashlands_biome_full`   | 107/434 | **114/434** |
+  | `basalts_biome_full`    | 127/434 | **134/434** |
+  | `mountains_biome`       | 403/434 | **404/434** |
+  | `ashlands_biome`        | 402/434 | **404/434** |
+
+  Two counts did NOT move, and both are readings rather than noise:
+  `mountain_volcano_spots` stays 359 because its output is a DISCRETE choice of
+  which candidate survives, and a sub-1/256 coordinate shift almost never
+  changes that - the same property `voronoi_cell_id` has. `basalts_biome` stays
+  408 because it is clamped and saturated over most of the map.
+
+  **This REFUTES what #295 read into `hairlineCracks`.** The issue took it
+  scoring 50 against the 2.1.12 capture and 61 against a 2.1.14 one as the game
+  changing under the fixture. Measured: the 2.1.12 fixture SNAPPED scores 61
+  too, and the two fixtures do not even hold the same positions - the older one
+  records 21 of them unsnapped. Once both are snapped the residual version
+  effect is at most 2 counts and goes BOTH ways (`floodPaths` 34 -> 36 favours
+  the newer capture, `floodCracksA` 55 -> 54 the older).
+
+  **A version difference and a capture-grid difference look identical from
+  inside a count, so rule out the grid FIRST** - it is free, where re-capturing
+  to test a version hypothesis will confirm that hypothesis whether or not it is
+  true. Following #295's own suggested handling here would have produced a
+  confident wrong answer.
+
+  And **2.1.14, 2.1.15 and 2.1.16 are ONE oracle** for map-gen: the data Lua is
+  byte-identical across them, and a re-capture at 2.1.16 matched 2.1.14 on all
+  305 sampled values. So `refs:sync --fixtures` reporting "115 of 118 predate
+  the installed binary" overstates staleness by three versions; the real cut is
+  95 of 118 older than 2.1.14.
+
+  `the_capture_grid_snap_is_load_bearing_on_the_vulcanus_crack_layer` pins BOTH
+  arms, not just the good one - a test asserting only the snapped number would
+  pass again if the snap were removed and the counts re-frozen to match, which
+  is exactly how this shipped the first time.
 
 - **The technique that solved #293 is worth more than the fix: capture the
   INTERMEDIATES, at the SAME positions.** `basisCallerScales` graded the two
