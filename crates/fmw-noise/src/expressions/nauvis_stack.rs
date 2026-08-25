@@ -36,6 +36,7 @@ use crate::expressions::nauvis_climate::{
     Aux, AuxParams, Moisture, MoistureParams, Temperature, TemperatureParams,
 };
 use crate::expressions::nauvis_shared::{NauvisShared, NauvisSharedParams};
+use crate::tiles::nauvis_catalog::{NauvisTileCatalog, NauvisTileFields, TILE_ORDER};
 
 /// Every control the Nauvis expression core reads.
 #[derive(Clone, Debug)]
@@ -216,6 +217,87 @@ impl NauvisStack {
             14 => self.moisture.eval(x, y),
             _ => self.temperature.eval(x, y),
         }
+    }
+}
+
+/// The tier-2 field selector: the whole Nauvis chain plus the tile layer above
+/// it.
+///
+/// It is a separate struct from [`NauvisStack`] rather than more arms on
+/// `NauvisStack::field`, for the reason the Vulcanus port records: the tile
+/// catalog builds nineteen `Prepared` multioctaves, and nothing on the
+/// expression chain needs them. Folding them into the stack would make every
+/// tier-1 fixture test pay for a layer it does not read.
+///
+/// **The selector lives here, beside the stack, and NOT in the wasm crate.**
+/// Reaching these fields from another crate would mean `pub` accessors that
+/// exist solely for a test, and a `pub` method cannot be `#[cfg(test)]`-gated
+/// because the wasm crate calls it at build time. Keeping it here also keeps
+/// [`Self::FIELD_COUNT`] on the type that owns the `match`, so the count and
+/// the arms it bounds cannot drift apart.
+pub struct NauvisParity<'a> {
+    stack: &'a NauvisStack,
+    tiles: NauvisTileCatalog,
+}
+
+impl<'a> NauvisParity<'a> {
+    /// How many named fields [`Self::field`] can select, `0..FIELD_COUNT`.
+    ///
+    /// The order is the order the chain evaluates in: the sixteen expression
+    /// fields [`NauvisStack::field`] selects, then the 21 tile probabilities in
+    /// `TILE_ORDER`, then the argmax over them.
+    pub const FIELD_COUNT: u32 = NauvisStack::FIELD_COUNT + 21 + 1;
+
+    #[must_use]
+    pub fn new(stack: &'a NauvisStack, seed0: u32) -> Self {
+        Self {
+            stack,
+            tiles: NauvisTileCatalog::new(seed0),
+        }
+    }
+
+    /// One named field at `(x, y)`.
+    ///
+    /// The 21 probabilities are folded individually rather than only the
+    /// winner, because **an argmax absorbs almost anything** - and that is
+    /// measured twice over, not assumed:
+    ///
+    /// - Numeric poison applied to every field beneath the catalog leaves all
+    ///   153 captured tiles resolving correctly (see `fixtures.rs`).
+    /// - Planting a one-digit slip in `grass-3`'s climate box - `aux_to` 0.65
+    ///   to 0.66 - moves **`tile:grass-3` and nothing else** across a 484-point
+    ///   window. `resolvedTileIndex` does not budge.
+    ///
+    /// So a mis-transcribed climate box really does show here and nowhere else.
+    /// Folding only the winner would have graded 21 formulas with one number
+    /// that cannot see any of them.
+    ///
+    /// The argmax itself crosses as its INDEX widened to `f64`, which is exact
+    /// for 0..21 and keeps the whole selector one `f64`-valued function.
+    #[must_use]
+    pub fn field(&self, field: u32, x: f64, y: f64) -> f64 {
+        if field < NauvisStack::FIELD_COUNT {
+            return self.stack.field(field, x, y);
+        }
+        let f = NauvisTileFields {
+            x,
+            y,
+            elevation: self.stack.elevation_nauvis.eval(x, y),
+            aux: self.stack.aux.eval(x, y),
+            moisture: self.stack.moisture.eval(x, y),
+        };
+        let i = (field - NauvisStack::FIELD_COUNT) as usize;
+        let probabilities = self.tiles.probabilities(&f);
+        if i < probabilities.len() {
+            return probabilities[i];
+        }
+        // Out of range resolves to the argmax, matching the exhaustive `match`
+        // this was lifted from.
+        let winner = self.tiles.resolve(&f);
+        TILE_ORDER
+            .iter()
+            .position(|t| *t == winner)
+            .expect("resolve returns a tile from TILE_ORDER") as f64
     }
 }
 

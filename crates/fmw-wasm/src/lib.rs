@@ -1128,7 +1128,7 @@ pub extern "C" fn render_request(len: u32) -> u32 {
 // ---------------------------------------------------------------------------
 
 use fmw_noise::distance_from_nearest_point::Point as NauvisPoint;
-use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack};
+use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisParity, NauvisStack};
 
 /// Tier 2 for the Nauvis expression core, one named field at a time.
 ///
@@ -1194,12 +1194,16 @@ pub extern "C" fn checksum_nauvis(
         starting_positions: vec![NauvisPoint { x: 0.0, y: 0.0 }],
     });
 
+    // The parity selector rather than the stack's own, so the 21 tile
+    // probabilities and the argmax over them are inside the comparison too.
+    let parity = NauvisParity::new(&stack, seed0);
+
     let mut acc = 0u64;
     for j in 0..n {
         let y = y0 + f64::from(j) * step;
         for i in 0..n {
             let x = x0 + f64::from(i) * step;
-            acc = checksum::fold_f64(acc, stack.field(field, x, y));
+            acc = checksum::fold_f64(acc, parity.field(field, x, y));
         }
     }
     acc
@@ -1209,5 +1213,5 @@ pub extern "C" fn checksum_nauvis(
 /// stop covering one.
 #[unsafe(no_mangle)]
 pub extern "C" fn nauvis_field_count() -> u32 {
-    NauvisStack::FIELD_COUNT
+    NauvisParity::FIELD_COUNT
 }

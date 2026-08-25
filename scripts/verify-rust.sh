@@ -118,6 +118,24 @@ POISONED_TESTS=(
 
   tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order
 
+  # Phase 6 (#226), the Nauvis tile argmax. Same shape as Vulcanus's: the
+  # 21-way winner is a DISCRETE output, so `poison::f64_result` cannot reach it
+  # and its control is `poison::index_result` in
+  # `tiles::nauvis_catalog::NauvisTileCatalog::resolve`.
+  #
+  # Both tests here are red ONLY because of that hook, and that was measured
+  # rather than assumed. Deleting the `index_result` call and re-running under
+  # poison leaves BOTH GREEN - so numeric poison applied to every field beneath
+  # the catalog moves not one of the 153 tiles.
+  #
+  # That is a stronger result than Vulcanus's comment above, which this block
+  # first copied: there the end-to-end test is red whether or not the argmax has
+  # a control, because its ocean/biome hooks move classifications. Here nothing
+  # but `index_result` can redden either test, which is the tile argmax's
+  # absorbing property stated as a measurement.
+  fixtures::puts_every_nauvis_tile_where_the_game_puts_it_at_all_three_seeds
+  tiles::nauvis_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_order
+
   # Phase 5's second half (#225), the cliff stack. Three hooks, because three
   # ops here can be wrong independently and one red test would otherwise stand
   # in for all of them:
