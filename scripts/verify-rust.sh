@@ -181,6 +181,19 @@ POISONED_TESTS=(
   # still far under the test shards (300s+), so it does not move the gate wall -
   # but the line in CLAUDE.md calling it 19s and the cheapest job expired here.
   fixtures::the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none
+
+  # Phase 6 (#226), Nauvis. The shared sub-tree's own hook is
+  # `poison::f64_result` on `cliff_ringbreak` - the layer's own arithmetic on
+  # top of the warp, rather than one of the octave fields, which inherit
+  # `basis_noise`'s hook already.
+  #
+  # `the_nauvis_offset_seeds_are_the_crc32_of_their_expression_names` is
+  # deliberately NOT here. It compares two `u32` constants against numbers
+  # worked out by hashing a string, so there is no ULP to bend and a wrong
+  # constant fails it with or without the feature - the same class as
+  # `the_random_penalty_seed_word_matches_the_measured_formula`. See
+  # `crates/fmw-noise/src/poison.rs`.
+  fixtures::reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then

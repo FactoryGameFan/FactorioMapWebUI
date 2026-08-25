@@ -4328,3 +4328,123 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     assert!(peak <= 0.2 + 1e-6, "captured peak {peak} exceeds the cap");
     assert!(peak > 0.05, "the field is empty over this sample");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 (#226), Nauvis. The shared sub-tree first: `nauvis_hills`,
+// `nauvis_hills_cliff_level`, `nauvis_plateaus`, `nauvis_bridge_billows`,
+// `forest_path_billows`, and the domain-warped `nauvis_hills_offset` /
+// `nauvis_cliff_ringbreak` pair the cliff field reads.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::nauvis_shared::{
+    NauvisShared, NauvisSharedParams, NAUVIS_OFFSET_X_SEED1, NAUVIS_OFFSET_Y_SEED1,
+};
+
+/// Score one named field over a fixture's positions, snapped onto the capture
+/// grid, returning (exact f32 matches, worst absolute residual).
+///
+/// The snap is `snap_coord`, for the reason `load_captured_at` records at
+/// length: a fixture's raw coordinate is often not where the game looked.
+fn score_nauvis(
+    positions: &[(f64, f64)],
+    expected: &[Json],
+    mut f: impl FnMut(f64, f64) -> f64,
+) -> (usize, f64) {
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for (i, (x, y)) in positions.iter().enumerate() {
+        let want = expected[i].as_f64();
+        let got = f64::from(f(snap_coord(*x), snap_coord(*y)) as f32);
+        worst = worst.max((got - want).abs());
+        if got == want {
+            exact += 1;
+        }
+    }
+    (exact, worst)
+}
+
+#[test]
+fn the_nauvis_offset_seeds_are_the_crc32_of_their_expression_names() {
+    // The game passes `basis_noise` the STRING 'nauvis_offset_x' / '_y' as
+    // seed1 and hashes it with standard CRC32. These two constants are the only
+    // place in the port where a seed comes from a name rather than a number, so
+    // they are pinned directly rather than left to be graded through the field
+    // they seed - a wrong constant produces a perfectly plausible warp field.
+    //
+    // `src/noise/expressions/nauvisShared.ts` pins the same two values, and
+    // `test/nauvisShared.spec.ts` asserts them.
+    assert_eq!(NAUVIS_OFFSET_X_SEED1, 593_691_028);
+    assert_eq!(NAUVIS_OFFSET_Y_SEED1, 1_415_852_290);
+}
+
+#[test]
+fn reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-cliff-offset-raw.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 38, "a regen cannot empty the loop");
+
+    // This fixture was captured entirely ON the 1/256 grid, so `snap_coord` is
+    // the identity here and the counts below are the same snapped or not. It is
+    // still applied, and the count still asserted, so that a re-capture which
+    // introduced off-grid positions would be graded correctly rather than
+    // scoring at points the game never evaluated.
+    assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
+
+    // Two seeds, so a constant that happened to suit 123456 cannot pass.
+    // Every count below was measured on the TypeScript side against this same
+    // fixture with the same snap, and all eight agree exactly - so they are the
+    // distance BOTH ports sit from the game rather than a gap between them.
+    let expected: [(u32, usize, usize, usize, usize); 2] = [
+        // (seed, rawX, rawY, hillsOffset, cliffRingbreak) exact f32 matches / 38
+        (123_456, 30, 30, 29, 29),
+        (777_771, 36, 30, 31, 31),
+    ];
+
+    for (case, &(seed, want_raw_x, want_raw_y, want_offset, want_ringbreak)) in
+        fixture.get("cases").as_array().iter().zip(expected.iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let shared = NauvisShared::new(&NauvisSharedParams {
+            seed0: seed,
+            segmentation_multiplier: 1.0,
+        });
+
+        // `raw_x`/`raw_y` are bare `basis_noise` at `nauvis_seg / 500`, read
+        // through the layer so a wrong input scale or a swapped table is caught
+        // here rather than only through the fields above them.
+        let (raw_x, worst_raw_x) = score_nauvis(&positions, case.get("rawX").as_array(), |x, y| {
+            shared.hills_offset_raw_x(x, y)
+        });
+        let (raw_y, worst_raw_y) = score_nauvis(&positions, case.get("rawY").as_array(), |x, y| {
+            shared.hills_offset_raw_y(x, y)
+        });
+        let (offset, worst_offset) =
+            score_nauvis(&positions, case.get("hillsOffset").as_array(), |x, y| {
+                shared.hills_offset(x, y)
+            });
+        let (ringbreak, worst_ringbreak) =
+            score_nauvis(&positions, case.get("ringbreak").as_array(), |x, y| {
+                shared.cliff_ringbreak(x, y)
+            });
+
+        assert_eq!(
+            raw_x, want_raw_x,
+            "seed {seed} rawX exact, worst {worst_raw_x:e}"
+        );
+        assert_eq!(
+            raw_y, want_raw_y,
+            "seed {seed} rawY exact, worst {worst_raw_y:e}"
+        );
+        assert_eq!(
+            offset, want_offset,
+            "seed {seed} hillsOffset exact, worst {worst_offset:e}"
+        );
+        assert_eq!(
+            ringbreak, want_ringbreak,
+            "seed {seed} cliffRingbreak exact, worst {worst_ringbreak:e}"
+        );
+    }
+}
