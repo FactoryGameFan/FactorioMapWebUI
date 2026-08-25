@@ -14,6 +14,7 @@ import {
   NAUVIS_OFFSET_Y_SEED1,
 } from "../src/noise/expressions/nauvisShared";
 import { makeTemperature } from "../src/noise/expressions/temperature";
+import { makeTileCatalog } from "../src/noise/tiles/catalog";
 
 /**
  * Tier 2 of the Rust port's gate for the Nauvis expression core (#226): strict
@@ -217,6 +218,41 @@ function tsFields(c: Case): ((x: number, y: number) => number)[] {
     segmentationMultiplier: c.segmentationMultiplier,
   };
 
+  // Hoisted, because the tile layer reads all three and rebuilding them per
+  // tile would be 21 copies of the same chain.
+  const elevationNauvis = makeElevationNauvis(elevationCommon);
+  const auxAt = makeAux({
+    seed0: SEED0,
+    segmentationMultiplier: c.segmentationMultiplier,
+    frequency: c.auxFrequency,
+    bias: c.auxBias,
+  });
+  const moistureAt = makeMoisture({
+    seed0: SEED0,
+    segmentationMultiplier: c.segmentationMultiplier,
+    moistureFrequency: c.moistureFrequency,
+    moistureBias: c.moistureBias,
+    startingAreaMoistureSize: c.startingAreaMoistureSize,
+    startingAreaMoistureFrequency: c.startingAreaMoistureFrequency,
+  });
+
+  // `makeTileResolver` is deliberately NOT used to build this env, and the
+  // reason is a live bug rather than a style choice: `TileResolverParams` has
+  // no `waterLevel` field, so the resolver builds its elevation tree at
+  // water level 0 whatever the caller asked for. That is issue #320 - it costs
+  // 322 of 2,401 resolved tiles at `waterLevel = 5`. Tier 2 grades the tile
+  // FORMULAS, so it reads the shipped `probability` closures over an env built
+  // from the shipped expression trees, and leaves the plumbing gap to its own
+  // change.
+  const catalog = makeTileCatalog(SEED0);
+  const envAt = (x: number, y: number) => ({
+    x,
+    y,
+    elevation: elevationNauvis(x, y),
+    aux: auxAt(x, y),
+    moisture: moistureAt(x, y),
+  });
+
   return [
     shared.hills,
     shared.cliffLevel,
@@ -227,29 +263,32 @@ function tsFields(c: Case): ((x: number, y: number) => number)[] {
     (x, y) => basisNoise(x * offsetInputScale, y * offsetInputScale, rawYTables),
     shared.hillsOffset,
     shared.cliffRingbreak,
-    makeElevationNauvis(elevationCommon),
+    elevationNauvis,
     makeElevationNauvis({ ...elevationCommon, withCliffElevation: false }),
     makeElevationLakes(elevationCommon),
     makeElevationIsland(elevationCommon),
-    makeAux({
-      seed0: SEED0,
-      segmentationMultiplier: c.segmentationMultiplier,
-      frequency: c.auxFrequency,
-      bias: c.auxBias,
-    }),
-    makeMoisture({
-      seed0: SEED0,
-      segmentationMultiplier: c.segmentationMultiplier,
-      moistureFrequency: c.moistureFrequency,
-      moistureBias: c.moistureBias,
-      startingAreaMoistureSize: c.startingAreaMoistureSize,
-      startingAreaMoistureFrequency: c.startingAreaMoistureFrequency,
-    }),
+    auxAt,
+    moistureAt,
     makeTemperature({
       seed0: SEED0,
       frequency: c.temperatureFrequency,
       bias: c.temperatureBias,
     }),
+    // The 21 tile probabilities, in catalog order, then the argmax over them.
+    ...catalog.map((t) => (x: number, y: number) => t.probability(envAt(x, y))),
+    (x: number, y: number) => {
+      const env = envAt(x, y);
+      let winner = 0;
+      let best = catalog[0].probability(env);
+      for (let i = 1; i < catalog.length; i++) {
+        const p = catalog[i].probability(env);
+        if (p > best) {
+          best = p;
+          winner = i;
+        }
+      }
+      return winner;
+    },
   ];
 }
 
@@ -270,6 +309,31 @@ const FIELD_NAMES = [
   "aux",
   "moisture",
   "temperature",
+  // The 21 tiles, spelled out rather than derived from the catalog. Derived,
+  // a reordering would silently relabel every failure instead of failing;
+  // `the tile field names match the catalog's own order` is the check.
+  "tile:deepwater",
+  "tile:water",
+  "tile:grass-1",
+  "tile:grass-2",
+  "tile:grass-3",
+  "tile:grass-4",
+  "tile:dry-dirt",
+  "tile:dirt-1",
+  "tile:dirt-2",
+  "tile:dirt-3",
+  "tile:dirt-4",
+  "tile:dirt-5",
+  "tile:dirt-6",
+  "tile:dirt-7",
+  "tile:sand-1",
+  "tile:sand-2",
+  "tile:sand-3",
+  "tile:red-desert-0",
+  "tile:red-desert-1",
+  "tile:red-desert-2",
+  "tile:red-desert-3",
+  "resolvedTileIndex",
 ] as const;
 
 const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
@@ -346,6 +410,44 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
     // for a narrowing reason no matter how many fields it folded.
     expect(offGrid({ x0: 512.5, y0: -1024.25, step: 0.5, n: 22 })).toBe(0);
     expect(offGrid({ x0: 3000.75, y0: 3000.75, step: 8, n: 22 })).toBe(0);
+  });
+
+  it("the tile field names match the catalog's own order", () => {
+    // FIELD_NAMES spells the 21 tiles out rather than deriving them, so that a
+    // reordering fails here instead of silently relabelling every downstream
+    // failure. This is the check that keeps the two in step.
+    const fromCatalog = makeTileCatalog(SEED0).map((t) => `tile:${t.name}`);
+    const fromNames = FIELD_NAMES.filter((n) => n.startsWith("tile:"));
+    expect(fromNames).toEqual(fromCatalog);
+    expect(fromCatalog).toHaveLength(21);
+    // And the tile block sits immediately after the 16 expression fields, so
+    // `FIELD_NAMES[16 + i]` really is `TILE_ORDER[i]`'s probability.
+    expect(FIELD_NAMES[16]).toBe("tile:deepwater");
+    expect(FIELD_NAMES[36]).toBe("tile:red-desert-3");
+    expect(FIELD_NAMES[37]).toBe("resolvedTileIndex");
+  });
+
+  it("the resolved tile index really is an index into the catalog", async () => {
+    // `resolvedTileIndex` crosses the ABI as an f64, so a wrong widening or an
+    // off-by-one would still fold to *some* number on both sides. This pins
+    // that the values are integral and inside 0..21 - which the checksum
+    // cannot say, because it folds raw bits.
+    const c = CASES[0];
+    const fields = tsFields(c);
+    const resolved = fields[37];
+    const seen = new Set<number>();
+    for (let j = 0; j < c.n; j++) {
+      for (let i = 0; i < c.n; i++) {
+        const v = resolved(c.x0 + i * c.step, c.y0 + j * c.step);
+        expect(Number.isInteger(v)).toBe(true);
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThan(21);
+        seen.add(v);
+      }
+    }
+    // Anti-vacuity: a window that resolved to one constant tile would satisfy
+    // everything above and grade nothing.
+    expect(seen.size).toBeGreaterThan(1);
   });
 
   it("the cases actually differ from each other, field by field", async () => {

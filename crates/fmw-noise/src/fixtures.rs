@@ -4813,3 +4813,264 @@ fn reproduces_the_games_temperature_bit_for_bit_at_every_captured_position() {
     assert_eq!(exact, 26, "exact f32 matches, worst {worst:e}");
     assert_eq!(worst, 0.0, "worst absolute error");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 (#226), Nauvis tiles: the 21-way argmax against the tile the game
+// actually placed.
+
+use crate::expressions::nauvis_stack::{NauvisCtx, NauvisStack};
+use crate::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog, NauvisTileFields, TILE_ORDER};
+
+/// Score one `oracle-tile-names` fixture: how many of its positions the port
+/// resolves to the tile name the game recorded.
+///
+/// Returns `(exact, total, misses)`, where a miss carries the position, what
+/// the game placed, what we placed, and the gap between the top two
+/// probabilities - because a near-tie miss and a systematically-wrong-formula
+/// miss look identical in a count and completely different in that number.
+fn score_nauvis_tiles(fixture: &Json) -> (usize, usize, Vec<String>) {
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = fixture.get("positions").as_array();
+    let names = fixture.get("tileNames").as_array();
+    assert_eq!(positions.len(), names.len(), "fixture rows disagree");
+
+    let stack = NauvisStack::new(&NauvisCtx::defaults(seed0));
+    let catalog = NauvisTileCatalog::new(seed0);
+
+    let mut exact = 0usize;
+    let mut misses = Vec::new();
+    for (i, p) in positions.iter().enumerate() {
+        // Snap, even though every position in these three fixtures is
+        // integral - see `the_capture_grid_snap_is_inert_on_the_nauvis_tile
+        // _fixtures_and_that_is_measured`, which pins that it is inert rather
+        // than assuming it.
+        let x = snap_coord(p.get("x").as_f64());
+        let y = snap_coord(p.get("y").as_f64());
+
+        let f = NauvisTileFields {
+            x,
+            y,
+            elevation: stack.elevation_nauvis.eval(x, y),
+            aux: stack.aux.eval(x, y),
+            moisture: stack.moisture.eval(x, y),
+        };
+        let got = catalog.resolve(&f);
+        let want = names[i].as_str();
+
+        if got.name() == want {
+            exact += 1;
+            continue;
+        }
+        let mut p_sorted = catalog.probabilities(&f);
+        p_sorted.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        misses.push(format!(
+            "seed={seed0} ({x},{y}) want={want} got={} top2gap={:.3e}",
+            got.name(),
+            p_sorted[0] - p_sorted[1]
+        ));
+    }
+    (exact, positions.len(), misses)
+}
+
+/// The 21-way Nauvis tile argmax against `surface.get_tile(x, y).name`, at all
+/// three captured seeds.
+///
+/// **The count is FROZEN at a full score, and it is a full score.** The
+/// TypeScript reaches the same 153 of 153 against these fixtures, measured
+/// before this port was written so the number comes from the reference rather
+/// than from the port agreeing with itself.
+///
+/// That makes this the strongest tier-1 result on Nauvis, and the reason is
+/// worth reading beside `elevation_nauvis`'s 8 of 26: an argmax absorbs error.
+/// Every probability under it is a composite of `aux`, `moisture` and
+/// `elevation_nauvis`, none of which is bit-exact, and it still resolves
+/// perfectly, because a sub-ULP error almost never changes which of 21 values
+/// is largest. **A perfect argmax is not evidence that the fields beneath it
+/// are right** - it is the same property that made `poison::index_result`
+/// necessary, and the standing argument for grading the probability vector as
+/// well as the winner.
+///
+/// The TypeScript spec on this fixture asserts `>= 90%` and a near-boundary
+/// seam for any mismatch. That bound is 63 points looser than the truth, which
+/// is the #162 pathology again: it would pass with 15 tiles placed wrong.
+///
+/// **How absorbing the argmax is was measured, not estimated.** Deleting the
+/// `poison::index_result` call in `NauvisTileCatalog::resolve` and re-running
+/// under `--features poison` leaves this test GREEN: numeric poison applied to
+/// every field beneath the catalog moves not one of the 153. That is why the
+/// argmax needs a discrete hook of its own, and it is a stronger version of the
+/// same finding phase 3 recorded on Fulgora.
+#[test]
+fn puts_every_nauvis_tile_where_the_game_puts_it_at_all_three_seeds() {
+    let fixtures = [
+        ("test/fixtures/oracle-tile-names.seed123456.json", 51),
+        ("test/fixtures/oracle-tile-names.seed424242.json", 51),
+        ("test/fixtures/oracle-tile-names.seed654321.json", 51),
+    ];
+
+    let mut total_exact = 0usize;
+    let mut total = 0usize;
+    let mut all_misses = Vec::new();
+    for (path, want_rows) in fixtures {
+        // Captured at 2.1.11 against a 2.1.16 binary; the map-gen Lua is
+        // byte-identical across that range (#295).
+        let fixture = load_captured_at(path, "2.1.11");
+        let (exact, rows, misses) = score_nauvis_tiles(&fixture);
+        assert_eq!(rows, want_rows, "{path} size");
+        total_exact += exact;
+        total += rows;
+        all_misses.extend(misses);
+    }
+
+    assert_eq!(total, 153, "three fixtures of 51");
+    assert_eq!(
+        total_exact,
+        153,
+        "of 153. Misses:\n{}",
+        all_misses.join("\n")
+    );
+}
+
+/// The capture-grid snap is INERT on these three fixtures, and that is measured
+/// rather than assumed.
+///
+/// Every one of the 153 positions is an integer, because the capture mod echoes
+/// the FLOORED `get_tile` input rather than the pre-floor request. So the snap
+/// in `score_nauvis_tiles` moves nothing today.
+///
+/// **It is applied anyway, and this test is why that is not decoration.** If a
+/// future re-capture records fractional positions, scoring them raw would grade
+/// at points the game never evaluated and return a confident wrong answer
+/// (#295, where exactly that cost 13 frozen counts). This asserts the current
+/// state so the snap cannot be deleted as dead code, and it goes red the moment
+/// a re-capture makes the snap load-bearing - at which point the snap is
+/// already there and correct.
+#[test]
+fn the_capture_grid_snap_is_inert_on_the_nauvis_tile_fixtures_and_that_is_measured() {
+    let mut rows = 0usize;
+    for path in [
+        "test/fixtures/oracle-tile-names.seed123456.json",
+        "test/fixtures/oracle-tile-names.seed424242.json",
+        "test/fixtures/oracle-tile-names.seed654321.json",
+    ] {
+        let fixture = load_captured_at(path, "2.1.11");
+        for p in fixture.get("positions").as_array() {
+            let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+            assert_eq!(snap_coord(x), x, "{path}: the snap moved x={x}");
+            assert_eq!(snap_coord(y), y, "{path}: the snap moved y={y}");
+            rows += 1;
+        }
+    }
+    assert_eq!(rows, 153, "all three fixtures were read");
+}
+
+/// The argmax is not vacuous: these fixtures place 20 of the 21 tiles, and the
+/// port places the same 20.
+///
+/// A port that returned one constant tile would still score well on a fixture
+/// dominated by a single terrain, so a count alone is not enough. Both the
+/// number of distinct tiles and the exact SET are pinned, in both directions.
+///
+/// **The one tile no captured point covers is `dirt-7`**, and naming it is the
+/// point of this test rather than a footnote: its formula is graded by nothing
+/// here, so a typo in its climate box would survive the 153-of-153 above. The
+/// unit tests in `tiles::nauvis_catalog` are what stand behind it.
+#[test]
+fn the_nauvis_tile_fixtures_exercise_twenty_of_the_twenty_one_tiles() {
+    let mut placed: Vec<String> = Vec::new();
+    let mut recorded: Vec<String> = Vec::new();
+
+    for path in [
+        "test/fixtures/oracle-tile-names.seed123456.json",
+        "test/fixtures/oracle-tile-names.seed424242.json",
+        "test/fixtures/oracle-tile-names.seed654321.json",
+    ] {
+        let fixture = load_captured_at(path, "2.1.11");
+        let seed0 = fixture.get("seed0").as_f64() as u32;
+        let stack = NauvisStack::new(&NauvisCtx::defaults(seed0));
+        let catalog = NauvisTileCatalog::new(seed0);
+
+        for (i, p) in fixture.get("positions").as_array().iter().enumerate() {
+            let x = snap_coord(p.get("x").as_f64());
+            let y = snap_coord(p.get("y").as_f64());
+            let f = NauvisTileFields {
+                x,
+                y,
+                elevation: stack.elevation_nauvis.eval(x, y),
+                aux: stack.aux.eval(x, y),
+                moisture: stack.moisture.eval(x, y),
+            };
+            placed.push(catalog.resolve(&f).name().to_owned());
+            recorded.push(fixture.get("tileNames").as_array()[i].as_str().to_owned());
+        }
+    }
+
+    let dedup = |mut v: Vec<String>| {
+        v.sort();
+        v.dedup();
+        v
+    };
+    let ours = dedup(placed);
+    let theirs = dedup(recorded);
+
+    assert_eq!(ours, theirs, "the tile SETS disagree");
+    assert_eq!(ours.len(), 20, "distinct tiles placed: {ours:?}");
+
+    let missing: Vec<&str> = TILE_ORDER
+        .iter()
+        .map(|t| t.name())
+        .filter(|n| !ours.iter().any(|o| o == n))
+        .collect();
+    assert_eq!(
+        missing,
+        vec!["dirt-7"],
+        "the set of tiles NO fixture point covers has changed"
+    );
+}
+
+/// Both water tiles are genuinely graded by the fixtures, so `water_base` is
+/// not riding along untested.
+///
+/// **This started as the opposite claim.** The first draft asserted that all
+/// 153 captured points are land and that the water tiles therefore needed a
+/// synthetic control - written from the shape of the catalog rather than from
+/// the data. Measured, 34 of the 153 are water: 29 `deepwater` and 5 `water`.
+/// The counts are frozen here so that stays a measurement.
+#[test]
+fn the_fixtures_grade_both_water_tiles() {
+    let mut deepwater = 0usize;
+    let mut water = 0usize;
+    for path in [
+        "test/fixtures/oracle-tile-names.seed123456.json",
+        "test/fixtures/oracle-tile-names.seed424242.json",
+        "test/fixtures/oracle-tile-names.seed654321.json",
+    ] {
+        let fixture = load_captured_at(path, "2.1.11");
+        for n in fixture.get("tileNames").as_array() {
+            match n.as_str() {
+                "deepwater" => deepwater += 1,
+                "water" => water += 1,
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(deepwater, 29, "deepwater points");
+    assert_eq!(water, 5, "water points");
+
+    // And the ladder between them is ordered, which no fixture point pins:
+    // deeper than -2 is deepwater, between -2 and 0 is water, above is land.
+    let catalog = NauvisTileCatalog::new(123_456);
+    let at = |elevation: f64| {
+        catalog.resolve(&NauvisTileFields {
+            x: 0.0,
+            y: 0.0,
+            elevation,
+            aux: 0.5,
+            moisture: 0.5,
+        })
+    };
+    assert_eq!(at(-40.0), NauvisTile::Deepwater);
+    assert_eq!(at(-1.0), NauvisTile::Water);
+    assert_ne!(at(5.0), NauvisTile::Water);
+    assert_ne!(at(5.0), NauvisTile::Deepwater);
+}
