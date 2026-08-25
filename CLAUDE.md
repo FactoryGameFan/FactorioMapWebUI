@@ -804,6 +804,23 @@ byte-exactness invariant, `wrangler` + `@cloudflare/vitest-pool-workers` are
 grouped because pool-workers hard-pins wrangler, and the `brace-expansion`
 override and `engines.node` floor are both marked as deliberate rather than stale.
 
+**The worker's `vitest` is coupled to `vite-plus`, and Renovate does NOT know
+it** (measured 2026-08-25). Renovate lists "Update dependency vitest to v4.1.11"
+as its own item, and taking it alone leaves `pnpm peers check` reporting an
+unmet `@vitest/browser-preview`: vite-plus pins the whole `@vitest/*` family at
+its own version (0.2.9 carries 4.1.10, 0.3.0 carries 4.1.11), so the worker's
+`vitest` has to move **with** vite-plus rather than ahead of it. The gate cannot
+see this - `pnpm run verify` passed with the split - so check `pnpm peers check`
+after any bump that touches either.
+
+**`pnpm outdated`'s "latest" is a trap for `wrangler`.** pool-workers pins it
+EXACTLY (`0.21.3` -> `wrangler = 4.123.0`, `0.22.0` -> `4.124.0`), so taking the
+newest wrangler splits the tree into two copies - which matters because
+`wrangler types --check` runs the direct copy while the tests run pool-workers'.
+Move wrangler to whatever version the pool-workers being installed names, not to
+`latest`, and confirm with `grep -oE "^  wrangler@[0-9.]+:" pnpm-lock.yaml`
+returning ONE line.
+
 **`enabled: false` disables SECURITY updates too, and `brace-expansion` proved
 it.** That rule exists to stop Renovate proposing the 5.x spike, but it also
 means no bot PR can ever arrive for the 2.x branch - including a CVE fix. On

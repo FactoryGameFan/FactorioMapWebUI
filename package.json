@@ -40,11 +40,11 @@
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.4.11",
     "concurrently": "^10.0.4",
-    "happy-dom": "^20.11.1",
+    "happy-dom": "^20.11.6",
     "jszip": "^3.10.1",
     "typescript": "^6.0.3",
     "vite-plus": "^0.2.6",
-    "vue-tsc": "^3.3.8"
+    "vue-tsc": "^3.3.11"
   },
   "devEngines": {
     "packageManager": {
