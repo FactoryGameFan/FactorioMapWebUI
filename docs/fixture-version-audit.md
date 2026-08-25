@@ -165,9 +165,20 @@ Whatever the audit concludes, write it back into
 - Never promote an `inferred` or `unknown` entry on the strength of a clean
   diff. Only a fresh capture against a known binary can do that.
 
-`test/fixtureProvenance.spec.ts` enforces that every fixture keeps an entry, and
-caps `unknown` at 1 so re-capturing
-`autoplace-can-be-disabled.dump.json` is the one move that can lower the ratchet.
+`test/fixtureProvenance.spec.ts` enforces that every fixture keeps an entry and
+pins the `unknown` count to the declared ratchet.
+
+**That ratchet reached 0 on 2026-08-25**, closing #295's suggestion 4.
+`autoplace-can-be-disabled.dump.json` was the last undocumented fixture, and
+`scripts/probes/autoplace-can-be-disabled` re-captured it against Factorio
+2.1.16: all 28 controls came back **byte-identical** to the committed file. The
+probe is committed rather than thrown away, so the claim is repeatable - which
+is the whole point of the rule above that a clean data diff can never promote an
+`unknown` entry.
+
+Because the count must EQUAL the ratchet rather than fall under it, 0 is a floor
+now: a new fixture arriving with no provenance fails immediately, where before it
+could quietly occupy the one slot that was already spoken for.
 
 ## Conclusions
 

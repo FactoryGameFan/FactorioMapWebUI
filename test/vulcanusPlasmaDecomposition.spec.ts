@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-vulcanus-plasma-decomposition.seed123456.json";
+import cracksFixture from "./fixtures/oracle-vulcanus-cracks.seed123456.json";
+import { countOffGrid, snapPosition } from "./captureGrid";
 import { basisNoise, basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
 import { withCtxDefaults } from "../src/noise/eval/ctx";
 import { f32 } from "../src/noise/eval/f32";
@@ -34,14 +36,34 @@ import { makeVulcanusHelpers } from "../src/noise/expressions/vulcanusHelpers";
  * and found `vulcanus_cracks_scale` is a noise-EXPRESSION rather than a Lua
  * number. See `src/noise/expressions/vulcanusCracks.ts`.
  *
- * ## A note on the version, which matters here
+ * ## A note on the version, and the claim this file used to make
  *
  * This fixture is captured from **2.1.14**;
- * `oracle-vulcanus-cracks.seed123456.json` is from **2.1.12**. The solved model
- * scores 61 of 61 here and 50 of 61 there, at identical positions. Those 11
- * are a GAME VERSION difference, not port error (#295). This file is the
- * current-version grade for this field; the older fixture's count is kept as it
- * is rather than chased.
+ * `oracle-vulcanus-cracks.seed123456.json` is from **2.1.12**. This file used
+ * to say the model scored 61 of 61 here and 50 of 61 there "at identical
+ * positions", and read those 11 as a GAME VERSION difference (#295). Both
+ * halves are wrong, and the second one is why the first looked true.
+ *
+ * **The positions are not identical.** The older fixture records 21 of its 61
+ * coordinates off the 1/256 `MapPosition` grid and its sweep scored them raw,
+ * so a third of that grade happened at points the game never evaluated.
+ * Snapped, it scores 61 of 61 as well.
+ *
+ * **And the two captures share only 52 of their 61 points**, which is a
+ * property of the harness rather than of either version. A capture PRODUCES a
+ * grid coordinate with `Math.floor` (`snapToMapPosition` in
+ * `test/oracle/capture.ts`); `test/captureGrid.ts` RECOVERS one with
+ * `Math.trunc`, because truncation toward zero is what the game does to a
+ * coordinate handed to it off the grid. Both are right for their own job, and
+ * they differ by one cell on a coordinate that is both NEGATIVE and off the
+ * grid - true at exactly 9 of these 61 positions, which is why nothing near the
+ * origin ever showed it. So a re-capture of an off-grid fixture cannot land on
+ * the points that snapping the old one produces, and comparing two captures'
+ * COUNTS compares two different sample sets.
+ *
+ * At the 52 points they do share, the two captures record bit-identical values.
+ * `the two captures agree wherever they sample the same point` asserts it. The
+ * game did not change.
  *
  * **Exact f64 equality, never a bound** (#162).
  */
@@ -154,5 +176,63 @@ describe("vulcanus_plasma decomposed (#293)", () => {
     }
     expect(exact).toBe(N);
     expect(worst).toBe(0);
+  });
+
+  /**
+   * **Game against game, across two versions, with the port removed.**
+   *
+   * This is the measurement that settles #295's headline reading. Neither side
+   * is ours: both arrays are values Factorio itself produced, one at 2.1.12 and
+   * one at 2.1.14. The only transformation is snapping the older fixture's
+   * recorded coordinates onto the grid the game evaluated them at.
+   *
+   * A version difference and a capture-grid difference look identical from
+   * inside a count, so the grid has to be ruled out first - and unlike a
+   * re-capture, it is free. Re-capturing to test a version hypothesis will
+   * confirm that hypothesis whether or not it is true, because the new fixture
+   * is snapped and the old one is not, so the count rises either way.
+   *
+   * Backed by the data as well: every Lua file behind this chain -
+   * `planet-vulcanus-map-gen.lua`, `noise-programs.lua`, `noise-functions.lua`,
+   * `base/prototypes/noise-expressions.lua`, `tiles-vulcanus.lua` - is
+   * byte-identical from 2.1.12 through 2.1.16.
+   *
+   * This asserts one field, because `hairlineCracks` is the only one the two
+   * committed fixtures have in common. The same comparison was run against a
+   * fresh **2.1.16** capture across all five crack fields on 2026-08-25 and
+   * came back bit-identical at every shared point there too; that capture is
+   * deliberately not committed, since adopting it would move frozen counts for
+   * a difference now measured to be zero. `load_captured_at` in
+   * `crates/fmw-noise/src/fixtures.rs` records the full result and the reason
+   * only 52 of the 61 points are shared.
+   */
+  it("the two captures agree wherever they sample the same point", () => {
+    const key = (p: { x: number; y: number }) => `${p.x},${p.y}`;
+    const atPoint = new Map<string, number>();
+    fixture.positions.forEach((p, i) => atPoint.set(key(p), fixture.hairlineCracks[i]));
+
+    let shared = 0;
+    let identical = 0;
+    let control = 0;
+    for (let i = 0; i < cracksFixture.positions.length; i++) {
+      const k = key(snapPosition(cracksFixture.positions[i]));
+      const want = atPoint.get(k);
+      if (want === undefined) continue;
+      shared++;
+      if (Object.is(cracksFixture.hairlineCracks[i], want)) identical++;
+      // Control: the same comparison against a DIFFERENT field of the same
+      // fixture must fail everywhere, or "identical" is measuring nothing.
+      if (Object.is(cracksFixture.floodCracksA[i], want)) control++;
+    }
+
+    // Anti-vacuity, both directions. If a re-capture ever lands the older
+    // fixture on the grid, the snap becomes the identity and this stops being
+    // a statement about anything; and if the two position sets ever drift
+    // fully apart the loop empties while still reporting success.
+    expect(countOffGrid(cracksFixture.positions), "off-grid positions").toBe(21);
+    expect(shared, "points the two captures share").toBe(52);
+    expect(control, "control - a different field must not match").toBe(0);
+
+    expect(identical).toBe(shared);
   });
 });

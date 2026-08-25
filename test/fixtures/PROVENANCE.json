@@ -19,11 +19,11 @@
     "Enforced by test/fixtureProvenance.spec.ts; report staleness with",
     "'pnpm refs:sync --fixtures'."
   ],
-  "maxUnknown": 1,
+  "maxUnknown": 0,
   "fixtures": {
     "autoplace-can-be-disabled.dump.json": {
-      "factorioVersion": "unknown",
-      "evidence": "UNDOCUMENTED - committed 2026-07-12, between the 2.1.9 and 2.1.11 eras; re-capture to establish"
+      "factorioVersion": "2.1.16",
+      "evidence": "RE-CAPTURED 2026-08-25 against Factorio 2.1.16 (build 87294, mac-arm64) via scripts/probes/autoplace-can-be-disabled, which is committed so this is repeatable rather than a one-off: all 28 autoplace controls re-read from prototypes.autoplace_control with space-age loaded, and the dump came back BYTE-IDENTICAL to the committed file (1696 bytes, same keys, same values, same key order). Was the last 'unknown' entry (#295 suggestion 4) - committed 2026-07-12 between the 2.1.9 and 2.1.11 eras with no version recorded. A clean data diff could not have promoted it, per docs/fixture-version-audit.md; only a capture against a named binary can"
     },
     "basis-noise-seeding.game.json": {
       "factorioVersion": "2.1.12",

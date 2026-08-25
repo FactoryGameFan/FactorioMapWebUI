@@ -1,0 +1,10 @@
+{
+  "mode": "create",
+  "mod": {
+    "name": "autoplace_can_be_disabled_probe",
+    "version": "0.0.1",
+    "dependencies": ["base", "space-age"],
+    "control_lua_file": "scripts/probes/autoplace-can-be-disabled/control.lua"
+  },
+  "timeout_seconds": 300
+}
