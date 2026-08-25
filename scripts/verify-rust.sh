@@ -181,6 +181,48 @@ POISONED_TESTS=(
   # still far under the test shards (300s+), so it does not move the gate wall -
   # but the line in CLAUDE.md calling it 19s and the cheapest job expired here.
   fixtures::the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none
+
+  # Phase 6 (#226), Nauvis. The shared sub-tree's own hook is
+  # `poison::f64_result` on `cliff_ringbreak` - the layer's own arithmetic on
+  # top of the warp, rather than one of the octave fields, which inherit
+  # `basis_noise`'s hook already.
+  #
+  # `the_nauvis_offset_seeds_are_the_crc32_of_their_expression_names` is
+  # deliberately NOT here. It compares two `u32` constants against numbers
+  # worked out by hashing a string, so there is no ULP to bend and a wrong
+  # constant fails it with or without the feature - the same class as
+  # `the_random_penalty_seed_word_matches_the_measured_formula`. See
+  # `crates/fmw-noise/src/poison.rs`.
+  fixtures::reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position
+
+  # `amplitude_corrected_multioctave_noise`, ported in phase 6 because
+  # `elevation_lakes` and `elevation_nauvis` both read it. Like the layer above,
+  # it adds no hook of its own: it is a transform on top of
+  # `variable_persistence_multioctave_noise`, so there is no path to it that
+  # avoids `basis_noise` and nothing could give its own arithmetic an
+  # independent control.
+  fixtures::reproduces_the_amplitude_corrected_wrapper_at_the_typescripts_own_count
+
+  # `elevation_lakes` / `elevation_island`. Same reasoning again: every value in
+  # that tree composes `basis_noise`, so the layer adds no hook of its own.
+  fixtures::reproduces_the_games_elevation_lakes_tree_at_every_captured_position
+  fixtures::reproduces_the_games_elevation_island_tree_at_every_captured_position
+
+  # `elevation_nauvis`, and the `added_cliff_elevation = 0` variant that
+  # `cliff_elevation_nauvis` depends on. `the_cliff_elevation_term_moves_...`
+  # is NOT here: it compares the GAME's own two columns against each other and
+  # our two trees against each other, so a perturbation applies to both sides
+  # and cancels - the relational shape `poison.rs` records for the capture-grid
+  # snap test.
+  fixtures::reproduces_the_games_elevation_nauvis_tree_at_every_captured_position
+  fixtures::reproduces_the_games_elevation_nauvis_no_cliff_variant_at_both_seeds
+
+  # The three climate expressions. `temperature_basic` composes nothing but
+  # `quick_multioctave_noise`, so it is the shallowest thing in the Nauvis port
+  # - and the only one that reaches the game bit-exactly.
+  fixtures::reproduces_the_games_aux_at_every_captured_position
+  fixtures::reproduces_the_games_moisture_at_every_captured_position
+  fixtures::reproduces_the_games_temperature_bit_for_bit_at_every_captured_position
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then

@@ -52,6 +52,16 @@
 //!   that the WRONG models of `^` disagree with the game at many positions.
 //!   Poisoning makes them disagree MORE, so it stays green by construction -
 //!   which is correct for a guard whose whole content is a negative.
+//!
+//! Phase 6 (#226) adds a third of the relational kind:
+//!
+//! - `the_cliff_elevation_term_moves_the_tree_where_the_outer_min_does_not_mask_it`
+//!   counts positions where `elevation_nauvis` and `elevation_nauvis_no_cliff`
+//!   DISAGREE, on the game's own two columns and on our two trees. A
+//!   perturbation applies to both sides of each comparison and cancels, so it
+//!   stays green - checked rather than predicted. Its discriminating power is
+//!   the relation: the two trees must differ at 17 of 26 and agree at the other
+//!   9, which a port ignoring the flag entirely cannot do.
 
 /// Bend an f32 result by one ULP. Zero is left alone, because several ops
 /// legitimately return exactly zero and the point is to perturb a computed

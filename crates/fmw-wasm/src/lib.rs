@@ -153,6 +153,14 @@ pub extern "C" fn checksum_multioctave_noise(
 /// where a difference would read as an op divergence. The per-tile path is
 /// graded by tier 1 instead, which feeds the fixture's captured
 /// `persistenceField`; the spec calls this with several values.
+///
+/// It crosses as an **f64**, and that is load-bearing rather than tidy. It was
+/// an f32 until #226, so the spec narrowed its own value with `Math.fround`
+/// before comparing - a harness compensation that made the two sides agree by
+/// construction on exactly the term that turned out to differ. Two of that
+/// spec's cases pass a persistence which is not f32-exact (0.62 and 0.9), so
+/// with the compensation gone this comparison now grades the operand width
+/// instead of hiding it.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn checksum_variable_persistence(
@@ -162,7 +170,7 @@ pub extern "C" fn checksum_variable_persistence(
     input_scale: f64,
     output_scale: f64,
     offset_x: f64,
-    persistence: f32,
+    persistence: f64,
     x0: f64,
     y0: f64,
     step: f64,
@@ -1113,4 +1121,93 @@ pub extern "C" fn render_request(len: u32) -> u32 {
         core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(RENDER).cast::<u8>(), RENDER_BYTES)
     };
     render::render(request, out) as u32
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2 for phase 6 - the Nauvis expression core (#226).
+// ---------------------------------------------------------------------------
+
+use fmw_noise::distance_from_nearest_point::Point as NauvisPoint;
+use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack};
+
+/// Tier 2 for the Nauvis expression core, one named field at a time.
+///
+/// **The parameters arrive as ARGUMENTS, not as a request**, which is the
+/// opposite of `checksum_vulcanus` and needs saying because that choice was
+/// deliberate there. Vulcanus reads its request so that the module builds its
+/// stack through the same `render::vulcanus_*` helpers the RENDERER uses,
+/// putting a mis-wired bearing inside the comparison. Nauvis has no render path
+/// yet, so there is no shared wiring to put inside anything, and a request
+/// block would be an ABI commitment made before the renderer that has to live
+/// with it exists.
+///
+/// **When the Nauvis render path lands it should be revisited**, for exactly
+/// the reason Vulcanus records: a private copy of the renderer's wiring is
+/// reproduced identically on both sides and stays invisible.
+///
+/// No trig crosses here, and that is not an omission - Nauvis reaches no
+/// transcendental at all, so the #270 hazard that made Fulgora's and Vulcanus's
+/// signatures as wide as they are does not apply. See
+/// `expressions::nauvis_stack`.
+///
+/// `field` selects which named expression to fold, `0..nauvis_field_count()`.
+/// Same contract as the other checksums otherwise: rows outer,
+/// order-sensitive fold, strict bit equality, the signed-BigInt caveat, and
+/// the same limit - it detects divergence, it does not establish correctness.
+///
+/// The spawn is fixed at the origin. Every Nauvis fixture was captured there,
+/// `starting_positions` is graded by its own cargo test in `nauvis_stack`, and
+/// a variable-length point list would need the scratch region for a parameter
+/// nothing in tier 1 moves.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn checksum_nauvis(
+    seed0: u32,
+    water_level: f64,
+    segmentation_multiplier: f64,
+    moisture_frequency: f64,
+    moisture_bias: f64,
+    aux_frequency: f64,
+    aux_bias: f64,
+    temperature_frequency: f64,
+    temperature_bias: f64,
+    starting_area_moisture_size: f64,
+    starting_area_moisture_frequency: f64,
+    field: u32,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    n: u32,
+) -> u64 {
+    let stack = NauvisStack::new(&NauvisCtx {
+        seed0,
+        water_level,
+        segmentation_multiplier,
+        moisture_frequency,
+        moisture_bias,
+        aux_frequency,
+        aux_bias,
+        temperature_frequency,
+        temperature_bias,
+        starting_area_moisture_size,
+        starting_area_moisture_frequency,
+        starting_positions: vec![NauvisPoint { x: 0.0, y: 0.0 }],
+    });
+
+    let mut acc = 0u64;
+    for j in 0..n {
+        let y = y0 + f64::from(j) * step;
+        for i in 0..n {
+            let x = x0 + f64::from(i) * step;
+            acc = checksum::fold_f64(acc, stack.field(field, x, y));
+        }
+    }
+    acc
+}
+
+/// How many fields [`checksum_nauvis`] can select, so the spec cannot silently
+/// stop covering one.
+#[unsafe(no_mangle)]
+pub extern "C" fn nauvis_field_count() -> u32 {
+    NauvisStack::FIELD_COUNT
 }

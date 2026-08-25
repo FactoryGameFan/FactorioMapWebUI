@@ -289,6 +289,9 @@ use crate::quick_multioctave_noise::{
     QuickPersistenceParams,
 };
 use crate::variable_persistence_multioctave_noise::{
+    amplitude_corrected_multioctave_noise, AmplitudeCorrectedParams,
+};
+use crate::variable_persistence_multioctave_noise::{
     variable_persistence_multioctave_noise, VariablePersistenceParams,
 };
 
@@ -384,7 +387,14 @@ fn reproduces_the_variable_persistence_fixture_exactly() {
             variable_persistence_multioctave_noise(
                 p.get("x").as_f64(),
                 p.get("y").as_f64(),
-                persistence[i] as f32,
+                // Passed as the f64 the fixture records, not narrowed. Every
+                // value in this array is exactly f32 - it is the noise
+                // machine's own `0.35 + 0.25 * basis_noise{...}` - so this
+                // fixture scores 266/266 under EITHER width and cannot grade
+                // the op's persistence operand at all. What can is
+                // `oracle-multioctave-wrappers`, whose amplitude-corrected
+                // cases pass the raw `0.7`; see the note on `eval`.
+                persistence[i],
                 &params,
             )
         });
@@ -472,13 +482,75 @@ fn reproduces_the_quick_persistence_wrapper_exactly() {
     }
 
     // test/multioctaveWrappers.spec.ts asserts the same 152 and the same 0.
-    // `amplitude_corrected_multioctave_noise`, the other wrapper in that
-    // fixture, is deliberately NOT ported yet: it sits at 81/152 in the
-    // TypeScript with a bit-exact op underneath and an unexplained residual
-    // (#254). Porting it now would mean porting a known-wrong model and
-    // enshrining its wrongness in a Rust assertion.
     assert_eq!(total, 152, "fixture size");
     assert_eq!(exact_total, 152, "exact f32 matches");
+}
+
+#[test]
+fn reproduces_the_amplitude_corrected_wrapper_at_the_typescripts_own_count() {
+    // The other wrapper in the same fixture, and the one this file used to say
+    // was "deliberately NOT ported yet: porting it now would mean porting a
+    // known-wrong model and enshrining its wrongness in a Rust assertion".
+    //
+    // Phase 6 needs it - `elevation_lakes` and `elevation_nauvis` both read it
+    // for their variable-persistence field - so it is ported now, faithfully,
+    // residual and all. That is the port's standing rule rather than an
+    // exception to it: reproduce the TypeScript exactly so tier 2 stays
+    // honest, and fix the model in a change graded on its own. A unilateral
+    // "fix" on the Rust side would read as a port bug here.
+    //
+    // **The count is FROZEN rather than bounded, which is strictly stronger
+    // than what the TypeScript asserts.** That side has `worst < 2.5e-7` and
+    // no count at all, so a change to the model that moved 30 positions while
+    // staying inside the bound would pass there and fail here. That is #162's
+    // whole lesson, and #254 is exactly the kind of open question a bound
+    // would let drift.
+    //
+    // 81 of 152 with the op underneath bit-exact (152/152 above) is #254, and
+    // it is not explained. Two models have been tried and rejected on the
+    // TypeScript side, both recorded at `test/multioctaveWrappers.spec.ts`:
+    // running the wrapper's transform in the noise machine's f32 - which is
+    // what took its SIBLING from 38/152 to 152/152 - scores 84/152 here, no
+    // better than the f64 form that ships. Do not "fix" this by guessing.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-multioctave-wrappers.seed123456.json",
+        "2.1.12",
+    );
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = fixture.get("positions").as_array();
+
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    let mut worst_total = 0.0f64;
+    for case in fixture.get("amplitudeCorrected").as_array() {
+        let values = case.get("values").as_array();
+        assert_all_f32(values, "amplitudeCorrected");
+        let params = AmplitudeCorrectedParams {
+            seed0,
+            seed1: case.get("seed1").as_f64() as u32,
+            octaves: case.get("octaves").as_f64() as u32,
+            input_scale: case.get("inputScale").as_f64(),
+            offset_x: case.get("offsetX").as_f64(),
+            persistence: case.get("persistence").as_f64(),
+            amplitude: case.get("amplitude").as_f64(),
+        };
+        let (exact, worst) = score_case(values, |i| {
+            let p = &positions[i];
+            amplitude_corrected_multioctave_noise(p.get("x").as_f64(), p.get("y").as_f64(), &params)
+        });
+        total += values.len();
+        exact_total += exact;
+        worst_total = worst_total.max(worst);
+    }
+
+    assert_eq!(total, 152, "fixture size");
+    // Measured on the TypeScript side against this same fixture: 81 and
+    // 1.788139e-7, to every printed digit.
+    assert_eq!(exact_total, 81, "exact f32 matches, worst {worst_total:e}");
+    assert!(
+        worst_total < 2.5e-7,
+        "worst absolute error {worst_total:e} exceeds the TypeScript's own bound"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4327,4 +4399,417 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
         .fold(f64::NEG_INFINITY, f64::max);
     assert!(peak <= 0.2 + 1e-6, "captured peak {peak} exceeds the cap");
     assert!(peak > 0.05, "the field is empty over this sample");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 (#226), Nauvis. The shared sub-tree first: `nauvis_hills`,
+// `nauvis_hills_cliff_level`, `nauvis_plateaus`, `nauvis_bridge_billows`,
+// `forest_path_billows`, and the domain-warped `nauvis_hills_offset` /
+// `nauvis_cliff_ringbreak` pair the cliff field reads.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::nauvis_shared::{
+    NauvisShared, NauvisSharedParams, NAUVIS_OFFSET_X_SEED1, NAUVIS_OFFSET_Y_SEED1,
+};
+
+/// Score one named field over a fixture's positions, snapped onto the capture
+/// grid, returning (exact f32 matches, worst absolute residual).
+///
+/// The snap is `snap_coord`, for the reason `load_captured_at` records at
+/// length: a fixture's raw coordinate is often not where the game looked.
+fn score_nauvis(
+    positions: &[(f64, f64)],
+    expected: &[Json],
+    mut f: impl FnMut(f64, f64) -> f64,
+) -> (usize, f64) {
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for (i, (x, y)) in positions.iter().enumerate() {
+        let want = expected[i].as_f64();
+        let got = f64::from(f(snap_coord(*x), snap_coord(*y)) as f32);
+        worst = worst.max((got - want).abs());
+        if got == want {
+            exact += 1;
+        }
+    }
+    (exact, worst)
+}
+
+#[test]
+fn the_nauvis_offset_seeds_are_the_crc32_of_their_expression_names() {
+    // The game passes `basis_noise` the STRING 'nauvis_offset_x' / '_y' as
+    // seed1 and hashes it with standard CRC32. These two constants are the only
+    // place in the port where a seed comes from a name rather than a number, so
+    // they are pinned directly rather than left to be graded through the field
+    // they seed - a wrong constant produces a perfectly plausible warp field.
+    //
+    // `src/noise/expressions/nauvisShared.ts` pins the same two values, and
+    // `test/nauvisShared.spec.ts` asserts them.
+    assert_eq!(NAUVIS_OFFSET_X_SEED1, 593_691_028);
+    assert_eq!(NAUVIS_OFFSET_Y_SEED1, 1_415_852_290);
+}
+
+#[test]
+fn reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-cliff-offset-raw.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 38, "a regen cannot empty the loop");
+
+    // This fixture was captured entirely ON the 1/256 grid, so `snap_coord` is
+    // the identity here and the counts below are the same snapped or not. It is
+    // still applied, and the count still asserted, so that a re-capture which
+    // introduced off-grid positions would be graded correctly rather than
+    // scoring at points the game never evaluated.
+    assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
+
+    // Two seeds, so a constant that happened to suit 123456 cannot pass.
+    // Every count below was measured on the TypeScript side against this same
+    // fixture with the same snap, and all eight agree exactly - so they are the
+    // distance BOTH ports sit from the game rather than a gap between them.
+    let expected: [(u32, usize, usize, usize, usize); 2] = [
+        // (seed, rawX, rawY, hillsOffset, cliffRingbreak) exact f32 matches / 38
+        (123_456, 30, 30, 29, 29),
+        (777_771, 36, 30, 31, 31),
+    ];
+
+    for (case, &(seed, want_raw_x, want_raw_y, want_offset, want_ringbreak)) in
+        fixture.get("cases").as_array().iter().zip(expected.iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let shared = NauvisShared::new(&NauvisSharedParams {
+            seed0: seed,
+            segmentation_multiplier: 1.0,
+        });
+
+        // `raw_x`/`raw_y` are bare `basis_noise` at `nauvis_seg / 500`, read
+        // through the layer so a wrong input scale or a swapped table is caught
+        // here rather than only through the fields above them.
+        let (raw_x, worst_raw_x) = score_nauvis(&positions, case.get("rawX").as_array(), |x, y| {
+            shared.hills_offset_raw_x(x, y)
+        });
+        let (raw_y, worst_raw_y) = score_nauvis(&positions, case.get("rawY").as_array(), |x, y| {
+            shared.hills_offset_raw_y(x, y)
+        });
+        let (offset, worst_offset) =
+            score_nauvis(&positions, case.get("hillsOffset").as_array(), |x, y| {
+                shared.hills_offset(x, y)
+            });
+        let (ringbreak, worst_ringbreak) =
+            score_nauvis(&positions, case.get("ringbreak").as_array(), |x, y| {
+                shared.cliff_ringbreak(x, y)
+            });
+
+        assert_eq!(
+            raw_x, want_raw_x,
+            "seed {seed} rawX exact, worst {worst_raw_x:e}"
+        );
+        assert_eq!(
+            raw_y, want_raw_y,
+            "seed {seed} rawY exact, worst {worst_raw_y:e}"
+        );
+        assert_eq!(
+            offset, want_offset,
+            "seed {seed} hillsOffset exact, worst {worst_offset:e}"
+        );
+        assert_eq!(
+            ringbreak, want_ringbreak,
+            "seed {seed} cliffRingbreak exact, worst {worst_ringbreak:e}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `elevation_lakes` and `elevation_island` - `make_0_12like_lakes` plus
+// `finish_elevation`, the two halves of the pre-Nauvis elevation tree.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
+
+/// The three elevation fixtures share a shape: 26 positions, an `elevation`
+/// array, and a `startingLakeDistance` array whose saturation at 1024 splits
+/// the far field from the near-spawn band.
+fn score_elevation(fixture: &Json, tree: &ElevationLakes) -> (usize, f64) {
+    let positions = fixture_positions(fixture, "positions");
+    let expected = fixture.get("elevation").as_array();
+    score_nauvis(&positions, expected, |x, y| tree.eval(x, y))
+}
+
+#[test]
+fn reproduces_the_games_elevation_lakes_tree_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-lakes.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    // 14 of the 26 far-ring positions were captured off the 1/256 grid, so the
+    // snap is doing real work here - unlike the offset-raw fixture above.
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let lakes = ElevationLakes::new(&ElevationLakesParams::defaults(123_456));
+    let (exact, worst) = score_elevation(&fixture, &lakes);
+
+    // Measured on the TypeScript side against the same fixture with the same
+    // snap: 21 and 3.814697e-6, to every printed digit.
+    //
+    // `test/elevationLakes.spec.ts` asserts a BOUND (`worst < 4e-6`) and splits
+    // the fixture into a far field and a near-spawn band. This grades all 26 at
+    // once and freezes the count instead, for the reason the header records: a
+    // bound cannot tell "close" from "identical", and the 4 far-field misses
+    // are #255, still open. If this number moves, read it - up is worth taking,
+    // down is a regression.
+    assert_eq!(exact, 21, "exact f32 matches, worst {worst:e}");
+    assert!(worst < 4e-6, "worst absolute error {worst:e}");
+}
+
+#[test]
+fn reproduces_the_games_elevation_island_tree_at_every_captured_position() {
+    // `elevation_island` IS `elevation_lakes` with `bias = -1000` and the
+    // segmentation divided by 4, so this grades the same code down a different
+    // branch. The bias is what collapses branch 1 of `make_0_12like_lakes` and
+    // leaves branch 2's own literal 20 standing - the two coincide at
+    // `elevation_lakes`, which is exactly why a single fixture could not tell
+    // a port that confused them from one that did not.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-island.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let island = ElevationLakes::new(&ElevationLakesParams::island(123_456));
+    let (exact, worst) = score_elevation(&fixture, &island);
+
+    // Measured on the TypeScript side: 19 and 1.525879e-5.
+    assert_eq!(exact, 19, "exact f32 matches, worst {worst:e}");
+    assert!(worst < 1.6e-5, "worst absolute error {worst:e}");
+}
+
+#[test]
+fn the_island_branch_differs_from_the_lakes_branch_where_the_bias_bites() {
+    // Anti-vacuity for the two tests above: they read different fixtures, but
+    // both call the same struct, so a port that ignored `bias` entirely would
+    // score 21 on one and something on the other without either test saying
+    // the branch was reached. The two trees must actually disagree.
+    let lakes = ElevationLakes::new(&ElevationLakesParams::defaults(123_456));
+    let island = ElevationLakes::new(&ElevationLakesParams::island(123_456));
+    let mut differ = 0usize;
+    for i in -8i32..8 {
+        for j in -8i32..8 {
+            let (x, y) = (f64::from(i) * 137.5, f64::from(j) * 141.25);
+            if lakes.eval(x, y) != island.eval(x, y) {
+                differ += 1;
+            }
+        }
+    }
+    // 232 of 256, not all - `finish_elevation` takes a `min` of four terms and
+    // only one of them reads the lakes branch, so where a starting-lake term is
+    // already the smallest the bias cannot show. Both halves are frozen:
+    // "everything differs" is false, and "something differs" would pass for a
+    // port that dropped `bias` and got its difference from the quartered
+    // segmentation alone.
+    assert_eq!(differ, 232, "positions where the two trees disagree");
+    assert_eq!(
+        256 - differ,
+        24,
+        "positions where the outer min masks the bias"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `elevation_nauvis` - the planet's own elevation tree, and the
+// `added_cliff_elevation = 0` variant the cliffiness field depends on.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
+
+#[test]
+fn reproduces_the_games_elevation_nauvis_tree_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-nauvis.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let nauvis = ElevationNauvis::new(&ElevationNauvisParams::defaults(123_456));
+    let (exact, worst) = score_nauvis(&positions, fixture.get("elevation").as_array(), |x, y| {
+        nauvis.eval(x, y)
+    });
+
+    // Measured on the TypeScript side against the same fixture with the same
+    // snap: 8 and 3.852844e-4, to every printed digit.
+    //
+    // **8 of 26 is the WEAKEST tier-1 count in the Nauvis port so far, and that
+    // is inherited rather than new.** This tree stacks the shared layer, an
+    // amplitude-corrected persistence field and a variable-persistence detail
+    // stack on top of each other, so it carries every unported narrowing
+    // underneath it at once - including the 81/152 of #254, which sits directly
+    // in its persistence term. `test/elevationNauvis.spec.ts` bounds the same
+    // quantity at 4e-4 and reports no count at all.
+    assert_eq!(exact, 8, "exact f32 matches, worst {worst:e}");
+    assert!(worst < 4e-4, "worst absolute error {worst:e}");
+}
+
+#[test]
+fn reproduces_the_games_elevation_nauvis_no_cliff_variant_at_both_seeds() {
+    // `elevation_nauvis_no_cliff` is `elevation_nauvis_function(0)` - the same
+    // tree with `added_cliff_elevation` forced to zero. It is what
+    // `cliff_elevation_nauvis` depends on, so it is a real expression rather
+    // than a debugging switch, and it is graded at TWO seeds.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-nauvis-no-cliff.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    // Measured on the TypeScript side: (seed, exact) pairs, worst 3.833771e-4
+    // and 3.089905e-4 respectively.
+    for (case, &(seed, want)) in fixture
+        .get("cases")
+        .as_array()
+        .iter()
+        .zip([(123_456u32, 6usize), (777_771, 4)].iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let mut params = ElevationNauvisParams::defaults(seed);
+        params.with_cliff_elevation = false;
+        let tree = ElevationNauvis::new(&params);
+        let (exact, worst) = score_nauvis(&positions, case.get("elevation").as_array(), |x, y| {
+            tree.eval(x, y)
+        });
+        assert_eq!(
+            exact, want,
+            "seed {seed} exact f32 matches, worst {worst:e}"
+        );
+        assert!(worst < 4e-4, "seed {seed} worst absolute error {worst:e}");
+    }
+}
+
+#[test]
+fn the_cliff_elevation_term_moves_the_tree_where_the_outer_min_does_not_mask_it() {
+    // Anti-vacuity for the pair above: both call the same struct, so a port
+    // that ignored `with_cliff_elevation` would score 8 and 6 against two
+    // fixtures that genuinely differ, and neither test would say the flag was
+    // read. The two fixtures share their positions exactly, which is what makes
+    // a position-by-position comparison legitimate here.
+    let with_fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-nauvis.seed123456.json",
+        "2.1.11",
+    );
+    let without_fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-nauvis-no-cliff.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&with_fixture, "positions");
+    assert_eq!(
+        positions,
+        fixture_positions(&without_fixture, "positions"),
+        "the two fixtures no longer sample the same points"
+    );
+
+    let with_cliff = ElevationNauvis::new(&ElevationNauvisParams::defaults(123_456));
+    let mut off = ElevationNauvisParams::defaults(123_456);
+    off.with_cliff_elevation = false;
+    let without_cliff = ElevationNauvis::new(&off);
+
+    // The GAME's own two columns, so this measures the expression rather than
+    // the port: the flag must move some positions and be masked at others.
+    let game_with = with_fixture.get("elevation").as_array();
+    let game_without = without_fixture.get("cases").as_array()[0]
+        .get("elevation")
+        .as_array();
+    let mut game_differ = 0usize;
+    let mut ours_differ = 0usize;
+    for (i, (x, y)) in positions.iter().enumerate() {
+        if game_with[i].as_f64() != game_without[i].as_f64() {
+            game_differ += 1;
+        }
+        let (sx, sy) = (snap_coord(*x), snap_coord(*y));
+        if with_cliff.eval(sx, sy) != without_cliff.eval(sx, sy) {
+            ours_differ += 1;
+        }
+    }
+    // Frozen both ways. "All 26 differ" is false - the outer `min` against
+    // `starting_lake` masks the term near spawn - and "some differ" would pass
+    // for a port that read the flag and got the term wrong.
+    assert_eq!(
+        game_differ, 17,
+        "positions where the GAME's two columns differ"
+    );
+    assert_eq!(ours_differ, 17, "positions where our two trees differ");
+}
+
+// ---------------------------------------------------------------------------
+// The climate expressions: `aux` (terrain type), `moisture`, `temperature`.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::nauvis_climate::{
+    Aux, AuxParams, Moisture, MoistureParams, Temperature, TemperatureParams,
+};
+
+#[test]
+fn reproduces_the_games_aux_at_every_captured_position() {
+    let fixture = load_captured_at("test/fixtures/oracle-aux.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let aux = Aux::new(&AuxParams::defaults(123_456));
+    let (exact, worst) = score_nauvis(&positions, fixture.get("aux").as_array(), |x, y| {
+        aux.eval(x, y)
+    });
+
+    // `test/aux.spec.ts` asserts the same 14 and bounds the same residual at
+    // 2^-24, which is one f32 ULP at 1.0 - the field's own scale.
+    assert_eq!(exact, 14, "exact f32 matches, worst {worst:e}");
+    assert!(worst <= f64::from(f32::EPSILON) / 2.0, "worst {worst:e}");
+}
+
+#[test]
+fn reproduces_the_games_moisture_at_every_captured_position() {
+    let fixture = load_captured_at("test/fixtures/oracle-moisture.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let moisture = Moisture::new(&MoistureParams::defaults(123_456));
+    let (exact, worst) = score_nauvis(&positions, fixture.get("moisture").as_array(), |x, y| {
+        moisture.eval(x, y)
+    });
+
+    // `test/moisture.spec.ts` asserts the same 18 and the same 2^-24 bound.
+    assert_eq!(exact, 18, "exact f32 matches, worst {worst:e}");
+    assert!(worst <= f64::from(f32::EPSILON) / 2.0, "worst {worst:e}");
+}
+
+#[test]
+fn reproduces_the_games_temperature_bit_for_bit_at_every_captured_position() {
+    let fixture = load_captured_at("test/fixtures/oracle-temperature.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    // The strongest anti-vacuity case for the snap in the whole port: as
+    // recorded these 26 score 17/26 at worst 5.817e-5, and snapped they are
+    // exact. See `test/captureGrid.ts`, where this fixture heads the table.
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let temperature = Temperature::new(&TemperatureParams::defaults(123_456));
+    let (exact, worst) = score_nauvis(&positions, fixture.get("temperature").as_array(), |x, y| {
+        temperature.eval(x, y)
+    });
+
+    // BIT-EXACT, and asserted as such. `temperature_basic` is the shallowest
+    // expression in the Nauvis port - one `quick_multioctave_noise` and a
+    // clamp, with no composed layer under it - so it is the one field here that
+    // reaches the game exactly, and a residual of anything at all would be a
+    // finding. `test/temperature.spec.ts` asserts the same 26 and the same 0.
+    assert_eq!(exact, 26, "exact f32 matches, worst {worst:e}");
+    assert_eq!(worst, 0.0, "worst absolute error");
 }
