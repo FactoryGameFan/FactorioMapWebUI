@@ -2464,6 +2464,118 @@ about them is NOT confirmed. It expected `moats`, `vaultSpots` and
 per-operation narrowings and still have to be applied and re-scored one at a
 time, under the greedy-accept rule.
 
+**Phase 6 (#226) is IN PROGRESS: the Nauvis EXPRESSION CORE is ported and
+gated; the five overlays, the tiles and the render path are not.** Landed:
+`nauvis_shared`, `elevation_lakes` (and `elevation_island`, which is that tree
+with `bias = -1000` and the segmentation quartered), `elevation_nauvis` (and
+`elevation_nauvis_no_cliff`), `nauvis_climate` holding `aux`, `moisture` and
+`temperature`, plus `nauvis_stack`. Still unported: `resources/`, `enemies/`,
+`trees/`, `rocks/rockField.ts`, `cliffs/cliffFields.ts` and `tiles/` - about
+2,750 lines of TypeScript, more than the core was.
+
+Tier 1 grades every captured Nauvis field, snapped onto the 1/256 capture grid
+and scored by exact f32 match count. **Every count was measured on the
+TypeScript side against the same fixture with the same snap and agrees to every
+printed digit**, so they describe the distance BOTH ports sit from the game:
+
+| field                                   | exact    | worst       |
+| --------------------------------------- | -------- | ----------- |
+| `temperature`                           | 26/26    | **0**       |
+| `elevation_lakes`                       | 21/26    | 3.814697e-6 |
+| `elevation_island`                      | 19/26    | 1.525879e-5 |
+| `moisture`                              | 18/26    | 5.960464e-8 |
+| `aux`                                   | 14/26    | 5.960464e-8 |
+| `elevation_nauvis`                      | 8/26     | 3.852844e-4 |
+| `elevation_nauvis_no_cliff` (two seeds) | 6, 4 /26 | 3.8e-4      |
+
+plus the cliff offset chain at 38 positions and two seeds: `rawX` 30 and 36,
+`rawY` 30 and 30, `hillsOffset` 29 and 31, `cliffRingbreak` 29 and 31.
+
+**Read `temperature` beside the rest rather than as an outlier.** It is the
+shallowest expression in the port - one `quick_multioctave_noise` and a clamp,
+nothing composed beneath it - and it is bit-exact. `aux` and `moisture` are one
+`nauvis_plateaus` away from it and land at one f32 ULP. `elevation_nauvis` is
+the weakest count in the Nauvis port because it stacks the shared layer, an
+amplitude-corrected persistence field and a variable-persistence detail stack,
+so it carries every unported narrowing underneath it at once.
+
+**Porting `amplitude_corrected_multioctave_noise` moved a SHIPPED op, and no
+fixture in the tree could see the difference.**
+`variable_persistence_multioctave_noise` took `persistence` as an **f32**;
+the TypeScript multiplies its f32 accumulator by an un-narrowed JavaScript
+number. `oracle-variable-persistence-multioctave`'s captured `persistenceField`
+is the noise machine's own `0.35 + 0.25 * basis_noise{...}`, so all 38 values
+are exactly f32 and both widths score 266/266 with worst 0 - the same shape as
+#191 and #309, a narrowing the fixtures agree on because they only ever offer
+values already on the grid.
+
+`oracle-multioctave-wrappers`'s amplitude-corrected cases DO discriminate,
+because they pass the program constant `0.7` straight in:
+
+| persistence operand                | exact  | worst    |
+| ---------------------------------- | ------ | -------- |
+| f64 (the TypeScript, and now this) | 81/152 | 1.788e-7 |
+| f32 (what shipped here)            | 89/152 | 5.960e-8 |
+
+**The better-scoring form is NOT the one taken.** 89 is an improvement and not
+a full exact count, so the greedy-accept rule rejects it as a model change, and
+adopting it would put a divergence into every Nauvis elevation value with
+nothing to grade it. It is a real finding for #254 - which records the 81/152
+as unexplained - naming one term worth 8 points and still 63 short. Neither
+form is the game's.
+
+Two harness compensations went with it. `checksum_variable_persistence` crossed
+the ABI as an f32, so `test/wasmMultioctaveParity.spec.ts` narrowed its own
+value with `Math.fround` first, making the two sides agree by construction on
+exactly the term that differed; both are f64 now and two of that spec's cases
+(0.62, 0.9) are not f32-exact, so it grades the width instead of hiding it.
+And `p ** octaves` is **`powf`, not `powi`** - `powi` disagrees with V8 by one
+ULP at 0.7^4, 0.7^6 and 0.7^8, and one ULP there flips the f32 rounding of the
+octave gain, which moves every point in the case.
+
+**Tier 2 lands with the layers, not after them** (`test/wasmNauvisParity.spec.ts`
+
+- `checksum_nauvis`, 16 fields x 3 cases). Two departures from the Vulcanus
+  shape, both deliberate: the parameters cross as ARGUMENTS rather than as a
+  request, because there is no render path yet whose wiring a request would put
+  inside the comparison; and no trig crosses at all, because Nauvis reaches no
+  transcendental - which is why its signature is narrower than Fulgora's despite
+  carrying more controls.
+
+**Its sweep deliberately leaves the f32 grid, and that is load-bearing rather
+than decorative.** 1,430 of 1,452 sampled positions have at least one
+coordinate off the grid, frozen, with two tier-3-shaped windows asserted at 0
+as the control. Planting a pure coordinate narrowing in `hills_offset_raw_x`
+leaves tier 1 GREEN and turns tier 2 RED - so it is not a second opinion on
+what tier 1 covers, it is the only thing in the gate that can see that class of
+change on Nauvis. Every tier-3 window uses a binary origin and step, which is
+how #309 survived three shipped PRs.
+
+**`aux.rs` cannot exist**, so the three climate expressions share
+`nauvis_climate.rs`. `aux` is a reserved device name on Windows and a file by
+that name cannot be checked out there at all. It is the one place the port does
+not mirror `src/noise/expressions/` 1:1. `temperature_basic` is not
+Nauvis-specific either - Nauvis is just the only planet in this port that
+reaches it.
+
+**Adding an UNREACHABLE module moved `engine.wasm` by 54 bytes, and it is not
+the panic-location fingerprint.** No section kept its size and the delta was
+not a line count; the sufficient explanation is inlining, since a new caller of
+`var_pers_eval` and friends changes the cost heuristics for code that DOES
+ship. Checked both ways: each source rebuilds to its own hash reproducibly, and
+all 55 wasm parity tests including tier 3's byte-identical renders pass. That
+is a third fingerprint to hold beside the two below.
+
+**No expression layer in phase 6 carries its own poison hook, and that was
+measured rather than skipped.** `nauvis_shared` has one on `cliff_ringbreak`;
+deleting it leaves that layer's tier-1 test red anyway at 5 of 30 on `rawX`,
+because every field in these chains composes `basis_noise` and inherits its
+hook. No test in the crate could give one of them an independent control, so
+the later layers do not add hooks just to look symmetrical. All nine phase-6
+tier-1 tests are in `POISONED_TESTS` and all nine go red.
+`the_cliff_elevation_term_moves_the_tree_...` stays GREEN and should - it is a
+relational assertion, so a perturbation applies to both sides and cancels.
+
 - **`src/noise/wasm/engine.wasm` is a COMMITTED artifact.**
   `scripts/build-wasm.sh` produces it; `verify:rust` rebuilds and compares bytes
   rather than regenerating. That is what keeps `vp build` free of any non-JS step
