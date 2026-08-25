@@ -753,7 +753,7 @@ mod tests {
         let mut out = vec![0u8; 32 * 16 * 4];
         assert_eq!(render(&request(32, 16), &mut out), Status::Ok);
         let mut seen = [0usize; 3];
-        for px in out.chunks_exact(4) {
+        for px in out.as_chunks::<4>().0 {
             assert_eq!(px[3], 255, "alpha must be opaque");
             match [px[0], px[1], px[2]] {
                 LAND => seen[0] += 1,
@@ -824,7 +824,7 @@ mod tests {
         assert_eq!(render(&vulcanus_request(24, 12), &mut out), Status::Ok);
         let known: Vec<[u8; 3]> = TILE_ORDER.iter().map(|t| t.color()).collect();
         let mut distinct: Vec<[u8; 3]> = Vec::new();
-        for px in out.chunks_exact(4) {
+        for px in out.as_chunks::<4>().0 {
             assert_eq!(px[3], 255, "alpha must be opaque");
             let rgb = [px[0], px[1], px[2]];
             assert!(known.contains(&rgb), "uncatalogued colour {rgb:?}");

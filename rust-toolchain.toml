@@ -7,11 +7,22 @@
 # pin, so bumping this file means re-running the #218 probe, not assuming the
 # property carries over.
 #
-# Note rustup treats `1.97.1-<host>` and `stable-<host>` as separate installs
+# RE-RUN AT 1.98.0 ON 2026-08-25, and note that the gate itself is the probe:
+# `scripts/verify-rust.sh` rebuilds and `cmp`s against the committed module, and
+# the `rust` CI job runs it on ubuntu x86_64 while the artifact is built here on
+# macOS aarch64. So a green `rust` check on a toolchain-bump PR IS the
+# cross-host byte-identity result - there is nothing extra to run by hand.
+#
+# 1.97.1 -> 1.98.0 moved the module 178,593 -> 178,531 bytes. A compiler change
+# is a codegen change, so that was expected; what matters is that no RESULT
+# moved, and tier 3 pins that independently by comparing WASM renders against
+# the TypeScript byte for byte.
+#
+# Note rustup treats `1.98.0-<host>` and `stable-<host>` as separate installs
 # even at the same version, so the first cargo command after a fresh clone
-# downloads a toolchain even though `stable` is already 1.97.1.
+# downloads a toolchain even though `stable` is already 1.98.0.
 [toolchain]
-channel = "1.97.1"
+channel = "1.98.0"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]
 profile = "minimal"
