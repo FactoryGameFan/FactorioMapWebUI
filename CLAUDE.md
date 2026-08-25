@@ -2186,9 +2186,51 @@ landed as their own changes**, which is the intended path, not an exception:
   scoring 50 against the 2.1.12 capture and 61 against a 2.1.14 one as the game
   changing under the fixture. Measured: the 2.1.12 fixture SNAPPED scores 61
   too, and the two fixtures do not even hold the same positions - the older one
-  records 21 of them unsnapped. Once both are snapped the residual version
-  effect is at most 2 counts and goes BOTH ways (`floodPaths` 34 -> 36 favours
-  the newer capture, `floodCracksA` 55 -> 54 the older).
+  records 21 of them unsnapped.
+
+  **And the residual version effect is ZERO, not the "at most 2 counts, both
+  ways" this paragraph used to claim** (measured 2026-08-25, closing #295). That
+  figure came from comparing each capture's score over its OWN 61 positions,
+  which is the same mistake one level down: the two captures share only **52**
+  of their 61 points, so the comparison was again across two sample sets.
+
+  | field              | 2.1.12 /61 | 2.1.16 /61 | 2.1.12 /52 | 2.1.16 /52 |
+  | ------------------ | ---------: | ---------: | ---------: | ---------: |
+  | `hairlineCracks`   |         61 |         61 |     **52** |     **52** |
+  | `floodCracksA`     |         55 |         54 |     **46** |     **46** |
+  | `floodCracksB`     |         51 |         50 |     **45** |     **45** |
+  | `floodPaths`       |         34 |         36 |     **28** |     **28** |
+  | `floodBasaltsFunc` |         37 |         37 |     **31** |     **31** |
+
+  Restricted to the shared points every field ties, so the whole difference
+  lives in the 9 points the captures do not share. Three independent readings,
+  any of which could have failed:
+
+  - **Game against game, no port involved.** At all 52 shared points both
+    captures record BIT-IDENTICAL values on all five fields, worst delta exactly
+    0, with a control (a different field of the same fixture) agreeing 0 of 52.
+  - **The data.** Every Lua file behind the chain - `planet-vulcanus-map-gen.lua`,
+    `noise-programs.lua`, `noise-functions.lua`,
+    `base/prototypes/noise-expressions.lua`, `tiles-vulcanus.lua` - is
+    byte-identical 2.1.12 -> 2.1.16.
+  - **The mechanism, exactly.** The re-capture's position equals
+    `Math.floor(old_raw * 256) / 256` at **61 of 61** and
+    `Math.trunc(...)` at **52** - the two disagree on exactly the 9.
+
+  **So a re-capture of an off-grid fixture CANNOT land on the points that
+  snapping the old one produces, and that is by design rather than a bug.** A
+  capture PRODUCES a grid coordinate with `Math.floor` (`snapToMapPosition` in
+  `test/oracle/capture.ts`); `test/captureGrid.ts` RECOVERS one with
+  `Math.trunc`, because truncation toward zero is what the game does to a
+  coordinate handed to it off the grid. Both are right for their own job, and
+  `capture.ts` has said so in a comment the whole time. They differ by one cell
+  on a NEGATIVE coordinate, which is why this never showed up near the origin.
+
+  The consequence is the transferable part: **comparing two captures' COUNTS is
+  never a version measurement unless you first restrict to the points they
+  share.** Compare values at shared positions instead, which needs no port and
+  cannot be confounded this way. That comparison is kept as an assertion over
+  two committed fixtures, in `test/vulcanusPlasmaDecomposition.spec.ts`.
 
   **A version difference and a capture-grid difference look identical from
   inside a count, so rule out the grid FIRST** - it is free, where re-capturing
@@ -2205,7 +2247,23 @@ landed as their own changes**, which is the intended path, not an exception:
   `the_capture_grid_snap_is_load_bearing_on_the_vulcanus_crack_layer` pins BOTH
   arms, not just the good one - a test asserting only the snapped number would
   pass again if the snap were removed and the counts re-frozen to match, which
-  is exactly how this shipped the first time.
+  is exactly how this shipped the first time. **There are now THREE of these**;
+  `..._on_the_vulcanus_biome_layer` was added 2026-08-25 because the biome half
+  of that change landed with neither a dual-arm test nor an off-grid count, so
+  its six counts could have been quietly re-frozen downward. It pins all eight
+  fields, including the two that DO NOT move - `mountain_volcano_spots` at 359
+  and `basalts_biome` at 408 - since pinning those flat is what says the
+  discrete-choice and saturated-clamp readings are still true.
+
+  **`test/fixtures/PROVENANCE.json` now carries `maxUnknown: 0`.** The last
+  undocumented fixture was `autoplace-can-be-disabled.dump.json`, committed
+  2026-07-12 with no version recorded; `scripts/probes/autoplace-can-be-disabled`
+  re-captured it at 2.1.16 and it came back **byte-identical**, 1696 bytes.
+  Keep that probe rather than treating it as scaffolding - it is the only thing
+  that makes the claim repeatable, and `docs/fixture-version-audit.md`'s rule is
+  that a clean data diff can never promote an `unknown` entry. Because the count
+  must EQUAL the ratchet, 0 is now a floor: a new fixture with no provenance
+  fails immediately instead of taking up slack.
 
 - **The technique that solved #293 is worth more than the fix: capture the
   INTERMEDIATES, at the SAME positions.** `basisCallerScales` graded the two

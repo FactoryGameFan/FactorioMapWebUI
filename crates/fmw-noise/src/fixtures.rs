@@ -40,15 +40,47 @@ use std::collections::BTreeMap;
 ///   scores 61 of 61 too. What was missing was the snap in `vulcanus_sweep` -
 ///   the counts were being scored at 21 points the game never evaluated.
 ///
-/// The residual version effect, once both are snapped, is at most 2 counts and
-/// goes BOTH ways (`floodPaths` 34 -> 36 favours the newer capture,
-/// `floodCracksA` 55 -> 54 the older). Real, second-order, not the cause.
+/// **And the residual version effect is ZERO.** This comment used to say it was
+/// "at most 2 counts and goes BOTH ways", citing `floodPaths` 34 -> 36 and
+/// `floodCracksA` 55 -> 54. That was the same mistake one level down: those
+/// counts compare each capture's score over its OWN 61 positions, and the two
+/// captures share only **52** of their 61 points. Restricted to the points they
+/// share, every field ties - 52, 46, 45, 28 and 31, identical on both captures -
+/// so the whole apparent difference sits in the 9 they do not share (measured
+/// 2026-08-25).
 ///
-/// Two things generalise from that. **A version difference and a capture-grid
+/// The mechanism is exact, and it is a property of the HARNESS rather than of
+/// either version. A capture PRODUCES a grid coordinate with `Math.floor`
+/// (`snapToMapPosition` in `test/oracle/capture.ts`); `test/captureGrid.ts`
+/// RECOVERS one with `Math.trunc`, because truncation toward zero is what the
+/// game does to a coordinate handed to it off the grid. Both are right for
+/// their own job, and they differ by one cell on a NEGATIVE coordinate. The
+/// re-capture's position equals `floor(old_raw)` at 61 of 61 and
+/// `trunc(old_raw)` at 52.
+///
+/// So **a re-capture of an off-grid fixture cannot land on the points that
+/// snapping the old one produces**, and comparing two captures' COUNTS is not a
+/// version measurement at all. Compare VALUES at the points they share instead:
+/// that uses no port code, so port error cannot confound it.
+///
+/// It was run twice. Against a fresh 2.1.16 capture all FIVE crack fields came
+/// back bit-identical at every shared point, worst delta exactly 0; that
+/// capture is not committed, because adopting it would move frozen counts for a
+/// difference measured to be zero. What IS committed is the same comparison
+/// between the two fixtures already in the tree - `the two captures agree
+/// wherever they sample the same point` in
+/// `test/vulcanusPlasmaDecomposition.spec.ts`. That one asserts
+/// `hairline_cracks` alone, since it is the only field the 2.1.12 and 2.1.14
+/// captures have in common, with a control field that agrees 0 of 52.
+///
+/// Three things generalise from that. **A version difference and a capture-grid
 /// difference look identical from inside a count**, so rule out the grid first -
 /// it is free, and re-capturing to "check" a version hypothesis will confirm it
-/// whether or not it is true. And 2.1.14, 2.1.15 and 2.1.16 are ONE oracle for
-/// map-gen: the data Lua is byte-identical across them and a re-capture at
+/// whether or not it is true. **A count is a comparison between two sample
+/// sets** whenever the two sides were captured separately, so check the sets
+/// coincide before reading the difference. And 2.1.14, 2.1.15 and 2.1.16 are ONE
+/// oracle for map-gen: the data Lua is byte-identical across them - as is every
+/// file behind the Vulcanus crack chain back to 2.1.12 - and a re-capture at
 /// 2.1.16 matched 2.1.14 on all 305 sampled values, so "predates the installed
 /// binary" overstates staleness by three versions.
 ///
@@ -2906,6 +2938,14 @@ fn reproduces_the_vulcanus_biome_layer_at_every_captured_position() {
     );
     let positions = fixture.get("positions").as_array();
     assert_eq!(positions.len(), 434, "fixture size");
+    // Anti-vacuity for the snap below: 22 of these 434 were recorded off the
+    // 1/256 grid. If a re-capture ever lands them all on it, the snap becomes
+    // the identity and should be deleted rather than left looking load-bearing.
+    assert_eq!(
+        count_off_grid(&fixture_positions(&fixture, "positions")),
+        22,
+        "off-grid positions"
+    );
     let values = fixture.get("values");
 
     let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
@@ -2930,7 +2970,7 @@ fn reproduces_the_vulcanus_biome_layer_at_every_captured_position() {
     // 1.546e-4, 1.655e-4, 8.955e-5, 3.092e-4, 4.069e-5.
     //
     // **The three clamped biomes score roughly three times their own unclamped
-    // sources** - 403, 402 and 408 against 128, 107 and 127 - and they are the
+    // sources** - 404, 404 and 408 against 135, 114 and 134 - and they are the
     // same quantity times 2, clamped. Nothing improved between them: the clamp
     // saturates at 0 or 1 across most of the map, and a saturated position is
     // exact for free because both ports and the game return the bound. Read the
@@ -2974,6 +3014,96 @@ fn reproduces_the_vulcanus_biome_layer_at_every_captured_position() {
             "{key} exact f32 matches out of 434"
         );
     }
+}
+
+/// The snap is load-bearing on the biome layer, and by how much.
+///
+/// The third of these, after the crack and elevation ones. It exists for the
+/// same reason and guards the same failure: the biome sweep shipped scoring at
+/// raw `p.x`, and 22 of these 434 positions are recorded off the 1/256
+/// `MapPosition` grid, so those rows were graded at points the game never
+/// evaluated.
+///
+/// Both arms are pinned rather than only the snapped one. A test asserting just
+/// the good number would pass again if the snap were dropped and the counts
+/// re-frozen to match, which is exactly how this shipped the first time. The
+/// GAP between the two columns is the thing being guarded, not either column.
+///
+/// Measured 2026-08-25. Six of the eight move up and none moves down:
+///
+/// | field | unsnapped | snapped |
+/// | --- | ---: | ---: |
+/// | `mountain_volcano_spots` | 359 | 359 |
+/// | `mountains_raw_volcano` | 163 | **174** |
+/// | `mountains_biome_full` | 128 | **135** |
+/// | `ashlands_biome_full` | 107 | **114** |
+/// | `basalts_biome_full` | 127 | **134** |
+/// | `mountains_biome` | 403 | **404** |
+/// | `ashlands_biome` | 402 | **404** |
+/// | `basalts_biome` | 408 | 408 |
+///
+/// The two that DO NOT move are readings rather than noise, and pinning them
+/// flat is the point of including them. `mountain_volcano_spots` is dominated
+/// by a DISCRETE choice - which spot candidate survives a region - and a shift
+/// under 1/256 almost never changes which one that is, the same property
+/// `voronoi_cell_id` has. `basalts_biome` is clamped and saturated across most
+/// of the map, so most of its 408 are exact for free either way.
+#[test]
+fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_biome_layer() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-biomes.seed123456.json",
+        "2.1.12",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    let values = fixture.get("values");
+
+    // Non-vacuity: if a re-capture ever lands these on the grid, the snap
+    // becomes the identity and every assertion below stops discriminating.
+    assert_eq!(
+        count_off_grid(&positions),
+        22,
+        "positions recorded off the 1/256 grid"
+    );
+
+    let ctx = crate::eval::ctx::EvalCtx::new(fixture.get("seed0").as_f64() as u32);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let spawn = VulcanusSpawn::with_host_trig(&ctx);
+    let biomes = VulcanusBiomes::with_host_trig(&ctx, &helpers, &spawn);
+    let maybe_snap = |v: f64, snap: bool| if snap { snap_coord(v) } else { v };
+
+    let scored = |snap: bool| {
+        let fields: Vec<BiomeFields> = positions
+            .iter()
+            .map(|(x, y)| biomes.eval(maybe_snap(*x, snap), maybe_snap(*y, snap)))
+            .collect();
+        let score = |key: &str, select: &dyn Fn(&BiomeFields) -> f64| {
+            let got: Vec<f64> = fields.iter().map(select).collect();
+            score_vulcanus(&got, values.get(key).as_array(), key)
+        };
+        (
+            score("mountain_volcano_spots", &|f| f.mountain_volcano_spots),
+            score("vulcanus_mountains_raw_volcano", &|f| {
+                f.mountains_raw_volcano
+            }),
+            score("vulcanus_mountains_biome_full", &|f| f.mountains_biome_full),
+            score("vulcanus_ashlands_biome_full", &|f| f.ashlands_biome_full),
+            score("vulcanus_basalts_biome_full", &|f| f.basalts_biome_full),
+            score("vulcanus_mountains_biome", &|f| f.mountains_biome),
+            score("vulcanus_ashlands_biome", &|f| f.ashlands_biome),
+            score("vulcanus_basalts_biome", &|f| f.basalts_biome),
+        )
+    };
+
+    assert_eq!(
+        scored(false),
+        (359, 163, 128, 107, 127, 403, 402, 408),
+        "unsnapped - points the game never saw"
+    );
+    assert_eq!(
+        scored(true),
+        (359, 174, 135, 114, 134, 404, 404, 408),
+        "snapped - where the game evaluated"
+    );
 }
 
 use crate::expressions::vulcanus_elevation::{ElevationFields, VulcanusElevation};
@@ -3037,9 +3167,13 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     // different counts" inherits the same mistake: only one of them freezes a
     // count at all.
     //
-    // Graded against a **2.1.12** capture while the binary is 2.1.14 (#295), so
-    // a count short of a full house has one more candidate explanation than the
-    // port being wrong.
+    // Graded against a **2.1.12** capture while the binary is 2.1.16 (#295).
+    // That used to leave "the game changed" as an open candidate for a count
+    // short of a full house. It is now a narrow one: every Lua file behind the
+    // Vulcanus chain is byte-identical 2.1.12 -> 2.1.16, so a version effect
+    // here would have to be an ENGINE change rather than an expression change.
+    // On the crack layer it was also ruled out empirically, game against game -
+    // see `load_captured_at`.
     //
     // **The two columns are the same field in this fixture, and that is a gap
     // in the fixture rather than a result.** `vulcanus_elevation` is
@@ -3202,7 +3336,8 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
     // As with the elevation surface, the TypeScript counterpart grades this
     // with residual bounds rather than a count, so the "matched by the
     // TypeScript at 196" this comment used to carry described no committed
-    // assertion. Captured at 2.1.12 against a 2.1.14 binary (#295).
+    // assertion. Captured at 2.1.12 against a 2.1.16 binary; the map-gen
+    // Lua is byte-identical across that range (#295).
     assert_eq!(
         score_vulcanus(&got, fixture.get("temperature").as_array(), "temperature"),
         252,
@@ -3290,9 +3425,13 @@ fn reproduces_the_vulcanus_resource_layer_at_every_captured_position() {
     //   counting matches rather than bounding error, stated in one number, and
     //   it is why this test freezes counts.
     //
-    // Graded against a **2.1.12** capture while the binary is 2.1.14 (#295), so
-    // a count short of a full house has one more candidate explanation than the
-    // port being wrong.
+    // Graded against a **2.1.12** capture while the binary is 2.1.16 (#295).
+    // That used to leave "the game changed" as an open candidate for a count
+    // short of a full house. It is now a narrow one: every Lua file behind the
+    // Vulcanus chain is byte-identical 2.1.12 -> 2.1.16, so a version effect
+    // here would have to be an ENGINE change rather than an expression change.
+    // On the crack layer it was also ruled out empirically, game against game -
+    // see `load_captured_at`.
     type R = ResourceFields;
     for (key, want_exact, select) in [
         (
@@ -3390,7 +3529,8 @@ fn puts_every_vulcanus_tile_where_the_game_puts_it() {
     // radii 192 to 2079. No single range expression is systematically wrong,
     // which would cluster many cells of one tile instead.
     //
-    // Captured at 2.1.12 against a 2.1.14 binary (#295).
+    // Captured at 2.1.12 against a 2.1.16 binary; the map-gen
+    // Lua is byte-identical across that range (#295).
     assert_eq!(score_vulcanus_tiles(&fixture, seed0), 374, "of 381");
 }
 

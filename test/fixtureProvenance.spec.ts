@@ -113,9 +113,15 @@ describe("fixture provenance manifest", () => {
   /**
    * A ratchet, not a correctness bound. `unknown` means nobody wrote the
    * capture version down, which only a re-capture against a known binary can
-   * fix. One such fixture exists today
-   * (`autoplace-can-be-disabled.dump.json`, committed between the 2.1.9 and
-   * 2.1.11 eras).
+   * fix.
+   *
+   * **It reads 0 as of 2026-08-25, and the ratchet is what makes that mean
+   * something.** The last one was `autoplace-can-be-disabled.dump.json`,
+   * committed between the 2.1.9 and 2.1.11 eras with no version recorded and
+   * re-captured at 2.1.16 by `scripts/probes/autoplace-can-be-disabled` (#295
+   * suggestion 4). A zero here is now a floor rather than a target: because the
+   * count must EQUAL `maxUnknown`, adding an undocumented fixture fails
+   * immediately instead of quietly taking up slack that used to exist.
    *
    * The count must EQUAL `maxUnknown`, changed 2026-08-18. The old bound read
    * "at most 1" for as long as the count read 1, so it could only ever stop the
