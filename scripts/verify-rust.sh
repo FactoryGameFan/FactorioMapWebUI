@@ -207,6 +207,15 @@ POISONED_TESTS=(
   # that tree composes `basis_noise`, so the layer adds no hook of its own.
   fixtures::reproduces_the_games_elevation_lakes_tree_at_every_captured_position
   fixtures::reproduces_the_games_elevation_island_tree_at_every_captured_position
+
+  # `elevation_nauvis`, and the `added_cliff_elevation = 0` variant that
+  # `cliff_elevation_nauvis` depends on. `the_cliff_elevation_term_moves_...`
+  # is NOT here: it compares the GAME's own two columns against each other and
+  # our two trees against each other, so a perturbation applies to both sides
+  # and cancels - the relational shape `poison.rs` records for the capture-grid
+  # snap test.
+  fixtures::reproduces_the_games_elevation_nauvis_tree_at_every_captured_position
+  fixtures::reproduces_the_games_elevation_nauvis_no_cliff_variant_at_both_seeds
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then

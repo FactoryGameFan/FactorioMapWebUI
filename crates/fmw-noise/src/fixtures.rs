@@ -4619,3 +4619,130 @@ fn the_island_branch_differs_from_the_lakes_branch_where_the_bias_bites() {
         "positions where the outer min masks the bias"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `elevation_nauvis` - the planet's own elevation tree, and the
+// `added_cliff_elevation = 0` variant the cliffiness field depends on.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
+
+#[test]
+fn reproduces_the_games_elevation_nauvis_tree_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-nauvis.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let nauvis = ElevationNauvis::new(&ElevationNauvisParams::defaults(123_456));
+    let (exact, worst) = score_nauvis(&positions, fixture.get("elevation").as_array(), |x, y| {
+        nauvis.eval(x, y)
+    });
+
+    // Measured on the TypeScript side against the same fixture with the same
+    // snap: 8 and 3.852844e-4, to every printed digit.
+    //
+    // **8 of 26 is the WEAKEST tier-1 count in the Nauvis port so far, and that
+    // is inherited rather than new.** This tree stacks the shared layer, an
+    // amplitude-corrected persistence field and a variable-persistence detail
+    // stack on top of each other, so it carries every unported narrowing
+    // underneath it at once - including the 81/152 of #254, which sits directly
+    // in its persistence term. `test/elevationNauvis.spec.ts` bounds the same
+    // quantity at 4e-4 and reports no count at all.
+    assert_eq!(exact, 8, "exact f32 matches, worst {worst:e}");
+    assert!(worst < 4e-4, "worst absolute error {worst:e}");
+}
+
+#[test]
+fn reproduces_the_games_elevation_nauvis_no_cliff_variant_at_both_seeds() {
+    // `elevation_nauvis_no_cliff` is `elevation_nauvis_function(0)` - the same
+    // tree with `added_cliff_elevation` forced to zero. It is what
+    // `cliff_elevation_nauvis` depends on, so it is a real expression rather
+    // than a debugging switch, and it is graded at TWO seeds.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-nauvis-no-cliff.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    // Measured on the TypeScript side: (seed, exact) pairs, worst 3.833771e-4
+    // and 3.089905e-4 respectively.
+    for (case, &(seed, want)) in fixture
+        .get("cases")
+        .as_array()
+        .iter()
+        .zip([(123_456u32, 6usize), (777_771, 4)].iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let mut params = ElevationNauvisParams::defaults(seed);
+        params.with_cliff_elevation = false;
+        let tree = ElevationNauvis::new(&params);
+        let (exact, worst) = score_nauvis(&positions, case.get("elevation").as_array(), |x, y| {
+            tree.eval(x, y)
+        });
+        assert_eq!(
+            exact, want,
+            "seed {seed} exact f32 matches, worst {worst:e}"
+        );
+        assert!(worst < 4e-4, "seed {seed} worst absolute error {worst:e}");
+    }
+}
+
+#[test]
+fn the_cliff_elevation_term_moves_the_tree_where_the_outer_min_does_not_mask_it() {
+    // Anti-vacuity for the pair above: both call the same struct, so a port
+    // that ignored `with_cliff_elevation` would score 8 and 6 against two
+    // fixtures that genuinely differ, and neither test would say the flag was
+    // read. The two fixtures share their positions exactly, which is what makes
+    // a position-by-position comparison legitimate here.
+    let with_fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-nauvis.seed123456.json",
+        "2.1.11",
+    );
+    let without_fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-nauvis-no-cliff.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&with_fixture, "positions");
+    assert_eq!(
+        positions,
+        fixture_positions(&without_fixture, "positions"),
+        "the two fixtures no longer sample the same points"
+    );
+
+    let with_cliff = ElevationNauvis::new(&ElevationNauvisParams::defaults(123_456));
+    let mut off = ElevationNauvisParams::defaults(123_456);
+    off.with_cliff_elevation = false;
+    let without_cliff = ElevationNauvis::new(&off);
+
+    // The GAME's own two columns, so this measures the expression rather than
+    // the port: the flag must move some positions and be masked at others.
+    let game_with = with_fixture.get("elevation").as_array();
+    let game_without = without_fixture.get("cases").as_array()[0]
+        .get("elevation")
+        .as_array();
+    let mut game_differ = 0usize;
+    let mut ours_differ = 0usize;
+    for (i, (x, y)) in positions.iter().enumerate() {
+        if game_with[i].as_f64() != game_without[i].as_f64() {
+            game_differ += 1;
+        }
+        let (sx, sy) = (snap_coord(*x), snap_coord(*y));
+        if with_cliff.eval(sx, sy) != without_cliff.eval(sx, sy) {
+            ours_differ += 1;
+        }
+    }
+    // Frozen both ways. "All 26 differ" is false - the outer `min` against
+    // `starting_lake` masks the term near spawn - and "some differ" would pass
+    // for a port that read the flag and got the term wrong.
+    assert_eq!(
+        game_differ, 17,
+        "positions where the GAME's two columns differ"
+    );
+    assert_eq!(ours_differ, 17, "positions where our two trees differ");
+}

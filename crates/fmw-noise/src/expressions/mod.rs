@@ -9,6 +9,7 @@
 //! climate expressions read.
 
 pub mod elevation_lakes;
+pub mod elevation_nauvis;
 pub mod fulgora_cells;
 pub mod fulgora_elevation;
 pub mod fulgora_masks;
