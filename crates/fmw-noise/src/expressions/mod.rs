@@ -8,6 +8,7 @@
 //! which starts with `nauvis_shared`, the sub-tree the elevation chain and both
 //! climate expressions read.
 
+pub mod elevation_lakes;
 pub mod fulgora_cells;
 pub mod fulgora_elevation;
 pub mod fulgora_masks;

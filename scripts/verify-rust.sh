@@ -202,6 +202,11 @@ POISONED_TESTS=(
   # avoids `basis_noise` and nothing could give its own arithmetic an
   # independent control.
   fixtures::reproduces_the_amplitude_corrected_wrapper_at_the_typescripts_own_count
+
+  # `elevation_lakes` / `elevation_island`. Same reasoning again: every value in
+  # that tree composes `basis_noise`, so the layer adds no hook of its own.
+  fixtures::reproduces_the_games_elevation_lakes_tree_at_every_captured_position
+  fixtures::reproduces_the_games_elevation_island_tree_at_every_captured_position
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then

@@ -4520,3 +4520,102 @@ fn reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// `elevation_lakes` and `elevation_island` - `make_0_12like_lakes` plus
+// `finish_elevation`, the two halves of the pre-Nauvis elevation tree.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
+
+/// The three elevation fixtures share a shape: 26 positions, an `elevation`
+/// array, and a `startingLakeDistance` array whose saturation at 1024 splits
+/// the far field from the near-spawn band.
+fn score_elevation(fixture: &Json, tree: &ElevationLakes) -> (usize, f64) {
+    let positions = fixture_positions(fixture, "positions");
+    let expected = fixture.get("elevation").as_array();
+    score_nauvis(&positions, expected, |x, y| tree.eval(x, y))
+}
+
+#[test]
+fn reproduces_the_games_elevation_lakes_tree_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-lakes.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    // 14 of the 26 far-ring positions were captured off the 1/256 grid, so the
+    // snap is doing real work here - unlike the offset-raw fixture above.
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let lakes = ElevationLakes::new(&ElevationLakesParams::defaults(123_456));
+    let (exact, worst) = score_elevation(&fixture, &lakes);
+
+    // Measured on the TypeScript side against the same fixture with the same
+    // snap: 21 and 3.814697e-6, to every printed digit.
+    //
+    // `test/elevationLakes.spec.ts` asserts a BOUND (`worst < 4e-6`) and splits
+    // the fixture into a far field and a near-spawn band. This grades all 26 at
+    // once and freezes the count instead, for the reason the header records: a
+    // bound cannot tell "close" from "identical", and the 4 far-field misses
+    // are #255, still open. If this number moves, read it - up is worth taking,
+    // down is a regression.
+    assert_eq!(exact, 21, "exact f32 matches, worst {worst:e}");
+    assert!(worst < 4e-6, "worst absolute error {worst:e}");
+}
+
+#[test]
+fn reproduces_the_games_elevation_island_tree_at_every_captured_position() {
+    // `elevation_island` IS `elevation_lakes` with `bias = -1000` and the
+    // segmentation divided by 4, so this grades the same code down a different
+    // branch. The bias is what collapses branch 1 of `make_0_12like_lakes` and
+    // leaves branch 2's own literal 20 standing - the two coincide at
+    // `elevation_lakes`, which is exactly why a single fixture could not tell
+    // a port that confused them from one that did not.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-elevation-island.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let island = ElevationLakes::new(&ElevationLakesParams::island(123_456));
+    let (exact, worst) = score_elevation(&fixture, &island);
+
+    // Measured on the TypeScript side: 19 and 1.525879e-5.
+    assert_eq!(exact, 19, "exact f32 matches, worst {worst:e}");
+    assert!(worst < 1.6e-5, "worst absolute error {worst:e}");
+}
+
+#[test]
+fn the_island_branch_differs_from_the_lakes_branch_where_the_bias_bites() {
+    // Anti-vacuity for the two tests above: they read different fixtures, but
+    // both call the same struct, so a port that ignored `bias` entirely would
+    // score 21 on one and something on the other without either test saying
+    // the branch was reached. The two trees must actually disagree.
+    let lakes = ElevationLakes::new(&ElevationLakesParams::defaults(123_456));
+    let island = ElevationLakes::new(&ElevationLakesParams::island(123_456));
+    let mut differ = 0usize;
+    for i in -8i32..8 {
+        for j in -8i32..8 {
+            let (x, y) = (f64::from(i) * 137.5, f64::from(j) * 141.25);
+            if lakes.eval(x, y) != island.eval(x, y) {
+                differ += 1;
+            }
+        }
+    }
+    // 232 of 256, not all - `finish_elevation` takes a `min` of four terms and
+    // only one of them reads the lakes branch, so where a starting-lake term is
+    // already the smallest the bias cannot show. Both halves are frozen:
+    // "everything differs" is false, and "something differs" would pass for a
+    // port that dropped `bias` and got its difference from the quartered
+    // segmentation alone.
+    assert_eq!(differ, 232, "positions where the two trees disagree");
+    assert_eq!(
+        256 - differ,
+        24,
+        "positions where the outer min masks the bias"
+    );
+}
