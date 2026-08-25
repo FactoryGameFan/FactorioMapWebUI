@@ -86,11 +86,16 @@ pub fn eval(
     tables: &BasisNoiseTables,
 ) -> f32 {
     let xo = (x + terms.offset_x) as f32;
+    // `y` is narrowed for the same reason `x` is: the noise machine holds its
+    // coordinate values at f32, so the scale multiply is an f32 operation on
+    // both operands. `x` was always narrowed here through the `offset_x` add;
+    // `y` had no add to narrow it and so was silently multiplied in f64 (#191).
+    let yf = y as f32;
     let last = terms.scales.len().saturating_sub(1);
     let mut acc = 0.0f32;
     for (k, &scale) in terms.scales.iter().enumerate() {
         let xk = xo * scale;
-        let yk = (y * f64::from(scale)) as f32;
+        let yk = yf * scale;
         acc += basis_noise(f64::from(xk), f64::from(yk), tables);
         if k < last {
             acc *= persistence;
