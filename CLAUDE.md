@@ -578,9 +578,12 @@ loses_on_none` is 33s in the normal arm and **93s under poison**, taking the
   per 512x512 region, ~33s each in a debug build, and that grading lives on the
   TypeScript side instead. See the phase-5 notes below for the reasoning.
 
-  **Treat this job's cost as a RANGE, not a number: 1m44s to 2m48s.** #310
-  measured 1m44s on CI against the 2m48s recorded here from an earlier run, on
-  code whose Rust half did not change between them. That is the same spread the
+  **Treat this job's cost as a RANGE, not a number: roughly 1m45s to 2m50s.**
+  Three CI runs on code whose Rust half was equivalent between them came in at
+  **1m44s (#310), 2m48s (an earlier run) and 2m49s (#312)** - and #312's run
+  landed a second ABOVE the "1m44s to 2m48s" this paragraph first claimed, which
+  is the paragraph's own point arriving immediately. Endpoints stated to the
+  second invite exactly the chasing this warns against, so the figure is rounded. That is the same spread the
   test shards show (`one-ci-run-measures-the-runner` - identical spec files came
   in anywhere from 294s to 469s), and the honest response is to widen the figure
   rather than to replace it: a single run here measures the runner at least as
