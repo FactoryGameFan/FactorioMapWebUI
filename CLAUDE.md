@@ -145,9 +145,19 @@ inert off WSL.
 
 ### Automate with the Factorio headless CLI
 
-A lot can be driven from the command line - see
-<https://wiki.factorio.com/Command_line_parameters> (a wiki page, not in the
-shipped API docs). Relevant here:
+**Ask the binary, not the wiki: `factorio --help` prints every option.** It
+ships with the game, so it describes the version you actually have, and it is
+ahead of the wiki - it documents `--map-preview-planet`, `--map-gen-seed-max`
+and `--exchange-string`, and it says outright that `--map-gen-seed` "will
+override seed specified in map gen settings", which is the trap #232 hit.
+<https://wiki.factorio.com/Command_line_parameters> is a fallback for prose the
+help text does not carry.
+
+```bash
+"$HOME/Library/Application Support/Steam/steamapps/common/Factorio/factorio.app/Contents/MacOS/factorio" --help
+```
+
+Relevant here:
 
 - **Map-gen testing:** `factorio --create <save> --map-gen-settings <json>
 --map-gen-seed <n> --mod-directory <dir>` runs headless and exits cleanly even

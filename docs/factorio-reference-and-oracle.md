@@ -30,6 +30,11 @@ rule.
 Nothing below has been edited. It is a snapshot; `CLAUDE.md` is the current
 state.
 
+**One thing below is already superseded.** The headless-CLI section points at
+`wiki.factorio.com/Command_line_parameters` first. Run `factorio --help`
+instead: it ships with the game, so it describes the version you actually have,
+and it is ahead of the wiki.
+
 ---
 
 ## Factorio reference material - read it with `factorio-oracle refs`
