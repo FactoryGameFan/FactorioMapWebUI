@@ -153,6 +153,14 @@ pub extern "C" fn checksum_multioctave_noise(
 /// where a difference would read as an op divergence. The per-tile path is
 /// graded by tier 1 instead, which feeds the fixture's captured
 /// `persistenceField`; the spec calls this with several values.
+///
+/// It crosses as an **f64**, and that is load-bearing rather than tidy. It was
+/// an f32 until #226, so the spec narrowed its own value with `Math.fround`
+/// before comparing - a harness compensation that made the two sides agree by
+/// construction on exactly the term that turned out to differ. Two of that
+/// spec's cases pass a persistence which is not f32-exact (0.62 and 0.9), so
+/// with the compensation gone this comparison now grades the operand width
+/// instead of hiding it.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn checksum_variable_persistence(
@@ -162,7 +170,7 @@ pub extern "C" fn checksum_variable_persistence(
     input_scale: f64,
     output_scale: f64,
     offset_x: f64,
-    persistence: f32,
+    persistence: f64,
     x0: f64,
     y0: f64,
     step: f64,

@@ -289,6 +289,9 @@ use crate::quick_multioctave_noise::{
     QuickPersistenceParams,
 };
 use crate::variable_persistence_multioctave_noise::{
+    amplitude_corrected_multioctave_noise, AmplitudeCorrectedParams,
+};
+use crate::variable_persistence_multioctave_noise::{
     variable_persistence_multioctave_noise, VariablePersistenceParams,
 };
 
@@ -384,7 +387,14 @@ fn reproduces_the_variable_persistence_fixture_exactly() {
             variable_persistence_multioctave_noise(
                 p.get("x").as_f64(),
                 p.get("y").as_f64(),
-                persistence[i] as f32,
+                // Passed as the f64 the fixture records, not narrowed. Every
+                // value in this array is exactly f32 - it is the noise
+                // machine's own `0.35 + 0.25 * basis_noise{...}` - so this
+                // fixture scores 266/266 under EITHER width and cannot grade
+                // the op's persistence operand at all. What can is
+                // `oracle-multioctave-wrappers`, whose amplitude-corrected
+                // cases pass the raw `0.7`; see the note on `eval`.
+                persistence[i],
                 &params,
             )
         });
@@ -472,13 +482,75 @@ fn reproduces_the_quick_persistence_wrapper_exactly() {
     }
 
     // test/multioctaveWrappers.spec.ts asserts the same 152 and the same 0.
-    // `amplitude_corrected_multioctave_noise`, the other wrapper in that
-    // fixture, is deliberately NOT ported yet: it sits at 81/152 in the
-    // TypeScript with a bit-exact op underneath and an unexplained residual
-    // (#254). Porting it now would mean porting a known-wrong model and
-    // enshrining its wrongness in a Rust assertion.
     assert_eq!(total, 152, "fixture size");
     assert_eq!(exact_total, 152, "exact f32 matches");
+}
+
+#[test]
+fn reproduces_the_amplitude_corrected_wrapper_at_the_typescripts_own_count() {
+    // The other wrapper in the same fixture, and the one this file used to say
+    // was "deliberately NOT ported yet: porting it now would mean porting a
+    // known-wrong model and enshrining its wrongness in a Rust assertion".
+    //
+    // Phase 6 needs it - `elevation_lakes` and `elevation_nauvis` both read it
+    // for their variable-persistence field - so it is ported now, faithfully,
+    // residual and all. That is the port's standing rule rather than an
+    // exception to it: reproduce the TypeScript exactly so tier 2 stays
+    // honest, and fix the model in a change graded on its own. A unilateral
+    // "fix" on the Rust side would read as a port bug here.
+    //
+    // **The count is FROZEN rather than bounded, which is strictly stronger
+    // than what the TypeScript asserts.** That side has `worst < 2.5e-7` and
+    // no count at all, so a change to the model that moved 30 positions while
+    // staying inside the bound would pass there and fail here. That is #162's
+    // whole lesson, and #254 is exactly the kind of open question a bound
+    // would let drift.
+    //
+    // 81 of 152 with the op underneath bit-exact (152/152 above) is #254, and
+    // it is not explained. Two models have been tried and rejected on the
+    // TypeScript side, both recorded at `test/multioctaveWrappers.spec.ts`:
+    // running the wrapper's transform in the noise machine's f32 - which is
+    // what took its SIBLING from 38/152 to 152/152 - scores 84/152 here, no
+    // better than the f64 form that ships. Do not "fix" this by guessing.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-multioctave-wrappers.seed123456.json",
+        "2.1.12",
+    );
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = fixture.get("positions").as_array();
+
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    let mut worst_total = 0.0f64;
+    for case in fixture.get("amplitudeCorrected").as_array() {
+        let values = case.get("values").as_array();
+        assert_all_f32(values, "amplitudeCorrected");
+        let params = AmplitudeCorrectedParams {
+            seed0,
+            seed1: case.get("seed1").as_f64() as u32,
+            octaves: case.get("octaves").as_f64() as u32,
+            input_scale: case.get("inputScale").as_f64(),
+            offset_x: case.get("offsetX").as_f64(),
+            persistence: case.get("persistence").as_f64(),
+            amplitude: case.get("amplitude").as_f64(),
+        };
+        let (exact, worst) = score_case(values, |i| {
+            let p = &positions[i];
+            amplitude_corrected_multioctave_noise(p.get("x").as_f64(), p.get("y").as_f64(), &params)
+        });
+        total += values.len();
+        exact_total += exact;
+        worst_total = worst_total.max(worst);
+    }
+
+    assert_eq!(total, 152, "fixture size");
+    // Measured on the TypeScript side against this same fixture: 81 and
+    // 1.788139e-7, to every printed digit.
+    assert_eq!(exact_total, 81, "exact f32 matches, worst {worst_total:e}");
+    assert!(
+        worst_total < 2.5e-7,
+        "worst absolute error {worst_total:e} exceeds the TypeScript's own bound"
+    );
 }
 
 // ---------------------------------------------------------------------------

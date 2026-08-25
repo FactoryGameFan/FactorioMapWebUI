@@ -194,6 +194,14 @@ POISONED_TESTS=(
   # `the_random_penalty_seed_word_matches_the_measured_formula`. See
   # `crates/fmw-noise/src/poison.rs`.
   fixtures::reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position
+
+  # `amplitude_corrected_multioctave_noise`, ported in phase 6 because
+  # `elevation_lakes` and `elevation_nauvis` both read it. Like the layer above,
+  # it adds no hook of its own: it is a transform on top of
+  # `variable_persistence_multioctave_noise`, so there is no path to it that
+  # avoids `basis_noise` and nothing could give its own arithmetic an
+  # independent control.
+  fixtures::reproduces_the_amplitude_corrected_wrapper_at_the_typescripts_own_count
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then

@@ -264,12 +264,15 @@ describe("Rust and TypeScript variable_persistence_multioctave_noise agree bit f
         outputScale: c.outputScale,
         offsetX: c.offsetX,
       });
-      // The WASM boundary takes `persistence` as an f32, so the TypeScript side
-      // must be handed the same f32 or the two would evaluate different Horner
-      // weights - a difference in the harness, not in the op.
-      const p = Math.fround(c.p);
+      // Handed to both sides UN-narrowed. This used to be `Math.fround(c.p)`,
+      // with a comment explaining that the WASM boundary took `persistence` as
+      // an f32 - which was true, and was the bug: the accumulator multiply is
+      // `f32(acc * persistence)` against an f64 persistence, so narrowing here
+      // made the two sides agree by construction on the one term that actually
+      // differed. Two of the cases above (0.62, 0.9) are not f32-exact, so this
+      // comparison now grades the operand width. See #226 and #254.
       expect(fromWasm, `octaves=${c.octaves} offset=${c.offsetX} p=${c.p}`).toBe(
-        foldGrid((x, y) => fn(x, y, p), X0, Y0, STEP, N),
+        foldGrid((x, y) => fn(x, y, c.p), X0, Y0, STEP, N),
       );
     }
   });
