@@ -578,6 +578,15 @@ loses_on_none` is 33s in the normal arm and **93s under poison**, taking the
   per 512x512 region, ~33s each in a debug build, and that grading lives on the
   TypeScript side instead. See the phase-5 notes below for the reasoning.
 
+  **Treat this job's cost as a RANGE, not a number: 1m44s to 2m48s.** #310
+  measured 1m44s on CI against the 2m48s recorded here from an earlier run, on
+  code whose Rust half did not change between them. That is the same spread the
+  test shards show (`one-ci-run-measures-the-runner` - identical spec files came
+  in anywhere from 294s to 469s), and the honest response is to widen the figure
+  rather than to replace it: a single run here measures the runner at least as
+  much as the job. Do not "correct" this to whichever number you last saw. If a
+  change to the Rust really does move this job, show it with more than one run.
+
 - **It runs `bash scripts/verify-rust.sh` directly**, the one deviation from
   "the YAML names only package.json scripts". That does not reopen the drift
   the rule guards against, because `verify:rust` _is_ that one line, so the
@@ -1551,6 +1560,24 @@ comparison. A private copy of that wiring would be reproduced identically on
 both sides and stay invisible. The sweep is the request's own pixel grid, swept
 rows-outer exactly as `render_vulcanus` sweeps it, so there is one geometry
 convention rather than two.
+
+**The field SELECTOR lives in `fmw-noise`, not in the wasm crate, and copy that
+for Nauvis too.** `VulcanusParity` sits beside `VulcanusStack` in
+`expressions/vulcanus_stack.rs`; the wasm export builds the stack through the
+render helpers and then calls `parity.field(field, x, y)`. The reason is
+ownership of test-only API: the selector needs `elevation_fields` and
+`temperature`, which NO render path reads, and reaching them from another crate
+meant two `pub` methods on a library type that existed solely for a test - and a
+`pub` method cannot be `#[cfg(test)]`-gated, because the wasm crate calls it at
+build time. Keeping the selector in the same module makes both private again.
+The field count moved with it (`VulcanusParity::FIELD_COUNT`), so the count and
+the `match` it bounds cannot drift apart.
+
+The move is pure code motion and was checked as such rather than assumed: tier 2
+(74 fields) and tier 3 (byte-identical renders) both pass unchanged. It DOES
+move `engine.wasm` by 142 bytes, because the selector inlines differently once
+it is in the same crate as the layers it reads - which is a reminder that a
+wasm diff is not by itself evidence of a behaviour change.
 
 **It found a real divergence on its first run, and the divergence was #309 -
 now fixed, see below.**

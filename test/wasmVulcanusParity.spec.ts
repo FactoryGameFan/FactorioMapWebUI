@@ -576,10 +576,15 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
     for (const [i] of FIELD_NAMES.entries()) {
       if (foldAll(a[i] as number[]) !== foldAll(b[i] as number[])) differing++;
     }
-    // Measured at 50 of 74. A floor rather than a freeze: the guard's job is
-    // "the second setting is a genuinely different chain", and the exact count
-    // is a property of which fields happen to read a slider, not a result.
-    expect(differing).toBeGreaterThan(40);
+    // Frozen at the measured 50 of 74, like every other count in this file,
+    // rather than left as the floor it started as. The argument for a floor was
+    // that this is "a property of which fields read a slider, not a result" -
+    // but that is true of the window guard's 74 and the tile guard's 19 too,
+    // and those are frozen. A freeze is strictly stronger: it fails if a change
+    // makes FEWER fields read a slider, which a floor of 40 would sit through
+    // for another nine fields, and it fails if a change makes more, which is a
+    // finding either way. If it moves, read it - do not widen it.
+    expect(differing).toBe(50);
   }, 300000);
 
   it("the two windows are different regimes, so running both says something", () => {
