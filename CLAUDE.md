@@ -1099,38 +1099,47 @@ Consequences that constrain any change here:
   change. Both halves were proven by planting them and watching each go red.
 
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
-  known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`), never a range
-  - the schemas here are empirical, so accepting an unseen format would decode a
-    changed layout into plausible wrong values. A version joins the list only with
-    a fixture proving a real string of it round-trips byte-exact
-    (`test/mapExchangeVersions.spec.ts`). This has now been a live bug **three
-    times**: the app rejected every string from Factorio 2.1.12 until 2026-07-28,
-    from 2.1.14 until 2026-08-13, and from 2.1.15 until 2026-08-24. Every time the
-    game moved under a Steam auto-update, and every time it was found by a version
-    audit rather than by a user. The UI advertises the target so the next drift is
-    visible, and `test/factorioTarget.spec.ts` fails the build if
-    `FACTORIO_TARGET_VERSION` disagrees with the newest fixture provenance - so do
-    not hand-maintain that constant.
+  known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`, `2.1.16.0`) and
+  never a range, because the schemas here are empirical: accepting an unseen
+  format would decode a changed layout into plausible wrong values. A version
+  joins the list only with a fixture proving a real string of it round-trips
+  byte-exact (`test/mapExchangeVersions.spec.ts`). This has now been a live bug
+  **four times**: the app rejected every string from Factorio 2.1.12 until
+  2026-07-28, from 2.1.14 until 2026-08-13, and from 2.1.15 and 2.1.16 until
+  2026-08-24 - **the last two on the same day, because Wube shipped both**. Every
+  time the game moved under a Steam auto-update, and every time it was found by a
+  version audit rather than by a user. The UI advertises the target so the next
+  drift is visible, and `test/factorioTarget.spec.ts` fails the build if
+  `FACTORIO_TARGET_VERSION` disagrees with the newest fixture provenance - so do
+  not hand-maintain that constant.
 
   **Read the tag off `factorio --version`, not off the patch number.** The
   binary prints a `Map output version: X.Y.Z-W` line and that maps 1:1 to the
   four-part exchange tag - confirmed on a binary whose tag we already knew
   (2.1.14 prints `2.1.14-1`, and `[2,1,14,1]` is what the list carries), which is
-  a control rather than a pattern match on three data points. The fourth part is
-  NOT monotonic (`.3`, `.2`, `.1`, `.2` across 2.1.9 to 2.1.15), so it cannot be
-  guessed. One `--version` answers "has import broken?" in a second.
+  a control rather than a pattern match. The fourth part is **not monotonic and
+  does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0` across 2.1.9 to
+  2.1.16. It FELL to zero at 2.1.16. It cannot be guessed, and one `--version`
+  answers "has import broken?" in a second.
+
+  **This machine's Steam tracks the EXPERIMENTAL branch**, which is why two
+  format moves arrived within hours of each other. Expect drift here to be more
+  frequent than a user on stable would see, and do not read "the game moved
+  again already" as a sign something is wrong.
 
 - **Capturing a new version is now a script, not a recipe in a comment.**
   `scripts/probes/exchange-format/capture.ts` does the whole thing through
   `factorio-oracle`, five cases in about 10 seconds:
 
   ```bash
-  node --experimental-strip-types scripts/probes/exchange-format/capture.ts 2.1.15
+  node --experimental-strip-types scripts/probes/exchange-format/capture.ts 2.1.16
   ```
 
   It reads each case's settings back out of the PREVIOUS version's fixture with
   the game's own `helpers.parse_map_exchange_string`, so "the five cases mirror
-  the last version's setting-for-setting" is a mechanism instead of a claim.
+  the last version's setting-for-setting" is a mechanism instead of a claim. The
+  previous version is DERIVED - the newest committed strings fixture older than
+  the target - so chaining 2.1.14 -> 2.1.15 -> 2.1.16 needed no edit.
 
   **The one trap, measured rather than reasoned:** feed a whole parse back as
   `--map-gen-settings` and every case inflates from 711 bytes to 1387, because
@@ -1152,15 +1161,23 @@ Consequences that constrain any change here:
   in `src/codec/mapExchangeString.ts` picks the layout, matched on the **exact**
   tag for the same reason `SUPPORTED_VERSIONS` is a list rather than a floor.
 
-  **2.1.15 shares that layout rather than getting its own**, which is why the
-  constants are named for the FIELD (`TAIL_DISPATCH_COOLDOWN_*`) and the selector
-  reads a list of tags. Three independent readings, none of them "it looked the
-  same": `base/prototypes/map-settings.lua` is absent from the 2.1.14 -> 2.1.15
-  diff entirely; all five re-captured cases inflate to the exact byte counts
-  their 2.1.14 counterparts do; and the game's own parse of the new default
-  string is identical across all 186 leaf fields. `map-settings.example.json`
-  DID change in that diff and is a red herring - it was catching up to the 2.1.14
-  default change it had missed.
+  **2.1.15 and 2.1.16 both share that layout rather than getting their own**,
+  which is why the constants are named for the FIELD
+  (`TAIL_DISPATCH_COOLDOWN_*`) and the selector reads a list of tags. Three
+  independent readings per version, none of them "it looked the same":
+  `base/prototypes/map-settings.lua` is absent from each tag-to-tag diff
+  entirely; all five re-captured cases inflate to the exact byte counts their
+  predecessors do; and the game's own parse of each new default string is
+  identical across all 186 leaf fields. At 2.1.15 `map-settings.example.json`
+  DID change and is a red herring - it was catching up to the 2.1.14 default
+  change it had missed. 2.1.16's whole data diff is `info.json` version bumps
+  and the changelog.
+
+  The spec covers these with a `describe.each` over a `LAYOUT_HEIRS` table, each
+  entry mirrored against the version before it - three near-identical describe
+  blocks was the signal to stop pasting. The table is deliberately NOT derived
+  from `SUPPORTED_VERSIONS`: that would make the spec agree with the codec by
+  construction, and the tag is one of the things being asserted.
 
   Two consequences worth knowing before touching this:
   - **A wrong schema choice is loud, not subtle** - decoding a 2.1.14 string

@@ -24,4 +24,4 @@
  * Pinned by `test/factorioTarget.spec.ts` against `PROVENANCE.json`. Bump it in
  * the same commit that lands a fixture from a newer game.
  */
-export const FACTORIO_TARGET_VERSION = "2.1.15";
+export const FACTORIO_TARGET_VERSION = "2.1.16";

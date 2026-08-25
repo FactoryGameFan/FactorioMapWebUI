@@ -61,6 +61,10 @@
       "factorioVersion": "2.1.15",
       "evidence": "CAPTURED 2026-08-24 against Factorio 2.1.15 (build 87284, mac-arm64, steam) by scripts/probes/exchange-format/capture.ts, hours after Steam auto-updated the binary and broke import for the third time. Five cases mirroring map-exchange-2.1.14.strings.json: each case's map-gen settings are the game's OWN parse of that fixture's string for the same case, fed back as --map-gen-settings as a delta against the default case, so the mirror is a mechanism rather than a claim. All five inflate to exactly the byte counts their 2.1.14 counterparts do (711/711/750/711/711), which is asserted in test/mapExchangeVersions.spec.ts"
     },
+    "map-exchange-2.1.16.strings.json": {
+      "factorioVersion": "2.1.16",
+      "evidence": "CAPTURED 2026-08-24 against Factorio 2.1.16 (build 87294, mac-arm64, steam, EXPERIMENTAL branch) by scripts/probes/exchange-format/capture.ts, the same day as the 2.1.15 capture because Wube shipped both. Five cases mirroring map-exchange-2.1.15.strings.json: each case's map-gen settings are the game's OWN parse of that fixture's string for the same case, fed back as --map-gen-settings as a delta against the default case. All five inflate to exactly the byte counts their 2.1.15 counterparts do (711/711/750/711/711). Format tag 2.1.16.0 - note the fourth part fell from 2 to 0, so it cannot be inferred from the version"
+    },
     "map-exchange-parsed.2.1.14-default.dump.json": {
       "factorioVersion": "2.1.14",
       "evidence": "captured 2026-08-13 in the same headless 2.1.14 run as map-exchange-2.1.14.strings.json's default-seed123456 case, by calling helpers.parse_map_exchange_string on that exact string"
@@ -68,6 +72,10 @@
     "map-exchange-parsed.2.1.15-default.dump.json": {
       "factorioVersion": "2.1.15",
       "evidence": "captured 2026-08-24 in the same 2.1.15 run as map-exchange-2.1.15.strings.json's default-seed123456 case, by calling helpers.parse_map_exchange_string on that exact string. Identical to the 2.1.14 parse across all 186 leaf fields, which is one of the three readings that says the payload layout did not move at 2.1.15"
+    },
+    "map-exchange-parsed.2.1.16-default.dump.json": {
+      "factorioVersion": "2.1.16",
+      "evidence": "captured 2026-08-24 in the same 2.1.16 run as map-exchange-2.1.16.strings.json's default-seed123456 case, by calling helpers.parse_map_exchange_string on that exact string. Identical to the 2.1.15 parse across all 186 leaf fields, which is one of the three readings that says the payload layout did not move at 2.1.16"
     },
     "map-exchange-parsed.default-seed123456.dump.json": {
       "factorioVersion": "2.1.9",

@@ -243,6 +243,16 @@ function writeStartingPoints(writer: BinaryWriter, points: MapPosition[]): void 
  *   all 186 leaf fields. So this is a tag-only move like 2.1.12, and it reuses
  *   the 2.1.14 tail layout rather than getting one of its own.
  *
+ * - `2.1.16.0` - what Factorio 2.1.16 (experimental) emits. Added the SAME DAY
+ *   as 2.1.15, because Wube shipped both on 2026-08-24. Another tag-only move,
+ *   read the same three ways, and its data diff against 2.1.15 is nothing but
+ *   `info.json` version bumps and the changelog.
+ *
+ *   **Note its fourth part is `0`.** The sequence across this list is 3, 2, 1,
+ *   2, 0 - it does not increase and does not track the patch number, so the tag
+ *   can never be guessed. `factorio --version` prints
+ *   `Map output version: X.Y.Z-W` and W is that part.
+ *
  * Note the two directions are not symmetric, and only one has ever been broken:
  * 2.1.12 accepts a `2.1.9.3` string fine, 2.1.14 accepts one too, and 2.1.15
  * parses all five `2.1.14.1` captures (all verified through the game's own
@@ -254,6 +264,7 @@ export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 12, 2],
   [2, 1, 14, 1],
   [2, 1, 15, 2],
+  [2, 1, 16, 0],
 ];
 
 /** Human-readable list for UI and error messages, e.g. "2.1.9.3, 2.1.12.2". */
@@ -450,6 +461,7 @@ const TAIL_FIXED_SCHEMA_WITH_DISPATCH_COOLDOWN: Schema = TAIL_FIXED_SCHEMA.flatM
 const TAIL_DISPATCH_COOLDOWN_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 14, 1],
   [2, 1, 15, 2],
+  [2, 1, 16, 0],
 ];
 
 function tailSchemaFor(version: FormatVersion): Schema {
