@@ -10,6 +10,19 @@ intention.
 two disagree, the code wins and this file is stale. Line numbers are from
 2026-08-25.
 
+**The port it was written for has LANDED.** The Rust lives in
+`crates/fmw-noise/src/resources/` - `nauvis_catalog.rs`, `resource_math.rs`,
+`regular_patches.rs`, `starting_patches.rs`, `resource_patches.rs` and
+`resolve_resource.rs`, mirroring these six 1:1. Two things this survey could not
+know, both settled while porting:
+
+- **The scoring metric could not be an exact f32 match count.** It is 0 on both
+  fixtures. `crates/fmw-noise/src/fixtures.rs` freezes a worst absolute
+  residual, an at-basement count and a value fold instead, and says why at
+  `ResourceScore`.
+- **The whole residual is one term**, the `fast_cbrt` inside `basement_value`.
+  Decomposed on #261; deliberately not fixed in the port.
+
 Two conventions from the port apply throughout and are not repeated at every
 line: score by exact f32 match count where that discriminates, and reproduce the
 TypeScript faithfully rather than fixing it - a finding gets its own issue. See

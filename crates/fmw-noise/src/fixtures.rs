@@ -5074,3 +5074,336 @@ fn the_fixtures_grade_both_water_tiles() {
     assert_ne!(at(5.0), NauvisTile::Water);
     assert_ne!(at(5.0), NauvisTile::Deepwater);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 (#226), the Nauvis resource layer: `regular_patches`,
+// `starting_patches` and the outer `max` over them.
+// ---------------------------------------------------------------------------
+
+use crate::checksum::fold_f64;
+use crate::resources::nauvis_catalog::resource_by_name;
+use crate::resources::regular_patches::{RegularPatches, RegularPatchesCtx};
+use crate::resources::resource_patches::{ResourcePatches, ResourcePatchesCtx};
+
+/// What one resource case is graded on.
+///
+/// ## Why this is not an exact f32 match count
+///
+/// Every other tier-1 sweep in this file freezes "how many of the port's values
+/// are bit-identical to the game's". That metric DEGENERATES here: it is
+/// **0 of 16,420** on the regular fixture and **0 of 14,980** on the starting
+/// one, before or after the capture-grid snap. The fields run to ~12,300 in
+/// magnitude and the port sits a systematic ~0.61 from the game, which is ~600
+/// f32 ULPs - so the count is 0 whatever the port does, and grades nothing.
+/// See #261.
+///
+/// `exact` is still recorded and asserted at 0, deliberately: when #261 is
+/// fixed it will stop being 0, and a frozen 0 turns that into a red test that
+/// names the change rather than a silent improvement nobody reads.
+///
+/// ## Why a frozen worst residual is not enough on its own
+///
+/// Because it was measured not to be. Nine breaks were planted in the
+/// TypeScript and each was checked against an order-sensitive fold of all
+/// 31,400 field values, to tell a real change from a no-op:
+///
+/// - Two real breaks moved `worst` loudly - the starting cone radius reading
+///   `s.quantity` (delta 7,887) and the starting stream losing its `seed1 + 1`
+///   (delta 13,230).
+/// - **Two real breaks moved `worst` in 0 of 8 cases**: dropping the `f32()` on
+///   `3 * quantity` in the cone, and pre-narrowing `Math.PI` there. Both change
+///   values; the 0.61 offset swamps them.
+/// - Five more looked like breaks and were genuine no-ops - the regular cull
+///   radius 128 -> 120, the cone's `>` -> `>=`, `min(atMax, atD)` argument
+///   order, `REGULAR_SPACING`'s last digit, and `1/3` written as a decimal.
+///
+/// So an f32 narrowing slip - the class this port is most likely to introduce,
+/// and the class of #273 and #309 - is invisible to a residual here. `fold` is
+/// what catches it, and it is what lets `cargo test` catch it alone rather than
+/// waiting for the JavaScript parity spec.
+struct ResourceScore {
+    /// Exact f32 matches against the game. 0 everywhere today; see above.
+    exact: usize,
+    /// Worst absolute residual against the game, as an EXACT value rather than
+    /// a bound. #261 owns why it is ~0.61 and not ~0.
+    worst: f64,
+    /// Positions where the port's spot field is exactly its basement, i.e. no
+    /// cone reached them. A discrete structural fact about spot selection, the
+    /// cull and the cone geometry, and the one number here that says something
+    /// about the shape of the field rather than about its distance from the
+    /// game.
+    ///
+    /// **Measured in Rust, not on the TypeScript side, and that is a departure
+    /// worth stating.** The TypeScript keeps `spotFieldAt` as a module-local
+    /// closure, so the direct count cannot be taken there without either
+    /// exporting an internal for a test or reimplementing 30 lines that would
+    /// then agree by construction. What IS measurable on both sides is the
+    /// subtraction proxy `field - blobTerm == basement`, and the two ports
+    /// agree on it at **8 of 8 cases exactly** (3965 / 3404 / 3955 / 3360 and
+    /// 3623 / 3351 / 3664 / 3418) - which, together with `fold`, is what ties
+    /// this count to the reference.
+    ///
+    /// The proxy is NOT the same number, and that is arithmetic rather than a
+    /// disagreement: `(a + b) - b` is not `a` in floating point. It undercounts
+    /// by 0 to 692 positions depending on the case - nothing at all for
+    /// starting iron, 692 for regular uranium, whose basement is -11,663 and
+    /// whose blob term is large enough for the round trip to lose the low bits.
+    /// Anything reading a cone-versus-basement split off a subtraction is
+    /// reading noise; take it from the spot field.
+    at_basement: usize,
+    /// FNV-1a over the raw bits of every field value, in position order.
+    ///
+    /// **Measured on the TYPESCRIPT side first** and frozen here, so the number
+    /// comes from the reference rather than from the port agreeing with itself.
+    /// The JavaScript half is `foldF64` in `test/wasmNauvisParity.spec.ts`.
+    fold: u64,
+}
+
+/// Score one case over a fixture's positions, snapped onto the capture grid.
+fn score_resource(
+    positions: &[(f64, f64)],
+    expected: &[Json],
+    field: impl Fn(f64, f64) -> f64,
+    spot_is_basement: impl Fn(f64, f64) -> bool,
+) -> ResourceScore {
+    let mut score = ResourceScore {
+        exact: 0,
+        worst: 0.0,
+        at_basement: 0,
+        fold: 0,
+    };
+    for (i, (raw_x, raw_y)) in positions.iter().enumerate() {
+        let (x, y) = (snap_coord(*raw_x), snap_coord(*raw_y));
+        let want = expected[i].as_f64();
+        let got = field(x, y);
+        score.fold = fold_f64(score.fold, got);
+        score.worst = score.worst.max((got - want).abs());
+        if f64::from(got as f32) == want {
+            score.exact += 1;
+        }
+        if spot_is_basement(x, y) {
+            score.at_basement += 1;
+        }
+    }
+    score
+}
+
+fn assert_resource_case(label: &str, got: &ResourceScore, want: &ResourceScore) {
+    assert_eq!(got.exact, want.exact, "{label} exact f32 matches");
+    assert_eq!(
+        got.worst, want.worst,
+        "{label} worst absolute residual (frozen exactly, not a bound)"
+    );
+    assert_eq!(
+        got.at_basement, want.at_basement,
+        "{label} at-basement count"
+    );
+    assert_eq!(
+        got.fold, want.fold,
+        "{label} value fold - a narrowing slip the residual cannot see"
+    );
+}
+
+#[test]
+fn reproduces_the_games_regular_resource_patches_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-resource-regular.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 4105, "a regen cannot empty the loop");
+
+    // This fixture was captured entirely ON the 1/256 grid, so `snap_coord` is
+    // the identity here - unlike its starting-patch sibling below, which has 22
+    // off-grid positions and needs it. It is applied anyway, so that a
+    // re-capture introducing off-grid positions is graded at the points the
+    // game actually visited rather than at the ones the file records.
+    assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
+
+    // `has_starting_area_placement = 0` and `regular_patch_set_count = 1` - the
+    // pure, unpartitioned regular field, routed onto elevation.
+    //
+    // Two seeds and two resources, so a constant that happened to suit one
+    // cannot pass. Every number below was measured on the TypeScript side
+    // against this same fixture with the same snap.
+    let expected = [
+        // iron-ore, 123456
+        ResourceScore {
+            exact: 0,
+            worst: 0.666_528_246_956_659_1,
+            at_basement: 4055,
+            fold: 0xc893_1246_0cee_1b0d,
+        },
+        // uranium-ore, 123456
+        ResourceScore {
+            exact: 0,
+            worst: 0.445_921_758_266_194_96,
+            at_basement: 4096,
+            fold: 0x6d3a_2d7b_802e_9923,
+        },
+        // iron-ore, 777771
+        ResourceScore {
+            exact: 0,
+            worst: 0.681_140_442_920_877_8,
+            at_basement: 4048,
+            fold: 0x0784_10da_87ea_e2af,
+        },
+        // uranium-ore, 777771
+        ResourceScore {
+            exact: 0,
+            worst: 0.472_515_691_264_561_6,
+            at_basement: 4096,
+            fold: 0x0f10_8499_43bc_9ae9,
+        },
+    ];
+
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), expected.len(), "case count");
+    for (case, want) in cases.iter().zip(expected.iter()) {
+        let name = case.get("resource").as_str();
+        let seed = case.get("seed").as_f64() as u32;
+        let params = resource_by_name(name).unwrap_or_else(|| panic!("unknown resource {name}"));
+        let patches = RegularPatches::new(params, &RegularPatchesCtx::defaults(seed));
+        let got = score_resource(
+            &positions,
+            case.get("values").as_array(),
+            |x, y| patches.field(x, y),
+            |x, y| patches.spot_field_at(x, y) == patches.basement(),
+        );
+        assert_resource_case(&format!("{name} seed {seed}"), &got, want);
+    }
+}
+
+#[test]
+fn reproduces_the_games_combined_resource_patches_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-resource-starting.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 3745, "a regen cannot empty the loop");
+
+    // **The snap is genuinely load-bearing here**, unlike on the regular
+    // fixture and unlike on the Nauvis tile fixtures where it is inert. 22 of
+    // these positions were captured off the 1/256 grid, and snapping them took
+    // the worst absolute residual from 4.899 / 4.340 / 5.270 / 4.673 down to
+    // 0.641 / 0.388 / 0.626 / 0.376 (#186, #260). The count is asserted so a
+    // re-capture cannot quietly empty the set the snap exists for.
+    assert_eq!(count_off_grid(&positions), 22, "off-grid positions");
+
+    // `has_starting_area_placement = 1`, both sets unpartitioned:
+    // `max(starting_patches, regular_patches)`. Routed onto MOISTURE rather
+    // than elevation - overriding elevation with this expression makes the
+    // engine's spawn-lake resolution recurse into itself and SIGSEGV headless.
+    let expected = [
+        // iron-ore, 123456
+        ResourceScore {
+            exact: 0,
+            worst: 0.621_077_909_003_361_1,
+            at_basement: 3623,
+            fold: 0xf550_becd_fc47_aba7,
+        },
+        // copper-ore, 123456
+        ResourceScore {
+            exact: 0,
+            worst: 0.375_161_180_856_594,
+            at_basement: 3663,
+            fold: 0x9f38_6fee_fdbf_008c,
+        },
+        // iron-ore, 777771
+        ResourceScore {
+            exact: 0,
+            worst: 0.638_610_429_770_778_9,
+            at_basement: 3664,
+            fold: 0x5cdb_e9af_0fd2_e80d,
+        },
+        // copper-ore, 777771
+        ResourceScore {
+            exact: 0,
+            worst: 0.375_982_763_795_036_6,
+            at_basement: 3700,
+            fold: 0x7562_f666_5fd8_36d9,
+        },
+    ];
+
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), expected.len(), "case count");
+    for (case, want) in cases.iter().zip(expected.iter()) {
+        let name = case.get("resource").as_str();
+        let seed = case.get("seed").as_f64() as u32;
+        let params = resource_by_name(name).unwrap_or_else(|| panic!("unknown resource {name}"));
+        let patches = ResourcePatches::new(params, &ResourcePatchesCtx::defaults(seed));
+        let regular = patches.regular();
+        let starting = patches
+            .starting()
+            .unwrap_or_else(|| panic!("{name} has no starting branch"));
+        let got = score_resource(
+            &positions,
+            case.get("values").as_array(),
+            |x, y| patches.field(x, y),
+            // BOTH branches, because the outer `max` reads both. A position
+            // where only one branch is at its basement still has a cone in it.
+            |x, y| {
+                regular.spot_field_at(x, y) == regular.basement()
+                    && starting.spot_field_at(x, y) == starting.basement()
+            },
+        );
+        assert_resource_case(&format!("{name} seed {seed}"), &got, want);
+    }
+}
+
+/// The capture-grid snap moves the starting fixture and does NOT move the
+/// regular one, and both halves are asserted.
+///
+/// `the_capture_grid_snap_is_inert_on_the_nauvis_tile_fixtures_and_that_is_measured`
+/// makes the same argument for the tile layer. Here it has teeth on one side:
+/// a test that asserted only the good number would pass again if the snap were
+/// deleted and the counts re-frozen to match, which is exactly how three tier-1
+/// sweeps shipped scoring at points the game never visited (#295).
+#[test]
+fn the_capture_grid_snap_is_load_bearing_on_the_starting_fixture_and_inert_on_the_regular_one() {
+    let raw_worst = |path: &str, captured_at: &str, case_index: usize, snap: bool| {
+        let fixture = load_captured_at(path, captured_at);
+        let positions = fixture_positions(&fixture, "positions");
+        let case = &fixture.get("cases").as_array()[case_index];
+        let name = case.get("resource").as_str();
+        let seed = case.get("seed").as_f64() as u32;
+        let params = resource_by_name(name).expect("a catalog resource");
+        let patches = ResourcePatches::new(params, &ResourcePatchesCtx::defaults(seed));
+        let values = case.get("values").as_array();
+        let mut worst = 0.0f64;
+        for (i, (x, y)) in positions.iter().enumerate() {
+            let (x, y) = if snap {
+                (snap_coord(*x), snap_coord(*y))
+            } else {
+                (*x, *y)
+            };
+            worst = worst.max((patches.field(x, y) - values[i].as_f64()).abs());
+        }
+        worst
+    };
+
+    let starting = "test/fixtures/oracle-resource-starting.seed123456.json";
+    let snapped = raw_worst(starting, "2.1.11", 0, true);
+    let unsnapped = raw_worst(starting, "2.1.11", 0, false);
+    assert_eq!(snapped, 0.621_077_909_003_361_1, "snapped");
+    // The TypeScript records this one to three decimals (`test/captureGrid.ts`
+    // and `test/resourcePatches.spec.ts` both say 4.899), so the exact value
+    // below is measured here rather than there. It agrees to every digit they
+    // print, and `fold` in the test above is what establishes that the two
+    // ports produce the same values at these positions in the first place.
+    assert_eq!(unsnapped, 4.899_269_704_827_02, "unsnapped");
+    assert!(
+        unsnapped > snapped * 7.0,
+        "the snap is worth 7.6x here, not a rounding difference"
+    );
+
+    // And the other way on the regular fixture, whose positions are all on the
+    // grid: applying the snap changes nothing at all.
+    let regular = "test/fixtures/oracle-resource-regular.seed123456.json";
+    assert_eq!(
+        raw_worst(regular, "2.1.11", 0, true),
+        raw_worst(regular, "2.1.11", 0, false),
+        "the snap is the identity on an all-on-grid fixture"
+    );
+}

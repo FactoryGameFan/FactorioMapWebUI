@@ -136,6 +136,20 @@ POISONED_TESTS=(
   fixtures::puts_every_nauvis_tile_where_the_game_puts_it_at_all_three_seeds
   tiles::nauvis_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_order
 
+  # Phase 6 (#226), the Nauvis resource layer. NO hook of its own, for the same
+  # reason no phase-6 expression layer has one: everything under it composes
+  # `basis_noise`, `fast_cbrt`, `random_penalty`, `distance_from_nearest_point`
+  # and `spot_selection`, all of which already carry theirs. Adding a seventh
+  # would give these two tests no control they do not already have.
+  #
+  # They are listed anyway, and that is the point of a NAMED list rather than a
+  # suite-level "did anything fail": these are the only tests that grade
+  # `resources::regular_patches` and `resources::starting_patches` against the
+  # game, and a future change that made them unreachable from every hook would
+  # be a port with no measurement behind it.
+  fixtures::reproduces_the_games_regular_resource_patches_at_every_captured_position
+  fixtures::reproduces_the_games_combined_resource_patches_at_every_captured_position
+
   # Phase 5's second half (#225), the cliff stack. Three hooks, because three
   # ops here can be wrong independently and one red test would otherwise stand
   # in for all of them:
