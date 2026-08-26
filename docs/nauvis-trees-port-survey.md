@@ -10,6 +10,19 @@ rather than an intention.
 two disagree, the code wins and this file is stale. Line numbers are from
 2026-08-25.
 
+**The port it was written for has LANDED.** The Rust lives in
+`crates/fmw-noise/src/trees/` - `asymmetric_ramps.rs`, `catalog.rs`, `shared.rs`
+and `field.rs`, mirroring these four 1:1. Everything below held up, including
+the per-field counts in section 0, which the Rust froze unchanged on the first
+run. Two things this survey could not know:
+
+- The 16 crc32 seeds are no longer copied constants on the Rust side.
+  `catalog.rs` carries a CRC-32 in its own test module and checks all 16 against
+  their names, so a copied magic number cannot be wrong on both ports at once.
+- The tier-2 tree block needed a different laziness shape from the resource
+  block, because `TreeFields` borrows a `TreeBase`. See CLAUDE.md's
+  "Structure conventions to copy for the next layer".
+
 Sibling: `docs/nauvis-resources-port-survey.md`, and the port it produced. Two
 conventions from that work carry and are not repeated at every line: reproduce
 the TypeScript faithfully rather than fixing it, and a finding gets its own

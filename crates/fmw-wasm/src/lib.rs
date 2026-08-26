@@ -1130,6 +1130,7 @@ pub extern "C" fn render_request(len: u32) -> u32 {
 use fmw_noise::distance_from_nearest_point::Point as NauvisPoint;
 use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisParity, NauvisStack};
 use fmw_noise::resources::resource_math::ResourceControlLevers;
+use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
 
 /// Tier 2 for the Nauvis expression core, one named field at a time.
 ///
@@ -1165,6 +1166,11 @@ use fmw_noise::resources::resource_math::ResourceControlLevers;
 /// arriving as eighteen arguments - see `NauvisCtx::resource_controls` for why
 /// that covers the paths, and for the one constraint on them: `resource_size`
 /// must stay above 0 or the resource fields fold zeros and compare nothing.
+///
+/// `trees_frequency` and `trees_size` reach the tree block, which is built only
+/// when a tree field is selected. Both are dead at the default, so a sweep that
+/// never moves them grades neither the per-species `input_scale` scaling nor
+/// the flat `0.2 * size` term.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn checksum_nauvis(
@@ -1182,6 +1188,8 @@ pub extern "C" fn checksum_nauvis(
     resource_frequency: f64,
     resource_size: f64,
     resource_richness: f64,
+    trees_frequency: f64,
+    trees_size: f64,
     field: u32,
     x0: f64,
     y0: f64,
@@ -1201,6 +1209,8 @@ pub extern "C" fn checksum_nauvis(
         starting_area_moisture_size,
         starting_area_moisture_frequency,
         starting_positions: vec![NauvisPoint { x: 0.0, y: 0.0 }],
+        trees_frequency,
+        trees_size,
         resource_controls: ResourceControlLevers {
             frequency: resource_frequency,
             size: resource_size,
@@ -1210,9 +1220,34 @@ pub extern "C" fn checksum_nauvis(
     let stack = NauvisStack::new(&ctx);
 
     // The parity selector rather than the stack's own, so the 21 tile
-    // probabilities, the argmax over them and the whole resource layer are
+    // probabilities, the argmax over them and the resource and tree layers are
     // inside the comparison too.
-    let parity = NauvisParity::new(&stack, &ctx);
+    //
+    // The tree layer is built HERE rather than inside the selector, and only
+    // when a tree field is being asked for. `TreeFields` borrows a `TreeBase`,
+    // so a selector owning both would be self-referential; and this is one call
+    // per FIELD, so an unconditional build would make all 57 other fields pay
+    // for sixteen `Prepared` multioctaves they never read. The two locals have
+    // to outlive the borrow, hence the declaration before the `if`.
+    let tree_base;
+    let tree_fields;
+    let parity = if field >= NauvisParity::TREE_BASE {
+        let mut tree_params = TreeFieldParams::defaults(seed0);
+        tree_params.trees_frequency = trees_frequency;
+        tree_params.trees_size = trees_size;
+        tree_params.segmentation_multiplier = segmentation_multiplier;
+        tree_params.moisture_frequency = moisture_frequency;
+        tree_params.moisture_bias = moisture_bias;
+        tree_params.temperature_frequency = temperature_frequency;
+        tree_params.temperature_bias = temperature_bias;
+        tree_params.starting_area_moisture_size = starting_area_moisture_size;
+        tree_params.starting_area_moisture_frequency = starting_area_moisture_frequency;
+        tree_base = TreeBase::new(&tree_params);
+        tree_fields = TreeFields::new(&tree_base);
+        NauvisParity::new(&stack, &ctx).with_trees(&tree_fields)
+    } else {
+        NauvisParity::new(&stack, &ctx)
+    };
 
     let mut acc = 0u64;
     for j in 0..n {

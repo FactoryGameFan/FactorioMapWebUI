@@ -150,6 +150,19 @@ POISONED_TESTS=(
   fixtures::reproduces_the_games_regular_resource_patches_at_every_captured_position
   fixtures::reproduces_the_games_combined_resource_patches_at_every_captured_position
 
+  # Phase 6 (#226), the Nauvis tree layer. No hook of its own either: every
+  # species composes `basis_noise` through `multioctave_noise`, and the climate
+  # boxes read `moisture` and `temperature`, all of which already carry theirs.
+  #
+  # The third test here is the one worth naming. It scores both fixtures WITHOUT
+  # the capture-grid snap, so it is the control on the snap rather than on the
+  # port - and it is still listed, because a perturbation has to move it too. A
+  # test that stayed green under poison while its snapped twin went red would
+  # mean the two were not measuring the same thing.
+  fixtures::reproduces_the_games_tree_layer_at_every_captured_position
+  fixtures::reproduces_the_games_tree_layer_at_moved_control_levers
+  fixtures::the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement
+
   # Phase 5's second half (#225), the cliff stack. Three hooks, because three
   # ops here can be wrong independently and one red test would otherwise stand
   # in for all of them:

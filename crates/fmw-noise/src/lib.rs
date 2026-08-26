@@ -32,6 +32,7 @@ pub mod spot_selection;
 pub mod starting_lakes;
 pub mod taus88;
 pub mod tiles;
+pub mod trees;
 pub mod variable_persistence_multioctave_noise;
 pub mod voronoi_noise;
 

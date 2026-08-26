@@ -5407,3 +5407,229 @@ fn the_capture_grid_snap_is_load_bearing_on_the_starting_fixture_and_inert_on_th
         "the snap is the identity on an all-on-grid fixture"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 (#226), the Nauvis tree layer: the two shared fields and all 15
+// species.
+// ---------------------------------------------------------------------------
+
+use crate::trees::catalog::TREE_SPECIES;
+use crate::trees::field::{TreeBase, TreeFieldParams, TreeFields};
+
+/// Score one tree field over a fixture's positions, snapped onto the capture
+/// grid, returning (exact f32 matches, worst absolute residual).
+///
+/// Unlike the resource layer, **the exact count works here and is the metric**.
+/// Tree values are probabilities in roughly `[-3, 0.45]` rather than the
+/// resource fields' ~12,300, so a one-term error does not put every value
+/// hundreds of ULPs out and collapse the count to 0. See CLAUDE.md, "When the
+/// exact-match count degenerates".
+fn score_tree(
+    positions: &[(f64, f64)],
+    expected: &[Json],
+    mut f: impl FnMut(f64, f64) -> f64,
+) -> (usize, f64) {
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for (i, (x, y)) in positions.iter().enumerate() {
+        let want = expected[i].as_f64();
+        let got = f64::from(f(snap_coord(*x), snap_coord(*y)) as f32);
+        worst = worst.max((got - want).abs());
+        if got == want {
+            exact += 1;
+        }
+    }
+    (exact, worst)
+}
+
+#[test]
+fn reproduces_the_games_tree_layer_at_every_captured_position() {
+    let fixture = load_captured_at("test/fixtures/oracle-trees.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+
+    // **The snap is load-bearing here**, and more so than on most fixtures: 14
+    // of these 26 positions were captured off the 1/256 grid. Scoring at the
+    // raw coordinates gives 85 of 442 against 120 snapped, so more than a third
+    // of the agreement would be thrown away by grading at points the game never
+    // visited (#186, #295). The count is asserted so a re-capture cannot
+    // silently empty the set the snap exists for.
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    assert_eq!(seed0, 123_456, "the fixture's own seed");
+    let base = TreeBase::new(&TreeFieldParams::defaults(seed0));
+    let fields = TreeFields::new(&base);
+    let values = fixture.get("values");
+
+    // Every count below was measured on the TypeScript side first, against this
+    // same fixture with the same snap. Read them by DEPTH, not as a ranking:
+    // `tree_small_noise` is bit-exact because it is one bare
+    // `multioctave_noise` with nothing beneath it, while every species stacks a
+    // temperature tree, a moisture tree, two `asymmetric_ramps`, a distance
+    // term and a three-octave noise on top of each other.
+    let (small, worst_small) = score_tree(
+        &positions,
+        values.get("tree_small_noise").as_array(),
+        |x, y| fields.shared().small_noise(x, y),
+    );
+    assert_eq!(small, 26, "tree_small_noise exact, worst {worst_small:e}");
+    assert_eq!(worst_small, 0.0, "tree_small_noise is bit-exact");
+
+    let (faded, worst_faded) = score_tree(
+        &positions,
+        values.get("trees_forest_path_cutout_faded").as_array(),
+        |x, y| fields.shared().forest_path_cutout_faded(x, y),
+    );
+    assert_eq!(
+        faded, 9,
+        "trees_forest_path_cutout_faded exact, worst {worst_faded:e}"
+    );
+
+    // (species name, exact of 26). The order is the catalog's.
+    let expected: [(&str, usize); 15] = [
+        ("tree_01", 1),
+        ("tree_04", 11),
+        ("tree_05", 2),
+        ("tree_02", 8),
+        ("tree_03", 7),
+        ("tree_07", 8),
+        ("tree_02_red", 1),
+        ("tree_08", 1),
+        ("tree_09", 11),
+        ("tree_06", 2),
+        ("tree_08_brown", 4),
+        ("tree_09_brown", 5),
+        ("tree_06_brown", 7),
+        ("tree_08_red", 9),
+        ("tree_09_red", 8),
+    ];
+    let mut total = small + faded;
+    for (index, (name, want)) in expected.iter().enumerate() {
+        assert_eq!(
+            TREE_SPECIES[index].name, *name,
+            "the expected table is out of step with the catalog"
+        );
+        let (exact, worst) = score_tree(&positions, values.get(name).as_array(), |x, y| {
+            fields.eval_at(index, x, y)
+        });
+        assert_eq!(exact, *want, "{name} exact, worst {worst:e}");
+        total += exact;
+    }
+    // The total is frozen too, so a species silently dropped from the loop
+    // above - which would leave every remaining assertion passing - moves a
+    // number.
+    assert_eq!(total, 120, "total exact of 442");
+}
+
+#[test]
+fn reproduces_the_games_tree_layer_at_moved_control_levers() {
+    // A second fixture at `control:trees:frequency = 3` and `:size = 2`. Both
+    // levers are dead at the default, so without this the frequency scaling of
+    // each species' `input_scale` and the flat `0.2 * size` term would be
+    // graded by nothing.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-trees-controls.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 17, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 7, "off-grid positions");
+
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let trees_frequency = fixture.get("treesFrequency").as_f64();
+    let trees_size = fixture.get("treesSize").as_f64();
+    assert_eq!(
+        (trees_frequency, trees_size),
+        (3.0, 2.0),
+        "the fixture's own levers"
+    );
+
+    let mut params = TreeFieldParams::defaults(seed0);
+    params.trees_frequency = trees_frequency;
+    params.trees_size = trees_size;
+    let base = TreeBase::new(&params);
+    let fields = TreeFields::new(&base);
+    let values = fixture.get("values");
+
+    let expected: [(&str, usize); 3] = [("tree_01", 3), ("tree_08", 2), ("tree_09_red", 4)];
+    let mut total = 0;
+    for (name, want) in expected {
+        let index = TREE_SPECIES
+            .iter()
+            .position(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the catalog"));
+        let (exact, worst) = score_tree(&positions, values.get(name).as_array(), |x, y| {
+            fields.eval_at(index, x, y)
+        });
+        assert_eq!(exact, want, "{name} exact, worst {worst:e}");
+        total += exact;
+    }
+    assert_eq!(total, 9, "total exact of 51");
+}
+
+/// The recorded counts in `test/captureGrid.ts` have DRIFTED, and this is where
+/// that is on the record.
+///
+/// That file's table says `oracle-trees` scores 83 of 442 unsnapped and 118
+/// snapped, and `oracle-trees-controls` 9 and 10. Measured on 2026-08-25 on
+/// both ports, the real figures are **85 and 120**, and **8 and 9**. The offset
+/// is constant across BOTH arms of each fixture, which is the signature of the
+/// port having moved since that table was taken on 2026-08-18 rather than of a
+/// methodology difference - several narrowing fixes landed in between (#273,
+/// #279, #290, #293, #309).
+///
+/// Nothing asserted those numbers, so they drifted quietly. These do.
+#[test]
+fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
+    let unsnapped_total = |path: &str, params: &TreeFieldParams, names: &[&str]| -> usize {
+        let fixture = load_captured_at(path, "2.1.11");
+        let positions = fixture_positions(&fixture, "positions");
+        let base = TreeBase::new(params);
+        let fields = TreeFields::new(&base);
+        let values = fixture.get("values");
+        let mut total = 0;
+        for name in names {
+            let expected = values.get(name).as_array();
+            let index = TREE_SPECIES.iter().position(|s| s.name == *name);
+            for (i, (x, y)) in positions.iter().enumerate() {
+                // NO snap - that is the point of this test.
+                let got = match index {
+                    Some(k) => fields.eval_at(k, *x, *y),
+                    None if *name == "tree_small_noise" => fields.shared().small_noise(*x, *y),
+                    None => fields.shared().forest_path_cutout_faded(*x, *y),
+                };
+                if f64::from(got as f32) == expected[i].as_f64() {
+                    total += 1;
+                }
+            }
+        }
+        total
+    };
+
+    let mut all: Vec<&str> = vec!["tree_small_noise", "trees_forest_path_cutout_faded"];
+    all.extend(TREE_SPECIES.iter().map(|s| s.name));
+    let defaults = TreeFieldParams::defaults(123_456);
+    assert_eq!(
+        unsnapped_total(
+            "test/fixtures/oracle-trees.seed123456.json",
+            &defaults,
+            &all
+        ),
+        85,
+        "unsnapped total of 442"
+    );
+
+    let mut params = TreeFieldParams::defaults(123_456);
+    params.trees_frequency = 3.0;
+    params.trees_size = 2.0;
+    assert_eq!(
+        unsnapped_total(
+            "test/fixtures/oracle-trees-controls.seed123456.json",
+            &params,
+            &["tree_01", "tree_08", "tree_09_red"],
+        ),
+        8,
+        "unsnapped total of 51"
+    );
+}
