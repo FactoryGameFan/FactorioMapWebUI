@@ -17,6 +17,7 @@ pub mod basis_noise;
 pub mod checksum;
 pub mod cliffs;
 pub mod distance_from_nearest_point;
+pub mod enemies;
 pub mod eval;
 pub mod expressions;
 pub mod fast_approx;

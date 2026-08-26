@@ -1194,7 +1194,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
 | 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view renders through the engine.**                                                                   | done     |
-| 6 (#226) | Nauvis - everything but `enemies/` and the render path                                                                                                                         | **most** |
+| 6 (#226) | Nauvis - every expression ported; the render path and tier 3 remain                                                                                                            | **most** |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1216,8 +1216,11 @@ them). Both are pure compositions of parts already ported, so the only new
 primitives were seven constants and three lever helpers across the two existing
 `catalog.rs` files.
 
-Still unported, about 240 lines of TypeScript: `enemies/`, plus the ABI Nauvis
-params block, the render path, and tier 3.
+Then `enemies/` - the constants, the four distance scalars and
+`enemy_base_probability` with its spot-region cache. That is **every Nauvis
+expression ported**.
+
+Still unported: the render path and tier 3.
 
 **One TypeScript file in a ported directory was ported for a reason that is not
 obvious.** `cliffConnections.ts` has **zero `src/` consumers** - only 23
@@ -1509,6 +1512,23 @@ again: `tree_small_noise` is bit-exact at 26/26 with residual exactly 0 because
 it is one bare `multioctave_noise`, while the 15 species stack a temperature
 tree, a moisture tree, two `asymmetric_ramps`, a distance term and a
 three-octave noise, and land between 1 and 11 of 26.
+
+The enemy-base layer is where the exact-match metric **measures magnitude rather
+than accuracy**, and the split is the whole reading:
+
+| bucket                   | seed 123456 | seed 777771 | worst   |
+| ------------------------ | ----------- | ----------- | ------- |
+| basement, `\|v\| >= 100` | 209 / 239   | 126 / 159   | 4.29e-5 |
+| mid, `1 <= \|v\| < 100`  | **0 / 602** | **0 / 658** | 9.76e-6 |
+| live, `\|v\| < 1`        | **1 / 191** | **1 / 215** | 4.17e-6 |
+
+The basement is -1000, so a position no cone reaches sits near -1007 where one
+f32 ULP is about 6e-5 - larger than the whole residual, so it is exact for free.
+Nearly the entire headline count of 210 and 127 is that. Where the field is
+doing something the port matches 2 of 406. **Freeze the three buckets, not the
+headline**: a single frozen 210 goes green on badly wrong cone arithmetic, and
+moves when a recapture shifts the basement/live split. This is the "a clamp
+flatters it" rule with a basement instead of a clamp.
 
 The cliff and rock layers score:
 
@@ -1808,15 +1828,26 @@ running the wasm parity specs**, especially tier 3's byte-identical renders.
   itself evidence of a behaviour change.
 - **Export a `<planet>_field_count()`** and assert the spec's name list against
   it, so a field added to the chain cannot silently go untested. Nauvis is at
-  **82**: 16 expression fields, 21 tile probabilities, the tile argmax, 18
+  **84**: 16 expression fields, 21 tile probabilities, the tile argmax, 18
   resource wrappers, the resource resolver, then `tree_small_noise`, the two
-  forest-path cutouts, 15 tree species and the tree density, and finally
+  forest-path cutouts, 15 tree species and the tree density, then
   `cliff_elevation`, `cliffiness`, the three rock probabilities and
-  `rock_density`.
+  `rock_density`, and finally `enemy_base_field` and `enemy_probability`.
 
-  **Index a block from its own BASE, never from the end of the list.** Two tree
-  assertions were written as `FIELD_NAMES.length - 1` and broke when the cliff
-  block landed behind them - a change with nothing to do with trees.
+  **Index a block from its own BASE, never from the end of the list.** This has
+  now bitten twice in the same file. Two tree assertions were written as
+  `FIELD_NAMES.length - 1` and broke when the cliff block landed behind them;
+  the cliff block's own name test was then written as an open-ended
+  `slice(base)`, which asserted "these six are the last six" and broke when the
+  enemy block landed. Use a bounded slice and assert the NEXT block's first name.
+
+  **Do not fold an operand just because a `max` sits above it.** The tile argmax
+  and the rock max both hide their operands, so those blocks fold each one. The
+  enemy `max` does not: its spot field runs from -1000 to about +1 while the
+  terms added to it are roughly +/-0.15, so the composed field is dominated by
+  the spot field rather than masking it. Check the magnitudes before deciding -
+  and folding it would have cost a reimplementation of the region scan in the
+  parity spec, which the TypeScript does not expose.
 
 - **Let the two sides reach the same numbers by DIFFERENT routes where you can.**
   Nauvis's resource block is the worked case: the Rust selector reads its five

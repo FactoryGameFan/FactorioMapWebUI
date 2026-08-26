@@ -34,6 +34,8 @@ use std::cell::OnceCell;
 use crate::cliffs::catalog::{CliffControls, CliffSettings};
 use crate::cliffs::fields::{CliffFieldParams, NauvisCliffFields};
 use crate::distance_from_nearest_point::Point;
+use crate::enemies::catalog::EnemyControls;
+use crate::enemies::field::{EnemyBaseField, EnemyFieldParams};
 use crate::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
 use crate::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
 use crate::expressions::nauvis_climate::{
@@ -105,6 +107,12 @@ pub struct NauvisCtx {
     pub cliff_settings: CliffSettings,
     /// The `rocks` autoplace control.
     pub rock_controls: RockControls,
+    /// The `enemy-base` autoplace control.
+    ///
+    /// Both sliders are dead at 1 - `size` enters as `sqrt(size)` and
+    /// `frequency` as a plain multiplier - and `oracle-enemy-base` was captured
+    /// at the defaults, so tier 1 grades neither. A sweep must move them.
+    pub enemy_controls: EnemyControls,
 }
 
 impl NauvisCtx {
@@ -130,6 +138,7 @@ impl NauvisCtx {
             cliff_controls: CliffControls::defaults(),
             cliff_settings: CliffSettings::defaults(),
             rock_controls: RockControls::defaults(),
+            enemy_controls: EnemyControls::defaults(),
         }
     }
 }
@@ -319,6 +328,15 @@ pub struct NauvisParity<'a, 'b> {
     /// the selector - `NauvisCliffFields` and `NauvisRockFields` each own their
     /// sub-layers outright, so there is no self-reference to work around.
     cliff_rock: OnceCell<NauvisCliffRockFields>,
+    /// What the enemy-base field needs, kept so it can be built once.
+    enemy_ctx: EnemyFieldParams,
+    /// The enemy-base field, built on first use.
+    ///
+    /// Lazy like the two blocks above, and here the cost is a cache rather than
+    /// a tree: `EnemyBaseField` owns a `RefCell<BTreeMap>` of selected spots and
+    /// fills it by running `select_spots` over up to nine 512-tile regions the
+    /// first time a position asks. None of the 82 fields before it reads that.
+    enemy: OnceCell<EnemyBaseField>,
 }
 
 /// What the cliff and rock fields need, carried until first use.
@@ -364,9 +382,9 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
     /// `TILE_ORDER`, then the argmax over them, then the resource layer (six
     /// `field`s, six `probability`s, six `richness`es and the resolver's
     /// winner), then the tree layer (`tree_small_noise`, the two forest-path
-    /// cutouts, the 15 species and the density over them), and finally the
-    /// cliff and rock block.
-    pub const FIELD_COUNT: u32 = Self::CLIFF_ROCK_BASE + 6;
+    /// cutouts, the 15 species and the density over them), then the cliff and
+    /// rock block, and finally the enemy-base block.
+    pub const FIELD_COUNT: u32 = Self::ENEMY_BASE + 2;
 
     /// Where the resource block starts.
     const RESOURCE_BASE: u32 = NauvisStack::FIELD_COUNT + 21 + 1;
@@ -375,6 +393,9 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
     /// Where the cliff and rock block starts: `cliff_elevation`, `cliffiness`,
     /// the three rock probabilities and `rock_density`.
     pub const CLIFF_ROCK_BASE: u32 = Self::TREE_BASE + 3 + 15 + 1;
+    /// Where the enemy-base block starts: the composed field and the clamped
+    /// probability.
+    pub const ENEMY_BASE: u32 = Self::CLIFF_ROCK_BASE + 6;
 
     #[must_use]
     pub fn new(stack: &'a NauvisStack, ctx: &NauvisCtx) -> Self {
@@ -419,7 +440,18 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
                 },
             },
             cliff_rock: OnceCell::new(),
+            enemy_ctx: EnemyFieldParams {
+                seed0: ctx.seed0,
+                controls: ctx.enemy_controls,
+                starting_positions: ctx.starting_positions.clone(),
+            },
+            enemy: OnceCell::new(),
         }
+    }
+
+    fn enemy(&self) -> &EnemyBaseField {
+        self.enemy
+            .get_or_init(|| EnemyBaseField::new(&self.enemy_ctx))
     }
 
     fn cliff_rock(&self) -> &NauvisCliffRockFields {
@@ -513,6 +545,9 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
             aux: self.stack.aux.eval(x, y),
             moisture: self.stack.moisture.eval(x, y),
         };
+        if field >= Self::ENEMY_BASE {
+            return self.enemy_field(field - Self::ENEMY_BASE, x, y);
+        }
         if field >= Self::CLIFF_ROCK_BASE {
             return self.cliff_rock_field(field - Self::CLIFF_ROCK_BASE, x, y);
         }
@@ -634,11 +669,39 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
             _ => held.rocks.density(x, y),
         }
     }
+
+    /// One field of the enemy-base block, `0..2`.
+    ///
+    /// **The spot field is NOT folded on its own, unlike the operands of every
+    /// other `max` in this selector.** The tile argmax and the rock max both
+    /// hide their operands, so those blocks fold each one; this `max` does not.
+    /// The spot field runs from -1000 to about +1 while the blob term is
+    /// roughly +/-0.15 and the starting-area term is 0 past 150 tiles, so
+    /// [`EnemyBaseField::field`] is dominated by the spot field rather than
+    /// masking it - a spot that survived the trim on one port and not the other
+    /// moves the composed field by hundreds.
+    ///
+    /// The TypeScript also does not expose it, so folding it would have meant
+    /// reimplementing the region scan in the parity spec - a private copy
+    /// reproduced on both sides, which is the trap `checksum_vulcanus` records.
+    ///
+    /// `probability` is folded even though it is 0 almost everywhere, because
+    /// the cap and the clamp are its own wiring.
+    fn enemy_field(&self, index: u32, x: f64, y: f64) -> f64 {
+        let enemy = self.enemy();
+        match index {
+            0 => enemy.field(x, y),
+            // Out of range resolves to the probability, matching the other
+            // blocks.
+            _ => enemy.probability(x, y),
+        }
+    }
 }
 
 #[cfg(test)]
 mod parity_tests {
     use super::*;
+    use crate::enemies::catalog::ENEMY_BASEMENT;
 
     fn parity_ctx() -> NauvisCtx {
         NauvisCtx::defaults(123_456)
@@ -1034,7 +1097,7 @@ mod parity_tests {
         let ctx = parity_ctx();
         let stack = NauvisStack::new(&ctx);
         let parity = NauvisParity::new(&stack, &ctx);
-        let sweep: Vec<Vec<f64>> = (NauvisParity::CLIFF_ROCK_BASE..NauvisParity::FIELD_COUNT)
+        let sweep: Vec<Vec<f64>> = (NauvisParity::CLIFF_ROCK_BASE..NauvisParity::ENEMY_BASE)
             .map(|f| {
                 let mut row = Vec::with_capacity(40 * 40);
                 for i in 0..40 {
@@ -1085,7 +1148,7 @@ mod parity_tests {
         let parity = NauvisParity::new(&stack, &ctx);
         let (x, y) = (140.5, -95.25);
 
-        assert_eq!(NauvisParity::FIELD_COUNT, NauvisParity::CLIFF_ROCK_BASE + 6);
+        assert_eq!(NauvisParity::ENEMY_BASE, NauvisParity::CLIFF_ROCK_BASE + 6);
 
         let cliffs = NauvisCliffFields::new(&CliffFieldParams::defaults(ctx.seed0));
         let rocks = NauvisRockFields::new(&RockFieldParams::defaults(ctx.seed0));
@@ -1096,10 +1159,11 @@ mod parity_tests {
         assert_eq!(parity.field(base + 3, x, y), rocks.at(x, y).big);
         assert_eq!(parity.field(base + 4, x, y), rocks.at(x, y).sand);
         assert_eq!(parity.field(base + 5, x, y), rocks.density(x, y));
-        // Past the end is the density, the block's own catch-all.
-        assert_eq!(
-            parity.field(NauvisParity::FIELD_COUNT, x, y),
-            rocks.density(x, y)
+        // The enemy block starts where this one ends.
+        assert_ne!(
+            parity.field(NauvisParity::ENEMY_BASE, x, y),
+            rocks.density(x, y),
+            "the enemy block must start where the cliff and rock block ends"
         );
     }
 
@@ -1217,6 +1281,141 @@ mod parity_tests {
             !moved(&|c| c.cliff_settings.cliff_elevation_0 = 25.0),
             "cliff_elevation_0 reached the block - the ABI must now carry it"
         );
+        assert!(
+            !moved(&|_c| {}),
+            "the sweep reports a difference with no change"
+        );
+    }
+
+    #[test]
+    fn every_enemy_field_index_reaches_a_distinct_value() {
+        // Same guard as the four blocks before it. A 2D grid, and a WIDE one:
+        // enemy bases are sparser than ore, and a sweep that reaches no spot
+        // folds -1000 into every position of the spot field. That is
+        // bit-identical between any two ports and compares nothing.
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let parity = NauvisParity::new(&stack, &ctx);
+        let sweep: Vec<Vec<f64>> = (NauvisParity::ENEMY_BASE..NauvisParity::FIELD_COUNT)
+            .map(|f| {
+                let mut row = Vec::with_capacity(24 * 24);
+                for i in 0..24 {
+                    for j in 0..24 {
+                        row.push(parity.field(
+                            f,
+                            f64::from(i) * 97.3 + 300.0,
+                            f64::from(j) * 89.7 + 300.0,
+                        ));
+                    }
+                }
+                row
+            })
+            .collect();
+        assert_eq!(sweep.len(), 2, "the block is two fields wide");
+        for a in 0..sweep.len() {
+            for b in (a + 1)..sweep.len() {
+                assert_ne!(
+                    sweep[a],
+                    sweep[b],
+                    "enemy fields {} and {} are the same sweep",
+                    NauvisParity::ENEMY_BASE + a as u32,
+                    NauvisParity::ENEMY_BASE + b as u32
+                );
+            }
+        }
+
+        // Anti-vacuity. The composed field must rise well ABOVE the basement
+        // somewhere, or no cone reaches this window and both fields are folding
+        // a constant; and the probability must be non-zero somewhere, or the
+        // cap and clamp are folding zeros.
+        assert!(
+            sweep[0].iter().any(|v| *v > ENEMY_BASEMENT + 100.0),
+            "no spot reaches this window - the field is all basement"
+        );
+        assert!(
+            sweep[1].iter().any(|v| *v > 0.0),
+            "no position in this window carries an enemy base"
+        );
+    }
+
+    #[test]
+    fn the_enemy_block_starts_where_the_cliff_and_rock_block_ends() {
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let parity = NauvisParity::new(&stack, &ctx);
+        // A position a cone actually reaches - the assertion at the end of this
+        // test is what found it. (868.5, 924.25) looked plausible and was pure
+        // basement, which would have made every equality below compare -1000
+        // against -1000.
+        let (x, y) = (300.0, 1197.0);
+
+        assert_eq!(NauvisParity::FIELD_COUNT, NauvisParity::ENEMY_BASE + 2);
+
+        let enemy = EnemyBaseField::new(&EnemyFieldParams::defaults(ctx.seed0));
+        let base = NauvisParity::ENEMY_BASE;
+        assert_eq!(parity.field(base, x, y), enemy.field(x, y));
+        assert_eq!(parity.field(base + 1, x, y), enemy.probability(x, y));
+        // The spot field is deliberately not one of them - see `enemy_field`.
+        // It is still the thing the pair is dominated by, which is why this
+        // asserts the composed field carries it rather than the basement.
+        assert!(
+            enemy.spot_field(x, y) > ENEMY_BASEMENT,
+            "pick a position a cone actually reaches, or this test is vacuous"
+        );
+        // Past the end is the probability, the block's own catch-all.
+        assert_eq!(
+            parity.field(NauvisParity::FIELD_COUNT, x, y),
+            enemy.probability(x, y)
+        );
+    }
+
+    #[test]
+    fn the_enemy_layer_is_built_only_when_one_of_its_fields_is_asked_for() {
+        // Lazy like the resource and cliff blocks, and here the cost is a cache
+        // rather than a tree: the first read runs `select_spots` over up to nine
+        // 512-tile regions and keeps the result.
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let parity = NauvisParity::new(&stack, &ctx);
+        let _ = parity.field(0, 100.5, 100.25);
+        let _ = parity.field(NauvisParity::ENEMY_BASE - 1, 100.5, 100.25);
+        assert!(parity.enemy.get().is_none(), "built too early");
+        let _ = parity.field(NauvisParity::ENEMY_BASE, 100.5, 100.25);
+        assert!(parity.enemy.get().is_some(), "never built");
+    }
+
+    #[test]
+    fn the_enemy_levers_reach_the_enemy_block() {
+        // Both are dead at the default - `size` enters as `sqrt(size)` and
+        // `frequency` as a plain multiplier - and `oracle-enemy-base` was
+        // captured at the defaults, so tier 1 grades neither. This is the only
+        // thing that covers them.
+        //
+        // A 2D grid placed where spots actually are, for the reason above: on an
+        // all-basement window every lever looks dead.
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let parity = NauvisParity::new(&stack, &ctx);
+
+        let moved = |f: &dyn Fn(&mut NauvisCtx)| -> bool {
+            let mut c = NauvisCtx::defaults(123_456);
+            f(&mut c);
+            let st = NauvisStack::new(&c);
+            let p = NauvisParity::new(&st, &c);
+            (0..24).any(|i| {
+                (0..24).any(|j| {
+                    let x = f64::from(i) * 97.3 + 300.0;
+                    let y = f64::from(j) * 89.7 + 300.0;
+                    (NauvisParity::ENEMY_BASE..NauvisParity::FIELD_COUNT)
+                        .any(|fl| p.field(fl, x, y) != parity.field(fl, x, y))
+                })
+            })
+        };
+        assert!(
+            moved(&|c| c.enemy_controls.frequency = 3.0),
+            "enemy frequency"
+        );
+        assert!(moved(&|c| c.enemy_controls.size = 2.0), "enemy size");
         assert!(
             !moved(&|_c| {}),
             "the sweep reports a difference with no change"

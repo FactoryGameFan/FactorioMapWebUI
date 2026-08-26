@@ -72,6 +72,20 @@
 //!   A one-ULP nudge does not move a -0.097 probability across zero, so it
 //!   stays green - correctly, because its content is a fact about where the
 //!   fixture sits rather than a claim about any computed value.
+//!
+//! The enemy layer (#226) adds two more, one of each kind:
+//!
+//! - `every_enemy_distance_scalar_saturates_at_2400_tiles` compares
+//!   `enemy_spot_radius` and friends against hand-computed constants, and
+//!   asserts they are FLAT past `distance = 2400`. Nothing beneath them carries
+//!   a hook - `eval::math` poisons only `slider_to_linear` and `slider_rescale`,
+//!   which these never call - and the equalities cancel a perturbation anyway.
+//!   The scalars are still graded, by the field test that composes them: a
+//!   wrong radius moves every cone, and that test goes red.
+//! - `the_spot_quantity_cube_is_powf_and_a_plain_product_would_diverge`
+//!   compares `r.powf(3.0)` against `r * r * r`, both unpoisoned. Its content is
+//!   that two ways of writing the same thing disagree, which a perturbation can
+//!   only strengthen.
 
 /// Bend an f32 result by one ULP. Zero is left alone, because several ops
 /// legitimately return exactly zero and the point is to perturb a computed
