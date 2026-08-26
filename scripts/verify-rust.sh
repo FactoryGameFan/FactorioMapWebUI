@@ -182,6 +182,20 @@ POISONED_TESTS=(
   fixtures::reproduces_the_games_nauvis_cliffiness_gate_exactly_at_both_seeds
   fixtures::reproduces_the_games_nauvis_rock_density_at_every_captured_position
 
+  # Phase 6 (#226), the Nauvis enemy-base layer. No hook of its own: the field
+  # composes `basis_noise`, `distance_from_nearest_point` and `spot_selection`,
+  # all of which carry theirs, and the last of those already covers the discrete
+  # half - which spots survive the trim.
+  #
+  # Both listed tests were watched going red rather than assumed to. The second
+  # is worth naming because its control is THIN: it counts positions where the
+  # clamped probability is positive, and `probability` is 0 at 990 of 1032
+  # positions, so a perturbation has to push one across zero to be seen. It
+  # does - 42 becomes 43 at seed 123456 - but that is one position, so do not
+  # read it as a strong gate. The field test above it is the real one.
+  fixtures::reproduces_the_games_enemy_base_field_at_both_seeds
+  fixtures::the_enemy_fixture_is_mostly_basement_so_the_probability_would_grade_nothing
+
   # Phase 5's second half (#225), the cliff stack. Three hooks, because three
   # ops here can be wrong independently and one red test would otherwise stand
   # in for all of them:

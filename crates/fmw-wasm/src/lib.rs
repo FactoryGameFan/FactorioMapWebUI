@@ -1129,6 +1129,7 @@ pub extern "C" fn render_request(len: u32) -> u32 {
 
 use fmw_noise::cliffs::catalog::{CliffControls, CliffSettings, CLIFF_ELEVATION_0_DEFAULT};
 use fmw_noise::distance_from_nearest_point::Point as NauvisPoint;
+use fmw_noise::enemies::catalog::EnemyControls;
 use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisParity, NauvisStack};
 use fmw_noise::resources::resource_math::ResourceControlLevers;
 use fmw_noise::rocks::catalog::RockControls;
@@ -1188,6 +1189,18 @@ use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
 /// sweep.
 ///
 /// `cliff_elevation_0` is deliberately absent - neither cliff field reads it.
+///
+/// `enemy_frequency` and `enemy_size` reach the enemy-base block, also built
+/// only when one of its fields is selected. Both are dead at the default -
+/// `size` enters as `sqrt(size)` and `frequency` as a plain multiplier - and
+/// `oracle-enemy-base` was captured at the defaults, so tier 1 grades neither
+/// and a sweep that leaves them at 1 grades neither either.
+///
+/// **A sweep of the enemy block also needs a window with spots in it.** The
+/// spot field is a max against a basement of -1000, so a window no cone reaches
+/// folds the same constant on both sides at every position - bit-identical, and
+/// comparing nothing. `oracle-enemy-base` is 96% basement, which is the scale of
+/// the problem.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn checksum_nauvis(
@@ -1213,6 +1226,8 @@ pub extern "C" fn checksum_nauvis(
     cliff_richness: f64,
     rocks_frequency: f64,
     rocks_size: f64,
+    enemy_frequency: f64,
+    enemy_size: f64,
     field: u32,
     x0: f64,
     y0: f64,
@@ -1257,6 +1272,10 @@ pub extern "C" fn checksum_nauvis(
         rock_controls: RockControls {
             frequency: rocks_frequency,
             size: rocks_size,
+        },
+        enemy_controls: EnemyControls {
+            frequency: enemy_frequency,
+            size: enemy_size,
         },
     };
     let stack = NauvisStack::new(&ctx);

@@ -23,6 +23,8 @@ import { makeTreeShared } from "../src/noise/trees/treeShared";
 import { makeTreeDensity, makeTreeSpeciesFields } from "../src/noise/trees/treeField";
 import { makeCliffElevation, makeCliffiness } from "../src/noise/cliffs/cliffFields";
 import { makeRockFields } from "../src/noise/rocks/rockField";
+import { makeEnemyBaseField } from "../src/noise/enemies/enemyBaseField";
+import { ENEMY_BASEMENT, ENEMY_PLACEMENT_CAP } from "../src/noise/enemies/enemyCatalog";
 
 /**
  * Tier 2 of the Rust port's gate for the Nauvis expression core (#226): strict
@@ -95,6 +97,8 @@ interface EngineExports {
     cliffRichness: number,
     rocksFrequency: number,
     rocksSize: number,
+    enemyFrequency: number,
+    enemySize: number,
     field: number,
     x0: number,
     y0: number,
@@ -162,6 +166,12 @@ const CLIFF_GATE_HITS = 327;
 /** How many swept positions have a non-zero rock density. Frozen; see the test. */
 const ROCK_DENSITY_HITS = 67;
 
+/** Per case, how many swept positions a cone reaches. Frozen; see the test. */
+const ENEMY_LIVE_PER_CASE = [331, 412, 484, 401, 393];
+
+/** How many swept positions have a positive enemy probability. Frozen. */
+const ENEMY_POSITIVE_POSITIONS = 160;
+
 interface Case {
   readonly label: string;
   readonly waterLevel: number;
@@ -185,6 +195,8 @@ interface Case {
   readonly cliffRichness: number;
   readonly rocksFrequency: number;
   readonly rocksSize: number;
+  readonly enemyFrequency: number;
+  readonly enemySize: number;
   readonly x0: number;
   readonly y0: number;
   readonly step: number;
@@ -213,6 +225,8 @@ const DEFAULT_CONTROLS = {
   cliffRichness: 1,
   rocksFrequency: 1,
   rocksSize: 1,
+  enemyFrequency: 1,
+  enemySize: 1,
 } as const;
 
 // Two windows, and neither is on the f32 grid - see the header. The near one
@@ -276,6 +290,10 @@ const CASES: readonly Case[] = [
     cliffRichness: 2,
     rocksFrequency: 2,
     rocksSize: 3,
+    // Both enemy levers are dead at the default, so this case is the only one
+    // that grades `sqrt(size)` or the plain frequency multiplier through tier 2.
+    enemyFrequency: 3,
+    enemySize: 2,
     x0: -213.3,
     y0: -147.7,
     step: 7.3,
@@ -415,6 +433,62 @@ function tsFields(c: Case): ((x: number, y: number) => number)[] {
     ...treeFields(c),
     // The cliff and rock layer.
     ...cliffRockFields(c),
+    // The enemy-base layer.
+    ...enemyFields(c),
+  ];
+}
+
+/**
+ * The enemy-base block's accessors, in the order the Rust selector expects.
+ *
+ * **Two fields, not three - the spot field is deliberately NOT folded on its
+ * own.** The first draft did fold it, on the argument that a `max` hides its
+ * operands the way the tile argmax and the rock max do. That argument is
+ * backwards here, and checking the magnitudes is what showed it: the spot field
+ * runs from -1000 to about +1, while the blob term is roughly +/-0.15 and the
+ * starting-area term is 0 beyond 150 tiles. So the composed field is DOMINATED
+ * by the spot field rather than hiding it, and a spot that survived the trim on
+ * one port and not the other moves `enemyBaseField` by hundreds.
+ *
+ * Folding it separately would also have cost something real: `makeEnemyBaseField`
+ * does not expose it, so this side would have had to reimplement the region
+ * scan - about 40 lines reproducing `selectSpots` wiring that the shipped
+ * TypeScript would then never be compared against. That is the private-copy
+ * trap `checksum_vulcanus` records, and paying it for coverage the composed
+ * field already gives would be the worst of both.
+ *
+ * `probability` folds even though it is 0 almost everywhere, because the cap
+ * and the clamp are its own wiring and nothing else covers them.
+ *
+ * ## What this block can and cannot see, measured by planting
+ *
+ * | planted break | this spec |
+ * | --- | --- |
+ * | `- 0.3` becomes `- 0.30001` | RED, names `enemyBaseField` |
+ * | `15 + 4*intensity` becomes `4.00001` | RED, names `enemyBaseField` |
+ * | `quantity * (1 + 1e-7)` | RED |
+ * | `quantity * (1 + 1e-9)`, `(1 + 1e-12)` | not seen |
+ * | `radius ** 3` becomes `radius * radius * radius` | **not seen** |
+ *
+ * The last two rows are one result. The cone's `peak` is `f32(f32(3q) / ...)`,
+ * and an f32 carries about 1.2e-7 of relative precision, so a relative change in
+ * `quantity` below that rounds away before it reaches any folded value. One f64
+ * ULP is 2.2e-16 - two orders of magnitude under the floor - which is why
+ * swapping `Math.pow` for a plain product is invisible here even though the two
+ * genuinely disagree at 25.4% of the radii in play.
+ *
+ * That is worth knowing rather than worrying about: it also means a one-ULP
+ * wasm-libm difference in `powf` cannot reach these fields either.
+ */
+function enemyFields(c: Case): ((x: number, y: number) => number)[] {
+  const f = makeEnemyBaseField({
+    seed0: SEED0,
+    controls: { frequency: c.enemyFrequency, size: c.enemySize },
+  });
+  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+  return [
+    (x, y) => f.field(x, y),
+    (x, y) => clamp(Math.min(f.field(x, y), ENEMY_PLACEMENT_CAP), 0, 1),
   ];
 }
 
@@ -688,6 +762,9 @@ const FIELD_NAMES = [
   "rock:big",
   "rock:sand",
   "rockDensity",
+  // The enemy-base block.
+  "enemyBaseField",
+  "enemyProbability",
 ] as const;
 
 const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
@@ -715,6 +792,8 @@ const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
       c.cliffRichness,
       c.rocksFrequency,
       c.rocksSize,
+      c.enemyFrequency,
+      c.enemySize,
       field,
       c.x0,
       c.y0,
@@ -822,7 +901,11 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
     // so a reordering fails here instead of relabelling every failure below.
     const base = FIELD_NAMES.indexOf("cliffElevation");
     expect(base).toBe(76);
-    expect(FIELD_NAMES.slice(base)).toEqual([
+    // A BOUNDED slice, not `slice(base)`. Written open-ended this asserted
+    // "these six are the last six", which the enemy block then falsified - a
+    // change with nothing to do with cliffs or rocks. Same trap as the two tree
+    // assertions that were written as `FIELD_NAMES.length - 1`.
+    expect(FIELD_NAMES.slice(base, base + 6)).toEqual([
       "cliffElevation",
       "cliffiness",
       "rock:huge",
@@ -830,8 +913,57 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
       "rock:sand",
       "rockDensity",
     ]);
-    expect(FIELD_NAMES).toHaveLength(82);
+    expect(FIELD_NAMES[base + 6]).toBe("enemyBaseField");
   });
+
+  it("the enemy block sits where the selector says", () => {
+    const base = FIELD_NAMES.indexOf("enemyBaseField");
+    expect(base).toBe(82);
+    expect(FIELD_NAMES.slice(base, base + 2)).toEqual(["enemyBaseField", "enemyProbability"]);
+    expect(FIELD_NAMES).toHaveLength(84);
+  });
+
+  it("the enemy sweep reaches spots rather than folding the basement", async () => {
+    // The enemy field is a `max` against a basement of -1000. A window no cone
+    // reaches folds that same constant on both sides at every position -
+    // perfectly bit-identical, and comparing nothing. The existing windows were
+    // chosen for ore and for trees, so whether any of them carries an enemy base
+    // is a question rather than an assumption.
+    //
+    // `oracle-enemy-base` is 96% basement, which is the scale of the risk.
+    const engine = await instantiate();
+    let live = 0;
+    let positive = 0;
+    let positions = 0;
+    const perCase: number[] = [];
+    for (const c of CASES) {
+      const [field, probability] = enemyFields(c);
+      let here = 0;
+      for (let j = 0; j < c.n; j++) {
+        for (let i = 0; i < c.n; i++) {
+          const x = c.x0 + i * c.step;
+          const y = c.y0 + j * c.step;
+          positions++;
+          // "Well above the basement" rather than "not exactly -1000": the blob
+          // and starting-area terms move a basement position by a fraction, so
+          // an exact comparison would call every position live.
+          if (field(x, y) > ENEMY_BASEMENT + 100) {
+            live++;
+            here++;
+          }
+          if (probability(x, y) > 0) positive++;
+        }
+      }
+      perCase.push(here);
+    }
+    expect(positions).toBe(OFF_GRID_POSITIONS + ON_GRID_POSITIONS);
+    // Frozen, so a window drifting off every enemy base is a failure rather
+    // than a silent loss of coverage - the resource block's lesson.
+    expect(perCase).toEqual(ENEMY_LIVE_PER_CASE);
+    expect(live).toBeGreaterThan(0);
+    expect(positive).toBe(ENEMY_POSITIVE_POSITIONS);
+    expect(engine.nauvis_field_count()).toBe(FIELD_NAMES.length);
+  }, 120000);
 
   it("the cliff gate answers both ways and the rock density is not vacuous", async () => {
     // Two anti-vacuity checks, one per field that can degenerate.

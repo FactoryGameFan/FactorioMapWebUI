@@ -5888,3 +5888,239 @@ fn the_rock_fixture_grades_the_intermediate_because_the_shipped_field_is_zero_th
          or the clamp is not what is flattening them: {worst_probability:e}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 (#226), the Nauvis enemy-base layer.
+// ---------------------------------------------------------------------------
+
+use crate::enemies::catalog::{
+    enemy_density, enemy_intensity, enemy_spot_quantity, enemy_spot_radius, EnemyControls,
+    ENEMY_PLACEMENT_CAP,
+};
+use crate::enemies::field::{EnemyBaseField, EnemyFieldParams};
+
+#[test]
+fn reproduces_the_games_enemy_base_field_at_both_seeds() {
+    // **The exact-match count on this field measures MAGNITUDE, not accuracy**,
+    // which is why this test freezes three buckets rather than one number.
+    //
+    // `enemy_base_probability` has a basement of -1000, so a position no cone
+    // reaches sits near -1007 - where one f32 ULP is about 6e-5, larger than the
+    // whole residual. Those positions are exact for free. Measured on the
+    // TypeScript side first, split by the magnitude of the GAME's own value:
+    //
+    //   basement (|v| >= 100)   209/239 and 126/159   worst 4.29e-5
+    //   mid      (1 <= |v| < 100)  0/602 and   0/658  worst 9.76e-6
+    //   live     (|v| < 1)         1/191 and   1/215  worst 4.17e-6
+    //
+    // Almost the entire headline count of 210 and 127 is the basement. Where the
+    // field is doing something, the port matches 2 positions of 406 across both
+    // seeds. A single frozen 210 would go green on a port whose cone arithmetic
+    // was badly wrong, and would MOVE for reasons that have nothing to do with
+    // the cones - a recapture that shifted the basement/live split changes it on
+    // its own. This is CLAUDE.md's "a clamp flatters it" rule in a new costume.
+    let fixture = load_captured_at("test/fixtures/oracle-enemy-base.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 1032, "a regen cannot empty the loop");
+
+    // Fully on-grid, like the two cliff fixtures, so the snap is the identity.
+    assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
+
+    // (seed, basement exact of n, mid exact of n, live exact of n).
+    /// (exact matches, positions) for one magnitude bucket.
+    type Bucket = (usize, usize);
+    let expected: [(u32, Bucket, Bucket, Bucket); 2] = [
+        (123_456, (209, 239), (0, 602), (1, 191)),
+        (777_771, (126, 159), (0, 658), (1, 215)),
+    ];
+    for (case, &(seed, basement, mid, live)) in
+        fixture.get("cases").as_array().iter().zip(expected.iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let field = EnemyBaseField::new(&EnemyFieldParams::defaults(seed));
+        let values = case.get("values").as_array();
+
+        let mut got = [(0usize, 0usize); 3];
+        let mut worst = [0.0f64; 3];
+        let mut headline = 0usize;
+        for (i, (x, y)) in positions.iter().enumerate() {
+            let want = values[i].as_f64();
+            let port = f64::from(field.field(snap_coord(*x), snap_coord(*y)) as f32);
+            let magnitude = want.abs();
+            let bucket = if magnitude >= 100.0 {
+                0
+            } else if magnitude >= 1.0 {
+                1
+            } else {
+                2
+            };
+            got[bucket].1 += 1;
+            worst[bucket] = worst[bucket].max((port - want).abs());
+            if port == want {
+                got[bucket].0 += 1;
+                headline += 1;
+            }
+        }
+        assert_eq!(
+            got[0], basement,
+            "seed {seed} basement bucket, worst {:e}",
+            worst[0]
+        );
+        assert_eq!(got[1], mid, "seed {seed} mid bucket, worst {:e}", worst[1]);
+        assert_eq!(
+            got[2], live,
+            "seed {seed} live bucket, worst {:e}",
+            worst[2]
+        );
+
+        // The headline is frozen too, as the sum - so a bucket boundary that
+        // silently moved would have to move two numbers consistently to hide.
+        assert_eq!(
+            headline,
+            basement.0 + mid.0 + live.0,
+            "seed {seed} headline exact"
+        );
+
+        // And the residual ordering is the whole point of the split: the
+        // basement's worst is the LARGEST of the three even though it scores
+        // best. If that ever inverts, the reading above is stale.
+        assert!(
+            worst[0] > worst[1] && worst[1] > worst[2],
+            "seed {seed}: residual no longer grows with magnitude - {:e} {:e} {:e}",
+            worst[0],
+            worst[1],
+            worst[2]
+        );
+    }
+}
+
+#[test]
+fn the_enemy_fixture_is_mostly_basement_so_the_probability_would_grade_nothing() {
+    // Why the test above grades `field` and not `probability`.
+    //
+    // `probability` is `clamp(min(field, 0.25), 0, 1)`, and the game's own
+    // values are positive at only 42 and 48 of 1032 positions. So a port that
+    // returned a constant 0 would agree with the game at 96% of this fixture.
+    // Frozen from the GAME's column, not ours, so it stays a fact about the
+    // capture rather than about the port.
+    let fixture = load_captured_at("test/fixtures/oracle-enemy-base.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    for (case, &(seed, want_positive, want_at_cap)) in fixture
+        .get("cases")
+        .as_array()
+        .iter()
+        .zip([(123_456u32, 42usize, 17usize), (777_771, 48, 21)].iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let values = case.get("values").as_array();
+        let positive = values.iter().filter(|v| v.as_f64() > 0.0).count();
+        let at_cap = values
+            .iter()
+            .filter(|v| v.as_f64() >= ENEMY_PLACEMENT_CAP)
+            .count();
+        assert_eq!(positive, want_positive, "seed {seed} positive game values");
+        assert_eq!(at_cap, want_at_cap, "seed {seed} game values at the cap");
+
+        // And our own `probability` agrees on the shape, which is what says the
+        // clamp and the cap are wired the way the game's are.
+        let field = EnemyBaseField::new(&EnemyFieldParams::defaults(seed));
+        let ours = positions
+            .iter()
+            .filter(|(x, y)| field.probability(snap_coord(*x), snap_coord(*y)) > 0.0)
+            .count();
+        assert_eq!(ours, want_positive, "seed {seed} positive ported values");
+    }
+}
+
+#[test]
+fn every_enemy_distance_scalar_saturates_at_2400_tiles() {
+    // `enemy_intensity` clamps its distance at 2400, so the radius, quantity,
+    // frequency and density are all flat past it. A sweep placed beyond 2400
+    // would grade the clamp and nothing else, which is worth knowing before
+    // choosing tier-2 windows.
+    //
+    // The values are the TypeScript's, measured at the default controls.
+    let c = EnemyControls::defaults();
+    for &(d, radius, quantity) in &[
+        (0.0f64, 15.0f64, 117.809_724_509_617_24f64),
+        (325.0, 19.0, 239.424_266_788_582_1),
+        (1000.0, 27.307_692_307_692_307, 710.824_462_802_164_8),
+        (2400.0, 44.538_461_538_461_54, 3_083.990_258_184_562_7),
+    ] {
+        assert!(
+            (enemy_spot_radius(d, &c) - radius).abs() < 1e-12,
+            "radius at {d}: {} vs {radius}",
+            enemy_spot_radius(d, &c)
+        );
+        assert!(
+            (enemy_spot_quantity(d, &c) - quantity).abs() < 1e-9,
+            "quantity at {d}: {} vs {quantity}",
+            enemy_spot_quantity(d, &c)
+        );
+    }
+    // Flat past the clamp, all four of them.
+    for &d in &[2400.0f64, 3000.0, 6000.0, 1e9] {
+        assert_eq!(enemy_intensity(d), enemy_intensity(2400.0), "intensity {d}");
+        assert_eq!(enemy_spot_radius(d, &c), enemy_spot_radius(2400.0, &c));
+        assert_eq!(enemy_spot_quantity(d, &c), enemy_spot_quantity(2400.0, &c));
+        assert_eq!(enemy_density(d, &c), enemy_density(2400.0, &c));
+    }
+    // And NOT flat below it, or the assertions above would be vacuous.
+    assert_ne!(enemy_spot_radius(0.0, &c), enemy_spot_radius(2400.0, &c));
+    assert_ne!(enemy_density(0.0, &c), enemy_density(2399.0, &c));
+}
+
+#[test]
+fn the_spot_quantity_cube_is_powf_and_a_plain_product_would_diverge() {
+    // `enemySpotQuantity` writes `radius ** 3`, which is `Math.pow`. The obvious
+    // translation `r * r * r` is a different function, and this is not a
+    // stylistic claim: over every integer distance from 0 to 2400 at six size
+    // sliders - 14,406 radii - the two disagree on about a quarter of them by
+    // one f64 ULP. CLAUDE.md records the same trap for `p ** octaves`, where
+    // `powi` disagreed with V8.
+    //
+    // This test reproduces the measurement rather than citing it, so the claim
+    // cannot rot.
+    //
+    // **The exact count is NOT portable, and freezing one made CI red.** `powf`
+    // is the HOST libm, so the number is a property of the machine as much as
+    // of the arithmetic: 3,653 on macOS/aarch64 and 3,651 on the Linux/x86_64
+    // runner, measured on both. An `assert_eq!` on 3,653 passed locally and
+    // failed the `rust` job on every Linux run.
+    //
+    // So the assertion is on the FRACTION. This is deliberately an exception to
+    // this file's "a mismatch is a finding, never a bound to widen" rule, and
+    // the exception is narrow: that rule governs counts that grade the PORT
+    // against the game's own ground truth, where a bound can swallow a real
+    // defect. This test grades neither the port nor a fixture - it compares
+    // libm against algebra - and its content is that the two disagree OFTEN
+    // rather than by exactly how much. `total` stays exact, because the shape
+    // of the sweep is ours and does not depend on the host.
+    let mut differ = 0usize;
+    let mut total = 0usize;
+    for d in 0..=2400 {
+        for &size in &[1.0f64, 0.5, 2.0, 3.0, 6.0, 1.0 / 6.0] {
+            let c = EnemyControls {
+                frequency: 1.0,
+                size,
+            };
+            #[allow(clippy::cast_precision_loss)]
+            let r = enemy_spot_radius(f64::from(d), &c);
+            total += 1;
+            if r.powf(3.0) != r * r * r {
+                differ += 1;
+            }
+        }
+    }
+    assert_eq!(total, 14_406, "the sweep changed shape");
+    // Both known hosts land at 25.4%, so the window is wide enough for a libm
+    // we have not met and far too narrow for a port that used one function
+    // twice: identical operands give 0, and a wholly wrong radius gives 14,406.
+    #[allow(clippy::cast_precision_loss)]
+    let fraction = differ as f64 / total as f64;
+    assert!(
+        (0.20..0.30).contains(&fraction),
+        "powf vs a plain product: {differ} of {total} ({:.1}%)",
+        fraction * 100.0
+    );
+}
