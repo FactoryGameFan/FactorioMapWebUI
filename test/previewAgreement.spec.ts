@@ -172,9 +172,14 @@ describe("preview agreement with the game", () => {
     }
     const compared = SIZE * SIZE - enemyPx;
 
-    // Measured 2026-07-28: 1189 enemy pixels, and 10 of the remaining 1,047,387
-    // disagree - 99.999%. Bounds are drift guards a little above that; the render
-    // is deterministic, so any movement here is a real change.
+    // Measured 2026-08-26: 1189 enemy pixels, and 8 of the remaining 1,047,387
+    // disagree - 99.9992%. Bounds are drift guards a little above that; the
+    // render is deterministic, so any movement here is a real change.
+    //
+    // **This comment said 10 until 2026-08-26 and had drifted**, the same way
+    // four rows of `test/captureGrid.ts`'s table had. Nothing was asserting it -
+    // the bound below is 200 - so the port moved under it unnoticed.
+    // `test/wasmNauvisRenderParity.spec.ts` now freezes the 8 exactly.
     withDiffArtifacts(
       {
         spec: "previewAgreement",

@@ -4,7 +4,10 @@
 //! shape that made WASM measure well in the #215 spike, and the reason
 //! `runRenderRequest`'s signature does not change.
 
-use crate::abi::{self, FulgoraParams, Params, Request, Status, VulcanusBearing, VulcanusParams};
+use crate::abi::{
+    self, FulgoraParams, NauvisParams, Params, Request, Status, VulcanusBearing, VulcanusParams,
+};
+use fmw_noise::cliffs::catalog::{CliffControls, CliffSettings};
 use fmw_noise::cliffs::catalog::{CLIFF_MAP_COLOR, CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX};
 use fmw_noise::cliffs::placement::{CliffBands, CliffPlacement};
 use fmw_noise::cliffs::vulcanus_fields::{
@@ -12,24 +15,31 @@ use fmw_noise::cliffs::vulcanus_fields::{
     VULCANUS_CLIFF_ELEVATION_INTERVAL, VULCANUS_CLIFF_SMOOTHING,
 };
 use fmw_noise::cliffs::vulcanus_ore_rejection::VulcanusOreRejection;
+use fmw_noise::distance_from_nearest_point::Point as NauvisPoint;
+use fmw_noise::enemies::catalog::EnemyControls;
 use fmw_noise::eval::ctx::{EvalCtx, ResourceLevers, VulcanusResourceControls};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::FulgoraStack;
+use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack};
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
+use fmw_noise::resources::resource_math::ResourceControlLevers;
 use fmw_noise::resources::vulcanus_catalog::{
     VulcanusResource, VulcanusResourcePlacement, RESOURCE_PROBABILITY_THRESHOLD,
     VULCANUS_RESOURCE_CATALOG,
 };
 use fmw_noise::resources::vulcanus_geyser::VulcanusGeyserPlacement;
+use fmw_noise::rocks::catalog::RockControls;
 use fmw_noise::rocks::catalog::{ROCK_MAP_COLOR, VULCANUS_ROCK_MARK_RADIUS_PX};
 use fmw_noise::rocks::vulcanus_field::VulcanusRockFields;
 use fmw_noise::rocks::vulcanus_placement::VulcanusRockPlacement;
 use fmw_noise::tiles::fulgora_catalog::FulgoraTile;
 use fmw_noise::tiles::fulgora_ocean::{ocean_tile, Ocean};
+use fmw_noise::tiles::helpers::water_base;
+use fmw_noise::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog, NauvisTileFields};
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
 
 /// `planet` code for Fulgora.
@@ -37,6 +47,8 @@ pub const PLANET_FULGORA: u32 = 0;
 
 /// `planet` code for Vulcanus.
 pub const PLANET_VULCANUS: u32 = 1;
+/// Planet code for Nauvis.
+pub const PLANET_NAUVIS: u32 = 2;
 /// `view` code for the land mask - land versus ocean, no land argmax.
 pub const VIEW_LANDMASK: u32 = 0;
 /// `view` code for the full terrain render, all ten tile colours.
@@ -149,8 +161,11 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
             VIEW_LANDMASK | VIEW_TERRAIN | VIEW_SCRAP_FOOTPRINT
         ) | (
             PLANET_VULCANUS,
-            VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL
-        )
+            VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL // Nauvis serves the TERRAIN view only so far. Its overlays - resources,
+                                                                                // trees, rocks, cliffs and enemies - are the follow-up, and until they
+                                                                                // land an `all` request has to stay on the TypeScript path rather than
+                                                                                // silently returning bare terrain.
+        ) | (PLANET_NAUVIS, VIEW_TERRAIN)
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -171,6 +186,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
     match (req.planet, req.params) {
         (PLANET_FULGORA, Params::Fulgora(p)) => render_fulgora(&req, &p, &mut out[..needed]),
         (PLANET_VULCANUS, Params::Vulcanus(p)) => render_vulcanus(&req, &p, &mut out[..needed]),
+        (PLANET_NAUVIS, Params::Nauvis(p)) => render_nauvis(&req, &p, &mut out[..needed]),
         _ => return Status::UnsupportedPlanetOrView,
     }
     Status::Ok
@@ -368,6 +384,136 @@ fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
 /// extends one pixel outside the tile by construction - so the two rules are
 /// reachable rather than theoretical, and the render must be byte-identical to
 /// the TypeScript's.
+/// `map_color` for each Nauvis tile, from `src/noise/tiles/catalog.ts`.
+///
+/// **Generated from that file rather than transcribed**, then checked by tier 3:
+/// a wrong colour is a whole-pixel difference, so the byte-identical render
+/// comparison catches one immediately. That is the only guard there is, and it
+/// is enough here - unlike the enemy layer's distance scalars, where a
+/// hand-typed constant slipped in the seventh digit and needed its own test.
+///
+/// `sand-2` and `red-desert-3` really do share `[128, 93, 52]`; that is the
+/// data file's doing, not a copy-paste.
+fn nauvis_tile_color(tile: NauvisTile) -> [u8; 3] {
+    match tile {
+        NauvisTile::Deepwater => [38, 64, 73],
+        NauvisTile::Water => [51, 83, 95],
+        NauvisTile::Grass1 => [55, 53, 11],
+        NauvisTile::Grass2 => [66, 57, 15],
+        NauvisTile::Grass3 => [65, 52, 28],
+        NauvisTile::Grass4 => [59, 40, 18],
+        NauvisTile::DryDirt => [94, 66, 37],
+        NauvisTile::Dirt1 => [141, 104, 60],
+        NauvisTile::Dirt2 => [136, 96, 59],
+        NauvisTile::Dirt3 => [133, 92, 53],
+        NauvisTile::Dirt4 => [103, 72, 43],
+        NauvisTile::Dirt5 => [91, 63, 38],
+        NauvisTile::Dirt6 => [80, 55, 31],
+        NauvisTile::Dirt7 => [80, 54, 28],
+        NauvisTile::Sand1 => [138, 103, 58],
+        NauvisTile::Sand2 => [128, 93, 52],
+        NauvisTile::Sand3 => [115, 83, 47],
+        NauvisTile::RedDesert0 => [103, 70, 32],
+        NauvisTile::RedDesert1 => [116, 81, 39],
+        NauvisTile::RedDesert2 => [116, 84, 43],
+        NauvisTile::RedDesert3 => [128, 93, 52],
+    }
+}
+
+/// The water early-out threshold, from `src/noise/preview/renderTerrain.ts`.
+///
+/// Whenever `water_base(elevation, 0, 100) >= 5`, water or deepwater beats every
+/// land tile, so the 19 land `noise_layer_noise` evaluations can be skipped and
+/// the winner picked from the two water tiles directly.
+///
+/// **It is an optimisation with a proof, not an approximation.** The
+/// TypeScript's own derivation bounds every land tile's probability at
+/// `<= 3.4512` by Cauchy-Schwarz on `basis_noise`'s four corner terms - true for
+/// any position and any of the 19 layer seeds, not just sampled ones - so 5
+/// leaves better than 30% of margin. Omitting it here would still be
+/// byte-identical and would give up the speed the port exists for;
+/// `the_water_early_out_picks_the_same_tile_as_the_full_argmax` is the test that
+/// says the two agree.
+const WATER_EARLY_OUT_THRESHOLD: f64 = 5.0;
+
+/// Sweep the window and paint each pixel's winning tile.
+///
+/// One [`NauvisStack`] for the whole window, like the other two planets - it
+/// holds three `NauvisShared` layers and their octave tables, and rebuilding
+/// them per pixel is the mistake `multioctave_noise` already cost 20x for.
+///
+/// **`water_level` is decoded and NOT used, which is issue #326.** The shipped
+/// `renderTerrain.ts` resolves every Nauvis tile at `water_level = 0` however
+/// the slider is set, and tier 3 asserts these two ports agree - so fixing it
+/// here alone would turn a TypeScript defect into a Rust one.
+fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
+    let ctx = NauvisCtx {
+        seed0: req.seed0,
+        // Deliberately 0 rather than `p.water_level` - see the doc comment.
+        water_level: 0.0,
+        segmentation_multiplier: p.segmentation_multiplier,
+        moisture_frequency: p.moisture_frequency,
+        moisture_bias: p.moisture_bias,
+        aux_frequency: p.aux_frequency,
+        aux_bias: p.aux_bias,
+        // The tile catalog reads no temperature at all - it keys on aux and
+        // moisture - so these two reach nothing on this path. Left at the
+        // defaults so the stack builds.
+        temperature_frequency: 1.0,
+        temperature_bias: 0.0,
+        starting_area_moisture_size: p.starting_area_moisture_size,
+        starting_area_moisture_frequency: p.starting_area_moisture_frequency,
+        starting_positions: vec![NauvisPoint { x: 0.0, y: 0.0 }],
+        trees_frequency: 1.0,
+        trees_size: 1.0,
+        resource_controls: ResourceControlLevers::defaults(),
+        cliff_controls: CliffControls::defaults(),
+        cliff_settings: CliffSettings::defaults(),
+        rock_controls: RockControls::defaults(),
+        enemy_controls: EnemyControls::defaults(),
+    };
+    let stack = NauvisStack::new(&ctx);
+    let catalog = NauvisTileCatalog::new(req.seed0);
+
+    let mut offset = 0usize;
+    for py in 0..req.height {
+        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            let color = nauvis_tile_color(nauvis_tile_at(&stack, &catalog, wx, wy));
+            out[offset] = color[0];
+            out[offset + 1] = color[1];
+            out[offset + 2] = color[2];
+            out[offset + 3] = 255;
+            offset += 4;
+        }
+    }
+}
+
+/// One pixel's tile, with the water early-out.
+fn nauvis_tile_at(stack: &NauvisStack, catalog: &NauvisTileCatalog, x: f64, y: f64) -> NauvisTile {
+    let elevation = stack.elevation_nauvis.eval(x, y);
+    let water_influence = water_base(elevation, 0.0, 100.0);
+    if water_influence >= WATER_EARLY_OUT_THRESHOLD {
+        // Deepwater is first in `TILE_ORDER`, so the full argmax's strict `>`
+        // never lets water displace it on an exact tie. `>=` here reproduces
+        // that tie-break rather than merely resembling it.
+        let deep_influence = water_base(elevation, -2.0, 200.0);
+        return if deep_influence >= water_influence {
+            NauvisTile::Deepwater
+        } else {
+            NauvisTile::Water
+        };
+    }
+    catalog.resolve(&NauvisTileFields {
+        x,
+        y,
+        elevation,
+        aux: stack.aux.eval(x, y),
+        moisture: stack.moisture.eval(x, y),
+    })
+}
+
 fn js_round(v: f64) -> f64 {
     (v + 0.5).floor()
 }
@@ -652,6 +798,62 @@ fn paint_vulcanus_cliffs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_water_early_out_picks_the_same_tile_as_the_full_argmax() {
+        // The early-out skips 19 land `noise_layer_noise` evaluations wherever
+        // water is winning by enough. It is an optimisation with a proof behind
+        // it, and this is the proof's empirical half: over a grid that spans
+        // deep water, coast and inland, the shortcut and the full argmax must
+        // agree at every position.
+        //
+        // **The grid has to contain water, or this asserts nothing.** That is
+        // the failure mode a `for` loop over land would hide, so the counts are
+        // frozen: an early-out that never fires proves nothing about the
+        // early-out.
+        let ctx = NauvisCtx::defaults(123_456);
+        let stack = NauvisStack::new(&ctx);
+        let catalog = NauvisTileCatalog::new(ctx.seed0);
+
+        let mut took_shortcut = 0usize;
+        let mut total = 0usize;
+        let mut deep = 0usize;
+        for i in 0..90 {
+            for j in 0..90 {
+                let x = f64::from(i) * 37.0 - 1600.0;
+                let y = f64::from(j) * 37.0 - 1600.0;
+                total += 1;
+
+                let elevation = stack.elevation_nauvis.eval(x, y);
+                let full = catalog.resolve(&NauvisTileFields {
+                    x,
+                    y,
+                    elevation,
+                    aux: stack.aux.eval(x, y),
+                    moisture: stack.moisture.eval(x, y),
+                });
+                let shortcut = nauvis_tile_at(&stack, &catalog, x, y);
+                assert_eq!(shortcut, full, "early-out disagrees at ({x}, {y})");
+
+                if water_base(elevation, 0.0, 100.0) >= WATER_EARLY_OUT_THRESHOLD {
+                    took_shortcut += 1;
+                    if full == NauvisTile::Deepwater {
+                        deep += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(total, 8100, "the sweep changed shape");
+        // Anti-vacuity, frozen: the early-out has to actually fire, and it has
+        // to produce BOTH water tiles - a grid that only ever reached deepwater
+        // would leave the `>=` tie-break untested.
+        assert_eq!(took_shortcut, 1631, "positions taking the shortcut");
+        assert_eq!(deep, 1310, "of those, deepwater");
+        assert!(
+            took_shortcut - deep > 0,
+            "the shortcut never picked plain water, so its tie-break is untested"
+        );
+    }
     use crate::abi::{
         ABI_VERSION, COMMON_BYTES, FULGORA_PARAMS_BYTES, MAGIC, VULCANUS_BEARINGS,
         VULCANUS_PARAMS_BYTES,

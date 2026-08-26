@@ -42,6 +42,9 @@ export const FULGORA_PARAMS_BYTES = 48;
 /** Must equal `fmw_wasm::abi::VULCANUS_PARAMS_BYTES`. */
 export const VULCANUS_PARAMS_BYTES = 312;
 
+/** Must equal `fmw_wasm::abi::NAUVIS_PARAMS_BYTES`. */
+export const NAUVIS_PARAMS_BYTES = 64;
+
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
  * reports so one scratch buffer serves every planet.
@@ -52,7 +55,7 @@ export const VULCANUS_PARAMS_BYTES = 312;
 export const REQUEST_BYTES = COMMON_BYTES + VULCANUS_PARAMS_BYTES;
 
 /** The `planet` codes the module understands. */
-export const PLANET = { fulgora: 0, vulcanus: 1 } as const;
+export const PLANET = { fulgora: 0, vulcanus: 1, nauvis: 2 } as const;
 
 /**
  * The `view` codes the module understands.
@@ -162,7 +165,30 @@ export interface VulcanusRenderRequest extends CommonRenderRequest {
   };
 }
 
-export type WasmRenderRequest = FulgoraRenderRequest | VulcanusRenderRequest;
+export interface NauvisRenderRequest extends CommonRenderRequest {
+  readonly planet: "nauvis";
+  /**
+   * `10 * log2(control:water:size)`.
+   *
+   * **Carried and NOT read by the terrain view**, which is issue #326. The
+   * shipped `renderTerrain.ts` resolves every tile at `waterLevel = 0` however
+   * the slider is set - `TileResolverParams` has no such field - and tier 3
+   * asserts the two ports are byte-identical, so the module ignores it too. It
+   * is sent because the `elevation`, `resources` and `cliffs` views already
+   * consume it and because fixing #326 should not also need a block growth.
+   */
+  readonly waterLevel: number;
+  /** `control:water:frequency`, RAW - the `1.5 *` happens inside the layer. */
+  readonly segmentationMultiplier: number;
+  readonly moistureFrequency: number;
+  readonly moistureBias: number;
+  readonly auxFrequency: number;
+  readonly auxBias: number;
+  readonly startingAreaMoistureSize: number;
+  readonly startingAreaMoistureFrequency: number;
+}
+
+export type WasmRenderRequest = FulgoraRenderRequest | VulcanusRenderRequest | NauvisRenderRequest;
 
 /**
  * `f32(f32(a / 180) * f32(PI))`, then f32 `sin`/`cos` - the narrowing lattice
@@ -269,7 +295,12 @@ export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }
  */
 export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest): number {
   const planet = req.planet ?? "fulgora";
-  const paramsBytes = planet === "vulcanus" ? VULCANUS_PARAMS_BYTES : FULGORA_PARAMS_BYTES;
+  const paramsBytes =
+    planet === "vulcanus"
+      ? VULCANUS_PARAMS_BYTES
+      : planet === "nauvis"
+        ? NAUVIS_PARAMS_BYTES
+        : FULGORA_PARAMS_BYTES;
   const total = COMMON_BYTES + paramsBytes;
   if (target.byteLength < total) {
     throw new RangeError(
@@ -295,10 +326,33 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
 
   if (planet === "vulcanus") {
     writeVulcanusParams(view, req as VulcanusRenderRequest);
+  } else if (planet === "nauvis") {
+    writeNauvisParams(view, req as NauvisRenderRequest);
   } else {
     writeFulgoraParams(view, req as FulgoraRenderRequest);
   }
   return total;
+}
+
+/**
+ * Nauvis's block: eight levers, no trig and no boxes.
+ *
+ * No trig because Nauvis reaches no `starting_spot_at_angle` - it is the one
+ * planet whose whole chain is free of transcendentals, so nothing has to be
+ * computed in V8 and handed across (#270). No boxes because the terrain view
+ * paints one pixel per pixel with no halo; the overlays will need a placement
+ * sweep box, and growing the block for it needs no version bump.
+ */
+function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
+  const p = COMMON_BYTES;
+  view.setFloat64(p, req.waterLevel, true);
+  view.setFloat64(p + 8, req.segmentationMultiplier, true);
+  view.setFloat64(p + 16, req.moistureFrequency, true);
+  view.setFloat64(p + 24, req.moistureBias, true);
+  view.setFloat64(p + 32, req.auxFrequency, true);
+  view.setFloat64(p + 40, req.auxBias, true);
+  view.setFloat64(p + 48, req.startingAreaMoistureSize, true);
+  view.setFloat64(p + 56, req.startingAreaMoistureFrequency, true);
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {

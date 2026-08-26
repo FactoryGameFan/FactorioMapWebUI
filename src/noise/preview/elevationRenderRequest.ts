@@ -386,6 +386,68 @@ function renderFulgoraThroughWasm(
 }
 
 /**
+ * Whether a request spawns at the origin and nowhere else.
+ *
+ * The Nauvis ABI block carries no spawn list - a variable-length array would
+ * need the scratch region for a parameter nothing in tier 1 moves - so the
+ * module fixes it at the origin. A request that moved it has to stay on the
+ * TypeScript path, and this is what says so. It is a REAL difference rather
+ * than a missing optimisation: `startingPositions` reaches `elevation_nauvis`'s
+ * distance term and `moisture`'s starting-area blend.
+ */
+function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
+  return points.length === 1 && points[0].x === 0 && points[0].y === 0;
+}
+
+/**
+ * The Rust engine's Nauvis path - the terrain view, and so far only that.
+ *
+ * The overlays (resources, trees, rocks, cliffs, enemies) are the follow-up, so
+ * an `all` request still takes the TypeScript path in full rather than getting
+ * bare terrain from the engine. The module refuses any other Nauvis view with
+ * `unsupported planet or view`, so a mistake here is loud rather than silent.
+ *
+ * **`waterLevel` is sent and deliberately ignored by the module** - issue #326.
+ * `renderTerrain.ts` resolves every tile at `waterLevel = 0` however the slider
+ * is set, and these two renders are asserted byte-identical, so the engine has
+ * to reproduce that rather than fix it here.
+ *
+ * The copy is the same single one Fulgora's path makes and for the same reason;
+ * see `renderFulgoraThroughWasm`.
+ */
+function renderNauvisThroughWasm(
+  req: ElevationRenderRequest,
+  engine: EngineExports,
+): ElevationRenderResult {
+  const view = renderThroughWasm(engine, {
+    planet: "nauvis",
+    view: "terrain",
+    seed0: req.seed0,
+    width: req.width,
+    height: req.height,
+    originX: req.originX,
+    originY: req.originY,
+    tilesPerPixel: req.tilesPerPixel,
+    waterLevel: req.waterLevel,
+    segmentationMultiplier: req.segmentationMultiplier,
+    // Each of these is OPTIONAL on the request and defaulted inside
+    // `makeMoisture` / `makeAux` on the TypeScript path. The module has no such
+    // fallback - it reads eight f64s - so the defaults are applied here, and
+    // they have to be the SAME ones. A wrong default is a silent divergence
+    // rather than an error, which is what `test/wasmNauvisRenderParity.spec.ts`
+    // is for: it renders windows with these levers moved and unmoved.
+    moistureFrequency: req.moistureFrequency ?? 1,
+    moistureBias: req.moistureBias ?? 0,
+    auxFrequency: req.auxFrequency ?? 1,
+    auxBias: req.auxBias ?? 0,
+    startingAreaMoistureSize: req.startingAreaMoistureSize ?? 1,
+    startingAreaMoistureFrequency: req.startingAreaMoistureFrequency ?? 1,
+  });
+  const owned = new Uint8ClampedArray(view);
+  return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
+}
+
+/**
  * Pure render step shared by the worker and its tests: run renderElevation or
  * renderTerrain (per `req.view`) and hand back the transferable RGBA buffer. No
  * Worker or DOM canvas involved.
@@ -566,6 +628,18 @@ export function runRenderRequest(
         });
       }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
+    }
+    // The one Nauvis path the Rust engine serves so far. Checked BEFORE the
+    // TypeScript render rather than after, so the engine's work replaces it
+    // instead of being thrown away - and only for `terrain`, because the
+    // overlays are not ported and an `all` request must not come back bare.
+    //
+    // The spawn is fixed at the origin on the module side, so a request with a
+    // moved spawn stays on the TypeScript path. `startingPositions` reaches
+    // `elevation_nauvis`'s distance terms, so taking the engine for one would
+    // be a real difference rather than a slower answer.
+    if (engine !== undefined && req.view === "terrain" && isDefaultSpawn(req.startingPositions)) {
+      return renderNauvisThroughWasm(req, engine);
     }
     image = renderTerrain({
       seed0: req.seed0,

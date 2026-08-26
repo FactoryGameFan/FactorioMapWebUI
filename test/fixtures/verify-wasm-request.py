@@ -31,7 +31,7 @@ ABI_VERSION = 2
 COMMON_BYTES = 56
 FULGORA_PARAMS_BYTES = 48
 VULCANUS_PARAMS_BYTES = 312
-PLANET = {"fulgora": 0, "vulcanus": 1}
+PLANET = {"fulgora": 0, "vulcanus": 1, "nauvis": 2}
 VIEW = {
     "landmask": 0,
     "terrain": 1,
@@ -54,6 +54,10 @@ BEARING_NAMES = [
     "resourceSulfurFar",
     "resourceSulfurNear",
 ]
+
+
+NAUVIS_PARAMS_BYTES = 64
+"""Must equal fmw_wasm::abi::NAUVIS_PARAMS_BYTES."""
 
 
 def u32(b, off):
@@ -104,6 +108,40 @@ def decode_fulgora(b, req):
         if abs(norm - 1.0) > 1e-6:
             raise AssertionError(f"fulgora {name}: sin^2+cos^2 = {norm}, not 1")
     return trig
+
+
+def decode_nauvis(b, req):
+    """Nauvis's block: eight f64 levers, no trig and no world boxes.
+
+    The simplest of the three, and the only structural check available is that
+    every field lands at its own offset - there is no unit-norm property to
+    lean on and no box to check for inversion. That is fine here and it is
+    worth saying WHY, because the Vulcanus block's history is the opposite
+    lesson: a property check is not a structural check, and its unit-norm test
+    passed a planted swap of two bearings. Eight distinct scalars read back at
+    eight distinct offsets cannot be swapped without one of them reading wrong,
+    so the per-field check IS the structural check here.
+    """
+    if len(b) != COMMON_BYTES + NAUVIS_PARAMS_BYTES:
+        raise AssertionError(f"nauvis request is {len(b)} bytes, expected 120")
+    decode_common(b, req, NAUVIS_PARAMS_BYTES)
+    p = COMMON_BYTES
+    fields = [
+        "waterLevel",
+        "segmentationMultiplier",
+        "moistureFrequency",
+        "moistureBias",
+        "auxFrequency",
+        "auxBias",
+        "startingAreaMoistureSize",
+        "startingAreaMoistureFrequency",
+    ]
+    for i, name in enumerate(fields):
+        check(name, f64(b, p + i * 8), req[name])
+    # A planted reordering of two levers that happen to hold the SAME value
+    # would slip past the loop above, so the fixture's request must not make
+    # that possible for more than the defaults it deliberately uses.
+    return {"levers": fields}
 
 
 def decode_vulcanus(b, req):
@@ -265,11 +303,14 @@ def main():
     vb = bytes(d["vulcanus"]["bytes"])
     ftrig = decode_fulgora(fb, d["fulgora"]["request"])
     vtrig, vbox, vsweep = decode_vulcanus(vb, d["vulcanus"]["request"])
+    nb = bytes(d["nauvis"]["bytes"])
+    nlevers = decode_nauvis(nb, d["nauvis"]["request"])
     print("fulgora: all fields agree, both bearings unit-norm")
     print(
         "vulcanus: all fields agree, ten bearings unit-norm, 1 legitimate duplicate, "
         "both world boxes distinct and non-inverted, placement halo symmetric"
     )
+    print("nauvis: all eight levers agree at their own offsets, 120 bytes")
 
     fixture = {
         "_comment": (
@@ -336,6 +377,13 @@ def main():
                 "placementSweepBox": vsweep,
             },
             "bytes": d["vulcanus"]["bytes"],
+        },
+        "nauvis": {
+            "paramsBytes": NAUVIS_PARAMS_BYTES,
+            "totalBytes": len(nb),
+            "request": d["nauvis"]["request"],
+            "decoded": nlevers,
+            "bytes": d["nauvis"]["bytes"],
         },
     }
     with open(dest, "w") as f:

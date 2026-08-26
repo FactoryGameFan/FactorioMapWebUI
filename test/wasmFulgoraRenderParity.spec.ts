@@ -13,6 +13,7 @@ import {
   FULGORA_PARAMS_BYTES,
   MAGIC,
   REQUEST_BYTES,
+  NAUVIS_PARAMS_BYTES,
   VULCANUS_PARAMS_BYTES,
   type WasmRenderRequest,
 } from "../src/noise/wasm/request";
@@ -219,7 +220,11 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.abiVersion).toBe(ABI_VERSION);
     expect(fixture.commonBytes).toBe(COMMON_BYTES);
 
-    for (const planet of ["fulgora", "vulcanus"] as const) {
+    // All THREE planets, since #226. A block added without a version bump is
+    // exactly the change this fixture exists to notice: the prefix declares its
+    // own length, so a wrong Nauvis block would decode as a length error rather
+    // than as garbage - but only if something writes it and compares.
+    for (const planet of ["fulgora", "vulcanus", "nauvis"] as const) {
       const arm = fixture[planet];
       const target = new Uint8Array(REQUEST_BYTES);
       const written = encodeRenderRequest(target, arm.request as WasmRenderRequest);
@@ -240,6 +245,11 @@ describe("the request encoding is pinned on both sides", () => {
     const fixture = (await import("./fixtures/wasm-request.v2.json")).default;
     expect(fixture.fulgora.totalBytes).toBe(COMMON_BYTES + FULGORA_PARAMS_BYTES);
     expect(fixture.vulcanus.totalBytes).toBe(COMMON_BYTES + VULCANUS_PARAMS_BYTES);
+    expect(fixture.nauvis.totalBytes).toBe(COMMON_BYTES + NAUVIS_PARAMS_BYTES);
+    // Nauvis's 120 sits BETWEEN the other two, so it is neither the capacity
+    // nor the floor - a third size is what makes "the encoder returns a length"
+    // a real statement rather than a two-case coincidence.
+    expect(fixture.nauvis.totalBytes).toBe(120);
     expect(fixture.fulgora.totalBytes).toBe(104);
     expect(REQUEST_BYTES).toBe(fixture.vulcanus.totalBytes);
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.fulgora.totalBytes);

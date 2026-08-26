@@ -1194,7 +1194,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
 | 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view renders through the engine.**                                                                   | done     |
-| 6 (#226) | Nauvis - every expression ported; the render path and tier 3 remain                                                                                                            | **most** |
+| 6 (#226) | Nauvis - every expression, and the TERRAIN render. Overlays remain                                                                                                             | **most** |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1220,7 +1220,14 @@ Then `enemies/` - the constants, the four distance scalars and
 `enemy_base_probability` with its spot-region cache. That is **every Nauvis
 expression ported**.
 
-Still unported: the render path and tier 3.
+Then the ABI's third planet block and the **terrain render**, with the water
+early-out and tier 3. `view: "terrain"` on Nauvis now renders through the
+engine, byte-identical to the TypeScript across four windows and 8 pixels from
+the game's own 1024x1024 preview.
+
+Still unported: the five Nauvis OVERLAYS - resources, trees, rocks, cliffs and
+enemies. Until they land, an `all` request stays on the TypeScript path in full
+rather than getting bare terrain, and the module refuses any other Nauvis view.
 
 **One TypeScript file in a ported directory was ported for a reason that is not
 obvious.** `cliffConnections.ts` has **zero `src/` consumers** - only 23
@@ -1373,6 +1380,28 @@ port.** Each got an issue and landed as its own graded change, because a
 unilateral fix on the Rust side reads as a port bug in tier 2, which is the
 whole point of having tier 2. All are now landed: #269, #270, #273, #279, #290,
 #293, #309.
+
+**The render path added a second one, and it is a user-visible bug rather than a
+precision question: #326.** `renderTerrain.ts` - the Nauvis tile argmax, so the
+`terrain` view and the terrain base of `all` - never threads `waterLevel` into
+the elevation it reads. `TileResolverParams` has no such field, so every tile
+resolves at `water_level = 0` however the slider is set, while the `elevation`,
+`resources` and `cliffs` views in the same panel all honour it. Measured over a
+162x162 grid spanning +/-3000 tiles: `control:water:size = 2` moves **12,471 of
+26,244 tiles (47.5%)**, and size 8 moves 74.4%.
+
+**A near-spawn window hides it completely, and that is the transferable half.**
+The first measurement used an 80x80 grid at step 7 over +/-280 tiles and
+reported **0 of 6400 differ at every water level**, with an `elevation_nauvis`
+mean that did not move at all above 0. That window sits inside the starting
+area, where the tree's starting-lake and starting-island terms dominate and the
+water-level term is masked. Widening to +/-3000 reverses the answer entirely. A
+near-spawn window is not a sample of this lever - and the same trap set the
+tier-3 spec's windows, where a 64x64 window at 1 tile/px came back with TWO
+distinct colours and `auxFrequency` moved nothing.
+
+The Rust render reproduces the omission, so tier 3 stays byte-identical and the
+fix lands as its own graded change with its pixel impact measured.
 
 **The cliff layer added one more, and it is a DUPLICATED FUNCTION rather than a
 narrowing.** `src/noise/cliffs/cliffCatalog.ts` carries its own plain-f64
@@ -1611,7 +1640,22 @@ declares `params_bytes`, then a per-planet block follows. Fulgora's request is
 The Vulcanus block has grown three times (248 -> 280 -> 312 -> 368) and
 Fulgora's has not moved a byte. `BadParamsLength` refuses a writer whose
 declared length disagrees. **A version bump is for a change to the COMMON
-prefix**, which every planet reads. Nauvis gets a third block with no bump.
+prefix**, which every planet reads.
+
+**Nauvis's block landed at 64 bytes with no bump**, so a Nauvis request is 120 -
+between the other two, which is what makes "the encoder returns a LENGTH, not
+the capacity" a real statement rather than a two-case coincidence. It carries
+eight climate and elevation levers and nothing else: no trig, because Nauvis is
+the one planet free of transcendentals, and no world boxes, because the terrain
+view paints one pixel per pixel with no halo. The overlays will need a placement
+sweep box; that is a block growth, also free.
+
+`test/fixtures/wasm-request.v2.json` pins all three, and
+`verify-wasm-request.py` decodes all three. Nauvis's structural check is just
+"eight distinct scalars at eight distinct offsets" - there is no unit-norm
+property to lean on, and none is needed, because eight scalars cannot be swapped
+without one reading wrong. That is the opposite of the Vulcanus block's lesson
+rather than a weaker version of it.
 
 **Errors return a status code and never trap.** A trap would poison the instance
 for every later request in that worker; a spec sends a bad magic and then
@@ -1658,6 +1702,13 @@ than module state, so nothing has to be registered or reset between tests.
 each worker; the worker instantiates synchronously with
 `new WebAssembly.Instance(module)`, which is allowed for an already-compiled
 module on any thread.
+
+**Nauvis's cutover has one extra guard: the SPAWN.** The Nauvis block carries no
+spawn list, so the module fixes it at the origin, and `runRenderRequest` refuses
+the engine when `startingPositions` is anything else. That is a correctness
+guard rather than a missing optimisation - `startingPositions` reaches
+`elevation_nauvis`'s distance term and `moisture`'s starting-area blend, so
+taking the engine there would be a wrong answer rather than a slow one.
 
 **A render dispatched before the engine message arrives is not a bug**, and that
 is what makes the cutover safe rather than merely tested: the two paths are
