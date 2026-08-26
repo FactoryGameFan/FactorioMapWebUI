@@ -136,6 +136,19 @@ pub const FULGORA_PARAMS_BYTES: usize = 48;
 /// Size of Vulcanus's parameter block.
 pub const VULCANUS_PARAMS_BYTES: usize = 312;
 
+/// Nauvis's block: eight climate and elevation levers, one `f64` each.
+///
+/// **A third block with no version bump, which is the split working as
+/// designed.** [`ABI_VERSION`] describes the COMMON prefix, which every planet
+/// reads; a planet block is declared by `params_bytes` and checked against the
+/// planet code, so adding one cannot misread an existing writer's request.
+///
+/// It carries no trig, because Nauvis reaches no `starting_spot_at_angle` - and
+/// no boxes, because the terrain view paints one pixel per pixel with no halo.
+/// The overlays will need at least a placement sweep box; that is a block
+/// growth, which is also free.
+pub const NAUVIS_PARAMS_BYTES: usize = 64;
+
 /// The largest request the module can accept, which is what `request_bytes()`
 /// reports so a caller can size one buffer for every planet.
 pub const REQUEST_BYTES: usize = COMMON_BYTES + VULCANUS_PARAMS_BYTES;
@@ -144,6 +157,8 @@ pub const REQUEST_BYTES: usize = COMMON_BYTES + VULCANUS_PARAMS_BYTES;
 pub const PLANET_FULGORA: u32 = 0;
 /// `planet` code for Vulcanus.
 pub const PLANET_VULCANUS: u32 = 1;
+/// Planet code for Nauvis.
+pub const PLANET_NAUVIS: u32 = 2;
 
 /// The ten Vulcanus bearings, in the order their `(sin, cos)` pairs appear in
 /// the block.
@@ -220,6 +235,7 @@ pub struct Request {
 pub enum Params {
     Fulgora(FulgoraParams),
     Vulcanus(VulcanusParams),
+    Nauvis(NauvisParams),
 }
 
 /// Fulgora's block.
@@ -291,6 +307,44 @@ pub struct VulcanusParams {
     pub placement_sweep_box: [f64; 4],
 }
 
+/// Nauvis's block.
+///
+/// # `water_level` is carried and the TERRAIN view does not read it
+///
+/// That is issue #326 and it is deliberate here. `renderTerrain.ts` builds its
+/// elevation through `makeTileResolver`, whose `TileResolverParams` has no
+/// `waterLevel` field at all, so the shipped TypeScript resolves every Nauvis
+/// tile at `water_level = 0` however the slider is set. Measured over a
+/// 162 x 162 grid spanning +/-3000 tiles, `control:water:size = 2` moves
+/// **12,471 of 26,244 tiles (47.5%)** - so this is a real defect rather than a
+/// rounding difference.
+///
+/// The render path here reproduces it, because tier 3 asserts the two ports are
+/// byte-identical and a unilateral fix on the Rust side would read as a port
+/// bug. The field is carried anyway: the `elevation`, `resources` and `cliffs`
+/// views all consume it today, and the fix for #326 needs it here rather than
+/// needing a block growth on top of a bug fix.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct NauvisParams {
+    /// `10 * log2(control:water:size)`. See the type docs - NOT read by the
+    /// terrain view, on purpose.
+    pub water_level: f64,
+    /// `control:water:frequency`, RAW.
+    pub segmentation_multiplier: f64,
+    /// `control:moisture:frequency`.
+    pub moisture_frequency: f64,
+    /// `control:moisture:bias`.
+    pub moisture_bias: f64,
+    /// `control:aux:frequency`.
+    pub aux_frequency: f64,
+    /// `control:aux:bias`.
+    pub aux_bias: f64,
+    /// `control:starting_area_moisture:size`.
+    pub starting_area_moisture_size: f64,
+    /// `control:starting_area_moisture:frequency`.
+    pub starting_area_moisture_frequency: f64,
+}
+
 impl VulcanusParams {
     /// One bearing's `(sin, cos)`, by name rather than by index.
     #[must_use]
@@ -340,6 +394,7 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
     let expected = match planet {
         PLANET_FULGORA => FULGORA_PARAMS_BYTES,
         PLANET_VULCANUS => VULCANUS_PARAMS_BYTES,
+        PLANET_NAUVIS => NAUVIS_PARAMS_BYTES,
         _ => return Err(Status::UnsupportedPlanetOrView),
     };
     if declared != expected {
@@ -358,6 +413,16 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
             cos_start: f64_at(bytes, p + 24),
             sin_vault: f64_at(bytes, p + 32),
             cos_vault: f64_at(bytes, p + 40),
+        }),
+        PLANET_NAUVIS => Params::Nauvis(NauvisParams {
+            water_level: f64_at(bytes, p),
+            segmentation_multiplier: f64_at(bytes, p + 8),
+            moisture_frequency: f64_at(bytes, p + 16),
+            moisture_bias: f64_at(bytes, p + 24),
+            aux_frequency: f64_at(bytes, p + 32),
+            aux_bias: f64_at(bytes, p + 40),
+            starting_area_moisture_size: f64_at(bytes, p + 48),
+            starting_area_moisture_frequency: f64_at(bytes, p + 56),
         }),
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
@@ -451,7 +516,7 @@ mod tests {
                 assert_eq!(f.islands_frequency, 1.0);
                 assert_eq!(f.islands_size, 1.0);
             }
-            Params::Vulcanus(_) => panic!("wrong block decoded"),
+            Params::Vulcanus(_) | Params::Nauvis(_) => panic!("wrong block decoded"),
         }
     }
 
