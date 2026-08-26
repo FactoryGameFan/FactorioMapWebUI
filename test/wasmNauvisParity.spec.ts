@@ -24,7 +24,7 @@ import { makeTreeDensity, makeTreeSpeciesFields } from "../src/noise/trees/treeF
 import { makeCliffElevation, makeCliffiness } from "../src/noise/cliffs/cliffFields";
 import { makeRockFields } from "../src/noise/rocks/rockField";
 import { makeEnemyBaseField } from "../src/noise/enemies/enemyBaseField";
-import { ENEMY_BASEMENT, ENEMY_PLACEMENT_CAP } from "../src/noise/enemies/enemyCatalog";
+import { ENEMY_BASEMENT } from "../src/noise/enemies/enemyCatalog";
 
 /**
  * Tier 2 of the Rust port's gate for the Nauvis expression core (#226): strict
@@ -458,7 +458,16 @@ function tsFields(c: Case): ((x: number, y: number) => number)[] {
  * field already gives would be the worst of both.
  *
  * `probability` folds even though it is 0 almost everywhere, because the cap
- * and the clamp are its own wiring and nothing else covers them.
+ * and the clamp are its own wiring and nothing else covers them -
+ * `test/enemyBaseField.spec.ts` only calls `field`. It folds through the
+ * SHIPPED `f.probability` accessor for that reason. It used to rebuild
+ * `clamp(min(field, ENEMY_PLACEMENT_CAP), 0, 1)` inline, which is exactly the
+ * private-copy trap named two paragraphs above: the sweep graded the Rust
+ * against a local copy of the wiring, so the shipped cap and clamp that
+ * `renderEnemies.ts` actually reads stayed uncovered, and the sentence above
+ * claiming otherwise was false. Both forms give identical values today, so the
+ * frozen checksums did not move when it changed - which is the point. A test
+ * whose numbers are the same either way is not the same test.
  *
  * ## What this block can and cannot see, measured by planting
  *
@@ -485,11 +494,7 @@ function enemyFields(c: Case): ((x: number, y: number) => number)[] {
     seed0: SEED0,
     controls: { frequency: c.enemyFrequency, size: c.enemySize },
   });
-  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
-  return [
-    (x, y) => f.field(x, y),
-    (x, y) => clamp(Math.min(f.field(x, y), ENEMY_PLACEMENT_CAP), 0, 1),
-  ];
+  return [(x, y) => f.field(x, y), (x, y) => f.probability(x, y)];
 }
 
 /**
