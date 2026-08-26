@@ -1194,7 +1194,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
 | 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view renders through the engine.**                                                                   | done     |
-| 6 (#226) | Nauvis                                                                                                                                                                         | **half** |
+| 6 (#226) | Nauvis - everything but `enemies/` and the render path                                                                                                                         | **most** |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1209,15 +1209,20 @@ and the order-priority resolver.
 Then `trees/` - `asymmetric_ramps`, the 15-species catalog, the two shared
 forest-path fields, and the species/density layer with its early-out.
 
-Still unported, about 531 lines of TypeScript: `enemies/` (240),
-`rocks/rockField.ts` (152), `cliffs/cliffFields.ts` (139), the ABI Nauvis params
-block, the render path, and tier 3.
+Then the two remaining Nauvis _field_ layers, which needed no new module:
+`cliffs/fields.rs` (`cliff_elevation_nauvis` and the `cliffiness_nauvis` gate)
+and `rocks/field.rs` (the three prototype probabilities and the density over
+them). Both are pure compositions of parts already ported, so the only new
+primitives were seven constants and three lever helpers across the two existing
+`catalog.rs` files.
 
-**Two TypeScript files in ported directories were skipped on purpose, and one
-was ported for a reason that is not obvious.** `cliffFields.ts` and
-`rocks/rockField.ts` are NAUVIS and belong to phase 6. `cliffConnections.ts` WAS
-ported and has **zero `src/` consumers** - only 23 investigation specs import
-it - so that #84's cliff investigation can be run against the engine.
+Still unported, about 240 lines of TypeScript: `enemies/`, plus the ABI Nauvis
+params block, the render path, and tier 3.
+
+**One TypeScript file in a ported directory was ported for a reason that is not
+obvious.** `cliffConnections.ts` has **zero `src/` consumers** - only 23
+investigation specs import it - so that #84's cliff investigation can be run
+against the engine.
 
 #### The three tiers, and what each one cannot see
 
@@ -1366,6 +1371,33 @@ unilateral fix on the Rust side reads as a port bug in tier 2, which is the
 whole point of having tier 2. All are now landed: #269, #270, #273, #279, #290,
 #293, #309.
 
+**The cliff layer added one more, and it is a DUPLICATED FUNCTION rather than a
+narrowing.** `src/noise/cliffs/cliffCatalog.ts` carries its own plain-f64
+`sliderToLinear`, and `cliffFields.ts` is its only consumer. The form in
+`src/noise/eval/math.ts` rounds every operation to f32 and is the one measured
+against the game - `fulgora_grid` sampled at five slider positions, where an f64
+chain rounded once at the end misses `s = 3` by one ULP. The two disagree at
+**11 of 22** slider positions across the two ranges the cliff gate reads, worst
+1.4e-7. The Rust reproduces the f64 form, because that is what the TypeScript
+does; the finding is issue #324.
+
+No committed fixture can grade it. All three cliff fixtures were captured at
+default settings, and at `s = 1` the two forms agree exactly on `(-1, 1)`. They
+do NOT agree on `(-1.7, 1.7)`, where the f32 form gives 4.768372e-8 rather than
+0 - but the gate reads that range only inside a `min` whose other argument is
+the `(-1, 1)` zero, so the one place they differ at the default is masked by an
+argument the `min` never picks. `test/cliffCatalog.spec.ts` asserts the anchor to
+12 decimal places, which the game-validated form would fail.
+
+**A lever can be masked so hard that only the slider's extreme grades it**, and
+that is the transferable half. Cliff frequency reaches the tier-2 block by one
+path, through two nested `min`s. Measured over 1600 positions, the count of
+moved field values is **0 at 1.0, 0.8, 0.6, 0.5, 0.45, 0.42, 0.4, 0.35, 0.3 and
+0.25, and 21 of 9600 at 1/6**. A sweep at any milder setting grades nothing
+while looking like it grades something. An analytic estimate of the crossing
+from the term's own bounds said "about 0.42" and was wrong by more than a factor
+of two, so sweep the lever rather than reasoning about it.
+
 Five rules came out of that work, and they are the transferable part:
 
 - **Accept a sweep candidate only when its OWN field reaches a full exact
@@ -1478,13 +1510,34 @@ it is one bare `multioctave_noise`, while the 15 species stack a temperature
 tree, a moisture tree, two `asymmetric_ramps`, a distance term and a
 three-octave noise, and land between 1 and 11 of 26.
 
-**`test/captureGrid.ts`'s table of tree counts has DRIFTED**, and nothing was
-asserting it. It records 83/442 unsnapped and 118 snapped, and 9/51 and 10; the
-real figures measured on both ports on 2026-08-25 are **85 and 120**, and **8
-and 9**. The offset is constant across BOTH arms of each fixture, which is the
-signature of the port having moved since that table was taken rather than of a
-methodology difference. `the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement`
-now freezes the unsnapped arm too.
+The cliff and rock layers score:
+
+| fixture                  | metric                  | seed 123456 | seed 777771 |
+| ------------------------ | ----------------------- | ----------- | ----------- |
+| `oracle-cliff-elevation` | exact of 1024           | 355         | 281         |
+| `oracle-cliffiness`      | gate MISMATCHES of 1024 | **0**       | **0**       |
+| `oracle-rock-density`    | exact of 26, snapped    | 17          | -           |
+
+`cliffiness_nauvis` is `(main_cliffiness >= cliff_cutoff) * 10`, so 0 mismatches
+is the strongest tier-1 result any Nauvis field has apart from `temperature`.
+Its anti-vacuity control is the non-zero count frozen beside it, 252 and 255 of
+1024 - a constant-0 port would miss a quarter of them.
+
+**Those two cliff fixtures are FULLY ON-GRID, the first phase-6 layer where that
+is true**, so the snap is the identity and the test asserts that rather than
+applying a snap that buys nothing - `captureGrid.ts`'s own rule for a snap that
+has reached zero. It pins both arms anyway, because "the snap is the identity"
+is a claim about ANSWERS and an off-grid count of 0 only counts positions.
+
+**`test/captureGrid.ts`'s table had DRIFTED in FOUR rows, and nothing was
+asserting any of them.** Two are the tree rows and two are `oracle-rock-density`.
+It recorded 83/118 and 9/10 for trees and 8/18 for rocks; the real figures,
+measured on both ports, are **85/120**, **8/9** and **7/17** (worst 8.345e-8
+snapped, not 8.508e-8). Each offset is one or two in BOTH arms of its fixture
+and in the same direction, which is the signature of the port having moved
+since the table was taken rather than of a methodology difference. All four are
+now frozen on the Rust side, snapped and raw, so a future drift fails a test
+instead of quietly ageing a comment.
 
 **The resource layer has no exact count** - it is 0 of 16,420 and 0 of 14,980,
 see above - so it freezes a worst absolute residual per case instead, plus a
@@ -1755,9 +1808,16 @@ running the wasm parity specs**, especially tier 3's byte-identical renders.
   itself evidence of a behaviour change.
 - **Export a `<planet>_field_count()`** and assert the spec's name list against
   it, so a field added to the chain cannot silently go untested. Nauvis is at
-  **76**: 16 expression fields, 21 tile probabilities, the tile argmax, 18
+  **82**: 16 expression fields, 21 tile probabilities, the tile argmax, 18
   resource wrappers, the resource resolver, then `tree_small_noise`, the two
-  forest-path cutouts, 15 tree species and the tree density.
+  forest-path cutouts, 15 tree species and the tree density, and finally
+  `cliff_elevation`, `cliffiness`, the three rock probabilities and
+  `rock_density`.
+
+  **Index a block from its own BASE, never from the end of the list.** Two tree
+  assertions were written as `FIELD_NAMES.length - 1` and broke when the cliff
+  block landed behind them - a change with nothing to do with trees.
+
 - **Let the two sides reach the same numbers by DIFFERENT routes where you can.**
   Nauvis's resource block is the worked case: the Rust selector reads its five
   thresholded resources off the shipped `ResourceResolver`, while the TypeScript

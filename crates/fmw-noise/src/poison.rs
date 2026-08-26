@@ -62,6 +62,16 @@
 //!   stays green - checked rather than predicted. Its discriminating power is
 //!   the relation: the two trees must differ at 17 of 26 and agree at the other
 //!   9, which a port ignoring the flag entirely cannot do.
+//!
+//! And a fourth of the STRUCTURAL kind, from the cliff and rock fields:
+//!
+//! - `the_rock_fixture_grades_the_intermediate_because_the_shipped_field_is_zero_there`
+//!   asserts that all 26 `oracle-rock-density` positions have every rock
+//!   probability negative, so the clamped density is 0 at each of them. It
+//!   exists to say why tier 1 grades `rock_density` and not the field above it.
+//!   A one-ULP nudge does not move a -0.097 probability across zero, so it
+//!   stays green - correctly, because its content is a fact about where the
+//!   fixture sits rather than a claim about any computed value.
 
 /// Bend an f32 result by one ULP. Zero is left alone, because several ops
 /// legitimately return exactly zero and the point is to perturb a computed
@@ -144,6 +154,15 @@ pub fn u32_result(value: u32) -> u32 {
 /// So the perturbation has to act on the choice. This is the smallest wrong
 /// answer a classifier can give, the way `i64_result`'s one-tile shift is for a
 /// coordinate.
+///
+/// **Nauvis's `cliffiness` gate reproduced that result on new ground in #226**,
+/// which is worth recording because the measurement was run rather than the
+/// rule applied. `cliffiness_nauvis` is
+/// `(main_cliffiness >= cliff_cutoff) * 10`; with no hook on it the tier-1 gate
+/// test stayed GREEN at 0 mismatches, while the sibling field sharing its whole
+/// `NauvisShared` chain fell from 355 exact to 227. The margins say why: the
+/// closest of 2,048 positions sits 2.344133e-4 from the cutoff and one f32 ULP
+/// there is about 6e-8, so a bent leaf is some 3,900 ULPs short.
 #[inline]
 #[must_use]
 pub fn bool_result(value: bool) -> bool {

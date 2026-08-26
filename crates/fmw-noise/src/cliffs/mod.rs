@@ -5,14 +5,16 @@
 //! here is `CliffGenerator` / `Cliff` behaviour rather than planet behaviour:
 //! the 4-tile corner lattice, `crossesCliff`, `fixImpossibleCells`, the
 //! orientation tables and the connection rules are the same on every planet.
-//! Only [`vulcanus_fields`] and [`vulcanus_ore_rejection`] know which planet
-//! they are on.
+//! Only [`fields`], [`vulcanus_fields`] and [`vulcanus_ore_rejection`] know
+//! which planet they are on.
 //!
-//! Nauvis's own cliff fields (`cliffFields.ts`) are NOT here. They need
-//! `nauvis_shared` and `elevation_nauvis`, which arrive with #226.
+//! Nauvis's own cliff fields arrived with #226 and live in [`fields`]. They are
+//! named for the planet the way the Vulcanus pair is, so the two sit side by
+//! side rather than one of them owning the unqualified name.
 
 pub mod catalog;
 pub mod connections;
+pub mod fields;
 pub mod placement;
 pub mod vulcanus_fields;
 pub mod vulcanus_ore_rejection;

@@ -31,6 +31,8 @@
 
 use std::cell::OnceCell;
 
+use crate::cliffs::catalog::{CliffControls, CliffSettings};
+use crate::cliffs::fields::{CliffFieldParams, NauvisCliffFields};
 use crate::distance_from_nearest_point::Point;
 use crate::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
 use crate::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
@@ -42,6 +44,8 @@ use crate::resources::nauvis_catalog::{resource_by_name, NAUVIS_RESOURCE_CATALOG
 use crate::resources::resolve_resource::{ResourceResolver, ResourceResolverCtx};
 use crate::resources::resource_math::ResourceControlLevers;
 use crate::resources::resource_patches::{ResourcePatches, ResourcePatchesCtx};
+use crate::rocks::catalog::RockControls;
+use crate::rocks::field::{NauvisRockFields, RockFieldParams};
 use crate::tiles::nauvis_catalog::{NauvisTileCatalog, NauvisTileFields, TILE_ORDER};
 use crate::trees::catalog::TREE_SPECIES;
 use crate::trees::field::TreeFields;
@@ -91,6 +95,16 @@ pub struct NauvisCtx {
     /// resolver drops the resource entirely and every resource field folds
     /// zeros, which is a vacuous comparison rather than a failing one.
     pub resource_controls: ResourceControlLevers,
+    /// The `nauvis_cliff` autoplace control.
+    pub cliff_controls: CliffControls,
+    /// The cliff-related `MapGenSettings` fields.
+    ///
+    /// `cliff_elevation_0` is carried but read by neither cliff field, so a
+    /// sweep moving it grades nothing. It is here because the render path will
+    /// need it and because it mirrors the TypeScript's own `CliffSettingsInput`.
+    pub cliff_settings: CliffSettings,
+    /// The `rocks` autoplace control.
+    pub rock_controls: RockControls,
 }
 
 impl NauvisCtx {
@@ -113,6 +127,9 @@ impl NauvisCtx {
             trees_frequency: 1.0,
             trees_size: 1.0,
             resource_controls: ResourceControlLevers::defaults(),
+            cliff_controls: CliffControls::defaults(),
+            cliff_settings: CliffSettings::defaults(),
+            rock_controls: RockControls::defaults(),
         }
     }
 }
@@ -285,6 +302,35 @@ pub struct NauvisParity<'a, 'b> {
     /// per FIELD, so an eager build would make all 38 expression and tile
     /// fields pay for a layer none of them reads.
     resources: OnceCell<NauvisResourceFields>,
+    /// Everything the cliff and rock fields need, kept so they can be built
+    /// once.
+    cliff_rock_ctx: CliffRockCtx,
+    /// The cliff and rock layer, built on first use.
+    ///
+    /// Lazy for the same measured reason as the resource block above, and the
+    /// cost here is the same one: `NauvisCliffFields` builds a whole
+    /// `ElevationNauvis` for `elevation_nauvis_no_cliff`, and
+    /// `NauvisRockFields` builds a `Moisture` and an `Aux`, each of which
+    /// carries its own `NauvisShared`. An eager build would charge all 76
+    /// earlier fields for a layer none of them reads.
+    ///
+    /// It is an owned `OnceCell` rather than the tree layer's borrowed
+    /// `Option`, because nothing here borrows anything with a shorter life than
+    /// the selector - `NauvisCliffFields` and `NauvisRockFields` each own their
+    /// sub-layers outright, so there is no self-reference to work around.
+    cliff_rock: OnceCell<NauvisCliffRockFields>,
+}
+
+/// What the cliff and rock fields need, carried until first use.
+struct CliffRockCtx {
+    cliff: CliffFieldParams,
+    rock: RockFieldParams,
+}
+
+/// The cliff and rock layer as tier 2 sees it.
+struct NauvisCliffRockFields {
+    cliffs: NauvisCliffFields,
+    rocks: NauvisRockFields,
 }
 
 /// The resource layer as tier 2 sees it.
@@ -317,14 +363,18 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
     /// fields [`NauvisStack::field`] selects, then the 21 tile probabilities in
     /// `TILE_ORDER`, then the argmax over them, then the resource layer (six
     /// `field`s, six `probability`s, six `richness`es and the resolver's
-    /// winner), and finally the tree layer: `tree_small_noise`, the two
-    /// forest-path cutouts, the 15 species and the density over them.
-    pub const FIELD_COUNT: u32 = NauvisStack::FIELD_COUNT + 21 + 1 + 6 * 3 + 1 + 3 + 15 + 1;
+    /// winner), then the tree layer (`tree_small_noise`, the two forest-path
+    /// cutouts, the 15 species and the density over them), and finally the
+    /// cliff and rock block.
+    pub const FIELD_COUNT: u32 = Self::CLIFF_ROCK_BASE + 6;
 
     /// Where the resource block starts.
     const RESOURCE_BASE: u32 = NauvisStack::FIELD_COUNT + 21 + 1;
     /// Where the tree block starts.
     pub const TREE_BASE: u32 = Self::RESOURCE_BASE + 6 * 3 + 1;
+    /// Where the cliff and rock block starts: `cliff_elevation`, `cliffiness`,
+    /// the three rock probabilities and `rock_density`.
+    pub const CLIFF_ROCK_BASE: u32 = Self::TREE_BASE + 3 + 15 + 1;
 
     #[must_use]
     pub fn new(stack: &'a NauvisStack, ctx: &NauvisCtx) -> Self {
@@ -345,7 +395,38 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
                 starting_lake_positions: None,
             },
             resources: OnceCell::new(),
+            cliff_rock_ctx: CliffRockCtx {
+                cliff: CliffFieldParams {
+                    seed0: ctx.seed0,
+                    controls: ctx.cliff_controls,
+                    settings: ctx.cliff_settings,
+                    segmentation_multiplier: ctx.segmentation_multiplier,
+                    water_level: ctx.water_level,
+                    starting_positions: ctx.starting_positions.clone(),
+                    starting_lake_positions: None,
+                },
+                rock: RockFieldParams {
+                    seed0: ctx.seed0,
+                    controls: ctx.rock_controls,
+                    segmentation_multiplier: ctx.segmentation_multiplier,
+                    moisture_frequency: ctx.moisture_frequency,
+                    moisture_bias: ctx.moisture_bias,
+                    aux_frequency: ctx.aux_frequency,
+                    aux_bias: ctx.aux_bias,
+                    starting_area_moisture_size: ctx.starting_area_moisture_size,
+                    starting_area_moisture_frequency: ctx.starting_area_moisture_frequency,
+                    starting_positions: ctx.starting_positions.clone(),
+                },
+            },
+            cliff_rock: OnceCell::new(),
         }
+    }
+
+    fn cliff_rock(&self) -> &NauvisCliffRockFields {
+        self.cliff_rock.get_or_init(|| NauvisCliffRockFields {
+            cliffs: NauvisCliffFields::new(&self.cliff_rock_ctx.cliff),
+            rocks: NauvisRockFields::new(&self.cliff_rock_ctx.rock),
+        })
     }
 
     fn resources(&self) -> &NauvisResourceFields {
@@ -432,6 +513,9 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
             aux: self.stack.aux.eval(x, y),
             moisture: self.stack.moisture.eval(x, y),
         };
+        if field >= Self::CLIFF_ROCK_BASE {
+            return self.cliff_rock_field(field - Self::CLIFF_ROCK_BASE, x, y);
+        }
         if field >= Self::TREE_BASE {
             return self.tree_field(field - Self::TREE_BASE, x, y);
         }
@@ -513,6 +597,41 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
             // Out of range resolves to the density, matching the exhaustive
             // `match` this was lifted from.
             _ => trees.density(x, y),
+        }
+    }
+
+    /// One field of the cliff and rock block, `0..6`.
+    ///
+    /// The three rock probabilities are folded separately from the density
+    /// above them, for the reason the tile and resource blocks both measured:
+    /// **a max absorbs almost anything.** Here it is worse than an argmax,
+    /// because the density also CLAMPS to `[0, 1]` and Nauvis rocks are sparse:
+    /// it is exactly 0 at 96 to 98 percent of a 64x64 window, so a fold of it
+    /// alone is mostly a fold of zeros. `huge` and `big` in particular differ
+    /// only by a constant factor and a constant offset, so the max picks the
+    /// same one of them almost everywhere.
+    ///
+    /// **`cliffiness` crosses as its 0/10 GATE and nothing finer**, which is a
+    /// real limit rather than an oversight. The TypeScript exposes only the
+    /// gate - `makeCliffiness` returns it - so recovering `main_cliffiness` on
+    /// the JavaScript side would mean rebuilding the six sub-terms there from
+    /// the same parts this reads. That is the private-copy trap
+    /// `checksum_vulcanus` records: a copy is reproduced identically on both
+    /// sides and stays invisible. So the fold compares gate answers, and a
+    /// divergence smaller than the nearest margin to the cutoff is invisible to
+    /// tier 2 as well as to tier 1. `cliff_elevation` is continuous and shares
+    /// four of the six sub-terms' `NauvisShared`, which is what grades that
+    /// region at all.
+    fn cliff_rock_field(&self, index: u32, x: f64, y: f64) -> f64 {
+        let held = self.cliff_rock();
+        match index {
+            0 => held.cliffs.cliff_elevation(x, y),
+            1 => held.cliffs.cliffiness(x, y),
+            2 => held.rocks.at(x, y).huge,
+            3 => held.rocks.at(x, y).big,
+            4 => held.rocks.at(x, y).sand,
+            // Out of range resolves to the density, matching the other blocks.
+            _ => held.rocks.density(x, y),
         }
     }
 }
@@ -768,7 +887,7 @@ mod parity_tests {
         let base = tree_fixture(&ctx);
         let trees = TreeFields::new(&base);
         let parity = NauvisParity::new(&stack, &ctx).with_trees(&trees);
-        let sweep: Vec<Vec<f64>> = (NauvisParity::TREE_BASE..NauvisParity::FIELD_COUNT)
+        let sweep: Vec<Vec<f64>> = (NauvisParity::TREE_BASE..NauvisParity::CLIFF_ROCK_BASE)
             .map(|f| {
                 let mut row = Vec::with_capacity(30 * 30);
                 for i in 0..30 {
@@ -812,7 +931,7 @@ mod parity_tests {
         let (x, y) = (140.5, -95.25);
 
         assert_eq!(NauvisParity::TREE_BASE, NauvisParity::RESOURCE_BASE + 19);
-        assert_eq!(NauvisParity::FIELD_COUNT, NauvisParity::TREE_BASE + 19);
+        assert_eq!(NauvisParity::CLIFF_ROCK_BASE, NauvisParity::TREE_BASE + 19);
 
         // The three shared fields land where the selector claims.
         assert_eq!(
@@ -836,14 +955,19 @@ mod parity_tests {
                 species.name
             );
         }
-        // Past the end is the density, the block's own catch-all.
+        // The last index in the block is the density, its own catch-all. It
+        // is bounded by `CLIFF_ROCK_BASE` rather than by `FIELD_COUNT` now that
+        // a block follows this one - past `CLIFF_ROCK_BASE` the selector
+        // dispatches to the cliff and rock fields, so the old "past the end is
+        // the density" assertion would have started grading the wrong block.
         assert_eq!(
-            parity.field(NauvisParity::FIELD_COUNT, x, y),
+            parity.field(NauvisParity::CLIFF_ROCK_BASE - 1, x, y),
             trees.density(x, y)
         );
-        assert_eq!(
-            parity.field(NauvisParity::FIELD_COUNT - 1, x, y),
-            trees.density(x, y)
+        assert_ne!(
+            parity.field(NauvisParity::CLIFF_ROCK_BASE, x, y),
+            trees.density(x, y),
+            "the cliff block must start where the tree block ends"
         );
     }
 
@@ -856,7 +980,7 @@ mod parity_tests {
         let ctx = parity_ctx();
         let stack = NauvisStack::new(&ctx);
         let parity = NauvisParity::new(&stack, &ctx);
-        for f in NauvisParity::TREE_BASE..NauvisParity::FIELD_COUNT {
+        for f in NauvisParity::TREE_BASE..NauvisParity::CLIFF_ROCK_BASE {
             assert_eq!(parity.field(f, 140.5, -95.25), 0.0, "field {f}");
         }
         // And the blocks below it are unaffected by the missing layer.
@@ -884,12 +1008,215 @@ mod parity_tests {
             (0..60).any(|i| {
                 let x = f64::from(i) * 17.3 - 400.0;
                 let y = f64::from(i) * -11.7 + 200.0;
-                (NauvisParity::TREE_BASE..NauvisParity::FIELD_COUNT)
+                (NauvisParity::TREE_BASE..NauvisParity::CLIFF_ROCK_BASE)
                     .any(|f| p.field(f, x, y) != parity.field(f, x, y))
             })
         };
         assert!(moved(&|c| c.trees_frequency = 3.0), "trees frequency");
         assert!(moved(&|c| c.trees_size = 2.0), "trees size");
+        assert!(
+            !moved(&|_c| {}),
+            "the sweep reports a difference with no change"
+        );
+    }
+
+    #[test]
+    fn every_cliff_and_rock_field_index_reaches_a_distinct_value() {
+        // Same guard as the three blocks before it: a `match` arm pointing at
+        // the wrong accessor produces a valid checksum for the WRONG field, so
+        // tier 2 would compare two fields nobody named.
+        //
+        // A 2D grid rather than a line, for the reason the resource block
+        // records: `density` clamps to 0 wherever no rock wins, and Nauvis
+        // rocks are sparse, so a diagonal that misses every patch would make
+        // the density an all-zero vector and report a collision that is not
+        // one.
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let parity = NauvisParity::new(&stack, &ctx);
+        let sweep: Vec<Vec<f64>> = (NauvisParity::CLIFF_ROCK_BASE..NauvisParity::FIELD_COUNT)
+            .map(|f| {
+                let mut row = Vec::with_capacity(40 * 40);
+                for i in 0..40 {
+                    for j in 0..40 {
+                        row.push(parity.field(
+                            f,
+                            f64::from(i) * 13.3 - 200.0,
+                            f64::from(j) * 11.7 - 200.0,
+                        ));
+                    }
+                }
+                row
+            })
+            .collect();
+        assert_eq!(sweep.len(), 6, "the block is six fields wide");
+        for a in 0..sweep.len() {
+            for b in (a + 1)..sweep.len() {
+                assert_ne!(
+                    sweep[a],
+                    sweep[b],
+                    "cliff/rock fields {} and {} are the same sweep",
+                    NauvisParity::CLIFF_ROCK_BASE + a as u32,
+                    NauvisParity::CLIFF_ROCK_BASE + b as u32
+                );
+            }
+        }
+
+        // Anti-vacuity, one per field that can degenerate:
+        //
+        // - the gate must answer BOTH ways somewhere, or a constant-0 port
+        //   would fold identically;
+        // - the clamped density must be non-zero somewhere, or the grid found
+        //   no rocks and the last field is all zeros - which is bit-identical
+        //   between any two ports and compares nothing.
+        let gate = &sweep[1];
+        assert!(gate.contains(&10.0), "no position is cliffy");
+        assert!(gate.contains(&0.0), "every position is cliffy");
+        assert!(
+            sweep[5].iter().any(|v| *v > 0.0),
+            "the grid contains no rocks at all"
+        );
+    }
+
+    #[test]
+    fn the_cliff_and_rock_block_starts_where_the_tree_block_ends_and_the_count_bounds_it() {
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let parity = NauvisParity::new(&stack, &ctx);
+        let (x, y) = (140.5, -95.25);
+
+        assert_eq!(NauvisParity::FIELD_COUNT, NauvisParity::CLIFF_ROCK_BASE + 6);
+
+        let cliffs = NauvisCliffFields::new(&CliffFieldParams::defaults(ctx.seed0));
+        let rocks = NauvisRockFields::new(&RockFieldParams::defaults(ctx.seed0));
+        let base = NauvisParity::CLIFF_ROCK_BASE;
+        assert_eq!(parity.field(base, x, y), cliffs.cliff_elevation(x, y));
+        assert_eq!(parity.field(base + 1, x, y), cliffs.cliffiness(x, y));
+        assert_eq!(parity.field(base + 2, x, y), rocks.at(x, y).huge);
+        assert_eq!(parity.field(base + 3, x, y), rocks.at(x, y).big);
+        assert_eq!(parity.field(base + 4, x, y), rocks.at(x, y).sand);
+        assert_eq!(parity.field(base + 5, x, y), rocks.density(x, y));
+        // Past the end is the density, the block's own catch-all.
+        assert_eq!(
+            parity.field(NauvisParity::FIELD_COUNT, x, y),
+            rocks.density(x, y)
+        );
+    }
+
+    #[test]
+    fn the_cliff_and_rock_layer_is_built_only_when_one_of_its_fields_is_asked_for() {
+        // Lazy for the same measured reason as the resource block: building it
+        // constructs an `ElevationNauvis` for `elevation_nauvis_no_cliff`, plus
+        // a `Moisture` and an `Aux` that each carry their own `NauvisShared`.
+        // `checksum_nauvis` is one call per field, so an eager build would
+        // charge all 76 earlier fields for a layer none of them reads.
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let parity = NauvisParity::new(&stack, &ctx);
+        let _ = parity.field(0, 100.5, 100.25);
+        let _ = parity.field(NauvisParity::CLIFF_ROCK_BASE - 1, 100.5, 100.25);
+        assert!(parity.cliff_rock.get().is_none(), "built too early");
+        let _ = parity.field(NauvisParity::CLIFF_ROCK_BASE, 100.5, 100.25);
+        assert!(parity.cliff_rock.get().is_some(), "never built");
+    }
+
+    #[test]
+    fn the_cliff_and_rock_levers_reach_their_block() {
+        // Every one of these is dead or nearly dead at the default, so tier 1's
+        // default-control fixtures cannot see any of them. `cliff_elevation_0`
+        // is deliberately absent: neither field reads it, and this asserts that
+        // rather than leaving it to be assumed.
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let parity = NauvisParity::new(&stack, &ctx);
+
+        let moved = |f: &dyn Fn(&mut NauvisCtx)| -> bool {
+            let mut c = NauvisCtx::defaults(123_456);
+            f(&mut c);
+            let st = NauvisStack::new(&c);
+            let p = NauvisParity::new(&st, &c);
+            // A 2D GRID, not a diagonal, and that is not caution. The only
+            // observable this block gives `low_freq_cliffiness` is the 0/10
+            // GATE, and a gate flips only where its term wins the outer `min`
+            // AND lands the other side of the cutoff. A 60-point line found no
+            // such position for the frequency lever and reported "this lever
+            // reaches nothing", which was a statement about the line.
+            (0..40).any(|i| {
+                (0..40).any(|j| {
+                    let x = f64::from(i) * 13.3 - 200.0;
+                    let y = f64::from(j) * 11.7 - 200.0;
+                    (NauvisParity::CLIFF_ROCK_BASE..NauvisParity::FIELD_COUNT)
+                        .any(|f| p.field(f, x, y) != parity.field(f, x, y))
+                })
+            })
+        };
+        // **Cliff frequency reaches this block ONLY at the slider's extreme
+        // minimum, and that is measured rather than reasoned.** Swept over
+        // 1600 positions x 6 fields at frequencies 1.0, 0.8, 0.6, 0.5, 0.45,
+        // 0.42, 0.4, 0.35, 0.3, 0.25 and 1/6, the count of moved field values
+        // is **0 at every one of them except 1/6, where it is 21 of 9600**. The
+        // elevation interval behaves identically, because it reaches the same
+        // place as `40 / interval`: 0 at 60, 80, 100 and 120, and 21 at 240.
+        //
+        // The mechanism is a `min` inside a `min`. Cliff frequency's only path
+        // is `low_freq_lever = min(slider_to_linear(cliff_frequency, -1.7, 1.7),
+        // slider_to_linear(cliff_richness, -1, 1))`, whose second argument is
+        // exactly 0 at the default richness - so any frequency at or above 1
+        // loses that `min` outright. Below 1 the lever does move, but the only
+        // thing this block can observe is the 0/10 GATE, and the term it feeds
+        // is `4 * (1.5 + basis + lever)` with `basis` bounded by an
+        // `output_scale` of 0.51. That sits far above the 0.707 cutoff until
+        // the lever drags it down, and it takes the whole slider range to do
+        // it. A first pass here estimated the crossing at about 0.42 from those
+        // bounds and was wrong by more than a factor of two, which is why the
+        // sweep above exists.
+        //
+        // A sweep that wants to grade this lever therefore has to set it to
+        // 1/6. Anything milder grades nothing and looks like it grades
+        // something.
+        assert!(
+            moved(&|c| c.cliff_controls.frequency = 1.0 / 6.0),
+            "cliff frequency at the slider minimum"
+        );
+        assert!(
+            !moved(&|c| c.cliff_controls.frequency = 0.25),
+            "0.25 must stay masked - if this fails the lever found a second \
+             path and the sweep numbers above are stale"
+        );
+        assert!(
+            !moved(&|c| c.cliff_controls.frequency = 3.0),
+            "a frequency above 1 must stay masked by the min"
+        );
+        assert!(
+            moved(&|c| c.cliff_controls.continuity = 2.0),
+            "cliff continuity"
+        );
+        assert!(
+            moved(&|c| c.cliff_settings.cliff_elevation_interval = 240.0),
+            "cliff elevation interval at 40/240 = the slider minimum"
+        );
+        assert!(
+            !moved(&|c| c.cliff_settings.cliff_elevation_interval = 120.0),
+            "120 gives frequency 1/3, which the min still masks"
+        );
+        assert!(
+            moved(&|c| c.cliff_settings.richness = 2.0),
+            "cliff richness"
+        );
+        assert!(
+            moved(&|c| c.rock_controls.frequency = 2.0),
+            "rocks frequency"
+        );
+        assert!(moved(&|c| c.rock_controls.size = 2.0), "rocks size");
+
+        // `cliff_elevation_0` reaches nothing in this block, which is why the
+        // ABI does not carry it. Asserted so that if a later field starts
+        // reading it, this line fails instead of the lever silently going
+        // ungraded.
+        assert!(
+            !moved(&|c| c.cliff_settings.cliff_elevation_0 = 25.0),
+            "cliff_elevation_0 reached the block - the ABI must now carry it"
+        );
         assert!(
             !moved(&|_c| {}),
             "the sweep reports a difference with no change"

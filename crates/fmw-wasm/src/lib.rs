@@ -1127,9 +1127,11 @@ pub extern "C" fn render_request(len: u32) -> u32 {
 // Tier 2 for phase 6 - the Nauvis expression core (#226).
 // ---------------------------------------------------------------------------
 
+use fmw_noise::cliffs::catalog::{CliffControls, CliffSettings, CLIFF_ELEVATION_0_DEFAULT};
 use fmw_noise::distance_from_nearest_point::Point as NauvisPoint;
 use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisParity, NauvisStack};
 use fmw_noise::resources::resource_math::ResourceControlLevers;
+use fmw_noise::rocks::catalog::RockControls;
 use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
 
 /// Tier 2 for the Nauvis expression core, one named field at a time.
@@ -1171,6 +1173,21 @@ use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
 /// when a tree field is selected. Both are dead at the default, so a sweep that
 /// never moves them grades neither the per-species `input_scale` scaling nor
 /// the flat `0.2 * size` term.
+///
+/// The four `cliff_*` and two `rocks_*` levers reach the cliff and rock block,
+/// which is likewise built only when one of its fields is selected.
+///
+/// **`cliff_frequency` and `cliff_elevation_interval` have to be taken to the
+/// slider's EXTREME to grade anything, and that is measured.** Both reach the
+/// block by one path, `low_freq_lever`, and both are masked by two nested
+/// `min`s on the way. Over 1600 positions the count of moved field values is 0
+/// at frequencies 1.0 down to 0.25 and **21 of 9600 at 1/6**; the interval
+/// behaves the same, since it arrives as `40 / interval`. A sweep that sets
+/// them to anything milder grades neither, while looking like it grades both.
+/// `the_cliff_and_rock_levers_reach_their_block` in `nauvis_stack` carries the
+/// sweep.
+///
+/// `cliff_elevation_0` is deliberately absent - neither cliff field reads it.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn checksum_nauvis(
@@ -1190,6 +1207,12 @@ pub extern "C" fn checksum_nauvis(
     resource_richness: f64,
     trees_frequency: f64,
     trees_size: f64,
+    cliff_frequency: f64,
+    cliff_continuity: f64,
+    cliff_elevation_interval: f64,
+    cliff_richness: f64,
+    rocks_frequency: f64,
+    rocks_size: f64,
     field: u32,
     x0: f64,
     y0: f64,
@@ -1215,6 +1238,25 @@ pub extern "C" fn checksum_nauvis(
             frequency: resource_frequency,
             size: resource_size,
             richness: resource_richness,
+        },
+        cliff_controls: CliffControls {
+            frequency: cliff_frequency,
+            continuity: cliff_continuity,
+        },
+        // `cliff_elevation_0` is NOT crossed, because neither cliff field reads
+        // it - `cliffiness_nauvis` uses the interval and the richness, and
+        // `cliff_elevation_nauvis` uses neither. Sending it would add an
+        // argument a sweep could move with nothing to show for it.
+        // `the_cliff_and_rock_levers_reach_their_block` asserts that it stays
+        // unreachable, so this stops being true loudly rather than quietly.
+        cliff_settings: CliffSettings {
+            cliff_elevation_0: CLIFF_ELEVATION_0_DEFAULT,
+            cliff_elevation_interval,
+            richness: cliff_richness,
+        },
+        rock_controls: RockControls {
+            frequency: rocks_frequency,
+            size: rocks_size,
         },
     };
     let stack = NauvisStack::new(&ctx);

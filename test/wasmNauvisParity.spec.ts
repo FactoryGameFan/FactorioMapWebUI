@@ -21,6 +21,8 @@ import { makeResourceResolver } from "../src/noise/resources/resolveResource";
 import { TREE_SPECIES } from "../src/noise/trees/treeCatalog";
 import { makeTreeShared } from "../src/noise/trees/treeShared";
 import { makeTreeDensity, makeTreeSpeciesFields } from "../src/noise/trees/treeField";
+import { makeCliffElevation, makeCliffiness } from "../src/noise/cliffs/cliffFields";
+import { makeRockFields } from "../src/noise/rocks/rockField";
 
 /**
  * Tier 2 of the Rust port's gate for the Nauvis expression core (#226): strict
@@ -87,6 +89,12 @@ interface EngineExports {
     resourceRichness: number,
     treesFrequency: number,
     treesSize: number,
+    cliffFrequency: number,
+    cliffContinuity: number,
+    cliffElevationInterval: number,
+    cliffRichness: number,
+    rocksFrequency: number,
+    rocksSize: number,
     field: number,
     x0: number,
     y0: number,
@@ -145,6 +153,15 @@ const OFF_GRID_POSITIONS = 2365;
 /** How many swept positions have a non-zero tree density. Frozen; see the test. */
 const TREE_DENSITY_HITS = 602;
 
+/** Swept positions whose coordinates ARE both f32-exact. Frozen with its complement. */
+const ON_GRID_POSITIONS = 55;
+
+/** How many swept positions the cliff gate answers 10 at. Frozen; see the test. */
+const CLIFF_GATE_HITS = 327;
+
+/** How many swept positions have a non-zero rock density. Frozen; see the test. */
+const ROCK_DENSITY_HITS = 67;
+
 interface Case {
   readonly label: string;
   readonly waterLevel: number;
@@ -162,6 +179,12 @@ interface Case {
   readonly resourceRichness: number;
   readonly treesFrequency: number;
   readonly treesSize: number;
+  readonly cliffFrequency: number;
+  readonly cliffContinuity: number;
+  readonly cliffElevationInterval: number;
+  readonly cliffRichness: number;
+  readonly rocksFrequency: number;
+  readonly rocksSize: number;
   readonly x0: number;
   readonly y0: number;
   readonly step: number;
@@ -184,6 +207,12 @@ const DEFAULT_CONTROLS = {
   resourceRichness: 1,
   treesFrequency: 1,
   treesSize: 1,
+  cliffFrequency: 1,
+  cliffContinuity: 1,
+  cliffElevationInterval: 40,
+  cliffRichness: 1,
+  rocksFrequency: 1,
+  rocksSize: 1,
 } as const;
 
 // Two windows, and neither is on the f32 grid - see the header. The near one
@@ -230,6 +259,23 @@ const CASES: readonly Case[] = [
     // `0.2 * size` term through tier 2.
     treesFrequency: 3,
     treesSize: 2,
+    // **The cliff frequency has to go to the slider's MINIMUM to grade
+    // anything.** Its only path is `low_freq_lever`, and two nested `min`s mask
+    // it everywhere else: measured over 1600 positions, the count of moved
+    // field values is 0 at 1.0, 0.8, 0.6, 0.5, 0.45, 0.42, 0.4, 0.35, 0.3 and
+    // 0.25, and 21 of 9600 at 1/6. A milder setting here would look like it
+    // graded the lever and would not.
+    //
+    // The elevation interval reaches the same place as `40 / interval`, so it
+    // is left at its default: moving both would test one path twice. The
+    // continuity and richness levers reach `cliff_cutoff` instead, which is a
+    // separate path and is exercised here.
+    cliffFrequency: 1 / 6,
+    cliffContinuity: 2,
+    cliffElevationInterval: 40,
+    cliffRichness: 2,
+    rocksFrequency: 2,
+    rocksSize: 3,
     x0: -213.3,
     y0: -147.7,
     step: 7.3,
@@ -367,6 +413,76 @@ function tsFields(c: Case): ((x: number, y: number) => number)[] {
     ...resourceFields(c),
     // The tree layer: the three shared fields, the 15 species, the density.
     ...treeFields(c),
+    // The cliff and rock layer.
+    ...cliffRockFields(c),
+  ];
+}
+
+/**
+ * The cliff and rock block's accessors, in the order the Rust selector expects.
+ *
+ * The three rock probabilities are folded separately from the density above
+ * them, and that is not symmetry with the tile block - it is stronger here.
+ * `density` CLAMPS to `[0, 1]` on top of taking a max, and Nauvis rocks are
+ * sparse: measured at seed 123456, only 76 to 166 positions of a 64x64 window
+ * have a non-zero density. So a fold of the density alone is mostly a fold of
+ * zeros, and `huge` and `big` differ only by a constant factor and a constant
+ * offset, so the max picks the same one of them nearly everywhere.
+ *
+ * **`cliffiness` crosses as its 0/10 GATE and nothing finer.** `makeCliffiness`
+ * returns only the gate, so recovering `main_cliffiness` here would mean
+ * rebuilding its six sub-terms in this spec from the same parts the Rust reads
+ * - the private-copy trap `checksum_vulcanus` records, where both sides
+ * reproduce the same wiring and the comparison sees nothing.
+ *
+ * **How blind that leaves it was measured by planting**, not estimated. Shifting
+ * `base_cliffiness` by changing its `- 0.01` term, over the 2,420 swept
+ * positions:
+ *
+ * | shift in `main_cliffiness` | this spec |
+ * | --- | --- |
+ * | 6e-6, 3e-5, 6e-5, 6e-4 | GREEN - not seen |
+ * | 6e-3 and larger | RED, naming `cliffiness` |
+ *
+ * So the fold catches a wrong term at the 1e-2 scale and nothing finer. Two
+ * controls ran beside it and both went RED naming the right field: a 1e-7
+ * relative change to `cliff_elevation`'s `30 *`, and a 1.4e-5 relative change
+ * to `rock:huge`'s `0.07 *`. The blindness is the gate's, not the sweep's.
+ *
+ * `cliff_elevation` is what grades that region at all - it is continuous and
+ * shares four of the six sub-terms' `makeNauvisShared`.
+ */
+function cliffRockFields(c: Case): ((x: number, y: number) => number)[] {
+  const cliffCtx = {
+    seed0: SEED0,
+    controls: { frequency: c.cliffFrequency, continuity: c.cliffContinuity },
+    settings: {
+      cliffElevation0: 10,
+      cliffElevationInterval: c.cliffElevationInterval,
+      richness: c.cliffRichness,
+    },
+    segmentationMultiplier: c.segmentationMultiplier,
+    waterLevel: c.waterLevel,
+  };
+  const rocks = makeRockFields({
+    seed0: SEED0,
+    rocksFrequency: c.rocksFrequency,
+    rocksSize: c.rocksSize,
+    segmentationMultiplier: c.segmentationMultiplier,
+    moistureFrequency: c.moistureFrequency,
+    moistureBias: c.moistureBias,
+    auxFrequency: c.auxFrequency,
+    auxBias: c.auxBias,
+    startingAreaMoistureSize: c.startingAreaMoistureSize,
+    startingAreaMoistureFrequency: c.startingAreaMoistureFrequency,
+  });
+  return [
+    makeCliffElevation(cliffCtx),
+    makeCliffiness(cliffCtx),
+    (x, y) => rocks.at(x, y).huge,
+    (x, y) => rocks.at(x, y).big,
+    (x, y) => rocks.at(x, y).sand,
+    rocks.density,
   ];
 }
 
@@ -565,6 +681,13 @@ const FIELD_NAMES = [
   "tree:tree_08_red",
   "tree:tree_09_red",
   "treeDensity",
+  // The cliff and rock block.
+  "cliffElevation",
+  "cliffiness",
+  "rock:huge",
+  "rock:big",
+  "rock:sand",
+  "rockDensity",
 ] as const;
 
 const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
@@ -586,6 +709,12 @@ const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
       c.resourceRichness,
       c.treesFrequency,
       c.treesSize,
+      c.cliffFrequency,
+      c.cliffContinuity,
+      c.cliffElevationInterval,
+      c.cliffRichness,
+      c.rocksFrequency,
+      c.rocksSize,
       field,
       c.x0,
       c.y0,
@@ -680,8 +809,64 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
     expect(FIELD_NAMES[base + 1]).toBe("tree:forest_path_cutout");
     expect(FIELD_NAMES[base + 2]).toBe("tree:forest_path_cutout_faded");
     expect(FIELD_NAMES[base + 3]).toBe("tree:tree_01");
-    expect(FIELD_NAMES[FIELD_NAMES.length - 1]).toBe("treeDensity");
+    // Indexed from the block's own BASE, not from the end of FIELD_NAMES. The
+    // end used to be the tree density; the cliff and rock block moved it, and
+    // an assertion written as `length - 1` fails on a change that has nothing
+    // to do with trees.
+    expect(FIELD_NAMES[base + 18]).toBe("treeDensity");
+    expect(FIELD_NAMES[base + 19]).toBe("cliffElevation");
   });
+
+  it("the cliff and rock block sits where the selector says", () => {
+    // Same guard as the tile and tree blocks: spelled out rather than derived,
+    // so a reordering fails here instead of relabelling every failure below.
+    const base = FIELD_NAMES.indexOf("cliffElevation");
+    expect(base).toBe(76);
+    expect(FIELD_NAMES.slice(base)).toEqual([
+      "cliffElevation",
+      "cliffiness",
+      "rock:huge",
+      "rock:big",
+      "rock:sand",
+      "rockDensity",
+    ]);
+    expect(FIELD_NAMES).toHaveLength(82);
+  });
+
+  it("the cliff gate answers both ways and the rock density is not vacuous", async () => {
+    // Two anti-vacuity checks, one per field that can degenerate.
+    //
+    // `cliffiness` is 0 or 10 and nothing else, so a window where every
+    // position gives the same answer folds a constant on both sides and grades
+    // nothing - the same objection the resource `probability` fields raised.
+    // `rockDensity` clamps to 0 wherever no rock wins, and Nauvis rocks are
+    // sparse enough that a window can genuinely miss them all.
+    const engine = await instantiate();
+    let cliffy = 0;
+    let bare = 0;
+    let rocks = 0;
+    let positions = 0;
+    for (const c of CASES) {
+      const [, cliffiness, , , , rockDensity] = cliffRockFields(c);
+      for (let j = 0; j < c.n; j++) {
+        for (let i = 0; i < c.n; i++) {
+          const x = c.x0 + i * c.step;
+          const y = c.y0 + j * c.step;
+          positions++;
+          if (cliffiness(x, y) === 10) cliffy++;
+          else bare++;
+          if (rockDensity(x, y) > 0) rocks++;
+        }
+      }
+    }
+    expect(positions).toBe(OFF_GRID_POSITIONS + ON_GRID_POSITIONS);
+    // Frozen, so a window drifting off every cliff or every rock is a failure
+    // rather than a silent loss of coverage.
+    expect(cliffy).toBe(CLIFF_GATE_HITS);
+    expect(bare).toBe(positions - CLIFF_GATE_HITS);
+    expect(rocks).toBe(ROCK_DENSITY_HITS);
+    expect(engine.nauvis_field_count()).toBe(FIELD_NAMES.length);
+  }, 120000);
 
   it("the tree density is not vacuous over the swept windows", async () => {
     // A `probability` field folds zeros where its resource is absent, and a
@@ -689,10 +874,12 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
     // both sides is agreement about nothing, so at least one window has to
     // contain a forest.
     const engine = await instantiate();
-    const densityIndex = FIELD_NAMES.length - 1;
+    // The tree block's density is its LAST field, found from the block's own
+    // base rather than from the end of FIELD_NAMES - see the name test above.
     let drawn = 0;
     for (const c of CASES) {
-      const density = treeFields(c)[densityIndex - 57];
+      const treeBlock = treeFields(c);
+      const density = treeBlock[treeBlock.length - 1];
       for (let j = 0; j < c.n; j++) {
         for (let i = 0; i < c.n; i++) {
           if (density(c.x0 + i * c.step, c.y0 + j * c.step) > 0) drawn++;

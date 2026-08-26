@@ -163,6 +163,25 @@ POISONED_TESTS=(
   fixtures::reproduces_the_games_tree_layer_at_moved_control_levers
   fixtures::the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement
 
+  # Phase 6 (#226), the Nauvis cliff and rock fields. One hook between them,
+  # `poison::bool_result` on `cliffs::fields::NauvisCliffFields::cliffiness`,
+  # and it was added because a measurement demanded it rather than because the
+  # discrete-output rule predicted it.
+  #
+  # Built with no hook on that line, the gate test stayed GREEN at 0 mismatches
+  # while `..._cliff_elevation_at_both_seeds` - which shares the same
+  # `NauvisShared` and therefore the same perturbed chain - fell from 355 exact
+  # to 227. So numeric poison really does move everything underneath the gate,
+  # and not one of its 2,048 answers changes with it: the closest any position
+  # sits to the cutoff is 2.344133e-4, against about 6e-8 for one f32 ULP there.
+  # With the hook live the same test reports 1024 of 1024 mismatches.
+  #
+  # The two continuous fields need no hook of their own - `cliff_elevation` and
+  # `rock_density` both compose `basis_noise`, which carries its own.
+  fixtures::reproduces_the_games_nauvis_cliff_elevation_at_both_seeds
+  fixtures::reproduces_the_games_nauvis_cliffiness_gate_exactly_at_both_seeds
+  fixtures::reproduces_the_games_nauvis_rock_density_at_every_captured_position
+
   # Phase 5's second half (#225), the cliff stack. Three hooks, because three
   # ops here can be wrong independently and one red test would otherwise stand
   # in for all of them:
