@@ -98,11 +98,41 @@ describe("the committed WASM engine", () => {
    * about the same size again by line count, so expect this to fire once more
    * and expect the same measurement to be taken.
    *
+   * **It fired at 265,497 on phase 6, exactly as predicted, and the
+   * measurement was taken before the ceiling moved.** Phase 6 landed in four
+   * pieces, and the committed module after each is an exact delta needing no
+   * interpretation:
+   *
+   * | build | bytes | delta |
+   * | --- | ---: | ---: |
+   * | phase 5 baseline (`fe5de8d`) | 178,531 | - |
+   * | + the Nauvis expression core (#318) | 199,147 | +20,616 |
+   * | + the tile catalog (#321) | 222,018 | +22,871 |
+   * | + the resource layer (#322) | 255,189 | +33,171 |
+   * | + the tree layer | 265,497 | +10,308 |
+   *
+   * And the stub-and-rebuild, which is what says nothing unaccounted for got
+   * linked in: making `checksum_nauvis` return 0 unconditionally
+   * dead-code-eliminates the whole Nauvis chain and gives **178,684 bytes**, so
+   * the chain costs 86,813 and what is left sits **153 bytes** from the phase-5
+   * baseline. That gap is the two extra `f64` arguments the export grew.
+   *
+   * **The first attempt at that stub was wrong, and the number it gave was the
+   * tell.** `if seed0 !== 0 { return 0; }` cannot be proved dead - `seed0` is a
+   * runtime argument - so nothing was eliminated and it "saved" 473 bytes. A
+   * stub meant to dead-code-eliminate has to be unconditional. Same lesson as a
+   * planted break that plants nothing.
+   *
+   * 512 KB keeps 1.97x headroom over 265,497, the same order the two previous
+   * ceilings kept. `enemies/`, `rocks/rockField.ts`, `cliffs/cliffFields.ts`,
+   * the Nauvis render path and tier 3 are still to come, so this has room for
+   * them and should not fire again inside phase 6.
+   *
    * If this fires again, measure what grew before moving it - the stub-and-
    * rebuild above is the method, and it takes a minute.
    */
   it("is small enough that the size trend stays worth watching", () => {
     const bytes = readFileSync(wasmPath).byteLength;
-    expect(bytes).toBeLessThan(256 * 1024);
+    expect(bytes).toBeLessThan(512 * 1024);
   });
 });

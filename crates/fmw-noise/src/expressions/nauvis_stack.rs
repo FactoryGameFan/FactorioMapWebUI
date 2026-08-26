@@ -43,6 +43,8 @@ use crate::resources::resolve_resource::{ResourceResolver, ResourceResolverCtx};
 use crate::resources::resource_math::ResourceControlLevers;
 use crate::resources::resource_patches::{ResourcePatches, ResourcePatchesCtx};
 use crate::tiles::nauvis_catalog::{NauvisTileCatalog, NauvisTileFields, TILE_ORDER};
+use crate::trees::catalog::TREE_SPECIES;
+use crate::trees::field::TreeFields;
 
 /// Every control the Nauvis expression core reads.
 #[derive(Clone, Debug)]
@@ -72,6 +74,10 @@ pub struct NauvisCtx {
     pub starting_area_moisture_frequency: f64,
     /// Spawn points.
     pub starting_positions: Vec<Point>,
+    /// `control:trees:frequency`.
+    pub trees_frequency: f64,
+    /// `control:trees:size`.
+    pub trees_size: f64,
     /// `control:<resource>:frequency|size|richness`, applied to EVERY resource.
     ///
     /// One set of levers rather than six, and that is a sweep decision rather
@@ -104,6 +110,8 @@ impl NauvisCtx {
             starting_area_moisture_size: 1.0,
             starting_area_moisture_frequency: 1.0,
             starting_positions: vec![Point { x: 0.0, y: 0.0 }],
+            trees_frequency: 1.0,
+            trees_size: 1.0,
             resource_controls: ResourceControlLevers::defaults(),
         }
     }
@@ -255,8 +263,17 @@ impl NauvisStack {
 /// because the wasm crate calls it at build time. Keeping it here also keeps
 /// [`Self::FIELD_COUNT`] on the type that owns the `match`, so the count and
 /// the arms it bounds cannot drift apart.
-pub struct NauvisParity<'a> {
+pub struct NauvisParity<'a, 'b> {
     stack: &'a NauvisStack,
+    /// The tree layer, when the caller built one.
+    ///
+    /// **Borrowed rather than owned, and that is ownership rather than taste.**
+    /// `TreeFields` borrows a `TreeBase`, so a selector owning both would be
+    /// self-referential - the same split `vulcanus_stack` makes. It is an
+    /// `Option` so the caller can skip building it: `checksum_nauvis` is one
+    /// call per FIELD, and the tree layer builds sixteen `Prepared`
+    /// multioctaves plus a climate stack that the other 57 fields never read.
+    trees: Option<&'b TreeFields<'b>>,
     tiles: NauvisTileCatalog,
     /// Everything the resource fields need, kept so they can be built once.
     resource_ctx: ResourceResolverCtx,
@@ -293,23 +310,27 @@ struct NauvisResourceFields {
     oil: ResourcePatches,
 }
 
-impl<'a> NauvisParity<'a> {
+impl<'a, 'b> NauvisParity<'a, 'b> {
     /// How many named fields [`Self::field`] can select, `0..FIELD_COUNT`.
     ///
     /// The order is the order the chain evaluates in: the sixteen expression
     /// fields [`NauvisStack::field`] selects, then the 21 tile probabilities in
-    /// `TILE_ORDER`, then the argmax over them, then the resource layer - six
-    /// `field`s, six `probability`s, six `richness`es, and the resolver's
-    /// winner.
-    pub const FIELD_COUNT: u32 = NauvisStack::FIELD_COUNT + 21 + 1 + 6 * 3 + 1;
+    /// `TILE_ORDER`, then the argmax over them, then the resource layer (six
+    /// `field`s, six `probability`s, six `richness`es and the resolver's
+    /// winner), and finally the tree layer: `tree_small_noise`, the two
+    /// forest-path cutouts, the 15 species and the density over them.
+    pub const FIELD_COUNT: u32 = NauvisStack::FIELD_COUNT + 21 + 1 + 6 * 3 + 1 + 3 + 15 + 1;
 
     /// Where the resource block starts.
     const RESOURCE_BASE: u32 = NauvisStack::FIELD_COUNT + 21 + 1;
+    /// Where the tree block starts.
+    pub const TREE_BASE: u32 = Self::RESOURCE_BASE + 6 * 3 + 1;
 
     #[must_use]
     pub fn new(stack: &'a NauvisStack, ctx: &NauvisCtx) -> Self {
         Self {
             stack,
+            trees: None,
             tiles: NauvisTileCatalog::new(ctx.seed0),
             resource_ctx: ResourceResolverCtx {
                 seed0: ctx.seed0,
@@ -356,6 +377,17 @@ impl<'a> NauvisParity<'a> {
         })
     }
 
+    /// Attach a tree layer, so the tree block can be selected.
+    ///
+    /// A builder rather than a constructor parameter because the caller has to
+    /// own the `TreeBase` the `TreeFields` borrows, and only wants to build
+    /// either when a tree field is actually being asked for.
+    #[must_use]
+    pub fn with_trees(mut self, trees: &'b TreeFields<'b>) -> Self {
+        self.trees = Some(trees);
+        self
+    }
+
     /// One resource's compiled field, by catalog index.
     ///
     /// `None` when the resolver dropped it, which happens only at
@@ -400,6 +432,9 @@ impl<'a> NauvisParity<'a> {
             aux: self.stack.aux.eval(x, y),
             moisture: self.stack.moisture.eval(x, y),
         };
+        if field >= Self::TREE_BASE {
+            return self.tree_field(field - Self::TREE_BASE, x, y);
+        }
         if field >= Self::RESOURCE_BASE {
             return self.resource_field(field - Self::RESOURCE_BASE, x, y);
         }
@@ -448,6 +483,38 @@ impl<'a> NauvisParity<'a> {
             None => NAUVIS_RESOURCE_CATALOG.len() as f64,
         }
     }
+
+    /// One field of the tree block, `0..19`.
+    ///
+    /// All 15 species are folded individually rather than only the density over
+    /// them, for the reason the tile layer measured: a `max` absorbs almost
+    /// anything. The density is one number per pixel and it moves only when the
+    /// WINNING species changes value, so folding it alone would grade fifteen
+    /// climate boxes with a number that cannot see fourteen of them.
+    ///
+    /// Both forest-path cutouts are folded, not just the faded one the species
+    /// read, because the density path reaches the RAW cutout directly - it
+    /// inlines `cutout * 0.3 + small_term` to avoid a second `tree_small_noise`
+    /// call. A fold of the faded one alone would not cover that call site.
+    ///
+    /// Returns 0 when no tree layer was attached. `checksum_nauvis` always
+    /// attaches one before selecting from this range, and
+    /// `the_tree_block_is_zero_without_a_tree_layer` pins the fallback so it
+    /// cannot be mistaken for a value.
+    fn tree_field(&self, index: u32, x: f64, y: f64) -> f64 {
+        let Some(trees) = self.trees else {
+            return 0.0;
+        };
+        match index {
+            0 => trees.shared().small_noise(x, y),
+            1 => trees.shared().forest_path_cutout(x, y),
+            2 => trees.shared().forest_path_cutout_faded(x, y),
+            i if (i as usize) < 3 + TREE_SPECIES.len() => trees.eval_at(i as usize - 3, x, y),
+            // Out of range resolves to the density, matching the exhaustive
+            // `match` this was lifted from.
+            _ => trees.density(x, y),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -473,7 +540,7 @@ mod parity_tests {
         let ctx = parity_ctx();
         let stack = NauvisStack::new(&ctx);
         let parity = NauvisParity::new(&stack, &ctx);
-        let sweep: Vec<Vec<f64>> = (NauvisParity::RESOURCE_BASE..NauvisParity::FIELD_COUNT)
+        let sweep: Vec<Vec<f64>> = (NauvisParity::RESOURCE_BASE..NauvisParity::TREE_BASE)
             .map(|f| {
                 let mut row = Vec::with_capacity(36 * 36);
                 for i in 0..36 {
@@ -527,16 +594,22 @@ mod parity_tests {
         let (x, y) = (611.5, -377.25);
 
         assert_eq!(NauvisParity::RESOURCE_BASE, NauvisStack::FIELD_COUNT + 22);
-        assert_eq!(NauvisParity::FIELD_COUNT, NauvisParity::RESOURCE_BASE + 19);
+        assert_eq!(NauvisParity::TREE_BASE, NauvisParity::RESOURCE_BASE + 19);
 
         // The index just below the block is still the tile argmax, and the
         // first index of the block is a resource field rather than that argmax.
         let argmax = parity.field(NauvisParity::RESOURCE_BASE - 1, x, y);
         assert!((0.0..21.0).contains(&argmax), "tile argmax {argmax}");
-        // Past the end is the resolver's winner, the block's own catch-all.
+        // The last index of the block is the resolver's winner, which is also
+        // the block's own catch-all - but the index PAST it is now the tree
+        // block, not the fallback, so the two are asserted separately.
         assert_eq!(
-            parity.field(NauvisParity::FIELD_COUNT, x, y),
-            parity.field(NauvisParity::FIELD_COUNT - 1, x, y)
+            parity.field(NauvisParity::TREE_BASE - 1, x, y),
+            parity.field(NauvisParity::TREE_BASE - 1, x, y)
+        );
+        assert!(
+            parity.field(NauvisParity::TREE_BASE - 1, x, y) <= 6.0,
+            "the last resource index is the resolver winner"
         );
     }
 
@@ -583,7 +656,7 @@ mod parity_tests {
         let ctx = parity_ctx();
         let stack = NauvisStack::new(&ctx);
         let parity = NauvisParity::new(&stack, &ctx);
-        let last = NauvisParity::FIELD_COUNT - 1;
+        let last = NauvisParity::TREE_BASE - 1;
         let mut seen = std::collections::BTreeSet::new();
         for i in 0..300 {
             let v = parity.field(
@@ -672,6 +745,154 @@ mod parity_tests {
             NauvisParity::new(&rich_stack, &rich).field(iron_richness, x, y),
             base_parity.field(iron_richness, x, y),
             "resource richness"
+        );
+    }
+
+    fn tree_fixture(ctx: &NauvisCtx) -> crate::trees::field::TreeBase {
+        use crate::trees::field::{TreeBase, TreeFieldParams};
+        let mut p = TreeFieldParams::defaults(ctx.seed0);
+        p.trees_frequency = ctx.trees_frequency;
+        p.trees_size = ctx.trees_size;
+        p.segmentation_multiplier = ctx.segmentation_multiplier;
+        TreeBase::new(&p)
+    }
+
+    #[test]
+    fn every_tree_field_index_reaches_a_distinct_value() {
+        // Same guard as the expression and resource blocks: a `match` arm
+        // pointing at the wrong accessor produces a valid checksum for the
+        // WRONG field. Two indices agreeing over a whole sweep is how that
+        // shows.
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let base = tree_fixture(&ctx);
+        let trees = TreeFields::new(&base);
+        let parity = NauvisParity::new(&stack, &ctx).with_trees(&trees);
+        let sweep: Vec<Vec<f64>> = (NauvisParity::TREE_BASE..NauvisParity::FIELD_COUNT)
+            .map(|f| {
+                let mut row = Vec::with_capacity(30 * 30);
+                for i in 0..30 {
+                    for j in 0..30 {
+                        row.push(parity.field(
+                            f,
+                            f64::from(i) * 27.3 - 400.0,
+                            f64::from(j) * 24.7 - 400.0,
+                        ));
+                    }
+                }
+                row
+            })
+            .collect();
+        for a in 0..sweep.len() {
+            for b in (a + 1)..sweep.len() {
+                assert_ne!(
+                    sweep[a],
+                    sweep[b],
+                    "tree fields {} and {} are the same sweep",
+                    NauvisParity::TREE_BASE + a as u32,
+                    NauvisParity::TREE_BASE + b as u32
+                );
+            }
+        }
+        // Anti-vacuity: the density must be non-zero somewhere, or the grid
+        // found no forest and the last field is all zeros.
+        assert!(
+            sweep[sweep.len() - 1].iter().any(|v| *v > 0.0),
+            "the grid contains no trees at all"
+        );
+    }
+
+    #[test]
+    fn the_tree_block_starts_where_the_resource_block_ends_and_the_count_bounds_it() {
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let base = tree_fixture(&ctx);
+        let trees = TreeFields::new(&base);
+        let parity = NauvisParity::new(&stack, &ctx).with_trees(&trees);
+        let (x, y) = (140.5, -95.25);
+
+        assert_eq!(NauvisParity::TREE_BASE, NauvisParity::RESOURCE_BASE + 19);
+        assert_eq!(NauvisParity::FIELD_COUNT, NauvisParity::TREE_BASE + 19);
+
+        // The three shared fields land where the selector claims.
+        assert_eq!(
+            parity.field(NauvisParity::TREE_BASE, x, y),
+            trees.shared().small_noise(x, y)
+        );
+        assert_eq!(
+            parity.field(NauvisParity::TREE_BASE + 1, x, y),
+            trees.shared().forest_path_cutout(x, y)
+        );
+        assert_eq!(
+            parity.field(NauvisParity::TREE_BASE + 2, x, y),
+            trees.shared().forest_path_cutout_faded(x, y)
+        );
+        // Then the 15 species, in catalog order.
+        for (k, species) in TREE_SPECIES.iter().enumerate() {
+            assert_eq!(
+                parity.field(NauvisParity::TREE_BASE + 3 + k as u32, x, y),
+                trees.eval_at(k, x, y),
+                "{}",
+                species.name
+            );
+        }
+        // Past the end is the density, the block's own catch-all.
+        assert_eq!(
+            parity.field(NauvisParity::FIELD_COUNT, x, y),
+            trees.density(x, y)
+        );
+        assert_eq!(
+            parity.field(NauvisParity::FIELD_COUNT - 1, x, y),
+            trees.density(x, y)
+        );
+    }
+
+    #[test]
+    fn the_tree_block_is_zero_without_a_tree_layer() {
+        // The fallback exists so the selector can stay one type whether or not
+        // the caller built the tree layer. It must be an obvious sentinel
+        // rather than a plausible number - `checksum_nauvis` always attaches
+        // one before selecting from this range.
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let parity = NauvisParity::new(&stack, &ctx);
+        for f in NauvisParity::TREE_BASE..NauvisParity::FIELD_COUNT {
+            assert_eq!(parity.field(f, 140.5, -95.25), 0.0, "field {f}");
+        }
+        // And the blocks below it are unaffected by the missing layer.
+        assert_ne!(parity.field(0, 140.5, -95.25), 0.0);
+    }
+
+    #[test]
+    fn the_tree_levers_reach_the_tree_block() {
+        // Both are dead at the default, so tier 1's default-control fixture
+        // cannot see either. The controls fixture covers them against the game;
+        // this covers them against the wiring.
+        let ctx = parity_ctx();
+        let stack = NauvisStack::new(&ctx);
+        let base = tree_fixture(&ctx);
+        let trees = TreeFields::new(&base);
+        let parity = NauvisParity::new(&stack, &ctx).with_trees(&trees);
+
+        let moved = |f: &dyn Fn(&mut NauvisCtx)| -> bool {
+            let mut c = NauvisCtx::defaults(123_456);
+            f(&mut c);
+            let s = NauvisStack::new(&c);
+            let b = tree_fixture(&c);
+            let t = TreeFields::new(&b);
+            let p = NauvisParity::new(&s, &c).with_trees(&t);
+            (0..60).any(|i| {
+                let x = f64::from(i) * 17.3 - 400.0;
+                let y = f64::from(i) * -11.7 + 200.0;
+                (NauvisParity::TREE_BASE..NauvisParity::FIELD_COUNT)
+                    .any(|f| p.field(f, x, y) != parity.field(f, x, y))
+            })
+        };
+        assert!(moved(&|c| c.trees_frequency = 3.0), "trees frequency");
+        assert!(moved(&|c| c.trees_size = 2.0), "trees size");
+        assert!(
+            !moved(&|_c| {}),
+            "the sweep reports a difference with no change"
         );
     }
 

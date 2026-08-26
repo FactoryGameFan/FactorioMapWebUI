@@ -18,6 +18,9 @@ import { makeTileCatalog } from "../src/noise/tiles/catalog";
 import { RESOURCE_CATALOG } from "../src/noise/resources/resourceCatalog";
 import { makeResourcePatches } from "../src/noise/resources/resourcePatches";
 import { makeResourceResolver } from "../src/noise/resources/resolveResource";
+import { TREE_SPECIES } from "../src/noise/trees/treeCatalog";
+import { makeTreeShared } from "../src/noise/trees/treeShared";
+import { makeTreeDensity, makeTreeSpeciesFields } from "../src/noise/trees/treeField";
 
 /**
  * Tier 2 of the Rust port's gate for the Nauvis expression core (#226): strict
@@ -82,6 +85,8 @@ interface EngineExports {
     resourceFrequency: number,
     resourceSize: number,
     resourceRichness: number,
+    treesFrequency: number,
+    treesSize: number,
     field: number,
     x0: number,
     y0: number,
@@ -137,6 +142,9 @@ const SEED0 = 123456;
  */
 const OFF_GRID_POSITIONS = 2365;
 
+/** How many swept positions have a non-zero tree density. Frozen; see the test. */
+const TREE_DENSITY_HITS = 602;
+
 interface Case {
   readonly label: string;
   readonly waterLevel: number;
@@ -152,6 +160,8 @@ interface Case {
   readonly resourceFrequency: number;
   readonly resourceSize: number;
   readonly resourceRichness: number;
+  readonly treesFrequency: number;
+  readonly treesSize: number;
   readonly x0: number;
   readonly y0: number;
   readonly step: number;
@@ -172,6 +182,8 @@ const DEFAULT_CONTROLS = {
   resourceFrequency: 1,
   resourceSize: 1,
   resourceRichness: 1,
+  treesFrequency: 1,
+  treesSize: 1,
 } as const;
 
 // Two windows, and neither is on the f32 grid - see the header. The near one
@@ -213,6 +225,11 @@ const CASES: readonly Case[] = [
     resourceFrequency: 1.5,
     resourceSize: 2,
     resourceRichness: 3,
+    // Both tree levers are dead at the default, so this case is the only one
+    // that grades the per-species `input_scale` scaling or the flat
+    // `0.2 * size` term through tier 2.
+    treesFrequency: 3,
+    treesSize: 2,
     x0: -213.3,
     y0: -147.7,
     step: 7.3,
@@ -348,6 +365,50 @@ function tsFields(c: Case): ((x: number, y: number) => number)[] {
     // The resource layer: six `field`s, six `probability`s, six `richness`es,
     // then the resolver's winner.
     ...resourceFields(c),
+    // The tree layer: the three shared fields, the 15 species, the density.
+    ...treeFields(c),
+  ];
+}
+
+/**
+ * The tree block's accessors, in the order the Rust selector expects.
+ *
+ * All 15 species are folded individually rather than only the density over
+ * them, for the reason the tile layer measured: a `max` absorbs almost
+ * anything. The density is one number per pixel that moves only when the
+ * WINNING species changes value, so folding it alone would grade fifteen
+ * climate boxes with a number that cannot see fourteen of them.
+ *
+ * Both forest-path cutouts are folded, not only the faded one the species read,
+ * because `makeTreeDensity` reaches the RAW cutout directly - it inlines
+ * `cutout * 0.3 + smallTerm` to avoid a second `tree_small_noise` call. A fold
+ * of the faded one alone would not cover that call site.
+ */
+function treeFields(c: Case): ((x: number, y: number) => number)[] {
+  const params = {
+    seed0: SEED0,
+    treesFrequency: c.treesFrequency,
+    treesSize: c.treesSize,
+    segmentationMultiplier: c.segmentationMultiplier,
+    moistureFrequency: c.moistureFrequency,
+    moistureBias: c.moistureBias,
+    temperatureFrequency: c.temperatureFrequency,
+    temperatureBias: c.temperatureBias,
+    startingAreaMoistureSize: c.startingAreaMoistureSize,
+    startingAreaMoistureFrequency: c.startingAreaMoistureFrequency,
+  };
+  const shared = makeTreeShared({
+    seed0: SEED0,
+    segmentationMultiplier: c.segmentationMultiplier,
+  });
+  const species = makeTreeSpeciesFields(params);
+  const density = makeTreeDensity(params);
+  return [
+    shared.smallNoise,
+    shared.forestPathCutout,
+    shared.forestPathCutoutFaded,
+    ...species.map((f) => f.evalAt),
+    density,
   ];
 }
 
@@ -482,6 +543,28 @@ const FIELD_NAMES = [
   "resource:crude-oil:richness",
   "resource:uranium-ore:richness",
   "resolvedResourceIndex",
+  // The tree block. The 15 species are spelled out for the same reason the
+  // tiles are: derived, a reordering would relabel every failure rather than
+  // failing.
+  "tree:small_noise",
+  "tree:forest_path_cutout",
+  "tree:forest_path_cutout_faded",
+  "tree:tree_01",
+  "tree:tree_04",
+  "tree:tree_05",
+  "tree:tree_02",
+  "tree:tree_03",
+  "tree:tree_07",
+  "tree:tree_02_red",
+  "tree:tree_08",
+  "tree:tree_09",
+  "tree:tree_06",
+  "tree:tree_08_brown",
+  "tree:tree_09_brown",
+  "tree:tree_06_brown",
+  "tree:tree_08_red",
+  "tree:tree_09_red",
+  "treeDensity",
 ] as const;
 
 const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
@@ -501,6 +584,8 @@ const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
       c.resourceFrequency,
       c.resourceSize,
       c.resourceRichness,
+      c.treesFrequency,
+      c.treesSize,
       field,
       c.x0,
       c.y0,
@@ -577,6 +662,50 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
     expect(FIELD_NAMES[36]).toBe("tile:red-desert-3");
     expect(FIELD_NAMES[37]).toBe("resolvedTileIndex");
   });
+
+  it("the tree field names match the catalog's own order", () => {
+    // Same guard as the tiles': FIELD_NAMES spells the 15 species out rather
+    // than deriving them, so a catalog reordering fails here instead of
+    // silently relabelling every downstream failure.
+    const fromCatalog = TREE_SPECIES.map((t) => `tree:${t.name}`);
+    const fromNames = FIELD_NAMES.filter(
+      (n) => n.startsWith("tree:") && !n.startsWith("tree:small") && !n.startsWith("tree:forest"),
+    );
+    expect(fromNames).toEqual(fromCatalog);
+    expect(fromCatalog).toHaveLength(15);
+    // And the block sits where the selector says: three shared fields, then the
+    // species, then the density.
+    const base = FIELD_NAMES.indexOf("tree:small_noise");
+    expect(base).toBe(57);
+    expect(FIELD_NAMES[base + 1]).toBe("tree:forest_path_cutout");
+    expect(FIELD_NAMES[base + 2]).toBe("tree:forest_path_cutout_faded");
+    expect(FIELD_NAMES[base + 3]).toBe("tree:tree_01");
+    expect(FIELD_NAMES[FIELD_NAMES.length - 1]).toBe("treeDensity");
+  });
+
+  it("the tree density is not vacuous over the swept windows", async () => {
+    // A `probability` field folds zeros where its resource is absent, and a
+    // tree density does the same where no species wins. Bit-identical zeros on
+    // both sides is agreement about nothing, so at least one window has to
+    // contain a forest.
+    const engine = await instantiate();
+    const densityIndex = FIELD_NAMES.length - 1;
+    let drawn = 0;
+    for (const c of CASES) {
+      const density = treeFields(c)[densityIndex - 57];
+      for (let j = 0; j < c.n; j++) {
+        for (let i = 0; i < c.n; i++) {
+          if (density(c.x0 + i * c.step, c.y0 + j * c.step) > 0) drawn++;
+        }
+      }
+    }
+    expect(drawn).toBeGreaterThan(0);
+    // Frozen, so a window drifting off every forest is a failure rather than a
+    // silent loss of coverage.
+    expect(drawn).toBe(TREE_DENSITY_HITS);
+    // And the module agrees the block exists at all.
+    expect(engine.nauvis_field_count()).toBe(FIELD_NAMES.length);
+  }, 120000);
 
   it("the resolved tile index really is an index into the catalog", async () => {
     // `resolvedTileIndex` crosses the ABI as an f64, so a wrong widening or an

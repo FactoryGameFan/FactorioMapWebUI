@@ -1206,9 +1206,12 @@ Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 catalog, the distance-dependent scalars, both spot fields, their outer `max`
 and the order-priority resolver.
 
-Still unported, about 1,110 lines of TypeScript: `trees/` (578), `enemies/`
-(240), `rocks/rockField.ts` (152), `cliffs/cliffFields.ts` (139), the ABI Nauvis
-params block, the render path, and tier 3.
+Then `trees/` - `asymmetric_ramps`, the 15-species catalog, the two shared
+forest-path fields, and the species/density layer with its early-out.
+
+Still unported, about 531 lines of TypeScript: `enemies/` (240),
+`rocks/rockField.ts` (152), `cliffs/cliffFields.ts` (139), the ABI Nauvis params
+block, the render path, and tier 3.
 
 **Two TypeScript files in ported directories were skipped on purpose, and one
 was ported for a reason that is not obvious.** `cliffFields.ts` and
@@ -1467,6 +1470,21 @@ plus the cliff offset chain at 38 positions and two seeds: `rawX` 30 and 36,
 
 The tile layer is **153 of 153** at all three seeds, and reads high for the
 reason an argmax always does.
+
+The tree layer is **120 of 442** on `oracle-trees` and **9 of 51** on
+`oracle-trees-controls`, snapped, and the spread inside it is the depth rule
+again: `tree_small_noise` is bit-exact at 26/26 with residual exactly 0 because
+it is one bare `multioctave_noise`, while the 15 species stack a temperature
+tree, a moisture tree, two `asymmetric_ramps`, a distance term and a
+three-octave noise, and land between 1 and 11 of 26.
+
+**`test/captureGrid.ts`'s table of tree counts has DRIFTED**, and nothing was
+asserting it. It records 83/442 unsnapped and 118 snapped, and 9/51 and 10; the
+real figures measured on both ports on 2026-08-25 are **85 and 120**, and **8
+and 9**. The offset is constant across BOTH arms of each fixture, which is the
+signature of the port having moved since that table was taken rather than of a
+methodology difference. `the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement`
+now freezes the unsnapped arm too.
 
 **The resource layer has no exact count** - it is 0 of 16,420 and 0 of 14,980,
 see above - so it freezes a worst absolute residual per case instead, plus a
@@ -1737,8 +1755,9 @@ running the wasm parity specs**, especially tier 3's byte-identical renders.
   itself evidence of a behaviour change.
 - **Export a `<planet>_field_count()`** and assert the spec's name list against
   it, so a field added to the chain cannot silently go untested. Nauvis is at
-  **57**: 16 expression fields, 21 tile probabilities, the tile argmax, 18
-  resource wrappers and the resource resolver.
+  **76**: 16 expression fields, 21 tile probabilities, the tile argmax, 18
+  resource wrappers, the resource resolver, then `tree_small_noise`, the two
+  forest-path cutouts, 15 tree species and the tree density.
 - **Let the two sides reach the same numbers by DIFFERENT routes where you can.**
   Nauvis's resource block is the worked case: the Rust selector reads its five
   thresholded resources off the shipped `ResourceResolver`, while the TypeScript
@@ -1752,7 +1771,13 @@ running the wasm parity specs**, especially tier 3's byte-identical renders.
   trees, so an eager build would make all 38 expression and tile fields pay for
   a layer none of them reads. A `OnceCell` on the selector fixes it, and
   `the_resource_layer_is_built_only_when_a_resource_field_is_asked_for` keeps it
-  fixed.
+  fixed. **The tree block needs a different shape for the same goal**, because
+  `TreeFields` borrows a `TreeBase` and a selector owning both would be
+  self-referential: it is an `Option<&TreeFields>` on the selector, built at the
+  CALL SITE inside an `if field >= TREE_BASE`, with the two locals declared
+  before the `if` so they outlive the borrow. Its fallback returns 0 and
+  `the_tree_block_is_zero_without_a_tree_layer` pins that, so a missing layer
+  cannot be mistaken for a value.
 - **A parity window must CONTAIN the thing it grades.** Four of the six resource
   `probability` fields folded 484 zeros in both original windows, because ore is
   sparse against a 22x22 sweep and no patch intersected them - a fold that is
