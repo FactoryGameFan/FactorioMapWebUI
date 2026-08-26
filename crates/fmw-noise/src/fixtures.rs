@@ -5633,3 +5633,258 @@ fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
         "unsnapped total of 51"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 (#226), the Nauvis cliff and rock fields.
+// ---------------------------------------------------------------------------
+
+use crate::cliffs::fields::{CliffFieldParams, NauvisCliffFields};
+use crate::rocks::field::{NauvisRockFields, RockFieldParams};
+
+/// Score one field over a fixture's positions WITHOUT the capture-grid snap.
+///
+/// The snapped form is [`score_nauvis`]. Both exist because where the snap is
+/// load-bearing the test pins both arms: a test asserting only the good number
+/// would pass again if the snap were removed and the counts re-frozen to match,
+/// which is how that shipped the first time (#295).
+fn score_nauvis_raw(
+    positions: &[(f64, f64)],
+    expected: &[Json],
+    mut f: impl FnMut(f64, f64) -> f64,
+) -> (usize, f64) {
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for (i, (x, y)) in positions.iter().enumerate() {
+        let want = expected[i].as_f64();
+        let got = f64::from(f(*x, *y) as f32);
+        worst = worst.max((got - want).abs());
+        if got == want {
+            exact += 1;
+        }
+    }
+    (exact, worst)
+}
+
+#[test]
+fn reproduces_the_games_nauvis_cliff_elevation_at_both_seeds() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-cliff-elevation.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 1024, "a regen cannot empty the loop");
+
+    // **The snap is the IDENTITY on this fixture, and that is asserted rather
+    // than assumed.** Every one of the 1024 positions is already on the game's
+    // 1/256 grid, which makes this the first phase-6 layer where the snap buys
+    // nothing. `test/captureGrid.ts` states the rule for exactly this case: a
+    // snap that has reached 0 "should be deleted rather than left looking
+    // load-bearing". So the count is frozen here instead, and a re-capture that
+    // introduced off-grid rows would fail this line rather than quietly need a
+    // snap nobody adds.
+    assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
+
+    // Measured on the TypeScript side first: (seed, exact of 1024).
+    for (case, &(seed, want)) in fixture
+        .get("cases")
+        .as_array()
+        .iter()
+        .zip([(123_456u32, 355usize), (777_771, 281)].iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(seed));
+        let (exact, worst) = score_nauvis(&positions, case.get("values").as_array(), |x, y| {
+            fields.cliff_elevation(x, y)
+        });
+        assert_eq!(
+            exact, want,
+            "seed {seed} exact f32 matches, worst {worst:e}"
+        );
+
+        // The snapped and raw arms must agree exactly, which is what "the snap
+        // is the identity" MEANS. Asserting the off-grid count alone would not
+        // say it - that counts positions, this compares answers.
+        let (raw_exact, raw_worst) =
+            score_nauvis_raw(&positions, case.get("values").as_array(), |x, y| {
+                fields.cliff_elevation(x, y)
+            });
+        assert_eq!(raw_exact, exact, "seed {seed}: the snap moved the count");
+        assert_eq!(raw_worst, worst, "seed {seed}: the snap moved the residual");
+    }
+}
+
+#[test]
+fn reproduces_the_games_nauvis_cliffiness_gate_exactly_at_both_seeds() {
+    let fixture = load_captured_at("test/fixtures/oracle-cliffiness.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 1024, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
+
+    // `cliffiness_nauvis` is `(main_cliffiness >= cliff_cutoff) * 10`, so every
+    // value is exactly 0 or 10 and this is a mismatch COUNT rather than an
+    // exact-f32 count. It is 0 at both seeds - the strongest tier-1 result any
+    // Nauvis field has apart from `temperature`.
+    //
+    // **The non-zero counts are frozen beside it, and they are the anti-vacuity
+    // control.** An exact score on a discrete field is cheap if the fixture is
+    // mostly one value; it is not. A constant-0 port would miss about a quarter
+    // of these positions and a constant-10 port about three quarters, so the
+    // 0 above is a real measurement.
+    for (case, &(seed, want_ones)) in fixture
+        .get("cases")
+        .as_array()
+        .iter()
+        .zip([(123_456u32, 252usize), (777_771, 255)].iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(seed));
+
+        // The cutoff at the default levers, frozen so a lever-math slip shows
+        // up here rather than as a handful of moved gate answers.
+        // At the default levers `slider_to_linear(1, -1, 1)` is 0, so the gap
+        // size is exactly 0.5 and the cutoff is `2 * 0.5^1.5` - which is
+        // `1/sqrt(2)`, bit for bit. Written as the constant because it IS the
+        // constant, not because clippy asked: an identity is a stronger thing
+        // to freeze than a transcription of sixteen digits.
+        assert_eq!(
+            fields.cliff_cutoff(),
+            std::f64::consts::FRAC_1_SQRT_2,
+            "cliff_cutoff at the default levers"
+        );
+
+        let values = case.get("values").as_array();
+        let mut mismatches = 0usize;
+        let mut ones = 0usize;
+        for (i, (x, y)) in positions.iter().enumerate() {
+            let want = values[i].as_f64();
+            if want != 0.0 {
+                ones += 1;
+            }
+            if fields.cliffiness(*x, *y) != want {
+                mismatches += 1;
+            }
+        }
+        assert_eq!(mismatches, 0, "seed {seed} gate mismatches");
+        assert_eq!(ones, want_ones, "seed {seed} non-zero gate positions");
+    }
+}
+
+#[test]
+fn reproduces_the_games_nauvis_rock_density_at_every_captured_position() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-rock-density.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
+
+    // The snap IS load-bearing here - 14 of 26 positions were captured off the
+    // grid - so both arms are pinned. See `score_nauvis_raw`.
+    assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
+
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    assert_eq!(seed0, 123_456, "the fixture's own seed");
+    let fields = NauvisRockFields::new(&RockFieldParams::defaults(seed0));
+    let values = fixture.get("values").as_array();
+
+    // Measured on the TypeScript side first. The snap is worth 10 of the 26 and
+    // takes the residual down by four orders of magnitude.
+    let (exact, worst) = score_nauvis(&positions, values, |x, y| fields.rock_density(x, y));
+    assert_eq!(exact, 17, "snapped exact f32 matches, worst {worst:e}");
+    assert!(worst < 9e-8, "snapped worst absolute error {worst:e}");
+
+    let (raw_exact, raw_worst) =
+        score_nauvis_raw(&positions, values, |x, y| fields.rock_density(x, y));
+    assert_eq!(raw_exact, 7, "raw exact f32 matches, worst {raw_worst:e}");
+    assert!(
+        raw_worst > 1.5e-3,
+        "the raw arm must stay far worse, or the snap is doing nothing: {raw_worst:e}"
+    );
+}
+
+#[test]
+fn the_cliffiness_gate_sits_far_enough_from_its_cutoff_that_a_bent_leaf_cannot_flip_it() {
+    // This is the measurement behind `poison::bool_result` on the gate, kept as
+    // an assertion rather than as a sentence in a comment.
+    //
+    // `cliffiness_nauvis` is discrete, so CLAUDE.md's rule says a numeric hook
+    // cannot reach it. That rule is about MARGINS, and margins are a property
+    // of this particular field rather than of discreteness in general - a gate
+    // whose values crowded its threshold would be reachable. So the distance is
+    // measured over the same 2,048 positions the tier-1 test grades.
+    //
+    // The numbers are the reason the hook exists: one f32 ULP at the cutoff's
+    // 0.707 is about 6e-8, and the closest position is 2.344133e-4 away, some
+    // 3,900 ULPs. Built without the hook, the gate test stayed green at 0
+    // mismatches while `..._cliff_elevation_at_both_seeds` - same seed, same
+    // `NauvisShared`, same perturbed chain - fell from 355 exact to 227.
+    let fixture = load_captured_at("test/fixtures/oracle-cliffiness.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+
+    for &(seed, closest) in &[(123_456u32, 3.402_456e-3f64), (777_771, 2.344_133e-4)] {
+        let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(seed));
+        let cutoff = fields.cliff_cutoff();
+        let mut nearest = f64::INFINITY;
+        let mut within_one_ulp_scale = 0usize;
+        for (x, y) in &positions {
+            let margin = (fields.main_cliffiness(*x, *y) - cutoff).abs();
+            nearest = nearest.min(margin);
+            if margin < 1e-5 {
+                within_one_ulp_scale += 1;
+            }
+        }
+        // Frozen to seven significant figures rather than asserted as a bound,
+        // so a change to any of the six sub-terms moves this line instead of
+        // being absorbed by a threshold.
+        assert!(
+            (nearest - closest).abs() < 1e-9,
+            "seed {seed} closest margin {nearest:e}, expected {closest:e}"
+        );
+        assert_eq!(
+            within_one_ulp_scale, 0,
+            "seed {seed}: a position came within 1e-5 of the cutoff, so a \
+             numeric perturbation may now reach the gate and the bool_result \
+             hook is no longer the only control"
+        );
+    }
+}
+
+#[test]
+fn the_rock_fixture_grades_the_intermediate_because_the_shipped_field_is_zero_there() {
+    // `oracle-rock-density` holds the game's named `rock_density` expression,
+    // NOT the clamped max of the three prototype probabilities that the overlay
+    // rolls against. It is easy to read the fixture's name as the latter, so
+    // this measures why it cannot be.
+    //
+    // At all 26 fixture positions every one of the three probabilities is
+    // negative, so the clamped field is exactly 0 everywhere and would accept
+    // any port that returned 0. The probabilities above `rock_density` are
+    // therefore graded by tier 2 and by nothing in tier 1.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-rock-density.seed123456.json",
+        "2.1.11",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    let fields = NauvisRockFields::new(&RockFieldParams::defaults(123_456));
+
+    let mut non_zero_density = 0usize;
+    let mut worst_probability = f64::NEG_INFINITY;
+    for (x, y) in &positions {
+        let (sx, sy) = (snap_coord(*x), snap_coord(*y));
+        if fields.density(sx, sy) != 0.0 {
+            non_zero_density += 1;
+        }
+        let p = fields.at(sx, sy);
+        worst_probability = worst_probability.max(p.huge.max(p.big).max(p.sand));
+    }
+    assert_eq!(
+        non_zero_density, 0,
+        "the clamped density is no longer 0 at every fixture position - if a \
+         re-capture moved the positions onto rocks, grade `density` here too"
+    );
+    assert!(
+        worst_probability < 0.0,
+        "the largest probability at any fixture position must stay negative, \
+         or the clamp is not what is flattening them: {worst_probability:e}"
+    );
+}

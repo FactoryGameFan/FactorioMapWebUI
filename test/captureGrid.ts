@@ -26,20 +26,30 @@
  * | `oracle-temperature` | 17/26 exact, 5.817e-5 | **26/26 exact, 0** |
  * | `oracle-elevation-lakes` `distance` | 18/26, 4.639e-3 | **26/26, 0** |
  * | `oracle-vulcanus-resources` sulfuricAcidPatches | 2.942e-3 | 7.153e-8 (41,100x) |
- * | `oracle-rock-density` | 8/26, 1.570e-3 | 18/26, 8.508e-8 (18,455x) |
+ * | `oracle-rock-density` | 7/26, 1.570e-3 | 17/26, 8.345e-8 (18,816x) |
  * | `oracle-elevation-lakes` elevation | 6/17, 7.372e-3 | 13/17, 3.815e-6 (1,933x) |
  * | `oracle-moisture` | 15/26, 3.070e-5 | 18/26, 5.960e-8 (515x) |
- * | `oracle-trees` | 83/442, 9.233e-4 | 118/442, 2.593e-6 (356x) |
+ * | `oracle-trees` | 85/442, 9.233e-4 | 120/442, 2.593e-6 (356x) |
  * | `oracle-elevation-island` | 4/17, 6.673e-3 | 10/17, 2.564e-5 (260x) |
  * | `oracle-aux` | 10/26, 1.262e-5 | 14/26, 5.960e-8 (212x) |
  * | `oracle-vulcanus-climate` | 60/122, 4.584e-4 | 70/122, 3.359e-6 (136x) |
- * | `oracle-trees-controls` | 9/51, 8.646e-4 | 10/51, 1.139e-5 (76x) |
+ * | `oracle-trees-controls` | 8/51, 8.646e-4 | 9/51, 1.139e-5 (76x) |
  * | `oracle-vulcanus-temperature` | 185/434, 1.327e-1 | 189/434, 2.639e-3 (50x) |
  * | `oracle-vulcanus-elevation` | 200/868, 1.332e-1 | 202/868, 5.234e-3 (25x) |
  * | `oracle-elevation-nauvis` | 2/17, 3.922e-3 | 3/17, 3.856e-4 (10x) |
  * | `oracle-vulcanus-cracks` | 76/305, 1.853e-3 | 79/305, 2.067e-4 (9x) |
  * | `oracle-resource-starting` | 4.899 abs | 0.641 abs (7.6x) |
  * | `oracle-vulcanus-biomes` | 1990/3472, 3.092e-4 | 2024/3472, 4.634e-5 (6.7x) |
+ *
+ * **Four of these rows had DRIFTED, and nothing was asserting them** - the two
+ * `oracle-trees` rows and the two `oracle-rock-density` ones. They read
+ * 83/118, 9/10 and 8/18 until 2026-08-26; re-measured on both ports the same
+ * day they are 85/120, 8/9 and 7/17. The offset is one or two in BOTH arms of
+ * each fixture and in the same direction, which is the signature of the port
+ * having moved since the table was taken rather than of a methodology
+ * difference. The counts are now frozen on the Rust side
+ * (`crates/fmw-noise/src/fixtures.rs`), snapped and raw, so a future drift
+ * fails a test instead of quietly ageing a comment.
  *
  * ## Why this is a measurement and not a fit
  *

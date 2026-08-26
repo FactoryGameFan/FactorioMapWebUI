@@ -3,7 +3,32 @@
 //!
 //! `sliderRescale` and `rangeSelectBase` are re-exported from that file for
 //! Nauvis callers; both already live in [`crate::eval::math`] here, so nothing
-//! is re-exported.
+//! is re-exported. The Nauvis field that consumes them arrived with #226 and
+//! lives in [`super::field`].
+
+/// `basis_noise` `seed1` for `rock_noise`, on both planets.
+pub const ROCK_SEED1: u32 = 137;
+
+/// The `rocks` autoplace control's two sliders.
+#[derive(Clone, Copy, Debug)]
+pub struct RockControls {
+    /// `control:rocks:frequency`; 1 at the default. Scales the noise INPUT, not
+    /// the probability - see [`super::field::NauvisRockFields`].
+    pub frequency: f64,
+    /// `control:rocks:size`; 1 at the default. Enters the probability twice.
+    pub size: f64,
+}
+
+impl RockControls {
+    /// Both sliders at 1.
+    #[must_use]
+    pub const fn defaults() -> Self {
+        Self {
+            frequency: 1.0,
+            size: 1.0,
+        }
+    }
+}
 
 /// `map_color` for every charted rock prototype.
 ///
@@ -27,6 +52,12 @@ pub const ROCK_MAP_COLOR: [u8; 3] = [129, 105, 78];
 /// was **14x too little ink**; 3x3 is 0.65x and the closest an odd-sided mark
 /// gets, since 5x5 overshoots to ~1.8x.
 pub const VULCANUS_ROCK_MARK_RADIUS_PX: i64 = 1;
+
+/// Radius, in pixels, of the mark painted per placed NAUVIS rock. Also 1, a
+/// 3x3 mark, for the reason above - the two planets agreed, so the constant is
+/// duplicated rather than shared to keep each planet's overlay independently
+/// tunable.
+pub const NAUVIS_ROCK_MARK_RADIUS_PX: i64 = 1;
 
 /// The tile stride at which the rock probability field is evaluated.
 ///

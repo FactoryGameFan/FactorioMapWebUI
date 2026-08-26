@@ -1,13 +1,17 @@
 //! Cliff catalog: the engine-level tables the placement pass keys on, ported
 //! from `src/noise/cliffs/cliffCatalog.ts`.
 //!
-//! Everything here is `CliffGenerator` / `CellCliffCrossing` behaviour rather
-//! than planet behaviour, so it is shared by every planet that places cliffs.
-//! The Nauvis lever math that shares the TypeScript file (`sliderToLinear`,
-//! `getModifiedElevationInterval`, `getModifiedRichness`) is deliberately NOT
-//! here: `slider_to_linear` already lives in [`crate::eval::math`], and the
-//! other two only serve the Nauvis cliff control, which arrives with #226.
+//! Most of it is `CliffGenerator` / `CellCliffCrossing` behaviour rather than
+//! planet behaviour, so it is shared by every planet that places cliffs.
 //! Vulcanus has no cliff autoplace control at all.
+//!
+//! The Nauvis lever math that shares the TypeScript file arrived with #226 and
+//! now lives here too: [`cliff_slider_to_linear`], [`modified_elevation_interval`]
+//! and [`modified_richness`]. This module doc used to say that block was
+//! deliberately absent because "`slider_to_linear` already lives in
+//! [`crate::eval::math`]". That reasoning turned out to be wrong, and the
+//! reason it was wrong is the one thing in this file worth reading twice - see
+//! [`cliff_slider_to_linear`].
 //!
 //! ## What was read out of the binary, and where
 //!
@@ -43,6 +47,115 @@
 //! full precision. Shipping the quantised values means the render path does no
 //! floating-point rounding for the boxes at all, while the derivation stays
 //! checkable against the Lua it came from.
+
+/// Default `cliff_elevation_0` map-gen setting.
+pub const CLIFF_ELEVATION_0_DEFAULT: f64 = 10.0;
+
+/// Default `cliff_elevation_interval` map-gen setting, before the frequency
+/// lever.
+pub const CLIFF_ELEVATION_INTERVAL_DEFAULT: f64 = 40.0;
+
+/// `basis_noise` `seed1` for `low_frequency_cliffiness`.
+pub const LOW_FREQ_CLIFFINESS_SEED1: u32 = 86_883;
+
+/// The `nauvis_cliff` autoplace control's two sliders.
+///
+/// `size` doubles as continuity in the game's own naming, which is why the
+/// field is called `continuity` here and in the TypeScript.
+#[derive(Clone, Copy, Debug)]
+pub struct CliffControls {
+    /// `control:nauvis_cliff:frequency`; 1 at the default.
+    pub frequency: f64,
+    /// `control:nauvis_cliff:size`; 1 at the default. 0 disables cliffs.
+    pub continuity: f64,
+}
+
+impl CliffControls {
+    /// Both sliders at 1.
+    #[must_use]
+    pub const fn defaults() -> Self {
+        Self {
+            frequency: 1.0,
+            continuity: 1.0,
+        }
+    }
+}
+
+/// The cliff-related `MapGenSettings` fields that feed the lever math.
+#[derive(Clone, Copy, Debug)]
+pub struct CliffSettings {
+    /// `cliff_elevation_0`.
+    pub cliff_elevation_0: f64,
+    /// `cliff_elevation_interval`, before the frequency lever.
+    pub cliff_elevation_interval: f64,
+    /// `richness`, before the continuity lever.
+    pub richness: f64,
+}
+
+impl CliffSettings {
+    /// The game's defaults: elevation 0 at 10, interval 40, richness 1.
+    #[must_use]
+    pub const fn defaults() -> Self {
+        Self {
+            cliff_elevation_0: CLIFF_ELEVATION_0_DEFAULT,
+            cliff_elevation_interval: CLIFF_ELEVATION_INTERVAL_DEFAULT,
+            richness: 1.0,
+        }
+    }
+}
+
+/// `slider_to_linear` **as the cliff lever math computes it** - all f64, one
+/// rounding at the end.
+///
+/// # This is NOT [`crate::eval::math::slider_to_linear`], and the difference is
+/// a finding rather than a detail
+///
+/// The TypeScript has two implementations of the same GUI helper.
+/// `src/noise/eval/math.ts` rounds every operation to f32, which is the form
+/// that was measured against the game: `fulgora_grid` was sampled at five
+/// slider positions on a real 2.1.14 surface, and an f64 chain rounded once at
+/// the end misses `s = 3` by one f32 ULP while the per-operation form matches
+/// all five. `src/noise/cliffs/cliffCatalog.ts` carries a second, plain-f64
+/// copy, and `cliffFields.ts` is its only consumer.
+///
+/// **The two disagree at 11 of 22 slider positions tested** across the two
+/// ranges the cliff gate reads, `(-1, 1)` and `(-1.7, 1.7)`. The largest gap
+/// measured is 1.4e-7, at `s = 1.5` on `(-1.7, 1.7)`.
+///
+/// This port reproduces the f64 form, because the rule is to port the
+/// TypeScript faithfully and let a finding land as its own graded change - it is
+/// issue #324. Do
+/// not "fix" it by calling [`crate::eval::math::slider_to_linear`] here - that
+/// would be a unilateral change on the Rust side, and tier 2 would report it as
+/// a port bug, which is exactly the signal tier 2 exists to give.
+///
+/// ## Why no committed fixture can see it
+///
+/// All three cliff fixtures were captured at default settings, and at `s = 1`
+/// the two forms agree exactly on `(-1, 1)` - both return 0. They do NOT agree
+/// on `(-1.7, 1.7)`, where the f32 form returns 4.768372e-8 rather than 0. The
+/// cliff gate reads that range only inside
+/// `min(slider_to_linear(freq, -1.7, 1.7), slider_to_linear(richness, -1, 1))`,
+/// and at the defaults the `min` picks the `(-1, 1)` zero, so the difference is
+/// masked by an argument it never chooses. Move either lever off 1 and it stops
+/// being masked - which is why the tier-2 sweep moves them.
+#[must_use]
+pub fn cliff_slider_to_linear(v: f64, lo: f64, hi: f64) -> f64 {
+    lo + 0.5 * (hi - lo) * (1.0 + crate::eval::math::log2(v) / crate::eval::math::log2(6.0))
+}
+
+/// Higher frequency gives tighter (smaller) elevation bands between cliff
+/// lines: `base_interval / frequency`.
+#[must_use]
+pub fn modified_elevation_interval(base_interval: f64, frequency: f64) -> f64 {
+    base_interval / frequency
+}
+
+/// Continuity scales cliff richness directly; 0 disables cliffs entirely.
+#[must_use]
+pub fn modified_richness(base_richness: f64, continuity: f64) -> f64 {
+    base_richness * continuity
+}
 
 /// Cliff placement grid cell size, in tiles.
 pub const CLIFF_GRID_SIZE: f64 = 4.0;
