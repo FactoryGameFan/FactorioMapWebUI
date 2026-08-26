@@ -1166,7 +1166,7 @@ Field labels carry in-game tooltip text via `FInfo` (an `info` prop on
 `EnemyValueRow`, an `info:` entry in `controlCatalog.ts` for the enemy-base
 autoplace rows).
 
-### The Rust/WASM noise engine (`crates/`) - phases 1-5 done, phase 6 half done
+### The Rust/WASM noise engine (`crates/`) - phases 1-5 done, phase 6 all but the overlays
 
 A Cargo workspace at the repository root, landed empty on purpose (#219) so the
 gate was proven green on `main` before any port code depended on it. Two crates:
@@ -1263,6 +1263,17 @@ measured rather than assumed:
   `log2`/`pow` difference inside `wasm32-unknown-unknown` is invisible to it
   (#270). Anything new that reaches a transcendental needs a tier-2 sweep, not
   just a fixture.
+- **And `cargo test`'s OWN libm differs between your machine and the runner, so
+  an exact count with a libm call inside it is not portable.** Measured
+  2026-08-26 landing the enemy layer (#327): a test froze the number of radii
+  where `r.powf(3.0)` differs from `r * r * r` at 3,653 of 14,406. That is
+  **3,651** on the Linux/x86_64 runner. It passed `pnpm run verify` three times
+  locally and turned the `rust` job red on every CI run, looking like a port
+  regression rather than a platform difference. Before freezing a count, ask
+  what it is a function of: if `pow`, `log2`, `exp`, `cbrt`, `sin` or `cos` sits
+  anywhere inside the predicate being counted, freeze a FRACTION and say why.
+  The parts that are ours stay exact - that test still asserts `total` at
+  exactly 14,406, because the shape of the sweep does not depend on the host.
 
 **Tier 2 has a SHELF LIFE, and #227 is the deadline.** It compares Rust against
 TypeScript, and #227 deletes the TypeScript. Write each layer's tier 2 as the
@@ -1516,119 +1527,53 @@ gain, which moves every point in the case.
 
 #### Current tier-1 counts
 
-`crates/fmw-noise/src/fixtures.rs` is the authority. Nauvis (#226), snapped,
-exact f32 matches:
+**`crates/fmw-noise/src/fixtures.rs` is the authority, and the tables live in
+`docs/rust-wasm-port-history.md`.** Do not copy a count back into this file. It
+has gone stale twice, and a number written in two places is a number that can
+disagree with itself - which is exactly the failure `test/captureGrid.ts` hit
+below. What stays here is the part that is a RULE rather than a record.
 
-| field                                   | exact    | worst       |
-| --------------------------------------- | -------- | ----------- |
-| `temperature`                           | 26/26    | **0**       |
-| `elevation_lakes`                       | 21/26    | 3.814697e-6 |
-| `elevation_island`                      | 19/26    | 1.525879e-5 |
-| `moisture`                              | 18/26    | 5.960464e-8 |
-| `aux`                                   | 14/26    | 5.960464e-8 |
-| `elevation_nauvis`                      | 8/26     | 3.852844e-4 |
-| `elevation_nauvis_no_cliff` (two seeds) | 6, 4 /26 | 3.8e-4      |
-
-plus the cliff offset chain at 38 positions and two seeds: `rawX` 30 and 36,
-`rawY` 30 and 30, `hillsOffset` 29 and 31, `cliffRingbreak` 29 and 31.
-
-The tile layer is **153 of 153** at all three seeds, and reads high for the
-reason an argmax always does.
-
-The tree layer is **120 of 442** on `oracle-trees` and **9 of 51** on
-`oracle-trees-controls`, snapped, and the spread inside it is the depth rule
-again: `tree_small_noise` is bit-exact at 26/26 with residual exactly 0 because
-it is one bare `multioctave_noise`, while the 15 species stack a temperature
-tree, a moisture tree, two `asymmetric_ramps`, a distance term and a
-three-octave noise, and land between 1 and 11 of 26.
-
-The enemy-base layer is where the exact-match metric **measures magnitude rather
-than accuracy**, and the split is the whole reading:
-
-| bucket                   | seed 123456 | seed 777771 | worst   |
-| ------------------------ | ----------- | ----------- | ------- |
-| basement, `\|v\| >= 100` | 209 / 239   | 126 / 159   | 4.29e-5 |
-| mid, `1 <= \|v\| < 100`  | **0 / 602** | **0 / 658** | 9.76e-6 |
-| live, `\|v\| < 1`        | **1 / 191** | **1 / 215** | 4.17e-6 |
-
-The basement is -1000, so a position no cone reaches sits near -1007 where one
-f32 ULP is about 6e-5 - larger than the whole residual, so it is exact for free.
-Nearly the entire headline count of 210 and 127 is that. Where the field is
-doing something the port matches 2 of 406. **Freeze the three buckets, not the
-headline**: a single frozen 210 goes green on badly wrong cone arithmetic, and
-moves when a recapture shifts the basement/live split. This is the "a clamp
-flatters it" rule with a basement instead of a clamp.
-
-The cliff and rock layers score:
-
-| fixture                  | metric                  | seed 123456 | seed 777771 |
-| ------------------------ | ----------------------- | ----------- | ----------- |
-| `oracle-cliff-elevation` | exact of 1024           | 355         | 281         |
-| `oracle-cliffiness`      | gate MISMATCHES of 1024 | **0**       | **0**       |
-| `oracle-rock-density`    | exact of 26, snapped    | 17          | -           |
-
-`cliffiness_nauvis` is `(main_cliffiness >= cliff_cutoff) * 10`, so 0 mismatches
-is the strongest tier-1 result any Nauvis field has apart from `temperature`.
-Its anti-vacuity control is the non-zero count frozen beside it, 252 and 255 of
-1024 - a constant-0 port would miss a quarter of them.
-
-**Those two cliff fixtures are FULLY ON-GRID, the first phase-6 layer where that
-is true**, so the snap is the identity and the test asserts that rather than
-applying a snap that buys nothing - `captureGrid.ts`'s own rule for a snap that
-has reached zero. It pins both arms anyway, because "the snap is the identity"
-is a claim about ANSWERS and an off-grid count of 0 only counts positions.
-
-**`test/captureGrid.ts`'s table had DRIFTED in FOUR rows, and nothing was
-asserting any of them.** Two are the tree rows and two are `oracle-rock-density`.
-It recorded 83/118 and 9/10 for trees and 8/18 for rocks; the real figures,
-measured on both ports, are **85/120**, **8/9** and **7/17** (worst 8.345e-8
-snapped, not 8.508e-8). Each offset is one or two in BOTH arms of its fixture
-and in the same direction, which is the signature of the port having moved
-since the table was taken rather than of a methodology difference. All four are
-now frozen on the Rust side, snapped and raw, so a future drift fails a test
-instead of quietly ageing a comment.
-
-**The resource layer has no exact count** - it is 0 of 16,420 and 0 of 14,980,
-see above - so it freezes a worst absolute residual per case instead, plus a
-fold. Those residuals, all four cases at two seeds each:
-
-| fixture                    | iron          | copper / uranium |
-| -------------------------- | ------------- | ---------------- |
-| `oracle-resource-regular`  | 0.6665/0.6811 | 0.4459/0.4725    |
-| `oracle-resource-starting` | 0.6211/0.6386 | 0.3752/0.3760    |
-
-Every one of those is the SAME term: the `fast_cbrt` inside `basement_value`
-(#261). Split by whether a cone reached the position, the residual is +0.36 to
-+0.61 where the basement is read and **-0.002 to -0.124 where it is not**.
-
-The headline results on the two finished planets:
-
-- **Fulgora**: 13 fields reached 101/101 at residual exactly 0 when #273 and
-  #279 landed. The terrain PNG sits at **34,788 differing pixels of 1,048,576**,
-  and the scrap footprint has **zero** stray game pixels.
-- **Vulcanus**: the full tile argmax is graded against the tile the game placed,
-  tier 3 is byte-identical against the TypeScript across nine windows, and
-  **12,423 of 929,686** pixels differ from the game's own 1024x1024 PNG -
-  98.664%, the TypeScript's own number reached through a separate path. It is
-  asserted as an EXACT count, not a bound, because byte-identity means it can
-  be.
-- **`vulcanus_decorative_knockout` is BIT-EXACT at all 434 positions**, worst
-  residual exactly 0 - the strongest tier-1 result any Vulcanus field has. It is
-  a bare two-octave `multioctave_noise` at `output_scale = 1`, so nothing sits
-  between it and the primitives.
-- **The cliff stack is graded against the game's own cliff entities**, both
-  rejection arms, with `orientation` as a fourth column: four bits per cell
-  against `LuaEntity.cliff_orientation`, which is what says the two ports produce
-  the same cell CODES and not merely the same positions. The ore rejection takes
-  wrong orientations 33 -> 21.
-
-**A bound reported #279's Vulcanus work as a regression, which is #162 with the
-sign flipped.** Four resource fields went from about 600 to about 1000 exact of
-1085 while one worst residual tripled and tripped a 3e-5 bound - a bound that
-was two ULPs at the outlier's own magnitude. Those four assertions are now
-frozen exact counts with the residual kept underneath, and the replacement was
-proven strictly stronger by planting: un-narrowing the calcite radius drops the
-count 969 -> 669 while the residual bound passes unchanged.
+- **Freeze the three BUCKETS, not the headline, wherever a basement or a clamp
+  dominates.** The enemy-base field is the worked case: it bottoms out at -1000,
+  so a position no cone reaches sits near -1007, where one f32 ULP is about
+  6e-5 - larger than the whole residual, and therefore exact for free. Nearly
+  the entire headline count is that. Where the field is actually doing something
+  the port matches 2 of 406. A single frozen headline goes green on badly wrong
+  cone arithmetic, and moves when a recapture shifts the basement/live split.
+  This is the "a clamp flatters it" rule with a basement instead of a clamp.
+- **A gate result needs an anti-vacuity control frozen beside it.**
+  `cliffiness_nauvis` is `(main_cliffiness >= cliff_cutoff) * 10` and scores
+  **0 gate mismatches of 1024** at both seeds - the strongest tier-1 result any
+  Nauvis field has apart from `temperature`. That means nothing on its own,
+  because a constant-0 port also produces no mismatches on the zero side. The
+  non-zero count is frozen next to it for that reason.
+- **When a fixture is FULLY ON-GRID the snap is the identity, so assert that
+  rather than applying a snap that buys nothing** - `captureGrid.ts`'s own rule
+  for a snap that has reached zero. Pin BOTH arms anyway: "the snap is the
+  identity" is a claim about ANSWERS, and an off-grid count of 0 only counts
+  positions. The two cliff fixtures are the first phase-6 layer where it holds.
+- **A hand-maintained count table DRIFTS, and nothing was asserting it.**
+  `test/captureGrid.ts` had drifted in four rows at once - two tree rows and two
+  `oracle-rock-density` rows - each off by one or two in BOTH arms of its
+  fixture and in the same direction, which is the signature of the port having
+  moved since the table was taken rather than of a methodology difference. All
+  four are frozen on the Rust side now, snapped and raw, so a future drift fails
+  a test instead of quietly ageing a comment. That is the general remedy: freeze
+  it in a test, or do not write it down.
+- **The resource layer has no exact count at all** - see "When the exact-match
+  count degenerates" above. It freezes a worst absolute residual per case plus a
+  fold, and every one of those residuals is the same term: the `fast_cbrt`
+  inside `basement_value` (#261).
+- **Assert an EXACT count rather than a bound wherever byte-identity makes one
+  possible.** Vulcanus's whole-image comparison against the game's own 1024x1024
+  PNG is frozen exactly for that reason, not bounded.
+- **A bound reported #279's Vulcanus work as a REGRESSION, which is #162 with
+  the sign flipped.** Four resource fields went from about 600 to about 1000
+  exact of 1085 while one worst residual tripled and tripped a 3e-5 bound - a
+  bound that was two ULPs at the outlier's own magnitude. Those four assertions
+  are frozen exact counts now with the residual kept underneath, and the
+  replacement was proven strictly stronger by planting: un-narrowing the calcite
+  radius drops the count 969 -> 669 while the residual bound passes unchanged.
 
 #### The ABI
 

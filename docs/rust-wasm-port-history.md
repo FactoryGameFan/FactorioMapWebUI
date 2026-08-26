@@ -13,8 +13,11 @@ retellings of how a wrong belief was refuted. Read this when you want to know
 why a number is what it is, or when a frozen count moves and you need to know
 what moved it last time.
 
-Nothing below has been edited. It is a snapshot, so it goes stale the moment the
-port moves; `CLAUDE.md` is the current state and this is the paper trail.
+The snapshot itself has not been edited, so it goes stale the moment the port
+moves; `CLAUDE.md` is the current state and this is the paper trail. Records
+shed by `CLAUDE.md` since then are APPENDED under "Later additions" at the
+bottom rather than merged into the snapshot, each one dated, so the 2026-08-25
+text stays readable as the thing it was.
 
 ---
 
@@ -1264,3 +1267,81 @@ line, col}` and it is NOT 4-byte aligned in the data image, so reading a `u32`
   looks like a broken checksum. Every u64 crossing needs
   `BigInt.asUintN(64, x)`; `test/wasmEngine.spec.ts` shows the shape.
 
+
+---
+
+## Later additions, appended after the snapshot
+
+Everything above this line is the 2026-08-25 snapshot and is left unedited, so
+its phase-6 section still describes the expression core as the newest work. What
+follows was appended afterwards, each block dated, as `CLAUDE.md` shed a record
+it no longer needed at the keyboard.
+
+### 2026-08-26 - the phase-6 tier-1 tables (#226)
+
+Moved out of `CLAUDE.md`'s "Current tier-1 counts" when the cliff and rock
+fields (#325), the enemy-base layer (#327) and the terrain render (#328) landed.
+`crates/fmw-noise/src/fixtures.rs` remains the authority; these are the numbers
+as frozen on that date, kept so a future move can be read against them.
+`CLAUDE.md` keeps the readings, which are rules rather than records.
+
+The enemy-base layer, where the exact-match metric **measures magnitude rather
+than accuracy**, and the split is the whole reading:
+
+| bucket                   | seed 123456 | seed 777771 | worst   |
+| ------------------------ | ----------- | ----------- | ------- |
+| basement, `\|v\| >= 100` | 209 / 239   | 126 / 159   | 4.29e-5 |
+| mid, `1 <= \|v\| < 100`  | **0 / 602** | **0 / 658** | 9.76e-6 |
+| live, `\|v\| < 1`        | **1 / 191** | **1 / 215** | 4.17e-6 |
+
+The basement is -1000, so a position no cone reaches sits near -1007 where one
+f32 ULP is about 6e-5 - larger than the whole residual, so it is exact for free.
+Nearly the entire headline count of 210 and 127 is that.
+
+The cliff and rock layers:
+
+| fixture                  | metric                  | seed 123456 | seed 777771 |
+| ------------------------ | ----------------------- | ----------- | ----------- |
+| `oracle-cliff-elevation` | exact of 1024           | 355         | 281         |
+| `oracle-cliffiness`      | gate MISMATCHES of 1024 | **0**       | **0**       |
+| `oracle-rock-density`    | exact of 26, snapped    | 17          | -           |
+
+`cliffiness_nauvis`'s anti-vacuity control is the non-zero count frozen beside
+it, 252 and 255 of 1024.
+
+The resource layer has no exact count - it is 0 of 16,420 and 0 of 14,980 - so
+it freezes a worst absolute residual per case instead, plus a fold. All four
+cases at two seeds each:
+
+| fixture                    | iron          | copper / uranium |
+| -------------------------- | ------------- | ---------------- |
+| `oracle-resource-regular`  | 0.6665/0.6811 | 0.4459/0.4725    |
+| `oracle-resource-starting` | 0.6211/0.6386 | 0.3752/0.3760    |
+
+Every one of those is the same term: the `fast_cbrt` inside `basement_value`
+(#261). Split by whether a cone reached the position, the residual is +0.36 to
++0.61 where the basement is read and **-0.002 to -0.124 where it is not**.
+
+The tile layer is **153 of 153** at all three seeds. The tree layer is **120 of
+442** on `oracle-trees` and **9 of 51** on `oracle-trees-controls`, snapped,
+with `tree_small_noise` bit-exact at 26/26 and the 15 species between 1 and 11
+of 26 - the depth rule again.
+
+### 2026-08-26 - the powf count that was never portable (#327)
+
+`the_spot_quantity_cube_is_powf_and_a_plain_product_would_diverge` first froze
+the disagreement between `r.powf(3.0)` and `r * r * r` at **3,653 of 14,406**.
+That count is a property of the host math library, not of the arithmetic:
+
+| host                | differ of 14,406 |
+| ------------------- | ---------------- |
+| macOS / aarch64     | 3,653            |
+| Linux / x86_64 (CI) | 3,651            |
+
+`pnpm run verify` was green three times locally before the push, because CI is
+the only place the second host is ever exercised. The assertion is on the
+fraction now, held between 20% and 30%, with `total` still frozen at exactly
+14,406. Planting the break it exists to catch - making both sides
+`r.powf(3.0)` - drives it to `0 of 14406 (0.0%)` and fails loudly, so the
+widened form is not vacuous. The rule is in `CLAUDE.md` beside the tier-2 libm
+bullet.
