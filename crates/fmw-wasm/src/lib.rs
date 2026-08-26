@@ -1129,6 +1129,7 @@ pub extern "C" fn render_request(len: u32) -> u32 {
 
 use fmw_noise::distance_from_nearest_point::Point as NauvisPoint;
 use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisParity, NauvisStack};
+use fmw_noise::resources::resource_math::ResourceControlLevers;
 
 /// Tier 2 for the Nauvis expression core, one named field at a time.
 ///
@@ -1159,6 +1160,11 @@ use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisParity, NauvisStack}
 /// `starting_positions` is graded by its own cargo test in `nauvis_stack`, and
 /// a variable-length point list would need the scratch region for a parameter
 /// nothing in tier 1 moves.
+///
+/// The three `resource_*` levers apply to EVERY resource at once rather than
+/// arriving as eighteen arguments - see `NauvisCtx::resource_controls` for why
+/// that covers the paths, and for the one constraint on them: `resource_size`
+/// must stay above 0 or the resource fields fold zeros and compare nothing.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn checksum_nauvis(
@@ -1173,13 +1179,16 @@ pub extern "C" fn checksum_nauvis(
     temperature_bias: f64,
     starting_area_moisture_size: f64,
     starting_area_moisture_frequency: f64,
+    resource_frequency: f64,
+    resource_size: f64,
+    resource_richness: f64,
     field: u32,
     x0: f64,
     y0: f64,
     step: f64,
     n: u32,
 ) -> u64 {
-    let stack = NauvisStack::new(&NauvisCtx {
+    let ctx = NauvisCtx {
         seed0,
         water_level,
         segmentation_multiplier,
@@ -1192,11 +1201,18 @@ pub extern "C" fn checksum_nauvis(
         starting_area_moisture_size,
         starting_area_moisture_frequency,
         starting_positions: vec![NauvisPoint { x: 0.0, y: 0.0 }],
-    });
+        resource_controls: ResourceControlLevers {
+            frequency: resource_frequency,
+            size: resource_size,
+            richness: resource_richness,
+        },
+    };
+    let stack = NauvisStack::new(&ctx);
 
     // The parity selector rather than the stack's own, so the 21 tile
-    // probabilities and the argmax over them are inside the comparison too.
-    let parity = NauvisParity::new(&stack, seed0);
+    // probabilities, the argmax over them and the whole resource layer are
+    // inside the comparison too.
+    let parity = NauvisParity::new(&stack, &ctx);
 
     let mut acc = 0u64;
     for j in 0..n {

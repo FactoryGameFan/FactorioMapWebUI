@@ -15,6 +15,9 @@ import {
 } from "../src/noise/expressions/nauvisShared";
 import { makeTemperature } from "../src/noise/expressions/temperature";
 import { makeTileCatalog } from "../src/noise/tiles/catalog";
+import { RESOURCE_CATALOG } from "../src/noise/resources/resourceCatalog";
+import { makeResourcePatches } from "../src/noise/resources/resourcePatches";
+import { makeResourceResolver } from "../src/noise/resources/resolveResource";
 
 /**
  * Tier 2 of the Rust port's gate for the Nauvis expression core (#226): strict
@@ -34,7 +37,7 @@ import { makeTileCatalog } from "../src/noise/tiles/catalog";
  *
  * ## The sweep deliberately leaves the f32 grid, and that is LOAD-BEARING
  *
- * The steps are not binary fractions, so 1,430 of the 1,452 sampled positions
+ * The steps are not binary fractions, so 2,365 of the 2,420 sampled positions
  * have at least one coordinate off the f32 grid. That is the whole point: #309
  * was a narrowing difference every tier-3 window missed, because all four of
  * those use binary origins and steps and so agree by construction.
@@ -76,6 +79,9 @@ interface EngineExports {
     temperatureBias: number,
     startingAreaMoistureSize: number,
     startingAreaMoistureFrequency: number,
+    resourceFrequency: number,
+    resourceSize: number,
+    resourceRichness: number,
     field: number,
     x0: number,
     y0: number,
@@ -122,6 +128,15 @@ function foldGrid(f: (x: number, y: number) => number, c: Case): bigint {
 
 const SEED0 = 123456;
 
+/**
+ * How many of the swept positions have at least one coordinate off the f32
+ * grid. Frozen, because it is the whole reason this spec can see what tier 3
+ * cannot - every tier-3 window uses a binary origin and step, so all of its
+ * coordinates are f32-exact and a narrowing difference is invisible there by
+ * construction.
+ */
+const OFF_GRID_POSITIONS = 2365;
+
 interface Case {
   readonly label: string;
   readonly waterLevel: number;
@@ -134,6 +149,9 @@ interface Case {
   readonly temperatureBias: number;
   readonly startingAreaMoistureSize: number;
   readonly startingAreaMoistureFrequency: number;
+  readonly resourceFrequency: number;
+  readonly resourceSize: number;
+  readonly resourceRichness: number;
   readonly x0: number;
   readonly y0: number;
   readonly step: number;
@@ -151,6 +169,9 @@ const DEFAULT_CONTROLS = {
   temperatureBias: 0,
   startingAreaMoistureSize: 1,
   startingAreaMoistureFrequency: 1,
+  resourceFrequency: 1,
+  resourceSize: 1,
+  resourceRichness: 1,
 } as const;
 
 // Two windows, and neither is on the f32 grid - see the header. The near one
@@ -186,9 +207,44 @@ const CASES: readonly Case[] = [
     temperatureBias: 7,
     startingAreaMoistureSize: 4,
     startingAreaMoistureFrequency: 3,
+    // Every resource lever off its default too. `resourceSize` must stay
+    // ABOVE 0: at or below it the Rust resolver drops the resource and the
+    // resource fields fold zeros on one side only.
+    resourceFrequency: 1.5,
+    resourceSize: 2,
+    resourceRichness: 3,
     x0: -213.3,
     y0: -147.7,
     step: 7.3,
+    n: 22,
+  },
+  // Two WIDE windows, and they exist for the resource block alone.
+  //
+  // Ore is sparse against a 22 x 22 sweep: the two windows above contain a
+  // patch of iron and one of coal between them and nothing else, so four of the
+  // six `probability` fields folded 484 zeros in both and graded nothing. That
+  // is the tile layer's argmax lesson in another costume - a fold can be
+  // perfectly bit-identical and still be comparing nothing.
+  //
+  // No single window fixes it. Measured over six candidates, the best hit five
+  // of six resources; patches run about 40 tiles across and any step wide
+  // enough to cover ground steps over them. These two together reach all six -
+  // `every resource is actually drawn somewhere in the sweep` is the assertion
+  // that keeps them doing so.
+  {
+    label: "default controls, wide north-west",
+    ...DEFAULT_CONTROLS,
+    x0: -1798.7,
+    y0: 2201.3,
+    step: 63.7,
+    n: 22,
+  },
+  {
+    label: "default controls, wide south",
+    ...DEFAULT_CONTROLS,
+    x0: 301.3,
+    y0: -2498.7,
+    step: 91.3,
     n: 22,
   },
 ];
@@ -289,6 +345,76 @@ function tsFields(c: Case): ((x: number, y: number) => number)[] {
       }
       return winner;
     },
+    // The resource layer: six `field`s, six `probability`s, six `richness`es,
+    // then the resolver's winner.
+    ...resourceFields(c),
+  ];
+}
+
+/**
+ * The resource block's accessors, in the order the Rust selector expects.
+ *
+ * **These six are built HERE from the documented skip constants, while the Rust
+ * side reads five of them off the shipped `ResourceResolver`.** That asymmetry
+ * is deliberate and it is what makes the comparison worth something. The
+ * TypeScript resolver returns a bare closure and exposes none of its per-resource
+ * fields, so there is no way to reach them through it - and building the same
+ * private copy on both sides would have reproduced any mis-wiring identically
+ * and stayed invisible, which is the trap `checksum_vulcanus` records. Reaching
+ * the same numbers by two different routes is evidence that the resolver really
+ * does partition the two candidate streams the way its own documentation says.
+ *
+ * Crude oil is the one resource the resolver deliberately does not hold - it is
+ * the `placement: "roll"` entry - so the Rust side builds it separately with
+ * these same skip parameters. Its FIELD is still folded here: the renderer's
+ * oil pass will need it, and leaving it out would carry it into #227 ungraded.
+ *
+ * All three wrappers are folded for all six, not just the resolver's winner.
+ * The winner is one integer per position that moves only when a probability
+ * crosses 0.5, so folding it alone would grade eighteen formulas with a number
+ * that cannot see any of them - the tile layer measured exactly that, where a
+ * one-digit slip in a climate box moved one probability and left the argmax
+ * still. `richness` never reaches the winner at all.
+ */
+function resourceFields(c: Case): ((x: number, y: number) => number)[] {
+  const levers = {
+    frequency: c.resourceFrequency,
+    size: c.resourceSize,
+    richness: c.resourceRichness,
+  };
+  const common = {
+    seed0: SEED0,
+    controls: levers,
+    segmentationMultiplier: c.segmentationMultiplier,
+    waterLevel: c.waterLevel,
+  };
+  // `skip_span` 6 for the regular set and 4 for the starting set, offset by
+  // `patchSetIndex` - the constants `makeResourceResolver` uses. Restated here
+  // rather than imported, because they are private to that module and because
+  // the Rust half reaches them through the resolver instead; see above.
+  const patches = RESOURCE_CATALOG.map((params) =>
+    makeResourcePatches(params, {
+      ...common,
+      regularSkipSpan: 6,
+      regularSkipOffset: params.patchSetIndex,
+      startingSkipSpan: 4,
+      startingSkipOffset: params.patchSetIndex,
+    }),
+  );
+  const resolver = makeResourceResolver({
+    seed0: SEED0,
+    controls: Object.fromEntries(RESOURCE_CATALOG.map((r) => [r.controlName, levers])),
+    segmentationMultiplier: c.segmentationMultiplier,
+    waterLevel: c.waterLevel,
+  });
+  return [
+    ...patches.map((p) => (x: number, y: number) => p.field(x, y)),
+    ...patches.map((p) => (x: number, y: number) => p.probability(x, y)),
+    ...patches.map((p) => (x: number, y: number) => p.richness(x, y)),
+    // The winner as its CATALOG index, or 6 for "nothing is drawn here" -
+    // catalog index rather than position in the resolver's own list, so a
+    // resource dropped by a `size` lever cannot silently renumber the others.
+    (x: number, y: number) => resolver(x, y)?.patchSetIndex ?? RESOURCE_CATALOG.length,
   ];
 }
 
@@ -334,6 +460,28 @@ const FIELD_NAMES = [
   "tile:red-desert-2",
   "tile:red-desert-3",
   "resolvedTileIndex",
+  // The resource block, in catalog order within each wrapper. Spelled out for
+  // the same reason the tiles are: derived, a reordering would relabel every
+  // failure instead of failing.
+  "resource:iron-ore:field",
+  "resource:copper-ore:field",
+  "resource:coal:field",
+  "resource:stone:field",
+  "resource:crude-oil:field",
+  "resource:uranium-ore:field",
+  "resource:iron-ore:probability",
+  "resource:copper-ore:probability",
+  "resource:coal:probability",
+  "resource:stone:probability",
+  "resource:crude-oil:probability",
+  "resource:uranium-ore:probability",
+  "resource:iron-ore:richness",
+  "resource:copper-ore:richness",
+  "resource:coal:richness",
+  "resource:stone:richness",
+  "resource:crude-oil:richness",
+  "resource:uranium-ore:richness",
+  "resolvedResourceIndex",
 ] as const;
 
 const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
@@ -350,6 +498,9 @@ const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
       c.temperatureBias,
       c.startingAreaMoistureSize,
       c.startingAreaMoistureFrequency,
+      c.resourceFrequency,
+      c.resourceSize,
+      c.resourceRichness,
       field,
       c.x0,
       c.y0,
@@ -397,13 +548,13 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
       return count;
     };
 
-    // 1,430 of 1,452, not all of them: an individual x lands back on the grid
-    // now and then (`-213.3 + 7.3` is exactly -206), and at 22 positions both
-    // coordinates do at once. Those 22 cannot discriminate a narrowing, which
-    // is exactly why the count is frozen rather than asserted as "all".
+    // Not all of them: an individual x lands back on the grid now and then
+    // (`-213.3 + 7.3` is exactly -206), and at some positions both coordinates
+    // do at once. Those cannot discriminate a narrowing, which is exactly why
+    // the count is frozen rather than asserted as "all".
     const total = CASES.reduce((n, c) => n + c.n * c.n, 0);
-    expect(total).toBe(3 * 22 * 22);
-    expect(CASES.reduce((n, c) => n + offGrid(c), 0)).toBe(1430);
+    expect(total).toBe(5 * 22 * 22);
+    expect(CASES.reduce((n, c) => n + offGrid(c), 0)).toBe(OFF_GRID_POSITIONS);
 
     // The control, and the whole point: a tier-3-shaped window - binary origin,
     // binary step - is entirely ON the grid, so a sweep over it could not fail
@@ -451,12 +602,25 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
   });
 
   it("the cases actually differ from each other, field by field", async () => {
-    // Three cases that folded to the same numbers would be one case run three
-    // times. Every field must move between the two default-control windows
-    // (different geometry), and the moved-control case must move a field only
-    // a control can reach.
+    // Cases that folded to the same numbers would be one case run five times.
+    //
+    // The requirement is "at least two cases disagree", not "the first two
+    // disagree", and that weakening is forced by the resource block rather than
+    // chosen: a `probability` is 0 wherever its resource is absent, so a field
+    // can legitimately fold identically across any pair of windows that both
+    // miss its patches. What it may NOT do is fold identically across all five.
     const engine = await instantiate();
     for (let f = 0; f < FIELD_NAMES.length; f++) {
+      const folds = CASES.map((c) => wasmChecksum(engine, c, f));
+      expect(new Set(folds).size, `${FIELD_NAMES[f]} folds the same in every case`).toBeGreaterThan(
+        1,
+      );
+    }
+    // The two default-control geometries still have to move every field that is
+    // not a resource probability - that is the sharper form and it still holds
+    // for 39 of the 57.
+    for (let f = 0; f < FIELD_NAMES.length; f++) {
+      if (FIELD_NAMES[f].endsWith(":probability")) continue;
       expect(
         wasmChecksum(engine, CASES[0], f),
         `${FIELD_NAMES[f]} is the same near and far`,
@@ -466,4 +630,33 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
     // own two, so it is the sharpest check that the control block is wired.
     expect(wasmChecksum(engine, CASES[0], 15)).not.toBe(wasmChecksum(engine, CASES[2], 15));
   });
+
+  it("every resource is actually drawn somewhere in the sweep", () => {
+    // Anti-vacuity for the resource block, and the reason the two wide windows
+    // exist. A `probability` field folds 484 zeros wherever its resource is
+    // absent, so a sweep that contained no ore would be bit-identical on both
+    // sides while comparing nothing at all. This asserts each of the six is
+    // present in at least one case, and counts them so a window drifting off
+    // its patches is a failure rather than a silent loss of coverage.
+    const drawn = RESOURCE_CATALOG.map(() => 0);
+    for (const c of CASES) {
+      const fields = resourceFields(c);
+      for (let r = 0; r < RESOURCE_CATALOG.length; r++) {
+        const probability = fields[6 + r];
+        for (let j = 0; j < c.n; j++) {
+          for (let i = 0; i < c.n; i++) {
+            if (probability(c.x0 + i * c.step, c.y0 + j * c.step) > 0) drawn[r]++;
+          }
+        }
+      }
+    }
+    for (let r = 0; r < RESOURCE_CATALOG.length; r++) {
+      expect(drawn[r], `${RESOURCE_CATALOG[r].name} is absent from every window`).toBeGreaterThan(
+        0,
+      );
+    }
+    // Frozen, so a window that drifts off its patches is caught rather than
+    // absorbed. Measured on the TypeScript side across all five cases.
+    expect(drawn).toEqual([7, 3, 5, 4, 4, 1]);
+  }, 120000);
 });

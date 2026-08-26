@@ -1201,12 +1201,14 @@ Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `bias = -1000` with the segmentation quartered), `elevation_nauvis` and
 `elevation_nauvis_no_cliff`, `nauvis_climate` (holding `aux`, `moisture` and
 `temperature`), and `nauvis_stack`. It also ported
-`amplitude_corrected_multioctave_noise`, which phase 1 had deferred.
+`amplitude_corrected_multioctave_noise`, which phase 1 had deferred. Then the
+21-tile catalog and argmax, and then the whole of `resources/` - the six-entry
+catalog, the distance-dependent scalars, both spot fields, their outer `max`
+and the order-priority resolver.
 
-Still unported, about 2,750 lines of TypeScript - more than the core was:
-`resources/`, `enemies/`, `trees/`, `rocks/rockField.ts`,
-`cliffs/cliffFields.ts`, `tiles/`, the ABI Nauvis params block, the render path,
-and tier 3.
+Still unported, about 1,110 lines of TypeScript: `trees/` (578), `enemies/`
+(240), `rocks/rockField.ts` (152), `cliffs/cliffFields.ts` (139), the ABI Nauvis
+params block, the render path, and tier 3.
 
 **Two TypeScript files in ported directories were skipped on purpose, and one
 was ported for a reason that is not obvious.** `cliffFields.ts` and
@@ -1217,7 +1219,9 @@ it - so that #84's cliff investigation can be run against the engine.
 #### The three tiers, and what each one cannot see
 
 - **Tier 1 grades the port against the GAME**, using the `oracle-*` fixtures.
-  Score is an **exact f32 match count**, frozen, never an error bound (#162).
+  Score is an **exact f32 match count**, frozen, never an error bound (#162) -
+  **except where that count degenerates**, which the Nauvis resource layer is
+  the first place it does. See "When the exact-match count degenerates" below.
 - **Tier 2 grades Rust against TypeScript**, folding many fields at several
   slider settings into one order-sensitive checksum.
 - **Tier 3 is byte-identical RGBA** through the real ABI boundary, plus a count
@@ -1247,7 +1251,7 @@ TypeScript, and #227 deletes the TypeScript. Write each layer's tier 2 as the
 layer lands, never at the end.
 
 **Parity sweeps must use NON-binary origins and steps**, or they agree by
-construction. `test/wasmNauvisParity.spec.ts` freezes 1,430 of 1,452 positions
+construction. `test/wasmNauvisParity.spec.ts` freezes 2,365 of 2,420 positions
 off the f32 grid, with two tier-3-shaped windows asserted at 0 as the control.
 Planting a coordinate narrowing in `hills_offset_raw_x` leaves tier 1 green and
 turns tier 2 red.
@@ -1284,6 +1288,42 @@ result:
   residual of its three sibling fields and the fewest exact matches, 1 of 38.
   That one number is the whole argument for counting matches instead of bounding
   error.
+
+#### When the exact-match count degenerates - the resource layer
+
+**On `resources/` the exact f32 match count is 0 and grades nothing.** It is
+0 of 16,420 on `oracle-resource-regular` and 0 of 14,980 on
+`oracle-resource-starting`, snapped or not, because the fields run to ~12,300
+in magnitude and the port sits a systematic ~0.61 from the game - about 600 f32
+ULPs. The count is 0 whatever the port does. It is still asserted at 0, so that
+fixing #261 turns it into a red test rather than a silent improvement.
+
+**A frozen worst-absolute residual does not cover the gap on its own**, and that
+was measured rather than assumed. Nine breaks were planted in the TypeScript,
+each checked against an order-sensitive fold of all 31,400 field values so a
+real change could be told from a no-op:
+
+- Two real breaks moved the residual loudly - the starting cone radius reading
+  `s.quantity` (delta 7,887), and the starting stream losing its `seed1 + 1`
+  (delta 13,230).
+- **Two real breaks moved it in 0 of 8 cases**: dropping the `f32()` on
+  `3 * quantity` in the cone, and pre-narrowing `Math.PI` there. Both change
+  values. The 0.61 offset swamps them. That is the class of #273 and #309.
+- Five looked like breaks and are genuine no-ops: the regular cull radius
+  128 -> 120, the cone's `>` -> `>=`, `min(atMax, atD)` argument order,
+  `REGULAR_SPACING`'s last digit, and `1/3` written as a decimal.
+
+So `fixtures.rs` freezes four numbers per case instead of one: the exact count,
+the exact worst residual, the count of positions no cone reached, and **an
+FNV-1a fold of the port's own values, measured on the TypeScript side first**.
+The fold is what catches a narrowing slip, and it is what lets `cargo test`
+catch one alone rather than waiting for the JavaScript parity spec.
+
+**Do not take a cone-versus-basement split off a subtraction.** `field -
+blobTerm == basement` looks like the spot field and is not: `(a + b) - b` is not
+`a`, and the proxy undercounts the at-basement group by up to 692 of 4,105
+positions. Both ports agree on the proxy at 8 of 8 cases, so it is a faithful
+measurement of the wrong thing. Take it from the spot field.
 
 **`snapPosition` before scoring anything against a fixture**
 (`test/captureGrid.ts`). Scoring at raw fixture coordinates returns a confident
@@ -1424,6 +1464,22 @@ exact f32 matches:
 
 plus the cliff offset chain at 38 positions and two seeds: `rawX` 30 and 36,
 `rawY` 30 and 30, `hillsOffset` 29 and 31, `cliffRingbreak` 29 and 31.
+
+The tile layer is **153 of 153** at all three seeds, and reads high for the
+reason an argmax always does.
+
+**The resource layer has no exact count** - it is 0 of 16,420 and 0 of 14,980,
+see above - so it freezes a worst absolute residual per case instead, plus a
+fold. Those residuals, all four cases at two seeds each:
+
+| fixture                    | iron          | copper / uranium |
+| -------------------------- | ------------- | ---------------- |
+| `oracle-resource-regular`  | 0.6665/0.6811 | 0.4459/0.4725    |
+| `oracle-resource-starting` | 0.6211/0.6386 | 0.3752/0.3760    |
+
+Every one of those is the SAME term: the `fast_cbrt` inside `basement_value`
+(#261). Split by whether a cone reached the position, the residual is +0.36 to
++0.61 where the basement is read and **-0.002 to -0.124 where it is not**.
 
 The headline results on the two finished planets:
 
@@ -1680,7 +1736,32 @@ running the wasm parity specs**, especially tier 3's byte-identical renders.
   `engine.wasm` by 142 bytes, which is a reminder that a wasm diff is not by
   itself evidence of a behaviour change.
 - **Export a `<planet>_field_count()`** and assert the spec's name list against
-  it, so a field added to the chain cannot silently go untested.
+  it, so a field added to the chain cannot silently go untested. Nauvis is at
+  **57**: 16 expression fields, 21 tile probabilities, the tile argmax, 18
+  resource wrappers and the resource resolver.
+- **Let the two sides reach the same numbers by DIFFERENT routes where you can.**
+  Nauvis's resource block is the worked case: the Rust selector reads its five
+  thresholded resources off the shipped `ResourceResolver`, while the TypeScript
+  spec builds all six from the documented skip constants, because
+  `makeResourceResolver` returns a bare closure and exposes nothing. Agreement
+  is then evidence that the resolver really does partition its two candidate
+  streams the way its own docs say. Building the same private copy on both sides
+  would have proved nothing - that is the `checksum_vulcanus` trap one level up.
+- **Build an expensive tier-2 layer LAZILY.** `checksum_nauvis` is one call per
+  FIELD, and constructing the resource block builds four `ElevationNauvis`
+  trees, so an eager build would make all 38 expression and tile fields pay for
+  a layer none of them reads. A `OnceCell` on the selector fixes it, and
+  `the_resource_layer_is_built_only_when_a_resource_field_is_asked_for` keeps it
+  fixed.
+- **A parity window must CONTAIN the thing it grades.** Four of the six resource
+  `probability` fields folded 484 zeros in both original windows, because ore is
+  sparse against a 22x22 sweep and no patch intersected them - a fold that is
+  perfectly bit-identical and compares nothing. No single window fixes it (the
+  best of six candidates reached five of six resources), so there are two wide
+  ones, and `every resource is actually drawn somewhere in the sweep` freezes
+  the per-resource hit counts so a window drifting off its patches fails rather
+  than silently losing coverage. Same lesson as the resource overlay's five
+  windows on Vulcanus.
 - **Cross the parameters as a REQUEST once a render path exists.**
   `checksum_vulcanus(request_len, field)` reads the request already in the
   scratch buffer, written by the shipped `encodeRenderRequest`, and builds its
