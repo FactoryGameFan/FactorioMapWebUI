@@ -110,6 +110,8 @@
 //! +96  f64  rocks_frequency
 //! +104 f64  rocks_size
 //! +112 f64 x 4   placement_sweep_box: x0, y0, x1, y1
+//! +144 f64  enemy_frequency
+//! +152 f64  enemy_size
 //! ```
 //!
 //! **The Vulcanus block has grown twice with no version bump - 248 to 280 for
@@ -156,7 +158,7 @@ pub const FULGORA_PARAMS_BYTES: usize = 48;
 pub const VULCANUS_PARAMS_BYTES: usize = 312;
 
 /// Nauvis's block: eight climate and elevation levers, the tree overlay's four,
-/// then the rock overlay's two and its sweep box.
+/// the rock overlay's two, its sweep box, then the enemy overlay's two.
 ///
 /// **A third block with no version bump, which is the split working as
 /// designed.** [`ABI_VERSION`] describes the COMMON prefix, which every planet
@@ -173,9 +175,13 @@ pub const VULCANUS_PARAMS_BYTES: usize = 312;
 /// directions cross; that is the same two-boxes-not-one reasoning Vulcanus's
 /// block records, and it is a further growth rather than a reuse.
 ///
-/// **Grown 64 -> 96 for the tree overlay, then 96 -> 144 for the rocks.**
-/// Vulcanus's grew three times the same way.
-pub const NAUVIS_PARAMS_BYTES: usize = 144;
+/// **Grown 64 -> 96 for the tree overlay, 96 -> 144 for the rocks, 144 -> 160
+/// for the enemies.** Vulcanus's grew three times the same way. The enemy
+/// growth is the smallest of the three because that overlay reuses the rock
+/// overlay's sweep box whole: both paint a symmetric 3x3 mark, so one halo
+/// serves them and `placementMarkSweepBox` is the one place the arithmetic
+/// lives.
+pub const NAUVIS_PARAMS_BYTES: usize = 160;
 
 /// The largest request the module can accept, which is what `request_bytes()`
 /// reports so a caller can size one buffer for every planet.
@@ -398,7 +404,16 @@ pub struct NauvisParams {
     /// renderer knows.
     ///
     /// For an untiled render this is the pixel box itself.
+    ///
+    /// The ENEMY overlay reads this same box rather than getting one of its
+    /// own. Both it and the rocks paint a symmetric 3x3 mark, so one halo
+    /// covers them exactly - unlike Vulcanus, whose cliff block is a different
+    /// shape and does need a second.
     pub placement_sweep_box: [f64; 4],
+    /// `control:enemy-base:frequency`.
+    pub enemy_frequency: f64,
+    /// `control:enemy-base:size`.
+    pub enemy_size: f64,
 }
 
 impl VulcanusParams {
@@ -491,6 +506,8 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
                 f64_at(bytes, p + 128),
                 f64_at(bytes, p + 136),
             ],
+            enemy_frequency: f64_at(bytes, p + 144),
+            enemy_size: f64_at(bytes, p + 152),
         }),
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
@@ -587,7 +604,7 @@ mod tests {
         let mut b = good_nauvis();
         let values = [
             11.0f64, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0,
-            25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0,
+            25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 32.0, 33.0,
         ];
         for (i, v) in values.iter().enumerate() {
             let at = 32 + i * 8;
@@ -620,6 +637,8 @@ mod tests {
                 n.placement_sweep_box[1],
                 n.placement_sweep_box[2],
                 n.placement_sweep_box[3],
+                n.enemy_frequency,
+                n.enemy_size,
             ],
             values
         );

@@ -132,6 +132,49 @@ function request(w: Window): ElevationRenderRequest {
   };
 }
 
+/**
+ * A Nauvis request built for `renderThroughWasm` directly, bypassing
+ * `runRenderRequest`.
+ *
+ * Shared by every overlay block's "serves the view rather than refusing it"
+ * test, which is the one test in each block that has to reach the module
+ * without the fallback in front of it. Shared rather than written out per
+ * block because each ABI growth makes another lever REQUIRED, and three
+ * separate copies meant three edits and three chances to miss one - the
+ * type-checker caught it every time, but the churn is the point.
+ *
+ * Every lever is at the game's default, so these tests grade acceptance of the
+ * view and nothing else; the levers are graded by their own block's test.
+ */
+function directRequest(w: Window, view: "trees" | "rocks" | "enemies") {
+  return {
+    planet: "nauvis",
+    view,
+    seed0: SEED,
+    width: w.width,
+    height: w.height,
+    originX: w.originX,
+    originY: w.originY,
+    tilesPerPixel: w.tilesPerPixel,
+    waterLevel: 0,
+    segmentationMultiplier: 1,
+    moistureFrequency: 1,
+    moistureBias: 0,
+    auxFrequency: 1,
+    auxBias: 0,
+    startingAreaMoistureSize: 1,
+    startingAreaMoistureFrequency: 1,
+    temperatureFrequency: 1,
+    temperatureBias: 0,
+    treesFrequency: 1,
+    treesSize: 1,
+    rocksFrequency: 1,
+    rocksSize: 1,
+    enemyFrequency: 1,
+    enemySize: 1,
+  } as const;
+}
+
 let compiled: WebAssembly.Module | undefined;
 async function engine() {
   compiled ??= await compileEngine(
@@ -309,30 +352,7 @@ describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScr
     // fallback.
     const e = await engine();
     const w = WINDOWS[0];
-    const pixels = renderThroughWasm(e, {
-      planet: "nauvis",
-      view: "trees",
-      seed0: SEED,
-      width: w.width,
-      height: w.height,
-      originX: w.originX,
-      originY: w.originY,
-      tilesPerPixel: w.tilesPerPixel,
-      waterLevel: 0,
-      segmentationMultiplier: 1,
-      moistureFrequency: 1,
-      moistureBias: 0,
-      auxFrequency: 1,
-      auxBias: 0,
-      startingAreaMoistureSize: 1,
-      startingAreaMoistureFrequency: 1,
-      temperatureFrequency: 1,
-      temperatureBias: 0,
-      treesFrequency: 1,
-      treesSize: 1,
-      rocksFrequency: 1,
-      rocksSize: 1,
-    });
+    const pixels = renderThroughWasm(e, directRequest(w, "trees"));
     expect(pixels.length).toBe(w.width * w.height * 4);
   }, 300000);
 
@@ -474,30 +494,7 @@ describe("the WASM engine renders the Nauvis rock overlay exactly as the TypeScr
     // runs of the same code.
     const e = await engine();
     const w = WINDOWS[0];
-    const pixels = renderThroughWasm(e, {
-      planet: "nauvis",
-      view: "rocks",
-      seed0: SEED,
-      width: w.width,
-      height: w.height,
-      originX: w.originX,
-      originY: w.originY,
-      tilesPerPixel: w.tilesPerPixel,
-      waterLevel: 0,
-      segmentationMultiplier: 1,
-      moistureFrequency: 1,
-      moistureBias: 0,
-      auxFrequency: 1,
-      auxBias: 0,
-      startingAreaMoistureSize: 1,
-      startingAreaMoistureFrequency: 1,
-      temperatureFrequency: 1,
-      temperatureBias: 0,
-      treesFrequency: 1,
-      treesSize: 1,
-      rocksFrequency: 1,
-      rocksSize: 1,
-    });
+    const pixels = renderThroughWasm(e, directRequest(w, "rocks"));
     expect(pixels.length).toBe(w.width * w.height * 4);
   }, 300000);
 
@@ -587,6 +584,185 @@ describe("the WASM engine renders the Nauvis rock overlay exactly as the TypeScr
           runRenderRequest(
             {
               ...rockRequest(w),
+              width: tile.width,
+              height: tile.height,
+              originX: tile.originX,
+              originY: tile.originY,
+              ...(withHalo ? { fullImage: full } : {}),
+            },
+            e,
+          ).buffer,
+        );
+        for (let ty = 0; ty < tile.height; ty++) {
+          for (let tx = 0; tx < tile.width; tx++) {
+            const src = (ty * tile.width + tx) * 4;
+            const dst = ((tile.dy + ty) * w.width + (tile.dx + tx)) * 4;
+            stitched.set(px.subarray(src, src + 4), dst);
+          }
+        }
+      }
+      return stitched;
+    };
+    expect(Array.from(renderTiled(true))).toEqual(Array.from(whole));
+    expect(Array.from(renderTiled(false))).not.toEqual(Array.from(whole));
+  }, 300000);
+});
+
+/**
+ * The enemy overlay's OWN windows, and it needs them for the reason Vulcanus's
+ * ore block needs its own five.
+ *
+ * Enemy bases do not spawn inside the starting area, so two of the five windows
+ * the tree and rock blocks share carry **zero** enemy pixels - and worse, on
+ * the near-spawn window `control:enemy-base:frequency` moves the render by
+ * exactly **0 bytes**. A lever test there reports success having graded
+ * nothing, which is the failure this whole port keeps re-learning.
+ *
+ * These five were found by sweeping the far field and then varying width,
+ * height, origin and tiles-per-pixel independently across what carried bases,
+ * so a swapped width and height or an origin folded into the wrong axis is
+ * still visible. Every one carries bases AND moves under both levers.
+ */
+const ENEMY_WINDOWS: readonly Window[] = [
+  {
+    label: "far north-east",
+    width: 64,
+    height: 64,
+    originX: 2000.5,
+    originY: -2000.25,
+    tilesPerPixel: 8,
+  },
+  { label: "tall", width: 24, height: 96, originX: -2048, originY: 768, tilesPerPixel: 8 },
+  {
+    label: "wide",
+    width: 120,
+    height: 40,
+    originX: -4000.25,
+    originY: -4000.75,
+    tilesPerPixel: 12,
+  },
+  {
+    label: "fine, far",
+    width: 64,
+    height: 64,
+    originX: 1500.5,
+    originY: 1500.25,
+    tilesPerPixel: 2,
+  },
+  {
+    label: "very far, coarse",
+    width: 96,
+    height: 96,
+    originX: -6000.5,
+    originY: 6000.25,
+    tilesPerPixel: 16,
+  },
+];
+
+/** Measured on the TypeScript path before the port. */
+const ENEMY_PIXELS_PER_WINDOW = [150, 44, 116, 84, 208];
+
+/**
+ * `ENEMY_MAP_COLOR` in `src/noise/enemies/enemyCatalog.ts`.
+ *
+ * **Not `ENEMY_RGB` above**, which is 25 rather than 26 and is the colour the
+ * GAME's own capture paints. The two differ by one in the red-adjacent
+ * channels and mean different things: this one is what our overlay writes, that
+ * one is what the preview PNG contains and the terrain comparison excludes.
+ */
+const ENEMY_OVERLAY_RGB = [255, 26, 26] as const;
+
+describe("the WASM engine renders the Nauvis enemy overlay exactly as the TypeScript does", () => {
+  const enemyRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "enemies" });
+
+  it("serves the enemies view rather than refusing it", async () => {
+    const e = await engine();
+    const w = ENEMY_WINDOWS[0];
+    const pixels = renderThroughWasm(e, directRequest(w, "enemies"));
+    expect(pixels.length).toBe(w.width * w.height * 4);
+  }, 300000);
+
+  it("is byte-identical across five windows", async () => {
+    const e = await engine();
+    for (const w of ENEMY_WINDOWS) {
+      const wasm = new Uint8ClampedArray(runRenderRequest(enemyRequest(w), e).buffer);
+      const ts = new Uint8ClampedArray(runRenderRequest(enemyRequest(w)).buffer);
+      expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+    }
+  }, 300000);
+
+  it("paints enemy pixels in every window, and only enemy-coloured ones", async () => {
+    const e = await engine();
+    const counts: number[] = [];
+    for (const w of ENEMY_WINDOWS) {
+      const enemies = new Uint8ClampedArray(runRenderRequest(enemyRequest(w), e).buffer);
+      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      let changed = 0;
+      let enemyColoured = 0;
+      for (let i = 0; i < enemies.length; i += 4) {
+        const was =
+          terrain[i] === ENEMY_OVERLAY_RGB[0] &&
+          terrain[i + 1] === ENEMY_OVERLAY_RGB[1] &&
+          terrain[i + 2] === ENEMY_OVERLAY_RGB[2];
+        const is =
+          enemies[i] === ENEMY_OVERLAY_RGB[0] &&
+          enemies[i + 1] === ENEMY_OVERLAY_RGB[1] &&
+          enemies[i + 2] === ENEMY_OVERLAY_RGB[2];
+        if (
+          enemies[i] !== terrain[i] ||
+          enemies[i + 1] !== terrain[i + 1] ||
+          enemies[i + 2] !== terrain[i + 2]
+        ) {
+          changed++;
+        }
+        if (is && !was) enemyColoured++;
+      }
+      expect(enemyColoured, `${w.label}: every changed pixel must be enemy-coloured`).toBe(changed);
+      counts.push(changed);
+    }
+    expect(counts).toEqual(ENEMY_PIXELS_PER_WINDOW);
+  }, 300000);
+
+  it("moving each enemy lever moves the render on both paths together", async () => {
+    // The window is the FAR one, not the near-spawn one every other block uses:
+    // `frequency` moves 0 bytes near spawn, so that test would be vacuous. Here
+    // the two levers move 328 and 587 bytes, measured on the TypeScript path.
+    const e = await engine();
+    const base = enemyRequest(ENEMY_WINDOWS[4]);
+    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+    const baseWasm = flat(base, e);
+    expect(flat(base)).toEqual(baseWasm);
+    for (const [label, patch] of [
+      ["enemyControls.frequency", { enemyControls: { frequency: 3, size: 1 } }],
+      ["enemyControls.size", { enemyControls: { frequency: 1, size: 3 } }],
+    ] as const) {
+      const req = { ...base, ...patch } as ElevationRenderRequest;
+      const moved = flat(req, e);
+      expect(moved, `${label}: the two paths must agree`).toEqual(flat(req));
+      expect(moved, `${label}: must actually move the render`).not.toEqual(baseWasm);
+    }
+  }, 300000);
+
+  it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
+    const e = await engine();
+    const w = ENEMY_WINDOWS[4];
+    const whole = new Uint8ClampedArray(runRenderRequest(enemyRequest(w), e).buffer);
+    const full = {
+      originX: w.originX,
+      originY: w.originY,
+      width: w.width,
+      height: w.height,
+      tilesPerPixel: w.tilesPerPixel,
+    };
+    const renderTiled = (withHalo: boolean): Uint8ClampedArray => {
+      const stitched = new Uint8ClampedArray(whole.length);
+      for (const tile of planTiles(full, 32)) {
+        const px = new Uint8ClampedArray(
+          runRenderRequest(
+            {
+              ...enemyRequest(w),
               width: tile.width,
               height: tile.height,
               originX: tile.originX,

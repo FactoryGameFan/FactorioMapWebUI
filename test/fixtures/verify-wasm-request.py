@@ -41,6 +41,7 @@ VIEW = {
     "resources": 5,
     "all": 6,
     "trees": 7,
+    "enemies": 8,
 }
 
 BEARING_NAMES = [
@@ -57,7 +58,7 @@ BEARING_NAMES = [
 ]
 
 
-NAUVIS_PARAMS_BYTES = 144
+NAUVIS_PARAMS_BYTES = 160
 """Must equal fmw_wasm::abi::NAUVIS_PARAMS_BYTES."""
 
 
@@ -112,7 +113,7 @@ def decode_fulgora(b, req):
 
 
 def decode_nauvis(b, req):
-    """Nauvis's block: fourteen f64 levers and one world box, no trig.
+    """Nauvis's block: sixteen f64 levers and one world box, no trig.
 
     The simplest of the three, and the only structural check available is that
     every field lands at its own offset - there is no unit-norm property to
@@ -152,6 +153,8 @@ def decode_nauvis(b, req):
         "treesSize",
         "rocksFrequency",
         "rocksSize",
+        "enemyFrequency",
+        "enemySize",
     ]
     values = [req[name] for name in fields]
     if len(set(values)) != len(values):
@@ -159,8 +162,13 @@ def decode_nauvis(b, req):
             "the nauvis fixture must use a DISTINCT value per lever - "
             "with a repeat, a swap of the two that share it reads correct"
         )
+    # The offsets are NOT a flat walk any more: the sweep box sits between the
+    # rock levers and the enemy ones, so everything after index 14 is shifted by
+    # the box's 32 bytes. Written as an explicit offset per field rather than
+    # `p + i * 8`, because that expression silently read the box as two levers.
     for i, name in enumerate(fields):
-        check(name, f64(b, p + i * 8), req[name])
+        at = p + i * 8 if i < 14 else p + 32 + i * 8
+        check(name, f64(b, at), req[name])
 
     # The sweep box is checked by SHAPE rather than by distinctness, the way
     # Vulcanus's two are. A rock mark is a symmetric 3x3 centred on its pixel,

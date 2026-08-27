@@ -604,11 +604,11 @@
     ]
   },
   "nauvis": {
-    "paramsBytes": 144,
-    "totalBytes": 200,
+    "paramsBytes": 160,
+    "totalBytes": 216,
     "request": {
       "planet": "nauvis",
-      "view": "rocks",
+      "view": "enemies",
       "seed0": 123456,
       "width": 8,
       "height": 4,
@@ -629,6 +629,8 @@
       "treesSize": 8.75,
       "rocksFrequency": 9.5,
       "rocksSize": 10.25,
+      "enemyFrequency": 11.75,
+      "enemySize": 13.25,
       "placementSweepBox": {
         "x0": -514.5,
         "y0": 254.25,
@@ -651,7 +653,9 @@
         "treesFrequency",
         "treesSize",
         "rocksFrequency",
-        "rocksSize"
+        "rocksSize",
+        "enemyFrequency",
+        "enemySize"
       ],
       "placementSweepBox": {
         "x0": -514.5,
@@ -673,7 +677,7 @@
       0,
       0,
       0,
-      4,
+      8,
       0,
       0,
       0,
@@ -689,7 +693,7 @@
       0,
       0,
       0,
-      144,
+      160,
       0,
       0,
       0,
@@ -860,6 +864,22 @@
       0,
       164,
       112,
+      64,
+      0,
+      0,
+      0,
+      0,
+      0,
+      128,
+      39,
+      64,
+      0,
+      0,
+      0,
+      0,
+      0,
+      128,
+      42,
       64
     ]
   }

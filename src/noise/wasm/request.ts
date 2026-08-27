@@ -43,7 +43,7 @@ export const FULGORA_PARAMS_BYTES = 48;
 export const VULCANUS_PARAMS_BYTES = 312;
 
 /** Must equal `fmw_wasm::abi::NAUVIS_PARAMS_BYTES`. */
-export const NAUVIS_PARAMS_BYTES = 144;
+export const NAUVIS_PARAMS_BYTES = 160;
 
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
@@ -74,6 +74,7 @@ export const VIEW = {
   resources: 5,
   all: 6,
   trees: 7,
+  enemies: 8,
 } as const;
 
 /**
@@ -221,6 +222,9 @@ export interface NauvisRenderRequest extends CommonRenderRequest {
     readonly x1: number;
     readonly y1: number;
   };
+  /** `control:enemy-base:frequency` / `:size`. */
+  readonly enemyFrequency: number;
+  readonly enemySize: number;
 }
 
 export type WasmRenderRequest = FulgoraRenderRequest | VulcanusRenderRequest | NauvisRenderRequest;
@@ -370,8 +374,9 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
 }
 
 /**
- * Nauvis's block: eight climate levers, the tree overlay's four, then the rock
- * overlay's two and its sweep box. No trig, and ONE box rather than two.
+ * Nauvis's block: eight climate levers, the tree overlay's four, the rock
+ * overlay's two, its sweep box, then the enemy overlay's two. No trig, and ONE
+ * box rather than two.
  *
  * No trig because Nauvis reaches no `starting_spot_at_angle` - it is the one
  * planet whose whole chain is free of transcendentals, so nothing has to be
@@ -379,12 +384,12 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
  *
  * The tree overlay needed no box at all, which is a property of trees rather
  * than an omission: it reads its density FIELD at a one-cell border in world
- * coordinates instead of reading neighbouring image pixels. The rock overlay
- * does read the image - its 3x3 mark straddles seams - so it needs the sweep
- * box, and because that mark is symmetric one box covers it exactly. The cliff
- * overlay will need a SECOND box, since its block is asymmetric and its two
- * directions cross; that is a further growth rather than a reuse, and needs no
- * version bump either.
+ * coordinates instead of reading neighbouring image pixels. The rock and enemy
+ * overlays do read the image - their 3x3 marks straddle seams - and because
+ * both marks are symmetric and the same size, ONE box covers them both. The
+ * cliff overlay will need a SECOND box, since its block is asymmetric and its
+ * two directions cross; that is a further growth rather than a reuse, and needs
+ * no version bump either.
  */
 function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
   const p = COMMON_BYTES;
@@ -412,6 +417,8 @@ function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
   view.setFloat64(p + 120, sweep.y0, true);
   view.setFloat64(p + 128, sweep.x1, true);
   view.setFloat64(p + 136, sweep.y1, true);
+  view.setFloat64(p + 144, req.enemyFrequency, true);
+  view.setFloat64(p + 152, req.enemySize, true);
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {

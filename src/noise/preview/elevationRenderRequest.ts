@@ -403,13 +403,13 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 }
 
 /**
- * The Rust engine's Nauvis path - the terrain view, the tree overlay and the
- * rock overlay.
+ * The Rust engine's Nauvis path - the terrain view and the tree, rock and
+ * enemy overlays.
  *
- * The three remaining overlays (resources, cliffs, enemies) are the follow-up,
- * so an `all` request still takes the TypeScript path in full rather than
- * coming back missing them. The module refuses any other Nauvis view with
- * `unsupported planet or view`, so a mistake here is loud rather than silent.
+ * The two remaining overlays (resources and cliffs) are the follow-up, so an
+ * `all` request still takes the TypeScript path in full rather than coming back
+ * missing them. The module refuses any other Nauvis view with `unsupported
+ * planet or view`, so a mistake here is loud rather than silent.
  *
  * **`waterLevel` is sent and deliberately ignored by the module** - issue #326.
  * `renderTerrain.ts` resolves every tile at `waterLevel = 0` however the slider
@@ -422,7 +422,7 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 function renderNauvisThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
-  view: "terrain" | "trees" | "rocks",
+  view: "terrain" | "trees" | "rocks" | "enemies",
 ): ElevationRenderResult {
   const pixels = renderThroughWasm(engine, {
     planet: "nauvis",
@@ -456,6 +456,8 @@ function renderNauvisThroughWasm(
     treesSize: req.treeControls?.size ?? 1,
     rocksFrequency: req.rockControls?.frequency ?? 1,
     rocksSize: req.rockControls?.size ?? 1,
+    enemyFrequency: req.enemyControls?.frequency ?? 1,
+    enemySize: req.enemyControls?.size ?? 1,
     // The same box `renderRocks` is handed on the TypeScript path, so the two
     // sweep identical pixel ranges. `haloQueryBox` stays the one place that
     // arithmetic lives.
@@ -649,7 +651,7 @@ export function runRenderRequest(
     }
     // The Nauvis paths the Rust engine serves so far. Checked BEFORE the
     // TypeScript render rather than after, so the engine's work replaces it
-    // instead of being thrown away - and not for `all`, because three of the
+    // instead of being thrown away - and not for `all`, because two of the
     // five overlays are still unported and that request must not come back
     // missing them.
     //
@@ -659,7 +661,10 @@ export function runRenderRequest(
     // be a real difference rather than a slower answer.
     if (
       engine !== undefined &&
-      (req.view === "terrain" || req.view === "trees" || req.view === "rocks") &&
+      (req.view === "terrain" ||
+        req.view === "trees" ||
+        req.view === "rocks" ||
+        req.view === "enemies") &&
       isDefaultSpawn(req.startingPositions)
     ) {
       return renderNauvisThroughWasm(req, engine, req.view);

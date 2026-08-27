@@ -1194,7 +1194,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
 | 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view renders through the engine.**                                                                   | done     |
-| 6 (#226) | Nauvis - every expression, the TERRAIN render, and the TREE and ROCK overlays. Three overlays remain                                                                           | **most** |
+| 6 (#226) | Nauvis - every expression, the TERRAIN render, and the TREE, ROCK and ENEMY overlays. Two overlays remain                                                                      | **most** |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1234,9 +1234,31 @@ Then the ROCK overlay - the first Nauvis placement roll, reusing
 `placement/roll.rs` whole and adding only a salt, three collision boxes and the
 argmax over them.
 
-Still unported: three Nauvis OVERLAYS - resources, cliffs and enemies. Until
-they land, an `all` request stays on the TypeScript path in full rather than
-coming back missing them, and the module refuses any other Nauvis view.
+Then the ENEMY overlay, which reuses the rock overlay's roll, water gate,
+sweep box and skip-aware painter whole and adds only two levers, three salts, a
+constant collision box and the penalty composition.
+
+Still unported: two Nauvis OVERLAYS - resources and cliffs. Until they land, an
+`all` request stays on the TypeScript path in full rather than coming back
+missing them, and the module refuses any other Nauvis view.
+
+**The default window set is unusable for a SPARSE overlay, and the enemy layer
+is where that bit hardest.** Enemy bases do not spawn inside the starting area,
+so two of the five windows the tree and rock blocks share carry zero enemy
+pixels - and on the near-spawn window `control:enemy-base:frequency` moves the
+render by exactly **0 bytes**. Both the byte-identity block and the lever test
+would have reported success having graded nothing. The enemy block has its own
+five windows, swept from the far field and then varied in width, height, origin
+and tiles-per-pixel independently. Same lesson as Vulcanus's ore windows; expect
+to need it again for resources, which are sparser still.
+
+**Two edits in one slice landed in the VULCANUS path instead of the Nauvis one**,
+because the two writers end with identical text: `NauvisParams` and
+`VulcanusParams` both end `pub placement_sweep_box: [f64; 4],`, and
+`renderNauvisThroughWasm` and `renderVulcanusThroughWasm` both end
+`placementSweepBox: placementMarkSweepBox(req),`. The first was caught by the
+compiler; the second was not - it type-checked and rendered zero enemies, which
+looked exactly like a broken port. Anchor an edit on text only the target has.
 
 Three traps that slice paid for, all transferable:
 
@@ -1619,11 +1641,11 @@ Fulgora's has not moved a byte. `BadParamsLength` refuses a writer whose
 declared length disagrees. **A version bump is for a change to the COMMON
 prefix**, which every planet reads.
 
-**Nauvis's block landed at 64 bytes with no bump and has since grown twice** -
-96 for the tree overlay's four levers, 144 for the rock overlay's two and its
-sweep box - so a Nauvis request is 200, still between the other two, which is
-what makes "the encoder returns a LENGTH, not the capacity" a real statement
-rather than a two-case coincidence. It carries no trig, because Nauvis is the
+**Nauvis's block landed at 64 bytes with no bump and has since grown three
+times** - 96 for the tree overlay's four levers, 144 for the rock overlay's two
+and its sweep box, 160 for the enemy overlay's two - so a Nauvis request is 216,
+still between the other two, which is what makes "the encoder returns a LENGTH,
+not the capacity" a real statement rather than a two-case coincidence. It carries no trig, because Nauvis is the
 one planet free of transcendentals.
 
 It carries ONE world box, not two, and which overlays need one is not
