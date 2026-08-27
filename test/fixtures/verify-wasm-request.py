@@ -58,8 +58,16 @@ BEARING_NAMES = [
 ]
 
 
-NAUVIS_PARAMS_BYTES = 376
-"""Must equal fmw_wasm::abi::NAUVIS_PARAMS_BYTES."""
+NAUVIS_MAX_STARTING_POINTS = 8
+"""Must equal fmw_wasm::abi::NAUVIS_MAX_STARTING_POINTS."""
+
+NAUVIS_PARAMS_BYTES = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16
+"""Must equal fmw_wasm::abi::NAUVIS_PARAMS_BYTES.
+
+376 bytes of levers and boxes, then the starting-point block: one count
+plus NAUVIS_MAX_STARTING_POINTS [x, y] pairs, added by #227 so a moved
+spawn no longer has to fall back to the TypeScript renderer.
+"""
 
 
 def u32(b, off):
@@ -250,6 +258,50 @@ def decode_nauvis(b, req):
             "resource triples included"
         )
 
+    # The starting-point block (#227). Written from the layout table rather
+    # than from the encoder: count at p + 376, then eight [x, y] pairs.
+    #
+    # Checked as PAIRS, not as a flat run of sixteen scalars. Flattening is
+    # what would let an [x, y] read transposed, or the list sit one slot out
+    # against its count, and still line up - the same shape of hole the
+    # bearing swap exposed on Vulcanus. So each pair is checked against its
+    # own request entry, x and y separately, and the fixture must make x != y
+    # within every pair or a transpose reads correct.
+    want_spawn = req.get("startingPositions", [])
+    if len(want_spawn) > NAUVIS_MAX_STARTING_POINTS:
+        raise AssertionError(
+            f"startingPositions holds {len(want_spawn)} points, over the cap "
+            f"of {NAUVIS_MAX_STARTING_POINTS}"
+        )
+    count = f64(b, p + 376)
+    check("startingPositionCount", count, float(len(want_spawn)))
+    for i in range(NAUVIS_MAX_STARTING_POINTS):
+        at = p + 384 + i * 16
+        x, y = f64(b, at), f64(b, at + 8)
+        if i < len(want_spawn):
+            check(f"startingPositions[{i}].x", x, want_spawn[i]["x"])
+            check(f"startingPositions[{i}].y", y, want_spawn[i]["y"])
+            if x == y:
+                raise AssertionError(
+                    f"startingPositions[{i}] has x == y ({x}), so a transposed "
+                    "pair would read back correct"
+                )
+        elif (x, y) != (0.0, 0.0):
+            # Past the count the slots must be zeroed. A writer that left stale
+            # bytes there is invisible today - nothing reads them - and becomes
+            # a wrong spawn the moment the count grows.
+            raise AssertionError(
+                f"startingPositions[{i}] is past the count but holds ({x}, {y})"
+            )
+    # Distinct POINTS as well as distinct coordinates, so a swap of two whole
+    # points cannot read back correct either.
+    pts = [(pt["x"], pt["y"]) for pt in want_spawn]
+    if len(set(pts)) != len(pts):
+        raise AssertionError(
+            "the nauvis fixture must use DISTINCT starting points - with a "
+            "repeat, a swap of the two that share it reads correct"
+        )
+
     # A planted reordering of two levers that happen to hold the SAME value
     # would slip past the loop above, so the fixture's request must not make
     # that possible for more than the defaults it deliberately uses.
@@ -258,6 +310,7 @@ def decode_nauvis(b, req):
         "placementSweepBox": want,
         "cellQueryBox": want_cells,
         "resourceLevers": want_res,
+        "startingPositions": want_spawn,
     }
 
 
@@ -431,7 +484,8 @@ def main():
         f"nauvis: all {len(nlevers['levers'])} levers agree at their own "
         f"offsets and are pairwise distinct, six resource triples distinct "
         f"too, placement halo symmetric, cliff halo asymmetric and distinct "
-        f"from it, {len(nb)} bytes"
+        f"from it, {len(nlevers['startingPositions'])} starting points paired "
+        f"and the rest zeroed, {len(nb)} bytes"
     )
 
     fixture = {

@@ -192,7 +192,9 @@ pub const VULCANUS_PARAMS_BYTES: usize = 312;
 /// growth is the largest because it is the only overlay with PER-RESOURCE
 /// levers rather than one pair, and it is what makes Nauvis's block the biggest
 /// of the three - see [`REQUEST_BYTES`].
-pub const NAUVIS_PARAMS_BYTES: usize = 376;
+/// 376 bytes of levers and boxes, then the starting-point block: one count
+/// plus `NAUVIS_MAX_STARTING_POINTS` `[x, y]` pairs.
+pub const NAUVIS_PARAMS_BYTES: usize = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16;
 
 /// The largest request the module can accept, which is what `request_bytes()`
 /// reports so a caller can size one buffer for every planet.
@@ -473,6 +475,62 @@ pub struct NauvisParams {
     /// produces a plausible planet with its ores swapped, which is the same
     /// hazard the Vulcanus bearings carry.
     pub resource_levers: [[f64; 3]; 6],
+    /// How many of [`NauvisParams::starting_positions`] are real, `0..=8`.
+    ///
+    /// Carried as an `f64` like every other slot in this block, so the offset
+    /// arithmetic stays uniform and `f64_at` is the only reader. Decoding
+    /// clamps it, so a writer that lies cannot make the module read past the
+    /// array.
+    pub starting_position_count: f64,
+    /// The map's starting points, world tiles, `[x, y]` each.
+    ///
+    /// **Fixed capacity rather than a variable-length array**, which is what
+    /// kept this out of the block until now. Eight is well past what a real
+    /// preset carries - the game's default is a single point at the origin and
+    /// the app has no UI to add one, so these arrive only from an imported
+    /// exchange string.
+    ///
+    /// The spawn is not decoration: it reaches `elevation_nauvis`'s distance
+    /// term, `moisture`'s starting-area blend, the starting lakes, the tree
+    /// distance term and the starting resource patches. Before this block
+    /// carried it the module fixed it at the origin and `runRenderRequest`
+    /// sent any moved spawn down the TypeScript path instead - which is why
+    /// #227 could not delete that path.
+    pub starting_positions: [[f64; 2]; NAUVIS_MAX_STARTING_POINTS],
+}
+
+/// Capacity of [`NauvisParams::starting_positions`].
+///
+/// A cap rather than a variable-length array. Raising it grows the block and
+/// needs no ABI version bump - the common prefix is untouched - but it does
+/// need `NAUVIS_PARAMS_BYTES`, the TypeScript mirror and both offset tests to
+/// move together.
+pub const NAUVIS_MAX_STARTING_POINTS: usize = 8;
+
+impl NauvisParams {
+    /// The starting points that are actually set, as a slice.
+    ///
+    /// Reading `starting_positions` directly would hand a caller eight points
+    /// where the request declared fewer, and the trailing zeros are `(0, 0)` -
+    /// a legitimate spawn position, so they cannot be told apart by value.
+    #[must_use]
+    pub fn starting_points(&self) -> &[[f64; 2]] {
+        &self.starting_positions[..self.starting_point_count()]
+    }
+
+    /// [`NauvisParams::starting_position_count`], clamped to the real capacity.
+    ///
+    /// A non-finite or negative count reads as zero rather than trapping, and
+    /// the render path turns an empty list into the origin - so a malformed
+    /// request renders the default planet instead of failing.
+    #[must_use]
+    pub fn starting_point_count(&self) -> usize {
+        let n = self.starting_position_count;
+        if !n.is_finite() || n < 1.0 {
+            return 0;
+        }
+        (n as usize).min(NAUVIS_MAX_STARTING_POINTS)
+    }
 }
 
 impl NauvisParams {
@@ -597,6 +655,15 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
                     ];
                 }
                 levers
+            },
+            starting_position_count: f64_at(bytes, p + 376),
+            starting_positions: {
+                let mut points = [[0.0f64; 2]; NAUVIS_MAX_STARTING_POINTS];
+                for (i, point) in points.iter_mut().enumerate() {
+                    let at = p + 384 + i * 16;
+                    *point = [f64_at(bytes, at), f64_at(bytes, at + 8)];
+                }
+                points
             },
         }),
         _ => {
@@ -743,9 +810,66 @@ mod tests {
             ]
             .into_iter()
             .chain(n.resource_levers.into_iter().flatten())
+            .chain(core::iter::once(n.starting_position_count))
+            .chain(n.starting_positions.into_iter().flatten())
             .collect::<Vec<_>>(),
             values
         );
+    }
+
+    /// The starting-point list reads back as points, not as a flat run.
+    ///
+    /// The offset test above proves every slot has its own address, but it
+    /// flattens the array - so an `[x, y]` pair read transposed, or the whole
+    /// list shifted by one slot against its count, would still line up. This
+    /// pins the pairing and the count together.
+    #[test]
+    fn the_nauvis_starting_points_read_back_as_pairs() {
+        let mut b = good_nauvis();
+        let p = COMMON_BYTES;
+        let count = 3.0f64;
+        b[p + 376..p + 384].copy_from_slice(&count.to_le_bytes());
+        // Distinct, and x != y within each pair so a transpose is visible.
+        let pts: [[f64; 2]; 3] = [[-40.5, 17.25], [900.0, -3.5], [0.125, 64.0]];
+        for (i, [x, y]) in pts.iter().enumerate() {
+            let at = p + 384 + i * 16;
+            b[at..at + 8].copy_from_slice(&x.to_le_bytes());
+            b[at + 8..at + 16].copy_from_slice(&y.to_le_bytes());
+        }
+        let r = decode(&b).expect("should decode");
+        let Params::Nauvis(n) = r.params else {
+            panic!("wrong block")
+        };
+        assert_eq!(n.starting_point_count(), 3);
+        assert_eq!(n.starting_points(), pts);
+        // The slots past the count are readable but not "set" - and they are
+        // (0, 0), a LEGAL spawn, so nothing but the count can tell them apart.
+        assert_eq!(n.starting_positions[3], [0.0, 0.0]);
+    }
+
+    /// A count outside `0..=8` cannot make the module read past the array.
+    #[test]
+    fn a_bad_nauvis_starting_point_count_is_clamped() {
+        let mut b = good_nauvis();
+        let p = COMMON_BYTES;
+        for (bad, want) in [
+            (99.0f64, NAUVIS_MAX_STARTING_POINTS),
+            (-1.0, 0),
+            (0.0, 0),
+            (f64::NAN, 0),
+            // Non-finite reads as UNSET rather than as the cap: a malformed
+            // count should render the default planet, not eight garbage points.
+            (f64::INFINITY, 0),
+            (2.9, 2),
+        ] {
+            b[p + 376..p + 384].copy_from_slice(&bad.to_le_bytes());
+            let r = decode(&b).expect("should decode");
+            let Params::Nauvis(n) = r.params else {
+                panic!("wrong block")
+            };
+            assert_eq!(n.starting_point_count(), want, "count {bad}");
+            assert_eq!(n.starting_points().len(), want, "slice for {bad}");
+        }
     }
 
     /// The offset test above reaches EVERY `f64` in the block.
@@ -757,7 +881,7 @@ mod tests {
     /// block's own size instead.
     #[test]
     fn the_nauvis_offset_test_covers_the_whole_block() {
-        let named = 3 + 21 + 4 + 4 + 18;
+        let named = 3 + 21 + 4 + 4 + 18 + 1 + NAUVIS_MAX_STARTING_POINTS * 2;
         let slots = (COMMON_BYTES + NAUVIS_PARAMS_BYTES - 32) / 8;
         assert_eq!(
             named, slots,
@@ -809,8 +933,11 @@ mod tests {
         // whichever block happened to be largest. The resource overlay took
         // Nauvis past it, so the constant is a `max` and this pins what it
         // must equal: the biggest block, whichever that is.
-        assert_eq!(COMMON_BYTES + NAUVIS_PARAMS_BYTES, 432);
-        assert_eq!(REQUEST_BYTES, 432);
+        // 568 as of #227's starting-point block: 376 bytes of levers and boxes,
+        // then a count and eight `[x, y]` pairs. It grew again with no version
+        // bump, which is the split working - the common prefix is untouched.
+        assert_eq!(COMMON_BYTES + NAUVIS_PARAMS_BYTES, 568);
+        assert_eq!(REQUEST_BYTES, 568);
         // The property, not the number: the capacity is whichever request is
         // largest. Written over a runtime slice so it keeps holding when a
         // fourth planet arrives, and so it says WHICH planet is biggest rather

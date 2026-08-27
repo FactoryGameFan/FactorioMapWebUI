@@ -527,7 +527,17 @@ pub fn nauvis_ctx(seed0: u32, p: &NauvisParams, water_level: f64) -> NauvisCtx {
         temperature_bias: p.temperature_bias,
         starting_area_moisture_size: p.starting_area_moisture_size,
         starting_area_moisture_frequency: p.starting_area_moisture_frequency,
-        starting_positions: vec![NauvisPoint { x: 0.0, y: 0.0 }],
+        // An empty list renders the default planet rather than dividing by a
+        // spawn that is not there: `distance_from_nearest_point` over no points
+        // has no answer, and the game's own default is a single origin spawn.
+        starting_positions: if p.starting_point_count() == 0 {
+            vec![NauvisPoint { x: 0.0, y: 0.0 }]
+        } else {
+            p.starting_points()
+                .iter()
+                .map(|[x, y]| NauvisPoint { x: *x, y: *y })
+                .collect()
+        },
         trees_frequency: p.trees_frequency,
         trees_size: p.trees_size,
         cliff_controls: CliffControls {

@@ -42,8 +42,13 @@ export const FULGORA_PARAMS_BYTES = 48;
 /** Must equal `fmw_wasm::abi::VULCANUS_PARAMS_BYTES`. */
 export const VULCANUS_PARAMS_BYTES = 312;
 
-/** Must equal `fmw_wasm::abi::NAUVIS_PARAMS_BYTES`. */
-export const NAUVIS_PARAMS_BYTES = 376;
+/** Capacity of a Nauvis request's starting-point list. Mirrors
+ * `fmw_wasm::abi::NAUVIS_MAX_STARTING_POINTS`. */
+export const NAUVIS_MAX_STARTING_POINTS = 8;
+
+/** Must equal `fmw_wasm::abi::NAUVIS_PARAMS_BYTES`: 376 bytes of levers and
+ * boxes, then one count plus `NAUVIS_MAX_STARTING_POINTS` `[x, y]` pairs. */
+export const NAUVIS_PARAMS_BYTES = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16;
 
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
@@ -177,6 +182,17 @@ export interface VulcanusRenderRequest extends CommonRenderRequest {
 
 export interface NauvisRenderRequest extends CommonRenderRequest {
   readonly planet: "nauvis";
+  /**
+   * The map's starting points, world tiles. Omitted or empty means the origin.
+   *
+   * Capped at `NAUVIS_MAX_STARTING_POINTS`; the writer throws above that rather
+   * than dropping points, because a silently shortened list moves
+   * `distanceFromNearestPoint` and renders a subtly wrong planet. The spawn
+   * reaches `elevation_nauvis`'s distance term, `moisture`'s starting-area
+   * blend, the starting lakes, the tree distance term and the starting resource
+   * patches.
+   */
+  readonly startingPositions?: readonly { readonly x: number; readonly y: number }[];
   /**
    * `10 * log2(control:water:size)`.
    *
@@ -484,6 +500,24 @@ function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
     view.setFloat64(at, req.resourceLevers[i][0], true);
     view.setFloat64(at + 8, req.resourceLevers[i][1], true);
     view.setFloat64(at + 16, req.resourceLevers[i][2], true);
+  }
+
+  // The starting points. An empty list is legal and means the origin, which is
+  // what the module does with a zero count and what the game's own default is.
+  // Refusing an over-long list is deliberate: silently dropping points past the
+  // cap would move `distanceFromNearestPoint` and render a subtly wrong planet.
+  const spawn = req.startingPositions ?? [];
+  if (spawn.length > NAUVIS_MAX_STARTING_POINTS) {
+    throw new Error(
+      `startingPositions holds ${spawn.length} points, over the ABI cap of ${NAUVIS_MAX_STARTING_POINTS}`,
+    );
+  }
+  view.setFloat64(p + 376, spawn.length, true);
+  for (let i = 0; i < NAUVIS_MAX_STARTING_POINTS; i++) {
+    const at = p + 384 + i * 16;
+    const pt = spawn[i];
+    view.setFloat64(at, pt ? pt.x : 0, true);
+    view.setFloat64(at + 8, pt ? pt.y : 0, true);
   }
 }
 

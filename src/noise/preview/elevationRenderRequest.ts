@@ -5,6 +5,7 @@ import type { VulcanusResourceControls } from "../eval/ctx";
 import type { EnemyControls } from "../enemies/enemyCatalog";
 import type { Planet } from "../../model/planets";
 import { PLACEMENT_MARK_RADIUS_PX } from "../placement/placementRoll";
+import { NAUVIS_MAX_STARTING_POINTS } from "../wasm/request";
 import type { ResourceControlLevers } from "../resources/resolveResource";
 import type { RockControls } from "../rocks/rockCatalog";
 import { renderCliffs } from "./renderCliffs";
@@ -390,20 +391,6 @@ function renderFulgoraThroughWasm(
 }
 
 /**
- * Whether a request spawns at the origin and nowhere else.
- *
- * The Nauvis ABI block carries no spawn list - a variable-length array would
- * need the scratch region for a parameter nothing in tier 1 moves - so the
- * module fixes it at the origin. A request that moved it has to stay on the
- * TypeScript path, and this is what says so. It is a REAL difference rather
- * than a missing optimisation: `startingPositions` reaches `elevation_nauvis`'s
- * distance term and `moisture`'s starting-area blend.
- */
-function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
-  return points.length === 1 && points[0].x === 0 && points[0].y === 0;
-}
-
-/**
  * The Rust engine's Nauvis path - EVERY view the planet has.
  *
  * The terrain render, all five overlays, and the `all` composite. The module
@@ -482,6 +469,7 @@ function renderNauvisThroughWasm(
     // sweep identical pixel ranges. `haloQueryBox` stays the one place that
     // arithmetic lives.
     placementSweepBox: placementMarkSweepBox(req),
+    startingPositions: req.startingPositions,
   });
   const owned = new Uint8ClampedArray(pixels);
   return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
@@ -673,10 +661,15 @@ export function runRenderRequest(
     // Checked BEFORE the TypeScript render rather than after, so the engine's
     // work replaces it instead of being thrown away.
     //
-    // The spawn is fixed at the origin on the module side, so a request with a
-    // moved spawn stays on the TypeScript path. `startingPositions` reaches
-    // `elevation_nauvis`'s distance terms, so taking the engine for one would
-    // be a real difference rather than a slower answer.
+    // The Nauvis block carries the spawn list as of #227, so a moved spawn no
+    // longer forces the TypeScript path - the module reads the same points and
+    // reaches the same distance terms. An over-long list is refused by the
+    // writer rather than silently shortened, so it cannot arrive here wrong.
+    //
+    // `startingLakePositions` still does force it: the module derives the lake
+    // list from the seed and the spawn, which is the game's own rule and what
+    // the TypeScript does when the caller passes nothing, so an explicit list
+    // would be a wrong answer rather than a slow one. The app never sets it.
     if (
       engine !== undefined &&
       (req.view === "terrain" ||
@@ -687,7 +680,7 @@ export function runRenderRequest(
         req.view === "resources" ||
         req.view === "all") &&
       req.startingLakePositions === undefined &&
-      isDefaultSpawn(req.startingPositions)
+      req.startingPositions.length <= NAUVIS_MAX_STARTING_POINTS
     ) {
       return renderNauvisThroughWasm(req, engine, req.view);
     }

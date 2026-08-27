@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
-import { flushRecording, frozen, frozenCount, RECORDING, record } from "./tier2Frozen";
+import {
+  expectRecordedRows,
+  flushRecording,
+  frozen,
+  frozenCount,
+  RECORDING,
+  record,
+} from "./tier2Frozen";
 
 import { makeCliffinessBasic } from "../src/noise/cliffs/vulcanusCliffFields";
 import { distanceFromNearestPoint } from "../src/noise/distanceFromNearestPoint";
@@ -484,6 +491,7 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
       }
     }
     expect(compared).toBe(FIELD_NAMES.length * SLIDERS.length * WINDOWS.length);
+    expectRecordedRows(PLANET, FIELD_NAMES.length * (SLIDERS.length * WINDOWS.length + 1));
 
     // +1 window for the off-grid sweep frozen in the test below.
     if (!RECORDING)

@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
-import { flushRecording, frozen, frozenCount, RECORDING, record } from "./tier2Frozen";
+import {
+  expectRecordedRows,
+  flushRecording,
+  frozen,
+  frozenCount,
+  RECORDING,
+  record,
+} from "./tier2Frozen";
 
 import { makeFulgoraScrap } from "../src/noise/expressions/fulgoraScrap";
 import {
@@ -379,6 +386,7 @@ describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain"
       }
     }
     expect(compared).toBe(FIELD_NAMES.length * CASES.length);
+    expectRecordedRows(PLANET, FIELD_NAMES.length * CASES.length);
 
     if (!RECORDING) expect(frozenCount(PLANET)).toBe(FIELD_NAMES.length * CASES.length);
   });
