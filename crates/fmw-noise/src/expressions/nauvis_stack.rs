@@ -53,6 +53,14 @@ use crate::trees::catalog::TREE_SPECIES;
 use crate::trees::field::TreeFields;
 
 /// Every control the Nauvis expression core reads.
+/// How many resources `NAUVIS_RESOURCE_CATALOG` holds.
+///
+/// Named rather than written as `6`, because [`NauvisCtx::resource_controls`]
+/// and the ABI's own lever block both have to agree with it - and the ABI
+/// block's length is a wire format, so a catalog that grew without both moving
+/// would be a silent misread rather than a compile error.
+pub const NAUVIS_RESOURCE_COUNT: usize = NAUVIS_RESOURCE_CATALOG.len();
+
 #[derive(Clone, Debug)]
 pub struct NauvisCtx {
     /// Map seed (= `map_seed` / `seed0`).
@@ -84,19 +92,27 @@ pub struct NauvisCtx {
     pub trees_frequency: f64,
     /// `control:trees:size`.
     pub trees_size: f64,
-    /// `control:<resource>:frequency|size|richness`, applied to EVERY resource.
+    /// `control:<resource>:frequency|size|richness`, one triple per resource in
+    /// `NAUVIS_RESOURCE_CATALOG` order.
     ///
-    /// One set of levers rather than six, and that is a sweep decision rather
-    /// than a modelling one: the three levers reach three different formulas
-    /// (`size` and `frequency` the field, `richness` only the wrapper), so
-    /// moving them uniformly exercises every path. Eighteen separate arguments
-    /// across the ABI would buy nothing the resolver's own cargo tests do not
-    /// already cover.
+    /// **This was a single triple applied to every resource until the render
+    /// path landed**, and the reasoning behind that has expired rather than
+    /// been overturned. It said eighteen separate ABI arguments "would buy
+    /// nothing the resolver's own cargo tests do not already cover" - true when
+    /// written, and false from the moment the resource overlay put exactly
+    /// those eighteen in the request. The renderer was then building its own
+    /// six-entry map from them while this field carried a seventh, unused
+    /// value, which is the private-copy shape #330 exists to refuse.
     ///
-    /// **`size` must stay above 0 in a parity sweep.** At or below it the
-    /// resolver drops the resource entirely and every resource field folds
-    /// zeros, which is a vacuous comparison rather than a failing one.
-    pub resource_controls: ResourceControlLevers,
+    /// Six now, indexed by catalog position, and the renderer and the parity
+    /// selector read the same array. A triple wired to the wrong resource is
+    /// therefore INSIDE the tier-2 comparison rather than reproduced
+    /// identically on both sides of it.
+    ///
+    /// **Every `size` must stay above 0 in a parity sweep.** At or below it the
+    /// resolver drops that resource entirely and its fields fold zeros, which
+    /// is a vacuous comparison rather than a failing one.
+    pub resource_controls: [ResourceControlLevers; NAUVIS_RESOURCE_COUNT],
     /// The `nauvis_cliff` autoplace control.
     pub cliff_controls: CliffControls,
     /// The cliff-related `MapGenSettings` fields.
@@ -134,7 +150,7 @@ impl NauvisCtx {
             starting_positions: vec![Point { x: 0.0, y: 0.0 }],
             trees_frequency: 1.0,
             trees_size: 1.0,
-            resource_controls: ResourceControlLevers::defaults(),
+            resource_controls: [ResourceControlLevers::defaults(); NAUVIS_RESOURCE_COUNT],
             cliff_controls: CliffControls::defaults(),
             cliff_settings: CliffSettings::defaults(),
             rock_controls: RockControls::defaults(),
@@ -405,10 +421,13 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
             tiles: NauvisTileCatalog::new(ctx.seed0),
             resource_ctx: ResourceResolverCtx {
                 seed0: ctx.seed0,
-                // Every resource on the same levers - see `NauvisCtx`.
+                // Zipped by POSITION with the catalog, which is the same
+                // order the ABI block uses. The renderer builds its map from
+                // this very array, so the two cannot disagree.
                 controls: NAUVIS_RESOURCE_CATALOG
                     .iter()
-                    .map(|r| (r.control_name.to_string(), ctx.resource_controls))
+                    .zip(ctx.resource_controls)
+                    .map(|(r, levers)| (r.control_name.to_string(), levers))
                     .collect(),
                 starting_positions: ctx.starting_positions.clone(),
                 segmentation_multiplier: ctx.segmentation_multiplier,
@@ -899,7 +918,9 @@ mod parity_tests {
 
         let moved = |f: &dyn Fn(&mut ResourceControlLevers)| -> f64 {
             let mut ctx = NauvisCtx::defaults(123_456);
-            f(&mut ctx.resource_controls);
+            for levers in &mut ctx.resource_controls {
+                f(levers);
+            }
             let stack = NauvisStack::new(&ctx);
             NauvisParity::new(&stack, &ctx).field(iron_field, x, y)
         };
@@ -921,7 +942,9 @@ mod parity_tests {
             "richness must not move the raw field"
         );
         let mut rich = NauvisCtx::defaults(123_456);
-        rich.resource_controls.richness = 3.0;
+        for levers in &mut rich.resource_controls {
+            levers.richness = 3.0;
+        }
         let rich_stack = NauvisStack::new(&rich);
         assert_ne!(
             NauvisParity::new(&rich_stack, &rich).field(iron_richness, x, y),

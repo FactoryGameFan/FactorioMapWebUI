@@ -24,7 +24,7 @@ use fmw_noise::eval::ctx::{EvalCtx, ResourceLevers, VulcanusResourceControls};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::FulgoraStack;
-use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack};
+use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack, NAUVIS_RESOURCE_COUNT};
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
@@ -481,11 +481,40 @@ fn nauvis_tile_color(tile: NauvisTile) -> [u8; 3] {
 /// `renderTerrain.ts` resolves every Nauvis tile at `water_level = 0` however
 /// the slider is set, and tier 3 asserts these two ports agree - so fixing it
 /// here alone would turn a TypeScript defect into a Rust one.
-fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
-    let ctx = NauvisCtx {
-        seed0: req.seed0,
-        // Deliberately 0 rather than `p.water_level` - see the doc comment.
-        water_level: 0.0,
+/// The [`NauvisCtx`] a Nauvis request describes.
+///
+/// **This and the renderer are the ONE place a Nauvis request becomes a
+/// stack**, and `checksum_nauvis` - tier 2 - calls it too. A second copy of
+/// this wiring is precisely what tier 2 cannot catch: a lever handed to the
+/// wrong layer would be reproduced identically on both sides of the comparison
+/// and stay invisible. Sharing it puts the wiring inside the comparison, the
+/// same reason `vulcanus_ctx` is shared. That was #330's finding on the enemy
+/// accessor, one level up.
+///
+/// # `water_level` is a PARAMETER, and that is the one deliberate asymmetry
+///
+/// The renderer passes 0 because `renderTerrain.ts` resolves every tile at zero
+/// however the slider is set - issue #326, reproduced on purpose so tier 3 stays
+/// byte-identical. Tier 2 passes the request's real value, because it compares
+/// this port's expression chain against the TypeScript's, which reads the real
+/// one. Handing both callers a hard-coded 0 would make tier 2 red for a reason
+/// that is not a port bug; hard-coding the real value would break tier 3.
+///
+/// So exactly one field sits outside the shared wiring, for a reason that is
+/// itself a tracked defect. When #326 is fixed this parameter should go.
+pub fn nauvis_ctx(seed0: u32, p: &NauvisParams, water_level: f64) -> NauvisCtx {
+    let mut resource_controls = [ResourceControlLevers::defaults(); NAUVIS_RESOURCE_COUNT];
+    for (i, levers) in resource_controls.iter_mut().enumerate() {
+        let [frequency, size, richness] = p.resource_levers(i);
+        *levers = ResourceControlLevers {
+            frequency,
+            size,
+            richness,
+        };
+    }
+    NauvisCtx {
+        seed0,
+        water_level,
         segmentation_multiplier: p.segmentation_multiplier,
         moisture_frequency: p.moisture_frequency,
         moisture_bias: p.moisture_bias,
@@ -501,9 +530,15 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
         starting_positions: vec![NauvisPoint { x: 0.0, y: 0.0 }],
         trees_frequency: p.trees_frequency,
         trees_size: p.trees_size,
-        resource_controls: ResourceControlLevers::defaults(),
-        cliff_controls: CliffControls::defaults(),
-        cliff_settings: CliffSettings::defaults(),
+        cliff_controls: CliffControls {
+            frequency: p.cliff_frequency,
+            continuity: p.cliff_continuity,
+        },
+        cliff_settings: CliffSettings {
+            cliff_elevation_0: p.cliff_elevation_0,
+            cliff_elevation_interval: p.cliff_elevation_interval,
+            richness: p.cliff_richness,
+        },
         rock_controls: RockControls {
             frequency: p.rocks_frequency,
             size: p.rocks_size,
@@ -512,7 +547,14 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
             frequency: p.enemy_frequency,
             size: p.enemy_size,
         },
-    };
+        resource_controls,
+    }
+}
+
+/// Sweep the window and paint each pixel's winning tile, then the overlays.
+fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
+    // Zero rather than `p.water_level` - see `nauvis_ctx`, and issue #326.
+    let ctx = nauvis_ctx(req.seed0, p, 0.0);
     let stack = NauvisStack::new(&ctx);
     let catalog = NauvisTileCatalog::new(req.seed0);
 
