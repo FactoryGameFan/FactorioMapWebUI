@@ -604,11 +604,11 @@
     ]
   },
   "nauvis": {
-    "paramsBytes": 96,
-    "totalBytes": 152,
+    "paramsBytes": 144,
+    "totalBytes": 200,
     "request": {
       "planet": "nauvis",
-      "view": "trees",
+      "view": "rocks",
       "seed0": 123456,
       "width": 8,
       "height": 4,
@@ -626,7 +626,15 @@
       "temperatureFrequency": 5.75,
       "temperatureBias": 6.5,
       "treesFrequency": 7.25,
-      "treesSize": 8.75
+      "treesSize": 8.75,
+      "rocksFrequency": 9.5,
+      "rocksSize": 10.25,
+      "placementSweepBox": {
+        "x0": -514.5,
+        "y0": 254.25,
+        "x1": -494.5,
+        "y1": 266.25
+      }
     },
     "decoded": {
       "levers": [
@@ -641,8 +649,16 @@
         "temperatureFrequency",
         "temperatureBias",
         "treesFrequency",
-        "treesSize"
-      ]
+        "treesSize",
+        "rocksFrequency",
+        "rocksSize"
+      ],
+      "placementSweepBox": {
+        "x0": -514.5,
+        "y0": 254.25,
+        "x1": -494.5,
+        "y1": 266.25
+      }
     },
     "bytes": [
       70,
@@ -657,7 +673,7 @@
       0,
       0,
       0,
-      7,
+      4,
       0,
       0,
       0,
@@ -673,7 +689,7 @@
       0,
       0,
       0,
-      96,
+      144,
       0,
       0,
       0,
@@ -796,6 +812,54 @@
       0,
       128,
       33,
+      64,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      35,
+      64,
+      0,
+      0,
+      0,
+      0,
+      0,
+      128,
+      36,
+      64,
+      0,
+      0,
+      0,
+      0,
+      0,
+      20,
+      128,
+      192,
+      0,
+      0,
+      0,
+      0,
+      0,
+      200,
+      111,
+      64,
+      0,
+      0,
+      0,
+      0,
+      0,
+      232,
+      126,
+      192,
+      0,
+      0,
+      0,
+      0,
+      0,
+      164,
+      112,
       64
     ]
   }

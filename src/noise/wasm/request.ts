@@ -43,7 +43,7 @@ export const FULGORA_PARAMS_BYTES = 48;
 export const VULCANUS_PARAMS_BYTES = 312;
 
 /** Must equal `fmw_wasm::abi::NAUVIS_PARAMS_BYTES`. */
-export const NAUVIS_PARAMS_BYTES = 96;
+export const NAUVIS_PARAMS_BYTES = 144;
 
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
@@ -201,6 +201,26 @@ export interface NauvisRenderRequest extends CommonRenderRequest {
   /** `control:trees:frequency` / `:size`. */
   readonly treesFrequency: number;
   readonly treesSize: number;
+  /** `control:rocks:frequency` / `:size`. */
+  readonly rocksFrequency: number;
+  readonly rocksSize: number;
+  /**
+   * The world box to sweep for placement-roll hits, for the `rocks` view.
+   * Defaults to the request's own pixel box.
+   *
+   * A rock mark is a symmetric 3x3 centred on its pixel, so a rock centred just
+   * outside a worker tile still owes that tile pixels. Computed by
+   * `placementMarkSweepBox`, the same function the TypeScript path hands to
+   * `renderRocks` - the module reads the answer rather than deriving it,
+   * because the box is clamped to the FULL image and only the tiled renderer
+   * knows that geometry.
+   */
+  readonly placementSweepBox?: {
+    readonly x0: number;
+    readonly y0: number;
+    readonly x1: number;
+    readonly y1: number;
+  };
 }
 
 export type WasmRenderRequest = FulgoraRenderRequest | VulcanusRenderRequest | NauvisRenderRequest;
@@ -350,18 +370,21 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
 }
 
 /**
- * Nauvis's block: eight climate levers, then the tree overlay's four. No trig
- * and no boxes.
+ * Nauvis's block: eight climate levers, the tree overlay's four, then the rock
+ * overlay's two and its sweep box. No trig, and ONE box rather than two.
  *
  * No trig because Nauvis reaches no `starting_spot_at_angle` - it is the one
  * planet whose whole chain is free of transcendentals, so nothing has to be
  * computed in V8 and handed across (#270).
  *
- * Still no boxes after the tree slice, which is a property of trees rather than
- * an omission: the tree overlay reads its density FIELD at a one-cell border in
- * world coordinates instead of reading neighbouring image pixels, so a tiled
- * render matches an untiled one with no widened query box. The four remaining
- * overlays all need one, and growing the block for it needs no version bump.
+ * The tree overlay needed no box at all, which is a property of trees rather
+ * than an omission: it reads its density FIELD at a one-cell border in world
+ * coordinates instead of reading neighbouring image pixels. The rock overlay
+ * does read the image - its 3x3 mark straddles seams - so it needs the sweep
+ * box, and because that mark is symmetric one box covers it exactly. The cliff
+ * overlay will need a SECOND box, since its block is asymmetric and its two
+ * directions cross; that is a further growth rather than a reuse, and needs no
+ * version bump either.
  */
 function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
   const p = COMMON_BYTES;
@@ -377,6 +400,18 @@ function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
   view.setFloat64(p + 72, req.temperatureBias, true);
   view.setFloat64(p + 80, req.treesFrequency, true);
   view.setFloat64(p + 88, req.treesSize, true);
+  view.setFloat64(p + 96, req.rocksFrequency, true);
+  view.setFloat64(p + 104, req.rocksSize, true);
+  const sweep = req.placementSweepBox ?? {
+    x0: req.originX,
+    y0: req.originY,
+    x1: req.originX + req.width * req.tilesPerPixel,
+    y1: req.originY + req.height * req.tilesPerPixel,
+  };
+  view.setFloat64(p + 112, sweep.x0, true);
+  view.setFloat64(p + 120, sweep.y0, true);
+  view.setFloat64(p + 128, sweep.x1, true);
+  view.setFloat64(p + 136, sweep.y1, true);
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {

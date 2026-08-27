@@ -53,10 +53,13 @@ pub const TILES_PER_CHUNK: usize = (CHUNK * CHUNK) as usize;
 /// overlay readable; it is also what forces the halo-widened sweep box, since
 /// a mark centred just outside a worker tile still owes that tile pixels.
 ///
-/// **The Nauvis rock overlay is the exception and keeps 1x1**, for contrast
-/// reasons against that planet's palette rather than entity size. It is not
-/// ported here (it belongs to #226), so this constant serves every roll overlay
-/// this crate has.
+/// **Both planets' rock overlays use this radius**, and a note here used to say
+/// the Nauvis one "is the exception and keeps 1x1". That was wrong when it was
+/// written: `rocks/catalog.rs` has shipped `NAUVIS_ROCK_MARK_RADIUS_PX = 1` -
+/// a 3x3 mark, not a single pixel - since the 2026-07-28 measurement against
+/// the game's own preview moved BOTH planets off 1x1, and that constant's own
+/// doc block carries the table. `renderRocks.ts` and `elevationRenderRequest.ts`
+/// each carried a copy of the same stale claim.
 pub const PLACEMENT_MARK_RADIUS_PX: i64 = 1;
 
 /// Per-overlay stream salts.
@@ -76,6 +79,8 @@ pub mod salt {
     pub const VULCANUS_ROCKS: u32 = 0;
     /// The Vulcanus sulfuric-acid geyser.
     pub const VULCANUS_GEYSER: u32 = 0x001d_94e5;
+    /// Nauvis rocks - the three rock prototypes share one stream.
+    pub const NAUVIS_ROCKS: u32 = 0x005f_1e21;
 }
 
 /// `max(341, 0x3FBE2C + 7919*chunkX + 7907*chunkY + salt)` in `u32` arithmetic.

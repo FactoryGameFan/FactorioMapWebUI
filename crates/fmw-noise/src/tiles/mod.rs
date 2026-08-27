@@ -12,4 +12,5 @@ pub mod fulgora_catalog;
 pub mod fulgora_ocean;
 pub mod helpers;
 pub mod nauvis_catalog;
+pub mod nauvis_resolve;
 pub mod vulcanus_catalog;

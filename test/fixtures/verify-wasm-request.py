@@ -57,7 +57,7 @@ BEARING_NAMES = [
 ]
 
 
-NAUVIS_PARAMS_BYTES = 96
+NAUVIS_PARAMS_BYTES = 144
 """Must equal fmw_wasm::abi::NAUVIS_PARAMS_BYTES."""
 
 
@@ -112,7 +112,7 @@ def decode_fulgora(b, req):
 
 
 def decode_nauvis(b, req):
-    """Nauvis's block: twelve f64 levers, no trig and no world boxes.
+    """Nauvis's block: fourteen f64 levers and one world box, no trig.
 
     The simplest of the three, and the only structural check available is that
     every field lands at its own offset - there is no unit-norm property to
@@ -150,6 +150,8 @@ def decode_nauvis(b, req):
         "temperatureBias",
         "treesFrequency",
         "treesSize",
+        "rocksFrequency",
+        "rocksSize",
     ]
     values = [req[name] for name in fields]
     if len(set(values)) != len(values):
@@ -159,10 +161,31 @@ def decode_nauvis(b, req):
         )
     for i, name in enumerate(fields):
         check(name, f64(b, p + i * 8), req[name])
+
+    # The sweep box is checked by SHAPE rather than by distinctness, the way
+    # Vulcanus's two are. A rock mark is a symmetric 3x3 centred on its pixel,
+    # so the halo has to be equal on all four sides and strictly positive - an
+    # inverted or lopsided box would still decode as four fine scalars.
+    sweep = [f64(b, p + 112 + i * 8) for i in range(4)]
+    want = req["placementSweepBox"]
+    for i, key in enumerate(("x0", "y0", "x1", "y1")):
+        check(f"placementSweepBox.{key}", sweep[i], want[key])
+    if not (sweep[0] < sweep[2] and sweep[1] < sweep[3]):
+        raise AssertionError(f"placementSweepBox is inverted: {sweep}")
+    px0 = req["originX"]
+    py0 = req["originY"]
+    px1 = px0 + req["width"] * req["tilesPerPixel"]
+    py1 = py0 + req["height"] * req["tilesPerPixel"]
+    lo_x, hi_x = px0 - sweep[0], sweep[2] - px1
+    lo_y, hi_y = py0 - sweep[1], sweep[3] - py1
+    if not (lo_x == hi_x == lo_y == hi_y > 0):
+        raise AssertionError(
+            f"placementSweepBox is not a symmetric halo: {lo_x}, {hi_x}, {lo_y}, {hi_y}"
+        )
     # A planted reordering of two levers that happen to hold the SAME value
     # would slip past the loop above, so the fixture's request must not make
     # that possible for more than the defaults it deliberately uses.
-    return {"levers": fields}
+    return {"levers": fields, "placementSweepBox": want}
 
 
 def decode_vulcanus(b, req):
@@ -333,7 +356,8 @@ def main():
     )
     print(
         f"nauvis: all {len(nlevers['levers'])} levers agree at their own "
-        f"offsets, and are pairwise distinct, {len(nb)} bytes"
+        f"offsets and are pairwise distinct, placement halo symmetric, "
+        f"{len(nb)} bytes"
     )
 
     fixture = {

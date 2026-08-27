@@ -246,11 +246,11 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.fulgora.totalBytes).toBe(COMMON_BYTES + FULGORA_PARAMS_BYTES);
     expect(fixture.vulcanus.totalBytes).toBe(COMMON_BYTES + VULCANUS_PARAMS_BYTES);
     expect(fixture.nauvis.totalBytes).toBe(COMMON_BYTES + NAUVIS_PARAMS_BYTES);
-    // Nauvis's 152 sits BETWEEN the other two, so it is neither the capacity
+    // Nauvis's 200 sits BETWEEN the other two, so it is neither the capacity
     // nor the floor - a third size is what makes "the encoder returns a length"
     // a real statement rather than a two-case coincidence. It was 120 before
-    // the tree overlay grew that block by four levers.
-    expect(fixture.nauvis.totalBytes).toBe(152);
+    // the tree overlay grew that block, and 152 before the rock overlay did.
+    expect(fixture.nauvis.totalBytes).toBe(200);
     expect(fixture.fulgora.totalBytes).toBe(104);
     expect(REQUEST_BYTES).toBe(fixture.vulcanus.totalBytes);
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.fulgora.totalBytes);

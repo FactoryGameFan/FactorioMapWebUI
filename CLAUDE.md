@@ -1194,7 +1194,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
 | 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view renders through the engine.**                                                                   | done     |
-| 6 (#226) | Nauvis - every expression, the TERRAIN render and the TREE overlay. Four overlays remain                                                                                       | **most** |
+| 6 (#226) | Nauvis - every expression, the TERRAIN render, and the TREE and ROCK overlays. Three overlays remain                                                                           | **most** |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1230,9 +1230,36 @@ halo box: it reads its density FIELD at a one-cell world-coordinate border
 rather than reading neighbouring image pixels, so a tiled render matches an
 untiled one with nothing widened.
 
-Still unported: four Nauvis OVERLAYS - resources, rocks, cliffs and enemies.
-Until they land, an `all` request stays on the TypeScript path in full rather
-than coming back missing them, and the module refuses any other Nauvis view.
+Then the ROCK overlay - the first Nauvis placement roll, reusing
+`placement/roll.rs` whole and adding only a salt, three collision boxes and the
+argmax over them.
+
+Still unported: three Nauvis OVERLAYS - resources, cliffs and enemies. Until
+they land, an `all` request stays on the TypeScript path in full rather than
+coming back missing them, and the module refuses any other Nauvis view.
+
+Three traps that slice paid for, all transferable:
+
+- **A field named for the game's expression is not necessarily the one the
+  renderer rolls against.** `NauvisRockFields` has both `rock_density` - the
+  game's named expression, which `oracle-rock-density` holds - and `density`,
+  the CLAMPED max of the three prototype probabilities. The placement rolls
+  against the second. Rolling the first placed about 35x too many rocks, because
+  it is unclamped and much larger. The frozen tier-3 counts caught it on the
+  first run; a bound wide enough to be safe would not have.
+- **Reproduce the reference's out-of-range reads, including the ones that are
+  quirks.** `renderRocks.ts` sweeps the halo-widened box and indexes
+  `base.data[(py * width + px) * 4]` with a `px` that can be negative - which for
+  `py > 0` is a VALID index into the previous row, so its water skip consults the
+  wrong pixel. It is not harmless: a rock at `px = -1` still owes pixel 0 part of
+  its 3x3 mark. `water_at_wrapping_offset` reproduces it, including JavaScript's
+  `undefined` for a genuinely out-of-buffer read, and says why.
+- **The tile gate cannot read painted pixels.** A chunk straddles the render
+  edge, so `tile_allowed` asks about tiles outside the window. That is what moved
+  `nauvis_tile_at` and the water early-out out of `fmw-wasm`'s `render.rs` into
+  `fmw_noise::tiles::nauvis_resolve` - the terrain sweep is no longer its only
+  caller. The pixel-colour skip that remains is an optimisation and a paint
+  guard, not the correctness gate.
 
 **One TypeScript file in a ported directory was ported for a reason that is not
 obvious.** `cliffConnections.ts` has **zero `src/` consumers** - only 23
@@ -1592,15 +1619,21 @@ Fulgora's has not moved a byte. `BadParamsLength` refuses a writer whose
 declared length disagrees. **A version bump is for a change to the COMMON
 prefix**, which every planet reads.
 
-**Nauvis's block landed at 64 bytes with no bump and has since grown to 96** for
-the tree overlay's four levers, so a Nauvis request is 152 - still between the
-other two, which is what makes "the encoder returns a LENGTH, not the capacity"
-a real statement rather than a two-case coincidence. It carries no trig, because
-Nauvis is the one planet free of transcendentals, and still no world boxes: the
-terrain view paints one pixel per pixel, and trees read a one-cell border of
-their own FIELD rather than of the image. The four remaining overlays do need a
-placement sweep box and a cell query box; that is a further block growth, also
-free.
+**Nauvis's block landed at 64 bytes with no bump and has since grown twice** -
+96 for the tree overlay's four levers, 144 for the rock overlay's two and its
+sweep box - so a Nauvis request is 200, still between the other two, which is
+what makes "the encoder returns a LENGTH, not the capacity" a real statement
+rather than a two-case coincidence. It carries no trig, because Nauvis is the
+one planet free of transcendentals.
+
+It carries ONE world box, not two, and which overlays need one is not
+guessable. The terrain view paints one pixel per pixel. Trees need none either,
+because they read a one-cell border of their own FIELD rather than of the image
+
+- so a tiled render matches an untiled one with nothing widened, and trees are
+  the only one of the five like that. Rocks do read the image, and their mark is a
+  symmetric 3x3, so one box covers it exactly. Cliffs will need a SECOND box,
+  because that block is asymmetric and its two directions cross.
 
 `test/fixtures/wasm-request.v2.json` pins all three, and
 `verify-wasm-request.py` decodes all three. Nauvis's structural check is just
