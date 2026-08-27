@@ -403,13 +403,19 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 }
 
 /**
- * The Rust engine's Nauvis path - the terrain view and the tree, rock and
- * enemy overlays.
+ * The Rust engine's Nauvis path - the terrain view and the tree, rock, enemy
+ * and cliff overlays.
  *
- * The two remaining overlays (resources and cliffs) are the follow-up, so an
- * `all` request still takes the TypeScript path in full rather than coming back
- * missing them. The module refuses any other Nauvis view with `unsupported
- * planet or view`, so a mistake here is loud rather than silent.
+ * The last overlay (resources) is the follow-up, so an `all` request still
+ * takes the TypeScript path in full rather than coming back missing it. The
+ * module refuses any other Nauvis view with `unsupported planet or view`, so a
+ * mistake here is loud rather than silent.
+ *
+ * **A caller-supplied `startingLakePositions` also stays on the TypeScript
+ * path**, for the same reason a moved spawn does. The module derives the lake
+ * list from the seed and the origin spawn - the game's own rule, and what the
+ * TypeScript does when the caller passes nothing - so an explicit list would be
+ * a wrong answer rather than a slow one. The app never sets it; only tests do.
  *
  * **`waterLevel` is sent and deliberately ignored by the module** - issue #326.
  * `renderTerrain.ts` resolves every tile at `waterLevel = 0` however the slider
@@ -422,7 +428,7 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 function renderNauvisThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
-  view: "terrain" | "trees" | "rocks" | "enemies",
+  view: "terrain" | "trees" | "rocks" | "enemies" | "cliffs",
 ): ElevationRenderResult {
   const pixels = renderThroughWasm(engine, {
     planet: "nauvis",
@@ -458,6 +464,14 @@ function renderNauvisThroughWasm(
     rocksSize: req.rockControls?.size ?? 1,
     enemyFrequency: req.enemyControls?.frequency ?? 1,
     enemySize: req.enemyControls?.size ?? 1,
+    cliffFrequency: req.cliffControls?.frequency ?? 1,
+    cliffContinuity: req.cliffControls?.continuity ?? 1,
+    cliffElevation0: req.cliffSettings?.cliffElevation0 ?? 10,
+    cliffElevationInterval: req.cliffSettings?.cliffElevationInterval ?? 40,
+    cliffRichness: req.cliffSettings?.richness ?? 1,
+    // The asymmetric, crossed halo - a different shape from the placement
+    // sweep box above, which is why both are sent.
+    cellQueryBox: cliffCellQueryBox(req),
     // The same box `renderRocks` is handed on the TypeScript path, so the two
     // sweep identical pixel ranges. `haloQueryBox` stays the one place that
     // arithmetic lives.
@@ -651,9 +665,9 @@ export function runRenderRequest(
     }
     // The Nauvis paths the Rust engine serves so far. Checked BEFORE the
     // TypeScript render rather than after, so the engine's work replaces it
-    // instead of being thrown away - and not for `all`, because two of the
-    // five overlays are still unported and that request must not come back
-    // missing them.
+    // instead of being thrown away - and not for `all`, because one of the
+    // five overlays is still unported and that request must not come back
+    // missing it.
     //
     // The spawn is fixed at the origin on the module side, so a request with a
     // moved spawn stays on the TypeScript path. `startingPositions` reaches
@@ -664,7 +678,9 @@ export function runRenderRequest(
       (req.view === "terrain" ||
         req.view === "trees" ||
         req.view === "rocks" ||
-        req.view === "enemies") &&
+        req.view === "enemies" ||
+        req.view === "cliffs") &&
+      req.startingLakePositions === undefined &&
       isDefaultSpawn(req.startingPositions)
     ) {
       return renderNauvisThroughWasm(req, engine, req.view);

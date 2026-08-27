@@ -112,6 +112,12 @@
 //! +112 f64 x 4   placement_sweep_box: x0, y0, x1, y1
 //! +144 f64  enemy_frequency
 //! +152 f64  enemy_size
+//! +160 f64  cliff_frequency
+//! +168 f64  cliff_continuity
+//! +176 f64  cliff_elevation_0
+//! +184 f64  cliff_elevation_interval
+//! +192 f64  cliff_richness
+//! +200 f64 x 4   cell_query_box: x0, y0, x1, y1
 //! ```
 //!
 //! **The Vulcanus block has grown twice with no version bump - 248 to 280 for
@@ -158,7 +164,8 @@ pub const FULGORA_PARAMS_BYTES: usize = 48;
 pub const VULCANUS_PARAMS_BYTES: usize = 312;
 
 /// Nauvis's block: eight climate and elevation levers, the tree overlay's four,
-/// the rock overlay's two, its sweep box, then the enemy overlay's two.
+/// the rock overlay's two, its sweep box, the enemy overlay's two, then the
+/// cliff overlay's five and its own query box.
 ///
 /// **A third block with no version bump, which is the split working as
 /// designed.** [`ABI_VERSION`] describes the COMMON prefix, which every planet
@@ -176,12 +183,11 @@ pub const VULCANUS_PARAMS_BYTES: usize = 312;
 /// block records, and it is a further growth rather than a reuse.
 ///
 /// **Grown 64 -> 96 for the tree overlay, 96 -> 144 for the rocks, 144 -> 160
-/// for the enemies.** Vulcanus's grew three times the same way. The enemy
-/// growth is the smallest of the three because that overlay reuses the rock
-/// overlay's sweep box whole: both paint a symmetric 3x3 mark, so one halo
-/// serves them and `placementMarkSweepBox` is the one place the arithmetic
-/// lives.
-pub const NAUVIS_PARAMS_BYTES: usize = 160;
+/// for the enemies, 160 -> 232 for the cliffs.** Vulcanus's grew three times
+/// the same way. The enemy growth is the smallest because that overlay reuses
+/// the rock overlay's sweep box whole; the cliff growth is the largest because
+/// it is the only one that needs a SECOND box.
+pub const NAUVIS_PARAMS_BYTES: usize = 232;
 
 /// The largest request the module can accept, which is what `request_bytes()`
 /// reports so a caller can size one buffer for every planet.
@@ -414,6 +420,28 @@ pub struct NauvisParams {
     pub enemy_frequency: f64,
     /// `control:enemy-base:size`.
     pub enemy_size: f64,
+    /// `control:nauvis_cliff:frequency`.
+    pub cliff_frequency: f64,
+    /// `control:nauvis_cliff:size`, which doubles as continuity.
+    pub cliff_continuity: f64,
+    /// `cliff_elevation_0` from `MapGenSettings`.
+    pub cliff_elevation_0: f64,
+    /// `cliff_elevation_interval` from `MapGenSettings`, BEFORE the frequency
+    /// lever divides it - `modified_elevation_interval` does that inside.
+    pub cliff_elevation_interval: f64,
+    /// The cliff `richness` from `MapGenSettings`. Zero disables the overlay.
+    pub cliff_richness: f64,
+    /// The world box to enumerate cliff cells over, as `[x0, y0, x1, y1]`.
+    ///
+    /// **A SECOND box, and the only reason Nauvis needs one.** A cliff cell
+    /// paints a 4px block spanning `px - 2 ..= px + 1`, which is asymmetric and
+    /// whose two directions CROSS: a mark reaching far backwards has to be
+    /// caught from ahead of the tile. Every other Nauvis overlay paints a
+    /// symmetric 3x3 and shares
+    /// [`NauvisParams::placement_sweep_box`]; this one cannot.
+    ///
+    /// For an untiled render this is the pixel box itself.
+    pub cell_query_box: [f64; 4],
 }
 
 impl VulcanusParams {
@@ -508,6 +536,17 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
             ],
             enemy_frequency: f64_at(bytes, p + 144),
             enemy_size: f64_at(bytes, p + 152),
+            cliff_frequency: f64_at(bytes, p + 160),
+            cliff_continuity: f64_at(bytes, p + 168),
+            cliff_elevation_0: f64_at(bytes, p + 176),
+            cliff_elevation_interval: f64_at(bytes, p + 184),
+            cliff_richness: f64_at(bytes, p + 192),
+            cell_query_box: [
+                f64_at(bytes, p + 200),
+                f64_at(bytes, p + 208),
+                f64_at(bytes, p + 216),
+                f64_at(bytes, p + 224),
+            ],
         }),
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
@@ -604,7 +643,8 @@ mod tests {
         let mut b = good_nauvis();
         let values = [
             11.0f64, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0,
-            25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 32.0, 33.0,
+            25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0,
+            39.0, 40.0, 41.0, 42.0,
         ];
         for (i, v) in values.iter().enumerate() {
             let at = 32 + i * 8;
@@ -639,6 +679,15 @@ mod tests {
                 n.placement_sweep_box[3],
                 n.enemy_frequency,
                 n.enemy_size,
+                n.cliff_frequency,
+                n.cliff_continuity,
+                n.cliff_elevation_0,
+                n.cliff_elevation_interval,
+                n.cliff_richness,
+                n.cell_query_box[0],
+                n.cell_query_box[1],
+                n.cell_query_box[2],
+                n.cell_query_box[3],
             ],
             values
         );

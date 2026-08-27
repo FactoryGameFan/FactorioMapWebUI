@@ -43,7 +43,7 @@ export const FULGORA_PARAMS_BYTES = 48;
 export const VULCANUS_PARAMS_BYTES = 312;
 
 /** Must equal `fmw_wasm::abi::NAUVIS_PARAMS_BYTES`. */
-export const NAUVIS_PARAMS_BYTES = 160;
+export const NAUVIS_PARAMS_BYTES = 232;
 
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
@@ -225,6 +225,29 @@ export interface NauvisRenderRequest extends CommonRenderRequest {
   /** `control:enemy-base:frequency` / `:size`. */
   readonly enemyFrequency: number;
   readonly enemySize: number;
+  /** `control:nauvis_cliff:frequency`, and `:size` which doubles as continuity. */
+  readonly cliffFrequency: number;
+  readonly cliffContinuity: number;
+  /** The cliff-related `MapGenSettings` fields. Richness 0 disables the layer. */
+  readonly cliffElevation0: number;
+  readonly cliffElevationInterval: number;
+  readonly cliffRichness: number;
+  /**
+   * The world box to enumerate cliff cells over, for the `cliffs` view.
+   * Defaults to the request's own pixel box.
+   *
+   * A SECOND box, and the only one on this planet that is not the placement
+   * sweep box. The cliff block spans `px - 2 ..= px + 1` - asymmetric, and its
+   * two directions CROSS, so a mark reaching backwards must be caught from
+   * ahead of the tile. `cliffCellQueryBox` is the one place that arithmetic
+   * lives; the module reads the answer.
+   */
+  readonly cellQueryBox?: {
+    readonly x0: number;
+    readonly y0: number;
+    readonly x1: number;
+    readonly y1: number;
+  };
 }
 
 export type WasmRenderRequest = FulgoraRenderRequest | VulcanusRenderRequest | NauvisRenderRequest;
@@ -375,21 +398,20 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
 
 /**
  * Nauvis's block: eight climate levers, the tree overlay's four, the rock
- * overlay's two, its sweep box, then the enemy overlay's two. No trig, and ONE
- * box rather than two.
+ * overlay's two, its sweep box, the enemy overlay's two, then the cliff
+ * overlay's five and its own query box. No trig, and two boxes.
  *
  * No trig because Nauvis reaches no `starting_spot_at_angle` - it is the one
  * planet whose whole chain is free of transcendentals, so nothing has to be
  * computed in V8 and handed across (#270).
  *
- * The tree overlay needed no box at all, which is a property of trees rather
+ * The tree overlay needs no box at all, which is a property of trees rather
  * than an omission: it reads its density FIELD at a one-cell border in world
  * coordinates instead of reading neighbouring image pixels. The rock and enemy
  * overlays do read the image - their 3x3 marks straddle seams - and because
  * both marks are symmetric and the same size, ONE box covers them both. The
- * cliff overlay will need a SECOND box, since its block is asymmetric and its
- * two directions cross; that is a further growth rather than a reuse, and needs
- * no version bump either.
+ * cliff overlay needs its own, because its block spans `px - 2 ..= px + 1`:
+ * asymmetric, and the two directions cross.
  */
 function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
   const p = COMMON_BYTES;
@@ -419,6 +441,21 @@ function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
   view.setFloat64(p + 136, sweep.y1, true);
   view.setFloat64(p + 144, req.enemyFrequency, true);
   view.setFloat64(p + 152, req.enemySize, true);
+  view.setFloat64(p + 160, req.cliffFrequency, true);
+  view.setFloat64(p + 168, req.cliffContinuity, true);
+  view.setFloat64(p + 176, req.cliffElevation0, true);
+  view.setFloat64(p + 184, req.cliffElevationInterval, true);
+  view.setFloat64(p + 192, req.cliffRichness, true);
+  const cells = req.cellQueryBox ?? {
+    x0: req.originX,
+    y0: req.originY,
+    x1: req.originX + req.width * req.tilesPerPixel,
+    y1: req.originY + req.height * req.tilesPerPixel,
+  };
+  view.setFloat64(p + 200, cells.x0, true);
+  view.setFloat64(p + 208, cells.y0, true);
+  view.setFloat64(p + 216, cells.x1, true);
+  view.setFloat64(p + 224, cells.y1, true);
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {

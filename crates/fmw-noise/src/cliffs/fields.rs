@@ -26,6 +26,7 @@
 //! that meant for the hook.
 
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
+use crate::cliffs::placement::CliffFields;
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
 use crate::eval::math::{min, min2};
 use crate::eval::primitives::{basis_noise_expr, BasisExprParams};
@@ -220,5 +221,73 @@ impl NauvisCliffFields {
     #[must_use]
     pub fn cliff_cutoff(&self) -> f64 {
         self.cliff_cutoff
+    }
+}
+
+/// The trait impl the cliff placement engine needs.
+///
+/// The two methods already existed as inherent ones; this is the wiring that
+/// lets `CliffPlacement` be built for Nauvis at all. Until the overlay landed,
+/// `vulcanus_fields` was the only implementor - which is why the placement
+/// engine, `connections.rs` included, had been ported for a year with no Nauvis
+/// caller.
+impl CliffFields for NauvisCliffFields {
+    fn cliff_elevation(&self, x: f64, y: f64) -> f64 {
+        // **`cliff_elevation`, not the tile generator's `elevation`.**
+        // `multisample`'s offsets are in the CONSUMING program's grid units and
+        // the cliff generator walks a 4-tile lattice, so the same expression
+        // spans 4 tiles here and 1 there (#83). `NauvisCliffFields` builds the
+        // cliff-grid form; nothing here may substitute the per-tile one.
+        NauvisCliffFields::cliff_elevation(self, x, y)
+    }
+
+    fn cliffiness(&self, x: f64, y: f64) -> f64 {
+        NauvisCliffFields::cliffiness(self, x, y)
+    }
+}
+
+#[cfg(test)]
+mod trait_impl_tests {
+    use super::*;
+
+    /// The trait methods answer the same numbers the inherent ones do.
+    ///
+    /// Trivial-looking, and it is the guard against the one mistake this impl
+    /// invites: forwarding `cliff_elevation` to the tile generator's
+    /// `elevation` instead. The two are genuinely different fields - the cliff
+    /// generator walks a 4-tile lattice where every per-tile consumer walks 1,
+    /// so `multisample`'s offsets span 4 tiles here and 1 there - and taking
+    /// the wrong one was issue #18's root cause (#83). Nothing else in this
+    /// crate would notice: the placement engine only sees the trait.
+    #[test]
+    fn the_trait_forwards_to_the_cliff_grid_fields_not_the_tile_ones() {
+        let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(123_456));
+        let mut moved = 0usize;
+        for j in 0..16 {
+            for i in 0..16 {
+                let (x, y) = (f64::from(i) * 37.0 - 300.0, f64::from(j) * 41.0 - 300.0);
+                let via_trait = CliffFields::cliff_elevation(&fields, x, y);
+                let direct = fields.cliff_elevation(x, y);
+                assert_eq!(
+                    via_trait.to_bits(),
+                    direct.to_bits(),
+                    "elevation at ({x}, {y})"
+                );
+                let gate_trait = CliffFields::cliffiness(&fields, x, y);
+                let gate_direct = fields.cliffiness(x, y);
+                assert_eq!(
+                    gate_trait.to_bits(),
+                    gate_direct.to_bits(),
+                    "gate at ({x}, {y})"
+                );
+                if gate_direct != 0.0 {
+                    moved += 1;
+                }
+            }
+        }
+        // Anti-vacuity: a gate that is 0 everywhere would satisfy the equality
+        // above however it were wired. `cliffiness_nauvis` is a hard 0 or 10,
+        // so this counts the positions where it actually answers 10.
+        assert!(moved > 0, "the swept window must contain cliffy positions");
     }
 }

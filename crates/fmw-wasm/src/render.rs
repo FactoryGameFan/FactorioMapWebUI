@@ -7,8 +7,9 @@
 use crate::abi::{
     self, FulgoraParams, NauvisParams, Params, Request, Status, VulcanusBearing, VulcanusParams,
 };
-use fmw_noise::cliffs::catalog::{CliffControls, CliffSettings};
+use fmw_noise::cliffs::catalog::{modified_elevation_interval, CliffControls, CliffSettings};
 use fmw_noise::cliffs::catalog::{CLIFF_MAP_COLOR, CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX};
+use fmw_noise::cliffs::fields::{CliffFieldParams, NauvisCliffFields};
 use fmw_noise::cliffs::placement::{CliffBands, CliffPlacement};
 use fmw_noise::cliffs::vulcanus_fields::{
     VulcanusCliffFields, VulcanusLavaTiles, VULCANUS_CLIFF_ELEVATION_0,
@@ -195,7 +196,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
             VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL
         ) | (
             PLANET_NAUVIS,
-            VIEW_TERRAIN | VIEW_TREES | VIEW_ROCKS | VIEW_ENEMIES
+            VIEW_TERRAIN | VIEW_TREES | VIEW_ROCKS | VIEW_ENEMIES | VIEW_CLIFFS
         )
     );
     if !supported {
@@ -529,6 +530,9 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     if matches!(req.view, VIEW_ENEMIES) {
         paint_nauvis_enemies(req, p, &stack, &catalog, &ctx, out);
     }
+    if matches!(req.view, VIEW_CLIFFS) {
+        paint_nauvis_cliffs(req, p, out);
+    }
 }
 
 /// The two water colours the overlays refuse to paint over.
@@ -809,6 +813,103 @@ fn paint_nauvis_rocks(
                 NAUVIS_ROCK_MARK_RADIUS_PX,
                 is_nauvis_water,
             );
+        }
+    }
+}
+
+/// Composite the Nauvis cliff overlay over terrain that is already painted.
+///
+/// # It builds its own elevation, and that is the point
+///
+/// Every other Nauvis pass reads the render's shared `NauvisStack`, whose
+/// `water_level` is pinned to 0 to reproduce issue #326. The cliff layer must
+/// NOT: `renderCliffs.ts` threads the real water level into its own
+/// `cliff_elevation_nauvis`, so this pass builds `NauvisCliffFields` from
+/// `p.water_level` instead. One request therefore carries a water level that
+/// the terrain pass ignores and this pass honours, which is what the ABI's own
+/// note on that field says.
+///
+/// # The mark is an even-sided block, not a radius
+///
+/// It spans `px - CLIFF_MARK_BACK_PX ..= px + CLIFF_MARK_SIZE_PX -
+/// CLIFF_MARK_BACK_PX - 1`, i.e. 2 back and 1 forward, anchored on the cell's
+/// own 4-tile footprint rather than centred on it. No radius can express that,
+/// which is why this does not go through `paint_mark_skipping` - but it DOES
+/// need that function's water skip, so the loop is written out with the test
+/// inline.
+///
+/// # `floor`, not `js_round`
+///
+/// A cell's centre is converted with `floor`, matching `paintCliffCells`. The
+/// two roll overlays use `js_round` on their SWEEP BOX instead. Different
+/// quantisations for different jobs, and mixing them shifts cliffs by a pixel.
+fn paint_nauvis_cliffs(req: &Request, p: &NauvisParams, out: &mut [u8]) {
+    let mut params = CliffFieldParams::defaults(req.seed0);
+    params.controls = CliffControls {
+        frequency: p.cliff_frequency,
+        continuity: p.cliff_continuity,
+    };
+    params.settings = CliffSettings {
+        cliff_elevation_0: p.cliff_elevation_0,
+        cliff_elevation_interval: p.cliff_elevation_interval,
+        richness: p.cliff_richness,
+    };
+    params.segmentation_multiplier = p.segmentation_multiplier;
+    params.water_level = p.water_level;
+    params.starting_positions = vec![NauvisPoint { x: 0.0, y: 0.0 }];
+    // `None` derives the game's own lake positions from the seed and the spawn,
+    // which is what the TypeScript does when the caller passes nothing - and
+    // `runRenderRequest` refuses the engine for a caller that passes some.
+    params.starting_lake_positions = None;
+    let fields = NauvisCliffFields::new(&params);
+
+    let placement = CliffPlacement::new(
+        &fields,
+        CliffBands {
+            elevation0: p.cliff_elevation_0,
+            interval: modified_elevation_interval(p.cliff_elevation_interval, p.cliff_frequency),
+            // Nauvis sets `cliff_smoothing` to 0 explicitly. Vulcanus sets
+            // nothing and takes the prototype default of 1; using Nauvis's
+            // value there cost 57-69% recall (#18), so this is not a shared
+            // constant even though both planets name it.
+            smoothing: 0.0,
+            disabled: p.cliff_continuity == 0.0 || p.cliff_richness == 0.0,
+            ..CliffBands::default()
+        },
+    );
+
+    let [x0, y0, x1, y1] = p.cell_query_box;
+    let width = i64::from(req.width);
+    let height = i64::from(req.height);
+    let lo = CLIFF_MARK_BACK_PX;
+    let hi = CLIFF_MARK_SIZE_PX - CLIFF_MARK_BACK_PX - 1;
+
+    for cell in placement.placed_cells(x0, y0, x1, y1) {
+        let cx = ((cell.x - req.origin_x) / req.tiles_per_pixel).floor() as i64;
+        let cy = ((cell.y - req.origin_y) / req.tiles_per_pixel).floor() as i64;
+        for dy in -lo..=hi {
+            let y = cy + dy;
+            if y < 0 || y >= height {
+                continue;
+            }
+            for dx in -lo..=hi {
+                let x = cx + dx;
+                if x < 0 || x >= width {
+                    continue;
+                }
+                #[allow(clippy::cast_sign_loss)]
+                let o = ((y * width + x) * 4) as usize;
+                // Nauvis excludes water at PAINT time, unlike Vulcanus which
+                // excludes lava at placement time. A block straddling a
+                // coastline stops there rather than spilling onto the sea.
+                if is_nauvis_water(out[o], out[o + 1], out[o + 2]) {
+                    continue;
+                }
+                out[o] = CLIFF_MAP_COLOR[0];
+                out[o + 1] = CLIFF_MAP_COLOR[1];
+                out[o + 2] = CLIFF_MAP_COLOR[2];
+                out[o + 3] = 255;
+            }
         }
     }
 }

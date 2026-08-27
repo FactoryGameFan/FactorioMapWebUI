@@ -146,7 +146,7 @@ function request(w: Window): ElevationRenderRequest {
  * Every lever is at the game's default, so these tests grade acceptance of the
  * view and nothing else; the levers are graded by their own block's test.
  */
-function directRequest(w: Window, view: "trees" | "rocks" | "enemies") {
+function directRequest(w: Window, view: "trees" | "rocks" | "enemies" | "cliffs") {
   return {
     planet: "nauvis",
     view,
@@ -172,6 +172,11 @@ function directRequest(w: Window, view: "trees" | "rocks" | "enemies") {
     rocksSize: 1,
     enemyFrequency: 1,
     enemySize: 1,
+    cliffFrequency: 1,
+    cliffContinuity: 1,
+    cliffElevation0: 10,
+    cliffElevationInterval: 40,
+    cliffRichness: 1,
   } as const;
 }
 
@@ -763,6 +768,194 @@ describe("the WASM engine renders the Nauvis enemy overlay exactly as the TypeSc
           runRenderRequest(
             {
               ...enemyRequest(w),
+              width: tile.width,
+              height: tile.height,
+              originX: tile.originX,
+              originY: tile.originY,
+              ...(withHalo ? { fullImage: full } : {}),
+            },
+            e,
+          ).buffer,
+        );
+        for (let ty = 0; ty < tile.height; ty++) {
+          for (let tx = 0; tx < tile.width; tx++) {
+            const src = (ty * tile.width + tx) * 4;
+            const dst = ((tile.dy + ty) * w.width + (tile.dx + tx)) * 4;
+            stitched.set(px.subarray(src, src + 4), dst);
+          }
+        }
+      }
+      return stitched;
+    };
+    expect(Array.from(renderTiled(true))).toEqual(Array.from(whole));
+    expect(Array.from(renderTiled(false))).not.toEqual(Array.from(whole));
+  }, 300000);
+});
+
+/**
+ * The cliff overlay's OWN windows, for the same reason the enemy block has its
+ * own - and the lever sweep behind them is worth reading before changing any.
+ *
+ * Two of the five shared windows carry ZERO cliff pixels. Worse, on the
+ * near-spawn window TWO levers move the render by exactly 0 bytes:
+ * `cliffElevationInterval` and `waterLevel`. Reasoning from that would conclude
+ * the interval is unwired, or that the cliff view ignores water. Both are
+ * false - in the far field the interval moves 135 to 555 pixels and the water
+ * level moves 30 to 1,796. The near-spawn zero is the masking issue #320
+ * records for the terrain view, showing up again in the choice of window.
+ *
+ * So: sweep the lever, do not reason about it. These five were swept, and every
+ * one of them moves under every lever this block grades.
+ */
+const CLIFF_WINDOWS: readonly Window[] = [
+  { label: "tall", width: 24, height: 96, originX: -2048, originY: 768, tilesPerPixel: 8 },
+  { label: "fine", width: 96, height: 96, originX: 4000.5, originY: -3000.25, tilesPerPixel: 2 },
+  {
+    label: "wide",
+    width: 120,
+    height: 40,
+    originX: -4000.25,
+    originY: -4000.75,
+    tilesPerPixel: 12,
+  },
+  { label: "far", width: 48, height: 48, originX: 4000.25, originY: -3000.75, tilesPerPixel: 16 },
+  {
+    label: "very far",
+    width: 96,
+    height: 96,
+    originX: -6000.5,
+    originY: 6000.25,
+    tilesPerPixel: 16,
+  },
+];
+
+/** Measured on the TypeScript path before the port. */
+const CLIFF_PIXELS_PER_WINDOW = [425, 152, 1125, 1080, 2584];
+
+/** `CLIFF_MAP_COLOR` in `src/noise/cliffs/cliffCatalog.ts`. Both planets share it. */
+const CLIFF_RGB = [144, 119, 87] as const;
+
+describe("the WASM engine renders the Nauvis cliff overlay exactly as the TypeScript does", () => {
+  const cliffRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "cliffs" });
+
+  it("serves the cliffs view rather than refusing it", async () => {
+    const e = await engine();
+    const pixels = renderThroughWasm(e, directRequest(CLIFF_WINDOWS[0], "cliffs"));
+    expect(pixels.length).toBe(CLIFF_WINDOWS[0].width * CLIFF_WINDOWS[0].height * 4);
+  }, 300000);
+
+  it("is byte-identical across five windows", async () => {
+    const e = await engine();
+    for (const w of CLIFF_WINDOWS) {
+      const wasm = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
+      const ts = new Uint8ClampedArray(runRenderRequest(cliffRequest(w)).buffer);
+      expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+    }
+  }, 300000);
+
+  it("paints cliff pixels in every window, and only cliff-coloured ones", async () => {
+    const e = await engine();
+    const counts: number[] = [];
+    for (const w of CLIFF_WINDOWS) {
+      const cliffs = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
+      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      let changed = 0;
+      let cliffColoured = 0;
+      for (let i = 0; i < cliffs.length; i += 4) {
+        const was =
+          terrain[i] === CLIFF_RGB[0] &&
+          terrain[i + 1] === CLIFF_RGB[1] &&
+          terrain[i + 2] === CLIFF_RGB[2];
+        const is =
+          cliffs[i] === CLIFF_RGB[0] &&
+          cliffs[i + 1] === CLIFF_RGB[1] &&
+          cliffs[i + 2] === CLIFF_RGB[2];
+        if (
+          cliffs[i] !== terrain[i] ||
+          cliffs[i + 1] !== terrain[i + 1] ||
+          cliffs[i + 2] !== terrain[i + 2]
+        ) {
+          changed++;
+        }
+        if (is && !was) cliffColoured++;
+      }
+      expect(cliffColoured, `${w.label}: every changed pixel must be cliff-coloured`).toBe(changed);
+      counts.push(changed);
+    }
+    expect(counts).toEqual(CLIFF_PIXELS_PER_WINDOW);
+  }, 300000);
+
+  it("moving each cliff lever moves the render on both paths together", async () => {
+    // Six levers, and `waterLevel` is one of them - which is the interesting
+    // case. The TERRAIN view ignores it (#326, reproduced deliberately), so
+    // this is the first Nauvis pass where the module must actually READ the
+    // water level rather than pin it to zero. Both behaviours live in the same
+    // request.
+    const e = await engine();
+    const base = cliffRequest(CLIFF_WINDOWS[4]);
+    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+    const baseWasm = flat(base, e);
+    expect(flat(base)).toEqual(baseWasm);
+    for (const [label, patch] of [
+      // Frequency has to reach the slider's MINIMUM to grade much - see the
+      // cliff-lever note in CLAUDE.md, measured over 1600 positions.
+      ["cliffControls.frequency", { cliffControls: { frequency: 1 / 6, continuity: 1 } }],
+      ["cliffControls.continuity", { cliffControls: { frequency: 1, continuity: 3 } }],
+      [
+        "cliffSettings.cliffElevation0",
+        { cliffSettings: { cliffElevation0: 30, cliffElevationInterval: 40, richness: 1 } },
+      ],
+      [
+        "cliffSettings.cliffElevationInterval",
+        { cliffSettings: { cliffElevation0: 10, cliffElevationInterval: 20, richness: 1 } },
+      ],
+      ["waterLevel", { waterLevel: 5 }],
+    ] as const) {
+      const req = { ...base, ...patch } as ElevationRenderRequest;
+      const moved = flat(req, e);
+      expect(moved, `${label}: the two paths must agree`).toEqual(flat(req));
+      expect(moved, `${label}: must actually move the render`).not.toEqual(baseWasm);
+    }
+  }, 300000);
+
+  it("richness 0 disables the overlay entirely on both paths", async () => {
+    // A separate case because it is the one lever whose effect is REMOVAL. It
+    // must take the render back to bare terrain exactly, not merely change it.
+    const e = await engine();
+    const w = CLIFF_WINDOWS[4];
+    const off = {
+      ...cliffRequest(w),
+      cliffSettings: { cliffElevation0: 10, cliffElevationInterval: 40, richness: 0 },
+    } as ElevationRenderRequest;
+    const terrain = Array.from(new Uint8ClampedArray(runRenderRequest(request(w), e).buffer));
+    expect(Array.from(new Uint8ClampedArray(runRenderRequest(off, e).buffer))).toEqual(terrain);
+    expect(Array.from(new Uint8ClampedArray(runRenderRequest(off).buffer))).toEqual(terrain);
+  }, 300000);
+
+  it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
+    // The cliff halo is the ASYMMETRIC one: the block spans `px - 2 ..= px + 1`,
+    // so a cell reaching backwards has to be caught from AHEAD of the tile.
+    // That is why this box is sent separately from the placement sweep box
+    // rather than one serving both.
+    const e = await engine();
+    const w = CLIFF_WINDOWS[4];
+    const whole = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
+    const full = {
+      originX: w.originX,
+      originY: w.originY,
+      width: w.width,
+      height: w.height,
+      tilesPerPixel: w.tilesPerPixel,
+    };
+    const renderTiled = (withHalo: boolean): Uint8ClampedArray => {
+      const stitched = new Uint8ClampedArray(whole.length);
+      for (const tile of planTiles(full, 32)) {
+        const px = new Uint8ClampedArray(
+          runRenderRequest(
+            {
+              ...cliffRequest(w),
               width: tile.width,
               height: tile.height,
               originX: tile.originX,

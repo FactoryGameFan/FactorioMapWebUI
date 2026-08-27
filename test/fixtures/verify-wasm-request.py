@@ -58,7 +58,7 @@ BEARING_NAMES = [
 ]
 
 
-NAUVIS_PARAMS_BYTES = 160
+NAUVIS_PARAMS_BYTES = 232
 """Must equal fmw_wasm::abi::NAUVIS_PARAMS_BYTES."""
 
 
@@ -113,7 +113,7 @@ def decode_fulgora(b, req):
 
 
 def decode_nauvis(b, req):
-    """Nauvis's block: sixteen f64 levers and one world box, no trig.
+    """Nauvis's block: twenty-one f64 levers and TWO world boxes, no trig.
 
     The simplest of the three, and the only structural check available is that
     every field lands at its own offset - there is no unit-norm property to
@@ -155,6 +155,11 @@ def decode_nauvis(b, req):
         "rocksSize",
         "enemyFrequency",
         "enemySize",
+        "cliffFrequency",
+        "cliffContinuity",
+        "cliffElevation0",
+        "cliffElevationInterval",
+        "cliffRichness",
     ]
     values = [req[name] for name in fields]
     if len(set(values)) != len(values):
@@ -190,10 +195,42 @@ def decode_nauvis(b, req):
         raise AssertionError(
             f"placementSweepBox is not a symmetric halo: {lo_x}, {hi_x}, {lo_y}, {hi_y}"
         )
+
+    # The cliff cell box is the SECOND one, and the whole reason Nauvis needs
+    # two. It is checked by SHAPE against the first: this one must be
+    # asymmetric on at least one axis where the sweep box must be symmetric on
+    # both, so a writer that sent the same box twice - or swapped them - fails
+    # one check or the other. Equality alone is also refused, because two
+    # correct-looking rectangles that happen to match would satisfy every
+    # per-value check.
+    cells = [f64(b, p + 200 + i * 8) for i in range(4)]
+    want_cells = req["cellQueryBox"]
+    for i, key in enumerate(("x0", "y0", "x1", "y1")):
+        check(f"cellQueryBox.{key}", cells[i], want_cells[key])
+    if not (cells[0] < cells[2] and cells[1] < cells[3]):
+        raise AssertionError(f"cellQueryBox is inverted: {cells}")
+    if cells == sweep:
+        raise AssertionError(
+            "cellQueryBox equals placementSweepBox - the two halos are "
+            "different shapes, so an equal pair means one was sent twice"
+        )
+    c_lo_x, c_hi_x = px0 - cells[0], cells[2] - px1
+    c_lo_y, c_hi_y = py0 - cells[1], cells[3] - py1
+    if c_lo_x == c_hi_x and c_lo_y == c_hi_y:
+        raise AssertionError(
+            f"cellQueryBox is symmetric on both axes - the cliff block spans "
+            f"px-2..=px+1, so its halo cannot be: "
+            f"{c_lo_x}, {c_hi_x}, {c_lo_y}, {c_hi_y}"
+        )
+
     # A planted reordering of two levers that happen to hold the SAME value
     # would slip past the loop above, so the fixture's request must not make
     # that possible for more than the defaults it deliberately uses.
-    return {"levers": fields, "placementSweepBox": want}
+    return {
+        "levers": fields,
+        "placementSweepBox": want,
+        "cellQueryBox": want_cells,
+    }
 
 
 def decode_vulcanus(b, req):
@@ -364,8 +401,8 @@ def main():
     )
     print(
         f"nauvis: all {len(nlevers['levers'])} levers agree at their own "
-        f"offsets and are pairwise distinct, placement halo symmetric, "
-        f"{len(nb)} bytes"
+        f"offsets and are pairwise distinct, placement halo symmetric, cliff "
+        f"halo asymmetric and distinct from it, {len(nb)} bytes"
     )
 
     fixture = {
