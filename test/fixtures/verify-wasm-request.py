@@ -58,7 +58,7 @@ BEARING_NAMES = [
 ]
 
 
-NAUVIS_PARAMS_BYTES = 232
+NAUVIS_PARAMS_BYTES = 376
 """Must equal fmw_wasm::abi::NAUVIS_PARAMS_BYTES."""
 
 
@@ -113,7 +113,8 @@ def decode_fulgora(b, req):
 
 
 def decode_nauvis(b, req):
-    """Nauvis's block: twenty-one f64 levers and TWO world boxes, no trig.
+    """Nauvis's block: 21 scalar levers, TWO world boxes, and 18 more in six
+    per-resource triples. No trig.
 
     The simplest of the three, and the only structural check available is that
     every field lands at its own offset - there is no unit-norm property to
@@ -223,6 +224,32 @@ def decode_nauvis(b, req):
             f"{c_lo_x}, {c_hi_x}, {c_lo_y}, {c_hi_y}"
         )
 
+    # Six per-resource triples, in RESOURCE_CATALOG order. Read as a table
+    # rather than as eighteen more scalars, because the failure this guards
+    # against is a whole TRIPLE landing at a neighbour's offset - which reads as
+    # a plausible planet with two ores exchanged, and which a flat list of
+    # eighteen names would describe but not make legible.
+    want_res = req["resourceLevers"]
+    if len(want_res) != 6:
+        raise AssertionError(f"resourceLevers must hold 6 triples, got {len(want_res)}")
+    res = []
+    for i in range(6):
+        at = p + 232 + i * 24
+        triple = [f64(b, at), f64(b, at + 8), f64(b, at + 16)]
+        for j, lever in enumerate(("frequency", "size", "richness")):
+            check(f"resourceLevers[{i}].{lever}", triple[j], want_res[i][j])
+        res.append(triple)
+
+    # Distinctness across EVERY lever, scalar and per-resource together. Two
+    # triples that shared a value would let a swap of those two resources read
+    # back correct, which is the same hole the eight-lever fixture had.
+    flat = values + [v for triple in res for v in triple]
+    if len(set(flat)) != len(flat):
+        raise AssertionError(
+            "the nauvis fixture must use a DISTINCT value per lever, "
+            "resource triples included"
+        )
+
     # A planted reordering of two levers that happen to hold the SAME value
     # would slip past the loop above, so the fixture's request must not make
     # that possible for more than the defaults it deliberately uses.
@@ -230,6 +257,7 @@ def decode_nauvis(b, req):
         "levers": fields,
         "placementSweepBox": want,
         "cellQueryBox": want_cells,
+        "resourceLevers": want_res,
     }
 
 
@@ -401,8 +429,9 @@ def main():
     )
     print(
         f"nauvis: all {len(nlevers['levers'])} levers agree at their own "
-        f"offsets and are pairwise distinct, placement halo symmetric, cliff "
-        f"halo asymmetric and distinct from it, {len(nb)} bytes"
+        f"offsets and are pairwise distinct, six resource triples distinct "
+        f"too, placement halo symmetric, cliff halo asymmetric and distinct "
+        f"from it, {len(nb)} bytes"
     )
 
     fixture = {

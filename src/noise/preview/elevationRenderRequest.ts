@@ -22,6 +22,7 @@ import { renderVulcanusTerrain } from "./renderVulcanusTerrain";
 import { renderFulgoraLandMask, renderFulgoraTerrain } from "./renderFulgoraTerrain";
 import { renderThroughWasm, type EngineExports } from "../wasm/engine";
 import { renderFulgoraResources } from "./renderFulgoraResources";
+import { RESOURCE_CATALOG } from "../resources/resourceCatalog";
 import { makeFulgoraStack } from "../tiles/fulgoraCatalog";
 import type { FulgoraScrapControls } from "../expressions/fulgoraScrap";
 
@@ -403,13 +404,12 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 }
 
 /**
- * The Rust engine's Nauvis path - the terrain view and the tree, rock, enemy
- * and cliff overlays.
+ * The Rust engine's Nauvis path - the terrain view and all five overlays.
  *
- * The last overlay (resources) is the follow-up, so an `all` request still
- * takes the TypeScript path in full rather than coming back missing it. The
- * module refuses any other Nauvis view with `unsupported planet or view`, so a
- * mistake here is loud rather than silent.
+ * The `all` COMPOSITE is the remaining step, so that request still takes the
+ * TypeScript path in full. Every single-overlay view now goes through the
+ * engine; the module refuses anything else with `unsupported planet or view`,
+ * so a mistake here is loud rather than silent.
  *
  * **A caller-supplied `startingLakePositions` also stays on the TypeScript
  * path**, for the same reason a moved spawn does. The module derives the lake
@@ -428,7 +428,7 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 function renderNauvisThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
-  view: "terrain" | "trees" | "rocks" | "enemies" | "cliffs",
+  view: "terrain" | "trees" | "rocks" | "enemies" | "cliffs" | "resources",
 ): ElevationRenderResult {
   const pixels = renderThroughWasm(engine, {
     planet: "nauvis",
@@ -469,6 +469,13 @@ function renderNauvisThroughWasm(
     cliffElevation0: req.cliffSettings?.cliffElevation0 ?? 10,
     cliffElevationInterval: req.cliffSettings?.cliffElevationInterval ?? 40,
     cliffRichness: req.cliffSettings?.richness ?? 1,
+    // Catalog ORDER, not the request's key order: the module indexes this by
+    // position. `RESOURCE_CATALOG` is the one definition of that order on this
+    // side, so a resource added to it cannot silently shift the block.
+    resourceLevers: RESOURCE_CATALOG.map((entry) => {
+      const levers = req.resourceControls?.[entry.controlName];
+      return [levers?.frequency ?? 1, levers?.size ?? 1, levers?.richness ?? 1] as const;
+    }),
     // The asymmetric, crossed halo - a different shape from the placement
     // sweep box above, which is why both are sent.
     cellQueryBox: cliffCellQueryBox(req),
@@ -665,9 +672,8 @@ export function runRenderRequest(
     }
     // The Nauvis paths the Rust engine serves so far. Checked BEFORE the
     // TypeScript render rather than after, so the engine's work replaces it
-    // instead of being thrown away - and not for `all`, because one of the
-    // five overlays is still unported and that request must not come back
-    // missing it.
+    // instead of being thrown away - and not for `all`, which is the
+    // composite and lands as its own change.
     //
     // The spawn is fixed at the origin on the module side, so a request with a
     // moved spawn stays on the TypeScript path. `startingPositions` reaches
@@ -679,7 +685,8 @@ export function runRenderRequest(
         req.view === "trees" ||
         req.view === "rocks" ||
         req.view === "enemies" ||
-        req.view === "cliffs") &&
+        req.view === "cliffs" ||
+        req.view === "resources") &&
       req.startingLakePositions === undefined &&
       isDefaultSpawn(req.startingPositions)
     ) {

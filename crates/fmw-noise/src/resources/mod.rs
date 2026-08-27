@@ -18,6 +18,7 @@
 //! points and the eight constants that moved between 2.0.77 and 2.1.9.
 
 pub mod nauvis_catalog;
+pub mod nauvis_oil;
 pub mod regular_patches;
 pub mod resolve_resource;
 pub mod resource_math;

@@ -146,7 +146,7 @@ function request(w: Window): ElevationRenderRequest {
  * Every lever is at the game's default, so these tests grade acceptance of the
  * view and nothing else; the levers are graded by their own block's test.
  */
-function directRequest(w: Window, view: "trees" | "rocks" | "enemies" | "cliffs") {
+function directRequest(w: Window, view: "trees" | "rocks" | "enemies" | "cliffs" | "resources") {
   return {
     planet: "nauvis",
     view,
@@ -177,6 +177,14 @@ function directRequest(w: Window, view: "trees" | "rocks" | "enemies" | "cliffs"
     cliffElevation0: 10,
     cliffElevationInterval: 40,
     cliffRichness: 1,
+    resourceLevers: [
+      [1, 1, 1],
+      [1, 1, 1],
+      [1, 1, 1],
+      [1, 1, 1],
+      [1, 1, 1],
+      [1, 1, 1],
+    ],
   } as const;
 }
 
@@ -977,6 +985,216 @@ describe("the WASM engine renders the Nauvis cliff overlay exactly as the TypeSc
     };
     expect(Array.from(renderTiled(true))).toEqual(Array.from(whole));
     expect(Array.from(renderTiled(false))).not.toEqual(Array.from(whole));
+  }, 300000);
+});
+
+/**
+ * The resource overlay's OWN windows, and the search behind them is the point.
+ *
+ * **Crude oil appeared in exactly ONE of ten windows swept**, at 9 pixels. That
+ * matters far more than its size: oil is the only ROLLED Nauvis resource - the
+ * other five are pure threshold predicates - so it is the only thing that
+ * grades the roll, the 3x3 mark and the sweep box in this layer. Nine of the
+ * ten candidates would have graded the threshold path alone while looking
+ * complete.
+ *
+ * Between them the six cover all six catalog entries, and they vary width,
+ * height, origin and tiles-per-pixel independently across what carried ore.
+ */
+const RESOURCE_WINDOWS: readonly Window[] = [
+  {
+    label: "fine at spawn",
+    width: 96,
+    height: 96,
+    originX: -48.5,
+    originY: -48.25,
+    tilesPerPixel: 1,
+  },
+  {
+    label: "wide at spawn",
+    width: 128,
+    height: 128,
+    originX: -128,
+    originY: -128,
+    tilesPerPixel: 4,
+  },
+  {
+    label: "north-east",
+    width: 96,
+    height: 96,
+    originX: 2000.5,
+    originY: -2000.25,
+    tilesPerPixel: 16,
+  },
+  {
+    label: "wide, far",
+    width: 160,
+    height: 40,
+    originX: -6000.5,
+    originY: 6000.25,
+    tilesPerPixel: 32,
+  },
+  {
+    label: "tall, far",
+    width: 40,
+    height: 160,
+    originX: -6000.5,
+    originY: 6000.25,
+    tilesPerPixel: 32,
+  },
+  {
+    label: "all six, far",
+    width: 96,
+    height: 96,
+    originX: -6000.5,
+    originY: 6000.25,
+    tilesPerPixel: 32,
+  },
+];
+
+/**
+ * Pixels each resource paints per window, in catalog order.
+ *
+ * Rows in `RESOURCE_WINDOWS` order, columns iron, copper, coal, stone, oil,
+ * uranium. Measured on the TypeScript path before the port.
+ *
+ * **The zeros are the informative part**, as they are in the Vulcanus ore
+ * table. Each window carries a different mix, so a resolver wired to one region
+ * field for all six would show the same column everywhere. And every column
+ * sums above zero, which the test asserts separately - no entry is graded only
+ * by its own zeros.
+ */
+const ORE_PIXELS = [
+  [0, 0, 184, 149, 0, 0],
+  [42, 51, 41, 21, 0, 18],
+  [40, 37, 19, 14, 0, 4],
+  [13, 17, 14, 7, 0, 2],
+  [17, 17, 14, 9, 0, 1],
+  [28, 32, 20, 11, 9, 3],
+];
+
+/** `mapColor` for each entry of `RESOURCE_CATALOG`, in its own order. */
+const ORE_RGB = [
+  [106, 134, 148],
+  [205, 99, 55],
+  [0, 0, 0],
+  [176, 156, 109],
+  [199, 51, 196],
+  [0, 179, 0],
+] as const;
+
+describe("the WASM engine renders the Nauvis resource overlay exactly as the TypeScript does", () => {
+  const resourceRequest = (w: Window): ElevationRenderRequest => ({
+    ...request(w),
+    view: "resources",
+  });
+
+  it("serves the resources view rather than refusing it", async () => {
+    const e = await engine();
+    const w = RESOURCE_WINDOWS[0];
+    const pixels = renderThroughWasm(e, directRequest(w, "resources"));
+    expect(pixels.length).toBe(w.width * w.height * 4);
+  }, 300000);
+
+  it("is byte-identical across six windows", async () => {
+    const e = await engine();
+    for (const w of RESOURCE_WINDOWS) {
+      const wasm = new Uint8ClampedArray(runRenderRequest(resourceRequest(w), e).buffer);
+      const ts = new Uint8ClampedArray(runRenderRequest(resourceRequest(w)).buffer);
+      expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+    }
+  }, 300000);
+
+  it("paints each entry's own map colour, at the counts measured", async () => {
+    const e = await engine();
+    const table: number[][] = [];
+    for (const w of RESOURCE_WINDOWS) {
+      const ore = new Uint8ClampedArray(runRenderRequest(resourceRequest(w), e).buffer);
+      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const row = ORE_RGB.map((c) => {
+        let n = 0;
+        for (let i = 0; i < ore.length; i += 4) {
+          const is = ore[i] === c[0] && ore[i + 1] === c[1] && ore[i + 2] === c[2];
+          const was = terrain[i] === c[0] && terrain[i + 1] === c[1] && terrain[i + 2] === c[2];
+          if (is && !was) n++;
+        }
+        return n;
+      });
+      table.push(row);
+    }
+    expect(table).toEqual(ORE_PIXELS);
+    // No entry is graded only by its own zeros.
+    const perEntry = ORE_RGB.map((_, c) => table.reduce((sum, row) => sum + row[c], 0));
+    expect(perEntry.every((n) => n > 0)).toBe(true);
+  }, 300000);
+
+  it("moving one resource's levers moves only that resource", async () => {
+    // The check the eighteen-lever block needs and the round-trip fixture
+    // cannot give: a triple written to the wrong offset decodes as a
+    // NEIGHBOUR's, which is a plausible planet with two ores exchanged. Moving
+    // iron alone must move the render, and moving it must not be the same as
+    // moving copper alone.
+    const e = await engine();
+    const w = RESOURCE_WINDOWS[1];
+    const base = resourceRequest(w);
+    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+    const baseWasm = flat(base, e);
+    expect(flat(base)).toEqual(baseWasm);
+
+    const withLevers = (name: string): ElevationRenderRequest => ({
+      ...base,
+      resourceControls: { [name]: { frequency: 3, size: 2, richness: 1 } },
+    });
+    const iron = flat(withLevers("iron-ore"), e);
+    const copper = flat(withLevers("copper-ore"), e);
+    expect(iron, "iron: the two paths must agree").toEqual(flat(withLevers("iron-ore")));
+    expect(copper, "copper: the two paths must agree").toEqual(flat(withLevers("copper-ore")));
+    expect(iron, "iron levers must move the render").not.toEqual(baseWasm);
+    expect(copper, "copper levers must move the render").not.toEqual(baseWasm);
+    expect(iron, "iron and copper must not be the same edit").not.toEqual(copper);
+  }, 300000);
+
+  it("tiles to the same bytes as one whole render, on the window that carries oil", async () => {
+    // The oil window specifically. The five thresholded resources paint one
+    // pixel each and sweep the request's own box, so they cannot straddle a
+    // seam at all - only oil's 3x3 mark needs the halo, and only this window
+    // has any oil to grade it with.
+    const e = await engine();
+    const w = RESOURCE_WINDOWS[5];
+    const whole = new Uint8ClampedArray(runRenderRequest(resourceRequest(w), e).buffer);
+    const full = {
+      originX: w.originX,
+      originY: w.originY,
+      width: w.width,
+      height: w.height,
+      tilesPerPixel: w.tilesPerPixel,
+    };
+    const stitched = new Uint8ClampedArray(whole.length);
+    for (const tile of planTiles(full, 32)) {
+      const px = new Uint8ClampedArray(
+        runRenderRequest(
+          {
+            ...resourceRequest(w),
+            width: tile.width,
+            height: tile.height,
+            originX: tile.originX,
+            originY: tile.originY,
+            fullImage: full,
+          },
+          e,
+        ).buffer,
+      );
+      for (let ty = 0; ty < tile.height; ty++) {
+        for (let tx = 0; tx < tile.width; tx++) {
+          const src = (ty * tile.width + tx) * 4;
+          const dst = ((tile.dy + ty) * w.width + (tile.dx + tx)) * 4;
+          stitched.set(px.subarray(src, src + 4), dst);
+        }
+      }
+    }
+    expect(Array.from(stitched)).toEqual(Array.from(whole));
   }, 300000);
 });
 

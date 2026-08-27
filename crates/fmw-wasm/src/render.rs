@@ -29,6 +29,11 @@ use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
+use fmw_noise::resources::nauvis_catalog::NAUVIS_RESOURCE_CATALOG;
+use fmw_noise::resources::nauvis_oil::{crude_oil, NauvisOilPlacement};
+use fmw_noise::resources::resolve_resource::{
+    compare_priority, ResourceResolver, ResourceResolverCtx,
+};
 use fmw_noise::resources::resource_math::ResourceControlLevers;
 use fmw_noise::resources::vulcanus_catalog::{
     VulcanusResource, VulcanusResourcePlacement, RESOURCE_PROBABILITY_THRESHOLD,
@@ -48,6 +53,8 @@ use fmw_noise::tiles::nauvis_resolve::nauvis_tile_at;
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
 use fmw_noise::trees::catalog::{TREE_MAP_COLOR, TREE_MAX_ALPHA};
 use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 /// `planet` code for Fulgora.
 pub const PLANET_FULGORA: u32 = 0;
@@ -196,7 +203,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
             VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL
         ) | (
             PLANET_NAUVIS,
-            VIEW_TERRAIN | VIEW_TREES | VIEW_ROCKS | VIEW_ENEMIES | VIEW_CLIFFS
+            VIEW_TERRAIN | VIEW_TREES | VIEW_ROCKS | VIEW_ENEMIES | VIEW_CLIFFS | VIEW_RESOURCES
         )
     );
     if !supported {
@@ -530,6 +537,9 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     if matches!(req.view, VIEW_ENEMIES) {
         paint_nauvis_enemies(req, p, &stack, &catalog, &ctx, out);
     }
+    if matches!(req.view, VIEW_RESOURCES) {
+        paint_nauvis_resources(req, p, &stack, &catalog, out);
+    }
     if matches!(req.view, VIEW_CLIFFS) {
         paint_nauvis_cliffs(req, p, out);
     }
@@ -813,6 +823,178 @@ fn paint_nauvis_rocks(
                 NAUVIS_ROCK_MARK_RADIUS_PX,
                 is_nauvis_water,
             );
+        }
+    }
+}
+
+/// [`paint_mark`], recording which pixels it painted into `mark`.
+///
+/// Only crude oil needs this. Its 3x3 mark has to survive the thresholded pass
+/// that runs over the top, but only against the resources oil OUTRANKS - so
+/// pass 2 needs to know which pixels pass 1 wrote.
+///
+/// **It does NOT skip water**, and that is the TypeScript's behaviour rather
+/// than an oversight: oil cannot PLACE on a water tile (`tile_allowed` refuses
+/// it), but a mark centred on the shore may spill onto one. `renderResources.ts`
+/// passes `undefined` as the skip predicate here where the rock and enemy
+/// passes pass `isWater`.
+fn paint_mark_recording(
+    out: &mut [u8],
+    dims: (i64, i64),
+    px: i64,
+    py: i64,
+    color: [u8; 3],
+    r: i64,
+    mark: &mut [u8],
+) {
+    let (width, height) = dims;
+    for dy in -r..=r {
+        let y = py + dy;
+        if y < 0 || y >= height {
+            continue;
+        }
+        for dx in -r..=r {
+            let x = px + dx;
+            if x < 0 || x >= width {
+                continue;
+            }
+            #[allow(clippy::cast_sign_loss)]
+            let idx = (y * width + x) as usize;
+            let o = idx * 4;
+            out[o] = color[0];
+            out[o + 1] = color[1];
+            out[o + 2] = color[2];
+            out[o + 3] = 255;
+            mark[idx] = 1;
+        }
+    }
+}
+
+/// Composite the Nauvis resource overlay over terrain that is already painted.
+///
+/// # Two passes, and the order is the game's arbitration
+///
+/// Crude oil rolls and paints FIRST, as a 3x3 mark; the five thresholded
+/// resources paint over the top, one pixel each. That looks backwards until you
+/// read it as arbitration: the game picks the highest-probability entity per
+/// tile, and a solid ore saturates far above oil, so a solid must win a shared
+/// pixel. Overwriting reproduces that without a colour test.
+///
+/// The `oil_mark` is what keeps the exception: a resource that oil OUTRANKS -
+/// uranium alone today - must not overwrite it. That set is computed once per
+/// render from `compare_priority` rather than per pixel.
+///
+/// # The oil buffer is allocated lazily
+///
+/// Ore is sparse and oil is the sparsest of the six: of ten windows swept while
+/// choosing this layer's test coverage, exactly ONE contained any. A window
+/// with no oil should not pay for a `width * height` buffer, so it is allocated
+/// on the first hit - which is what the TypeScript's `oilMark ??=` does.
+fn paint_nauvis_resources(
+    req: &Request,
+    p: &NauvisParams,
+    stack: &NauvisStack,
+    catalog: &NauvisTileCatalog,
+    out: &mut [u8],
+) {
+    let width = i64::from(req.width);
+    let height = i64::from(req.height);
+
+    let mut controls: BTreeMap<String, ResourceControlLevers> = BTreeMap::new();
+    for (i, entry) in NAUVIS_RESOURCE_CATALOG.iter().enumerate() {
+        let [frequency, size, richness] = p.resource_levers(i);
+        controls.insert(
+            entry.control_name.to_string(),
+            ResourceControlLevers {
+                frequency,
+                size,
+                richness,
+            },
+        );
+    }
+
+    let mut ctx = ResourceResolverCtx::defaults(req.seed0);
+    ctx.controls = controls.clone();
+    ctx.segmentation_multiplier = p.segmentation_multiplier;
+    // The REAL water level, not the terrain pass's pinned zero. Resources
+    // honour it exactly as the cliff layer does - see #326 for why the terrain
+    // view does not.
+    ctx.water_level = p.water_level;
+    ctx.starting_positions = vec![NauvisPoint { x: 0.0, y: 0.0 }];
+    ctx.starting_lake_positions = None;
+    let resolver = ResourceResolver::new(&ctx);
+
+    // Pass 1: crude oil.
+    let oil = crude_oil();
+    let oil_levers = controls
+        .get(oil.control_name)
+        .copied()
+        .unwrap_or_else(ResourceControlLevers::defaults);
+    let mut oil_mark: Option<Vec<u8>> = None;
+    if oil_levers.size > 0.0 {
+        let placement = NauvisOilPlacement::new(
+            req.seed0,
+            oil_levers,
+            p.segmentation_multiplier,
+            vec![NauvisPoint { x: 0.0, y: 0.0 }],
+            stack,
+            catalog,
+        );
+        let set = placement.placement_set();
+        let (px0, px1, py0, py1) = sweep_pixel_range(req, p.placement_sweep_box);
+        for py in py0..py1 {
+            let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+            for px in px0..px1 {
+                let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+                if !set.placed(wx, wy) {
+                    continue;
+                }
+                let mark = oil_mark.get_or_insert_with(|| vec![0u8; (width * height) as usize]);
+                paint_mark_recording(
+                    out,
+                    (width, height),
+                    px,
+                    py,
+                    oil.map_color,
+                    PLACEMENT_MARK_RADIUS_PX,
+                    mark,
+                );
+            }
+        }
+    }
+
+    // The catalog entries a painted oil mark survives: the ones oil is drawn in
+    // preference to. Uranium alone today. Six comparisons once, not per pixel.
+    let oil_outranks: Vec<&'static str> = NAUVIS_RESOURCE_CATALOG
+        .iter()
+        .filter(|entry| compare_priority(oil, entry) == Ordering::Less)
+        .map(|entry| entry.name)
+        .collect();
+
+    // Pass 2: the thresholded resources, over the top. This sweeps the
+    // request's OWN pixel box - each paints a single pixel, so nothing
+    // straddles a seam and the halo is oil's alone.
+    for py in 0..height {
+        let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+        for px in 0..width {
+            #[allow(clippy::cast_sign_loss)]
+            let idx = (py * width + px) as usize;
+            let o = idx * 4;
+            if is_nauvis_water(out[o], out[o + 1], out[o + 2]) {
+                continue;
+            }
+            let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+            let Some(winner) = resolver.resolve(wx, wy) else {
+                continue;
+            };
+            if oil_mark.as_ref().is_some_and(|m| m[idx] == 1) && oil_outranks.contains(&winner.name)
+            {
+                continue;
+            }
+            out[o] = winner.map_color[0];
+            out[o + 1] = winner.map_color[1];
+            out[o + 2] = winner.map_color[2];
+            out[o + 3] = 255;
         }
     }
 }

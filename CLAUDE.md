@@ -1194,7 +1194,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
 | 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view renders through the engine.**                                                                   | done     |
-| 6 (#226) | Nauvis - every expression, the TERRAIN render, and the TREE, ROCK, ENEMY and CLIFF overlays. Resources remain                                                                  | **most** |
+| 6 (#226) | Nauvis - every expression, the TERRAIN render, and all FIVE overlays. Only the `all` composite remains                                                                         | **most** |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1248,9 +1248,25 @@ level - it builds its own `NauvisCliffFields` rather than sharing the render's
 stack, whose `water_level` is pinned to 0 for #326. One request carries a water
 level the terrain pass ignores and the cliff pass honours.
 
-Still unported: ONE Nauvis overlay - resources. Until it lands, an `all` request
-stays on the TypeScript path in full rather than coming back missing it, and the
-module refuses any other Nauvis view.
+Then the RESOURCE overlay, the largest: eighteen per-resource levers, and the
+only Nauvis layer that mixes a threshold pass with a roll. Crude oil is the one
+rolled entry; the other five threshold. Oil paints FIRST as a 3x3 mark and the
+solids paint over the top, which reads backwards until you read it as the
+game's arbitration - a solid ore saturates far above oil, so it must win a
+shared pixel. The exception is kept by an `oil_mark` buffer and a
+`compare_priority` set computed once per render: uranium alone is outranked by
+oil today.
+
+Still unported: the `all` COMPOSITE. Every single-overlay Nauvis view renders
+through the engine; `all` stays on the TypeScript path until the composite
+lands, and the module refuses anything else.
+
+**Crude oil appeared in exactly ONE of ten windows swept**, at 9 pixels - and
+that one pixel-cluster is one placement. Measured on the Rust side, its
+penalised probability is positive at 1 point in 9,216. Because it is the only
+rolled resource, nine of the ten candidate windows would have graded the
+threshold path alone while looking complete. This is the ore-window lesson at
+its sharpest: for a sparse layer, sweep for the thing before choosing a window.
 
 **The default window set is unusable for a SPARSE overlay, and the enemy layer
 is where that bit hardest.** Enemy bases do not spawn inside the starting area,
@@ -1651,11 +1667,20 @@ Fulgora's has not moved a byte. `BadParamsLength` refuses a writer whose
 declared length disagrees. **A version bump is for a change to the COMMON
 prefix**, which every planet reads.
 
-**Nauvis's block landed at 64 bytes with no bump and has since grown four
+**Nauvis's block landed at 64 bytes with no bump and has since grown five
 times** - 96 for the tree overlay's four levers, 144 for the rock overlay's two
 and its sweep box, 160 for the enemy overlay's two, 232 for the cliff overlay's
-five and its own query box - so a Nauvis request is 288, still between the other
-two, which is what makes "the encoder returns a LENGTH,
+five and its own query box, 376 for the resource overlay's eighteen - so a
+Nauvis request is 432.
+
+**`REQUEST_BYTES` MOVED for the first time since the v2 split, and it is
+Nauvis's now.** Both sides had it written as `COMMON_BYTES +
+VULCANUS_PARAMS_BYTES`, which was correct for three planets and silently wrong
+the moment a fourth block overtook it - the failure being a scratch buffer too
+small, which surfaces as a truncated request rather than as a size error. It is
+a `max` on both sides now, and the Rust test asserts the PROPERTY (the capacity
+equals the largest request) rather than repeating a literal. A Nauvis request
+was between the other two, which is what makes "the encoder returns a LENGTH,
 not the capacity" a real statement rather than a two-case coincidence. It carries no trig, because Nauvis is the
 one planet free of transcendentals.
 

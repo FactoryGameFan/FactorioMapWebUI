@@ -118,6 +118,9 @@
 //! +184 f64  cliff_elevation_interval
 //! +192 f64  cliff_richness
 //! +200 f64 x 4   cell_query_box: x0, y0, x1, y1
+//! +232 f64 x 18  resource levers, six resources x (frequency, size, richness)
+//!                in RESOURCE_ORDER: iron-ore, copper-ore, coal, stone,
+//!                crude-oil, uranium-ore
 //! ```
 //!
 //! **The Vulcanus block has grown twice with no version bump - 248 to 280 for
@@ -164,8 +167,8 @@ pub const FULGORA_PARAMS_BYTES: usize = 48;
 pub const VULCANUS_PARAMS_BYTES: usize = 312;
 
 /// Nauvis's block: eight climate and elevation levers, the tree overlay's four,
-/// the rock overlay's two, its sweep box, the enemy overlay's two, then the
-/// cliff overlay's five and its own query box.
+/// the rock overlay's two, its sweep box, the enemy overlay's two, the cliff
+/// overlay's five and its own query box, then the resource overlay's eighteen.
 ///
 /// **A third block with no version bump, which is the split working as
 /// designed.** [`ABI_VERSION`] describes the COMMON prefix, which every planet
@@ -183,15 +186,33 @@ pub const VULCANUS_PARAMS_BYTES: usize = 312;
 /// block records, and it is a further growth rather than a reuse.
 ///
 /// **Grown 64 -> 96 for the tree overlay, 96 -> 144 for the rocks, 144 -> 160
-/// for the enemies, 160 -> 232 for the cliffs.** Vulcanus's grew three times
-/// the same way. The enemy growth is the smallest because that overlay reuses
-/// the rock overlay's sweep box whole; the cliff growth is the largest because
-/// it is the only one that needs a SECOND box.
-pub const NAUVIS_PARAMS_BYTES: usize = 232;
+/// for the enemies, 160 -> 232 for the cliffs, 232 -> 376 for the resources.**
+/// Vulcanus's grew three times the same way. The enemy growth is the smallest
+/// because that overlay reuses the rock overlay's sweep box whole; the resource
+/// growth is the largest because it is the only overlay with PER-RESOURCE
+/// levers rather than one pair, and it is what makes Nauvis's block the biggest
+/// of the three - see [`REQUEST_BYTES`].
+pub const NAUVIS_PARAMS_BYTES: usize = 376;
 
 /// The largest request the module can accept, which is what `request_bytes()`
 /// reports so a caller can size one buffer for every planet.
-pub const REQUEST_BYTES: usize = COMMON_BYTES + VULCANUS_PARAMS_BYTES;
+///
+/// **NAUVIS is the largest now, not Vulcanus**, and this is the first time this
+/// constant has moved since the v2 split. The resource overlay's eighteen
+/// per-resource levers take Nauvis's block to 376 against Vulcanus's 312.
+///
+/// It is deliberately written as a `max` rather than as whichever planet
+/// happens to be biggest today: the previous form named `VULCANUS_PARAMS_BYTES`
+/// directly, which was correct for three planets and silently wrong the moment
+/// a fourth block overtook it. Nothing would have failed loudly - the scratch
+/// buffer would simply have been too small, which surfaces as a truncated
+/// request rather than as a size error.
+pub const REQUEST_BYTES: usize = COMMON_BYTES
+    + if NAUVIS_PARAMS_BYTES > VULCANUS_PARAMS_BYTES {
+        NAUVIS_PARAMS_BYTES
+    } else {
+        VULCANUS_PARAMS_BYTES
+    };
 
 /// `planet` code for Fulgora.
 pub const PLANET_FULGORA: u32 = 0;
@@ -442,6 +463,24 @@ pub struct NauvisParams {
     ///
     /// For an untiled render this is the pixel box itself.
     pub cell_query_box: [f64; 4],
+    /// Six resources' `(frequency, size, richness)`, in catalog order.
+    ///
+    /// The only PER-ENTRY lever block on this planet - every other overlay has
+    /// one pair for the whole layer. Ordered by `NAUVIS_RESOURCE_CATALOG`
+    /// rather than by name, and [`NauvisParams::resource_levers`] is how a
+    /// reader gets one by index so a caller and the decoder cannot disagree
+    /// about which triple is which. Getting two of these the wrong way round
+    /// produces a plausible planet with its ores swapped, which is the same
+    /// hazard the Vulcanus bearings carry.
+    pub resource_levers: [[f64; 3]; 6],
+}
+
+impl NauvisParams {
+    /// One resource's `(frequency, size, richness)`, by catalog index.
+    #[must_use]
+    pub fn resource_levers(&self, index: usize) -> [f64; 3] {
+        self.resource_levers[index]
+    }
 }
 
 impl VulcanusParams {
@@ -547,6 +586,18 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
                 f64_at(bytes, p + 216),
                 f64_at(bytes, p + 224),
             ],
+            resource_levers: {
+                let mut levers = [[0.0f64; 3]; 6];
+                for (i, entry) in levers.iter_mut().enumerate() {
+                    let at = p + 232 + i * 24;
+                    *entry = [
+                        f64_at(bytes, at),
+                        f64_at(bytes, at + 8),
+                        f64_at(bytes, at + 16),
+                    ];
+                }
+                levers
+            },
         }),
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
@@ -641,11 +692,12 @@ mod tests {
     #[test]
     fn no_two_nauvis_fields_share_an_offset() {
         let mut b = good_nauvis();
-        let values = [
-            11.0f64, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0,
-            25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0,
-            39.0, 40.0, 41.0, 42.0,
-        ];
+        // One distinct value per `f64` slot, from `origin_x` to the end of the
+        // block. Generated rather than typed: the list had been extended by
+        // hand four times and the only thing stopping the fifth from stopping
+        // short is the coverage assertion below.
+        let slots = (COMMON_BYTES + NAUVIS_PARAMS_BYTES - 32) / 8;
+        let values: Vec<f64> = (0..slots).map(|i| 11.0 + i as f64).collect();
         for (i, v) in values.iter().enumerate() {
             let at = 32 + i * 8;
             b[at..at + 8].copy_from_slice(&v.to_le_bytes());
@@ -688,8 +740,28 @@ mod tests {
                 n.cell_query_box[1],
                 n.cell_query_box[2],
                 n.cell_query_box[3],
-            ],
+            ]
+            .into_iter()
+            .chain(n.resource_levers.into_iter().flatten())
+            .collect::<Vec<_>>(),
             values
+        );
+    }
+
+    /// The offset test above reaches EVERY `f64` in the block.
+    ///
+    /// Without this, extending the block and forgetting to extend the list
+    /// leaves the new fields untested while the test still passes - which is
+    /// exactly what "assert the list matches the values" cannot notice, because
+    /// both sides shrink together. This compares the list's length against the
+    /// block's own size instead.
+    #[test]
+    fn the_nauvis_offset_test_covers_the_whole_block() {
+        let named = 3 + 21 + 4 + 4 + 18;
+        let slots = (COMMON_BYTES + NAUVIS_PARAMS_BYTES - 32) / 8;
+        assert_eq!(
+            named, slots,
+            "the offset test names {named} slots but the block has {slots}"
         );
     }
 
@@ -721,7 +793,7 @@ mod tests {
     ///
     /// **A Vulcanus request has grown twice with no version bump** - 304 -> 336
     /// when the cliff view landed, 336 -> 368 when the rock and resource
-    /// overlays did. That is what a per-planet block is FOR: the prefix
+    /// overlays did - and a Nauvis one has grown five times, past it. That is what a per-planet block is FOR: the prefix
     /// declares its own length, `BadParamsLength` refuses a writer that
     /// disagrees, and Fulgora's request has not moved a byte through either.
     /// The two halves ship together and
@@ -731,7 +803,27 @@ mod tests {
     fn the_split_left_a_fulgora_request_the_size_it_was_in_v1() {
         assert_eq!(COMMON_BYTES + FULGORA_PARAMS_BYTES, 104);
         assert_eq!(COMMON_BYTES + VULCANUS_PARAMS_BYTES, 368);
-        assert_eq!(REQUEST_BYTES, 368);
+        // **`REQUEST_BYTES` is NAUVIS's now.** It equalled Vulcanus's request
+        // for three planets and this assertion read `368` the whole time,
+        // which made it look like a property of the split rather than of
+        // whichever block happened to be largest. The resource overlay took
+        // Nauvis past it, so the constant is a `max` and this pins what it
+        // must equal: the biggest block, whichever that is.
+        assert_eq!(COMMON_BYTES + NAUVIS_PARAMS_BYTES, 432);
+        assert_eq!(REQUEST_BYTES, 432);
+        // The property, not the number: the capacity is whichever request is
+        // largest. Written over a runtime slice so it keeps holding when a
+        // fourth planet arrives, and so it says WHICH planet is biggest rather
+        // than repeating a literal that was Vulcanus's for three releases.
+        let sizes = [
+            COMMON_BYTES + FULGORA_PARAMS_BYTES,
+            COMMON_BYTES + VULCANUS_PARAMS_BYTES,
+            COMMON_BYTES + NAUVIS_PARAMS_BYTES,
+        ];
+        assert_eq!(
+            REQUEST_BYTES,
+            sizes.into_iter().max().expect("three planets")
+        );
     }
 
     /// Each failure mode has its OWN code, so a caller can tell "you sent an
