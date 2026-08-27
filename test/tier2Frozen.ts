@@ -92,9 +92,64 @@ export function record(planet: string, label: string, field: string, value: bigi
   dirty = true;
 }
 
+/**
+ * Every frozen row name, grouped by planet.
+ *
+ * Exists for `tier2Coverage.spec.ts`, which enumerates the module's actual
+ * exports and checks each has a row. Reading the table rather than any spec's
+ * case list is the point: a check sourced from the same array it validates can
+ * only catch a deletion, never an omission.
+ */
+export function frozenNames(): [string, string[]][] {
+  return Object.entries(table).map(([planet, rows]) => [planet, Object.keys(rows)]);
+}
+
 /** Number of entries the table holds for one planet. */
 export function frozenCount(planet: string): number {
   return Object.keys(table[planet] ?? {}).length;
+}
+
+/**
+ * Assert one fold against its frozen value, and against the reference arm while
+ * that arm still exists.
+ *
+ * This is the conversion #227 needs applied to every Rust-vs-TypeScript
+ * assertion: `expect(wasm).toBe(tsFold)` becomes
+ * `expectFrozen(planet, label, name, wasm, tsFold)`. While both ports exist all
+ * three agree, so the table cannot be wrong. When the TypeScript arm goes the
+ * call drops its last argument and the wasm arm keeps running against a value
+ * captured while the two demonstrably agreed.
+ *
+ * **Converting the existing parity specs rather than writing fresh minimal ones
+ * was the second attempt, and the first was wrong.** A hand-written spec that
+ * picked one case per export looked equivalent and was not: three review rounds
+ * found nine cases whose ARGUMENTS never reached the branch the op exists to
+ * get right - a `pow` sweep that missed the exact-sqrt path, a spot selection
+ * fixed on constant favorability so the sort comparator was unobservable, an
+ * `eval_math` range entirely below its clamp, a seed sweep that never wrapped.
+ * Those specs' constants ARE the coverage. Carry them; do not reinvent them.
+ */
+export function expectFrozen(
+  planet: string,
+  label: string,
+  name: string,
+  wasm: bigint,
+  reference?: bigint,
+): void {
+  const where = `${label}: ${name}`;
+  if (RECORDING) {
+    if (reference !== undefined && wasm !== reference) {
+      throw new Error(`${where}: refusing to record, arms disagree - ${wasm} vs ${reference}`);
+    }
+    record(planet, label, name, wasm);
+    return;
+  }
+  const want = frozen(planet, label, name);
+  if (want === undefined) throw new Error(`${where}: no frozen checksum`);
+  if (wasm !== want) throw new Error(`${where}: wasm ${wasm} != frozen ${want}`);
+  if (reference !== undefined && reference !== want) {
+    throw new Error(`${where}: reference ${reference} != frozen ${want}`);
+  }
 }
 
 /**
@@ -115,7 +170,11 @@ export function frozenCount(planet: string): number {
  * satisfies it.
  */
 export function expectRecordedRows(planet: string, rows: number): void {
-  expected.set(planet, rows);
+  // ACCUMULATES rather than sets. A spec can record from several describe
+  // blocks, each knowing only its own case count, and the flush needs the
+  // total. A block that throws before reaching its call leaves the total short,
+  // so the planet is dropped - which is the behaviour this guard exists for.
+  expected.set(planet, (expected.get(planet) ?? 0) + rows);
 }
 
 const expected = new Map<string, number>();

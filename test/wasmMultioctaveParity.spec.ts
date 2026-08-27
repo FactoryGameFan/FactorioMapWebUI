@@ -1,6 +1,18 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import { expectFrozen, expectRecordedRows, flushRecording } from "./tier2Frozen";
+
+/**
+ * All five primitive/eval parity specs record into one section, so
+ * `tier2Coverage.spec.ts` can enumerate the module's exports and require a
+ * frozen row for each. The row NAME is the export, which is what makes that
+ * check possible.
+ */
+const PLANET = "primitives:multioctave";
+
+afterAll(flushRecording);
 
 import { makeMultioctaveNoise } from "../src/noise/multioctaveNoise";
 import { makeQuickMultioctaveNoise } from "../src/noise/quickMultioctaveNoise";
@@ -169,10 +181,15 @@ describe("Rust and TypeScript multioctave_noise agree bit for bit", () => {
         inputScale: c.inputScale,
         outputScale: c.outputScale,
       });
-      expect(fromWasm, `octaves=${c.octaves} p=${c.persistence} seed1=${c.seed1}`).toBe(
+      expectFrozen(
+        PLANET,
+        `multioctave octaves=${c.octaves} p=${c.persistence} seed1=${c.seed1}`,
+        "checksum_multioctave_noise",
+        fromWasm,
         foldGrid(fn, X0, Y0, STEP, N),
       );
     }
+    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("would notice a single point differing by one ULP", async () => {
@@ -271,10 +288,15 @@ describe("Rust and TypeScript variable_persistence_multioctave_noise agree bit f
       // made the two sides agree by construction on the one term that actually
       // differed. Two of the cases above (0.62, 0.9) are not f32-exact, so this
       // comparison now grades the operand width. See #226 and #254.
-      expect(fromWasm, `octaves=${c.octaves} offset=${c.offsetX} p=${c.p}`).toBe(
+      expectFrozen(
+        PLANET,
+        `varpersist octaves=${c.octaves} offset=${c.offsetX} p=${c.p}`,
+        "checksum_variable_persistence",
+        fromWasm,
         foldGrid((x, y) => fn(x, y, c.p), X0, Y0, STEP, N),
       );
     }
+    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("is sensitive to offset_x, which is a single world-space translation here", async () => {
@@ -369,10 +391,15 @@ describe("Rust and TypeScript quick_multioctave_noise agree bit for bit", () => 
         octaveInputScaleMultiplier: c.oism,
         offsetX: c.offsetX,
       });
-      expect(fromWasm, `octaves=${c.octaves} oism=${c.oism} seed1=${c.seed1}`).toBe(
+      expectFrozen(
+        PLANET,
+        `quick octaves=${c.octaves} oism=${c.oism} seed1=${c.seed1}`,
+        "checksum_quick_multioctave",
+        fromWasm,
         foldGrid(fn, X0, Y0, STEP, N),
       );
     }
+    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("is sensitive to the octave multipliers, which are narrowed to f32", async () => {

@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import { expectFrozen, expectRecordedRows, flushRecording } from "./tier2Frozen";
+
+/** Its own section - see `tier2Frozen.ts`; each spec declares its own row count. */
+const PLANET = "primitives:basisNoise";
+
+afterAll(flushRecording);
 
 import { basisNoise, basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
 
@@ -115,7 +122,8 @@ describe("Rust and TypeScript basisNoise agree bit for bit", () => {
 
     // Strict equality on a fold of raw bits. Not a tolerance: the two ports
     // must produce the SAME f32 at every one of the 4,096 points.
-    expect(fromWasm).toBe(fromTs);
+    expectFrozen(PLANET, "default seed pair", "checksum_basis_noise", fromWasm, fromTs);
+    expectRecordedRows(PLANET, 1);
   });
 
   it("would notice a single point differing by one ULP", async () => {
@@ -141,8 +149,15 @@ describe("Rust and TypeScript basisNoise agree bit for bit", () => {
       [1, 0],
     ] as const) {
       const fromWasm = u64(engine.checksum_basis_noise(s0, s1, X0, Y0, STEP, N));
-      expect(fromWasm).toBe(foldTypeScript(s0, s1, X0, Y0, STEP, N));
+      expectFrozen(
+        PLANET,
+        `seeds ${s0}/${s1}`,
+        "checksum_basis_noise",
+        fromWasm,
+        foldTypeScript(s0, s1, X0, Y0, STEP, N),
+      );
     }
+    expectRecordedRows(PLANET, 3);
   });
 
   it("returns a different checksum for a different seed - but NOT for bit 0", async () => {

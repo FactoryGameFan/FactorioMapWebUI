@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import { expectFrozen, expectRecordedRows, flushRecording } from "./tier2Frozen";
+
+/** Its own section - see `tier2Frozen.ts`; each spec declares its own row count. */
+const PLANET = "primitives:eval";
+
+afterAll(flushRecording);
 
 import { basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
 import { clamp, lerp, max, min, sliderRescale, sliderToLinear } from "../src/noise/eval/math";
@@ -108,14 +115,26 @@ describe("Rust and TypeScript agree bit for bit on the noise machine's `^`", () 
     // by squaring. All four go through the same dispatcher on both sides, so a
     // branch chosen differently moves the checksum.
     for (const exponent of [2.5, 0.5, 2, 7, 0.25]) {
-      expect(u64(engine.checksum_pow(exponent, 0, X0, STEP, N)), `exponent ${exponent}`).toBe(
+      expectFrozen(
+        PLANET,
+        `pow exponent=${exponent}`,
+        "checksum_pow",
+        u64(engine.checksum_pow(exponent, 0, X0, STEP, N)),
         foldAll(xs.map((x) => noiseMachinePow(x, exponent))),
       );
     }
 
     // And the cube root separately, so `ONE_THIRD_F32` is inside the comparison
     // rather than beside it.
-    expect(u64(engine.checksum_pow(0, 1, X0, STEP, N))).toBe(foldAll(xs.map((x) => fastCbrt(x))));
+    expectFrozen(
+      PLANET,
+      "pow cbrt",
+      "checksum_pow",
+      u64(engine.checksum_pow(0, 1, X0, STEP, N)),
+      foldAll(xs.map((x) => fastCbrt(x))),
+    );
+    // Five exponent branches above plus this cbrt case.
+    expectRecordedRows(PLANET, 6);
   });
 
   it("would not agree if a branch were chosen differently", () => {
@@ -141,6 +160,7 @@ describe("Rust and TypeScript agree bit for bit on the slider functions", () => 
   const sliders = (): number[] => Array.from({ length: N }, (_, i) => S0 + i * DS);
 
   it("folds 600 slider positions identically for sliderToLinear", async () => {
+    let linearRows = 0;
     const engine = await instantiate();
     const ss = sliders();
     // Three ranges, including the asymmetric one fulgora_grid uses and the tiny
@@ -150,20 +170,33 @@ describe("Rust and TypeScript agree bit for bit on the slider functions", () => 
       [-0.5, 0.5],
       [-1.7, 1.7],
     ]) {
-      expect(u64(engine.checksum_slider(0, S0, DS, N, lo, hi)), `[${lo}, ${hi}]`).toBe(
+      expectFrozen(
+        PLANET,
+        `slider linear [${lo}, ${hi}]`,
+        "checksum_slider",
+        u64(engine.checksum_slider(0, S0, DS, N, lo, hi)),
         foldAll(ss.map((s) => sliderToLinear(s, lo, hi))),
       );
+      linearRows++;
     }
+    expectRecordedRows(PLANET, linearRows);
   });
 
   it("folds 600 slider positions identically for the per-operation sliderRescale", async () => {
+    let rescaleRows = 0;
     const engine = await instantiate();
     const ss = sliders();
     for (const n of [2, 3]) {
-      expect(u64(engine.checksum_slider(1, S0, DS, N, n, 0)), `n=${n}`).toBe(
+      expectFrozen(
+        PLANET,
+        `slider rescale n=${n}`,
+        "checksum_slider",
+        u64(engine.checksum_slider(1, S0, DS, N, n, 0)),
         foldAll(ss.map((s) => sliderRescale(s, n))),
       );
+      rescaleRows++;
     }
+    expectRecordedRows(PLANET, rescaleRows);
   });
 
   /**
@@ -238,7 +271,14 @@ describe("Rust and TypeScript agree bit for bit on the engine seed variables", (
       values.push(seedNormalized(seed), seedSmall(seed));
       seed = (seed + STRIDE) >>> 0;
     }
-    expect(u64(engine.checksum_seed_vars(START, STRIDE, N))).toBe(foldAll(values));
+    expectFrozen(
+      PLANET,
+      "seed vars wrapping",
+      "checksum_seed_vars",
+      u64(engine.checksum_seed_vars(START, STRIDE, N)),
+      foldAll(values),
+    );
+    expectRecordedRows(PLANET, 1);
   });
 
   it("the sweep really does reach the top of the range", () => {
@@ -262,7 +302,14 @@ describe("Rust and TypeScript agree bit for bit on the DSL math operators", () =
       const x = X0 + i * STEP;
       values.push(clamp(x, -1, 1), lerp(-3, 7, x), min(x, -x, 0.5, -0), max(x, -x, 0.5, -0));
     }
-    expect(u64(engine.checksum_eval_math(X0, STEP, N))).toBe(foldAll(values));
+    expectFrozen(
+      PLANET,
+      "eval math",
+      "checksum_eval_math",
+      u64(engine.checksum_eval_math(X0, STEP, N)),
+      foldAll(values),
+    );
+    expectRecordedRows(PLANET, 1);
   });
 
   it("the sweep crosses both clamp bounds and the signed zero, so it is not one branch", () => {
@@ -374,7 +421,10 @@ describe("Rust and TypeScript agree bit for bit on the composed eval pipeline", 
   it("folds 1,152 reads - two passes over 576 points - identically", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
-      expect(
+      expectFrozen(
+        PLANET,
+        `pipeline seed1=${c.seed1} dx=${c.dx} dy=${c.dy}`,
+        "checksum_eval_pipeline",
         u64(
           engine.checksum_eval_pipeline(
             c.seed0,
@@ -390,9 +440,10 @@ describe("Rust and TypeScript agree bit for bit on the composed eval pipeline", 
             N,
           ),
         ),
-        `seed1=${c.seed1} dx=${c.dx} dy=${c.dy}`,
-      ).toBe(foldAll(sweep(c)));
+        foldAll(sweep(c)),
+      );
     }
+    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("the reverse pass is all cache hits, which is what puts the memos inside the comparison", () => {

@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import { expectFrozen, expectRecordedRows, flushRecording } from "./tier2Frozen";
+
+/** Its own section - see `tier2Frozen.ts`; each spec declares its own row count. */
+const PLANET = "primitives:voronoi";
+
+afterAll(flushRecording);
 
 import { makeVoronoi, type VoronoiDistanceType } from "../src/noise/voronoiNoise";
 
@@ -152,16 +159,20 @@ describe("Rust and TypeScript voronoi_* agree bit for bit", () => {
             distanceType,
           });
           compared++;
-          expect(
-            fromWasm,
+          expectFrozen(
+            PLANET,
             `${op} ${distanceType} jitter=${c.jitter} grid=${c.gridSize} seed0=${c.seed0}`,
-          ).toBe(foldAll(sweep((x, y) => v[op](x, y))));
+            "checksum_voronoi",
+            fromWasm,
+            foldAll(sweep((x, y) => v[op](x, y))),
+          );
         }
       }
     }
     // 5 cases x (4 distance types x 4 ops - the 1 refused pyramid/minkowski3
     // pair) = 5 x 15, each a 1,600-point sweep.
     expect(compared).toBe(75);
+    expectRecordedRows(PLANET, 75);
   });
 
   it("folds the stable cell INDEX too, which cell_id can collide on", async () => {
@@ -199,11 +210,18 @@ describe("Rust and TypeScript voronoi_* agree bit for bit", () => {
             values.push(cellX, cellY);
           }
         }
-        expect(fromWasm, `${distanceType} jitter=${c.jitter} grid=${c.gridSize}`).toBe(
+        expectFrozen(
+          PLANET,
+          `index ${distanceType} jitter=${c.jitter} grid=${c.gridSize}`,
+          "checksum_voronoi_cell_index",
+          fromWasm,
           foldAll(values),
         );
       }
     }
+    // One row per (case, distance type) - no op dimension here, since the cell
+    // index is the same whichever op reads it.
+    expectRecordedRows(PLANET, CASES.length * DISTANCE_TYPES.length);
   });
 
   it("would notice a single sample differing by one ULP", async () => {
