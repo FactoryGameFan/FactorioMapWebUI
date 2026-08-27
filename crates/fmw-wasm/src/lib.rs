@@ -1376,6 +1376,22 @@ pub extern "C" fn nauvis_field_count() -> u32 {
 mod survey_tests {
     use super::*;
     use fmw_noise::expressions::fulgora_scrap::ScrapControls;
+    use std::sync::Mutex;
+
+    /// Serialises access to the module's `SCRATCH` and `RENDER` statics.
+    ///
+    /// **These tests were racy when they landed in #342 and CI passed them
+    /// anyway.** Every one writes a request into the single `SCRATCH` buffer
+    /// and reads the single `RENDER` buffer, and cargo runs tests in parallel -
+    /// so one test's request overwrites another's mid-call. It surfaced as
+    /// `a_nauvis_request_is_not_surveyed` getting `0`: the survey succeeded
+    /// because it had been handed a neighbouring test's VALID Fulgora request.
+    ///
+    /// Measured before the fix: 2-3 failures in every parallel run, 0 in every
+    /// single-threaded one. That is the shape to check for whenever a test here
+    /// touches the statics - a `--test-threads=1` run passing while the default
+    /// fails is the signature, and it is invisible to a single green CI run.
+    static BUFFERS: Mutex<()> = Mutex::new(());
 
     /// A Fulgora request over a strided box, built from the layout table.
     ///
@@ -1440,6 +1456,9 @@ mod survey_tests {
     /// rather than argued, at every position of a real band.
     #[test]
     fn the_survey_matches_the_full_stack_at_every_position() {
+        // Poison-tolerant: a panicking sibling must not turn every later
+        // test into a lock error that hides the original failure.
+        let _guard = BUFFERS.lock().unwrap_or_else(|e| e.into_inner());
         let (x0, y0, step, nx, ny) = (-1024.0, 512.0, 21.875, 24u32, 19u32);
         let seed0 = 2_967_702_466u32;
         assert_eq!(run_survey(&survey_request(seed0, x0, y0, step, nx, ny)), 0);
@@ -1493,6 +1512,9 @@ mod survey_tests {
     /// A band larger than the buffer is refused rather than overrunning it.
     #[test]
     fn a_band_past_the_buffer_is_refused() {
+        // Poison-tolerant: a panicking sibling must not turn every later
+        // test into a lock error that hides the original failure.
+        let _guard = BUFFERS.lock().unwrap_or_else(|e| e.into_inner());
         let too_many = (SURVEY_MAX_POSITIONS as u32) / 100 + 1;
         let req = survey_request(1, 0.0, 0.0, 8.0, too_many, 101);
         assert_eq!(run_survey(&req), abi::Status::OutputTooLarge as u32);
@@ -1505,6 +1527,9 @@ mod survey_tests {
     /// A non-Fulgora request is refused rather than read as one.
     #[test]
     fn a_nauvis_request_is_not_surveyed() {
+        // Poison-tolerant: a panicking sibling must not turn every later
+        // test into a lock error that hides the original failure.
+        let _guard = BUFFERS.lock().unwrap_or_else(|e| e.into_inner());
         let mut b = survey_request(1, 0.0, 0.0, 8.0, 2, 2);
         b[8..12].copy_from_slice(&abi::PLANET_NAUVIS.to_le_bytes());
         // The declared params length still says Fulgora's, so this is refused
