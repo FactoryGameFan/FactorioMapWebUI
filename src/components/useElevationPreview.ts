@@ -139,12 +139,21 @@ export function createWorkerHost(
     if (existing) return existing;
     const w = createWorker();
     w.onmessage = (e: MessageEvent) => {
-      const result = e.data as ElevationRenderResult;
-      const entry = pending.get(result.id);
+      const data = e.data as ElevationRenderResult | { id: number; error: string };
+      const entry = pending.get(data.id);
       // An id with no pending entry is a reply to an already-settled request.
       if (!entry) return;
-      pending.delete(result.id);
-      entry.resolve(result);
+      pending.delete(data.id);
+      // The worker cannot render at all - it has no engine and, since #227,
+      // nothing to fall back to. Rejecting the one request rather than
+      // dropping the worker: the failure is the MODULE, so a replacement
+      // worker would fail the same way, and `onerror`'s dropWorker path exists
+      // for the different case of a crashed worker.
+      if ("error" in data) {
+        entry.reject(new Error(data.error));
+        return;
+      }
+      entry.resolve(data);
     };
     // A worker crash would otherwise leave its tiles' promises pending forever.
     // Every tile this slot holds fails, not just the newest.

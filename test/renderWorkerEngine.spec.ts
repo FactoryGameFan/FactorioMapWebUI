@@ -10,10 +10,12 @@ import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
  * that neither the parity specs nor the type system can see.
  *
  * It has two branches - an engine handshake and a render - and the interesting
- * claim is about the gap BETWEEN them: a render that arrives before the engine
- * message must still succeed, on the TypeScript path. That is what makes the
- * cutover safe rather than merely tested, so it is asserted rather than
- * described.
+ * claim is about the gap BETWEEN them. That claim INVERTED in #227: a render
+ * arriving before the engine used to be served on the TypeScript path, which
+ * was safe because the two paths are byte-identical. With the TypeScript math
+ * going away it must be QUEUED instead - a fallback to nothing is not a slower
+ * right answer, it is no answer - and a module that will not instantiate must
+ * fail its requests rather than silently degrading.
  *
  * The worker module reads and writes the global `self`, so this installs a
  * minimal one, imports the module fresh per test, and takes it down again.
@@ -85,32 +87,45 @@ describe("the render worker's engine handshake", () => {
     (globalThis as { self?: unknown }).self = realSelf;
   });
 
-  it("renders before the engine arrives, and the pixels are the same after it does", async () => {
+  it("queues a render that arrives before the engine, then serves it", async () => {
     const w = await loadWorker();
     expect(w.onmessage).not.toBeNull();
 
-    // Before: no engine has been handed over, so this must take the TypeScript
-    // path rather than fail.
+    // Before the handshake the worker must answer NOTHING. This is the
+    // assertion that inverted in #227 - it used to require a reply here.
     w.onmessage?.({ data: request(1) });
-    expect(posted).toHaveLength(1);
-    const before = pixelsOf(0);
-    expect(before.length).toBe(12 * 9 * 4);
+    expect(posted, "a pre-engine render must be held, not served").toHaveLength(0);
 
-    // The handshake, then the same request again.
+    // A second one, so the drain is exercised with more than one entry and its
+    // ORDER can be checked.
+    w.onmessage?.({ data: request(2) });
+    expect(posted).toHaveLength(0);
+
     const module = await WebAssembly.compile(readFileSync(wasmPath));
     w.onmessage?.({ data: { kind: "engine", module } });
-    expect(posted, "the engine message must not post a reply").toHaveLength(1);
 
-    w.onmessage?.({ data: request(2) });
+    // Both, in arrival order. Order matters: the host settles by id, so a
+    // reordered drain would still resolve the right promises - which is
+    // exactly why it needs asserting rather than assuming.
     expect(posted).toHaveLength(2);
-    const after = pixelsOf(1);
+    expect((posted[0]?.message as { id: number }).id).toBe(1);
+    expect((posted[1]?.message as { id: number }).id).toBe(2);
+    expect(pixelsOf(0).length).toBe(12 * 9 * 4);
 
-    // The whole safety argument for the cutover, in one assertion.
-    expect(Array.from(after)).toEqual(Array.from(before));
+    // And a render after the handshake is served straight through, with the
+    // same pixels a queued one got - so queueing delays a request without
+    // changing its answer.
+    w.onmessage?.({ data: request(3) });
+    expect(posted).toHaveLength(3);
+    expect(Array.from(pixelsOf(2))).toEqual(Array.from(pixelsOf(0)));
   }, 120000);
 
   it("transfers the buffer rather than copying it across the boundary", async () => {
     const w = await loadWorker();
+    // The handshake first: since #227 a render before it is queued rather than
+    // served, so without this there is no reply to inspect.
+    const module = await WebAssembly.compile(readFileSync(wasmPath));
+    w.onmessage?.({ data: { kind: "engine", module } });
     w.onmessage?.({ data: request(3) });
     const sent = posted[0];
     if (!sent) throw new Error("the worker posted no reply");
@@ -118,10 +133,12 @@ describe("the render worker's engine handshake", () => {
     expect(sent.transfer?.[0]).toBe((sent.message as { buffer: ArrayBuffer }).buffer);
   }, 120000);
 
-  it("survives an engine message it cannot use, and keeps rendering", async () => {
+  it("fails its renders when the engine will not instantiate, rather than degrading", async () => {
     // A module that does not speak this bundle's ABI is a deployment problem.
-    // The worker must stay alive and fall back rather than throwing out of
-    // `onmessage`, which would take the whole slot down.
+    // The worker must stay alive - throwing out of `onmessage` would take the
+    // whole slot down - but it must now REPORT rather than fall back. With the
+    // TypeScript math gone there is nothing to fall back to, and a deployment
+    // that shipped a mismatched module used to look healthy and merely slow.
     const w = await loadWorker();
     const notOurEngine = await WebAssembly.compile(
       // The smallest valid module: a header and nothing else. It exports no
@@ -134,6 +151,32 @@ describe("the render worker's engine handshake", () => {
 
     w.onmessage?.({ data: request(4) });
     expect(posted).toHaveLength(1);
-    expect(pixelsOf(0).length).toBe(12 * 9 * 4);
+    const message = posted[0]?.message as { id: number; error?: string };
+    expect(message.id, "the error must carry the id, or the host strands it").toBe(4);
+    expect(message.error).toContain("render engine failed to instantiate");
+    // No buffer, so nothing is transferred and the host cannot mistake it for
+    // a result.
+    expect(posted[0]?.transfer).toBeUndefined();
+  }, 120000);
+
+  it("fails a request that was already QUEUED when the engine turned out to be bad", async () => {
+    // The queue and the failure path cross here, and this is the case that
+    // hangs the panel if it is wrong: a request held before the handshake, and
+    // a handshake that then fails. Dropping it would leave its promise pending
+    // forever, which is the "Rendering..." hang `useElevationPreview` already
+    // carries a comment about for a different cause.
+    const w = await loadWorker();
+    w.onmessage?.({ data: request(7) });
+    expect(posted).toHaveLength(0);
+
+    const notOurEngine = await WebAssembly.compile(
+      new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]),
+    );
+    w.onmessage?.({ data: { kind: "engine", module: notOurEngine } });
+
+    expect(posted, "the queued request must be settled, not dropped").toHaveLength(1);
+    const message = posted[0]?.message as { id: number; error?: string };
+    expect(message.id).toBe(7);
+    expect(message.error).toContain("render engine failed to instantiate");
   }, 120000);
 });
