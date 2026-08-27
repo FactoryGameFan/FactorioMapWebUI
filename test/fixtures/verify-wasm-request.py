@@ -40,6 +40,7 @@ VIEW = {
     "rocks": 4,
     "resources": 5,
     "all": 6,
+    "trees": 7,
 }
 
 BEARING_NAMES = [
@@ -56,7 +57,7 @@ BEARING_NAMES = [
 ]
 
 
-NAUVIS_PARAMS_BYTES = 64
+NAUVIS_PARAMS_BYTES = 96
 """Must equal fmw_wasm::abi::NAUVIS_PARAMS_BYTES."""
 
 
@@ -111,19 +112,28 @@ def decode_fulgora(b, req):
 
 
 def decode_nauvis(b, req):
-    """Nauvis's block: eight f64 levers, no trig and no world boxes.
+    """Nauvis's block: twelve f64 levers, no trig and no world boxes.
 
     The simplest of the three, and the only structural check available is that
     every field lands at its own offset - there is no unit-norm property to
     lean on and no box to check for inversion. That is fine here and it is
     worth saying WHY, because the Vulcanus block's history is the opposite
     lesson: a property check is not a structural check, and its unit-norm test
-    passed a planted swap of two bearings. Eight distinct scalars read back at
-    eight distinct offsets cannot be swapped without one of them reading wrong,
-    so the per-field check IS the structural check here.
+    passed a planted swap of two bearings.
+
+    **The distinctness below is load-bearing, and it used to be a claim rather
+    than a check.** This docstring already argued that "distinct scalars read
+    back at distinct offsets cannot be swapped without one reading wrong" - but
+    the fixture it was checking carried only two distinct values across eight
+    fields (five 1.0s and three 0.0s), so a swap of `moistureFrequency` and
+    `auxFrequency` passed every assertion here. The argument was sound and the
+    DATA did not instantiate it, which is the same shape of failure as the
+    bearing swap it cites. The fixture now uses twelve distinct values and the
+    assertion below is what stops a future edit quietly undoing that.
     """
-    if len(b) != COMMON_BYTES + NAUVIS_PARAMS_BYTES:
-        raise AssertionError(f"nauvis request is {len(b)} bytes, expected 120")
+    expected = COMMON_BYTES + NAUVIS_PARAMS_BYTES
+    if len(b) != expected:
+        raise AssertionError(f"nauvis request is {len(b)} bytes, expected {expected}")
     decode_common(b, req, NAUVIS_PARAMS_BYTES)
     p = COMMON_BYTES
     fields = [
@@ -135,7 +145,18 @@ def decode_nauvis(b, req):
         "auxBias",
         "startingAreaMoistureSize",
         "startingAreaMoistureFrequency",
+        # Read by the TREE overlay and by nothing else.
+        "temperatureFrequency",
+        "temperatureBias",
+        "treesFrequency",
+        "treesSize",
     ]
+    values = [req[name] for name in fields]
+    if len(set(values)) != len(values):
+        raise AssertionError(
+            "the nauvis fixture must use a DISTINCT value per lever - "
+            "with a repeat, a swap of the two that share it reads correct"
+        )
     for i, name in enumerate(fields):
         check(name, f64(b, p + i * 8), req[name])
     # A planted reordering of two levers that happen to hold the SAME value
@@ -310,7 +331,10 @@ def main():
         "vulcanus: all fields agree, ten bearings unit-norm, 1 legitimate duplicate, "
         "both world boxes distinct and non-inverted, placement halo symmetric"
     )
-    print("nauvis: all eight levers agree at their own offsets, 120 bytes")
+    print(
+        f"nauvis: all {len(nlevers['levers'])} levers agree at their own "
+        f"offsets, and are pairwise distinct, {len(nb)} bytes"
+    )
 
     fixture = {
         "_comment": (

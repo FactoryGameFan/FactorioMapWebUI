@@ -400,12 +400,13 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 }
 
 /**
- * The Rust engine's Nauvis path - the terrain view, and so far only that.
+ * The Rust engine's Nauvis path - the terrain view and the tree overlay.
  *
- * The overlays (resources, trees, rocks, cliffs, enemies) are the follow-up, so
- * an `all` request still takes the TypeScript path in full rather than getting
- * bare terrain from the engine. The module refuses any other Nauvis view with
- * `unsupported planet or view`, so a mistake here is loud rather than silent.
+ * The four remaining overlays (resources, rocks, cliffs, enemies) are the
+ * follow-up, so an `all` request still takes the TypeScript path in full rather
+ * than coming back as terrain plus trees. The module refuses any other Nauvis
+ * view with `unsupported planet or view`, so a mistake here is loud rather than
+ * silent.
  *
  * **`waterLevel` is sent and deliberately ignored by the module** - issue #326.
  * `renderTerrain.ts` resolves every tile at `waterLevel = 0` however the slider
@@ -418,10 +419,11 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 function renderNauvisThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
+  view: "terrain" | "trees",
 ): ElevationRenderResult {
-  const view = renderThroughWasm(engine, {
+  const pixels = renderThroughWasm(engine, {
     planet: "nauvis",
-    view: "terrain",
+    view,
     seed0: req.seed0,
     width: req.width,
     height: req.height,
@@ -442,8 +444,15 @@ function renderNauvisThroughWasm(
     auxBias: req.auxBias ?? 0,
     startingAreaMoistureSize: req.startingAreaMoistureSize ?? 1,
     startingAreaMoistureFrequency: req.startingAreaMoistureFrequency ?? 1,
+    // Trees are the only consumer of temperature, and the only view that reads
+    // the two tree levers. Defaulted here to the same values `makeTreeDensity`
+    // uses, for the reason the block above states.
+    temperatureFrequency: req.temperatureFrequency ?? 1,
+    temperatureBias: req.temperatureBias ?? 0,
+    treesFrequency: req.treeControls?.frequency ?? 1,
+    treesSize: req.treeControls?.size ?? 1,
   });
-  const owned = new Uint8ClampedArray(view);
+  const owned = new Uint8ClampedArray(pixels);
   return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
 }
 
@@ -629,17 +638,22 @@ export function runRenderRequest(
       }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
     }
-    // The one Nauvis path the Rust engine serves so far. Checked BEFORE the
+    // The Nauvis paths the Rust engine serves so far. Checked BEFORE the
     // TypeScript render rather than after, so the engine's work replaces it
-    // instead of being thrown away - and only for `terrain`, because the
-    // overlays are not ported and an `all` request must not come back bare.
+    // instead of being thrown away - and not for `all`, because four of the
+    // five overlays are still unported and that request must not come back
+    // missing them.
     //
     // The spawn is fixed at the origin on the module side, so a request with a
     // moved spawn stays on the TypeScript path. `startingPositions` reaches
     // `elevation_nauvis`'s distance terms, so taking the engine for one would
     // be a real difference rather than a slower answer.
-    if (engine !== undefined && req.view === "terrain" && isDefaultSpawn(req.startingPositions)) {
-      return renderNauvisThroughWasm(req, engine);
+    if (
+      engine !== undefined &&
+      (req.view === "terrain" || req.view === "trees") &&
+      isDefaultSpawn(req.startingPositions)
+    ) {
+      return renderNauvisThroughWasm(req, engine, req.view);
     }
     image = renderTerrain({
       seed0: req.seed0,

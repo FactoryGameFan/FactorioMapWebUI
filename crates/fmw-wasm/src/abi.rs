@@ -57,8 +57,10 @@
 //! common prefix
 //!   0  u32  magic          'FMWR' little-endian
 //!   4  u32  abi_version
-//!   8  u32  planet         0 = fulgora, 1 = vulcanus
-//!  12  u32  view           0 = landmask, 1 = terrain, 2 = scrap footprint
+//!   8  u32  planet         0 = fulgora, 1 = vulcanus, 2 = nauvis
+//!  12  u32  view           see the VIEW_* constants in render.rs; 0 = landmask
+//!                          through 7 = trees. Adding a code is not a layout
+//!                          change - only `supported` has to name it.
 //!  16  u32  seed0          the SURFACE seed, not the map seed
 //!  20  u32  width
 //!  24  u32  height
@@ -91,6 +93,20 @@
 //! +88  f64 x 20  trig, as ten (sin, cos) pairs in TRIG ORDER below
 //! +248 f64 x 4   cell_query_box: x0, y0, x1, y1
 //! +280 f64 x 4   placement_sweep_box: x0, y0, x1, y1
+//!
+//! nauvis block (96 bytes, so a Nauvis request is 152)
+//!  +0  f64  water_level        NOT read by the terrain view - see #326
+//!  +8  f64  segmentation_multiplier
+//! +16  f64  moisture_frequency
+//! +24  f64  moisture_bias
+//! +32  f64  aux_frequency
+//! +40  f64  aux_bias
+//! +48  f64  starting_area_moisture_size
+//! +56  f64  starting_area_moisture_frequency
+//! +64  f64  temperature_frequency   read by the TREE overlay only
+//! +72  f64  temperature_bias        read by the TREE overlay only
+//! +80  f64  trees_frequency
+//! +88  f64  trees_size
 //! ```
 //!
 //! **The Vulcanus block has grown twice with no version bump - 248 to 280 for
@@ -136,18 +152,25 @@ pub const FULGORA_PARAMS_BYTES: usize = 48;
 /// Size of Vulcanus's parameter block.
 pub const VULCANUS_PARAMS_BYTES: usize = 312;
 
-/// Nauvis's block: eight climate and elevation levers, one `f64` each.
+/// Nauvis's block: eight climate and elevation levers, then the tree overlay's
+/// four, one `f64` each.
 ///
 /// **A third block with no version bump, which is the split working as
 /// designed.** [`ABI_VERSION`] describes the COMMON prefix, which every planet
 /// reads; a planet block is declared by `params_bytes` and checked against the
 /// planet code, so adding one cannot misread an existing writer's request.
 ///
-/// It carries no trig, because Nauvis reaches no `starting_spot_at_angle` - and
-/// no boxes, because the terrain view paints one pixel per pixel with no halo.
-/// The overlays will need at least a placement sweep box; that is a block
-/// growth, which is also free.
-pub const NAUVIS_PARAMS_BYTES: usize = 64;
+/// It carries no trig, because Nauvis reaches no `starting_spot_at_angle`. It
+/// carries no halo boxes yet either: the terrain view paints one pixel per
+/// pixel, and the tree overlay - the first of the five to land - reads its
+/// density field at a one-cell world-coordinate border rather than reading the
+/// image, so a tile needs no widened query box to stay byte-identical. The four
+/// remaining overlays do need one; that is a further block growth, which is
+/// also free.
+///
+/// **Grown 64 -> 96 for the tree overlay**, the first time this block has moved.
+/// Vulcanus's grew three times the same way.
+pub const NAUVIS_PARAMS_BYTES: usize = 96;
 
 /// The largest request the module can accept, which is what `request_bytes()`
 /// reports so a caller can size one buffer for every planet.
@@ -343,6 +366,20 @@ pub struct NauvisParams {
     pub starting_area_moisture_size: f64,
     /// `control:starting_area_moisture:frequency`.
     pub starting_area_moisture_frequency: f64,
+    /// `control:temperature:frequency`.
+    ///
+    /// **Read by the TREE overlay and by nothing else.** The tile catalog keys
+    /// on aux and moisture, so the terrain view leaves temperature at its
+    /// defaults; `renderTrees.ts`'s species layer is the one consumer. The app
+    /// has no UI for either lever, but `climateReads` parses both out of an
+    /// imported exchange string, so a preset can move them.
+    pub temperature_frequency: f64,
+    /// `control:temperature:bias`. See [`NauvisParams::temperature_frequency`].
+    pub temperature_bias: f64,
+    /// `control:trees:frequency`.
+    pub trees_frequency: f64,
+    /// `control:trees:size`.
+    pub trees_size: f64,
 }
 
 impl VulcanusParams {
@@ -423,6 +460,10 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
             aux_bias: f64_at(bytes, p + 40),
             starting_area_moisture_size: f64_at(bytes, p + 48),
             starting_area_moisture_frequency: f64_at(bytes, p + 56),
+            temperature_frequency: f64_at(bytes, p + 64),
+            temperature_bias: f64_at(bytes, p + 72),
+            trees_frequency: f64_at(bytes, p + 80),
+            trees_size: f64_at(bytes, p + 88),
         }),
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
@@ -498,6 +539,57 @@ mod tests {
 
     fn good_vulcanus() -> Vec<u8> {
         header(PLANET_VULCANUS, VULCANUS_PARAMS_BYTES)
+    }
+
+    fn good_nauvis() -> Vec<u8> {
+        header(PLANET_NAUVIS, NAUVIS_PARAMS_BYTES)
+    }
+
+    /// The Nauvis fields do not overlap.
+    ///
+    /// **This block has no other structural check at all**, which is why the
+    /// test matters more here than for the other two. Fulgora's and Vulcanus's
+    /// trig pairs can at least be checked for unit norm; twelve bare scalars
+    /// have no such property, so "each lever reads back at its own offset with a
+    /// DISTINCT value" is the whole of it. `verify-wasm-request.py` makes the
+    /// same argument about the committed fixture and now enforces the
+    /// distinctness the argument depends on - it used to only assert it, over a
+    /// fixture carrying two distinct values across eight fields.
+    #[test]
+    fn no_two_nauvis_fields_share_an_offset() {
+        let mut b = good_nauvis();
+        let values = [
+            11.0f64, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0,
+            25.0,
+        ];
+        for (i, v) in values.iter().enumerate() {
+            let at = 32 + i * 8;
+            b[at..at + 8].copy_from_slice(&v.to_le_bytes());
+        }
+        let r = decode(&b).expect("should decode");
+        let Params::Nauvis(n) = r.params else {
+            panic!("wrong block")
+        };
+        assert_eq!(
+            [
+                r.origin_x,
+                r.origin_y,
+                r.tiles_per_pixel,
+                n.water_level,
+                n.segmentation_multiplier,
+                n.moisture_frequency,
+                n.moisture_bias,
+                n.aux_frequency,
+                n.aux_bias,
+                n.starting_area_moisture_size,
+                n.starting_area_moisture_frequency,
+                n.temperature_frequency,
+                n.temperature_bias,
+                n.trees_frequency,
+                n.trees_size,
+            ],
+            values
+        );
     }
 
     #[test]
