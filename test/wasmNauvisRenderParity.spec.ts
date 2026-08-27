@@ -291,26 +291,67 @@ describe("the WASM engine renders Nauvis terrain exactly as the TypeScript does"
     expect(flat(freqOnly)).toEqual(baseWasm);
   }, 300000);
 
-  it("a moved spawn stays on the TypeScript path rather than rendering wrong", async () => {
-    // The Nauvis ABI block carries no spawn list, so the module fixes it at the
-    // origin. `runRenderRequest` therefore has to REFUSE the engine for a
-    // request that moved it - `startingPositions` reaches `elevation_nauvis`'s
-    // distance term, so taking the engine anyway would be a wrong answer rather
-    // than a slow one.
+  it("a moved spawn renders THROUGH the engine, byte-identical to the TypeScript", async () => {
+    // The Nauvis block carries the spawn list as of #227, so the engine is no
+    // longer refused here. That inverts what this test proves. It used to check
+    // that `runRenderRequest` REFUSED the engine for a moved spawn, and it
+    // passed trivially: the engine arm was the TypeScript path, so the two arms
+    // were the same code.
+    //
+    // Now the engine cannot refuse, so byte-identity is only reachable if the
+    // module really reads the eight `[x, y]` pairs and feeds them to the same
+    // distance terms. Planted and MEASURED: making `nauvis_ctx` ignore the
+    // decoded list and hard-code the origin turns this red at 527 of this
+    // window's 4,096 pixels.
     const e = await engine();
-    const req = {
+    const moved = {
       ...request(WINDOWS[0]),
       startingPositions: [{ x: 512, y: -256 }],
     };
-    const withEngine = Array.from(new Uint8ClampedArray(runRenderRequest(req, e).buffer));
-    const withoutEngine = Array.from(new Uint8ClampedArray(runRenderRequest(req).buffer));
+    const withEngine = Array.from(new Uint8ClampedArray(runRenderRequest(moved, e).buffer));
+    const withoutEngine = Array.from(new Uint8ClampedArray(runRenderRequest(moved).buffer));
     expect(withEngine).toEqual(withoutEngine);
-    // And the moved spawn must actually change the render, or this proves
-    // nothing about which path ran.
+
+    // Anti-vacuity, and it is what makes the equality above mean something: the
+    // spawn has to actually move the render. If it did not, a module that
+    // ignored the list entirely would satisfy the assertion above.
     const atOrigin = Array.from(
       new Uint8ClampedArray(runRenderRequest(request(WINDOWS[0]), e).buffer),
     );
     expect(withEngine).not.toEqual(atOrigin);
+
+    // TWO points, because one point is the case a hard-coded origin can still
+    // get right by accident once it is offset - and because the count and the
+    // pairing are what the flat-offset test in `abi.rs` cannot check.
+    const two = {
+      ...request(WINDOWS[0]),
+      startingPositions: [
+        { x: 512, y: -256 },
+        { x: -300.5, y: 96.25 },
+      ],
+    };
+    expect(Array.from(new Uint8ClampedArray(runRenderRequest(two, e).buffer))).toEqual(
+      Array.from(new Uint8ClampedArray(runRenderRequest(two).buffer)),
+    );
+    expect(Array.from(new Uint8ClampedArray(runRenderRequest(two, e).buffer))).not.toEqual(
+      withEngine,
+    );
+  }, 300000);
+
+  it("refuses the engine for a spawn list longer than the ABI cap", async () => {
+    // The cap is a real edge rather than a formality: over it the writer throws
+    // instead of silently dropping points, so `runRenderRequest` has to keep
+    // such a request on the TypeScript path. Nine points, one past the eight
+    // the block holds.
+    const e = await engine();
+    const many = {
+      ...request(WINDOWS[0]),
+      startingPositions: Array.from({ length: 9 }, (_, i) => ({ x: i * 64, y: -i * 32 })),
+    };
+    expect(() => runRenderRequest(many, e)).not.toThrow();
+    expect(Array.from(new Uint8ClampedArray(runRenderRequest(many, e).buffer))).toEqual(
+      Array.from(new Uint8ClampedArray(runRenderRequest(many).buffer)),
+    );
   }, 300000);
 });
 

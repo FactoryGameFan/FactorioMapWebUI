@@ -98,12 +98,43 @@ export function frozenCount(planet: string): number {
 }
 
 /**
+ * Declare how many rows this planet's sweep must record before the table is
+ * rewritten. A spec calls it with its own expected total.
+ *
+ * **Without this a FAILED record run writes a partial table**, which is not
+ * hypothetical - it happened twice while this file was being written. A
+ * divergence part-way through the sweep throws, `afterAll` still runs, and the
+ * table lands holding 502 of its 504 rows. The next normal run then fails on a
+ * missing entry, which reads like a second unrelated break rather than like the
+ * first one's wreckage.
+ *
+ * It is a COUNT rather than a flag because a planet can record across more than
+ * one test - Vulcanus folds its three windows in one and its off-grid window in
+ * another - so "this test finished" is not the same as "the sweep is whole".
+ * Both call this with the same total, and only a run that recorded every row
+ * satisfies it.
+ */
+export function expectRecordedRows(planet: string, rows: number): void {
+  expected.set(planet, rows);
+}
+
+const expected = new Map<string, number>();
+
+/**
  * Merge this run's recordings into the committed table and write it out. Called
  * from an `afterAll` in each parity spec, so a partial run only rewrites the
  * planets it actually swept rather than truncating the other two.
+ *
+ * A planet that recorded fewer rows than it declared is DROPPED rather than
+ * written, so a run that threw part-way leaves the committed table untouched.
  */
 export function flushRecording(): void {
   if (!RECORDING || !dirty) return;
+  for (const [planet, rows] of Object.entries(recorded)) {
+    const want = expected.get(planet);
+    if (want === undefined || Object.keys(rows).length !== want) delete recorded[planet];
+  }
+  if (Object.keys(recorded).length === 0) return;
   const merged: Table = load();
   for (const [planet, rows] of Object.entries(recorded)) merged[planet] = rows;
   const ordered: Table = {};

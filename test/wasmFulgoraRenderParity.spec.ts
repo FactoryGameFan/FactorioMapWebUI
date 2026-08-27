@@ -246,15 +246,17 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.fulgora.totalBytes).toBe(COMMON_BYTES + FULGORA_PARAMS_BYTES);
     expect(fixture.vulcanus.totalBytes).toBe(COMMON_BYTES + VULCANUS_PARAMS_BYTES);
     expect(fixture.nauvis.totalBytes).toBe(COMMON_BYTES + NAUVIS_PARAMS_BYTES);
-    // Nauvis is the LARGEST now, at 432 - the resource overlay's eighteen
-    // per-resource levers took it past Vulcanus's 368. It has been 120, 152,
-    // 200, 216 and 288 as each overlay grew that block.
+    // Nauvis is the LARGEST now, at 568 - the resource overlay's eighteen
+    // per-resource levers took it past Vulcanus's 368, and #227's
+    // starting-point block (a count plus eight `[x, y]` pairs) grew it again so
+    // a moved spawn no longer falls back to the TypeScript renderer. It has
+    // been 120, 152, 200, 216, 288 and 432 as each overlay grew that block.
     //
     // So `REQUEST_BYTES` is Nauvis's, not Vulcanus's, and this is the first
     // time it has moved since the v2 split. The three assertions below say
     // that in the form that cannot go stale: the capacity is whichever block
     // is biggest, and every planet fits inside it.
-    expect(fixture.nauvis.totalBytes).toBe(432);
+    expect(fixture.nauvis.totalBytes).toBe(568);
     expect(REQUEST_BYTES).toBe(fixture.nauvis.totalBytes);
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.vulcanus.totalBytes);
     expect(fixture.fulgora.totalBytes).toBe(104);

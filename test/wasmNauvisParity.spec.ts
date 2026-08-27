@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
-import { flushRecording, frozen, frozenCount, RECORDING, record } from "./tier2Frozen";
+import {
+  expectRecordedRows,
+  flushRecording,
+  frozen,
+  frozenCount,
+  RECORDING,
+  record,
+} from "./tier2Frozen";
 
 import { encodeRenderRequest, type WasmRenderRequest } from "../src/noise/wasm/request";
 
@@ -139,28 +146,48 @@ const SEED0 = 123456;
  * coordinates are f32-exact and a narrowing difference is invisible there by
  * construction.
  */
-const OFF_GRID_POSITIONS = 2365;
+const OFF_GRID_POSITIONS = 2841;
 
 /** How many swept positions have a non-zero tree density. Frozen; see the test. */
-const TREE_DENSITY_HITS = 602;
+const TREE_DENSITY_HITS = 927;
 
 /** Swept positions whose coordinates ARE both f32-exact. Frozen with its complement. */
-const ON_GRID_POSITIONS = 55;
+const ON_GRID_POSITIONS = 63;
 
 /** How many swept positions the cliff gate answers 10 at. Frozen; see the test. */
 const CLIFF_GATE_HITS = 327;
 
 /** How many swept positions have a non-zero rock density. Frozen; see the test. */
-const ROCK_DENSITY_HITS = 67;
+const ROCK_DENSITY_HITS = 72;
 
-/** Per case, how many swept positions a cone reaches. Frozen; see the test. */
-const ENEMY_LIVE_PER_CASE = [331, 412, 484, 401, 393];
+/**
+ * Per case, how many swept positions a cone reaches. Frozen; see the test.
+ *
+ * **The moved-spawn case contributes 0, and that is correct rather than a gap.**
+ * Enemy bases are suppressed inside the starting area, and that case's window
+ * sits inside the area its own moved spawn creates - which is the point of the
+ * case. It grades the spawn-relative fields (`elevation_nauvis`'s distance
+ * term, `moisture`'s blend, the starting patches); the other five grade the
+ * enemy layer. A zero here would be a problem only if every case had one, which
+ * is what this array being per-case makes visible.
+ */
+const ENEMY_LIVE_PER_CASE = [331, 412, 484, 401, 393, 0];
 
 /** How many swept positions have a positive enemy probability. Frozen. */
 const ENEMY_POSITIVE_POSITIONS = 160;
 
 interface Case {
   readonly label: string;
+  /**
+   * The map's starting points. Omitted means the origin, which is what every
+   * case did before the Nauvis block carried a spawn list (#227).
+   *
+   * It has to be threaded on BOTH sides or the case grades nothing: the Rust
+   * arm reads it out of the request through `render::nauvis_ctx`, so a case
+   * that set it here and not in `tsFields` would diverge for a reason that is
+   * the spec's fault rather than the port's.
+   */
+  readonly startingPositions?: readonly { readonly x: number; readonly y: number }[];
   readonly waterLevel: number;
   readonly segmentationMultiplier: number;
   readonly moistureFrequency: number;
@@ -315,6 +342,25 @@ const CASES: readonly Case[] = [
     step: 91.3,
     n: 22,
   },
+  {
+    // The ONLY case that moves the spawn (#227). Two points rather than one,
+    // because a single moved point is the case a hard-coded origin can still
+    // get wrong in the same direction everywhere - two make the distance term
+    // a real minimum over a set. Near spawn on purpose: `elevation_nauvis`'s
+    // distance term, `moisture`'s starting-area blend and the starting patches
+    // are all spawn-relative and saturate in the far field, so a far window
+    // would fold a constant through them and grade nothing.
+    label: "default controls, moved spawn",
+    ...DEFAULT_CONTROLS,
+    startingPositions: [
+      { x: 512, y: -256 },
+      { x: -300.5, y: 96.25 },
+    ],
+    x0: 301.7,
+    y0: -173.3,
+    step: 6.7,
+    n: 22,
+  },
 ];
 
 /**
@@ -336,10 +382,12 @@ function tsFields(c: Case): ((x: number, y: number) => number)[] {
   const rawXTables = basisNoiseTablesFromSeed(SEED0, NAUVIS_OFFSET_X_SEED1);
   const rawYTables = basisNoiseTablesFromSeed(SEED0, NAUVIS_OFFSET_Y_SEED1);
 
+  const spawn = c.startingPositions?.map((q) => ({ ...q }));
   const elevationCommon = {
     seed0: SEED0,
     waterLevel: c.waterLevel,
     segmentationMultiplier: c.segmentationMultiplier,
+    startingPositions: spawn,
   };
 
   // Hoisted, because the tile layer reads all three and rebuilding them per
@@ -358,6 +406,7 @@ function tsFields(c: Case): ((x: number, y: number) => number)[] {
     moistureBias: c.moistureBias,
     startingAreaMoistureSize: c.startingAreaMoistureSize,
     startingAreaMoistureFrequency: c.startingAreaMoistureFrequency,
+    startingPositions: spawn,
   });
 
   // `makeTileResolver` is deliberately NOT used to build this env, and the
@@ -480,6 +529,7 @@ function enemyFields(c: Case): ((x: number, y: number) => number)[] {
   const f = makeEnemyBaseField({
     seed0: SEED0,
     controls: { frequency: c.enemyFrequency, size: c.enemySize },
+    startingPositions: c.startingPositions?.map((q) => ({ ...q })),
   });
   return [(x, y) => f.field(x, y), (x, y) => f.probability(x, y)];
 }
@@ -529,6 +579,7 @@ function cliffRockFields(c: Case): ((x: number, y: number) => number)[] {
     },
     segmentationMultiplier: c.segmentationMultiplier,
     waterLevel: c.waterLevel,
+    startingPositions: c.startingPositions?.map((q) => ({ ...q })),
   };
   const rocks = makeRockFields({
     seed0: SEED0,
@@ -578,6 +629,7 @@ function treeFields(c: Case): ((x: number, y: number) => number)[] {
     temperatureBias: c.temperatureBias,
     startingAreaMoistureSize: c.startingAreaMoistureSize,
     startingAreaMoistureFrequency: c.startingAreaMoistureFrequency,
+    startingPositions: c.startingPositions?.map((q) => ({ ...q })),
   };
   const shared = makeTreeShared({
     seed0: SEED0,
@@ -630,6 +682,7 @@ function resourceFields(c: Case): ((x: number, y: number) => number)[] {
     controls: levers,
     segmentationMultiplier: c.segmentationMultiplier,
     waterLevel: c.waterLevel,
+    startingPositions: c.startingPositions?.map((q) => ({ ...q })),
   };
   // `skip_span` 6 for the regular set and 4 for the starting set, offset by
   // `patchSetIndex` - the constants `makeResourceResolver` uses. Restated here
@@ -808,6 +861,7 @@ function nauvisRequest(c: Case, view: "terrain" = "terrain") {
     cliffElevationInterval: c.cliffElevationInterval,
     cliffRichness: c.cliffRichness,
     resourceLevers: [triple, triple, triple, triple, triple, triple],
+    startingPositions: c.startingPositions,
   } as const;
 }
 
@@ -856,6 +910,7 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
         expect(ts, `TypeScript ${c.label}: ${name}`).toBe(want);
       }
     }
+    expectRecordedRows(PLANET, FIELD_NAMES.length * CASES.length);
   }, 120000);
 
   it.skipIf(RECORDING)("freezes every field at every case, so #227 keeps this coverage", () => {
@@ -889,7 +944,7 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
     // do at once. Those cannot discriminate a narrowing, which is exactly why
     // the count is frozen rather than asserted as "all".
     const total = CASES.reduce((n, c) => n + c.n * c.n, 0);
-    expect(total).toBe(5 * 22 * 22);
+    expect(total).toBe(6 * 22 * 22);
     expect(CASES.reduce((n, c) => n + offGrid(c), 0)).toBe(OFF_GRID_POSITIONS);
 
     // The control, and the whole point: a tier-3-shaped window - binary origin,
