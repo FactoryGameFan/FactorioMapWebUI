@@ -146,7 +146,10 @@ function request(w: Window): ElevationRenderRequest {
  * Every lever is at the game's default, so these tests grade acceptance of the
  * view and nothing else; the levers are graded by their own block's test.
  */
-function directRequest(w: Window, view: "trees" | "rocks" | "enemies" | "cliffs" | "resources") {
+function directRequest(
+  w: Window,
+  view: "trees" | "rocks" | "enemies" | "cliffs" | "resources" | "all",
+) {
   return {
     planet: "nauvis",
     view,
@@ -1195,6 +1198,167 @@ describe("the WASM engine renders the Nauvis resource overlay exactly as the Typ
       }
     }
     expect(Array.from(stitched)).toEqual(Array.from(whole));
+  }, 300000);
+});
+
+/**
+ * The `all` composite: terrain plus every overlay, in the renderer's own order.
+ *
+ * Pixels the composite changes against bare terrain, per window. Measured on
+ * the TypeScript path before the port.
+ */
+const ALL_PIXELS_PER_WINDOW = [7724, 7195, 5135, 6405];
+
+const ALL_WINDOWS: readonly Window[] = [
+  {
+    label: "wide at spawn",
+    width: 128,
+    height: 128,
+    originX: -128,
+    originY: -128,
+    tilesPerPixel: 4,
+  },
+  {
+    label: "all six, far",
+    width: 96,
+    height: 96,
+    originX: -6000.5,
+    originY: 6000.25,
+    tilesPerPixel: 32,
+  },
+  {
+    label: "very far",
+    width: 96,
+    height: 96,
+    originX: -6000.5,
+    originY: 6000.25,
+    tilesPerPixel: 16,
+  },
+  {
+    label: "north-east",
+    width: 96,
+    height: 96,
+    originX: 2000.5,
+    originY: -2000.25,
+    tilesPerPixel: 16,
+  },
+];
+
+describe("the WASM engine renders the Nauvis `all` composite exactly as the TypeScript does", () => {
+  const allRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "all" });
+
+  it("serves the all view rather than refusing it", async () => {
+    const e = await engine();
+    const w = ALL_WINDOWS[0];
+    const pixels = renderThroughWasm(e, directRequest(w, "all"));
+    expect(pixels.length).toBe(w.width * w.height * 4);
+  }, 300000);
+
+  it("is byte-identical across four windows", async () => {
+    const e = await engine();
+    for (const w of ALL_WINDOWS) {
+      const wasm = new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer);
+      const ts = new Uint8ClampedArray(runRenderRequest(allRequest(w)).buffer);
+      expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+    }
+  }, 300000);
+
+  it("differs from bare terrain, at the counts measured", async () => {
+    // Anti-vacuity for the comparison above: two renderers that both painted
+    // nothing over terrain would be byte-identical too.
+    const e = await engine();
+    const counts: number[] = [];
+    for (const w of ALL_WINDOWS) {
+      const all = new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer);
+      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      let changed = 0;
+      for (let i = 0; i < all.length; i += 4) {
+        if (
+          all[i] !== terrain[i] ||
+          all[i + 1] !== terrain[i + 1] ||
+          all[i + 2] !== terrain[i + 2]
+        ) {
+          changed++;
+        }
+      }
+      counts.push(changed);
+    }
+    expect(counts).toEqual(ALL_PIXELS_PER_WINDOW);
+  }, 300000);
+
+  it("paints resources under the obstructions, and trees under everything", async () => {
+    // The paint ORDER, asserted rather than described.
+    //
+    // Trees, then resources, then rocks, enemies and cliffs over the top - so
+    // an obstruction crossing an ore patch reads as the thing that is in the
+    // way, and a forest reads as cleared rather than as an obstacle. Reordering
+    // the passes changes only the pixels where two of them land, which is
+    // invisible to a whole-image count and is exactly what this counts.
+    //
+    // **This window is the only one of the four where all THREE obstruction
+    // types cover ore.** The near-spawn one has no enemies and no cliffs at
+    // all, so its `byEnemy` and `byCliff` would both be 0 and two thirds of the
+    // assertion would grade nothing. Painting resources LAST would take all
+    // four numbers to zero.
+    const e = await engine();
+    const w = ALL_WINDOWS[2];
+    const all = new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer);
+    const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+    const res = new Uint8ClampedArray(
+      new Uint8ClampedArray(runRenderRequest({ ...request(w), view: "resources" }, e).buffer),
+    );
+    const at = (px: Uint8ClampedArray, i: number, c: readonly number[]): boolean =>
+      px[i] === c[0] && px[i + 1] === c[1] && px[i + 2] === c[2];
+    let ore = 0;
+    let covered = 0;
+    let byRock = 0;
+    let byEnemy = 0;
+    let byCliff = 0;
+    for (let i = 0; i < all.length; i += 4) {
+      const wasOre = ORE_RGB.some((c) => at(res, i, c)) && !ORE_RGB.some((c) => at(terrain, i, c));
+      if (!wasOre) continue;
+      ore++;
+      if (ORE_RGB.some((c) => at(all, i, c))) continue;
+      covered++;
+      if (at(all, i, ROCK_RGB)) byRock++;
+      else if (at(all, i, ENEMY_OVERLAY_RGB)) byEnemy++;
+      else if (at(all, i, CLIFF_RGB)) byCliff++;
+    }
+    expect({ ore, covered, byRock, byEnemy, byCliff }).toEqual({
+      ore: 69,
+      covered: 30,
+      byRock: 1,
+      byEnemy: 1,
+      byCliff: 28,
+    });
+  }, 300000);
+
+  it("routes every view the planet has through the engine", async () => {
+    // The test that used to assert the opposite. Each of the seven views must
+    // now agree between the engine and the TypeScript, and `all` must actually
+    // differ from bare terrain - otherwise this is comparing two copies of the
+    // same picture seven times.
+    const e = await engine();
+    const w = ALL_WINDOWS[2];
+    for (const view of [
+      "terrain",
+      "trees",
+      "rocks",
+      "enemies",
+      "cliffs",
+      "resources",
+      "all",
+    ] as const) {
+      const req = { ...request(w), view } as ElevationRenderRequest;
+      expect(
+        Array.from(new Uint8ClampedArray(runRenderRequest(req, e).buffer)),
+        `${view}: engine and TypeScript must agree`,
+      ).toEqual(Array.from(new Uint8ClampedArray(runRenderRequest(req).buffer)));
+    }
+    const all = Array.from(new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer));
+    const terrain = Array.from(new Uint8ClampedArray(runRenderRequest(request(w), e).buffer));
+    expect(all).not.toEqual(terrain);
   }, 300000);
 });
 
