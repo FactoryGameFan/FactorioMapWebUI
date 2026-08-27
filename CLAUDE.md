@@ -1194,7 +1194,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
 | 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view renders through the engine.**                                                                   | done     |
-| 6 (#226) | Nauvis - every expression, the TERRAIN render, and the TREE, ROCK and ENEMY overlays. Two overlays remain                                                                      | **most** |
+| 6 (#226) | Nauvis - every expression, the TERRAIN render, and the TREE, ROCK, ENEMY and CLIFF overlays. Resources remain                                                                  | **most** |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1238,9 +1238,19 @@ Then the ENEMY overlay, which reuses the rock overlay's roll, water gate,
 sweep box and skip-aware painter whole and adds only two levers, three salts, a
 constant collision box and the penalty composition.
 
-Still unported: two Nauvis OVERLAYS - resources and cliffs. Until they land, an
-`all` request stays on the TypeScript path in full rather than coming back
-missing them, and the module refuses any other Nauvis view.
+Then the CLIFF overlay, the most structural of the five: it needed
+`impl CliffFields for NauvisCliffFields`, which did not exist - `vulcanus_fields`
+was the only implementor, so the whole placement engine including
+`connections.rs` had been ported with no Nauvis caller. It is also the only one
+with an even-sided mark (`px - 2 ..= px + 1`, anchored not centred), the only one
+that needs a SECOND ABI box, and the only Nauvis pass that reads the REAL water
+level - it builds its own `NauvisCliffFields` rather than sharing the render's
+stack, whose `water_level` is pinned to 0 for #326. One request carries a water
+level the terrain pass ignores and the cliff pass honours.
+
+Still unported: ONE Nauvis overlay - resources. Until it lands, an `all` request
+stays on the TypeScript path in full rather than coming back missing it, and the
+module refuses any other Nauvis view.
 
 **The default window set is unusable for a SPARSE overlay, and the enemy layer
 is where that bit hardest.** Enemy bases do not spawn inside the starting area,
@@ -1641,10 +1651,11 @@ Fulgora's has not moved a byte. `BadParamsLength` refuses a writer whose
 declared length disagrees. **A version bump is for a change to the COMMON
 prefix**, which every planet reads.
 
-**Nauvis's block landed at 64 bytes with no bump and has since grown three
+**Nauvis's block landed at 64 bytes with no bump and has since grown four
 times** - 96 for the tree overlay's four levers, 144 for the rock overlay's two
-and its sweep box, 160 for the enemy overlay's two - so a Nauvis request is 216,
-still between the other two, which is what makes "the encoder returns a LENGTH,
+and its sweep box, 160 for the enemy overlay's two, 232 for the cliff overlay's
+five and its own query box - so a Nauvis request is 288, still between the other
+two, which is what makes "the encoder returns a LENGTH,
 not the capacity" a real statement rather than a two-case coincidence. It carries no trig, because Nauvis is the
 one planet free of transcendentals.
 
