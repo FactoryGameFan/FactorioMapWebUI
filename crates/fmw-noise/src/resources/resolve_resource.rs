@@ -39,9 +39,9 @@ use super::resource_math::ResourceControlLevers;
 use super::resource_patches::{ResourcePatches, ResourcePatchesCtx};
 
 /// The regular set shares one candidate stream across all six resources.
-const REGULAR_SKIP_SPAN: usize = 6;
+pub const REGULAR_SKIP_SPAN: usize = 6;
 /// The starting set shares one candidate stream across the four solids.
-const STARTING_SKIP_SPAN: usize = 4;
+pub const STARTING_SKIP_SPAN: usize = 4;
 
 /// Everything the resolver needs.
 #[derive(Clone, Debug)]

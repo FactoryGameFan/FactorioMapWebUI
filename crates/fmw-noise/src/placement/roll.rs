@@ -92,6 +92,11 @@ pub mod salt {
     pub const ENEMY_BITER_PENALTY: u32 = 0x002c_81d3;
     /// The spitter spawner's `random_penalty` draw.
     pub const ENEMY_SPITTER_PENALTY: u32 = 0x004e_0937;
+    /// Nauvis crude oil - the one RESOURCE that rolls rather than thresholds.
+    pub const CRUDE_OIL: u32 = 0x0076_b3af;
+    /// Crude oil's `random_penalty{source = 1, amplitude = 48}` draw, the same
+    /// batch-op stand-in the two spawner penalties are.
+    pub const CRUDE_OIL_PENALTY: u32 = 0x0091_c40d;
 }
 
 /// `max(341, 0x3FBE2C + 7919*chunkX + 7907*chunkY + salt)` in `u32` arithmetic.

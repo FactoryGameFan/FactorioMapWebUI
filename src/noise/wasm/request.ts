@@ -43,7 +43,7 @@ export const FULGORA_PARAMS_BYTES = 48;
 export const VULCANUS_PARAMS_BYTES = 312;
 
 /** Must equal `fmw_wasm::abi::NAUVIS_PARAMS_BYTES`. */
-export const NAUVIS_PARAMS_BYTES = 232;
+export const NAUVIS_PARAMS_BYTES = 376;
 
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
@@ -51,8 +51,16 @@ export const NAUVIS_PARAMS_BYTES = 232;
  *
  * Under v1 this was the size of the only request there was. It is now a
  * capacity, and `encodeRenderRequest` returns the bytes it actually wrote.
+ *
+ * **NAUVIS is the largest now, not Vulcanus.** This was written as
+ * `COMMON_BYTES + VULCANUS_PARAMS_BYTES` for three planets, which was correct
+ * the whole time and silently wrong the moment the resource overlay took
+ * Nauvis's block past it. A `Math.max` cannot go stale that way; the failure it
+ * avoids is a scratch buffer too small, which surfaces as a truncated request
+ * rather than as a size error.
  */
-export const REQUEST_BYTES = COMMON_BYTES + VULCANUS_PARAMS_BYTES;
+export const REQUEST_BYTES =
+  COMMON_BYTES + Math.max(FULGORA_PARAMS_BYTES, VULCANUS_PARAMS_BYTES, NAUVIS_PARAMS_BYTES);
 
 /** The `planet` codes the module understands. */
 export const PLANET = { fulgora: 0, vulcanus: 1, nauvis: 2 } as const;
@@ -248,6 +256,17 @@ export interface NauvisRenderRequest extends CommonRenderRequest {
     readonly x1: number;
     readonly y1: number;
   };
+  /**
+   * Six resources' `[frequency, size, richness]`, in `RESOURCE_CATALOG` order:
+   * iron-ore, copper-ore, coal, stone, crude-oil, uranium-ore.
+   *
+   * The only per-ENTRY lever block on this planet - every other overlay has one
+   * pair for the whole layer. Ordered by the catalog rather than by name, so
+   * the writer and the decoder cannot disagree about which triple is which:
+   * swapping two produces a plausible planet with its ores exchanged, which no
+   * whole-image bound would catch.
+   */
+  readonly resourceLevers: readonly (readonly [number, number, number])[];
 }
 
 export type WasmRenderRequest = FulgoraRenderRequest | VulcanusRenderRequest | NauvisRenderRequest;
@@ -399,7 +418,8 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
 /**
  * Nauvis's block: eight climate levers, the tree overlay's four, the rock
  * overlay's two, its sweep box, the enemy overlay's two, then the cliff
- * overlay's five and its own query box. No trig, and two boxes.
+ * overlay's five, its own query box, then the resource overlay's eighteen. No
+ * trig, and two boxes.
  *
  * No trig because Nauvis reaches no `starting_spot_at_angle` - it is the one
  * planet whose whole chain is free of transcendentals, so nothing has to be
@@ -456,6 +476,15 @@ function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
   view.setFloat64(p + 208, cells.y0, true);
   view.setFloat64(p + 216, cells.x1, true);
   view.setFloat64(p + 224, cells.y1, true);
+  if (req.resourceLevers.length !== 6) {
+    throw new Error(`resourceLevers must hold 6 entries, got ${req.resourceLevers.length}`);
+  }
+  for (let i = 0; i < 6; i++) {
+    const at = p + 232 + i * 24;
+    view.setFloat64(at, req.resourceLevers[i][0], true);
+    view.setFloat64(at + 8, req.resourceLevers[i][1], true);
+    view.setFloat64(at + 16, req.resourceLevers[i][2], true);
+  }
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {

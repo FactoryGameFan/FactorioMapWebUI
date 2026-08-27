@@ -246,14 +246,18 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.fulgora.totalBytes).toBe(COMMON_BYTES + FULGORA_PARAMS_BYTES);
     expect(fixture.vulcanus.totalBytes).toBe(COMMON_BYTES + VULCANUS_PARAMS_BYTES);
     expect(fixture.nauvis.totalBytes).toBe(COMMON_BYTES + NAUVIS_PARAMS_BYTES);
-    // Nauvis's 288 sits BETWEEN the other two, so it is neither the capacity
-    // nor the floor - a third size is what makes "the encoder returns a length"
-    // a real statement rather than a two-case coincidence. It has been 120,
-    // 152, 200 and 216 as the tree, rock, enemy and cliff overlays each grew
-    // that block. The resource overlay will take it past Vulcanus's 368.
-    expect(fixture.nauvis.totalBytes).toBe(288);
+    // Nauvis is the LARGEST now, at 432 - the resource overlay's eighteen
+    // per-resource levers took it past Vulcanus's 368. It has been 120, 152,
+    // 200, 216 and 288 as each overlay grew that block.
+    //
+    // So `REQUEST_BYTES` is Nauvis's, not Vulcanus's, and this is the first
+    // time it has moved since the v2 split. The three assertions below say
+    // that in the form that cannot go stale: the capacity is whichever block
+    // is biggest, and every planet fits inside it.
+    expect(fixture.nauvis.totalBytes).toBe(432);
+    expect(REQUEST_BYTES).toBe(fixture.nauvis.totalBytes);
+    expect(REQUEST_BYTES).toBeGreaterThan(fixture.vulcanus.totalBytes);
     expect(fixture.fulgora.totalBytes).toBe(104);
-    expect(REQUEST_BYTES).toBe(fixture.vulcanus.totalBytes);
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.fulgora.totalBytes);
   });
 
