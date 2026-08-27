@@ -795,7 +795,7 @@ pub extern "C" fn checksum_eval_pipeline(
 // ---------------------------------------------------------------------------
 
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
-use fmw_noise::expressions::{fulgora_scrap, fulgora_shared, fulgora_stack};
+use fmw_noise::expressions::{fulgora_cells, fulgora_scrap, fulgora_shared, fulgora_stack};
 use fmw_noise::tiles::{fulgora_catalog, fulgora_ocean};
 
 /// The named field a [`checksum_fulgora`] call folds.
@@ -1123,6 +1123,137 @@ pub extern "C" fn render_request(len: u32) -> u32 {
     render::render(request, out) as u32
 }
 
+/// Bytes one surveyed position writes: `[cell_id, cell_x, cell_y]` as `f64`.
+///
+/// `cell_id` is `f64` because the TypeScript compares it against `0.33` and
+/// carries it into `IslandCandidate.id` - narrowing it here would change which
+/// cells the finder reports. `cell_x`/`cell_y` are integers in an `i32` on the
+/// Rust side and plain numbers in JavaScript; sending them as `f64` keeps one
+/// element width across the block rather than saving eight bytes for a mixed
+/// layout the reader would have to unpack twice.
+const SURVEY_STRIDE_BYTES: usize = 24;
+
+/// Positions one `survey_fulgora_cells` call can write.
+///
+/// The island finder searches to radius 10,000 at a step of `grid / 8` - about
+/// 836,000 positions, or 20 MB of triples against a 4 MB buffer - so a whole
+/// search cannot land in one call and the caller sweeps in bands. This is what
+/// bounds a band.
+const SURVEY_MAX_POSITIONS: usize = RENDER_BYTES / SURVEY_STRIDE_BYTES;
+
+/// Positions a survey request would write, without evaluating any of them.
+///
+/// Exported so the caller can size its bands from the module's own limit rather
+/// than recomputing it - the same reason `request_bytes` is exported.
+#[unsafe(no_mangle)]
+pub extern "C" fn survey_max_positions() -> u32 {
+    SURVEY_MAX_POSITIONS as u32
+}
+
+/// Sweep a strided box and write each position's Voronoi cell id and index.
+///
+/// **This is not a render**, and it exists because #227 deletes the TypeScript
+/// the Fulgora island finder runs on. `cellSurvey.ts` evaluates
+/// `stack.cells.cells(x, y)` per position and reads `cellIndex` at the WARPED
+/// position - measured at 96.3% of island-finding, against 3.7% for the pure
+/// graph and rectangle work that stays in TypeScript.
+///
+/// The request is an ordinary Fulgora request: `origin_x`/`origin_y` are the
+/// band's first position, `tiles_per_pixel` is the survey step, and
+/// `width`/`height` are how many positions each way. A strided grid is exactly
+/// what the common prefix already describes, so this needs no new block.
+///
+/// **It evaluates only `shared` and `cells`, not the whole stack.**
+/// `FulgoraStack::eval` computes elevation, roads, ruins and scrap in one eager
+/// pass - correct for a render, and all wasted here. The two layers this does
+/// build are the same types the renderer uses, so there is no private copy of
+/// the wiring.
+///
+/// Returns a status code and does not trap, like [`render_request`].
+#[unsafe(no_mangle)]
+pub extern "C" fn survey_fulgora_cells(len: u32) -> u32 {
+    let request = unsafe {
+        core::slice::from_raw_parts(core::ptr::addr_of!(SCRATCH).cast::<u8>(), len as usize)
+    };
+    let req = match abi::decode(request) {
+        Ok(r) => r,
+        Err(status) => return status as u32,
+    };
+    let abi::Params::Fulgora(p) = req.params else {
+        return abi::Status::UnsupportedPlanetOrView as u32;
+    };
+    let positions = (req.width as usize) * (req.height as usize);
+    if positions > SURVEY_MAX_POSITIONS {
+        return abi::Status::OutputTooLarge as u32;
+    }
+
+    let ctx = fulgora_shared::FulgoraCtx {
+        seed0: req.seed0,
+        islands_frequency: p.islands_frequency,
+        islands_size: p.islands_size,
+    };
+    // One shared layer and one cell layer for the whole band, so the Voronoi
+    // point caches stay warm across it - the same reason the renderer shares a
+    // stack, and the reason a band is worth more than a position at a time.
+    let shared = fulgora_shared::FulgoraShared::new(
+        &ctx,
+        AngleTrig::new(p.sin_start, p.cos_start),
+        AngleTrig::new(p.sin_vault, p.cos_vault),
+    );
+    let mut cells = fulgora_cells::FulgoraCells::new(&ctx, shared.grid);
+
+    let out = unsafe {
+        core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(RENDER).cast::<u8>(), RENDER_BYTES)
+    };
+    let mut offset = 0usize;
+    for py in 0..req.height {
+        let y = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let x = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            let s = shared.eval(x, y);
+            let c = cells.eval(&s);
+            // `cell_index` is read at the warped position inside `eval`, which
+            // is the subtlety `cellSurvey.ts` carries a comment about: reading
+            // it at the raw sample would name the cell owning the raw point
+            // rather than the one that produced the id.
+            out[offset..offset + 8].copy_from_slice(&c.cells.to_le_bytes());
+            out[offset + 8..offset + 16].copy_from_slice(&f64::from(c.cell_index.0).to_le_bytes());
+            out[offset + 16..offset + 24].copy_from_slice(&f64::from(c.cell_index.1).to_le_bytes());
+            offset += SURVEY_STRIDE_BYTES;
+        }
+    }
+    abi::Status::Ok as u32
+}
+
+/// The survey step the module would use for this request's `grid`.
+///
+/// `surveyStep` in the TypeScript is `grid / 8`, and `grid` comes out of the
+/// shared layer rather than being a constant - it moves with
+/// `islands_frequency`. A caller that guessed it would sweep a different set of
+/// points than the finder was written against.
+#[unsafe(no_mangle)]
+pub extern "C" fn fulgora_survey_step(
+    seed0: u32,
+    islands_frequency: f64,
+    islands_size: f64,
+    sin_start: f64,
+    cos_start: f64,
+    sin_vault: f64,
+    cos_vault: f64,
+) -> f64 {
+    let ctx = fulgora_shared::FulgoraCtx {
+        seed0,
+        islands_frequency,
+        islands_size,
+    };
+    let shared = fulgora_shared::FulgoraShared::new(
+        &ctx,
+        AngleTrig::new(sin_start, cos_start),
+        AngleTrig::new(sin_vault, cos_vault),
+    );
+    shared.grid / 8.0
+}
+
 // ---------------------------------------------------------------------------
 // Tier 2 for phase 6 - the Nauvis expression core (#226).
 // ---------------------------------------------------------------------------
@@ -1239,4 +1370,167 @@ pub extern "C" fn checksum_nauvis(request_len: u32, field: u32) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn nauvis_field_count() -> u32 {
     NauvisParity::FIELD_COUNT
+}
+
+#[cfg(test)]
+mod survey_tests {
+    use super::*;
+    use fmw_noise::expressions::fulgora_scrap::ScrapControls;
+
+    /// A Fulgora request over a strided box, built from the layout table.
+    ///
+    /// Written here rather than borrowed from `abi`'s test helpers, which are
+    /// private to that module - and deliberately so, since a survey request
+    /// varies the geometry those helpers hold fixed.
+    fn survey_request(seed0: u32, x0: f64, y0: f64, step: f64, nx: u32, ny: u32) -> Vec<u8> {
+        let mut b = vec![0u8; abi::COMMON_BYTES + abi::FULGORA_PARAMS_BYTES];
+        b[0..4].copy_from_slice(&abi::MAGIC.to_le_bytes());
+        b[4..8].copy_from_slice(&abi::ABI_VERSION.to_le_bytes());
+        b[8..12].copy_from_slice(&abi::PLANET_FULGORA.to_le_bytes());
+        b[16..20].copy_from_slice(&seed0.to_le_bytes());
+        b[20..24].copy_from_slice(&nx.to_le_bytes());
+        b[24..28].copy_from_slice(&ny.to_le_bytes());
+        b[28..32].copy_from_slice(&(abi::FULGORA_PARAMS_BYTES as u32).to_le_bytes());
+        b[32..40].copy_from_slice(&x0.to_le_bytes());
+        b[40..48].copy_from_slice(&y0.to_le_bytes());
+        b[48..56].copy_from_slice(&step.to_le_bytes());
+        let p = abi::COMMON_BYTES;
+        b[p..p + 8].copy_from_slice(&1.0f64.to_le_bytes());
+        b[p + 8..p + 16].copy_from_slice(&1.0f64.to_le_bytes());
+        // Trig for the two bearings. Real values rather than zeros: a zeroed
+        // pair is not a unit vector and would put the starting spot somewhere
+        // the game never places it.
+        for (i, v) in [0.6f64, 0.8, -0.28, 0.96].iter().enumerate() {
+            b[p + 16 + i * 8..p + 24 + i * 8].copy_from_slice(&v.to_le_bytes());
+        }
+        b
+    }
+
+    fn run_survey(req: &[u8]) -> u32 {
+        unsafe {
+            let scratch = core::slice::from_raw_parts_mut(
+                core::ptr::addr_of_mut!(SCRATCH).cast::<u8>(),
+                SCRATCH_BYTES,
+            );
+            scratch[..req.len()].copy_from_slice(req);
+        }
+        survey_fulgora_cells(req.len() as u32)
+    }
+
+    fn survey_triple(i: usize) -> (f64, f64, f64) {
+        let out = unsafe {
+            core::slice::from_raw_parts(core::ptr::addr_of!(RENDER).cast::<u8>(), RENDER_BYTES)
+        };
+        let at = i * SURVEY_STRIDE_BYTES;
+        let read = |o: usize| {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&out[o..o + 8]);
+            f64::from_le_bytes(buf)
+        };
+        (read(at), read(at + 8), read(at + 16))
+    }
+
+    /// The cheap two-layer path answers exactly what the full stack does.
+    ///
+    /// This is the whole correctness claim of the export. `FulgoraStack::eval`
+    /// computes elevation, roads, ruins and scrap in one eager pass; the survey
+    /// builds only `shared` and `cells`. Those are the same types, but "same
+    /// type" is not "same answer" - the stack could in principle feed the cell
+    /// layer something the standalone construction does not. So it is compared
+    /// rather than argued, at every position of a real band.
+    #[test]
+    fn the_survey_matches_the_full_stack_at_every_position() {
+        let (x0, y0, step, nx, ny) = (-1024.0, 512.0, 21.875, 24u32, 19u32);
+        let seed0 = 2_967_702_466u32;
+        assert_eq!(run_survey(&survey_request(seed0, x0, y0, step, nx, ny)), 0);
+
+        let ctx = fulgora_shared::FulgoraCtx {
+            seed0,
+            islands_frequency: 1.0,
+            islands_size: 1.0,
+        };
+        let mut stack = fulgora_stack::FulgoraStack::new(
+            &ctx,
+            &ScrapControls::default(),
+            AngleTrig::new(0.6, 0.8),
+            AngleTrig::new(-0.28, 0.96),
+        );
+
+        let mut distinct_ids = 0;
+        let mut seen: Option<f64> = None;
+        for py in 0..ny {
+            for px in 0..nx {
+                let x = x0 + f64::from(px) * step;
+                let y = y0 + f64::from(py) * step;
+                let want = stack.eval(x, y);
+                let (id, cx, cy) = survey_triple((py * nx + px) as usize);
+                assert_eq!(id.to_bits(), want.cells.cells.to_bits(), "id at ({x}, {y})");
+                assert_eq!(
+                    cx,
+                    f64::from(want.cells.cell_index.0),
+                    "cellX at ({x}, {y})"
+                );
+                assert_eq!(
+                    cy,
+                    f64::from(want.cells.cell_index.1),
+                    "cellY at ({x}, {y})"
+                );
+                if seen != Some(id) {
+                    distinct_ids += 1;
+                    seen = Some(id);
+                }
+            }
+        }
+        // Anti-vacuity: a band that returned one constant would satisfy every
+        // assertion above while grading nothing. This counts RUNS rather than
+        // unique values, so it also refuses a band that is one cell throughout.
+        assert!(
+            distinct_ids > 20,
+            "the band is nearly constant: {distinct_ids} runs"
+        );
+    }
+
+    /// A band larger than the buffer is refused rather than overrunning it.
+    #[test]
+    fn a_band_past_the_buffer_is_refused() {
+        let too_many = (SURVEY_MAX_POSITIONS as u32) / 100 + 1;
+        let req = survey_request(1, 0.0, 0.0, 8.0, too_many, 101);
+        assert_eq!(run_survey(&req), abi::Status::OutputTooLarge as u32);
+        // And the largest legal band is accepted, so the bound is the real one
+        // rather than something stricter that happens to refuse the case above.
+        let exact = survey_request(1, 0.0, 0.0, 8.0, SURVEY_MAX_POSITIONS as u32, 1);
+        assert_eq!(run_survey(&exact), 0);
+    }
+
+    /// A non-Fulgora request is refused rather than read as one.
+    #[test]
+    fn a_nauvis_request_is_not_surveyed() {
+        let mut b = survey_request(1, 0.0, 0.0, 8.0, 2, 2);
+        b[8..12].copy_from_slice(&abi::PLANET_NAUVIS.to_le_bytes());
+        // The declared params length still says Fulgora's, so this is refused
+        // as a length error before the planet is ever read - which is the
+        // check doing its job, and why the planet guard needs its own case.
+        assert_ne!(run_survey(&b), 0);
+    }
+
+    /// The step the module reports is the one the finder was written against.
+    #[test]
+    fn the_reported_step_is_grid_over_eight() {
+        let step = fulgora_survey_step(2_967_702_466, 1.0, 1.0, 0.6, 0.8, -0.28, 0.96);
+        let ctx = fulgora_shared::FulgoraCtx {
+            seed0: 2_967_702_466,
+            islands_frequency: 1.0,
+            islands_size: 1.0,
+        };
+        let shared = fulgora_shared::FulgoraShared::new(
+            &ctx,
+            AngleTrig::new(0.6, 0.8),
+            AngleTrig::new(-0.28, 0.96),
+        );
+        assert_eq!(step, shared.grid / 8.0);
+        // It MOVES with the frequency lever - a constant would pass the line
+        // above and still be wrong for any non-default preset.
+        let other = fulgora_survey_step(2_967_702_466, 3.0, 1.0, 0.6, 0.8, -0.28, 0.96);
+        assert_ne!(step, other);
+    }
 }
