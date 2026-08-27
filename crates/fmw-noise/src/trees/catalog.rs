@@ -59,6 +59,22 @@ pub struct TreeSpecies {
 /// `tree_small_noise`'s seed1: `crc32(utf8("tree-small"))`.
 pub const TREE_SMALL_NOISE_SEED1: u32 = 2_343_395_516;
 
+/// The tree chart colour, `{0.19, 0.39, 0.19}` in 8-bit.
+///
+/// From `utility-constants.lua:201`, mirroring `TREE_MAP_COLOR` in
+/// `src/noise/preview/renderTrees.ts`. Unlike every other overlay colour in
+/// this port it is BLENDED rather than painted, so a pixel carrying it exactly
+/// is the fully-forested limit rather than the normal case.
+pub const TREE_MAP_COLOR: [u8; 3] = [48, 99, 48];
+
+/// The alpha a single tree blends at: the same constant's fourth component.
+///
+/// It is a PER-TREE alpha, not a ceiling on the overlay. Nine neighbouring
+/// tiles each blend independently, so their combined alpha is one minus the
+/// product of their misses and runs well past this value - which is the whole
+/// reason `renderTrees.ts` computes a product rather than a single blend.
+pub const TREE_MAX_ALPHA: f64 = 0.4;
+
 /// One row of the table below.
 ///
 /// Nine parameters, which clippy dislikes and which is right for a data-row

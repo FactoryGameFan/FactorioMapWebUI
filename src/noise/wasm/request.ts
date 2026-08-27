@@ -43,7 +43,7 @@ export const FULGORA_PARAMS_BYTES = 48;
 export const VULCANUS_PARAMS_BYTES = 312;
 
 /** Must equal `fmw_wasm::abi::NAUVIS_PARAMS_BYTES`. */
-export const NAUVIS_PARAMS_BYTES = 64;
+export const NAUVIS_PARAMS_BYTES = 96;
 
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
@@ -73,6 +73,7 @@ export const VIEW = {
   rocks: 4,
   resources: 5,
   all: 6,
+  trees: 7,
 } as const;
 
 /**
@@ -186,6 +187,20 @@ export interface NauvisRenderRequest extends CommonRenderRequest {
   readonly auxBias: number;
   readonly startingAreaMoistureSize: number;
   readonly startingAreaMoistureFrequency: number;
+  /**
+   * `control:temperature:frequency` / `:bias`.
+   *
+   * **Read by the tree overlay and by nothing else.** The tile catalog keys on
+   * aux and moisture, so the terrain view leaves these at their defaults. The
+   * app exposes no slider for either, but `climateReads` parses both out of an
+   * imported exchange string's `property_expression_names`, so a preset really
+   * can move them - and dropping them would silently render the wrong forest.
+   */
+  readonly temperatureFrequency: number;
+  readonly temperatureBias: number;
+  /** `control:trees:frequency` / `:size`. */
+  readonly treesFrequency: number;
+  readonly treesSize: number;
 }
 
 export type WasmRenderRequest = FulgoraRenderRequest | VulcanusRenderRequest | NauvisRenderRequest;
@@ -335,13 +350,18 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
 }
 
 /**
- * Nauvis's block: eight levers, no trig and no boxes.
+ * Nauvis's block: eight climate levers, then the tree overlay's four. No trig
+ * and no boxes.
  *
  * No trig because Nauvis reaches no `starting_spot_at_angle` - it is the one
  * planet whose whole chain is free of transcendentals, so nothing has to be
- * computed in V8 and handed across (#270). No boxes because the terrain view
- * paints one pixel per pixel with no halo; the overlays will need a placement
- * sweep box, and growing the block for it needs no version bump.
+ * computed in V8 and handed across (#270).
+ *
+ * Still no boxes after the tree slice, which is a property of trees rather than
+ * an omission: the tree overlay reads its density FIELD at a one-cell border in
+ * world coordinates instead of reading neighbouring image pixels, so a tiled
+ * render matches an untiled one with no widened query box. The four remaining
+ * overlays all need one, and growing the block for it needs no version bump.
  */
 function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
   const p = COMMON_BYTES;
@@ -353,6 +373,10 @@ function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
   view.setFloat64(p + 40, req.auxBias, true);
   view.setFloat64(p + 48, req.startingAreaMoistureSize, true);
   view.setFloat64(p + 56, req.startingAreaMoistureFrequency, true);
+  view.setFloat64(p + 64, req.temperatureFrequency, true);
+  view.setFloat64(p + 72, req.temperatureBias, true);
+  view.setFloat64(p + 80, req.treesFrequency, true);
+  view.setFloat64(p + 88, req.treesSize, true);
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {

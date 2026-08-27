@@ -5,11 +5,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
-import { compileEngine, instantiateEngine } from "../src/noise/wasm/engine";
+import { compileEngine, instantiateEngine, renderThroughWasm } from "../src/noise/wasm/engine";
 import {
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
+import { TREE_MAP_COLOR } from "../src/noise/preview/renderTrees";
+import { planTiles } from "../src/noise/preview/tiling";
 
 /**
  * Tier 3 for Nauvis (#226): the Rust engine's terrain render against the
@@ -250,6 +252,201 @@ describe("the WASM engine renders Nauvis terrain exactly as the TypeScript does"
       new Uint8ClampedArray(runRenderRequest(request(WINDOWS[0]), e).buffer),
     );
     expect(withEngine).not.toEqual(atOrigin);
+  }, 300000);
+});
+
+/**
+ * Pixels the tree overlay changes against bare terrain, per window.
+ *
+ * **Measured on the TypeScript path before any Rust existed**, so the number
+ * comes from the reference rather than from the port being graded. Frozen
+ * rather than bounded, for the reason every count in this port is: a bound wide
+ * enough to be safe is wide enough to swallow a real change.
+ *
+ * Coverage runs 34.6% to 76.1% of each window, so unlike ore - which needed
+ * Vulcanus's five hand-found windows - trees are dense enough that the four
+ * terrain windows already grade every one of them.
+ */
+const TREE_PIXELS_PER_WINDOW = [1417, 1754, 1353, 1574, 7074];
+
+/**
+ * A fifth window, and it is here because a planted break got past the other
+ * four.
+ *
+ * The blend converts alpha to a byte and then fixes it up from a 255-scale to a
+ * 256-scale with `a += a >> 7`, which only does anything once `alpha` reaches
+ * 128/255 - about 0.502. Deleting that fixup - a plausible simplification -
+ * left the four terrain windows BYTE-IDENTICAL, because none of them carries
+ * forest dense enough to get there. The break was real; the windows could not
+ * see it.
+ *
+ * This one is wide enough to reach that density at the default controls, so the
+ * fixup is graded. It is the same trap as Vulcanus's ore windows in a different
+ * costume: a window that contains none of the thing being graded compares
+ * nothing, and "the render matched" is exactly what it reports.
+ */
+const DENSE_WINDOW: Window = {
+  label: "dense forest at spawn",
+  width: 128,
+  height: 128,
+  originX: -128,
+  originY: -128,
+  tilesPerPixel: 4,
+};
+
+const TREE_WINDOWS: readonly Window[] = [...WINDOWS, DENSE_WINDOW];
+
+describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScript does", () => {
+  const treeRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "trees" });
+
+  it("serves the trees view rather than refusing it", async () => {
+    // The discriminating test, and the reason it is first. `runRenderRequest`
+    // falls back to the TypeScript path for any view the module refuses, so
+    // every byte-identity assertion below passes VACUOUSLY until the module
+    // actually accepts this view - the two arms would just be two runs of the
+    // same TypeScript. This one goes through the module directly, where a
+    // refusal is a thrown `unsupported planet or view` rather than a silent
+    // fallback.
+    const e = await engine();
+    const w = WINDOWS[0];
+    const pixels = renderThroughWasm(e, {
+      planet: "nauvis",
+      view: "trees",
+      seed0: SEED,
+      width: w.width,
+      height: w.height,
+      originX: w.originX,
+      originY: w.originY,
+      tilesPerPixel: w.tilesPerPixel,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      moistureFrequency: 1,
+      moistureBias: 0,
+      auxFrequency: 1,
+      auxBias: 0,
+      startingAreaMoistureSize: 1,
+      startingAreaMoistureFrequency: 1,
+      temperatureFrequency: 1,
+      temperatureBias: 0,
+      treesFrequency: 1,
+      treesSize: 1,
+    });
+    expect(pixels.length).toBe(w.width * w.height * 4);
+  }, 300000);
+
+  it("is byte-identical across five windows", async () => {
+    const e = await engine();
+    for (const w of TREE_WINDOWS) {
+      const wasm = new Uint8ClampedArray(runRenderRequest(treeRequest(w), e).buffer);
+      const ts = new Uint8ClampedArray(runRenderRequest(treeRequest(w)).buffer);
+      expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+    }
+  }, 300000);
+
+  it("blends toward the tree colour in every window, at the counts measured", async () => {
+    // The tree overlay does not paint a flat mark - it alpha-blends, so there
+    // is no single colour to count. The property that IS exact: a blended
+    // channel must land between the terrain value and the tree colour,
+    // inclusive. `((256 - a) * base + a * color) >> 8` is a weighted average of
+    // the two, and the truncation can only move it toward `base`, so this holds
+    // in both directions and would fail on a blend toward any other colour.
+    const e = await engine();
+    const counts: number[] = [];
+    for (const w of TREE_WINDOWS) {
+      const trees = new Uint8ClampedArray(runRenderRequest(treeRequest(w), e).buffer);
+      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      let changed = 0;
+      for (let i = 0; i < trees.length; i += 4) {
+        let moved = false;
+        for (let c = 0; c < 3; c++) {
+          if (trees[i + c] === terrain[i + c]) continue;
+          moved = true;
+          const lo = Math.min(terrain[i + c], TREE_MAP_COLOR[c]);
+          const hi = Math.max(terrain[i + c], TREE_MAP_COLOR[c]);
+          expect(
+            trees[i + c] >= lo && trees[i + c] <= hi,
+            `${w.label}: pixel ${i / 4} channel ${c} moved to ${trees[i + c]}, outside [${lo}, ${hi}]`,
+          ).toBe(true);
+        }
+        if (moved) changed++;
+      }
+      counts.push(changed);
+    }
+    expect(counts).toEqual(TREE_PIXELS_PER_WINDOW);
+  }, 300000);
+
+  it("moving each tree lever moves the render on both paths together", async () => {
+    // The four levers this slice adds to the ABI block. A lever written to the
+    // wrong offset decodes as a neighbour's value, which the round-trip fixture
+    // cannot see - only rendering with it moved can. Each patch was measured on
+    // the TypeScript path first and changes 5,840 to 23,775 bytes, so none of
+    // these comparisons is vacuous.
+    const e = await engine();
+    const base: ElevationRenderRequest = {
+      ...treeRequest(WINDOWS[0]),
+      width: 128,
+      height: 128,
+    };
+    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+    const baseWasm = flat(base, e);
+    expect(flat(base)).toEqual(baseWasm);
+
+    const patches: readonly (readonly [string, Partial<ElevationRenderRequest>])[] = [
+      ["treeControls.frequency", { treeControls: { frequency: 3, size: 1 } }],
+      ["treeControls.size", { treeControls: { frequency: 1, size: 3 } }],
+      ["temperatureFrequency", { temperatureFrequency: 4 }],
+      ["temperatureBias", { temperatureBias: 7 }],
+    ];
+    for (const [label, patch] of patches) {
+      const req = { ...base, ...patch } as ElevationRenderRequest;
+      const moved = flat(req, e);
+      expect(moved, `${label}: the two paths must agree`).toEqual(flat(req));
+      expect(moved, `${label}: must actually move the render`).not.toEqual(baseWasm);
+    }
+  }, 300000);
+
+  it("needs no halo: tiling reproduces one whole render byte for byte", async () => {
+    // Trees are the one overlay with no sweep box, and this is the claim that
+    // makes that safe. The density buffer reads the FIELD at a one-cell border
+    // in world coordinates, never the image, so a tile's border cells are the
+    // same numbers whether or not the neighbouring tile was ever rendered.
+    // Every other overlay in this port has to widen its query box instead.
+    const e = await engine();
+    const w = WINDOWS[0];
+    const whole = new Uint8ClampedArray(runRenderRequest(treeRequest(w), e).buffer);
+    const full = {
+      originX: w.originX,
+      originY: w.originY,
+      width: w.width,
+      height: w.height,
+      tilesPerPixel: w.tilesPerPixel,
+    };
+    const stitched = new Uint8ClampedArray(whole.length);
+    for (const tile of planTiles(full, 16)) {
+      const px = new Uint8ClampedArray(
+        runRenderRequest(
+          {
+            ...treeRequest(w),
+            width: tile.width,
+            height: tile.height,
+            originX: tile.originX,
+            originY: tile.originY,
+            fullImage: full,
+          },
+          e,
+        ).buffer,
+      );
+      for (let ty = 0; ty < tile.height; ty++) {
+        for (let tx = 0; tx < tile.width; tx++) {
+          const src = (ty * tile.width + tx) * 4;
+          const dst = ((tile.dy + ty) * w.width + (tile.dx + tx)) * 4;
+          stitched.set(px.subarray(src, src + 4), dst);
+        }
+      }
+    }
+    expect(Array.from(stitched)).toEqual(Array.from(whole));
   }, 300000);
 });
 

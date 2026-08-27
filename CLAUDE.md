@@ -1194,7 +1194,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
 | 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view renders through the engine.**                                                                   | done     |
-| 6 (#226) | Nauvis - every expression, and the TERRAIN render. Overlays remain                                                                                                             | **most** |
+| 6 (#226) | Nauvis - every expression, the TERRAIN render and the TREE overlay. Four overlays remain                                                                                       | **most** |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1225,9 +1225,14 @@ early-out and tier 3. `view: "terrain"` on Nauvis now renders through the
 engine, byte-identical to the TypeScript across four windows and 8 pixels from
 the game's own 1024x1024 preview.
 
-Still unported: the five Nauvis OVERLAYS - resources, trees, rocks, cliffs and
-enemies. Until they land, an `all` request stays on the TypeScript path in full
-rather than getting bare terrain, and the module refuses any other Nauvis view.
+Then the TREE overlay, the first of the five and the only one that needs no
+halo box: it reads its density FIELD at a one-cell world-coordinate border
+rather than reading neighbouring image pixels, so a tiled render matches an
+untiled one with nothing widened.
+
+Still unported: four Nauvis OVERLAYS - resources, rocks, cliffs and enemies.
+Until they land, an `all` request stays on the TypeScript path in full rather
+than coming back missing them, and the module refuses any other Nauvis view.
 
 **One TypeScript file in a ported directory was ported for a reason that is not
 obvious.** `cliffConnections.ts` has **zero `src/` consumers** - only 23
@@ -1587,20 +1592,31 @@ Fulgora's has not moved a byte. `BadParamsLength` refuses a writer whose
 declared length disagrees. **A version bump is for a change to the COMMON
 prefix**, which every planet reads.
 
-**Nauvis's block landed at 64 bytes with no bump**, so a Nauvis request is 120 -
-between the other two, which is what makes "the encoder returns a LENGTH, not
-the capacity" a real statement rather than a two-case coincidence. It carries
-eight climate and elevation levers and nothing else: no trig, because Nauvis is
-the one planet free of transcendentals, and no world boxes, because the terrain
-view paints one pixel per pixel with no halo. The overlays will need a placement
-sweep box; that is a block growth, also free.
+**Nauvis's block landed at 64 bytes with no bump and has since grown to 96** for
+the tree overlay's four levers, so a Nauvis request is 152 - still between the
+other two, which is what makes "the encoder returns a LENGTH, not the capacity"
+a real statement rather than a two-case coincidence. It carries no trig, because
+Nauvis is the one planet free of transcendentals, and still no world boxes: the
+terrain view paints one pixel per pixel, and trees read a one-cell border of
+their own FIELD rather than of the image. The four remaining overlays do need a
+placement sweep box and a cell query box; that is a further block growth, also
+free.
 
 `test/fixtures/wasm-request.v2.json` pins all three, and
 `verify-wasm-request.py` decodes all three. Nauvis's structural check is just
-"eight distinct scalars at eight distinct offsets" - there is no unit-norm
-property to lean on, and none is needed, because eight scalars cannot be swapped
-without one reading wrong. That is the opposite of the Vulcanus block's lesson
-rather than a weaker version of it.
+"distinct scalars at distinct offsets" - there is no unit-norm property to lean
+on, and none is needed, because scalars cannot be swapped without one reading
+wrong.
+
+**That argument was sound and the FIXTURE did not instantiate it**, which is the
+bearing-swap lesson one level up rather than the opposite of it. The committed
+Nauvis request carried only two distinct values across its eight fields - five
+`1.0` and three `0.0` - so a swap of `moistureFrequency` and `auxFrequency` read
+back correct and passed every assertion. The fixture now uses twelve distinct
+values, and both checkers ENFORCE distinctness rather than assuming it:
+`verify-wasm-request.py` fails on a repeat, and `no_two_nauvis_fields_share_an_offset`
+is the Rust side. **Check that a structural claim's data instantiates it**; a
+property nothing exercises reports success either way.
 
 **Errors return a status code and never trap.** A trap would poison the instance
 for every later request in that worker; a spec sends a bad magic and then

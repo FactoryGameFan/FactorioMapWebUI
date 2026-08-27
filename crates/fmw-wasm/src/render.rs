@@ -41,6 +41,8 @@ use fmw_noise::tiles::fulgora_ocean::{ocean_tile, Ocean};
 use fmw_noise::tiles::helpers::water_base;
 use fmw_noise::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog, NauvisTileFields};
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
+use fmw_noise::trees::catalog::{TREE_MAP_COLOR, TREE_MAX_ALPHA};
+use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
 
 /// `planet` code for Fulgora.
 pub const PLANET_FULGORA: u32 = 0;
@@ -84,6 +86,15 @@ pub const VIEW_RESOURCES: u32 = 5;
 /// and cliffs last matches the Nauvis composite, where the cliff pass is
 /// final.
 pub const VIEW_ALL: u32 = 6;
+
+/// Terrain with the Nauvis tree overlay blended over it.
+///
+/// The first `view` code neither of the other two planets has: trees have no
+/// Fulgora or Vulcanus meaning at all. Adding a code is not a layout change -
+/// `view` has been a `u32` in the common prefix since v1 - but the module's own
+/// `supported` match has to name it, or the render comes back
+/// `unsupported planet or view`.
+pub const VIEW_TREES: u32 = 7;
 
 /// The land colour, `FULGORA_LANDMASK_LAND_RGB` in
 /// `src/noise/preview/renderFulgoraTerrain.ts`.
@@ -154,6 +165,16 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
     // view reports as one rather than as a size problem. Vulcanus has no ocean
     // and no scrap, so the land mask and the scrap footprint are meaningless
     // there rather than merely unimplemented.
+    //
+    // Nauvis serves TERRAIN and the TREE overlay. The remaining four -
+    // resources, rocks, cliffs and enemies - are the follow-up, and until they
+    // land an `all` request has to stay on the TypeScript path rather than
+    // silently returning terrain plus trees.
+    //
+    // This note sits ABOVE the expression rather than beside a match arm
+    // because rustfmt wedges an interior comment onto the end of the preceding
+    // line and then indents its continuations to column 80, which is how the
+    // previous version of it ended up unreadable.
     let supported = matches!(
         (req.planet, req.view),
         (
@@ -161,11 +182,8 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
             VIEW_LANDMASK | VIEW_TERRAIN | VIEW_SCRAP_FOOTPRINT
         ) | (
             PLANET_VULCANUS,
-            VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL // Nauvis serves the TERRAIN view only so far. Its overlays - resources,
-                                                                                // trees, rocks, cliffs and enemies - are the follow-up, and until they
-                                                                                // land an `all` request has to stay on the TypeScript path rather than
-                                                                                // silently returning bare terrain.
-        ) | (PLANET_NAUVIS, VIEW_TERRAIN)
+            VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL
+        ) | (PLANET_NAUVIS, VIEW_TERRAIN | VIEW_TREES)
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -456,16 +474,16 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
         moisture_bias: p.moisture_bias,
         aux_frequency: p.aux_frequency,
         aux_bias: p.aux_bias,
-        // The tile catalog reads no temperature at all - it keys on aux and
-        // moisture - so these two reach nothing on this path. Left at the
-        // defaults so the stack builds.
-        temperature_frequency: 1.0,
-        temperature_bias: 0.0,
+        // Trees are the ONE consumer of temperature - the tile catalog keys on
+        // aux and moisture - so these two reach nothing on the terrain path and
+        // everything on the tree overlay.
+        temperature_frequency: p.temperature_frequency,
+        temperature_bias: p.temperature_bias,
         starting_area_moisture_size: p.starting_area_moisture_size,
         starting_area_moisture_frequency: p.starting_area_moisture_frequency,
         starting_positions: vec![NauvisPoint { x: 0.0, y: 0.0 }],
-        trees_frequency: 1.0,
-        trees_size: 1.0,
+        trees_frequency: p.trees_frequency,
+        trees_size: p.trees_size,
         resource_controls: ResourceControlLevers::defaults(),
         cliff_controls: CliffControls::defaults(),
         cliff_settings: CliffSettings::defaults(),
@@ -486,6 +504,123 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
             out[offset + 2] = color[2];
             out[offset + 3] = 255;
             offset += 4;
+        }
+    }
+
+    // The overlay passes, in the TypeScript's own order. Trees are first and
+    // sit UNDER everything else that will land here - a forest is cleared, not
+    // an obstacle routed around - so this `if` stays at the top of the block as
+    // the other four arrive.
+    if matches!(req.view, VIEW_TREES) {
+        paint_nauvis_trees(req, &ctx, out);
+    }
+}
+
+/// The two water colours the overlays refuse to paint over.
+///
+/// Derived from [`nauvis_tile_color`] rather than re-typed, so the predicate
+/// cannot drift from the palette it is testing against. `renderResources.ts`
+/// writes `WATER_TILE_COLORS` out by hand and every Nauvis overlay imports it
+/// from there; taking it from the one function that owns the colours removes
+/// that second copy on this side.
+fn is_nauvis_water(r: u8, g: u8, b: u8) -> bool {
+    let px = [r, g, b];
+    px == nauvis_tile_color(NauvisTile::Deepwater) || px == nauvis_tile_color(NauvisTile::Water)
+}
+
+/// The separable footprint kernel for a 1.0-tile charted box.
+///
+/// A tree's charted box is one tile square with a uniform sub-tile offset, so it
+/// paints its own pixel with probability 1, each edge neighbour with 0.5 and
+/// each diagonal with 0.25 - which is this kernel applied on both axes. See
+/// `renderTrees.ts`, whose header carries the disassembly reference.
+const TREE_KERNEL_WEIGHT: [f64; 3] = [0.5, 1.0, 0.5];
+
+/// Blend the tree overlay over an already-painted terrain buffer.
+///
+/// # Why a border buffer rather than a halo
+///
+/// Each pixel reads a 3x3 neighbourhood, but of the DENSITY FIELD rather than of
+/// the image - so the border cells are a pure function of world position and a
+/// tiled render reproduces an untiled one with no widened query box. That is why
+/// Nauvis's ABI block still carries no boxes after this slice, and it is the one
+/// overlay of the five for which that is true.
+///
+/// The buffer is `(width + 2) * (height + 2)` `f64`, sampled at exactly the
+/// world coordinates the pixel loop uses, which also keeps the cost at one
+/// density evaluation per pixel instead of nine.
+///
+/// # The blend is integer arithmetic, deliberately
+///
+/// `alpha` becomes an 8-bit byte, is fixed up from a 255-scale to a 256-scale,
+/// and the channels are mixed with a shift. Reproducing the TypeScript's float
+/// rounding instead would differ by a unit on some pixels, and tier 3 compares
+/// bytes.
+fn paint_nauvis_trees(req: &Request, ctx: &NauvisCtx, out: &mut [u8]) {
+    let mut params = TreeFieldParams::defaults(ctx.seed0);
+    params.trees_frequency = ctx.trees_frequency;
+    params.trees_size = ctx.trees_size;
+    params.segmentation_multiplier = ctx.segmentation_multiplier;
+    params.moisture_frequency = ctx.moisture_frequency;
+    params.moisture_bias = ctx.moisture_bias;
+    params.temperature_frequency = ctx.temperature_frequency;
+    params.temperature_bias = ctx.temperature_bias;
+    params.starting_area_moisture_size = ctx.starting_area_moisture_size;
+    params.starting_area_moisture_frequency = ctx.starting_area_moisture_frequency;
+    params
+        .starting_positions
+        .clone_from(&ctx.starting_positions);
+    let base = TreeBase::new(&params);
+    let fields = TreeFields::new(&base);
+
+    let width = req.width as usize;
+    let height = req.height as usize;
+    let buf_w = width + 2;
+    let buf_h = height + 2;
+    let mut density = vec![0.0f64; buf_w * buf_h];
+    for by in 0..buf_h {
+        let wy = req.origin_y + (by as f64 - 1.0) * req.tiles_per_pixel;
+        for bx in 0..buf_w {
+            let wx = req.origin_x + (bx as f64 - 1.0) * req.tiles_per_pixel;
+            density[by * buf_w + bx] = fields.density(wx, wy);
+        }
+    }
+
+    for py in 0..height {
+        for px in 0..width {
+            let o = (py * width + px) * 4;
+            if is_nauvis_water(out[o], out[o + 1], out[o + 2]) {
+                continue;
+            }
+
+            // The game blends once per DRAWN TREE, so nine neighbours compound
+            // rather than capping at one tree's alpha. The multiplication order
+            // is the TypeScript's - dy outer, dx inner, `d * wx * wy` - because
+            // f64 multiplication is not associative and tier 3 compares bytes.
+            let mut miss = 1.0f64;
+            for (dy, wy) in TREE_KERNEL_WEIGHT.iter().enumerate() {
+                let by = py + dy;
+                for (dx, wx) in TREE_KERNEL_WEIGHT.iter().enumerate() {
+                    let bx = px + dx;
+                    let p = density[by * buf_w + bx] * wx * wy;
+                    miss *= 1.0 - TREE_MAX_ALPHA * p;
+                }
+            }
+            let alpha = 1.0 - miss;
+            if alpha <= 0.0 {
+                continue;
+            }
+
+            // `alpha` is in (0, 1] here, so JavaScript's round-half-up and
+            // Rust's round-half-away-from-zero agree; `js_round` is used anyway
+            // so the rule is the same one every other pass in this file states.
+            let a = js_round(alpha * 255.0) as i32;
+            let a = a + (a >> 7);
+            for c in 0..3usize {
+                let mixed = (256 - a) * i32::from(out[o + c]) + a * i32::from(TREE_MAP_COLOR[c]);
+                out[o + c] = (mixed >> 8) as u8;
+            }
+            out[o + 3] = 255;
         }
     }
 }
@@ -855,8 +990,8 @@ mod tests {
         );
     }
     use crate::abi::{
-        ABI_VERSION, COMMON_BYTES, FULGORA_PARAMS_BYTES, MAGIC, VULCANUS_BEARINGS,
-        VULCANUS_PARAMS_BYTES,
+        ABI_VERSION, COMMON_BYTES, FULGORA_PARAMS_BYTES, MAGIC, NAUVIS_PARAMS_BYTES,
+        VULCANUS_BEARINGS, VULCANUS_PARAMS_BYTES,
     };
 
     /// A common prefix for `planet`, sized for that planet's block.
@@ -990,6 +1125,84 @@ mod tests {
         assert_eq!(render(&request(32, 16), &mut out), Status::OutputTooLarge);
     }
 
+    /// A Nauvis request at the game's default controls.
+    ///
+    /// Twelve levers, and the four the tree overlay added are at their own
+    /// defaults rather than zero: `trees_size` of 0 disables the layer outright
+    /// and would make the test below assert over an empty overlay.
+    fn nauvis_request(width: u32, height: u32) -> Vec<u8> {
+        let mut b = prefix(PLANET_NAUVIS, NAUVIS_PARAMS_BYTES, width, height, 123_456);
+        b[12..16].copy_from_slice(&VIEW_TERRAIN.to_le_bytes());
+        // water_level and the two bias levers stay 0; everything else is 1.
+        for at in [64, 72, 88, 104, 112, 120, 136] {
+            b[at..at + 8].copy_from_slice(&1.0f64.to_le_bytes());
+        }
+        b
+    }
+
+    /// The tree overlay blends toward the tree colour and touches nothing else.
+    ///
+    /// Byte-exactness against the TypeScript is tier 3's job
+    /// (`test/wasmNauvisRenderParity.spec.ts`); what this adds is a control
+    /// `cargo test` can run alone: the overlay must actually change pixels, must
+    /// move every changed channel toward `TREE_MAP_COLOR`, and must leave water
+    /// alone.
+    #[test]
+    fn the_nauvis_tree_overlay_blends_toward_the_tree_colour_and_spares_water() {
+        let (w, h) = (48u32, 48u32);
+        let mut terrain = vec![0u8; (w * h * 4) as usize];
+        assert_eq!(
+            render(&nauvis_request(w, h), &mut terrain),
+            Status::Ok,
+            "the terrain arm must render"
+        );
+
+        let mut b = nauvis_request(w, h);
+        b[12..16].copy_from_slice(&VIEW_TREES.to_le_bytes());
+        let mut trees = vec![0u8; (w * h * 4) as usize];
+        assert_eq!(
+            render(&b, &mut trees),
+            Status::Ok,
+            "the trees arm must render"
+        );
+
+        let mut changed = 0usize;
+        let mut water = 0usize;
+        for i in (0..trees.len()).step_by(4) {
+            let is_water = is_nauvis_water(terrain[i], terrain[i + 1], terrain[i + 2]);
+            if is_water {
+                water += 1;
+                assert_eq!(
+                    &trees[i..i + 4],
+                    &terrain[i..i + 4],
+                    "water at byte {i} must be left alone"
+                );
+                continue;
+            }
+            let mut moved = false;
+            for c in 0..3 {
+                if trees[i + c] == terrain[i + c] {
+                    continue;
+                }
+                moved = true;
+                let (a, t) = (terrain[i + c], TREE_MAP_COLOR[c]);
+                let (lo, hi) = (a.min(t), a.max(t));
+                assert!(
+                    trees[i + c] >= lo && trees[i + c] <= hi,
+                    "byte {i} channel {c}: {} is outside [{lo}, {hi}]",
+                    trees[i + c]
+                );
+            }
+            if moved {
+                changed += 1;
+            }
+        }
+        // Anti-vacuity, both ways: an overlay that painted nothing satisfies
+        // every assertion above, and so does a window with no water in it.
+        assert!(changed > 0, "the overlay must change some pixel");
+        assert!(water > 0, "the window must contain water to grade the skip");
+    }
+
     #[test]
     fn refuses_a_planet_or_view_it_cannot_render() {
         let mut out = vec![0u8; 4 * 4 * 4];
@@ -999,8 +1212,19 @@ mod tests {
         b[8..12].copy_from_slice(&99u32.to_le_bytes());
         assert_eq!(render(&b, &mut out), Status::UnsupportedPlanetOrView);
         // An unknown VIEW is caught by the dispatch, after a clean decode.
+        //
+        // The code here used to be 7, which stopped being unknown the moment
+        // `VIEW_TREES` took it. The assertion still passed - Fulgora does not
+        // serve trees either - so nothing went red while the test's stated
+        // reason quietly became false. Any code past the last real view works;
+        // 99 is far enough ahead that the next four overlays cannot reach it.
         let mut b = request(4, 4);
-        b[12..16].copy_from_slice(&7u32.to_le_bytes());
+        b[12..16].copy_from_slice(&99u32.to_le_bytes());
+        assert_eq!(render(&b, &mut out), Status::UnsupportedPlanetOrView);
+        // Trees are a NAUVIS view. Asking Fulgora for one is refused, which is
+        // what keeps the pair check a pair check rather than a view check.
+        let mut b = request(4, 4);
+        b[12..16].copy_from_slice(&VIEW_TREES.to_le_bytes());
         assert_eq!(render(&b, &mut out), Status::UnsupportedPlanetOrView);
         // Vulcanus has no ocean and no scrap, so the land mask and the scrap
         // footprint are meaningless there rather than merely unimplemented.
