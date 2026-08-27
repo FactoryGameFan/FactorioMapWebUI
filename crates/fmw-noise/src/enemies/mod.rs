@@ -10,3 +10,4 @@
 
 pub mod catalog;
 pub mod field;
+pub mod placement;

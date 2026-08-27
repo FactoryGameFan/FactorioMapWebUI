@@ -81,6 +81,17 @@ pub mod salt {
     pub const VULCANUS_GEYSER: u32 = 0x001d_94e5;
     /// Nauvis rocks - the three rock prototypes share one stream.
     pub const NAUVIS_ROCKS: u32 = 0x005f_1e21;
+    /// Nauvis enemy bases.
+    pub const ENEMY_BASES: u32 = 0x00a3_c07b;
+    /// The biter spawner's `random_penalty` draw.
+    ///
+    /// **Not a placement roll.** It stands in for a batch noise op rather than
+    /// for `generateEntities`' per-tile draw, but the need is identical - a
+    /// deterministic, position-pure uniform per tile - so it reuses this
+    /// machinery instead of introducing a second one. Same for the spitter.
+    pub const ENEMY_BITER_PENALTY: u32 = 0x002c_81d3;
+    /// The spitter spawner's `random_penalty` draw.
+    pub const ENEMY_SPITTER_PENALTY: u32 = 0x004e_0937;
 }
 
 /// `max(341, 0x3FBE2C + 7919*chunkX + 7907*chunkY + salt)` in `u32` arithmetic.

@@ -16,7 +16,9 @@ use fmw_noise::cliffs::vulcanus_fields::{
 };
 use fmw_noise::cliffs::vulcanus_ore_rejection::VulcanusOreRejection;
 use fmw_noise::distance_from_nearest_point::Point as NauvisPoint;
-use fmw_noise::enemies::catalog::EnemyControls;
+use fmw_noise::enemies::catalog::{EnemyControls, ENEMY_MAP_COLOR};
+use fmw_noise::enemies::field::{EnemyBaseField, EnemyFieldParams};
+use fmw_noise::enemies::placement::NauvisEnemyPlacement;
 use fmw_noise::eval::ctx::{EvalCtx, ResourceLevers, VulcanusResourceControls};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
@@ -97,6 +99,12 @@ pub const VIEW_ALL: u32 = 6;
 /// `supported` match has to name it, or the render comes back
 /// `unsupported planet or view`.
 pub const VIEW_TREES: u32 = 7;
+
+/// Terrain with the Nauvis enemy-base overlay painted over it.
+///
+/// The second `view` code no other planet has. Fulgora and Vulcanus have no
+/// enemy bases at all.
+pub const VIEW_ENEMIES: u32 = 8;
 
 /// The land colour, `FULGORA_LANDMASK_LAND_RGB` in
 /// `src/noise/preview/renderFulgoraTerrain.ts`.
@@ -185,7 +193,10 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         ) | (
             PLANET_VULCANUS,
             VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL
-        ) | (PLANET_NAUVIS, VIEW_TERRAIN | VIEW_TREES | VIEW_ROCKS)
+        ) | (
+            PLANET_NAUVIS,
+            VIEW_TERRAIN | VIEW_TREES | VIEW_ROCKS | VIEW_ENEMIES
+        )
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -483,7 +494,10 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
             frequency: p.rocks_frequency,
             size: p.rocks_size,
         },
-        enemy_controls: EnemyControls::defaults(),
+        enemy_controls: EnemyControls {
+            frequency: p.enemy_frequency,
+            size: p.enemy_size,
+        },
     };
     let stack = NauvisStack::new(&ctx);
     let catalog = NauvisTileCatalog::new(req.seed0);
@@ -511,6 +525,9 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     }
     if matches!(req.view, VIEW_ROCKS) {
         paint_nauvis_rocks(req, p, &stack, &catalog, &ctx, out);
+    }
+    if matches!(req.view, VIEW_ENEMIES) {
+        paint_nauvis_enemies(req, p, &stack, &catalog, &ctx, out);
     }
 }
 
@@ -790,6 +807,56 @@ fn paint_nauvis_rocks(
                 py,
                 ROCK_MAP_COLOR,
                 NAUVIS_ROCK_MARK_RADIUS_PX,
+                is_nauvis_water,
+            );
+        }
+    }
+}
+
+/// Composite the Nauvis enemy-base overlay over terrain that is already painted.
+///
+/// Simpler than the rock pass in one way that matters: there is no pre-roll
+/// water skip, so none of `water_at_wrapping_offset`'s row-wrap quirk arises
+/// here. The water test happens only inside the mark, where it stops a 3x3 from
+/// spilling onto the sea, and inside `tile_allowed`, which is the gate that
+/// matters.
+///
+/// The mark is the same symmetric 3x3 the rocks paint, which is why this reads
+/// the same `placement_sweep_box` rather than needing one of its own.
+fn paint_nauvis_enemies(
+    req: &Request,
+    p: &NauvisParams,
+    stack: &NauvisStack,
+    catalog: &NauvisTileCatalog,
+    ctx: &NauvisCtx,
+    out: &mut [u8],
+) {
+    let mut params = EnemyFieldParams::defaults(req.seed0);
+    params.controls = ctx.enemy_controls;
+    params
+        .starting_positions
+        .clone_from(&ctx.starting_positions);
+    let field = EnemyBaseField::new(&params);
+    let placement = NauvisEnemyPlacement::new(&field, stack, catalog);
+    let set = placement.placement_set();
+
+    let width = i64::from(req.width);
+    let height = i64::from(req.height);
+    let (px0, px1, py0, py1) = sweep_pixel_range(req, p.placement_sweep_box);
+    for py in py0..py1 {
+        let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+        for px in px0..px1 {
+            let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+            if !set.placed(wx, wy) {
+                continue;
+            }
+            paint_mark_skipping(
+                out,
+                (width, height),
+                px,
+                py,
+                ENEMY_MAP_COLOR,
+                PLACEMENT_MARK_RADIUS_PX,
                 is_nauvis_water,
             );
         }
