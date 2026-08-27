@@ -40,6 +40,16 @@ export interface EngineExports {
   request_bytes: () => number;
   abi_version: () => number;
   render_request: (len: number) => number;
+  /**
+   * Sweep a strided box and write `[cell_id, cell_x, cell_y]` per position.
+   *
+   * Not a render: it serves the Fulgora island finder, whose stage 1 is 96.3%
+   * cell evaluation. See `islands/surveyThroughWasm.ts` for the banding, which
+   * exists because a full search is ~20 MB of triples against a 4 MB buffer.
+   */
+  survey_fulgora_cells: (len: number) => number;
+  /** Positions one `survey_fulgora_cells` call can write. */
+  survey_max_positions: () => number;
 }
 
 /** Compile the module. Do this ONCE, on the main thread. */

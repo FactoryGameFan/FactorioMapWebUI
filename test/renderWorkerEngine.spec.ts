@@ -60,6 +60,13 @@ function pixelsOf(index: number): Uint8ClampedArray {
   return new Uint8ClampedArray((entry.message as { buffer: ArrayBuffer }).buffer);
 }
 
+/** The nth posted reply as an object, failing loudly rather than short-circuiting. */
+function replyAt(index: number): { id: number; error?: string } {
+  const entry = posted[index];
+  if (!entry) throw new Error(`no reply posted at index ${String(index)}`);
+  return entry.message as { id: number; error?: string };
+}
+
 /** Import the worker fresh, so each test gets its own `onmessage` closure. */
 async function loadWorker(): Promise<FakeSelf> {
   posted.length = 0;
@@ -108,8 +115,12 @@ describe("the render worker's engine handshake", () => {
     // reordered drain would still resolve the right promises - which is
     // exactly why it needs asserting rather than assuming.
     expect(posted).toHaveLength(2);
-    expect((posted[0]?.message as { id: number }).id).toBe(1);
-    expect((posted[1]?.message as { id: number }).id).toBe(2);
+    // Indexed without an optional chain: `posted[0]?.message` short-circuits to
+    // `undefined` and the cast then throws a TypeError, which fails the test
+    // with the wrong message. `replyAt` fails loudly instead, the way
+    // `pixelsOf` already does.
+    expect(replyAt(0).id).toBe(1);
+    expect(replyAt(1).id).toBe(2);
     expect(pixelsOf(0).length).toBe(12 * 9 * 4);
 
     // And a render after the handshake is served straight through, with the
@@ -151,7 +162,7 @@ describe("the render worker's engine handshake", () => {
 
     w.onmessage?.({ data: request(4) });
     expect(posted).toHaveLength(1);
-    const message = posted[0]?.message as { id: number; error?: string };
+    const message = replyAt(0);
     expect(message.id, "the error must carry the id, or the host strands it").toBe(4);
     expect(message.error).toContain("render engine failed to instantiate");
     // No buffer, so nothing is transferred and the host cannot mistake it for
@@ -175,7 +186,7 @@ describe("the render worker's engine handshake", () => {
     w.onmessage?.({ data: { kind: "engine", module: notOurEngine } });
 
     expect(posted, "the queued request must be settled, not dropped").toHaveLength(1);
-    const message = posted[0]?.message as { id: number; error?: string };
+    const message = replyAt(0);
     expect(message.id).toBe(7);
     expect(message.error).toContain("render engine failed to instantiate");
   }, 120000);
