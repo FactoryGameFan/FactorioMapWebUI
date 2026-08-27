@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import { flushRecording, frozen, frozenCount, RECORDING, record } from "./tier2Frozen";
 
 import { makeCliffinessBasic } from "../src/noise/cliffs/vulcanusCliffFields";
 import { distanceFromNearestPoint } from "../src/noise/distanceFromNearestPoint";
@@ -439,6 +441,11 @@ function writeRequest(engine: EngineExports, req: VulcanusRenderRequest): number
   return encodeRenderRequest(buffer, req);
 }
 
+const PLANET = "vulcanus";
+const OFF_GRID_LABEL = "off-grid";
+
+afterAll(flushRecording);
+
 describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph", () => {
   it("covers every field the module exposes, so a new one cannot go untested", async () => {
     const engine = await instantiate();
@@ -452,16 +459,35 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
       for (const w of WINDOWS) {
         const ts = tsFields(s, w);
         const len = writeRequest(engine, request(s, w));
+        const label = `${s.label}, ${w.label}`;
         for (const [field, name] of FIELD_NAMES.entries()) {
-          expect(
-            u64(engine.checksum_vulcanus(len, field)),
-            `${name} (${s.label}, ${w.label})`,
-          ).toBe(foldAll(ts[field] as number[]));
+          const wasm = u64(engine.checksum_vulcanus(len, field));
+          const tsFold = foldAll(ts[field] as number[]);
+
+          // Recording compares the two arms first, so the table can only ever
+          // capture a value both ports already agree on.
+          if (RECORDING) {
+            expect(wasm, `${name} (${label})`).toBe(tsFold);
+            record(PLANET, label, name, wasm);
+            compared++;
+            continue;
+          }
+
+          // Both arms against the frozen value rather than against each other -
+          // see `test/tier2Frozen.ts` for why that outlives #227.
+          const want = frozen(PLANET, label, name);
+          expect(want, `no frozen checksum for ${name} (${label})`).toBeDefined();
+          expect(wasm, `wasm ${name} (${label})`).toBe(want);
+          expect(tsFold, `TypeScript ${name} (${label})`).toBe(want);
           compared++;
         }
       }
     }
     expect(compared).toBe(FIELD_NAMES.length * SLIDERS.length * WINDOWS.length);
+
+    // +1 window for the off-grid sweep frozen in the test below.
+    if (!RECORDING)
+      expect(frozenCount(PLANET)).toBe(FIELD_NAMES.length * (SLIDERS.length * WINDOWS.length + 1));
   }, 300000);
 
   it(`the two ports agree off the f32 grid, which closes #${String(OFF_GRID_ISSUE)}`, async () => {
@@ -487,6 +513,21 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
       (_, field) => u64(engine.checksum_vulcanus(len, field)) !== foldAll(ts[field] as number[]),
     );
     expect(diverging).toEqual([]);
+
+    // The off-grid window is a fourth sweep and it dies with the TypeScript arm
+    // like the other three, so it is frozen too. It is the one that closes
+    // #309, which makes it the last sweep anybody would want to lose.
+    for (const [field, name] of FIELD_NAMES.entries()) {
+      const wasm = u64(engine.checksum_vulcanus(len, field));
+      if (RECORDING) {
+        record(PLANET, OFF_GRID_LABEL, name, wasm);
+        continue;
+      }
+      const want = frozen(PLANET, OFF_GRID_LABEL, name);
+      expect(want, `no frozen checksum for ${name} (${OFF_GRID_LABEL})`).toBeDefined();
+      expect(wasm, `wasm ${name} (${OFF_GRID_LABEL})`).toBe(want);
+      expect(foldAll(ts[field] as number[]), `TypeScript ${name} (${OFF_GRID_LABEL})`).toBe(want);
+    }
 
     // Anti-vacuity, and it is not optional: "nothing diverges" is exactly what a
     // sweep that evaluated nothing would report. Both sides could fold 0 for

@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import { flushRecording, frozen, frozenCount, RECORDING, record } from "./tier2Frozen";
 
 import { encodeRenderRequest, type WasmRenderRequest } from "../src/noise/wasm/request";
 
@@ -815,6 +817,10 @@ const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint => 
   return u64(engine.checksum_nauvis(written, field));
 };
 
+const PLANET = "nauvis";
+
+afterAll(flushRecording);
+
 describe("Rust and TypeScript agree bit for bit across the Nauvis expression core", () => {
   it("covers every field the module exposes", async () => {
     // The module owns the count, so a field added to the Rust chain cannot
@@ -829,12 +835,36 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
       const fields = tsFields(c);
       expect(fields.length, "accessor list length").toBe(FIELD_NAMES.length);
       for (let f = 0; f < fields.length; f++) {
-        expect(wasmChecksum(engine, c, f), `${c.label}: ${FIELD_NAMES[f]}`).toBe(
-          foldGrid(fields[f], c),
-        );
+        const name = FIELD_NAMES[f] as string;
+        const wasm = wasmChecksum(engine, c, f);
+        const ts = foldGrid(fields[f], c);
+
+        // Recording still compares the two arms first, so the table can only
+        // ever capture a value both ports already agree on.
+        if (RECORDING) {
+          expect(wasm, `${c.label}: ${name}`).toBe(ts);
+          record(PLANET, c.label, name, wasm);
+          continue;
+        }
+
+        // Both arms against the frozen value, not against each other. That is
+        // what survives #227: when the TypeScript arm goes, the wasm one keeps
+        // running against a number captured while the two demonstrably agreed.
+        const want = frozen(PLANET, c.label, name);
+        expect(want, `no frozen checksum for ${c.label}: ${name}`).toBeDefined();
+        expect(wasm, `wasm ${c.label}: ${name}`).toBe(want);
+        expect(ts, `TypeScript ${c.label}: ${name}`).toBe(want);
       }
     }
   }, 120000);
+
+  it.skipIf(RECORDING)("freezes every field at every case, so #227 keeps this coverage", () => {
+    // A missing row makes the fold test fail on `toBeDefined` rather than pass
+    // quietly, but only for a field the sweep still visits. This is the guard
+    // for the other direction: the table must cover the whole grid, so a case
+    // or field dropped from the sweep cannot shrink the frozen surface unseen.
+    expect(frozenCount(PLANET)).toBe(FIELD_NAMES.length * CASES.length);
+  });
 
   it("sweeps coordinates that are mostly NOT on the f32 grid, unlike tier 3", () => {
     // Anti-vacuity for the header's claim, and the reason this spec can see
