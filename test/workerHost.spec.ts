@@ -53,6 +53,31 @@ describe("createWorkerHost", () => {
     host.dispose();
   });
 
+  it("rejects the one request when the worker reports an engine failure", async () => {
+    // #227: with the TypeScript math gone, a worker that cannot instantiate the
+    // engine posts `{ id, error }` instead of a result. The host must REJECT
+    // that id - resolving it would hand the panel an object with no `buffer`
+    // and fail later, somewhere that does not name the cause.
+    const failing = (): WorkerLike => {
+      const w = {
+        onmessage: null as ((e: { data: unknown }) => void) | null,
+        onerror: null as ((e: unknown) => void) | null,
+        postMessage(r: ElevationRenderRequest) {
+          queueMicrotask(() => w.onmessage?.({ data: { id: r.id, error: "engine is broken" } }));
+        },
+        terminate: vi.fn(),
+      };
+      return w as unknown as WorkerLike;
+    };
+    const host = createWorkerHost(failing, 1);
+    await expect(host.execute(req(1), 0)).rejects.toThrow("engine is broken");
+
+    // The worker is NOT dropped: the failure is the module, so a replacement
+    // would fail identically. A later request reaches the same worker and gets
+    // the same answer rather than hanging.
+    await expect(host.execute(req(2), 0)).rejects.toThrow("engine is broken");
+  });
+
   it("terminates its workers on dispose", async () => {
     const made: (WorkerLike & { terminate: ReturnType<typeof vi.fn> })[] = [];
     const host = createWorkerHost(() => {
