@@ -10,6 +10,8 @@ import FButton from "../ui/FButton.vue";
 import FNumberInput from "../ui/FNumberInput.vue";
 import { createWorkerHost, defaultPoolSize } from "./useElevationPreview";
 import { findIslands, type FindOptions, type IslandResult } from "../noise/islands/findIslands";
+import { instantiateEngineSync, type EngineExports } from "../noise/wasm/engine";
+import { loadEngineModule } from "../noise/wasm/load";
 
 // `find` is the injection seam, mirroring ElevationPreviewPanel's `renderer`
 // prop: it lets the tests drive this component without spinning up Workers,
@@ -80,6 +82,28 @@ const RADIUS_MAX = 20000;
  * so it could drift without a single test noticing.
  */
 const DEFAULT_RADIUS = 1024;
+
+/**
+ * The engine for stage 1's cell survey, compiled once per panel.
+ *
+ * Memoised on the promise rather than the instance so two clicks in quick
+ * succession share one compile. `loadEngineModule` memoises the module too, so
+ * this is a second cheap layer over an already-shared one.
+ */
+let engineOnce: Promise<EngineExports | undefined> | undefined;
+async function surveyEngine(): Promise<EngineExports | undefined> {
+  engineOnce ??= (async () => {
+    try {
+      return instantiateEngineSync(await loadEngineModule());
+    } catch {
+      // Falls back to the TypeScript survey, which is slower and identical -
+      // `test/surveyThroughWasm.spec.ts` asserts the two produce the same
+      // island list. Not swallowable once #227 removes that arm.
+      return undefined;
+    }
+  })();
+  return engineOnce;
+}
 
 const store = usePresetsStore();
 const ui = useUiStore();
@@ -249,6 +273,17 @@ async function search() {
     // Follows the same read `ElevationPreviewPanel.vue` already uses.
     const islandControls = elevationCtxFromPreset(preset).fulgoraIslandControls;
     const run = props.find ?? findIslands;
+    // Loaded HERE rather than inside `findIslands`, for the reason
+    // `useElevationPreview` records: a fetch inside a function every test
+    // constructs makes those tests print pages of `ECONNREFUSED`, because under
+    // vitest the module URL points at a dev server that is not running. With
+    // `find` injected this is skipped entirely, so an injected test never
+    // touches the network.
+    //
+    // A failure is swallowed and the finder falls back to the TypeScript
+    // survey, which still exists. When #227 deletes it this has to become an
+    // error, the same way the render worker's did.
+    const engine = props.find ? undefined : await surveyEngine();
     // With `find` injected, `ensureHost()` must never be called - not even to
     // build the `execute` argument - or every test would try to spawn a real
     // Worker, which does not exist in the test environment. Wrapping the call
@@ -266,6 +301,7 @@ async function search() {
         : defaultPoolSize(
             typeof navigator === "undefined" ? undefined : navigator.hardwareConcurrency,
           ),
+      engine,
       execute: (req, slot) => ensureHost().execute(req, slot),
       signal: aborter.signal,
       onProgress: (d, t) => {

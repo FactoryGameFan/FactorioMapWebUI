@@ -50,6 +50,20 @@ export interface EngineExports {
   survey_fulgora_cells: (len: number) => number;
   /** Positions one `survey_fulgora_cells` call can write. */
   survey_max_positions: () => number;
+  /**
+   * The survey step for this ctx: `grid / 8`, where `grid` moves with
+   * `islands_frequency`. Exported so a caller can get it without building the
+   * TypeScript stack the survey exists to avoid.
+   */
+  fulgora_survey_step: (
+    seed0: number,
+    islandsFrequency: number,
+    islandsSize: number,
+    sinStart: number,
+    cosStart: number,
+    sinVault: number,
+    cosVault: number,
+  ) => number;
 }
 
 /** Compile the module. Do this ONCE, on the main thread. */

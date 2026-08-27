@@ -1135,8 +1135,8 @@ const SURVEY_STRIDE_BYTES: usize = 24;
 
 /// Positions one `survey_fulgora_cells` call can write.
 ///
-/// The island finder searches to radius 10,000 at a step of `grid / 8` - about
-/// 836,000 positions, or 20 MB of triples against a 4 MB buffer - so a whole
+/// The island finder searches to radius 20,000 at a step of `grid / 8` - about
+/// 3.3 million positions, or 80 MB of triples against a 4 MB buffer - so a whole
 /// search cannot land in one call and the caller sweeps in bands. This is what
 /// bounds a band.
 const SURVEY_MAX_POSITIONS: usize = RENDER_BYTES / SURVEY_STRIDE_BYTES;
