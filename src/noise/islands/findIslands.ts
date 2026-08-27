@@ -32,6 +32,7 @@ import { surveyIslands, type IslandCandidate } from "./cellSurvey";
 import { floodFillFrom, landMaskFromImage } from "./islandMask";
 import { chainComponents, type PlacedMask } from "./chainGraph";
 import type { FulgoraCtx } from "../expressions/fulgoraShared";
+import type { EngineExports } from "../wasm/engine";
 import type {
   ElevationRenderRequest,
   ElevationRenderResult,
@@ -135,6 +136,21 @@ export interface FindOptions {
   /** Same shape as `WorkerHost.execute` (Task 4), so it passes straight through. */
   readonly execute: (req: ElevationRenderRequest, slot: number) => Promise<ElevationRenderResult>;
   readonly concurrency: number;
+  /**
+   * The WASM engine, if the caller has one.
+   *
+   * Reaches `surveyIslands` and nothing else: stage 1 is 96.3% of the finder's
+   * cost and the only part that runs the noise chain #227 deletes. The refine
+   * pass already goes through `execute`, which is the render worker and so
+   * already engine-backed.
+   *
+   * A PARAMETER rather than a module-level load, for the reason
+   * `useElevationPreview` records: fetching the module from inside a function
+   * every test constructs makes those tests print pages of `ECONNREFUSED`,
+   * because under vitest the module URL points at a dev server that is not
+   * running.
+   */
+  readonly engine?: EngineExports;
   readonly refineCount?: number;
   readonly onProgress?: (done: number, total: number) => void;
   readonly signal?: AbortSignal;
@@ -391,12 +407,12 @@ export async function findIslands(opts: FindOptions): Promise<IslandResult[]> {
   const { ctx, radius, execute, concurrency, signal } = opts;
   const refineCount = opts.refineCount ?? DEFAULT_REFINE_COUNT;
 
-  const candidates = surveyIslands(ctx, {
-    x0: -radius,
-    y0: -radius,
-    x1: radius,
-    y1: radius,
-  });
+  const candidates = surveyIslands(
+    ctx,
+    { x0: -radius, y0: -radius, x1: radius, y1: radius },
+    undefined,
+    opts.engine,
+  );
 
   // The total starts as the coarse-only count and is EXTENDED once the
   // deduplicated refine set is known (below) - it cannot be computed upfront,

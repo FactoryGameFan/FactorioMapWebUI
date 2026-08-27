@@ -17,8 +17,8 @@ import type { FulgoraCtx } from "../expressions/fulgoraShared";
  *
  * The module writes `[cell_id, cell_x, cell_y]` as three `f64` per position, so
  * a position costs 24 bytes against a 4 MB output buffer - about 175,000
- * positions per call. The finder searches to radius 10,000 at a step of
- * `grid / 8`, which is roughly 836,000 positions, or 20 MB. So a whole search
+ * positions per call. The finder searches to radius 20,000 (`RADIUS_MAX`) at a step of
+ * `grid / 8`, which is about 3.3 million positions, or 80 MB. So a whole search
  * cannot land in one call.
  *
  * Bands are whole ROWS, never a partial one. A band boundary mid-row would make
