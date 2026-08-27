@@ -1349,7 +1349,8 @@ measured rather than assumed:
   `resolvedTile` matched at all 676 points while 17 of the 19 probabilities
   behind it diverged. That is the standing answer to "tier 3 is byte-identical,
   so why build tier 2".
-- **Only tier 2 sees the wasm libm.** `cargo test` runs on the host libm, so a
+- **Only tier 2 sees the wasm libm**, and after #227 only its FROZEN table does.
+  `cargo test` runs on the host libm, so a
   `log2`/`pow` difference inside `wasm32-unknown-unknown` is invisible to it
   (#270). Anything new that reaches a transcendental needs a tier-2 sweep, not
   just a fixture.
@@ -1365,9 +1366,29 @@ measured rather than assumed:
   The parts that are ours stay exact - that test still asserts `total` at
   exactly 14,406, because the shape of the sweep does not depend on the host.
 
-**Tier 2 has a SHELF LIFE, and #227 is the deadline.** It compares Rust against
-TypeScript, and #227 deletes the TypeScript. Write each layer's tier 2 as the
-layer lands, never at the end.
+**Tier 2's shelf life is now a FREEZE rather than a deadline.** It compared Rust
+against TypeScript, and #227 deletes the TypeScript, so all 942 folds are
+committed to `test/fixtures/tier2-checksums.json` and each spec asserts BOTH
+arms against the frozen value instead of against each other. When the TypeScript
+arm goes, the wasm arm keeps running against a number captured while the two
+demonstrably agreed. Write each layer's tier 2 as the layer lands anyway - a
+layer with no fold has nothing to freeze.
+
+**That freeze exists for one specific reason: nothing else runs the port inside
+`wasm32-unknown-unknown`.** `cargo test` links the host libm, so the #270 class
+is invisible to tier 1, and tier 3 executes wasm only along paths that reach a
+rendered pixel - many fields reach none at all. Without the table, #227 would
+have closed that hole permanently while every gate stayed green.
+
+Four planted breaks were RUN rather than predicted: a flipped bit in one frozen
+value reddens the **wasm** arm by name; a deleted row fails `toBeDefined` rather
+than passing quietly; a dropped case fails the per-planet count guard; and
+perturbing a Rust constant (`SEA_LEVEL_TEMPERATURE`, 15.0 -> 15.000000001) and
+rebuilding reddens the wasm arm alone, which is exactly the post-#227 behaviour
+the table is for. **Read a moved number, do not adjust it.**
+
+Record with `FMW_FREEZE_TIER2=1`, then run the specs normally - a record run
+compares nothing and so proves nothing.
 
 **Parity sweeps must use NON-binary origins and steps**, or they agree by
 construction. `test/wasmNauvisParity.spec.ts` freezes 2,365 of 2,420 positions

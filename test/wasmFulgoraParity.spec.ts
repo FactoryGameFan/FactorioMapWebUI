@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import { flushRecording, frozen, frozenCount, RECORDING, record } from "./tier2Frozen";
 
 import { makeFulgoraScrap } from "../src/noise/expressions/fulgoraScrap";
 import {
@@ -323,6 +325,10 @@ const FIELD_NAMES = [
   "resolvedTile",
 ];
 
+const PLANET = "fulgora";
+
+afterAll(flushRecording);
+
 describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain", () => {
   it("covers every field the module exposes, so a new one cannot go untested", async () => {
     const engine = await instantiate();
@@ -336,29 +342,45 @@ describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain"
     for (const c of CASES) {
       const ts = tsFields(c);
       for (const [field, name] of FIELD_NAMES.entries()) {
-        expect(
-          u64(
-            engine.checksum_fulgora(
-              SEED0,
-              c.islandsFrequency,
-              c.islandsSize,
-              sinStart,
-              cosStart,
-              sinVault,
-              cosVault,
-              field,
-              X0,
-              Y0,
-              STEP,
-              N,
-            ),
+        const wasm = u64(
+          engine.checksum_fulgora(
+            SEED0,
+            c.islandsFrequency,
+            c.islandsSize,
+            sinStart,
+            cosStart,
+            sinVault,
+            cosVault,
+            field,
+            X0,
+            Y0,
+            STEP,
+            N,
           ),
-          `${name} (${c.label})`,
-        ).toBe(foldAll(ts[field] as number[]));
+        );
+        const tsFold = foldAll(ts[field] as number[]);
+
+        // Recording compares the two arms first, so the table can only ever
+        // capture a value both ports already agree on.
+        if (RECORDING) {
+          expect(wasm, `${name} (${c.label})`).toBe(tsFold);
+          record(PLANET, c.label, name, wasm);
+          compared++;
+          continue;
+        }
+
+        // Both arms against the frozen value rather than against each other -
+        // see `test/tier2Frozen.ts` for why that outlives #227.
+        const want = frozen(PLANET, c.label, name);
+        expect(want, `no frozen checksum for ${name} (${c.label})`).toBeDefined();
+        expect(wasm, `wasm ${name} (${c.label})`).toBe(want);
+        expect(tsFold, `TypeScript ${name} (${c.label})`).toBe(want);
         compared++;
       }
     }
     expect(compared).toBe(FIELD_NAMES.length * CASES.length);
+
+    if (!RECORDING) expect(frozenCount(PLANET)).toBe(FIELD_NAMES.length * CASES.length);
   });
 
   it("the second slider case really is a different chain, so running both says something", () => {
