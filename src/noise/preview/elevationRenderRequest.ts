@@ -404,12 +404,11 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 }
 
 /**
- * The Rust engine's Nauvis path - the terrain view and all five overlays.
+ * The Rust engine's Nauvis path - EVERY view the planet has.
  *
- * The `all` COMPOSITE is the remaining step, so that request still takes the
- * TypeScript path in full. Every single-overlay view now goes through the
- * engine; the module refuses anything else with `unsupported planet or view`,
- * so a mistake here is loud rather than silent.
+ * The terrain render, all five overlays, and the `all` composite. The module
+ * refuses anything else with `unsupported planet or view`, so a mistake here is
+ * loud rather than silent.
  *
  * **A caller-supplied `startingLakePositions` also stays on the TypeScript
  * path**, for the same reason a moved spawn does. The module derives the lake
@@ -428,7 +427,7 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 function renderNauvisThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
-  view: "terrain" | "trees" | "rocks" | "enemies" | "cliffs" | "resources",
+  view: "terrain" | "trees" | "rocks" | "enemies" | "cliffs" | "resources" | "all",
 ): ElevationRenderResult {
   const pixels = renderThroughWasm(engine, {
     planet: "nauvis",
@@ -670,10 +669,9 @@ export function runRenderRequest(
       }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
     }
-    // The Nauvis paths the Rust engine serves so far. Checked BEFORE the
-    // TypeScript render rather than after, so the engine's work replaces it
-    // instead of being thrown away - and not for `all`, which is the
-    // composite and lands as its own change.
+    // Every Nauvis view the Rust engine serves, which is now all of them.
+    // Checked BEFORE the TypeScript render rather than after, so the engine's
+    // work replaces it instead of being thrown away.
     //
     // The spawn is fixed at the origin on the module side, so a request with a
     // moved spawn stays on the TypeScript path. `startingPositions` reaches
@@ -686,7 +684,8 @@ export function runRenderRequest(
         req.view === "rocks" ||
         req.view === "enemies" ||
         req.view === "cliffs" ||
-        req.view === "resources") &&
+        req.view === "resources" ||
+        req.view === "all") &&
       req.startingLakePositions === undefined &&
       isDefaultSpawn(req.startingPositions)
     ) {

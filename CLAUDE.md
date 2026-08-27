@@ -1257,9 +1257,19 @@ shared pixel. The exception is kept by an `oil_mark` buffer and a
 `compare_priority` set computed once per render: uranium alone is outranked by
 oil today.
 
-Still unported: the `all` COMPOSITE. Every single-overlay Nauvis view renders
-through the engine; `all` stays on the TypeScript path until the composite
-lands, and the module refuses anything else.
+Then the `all` COMPOSITE. **Every Nauvis view now renders through the engine.**
+
+**The paint order was WRONG in the module for four slices and nothing could
+tell.** The five `if`s ran trees, rocks, enemies, resources, cliffs; the
+TypeScript runs trees, resources, rocks, enemies, cliffs. A single-overlay
+request triggers exactly one of them, so `all` is the first request that runs
+more than one and therefore the first thing that grades the order at all.
+Reordering changes only the pixels where two passes land - 2 of 9,216 in the
+window that grades it - which is invisible to any whole-image bound. The
+frozen `{ore, covered, byRock, byEnemy, byCliff}` count is what catches it, and
+**the window matters**: only one of the four has all three obstruction types
+covering ore, so on the other three two thirds of that assertion would be
+zeroes.
 
 **Crude oil appeared in exactly ONE of ten windows swept**, at 9 pixels - and
 that one pixel-cluster is one placement. Measured on the Rust side, its

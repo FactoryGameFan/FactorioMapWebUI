@@ -203,7 +203,13 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
             VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL
         ) | (
             PLANET_NAUVIS,
-            VIEW_TERRAIN | VIEW_TREES | VIEW_ROCKS | VIEW_ENEMIES | VIEW_CLIFFS | VIEW_RESOURCES
+            VIEW_TERRAIN
+                | VIEW_TREES
+                | VIEW_ROCKS
+                | VIEW_ENEMIES
+                | VIEW_CLIFFS
+                | VIEW_RESOURCES
+                | VIEW_ALL
         )
     );
     if !supported {
@@ -524,23 +530,30 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
         }
     }
 
-    // The overlay passes, in the TypeScript's own order. Trees are first and
-    // sit UNDER everything else that will land here - a forest is cleared, not
-    // an obstacle routed around - so this `if` stays at the top of the block as
-    // the other four arrive.
-    if matches!(req.view, VIEW_TREES) {
+    // The overlay passes, in the TypeScript's own order - and for `all` that
+    // ORDER IS THE OUTPUT, not a detail. Trees first, under everything: a
+    // forest reads as cleared rather than as an obstacle. Then resources. Then
+    // the three obstructions over the top, so a rock, a spawner or a cliff
+    // crossing an ore patch reads as the thing that is in the way.
+    //
+    // **These five `if`s were in a different order until the composite landed**
+    // - resources sat after rocks and enemies - and nothing could tell, because
+    // a single-overlay view triggers exactly one of them. `all` is the first
+    // request that runs more than one, so it is the first thing that grades the
+    // order at all. `paints resources under the obstructions` freezes it.
+    if matches!(req.view, VIEW_TREES | VIEW_ALL) {
         paint_nauvis_trees(req, &ctx, out);
     }
-    if matches!(req.view, VIEW_ROCKS) {
-        paint_nauvis_rocks(req, p, &stack, &catalog, &ctx, out);
-    }
-    if matches!(req.view, VIEW_ENEMIES) {
-        paint_nauvis_enemies(req, p, &stack, &catalog, &ctx, out);
-    }
-    if matches!(req.view, VIEW_RESOURCES) {
+    if matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
         paint_nauvis_resources(req, p, &stack, &catalog, out);
     }
-    if matches!(req.view, VIEW_CLIFFS) {
+    if matches!(req.view, VIEW_ROCKS | VIEW_ALL) {
+        paint_nauvis_rocks(req, p, &stack, &catalog, &ctx, out);
+    }
+    if matches!(req.view, VIEW_ENEMIES | VIEW_ALL) {
+        paint_nauvis_enemies(req, p, &stack, &catalog, &ctx, out);
+    }
+    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
         paint_nauvis_cliffs(req, p, out);
     }
 }
