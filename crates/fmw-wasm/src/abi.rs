@@ -107,6 +107,9 @@
 //! +72  f64  temperature_bias        read by the TREE overlay only
 //! +80  f64  trees_frequency
 //! +88  f64  trees_size
+//! +96  f64  rocks_frequency
+//! +104 f64  rocks_size
+//! +112 f64 x 4   placement_sweep_box: x0, y0, x1, y1
 //! ```
 //!
 //! **The Vulcanus block has grown twice with no version bump - 248 to 280 for
@@ -152,25 +155,27 @@ pub const FULGORA_PARAMS_BYTES: usize = 48;
 /// Size of Vulcanus's parameter block.
 pub const VULCANUS_PARAMS_BYTES: usize = 312;
 
-/// Nauvis's block: eight climate and elevation levers, then the tree overlay's
-/// four, one `f64` each.
+/// Nauvis's block: eight climate and elevation levers, the tree overlay's four,
+/// then the rock overlay's two and its sweep box.
 ///
 /// **A third block with no version bump, which is the split working as
 /// designed.** [`ABI_VERSION`] describes the COMMON prefix, which every planet
 /// reads; a planet block is declared by `params_bytes` and checked against the
 /// planet code, so adding one cannot misread an existing writer's request.
 ///
-/// It carries no trig, because Nauvis reaches no `starting_spot_at_angle`. It
-/// carries no halo boxes yet either: the terrain view paints one pixel per
-/// pixel, and the tree overlay - the first of the five to land - reads its
-/// density field at a one-cell world-coordinate border rather than reading the
-/// image, so a tile needs no widened query box to stay byte-identical. The four
-/// remaining overlays do need one; that is a further block growth, which is
-/// also free.
+/// It carries no trig, because Nauvis reaches no `starting_spot_at_angle`.
 ///
-/// **Grown 64 -> 96 for the tree overlay**, the first time this block has moved.
+/// It carries ONE world box, not two. The tree overlay needs none at all - it
+/// reads its density field at a one-cell world-coordinate border rather than
+/// reading neighbouring image pixels - and the rock overlay's mark is a
+/// symmetric 3x3, so `placement_sweep_box` covers it exactly. The cliff overlay
+/// will need a second box, because its block is asymmetric and its two
+/// directions cross; that is the same two-boxes-not-one reasoning Vulcanus's
+/// block records, and it is a further growth rather than a reuse.
+///
+/// **Grown 64 -> 96 for the tree overlay, then 96 -> 144 for the rocks.**
 /// Vulcanus's grew three times the same way.
-pub const NAUVIS_PARAMS_BYTES: usize = 96;
+pub const NAUVIS_PARAMS_BYTES: usize = 144;
 
 /// The largest request the module can accept, which is what `request_bytes()`
 /// reports so a caller can size one buffer for every planet.
@@ -380,6 +385,20 @@ pub struct NauvisParams {
     pub trees_frequency: f64,
     /// `control:trees:size`.
     pub trees_size: f64,
+    /// `control:rocks:frequency`.
+    pub rocks_frequency: f64,
+    /// `control:rocks:size`.
+    pub rocks_size: f64,
+    /// The world box to sweep for placement-roll hits, as `[x0, y0, x1, y1]`.
+    ///
+    /// The rock overlay paints a 3x3 mark centred on its hit's pixel, so a rock
+    /// centred just outside a worker tile still owes that tile pixels. Sent
+    /// rather than derived for the reason Vulcanus's is: it is clamped to the
+    /// FULL image, which the common prefix does not describe and only the tiled
+    /// renderer knows.
+    ///
+    /// For an untiled render this is the pixel box itself.
+    pub placement_sweep_box: [f64; 4],
 }
 
 impl VulcanusParams {
@@ -464,6 +483,14 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
             temperature_bias: f64_at(bytes, p + 72),
             trees_frequency: f64_at(bytes, p + 80),
             trees_size: f64_at(bytes, p + 88),
+            rocks_frequency: f64_at(bytes, p + 96),
+            rocks_size: f64_at(bytes, p + 104),
+            placement_sweep_box: [
+                f64_at(bytes, p + 112),
+                f64_at(bytes, p + 120),
+                f64_at(bytes, p + 128),
+                f64_at(bytes, p + 136),
+            ],
         }),
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
@@ -560,7 +587,7 @@ mod tests {
         let mut b = good_nauvis();
         let values = [
             11.0f64, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0,
-            25.0,
+            25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0,
         ];
         for (i, v) in values.iter().enumerate() {
             let at = 32 + i * 8;
@@ -587,6 +614,12 @@ mod tests {
                 n.temperature_bias,
                 n.trees_frequency,
                 n.trees_size,
+                n.rocks_frequency,
+                n.rocks_size,
+                n.placement_sweep_box[0],
+                n.placement_sweep_box[1],
+                n.placement_sweep_box[2],
+                n.placement_sweep_box[3],
             ],
             values
         );

@@ -32,14 +32,16 @@ use fmw_noise::resources::vulcanus_catalog::{
     VULCANUS_RESOURCE_CATALOG,
 };
 use fmw_noise::resources::vulcanus_geyser::VulcanusGeyserPlacement;
-use fmw_noise::rocks::catalog::RockControls;
+use fmw_noise::rocks::catalog::{RockControls, NAUVIS_ROCK_MARK_RADIUS_PX};
 use fmw_noise::rocks::catalog::{ROCK_MAP_COLOR, VULCANUS_ROCK_MARK_RADIUS_PX};
+use fmw_noise::rocks::field::{NauvisRockFields, RockFieldParams};
+use fmw_noise::rocks::nauvis_placement::NauvisRockPlacement;
 use fmw_noise::rocks::vulcanus_field::VulcanusRockFields;
 use fmw_noise::rocks::vulcanus_placement::VulcanusRockPlacement;
 use fmw_noise::tiles::fulgora_catalog::FulgoraTile;
 use fmw_noise::tiles::fulgora_ocean::{ocean_tile, Ocean};
-use fmw_noise::tiles::helpers::water_base;
-use fmw_noise::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog, NauvisTileFields};
+use fmw_noise::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog};
+use fmw_noise::tiles::nauvis_resolve::nauvis_tile_at;
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
 use fmw_noise::trees::catalog::{TREE_MAP_COLOR, TREE_MAX_ALPHA};
 use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
@@ -183,7 +185,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         ) | (
             PLANET_VULCANUS,
             VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL
-        ) | (PLANET_NAUVIS, VIEW_TERRAIN | VIEW_TREES)
+        ) | (PLANET_NAUVIS, VIEW_TERRAIN | VIEW_TREES | VIEW_ROCKS)
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -438,21 +440,11 @@ fn nauvis_tile_color(tile: NauvisTile) -> [u8; 3] {
     }
 }
 
-/// The water early-out threshold, from `src/noise/preview/renderTerrain.ts`.
-///
-/// Whenever `water_base(elevation, 0, 100) >= 5`, water or deepwater beats every
-/// land tile, so the 19 land `noise_layer_noise` evaluations can be skipped and
-/// the winner picked from the two water tiles directly.
-///
-/// **It is an optimisation with a proof, not an approximation.** The
-/// TypeScript's own derivation bounds every land tile's probability at
-/// `<= 3.4512` by Cauchy-Schwarz on `basis_noise`'s four corner terms - true for
-/// any position and any of the 19 layer seeds, not just sampled ones - so 5
-/// leaves better than 30% of margin. Omitting it here would still be
-/// byte-identical and would give up the speed the port exists for;
-/// `the_water_early_out_picks_the_same_tile_as_the_full_argmax` is the test that
-/// says the two agree.
-const WATER_EARLY_OUT_THRESHOLD: f64 = 5.0;
+// `WATER_EARLY_OUT_THRESHOLD` and `nauvis_tile_at` moved to
+// `fmw_noise::tiles::nauvis_resolve` when the rock overlay landed: a placement
+// roll's `tile_allowed` gate asks the same question about tiles OUTSIDE the
+// render window, so the resolver can no longer live beside the sweep that used
+// to be its only caller. The early-out's proof note moved with it.
 
 /// Sweep the window and paint each pixel's winning tile.
 ///
@@ -487,7 +479,10 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
         resource_controls: ResourceControlLevers::defaults(),
         cliff_controls: CliffControls::defaults(),
         cliff_settings: CliffSettings::defaults(),
-        rock_controls: RockControls::defaults(),
+        rock_controls: RockControls {
+            frequency: p.rocks_frequency,
+            size: p.rocks_size,
+        },
         enemy_controls: EnemyControls::defaults(),
     };
     let stack = NauvisStack::new(&ctx);
@@ -513,6 +508,9 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     // the other four arrive.
     if matches!(req.view, VIEW_TREES) {
         paint_nauvis_trees(req, &ctx, out);
+    }
+    if matches!(req.view, VIEW_ROCKS) {
+        paint_nauvis_rocks(req, p, &stack, &catalog, &ctx, out);
     }
 }
 
@@ -625,30 +623,6 @@ fn paint_nauvis_trees(req: &Request, ctx: &NauvisCtx, out: &mut [u8]) {
     }
 }
 
-/// One pixel's tile, with the water early-out.
-fn nauvis_tile_at(stack: &NauvisStack, catalog: &NauvisTileCatalog, x: f64, y: f64) -> NauvisTile {
-    let elevation = stack.elevation_nauvis.eval(x, y);
-    let water_influence = water_base(elevation, 0.0, 100.0);
-    if water_influence >= WATER_EARLY_OUT_THRESHOLD {
-        // Deepwater is first in `TILE_ORDER`, so the full argmax's strict `>`
-        // never lets water displace it on an exact tie. `>=` here reproduces
-        // that tie-break rather than merely resembling it.
-        let deep_influence = water_base(elevation, -2.0, 200.0);
-        return if deep_influence >= water_influence {
-            NauvisTile::Deepwater
-        } else {
-            NauvisTile::Water
-        };
-    }
-    catalog.resolve(&NauvisTileFields {
-        x,
-        y,
-        elevation,
-        aux: stack.aux.eval(x, y),
-        moisture: stack.moisture.eval(x, y),
-    })
-}
-
 fn js_round(v: f64) -> f64 {
     (v + 0.5).floor()
 }
@@ -679,6 +653,30 @@ fn sweep_pixel_range(req: &Request, world_box: [f64; 4]) -> (i64, i64, i64, i64)
 /// cell's own footprint, which no radius can express, so they keep their own
 /// painter.
 fn paint_mark(out: &mut [u8], width: i64, height: i64, px: i64, py: i64, color: [u8; 3], r: i64) {
+    // Never-skip is the whole difference from `paint_mark_skipping`. Vulcanus
+    // excludes lava at PLACEMENT time, so its three call sites have nothing to
+    // test while painting.
+    paint_mark_skipping(out, (width, height), px, py, color, r, |_, _, _| false);
+}
+
+/// [`paint_mark`], but skipping any pixel the predicate rejects.
+///
+/// Nauvis's overlays exclude water at PAINT time - `renderRocks.ts` passes
+/// `isWater` to `paintMark` as its `skipPixel` - so a mark centred inland stops
+/// at the coastline rather than spilling onto the sea. Vulcanus has nothing to
+/// skip, because it excludes lava at PLACEMENT time instead, which is why
+/// `paint_mark` keeps its shorter signature and its three call sites there are
+/// unchanged.
+fn paint_mark_skipping(
+    out: &mut [u8],
+    dims: (i64, i64),
+    px: i64,
+    py: i64,
+    color: [u8; 3],
+    r: i64,
+    skip: impl Fn(u8, u8, u8) -> bool,
+) {
+    let (width, height) = dims;
     for dy in -r..=r {
         let y = py + dy;
         if y < 0 || y >= height {
@@ -691,10 +689,109 @@ fn paint_mark(out: &mut [u8], width: i64, height: i64, px: i64, py: i64, color: 
             }
             #[allow(clippy::cast_sign_loss)]
             let o = ((y * width + x) * 4) as usize;
+            if skip(out[o], out[o + 1], out[o + 2]) {
+                continue;
+            }
             out[o] = color[0];
             out[o + 1] = color[1];
             out[o + 2] = color[2];
             out[o + 3] = 255;
+        }
+    }
+}
+
+/// The water test `renderRocks.ts` applies BEFORE rolling, reproduced including
+/// the part of it that is a quirk.
+///
+/// The sweep runs over the halo-widened box, so `px` can be negative or past
+/// the width - and the TypeScript indexes `base.data[(py * width + px) * 4]`
+/// with it anyway. For `px < 0` and `py > 0` that is a VALID index into the
+/// previous row, so the skip consults a pixel that is not the one being tested.
+/// It is not harmless: a rock at `px = -1` still owes pixel 0 part of its 3x3
+/// mark, so the wrong read decides whether a real pixel is painted.
+///
+/// Out of the buffer entirely, JavaScript yields `undefined`, which compares
+/// equal to no colour - so an out-of-range read is "not water". All three
+/// channels have to be in range for the same reason: at `o = len - 2` the blue
+/// channel is `undefined` and the comparison fails.
+///
+/// Reproduced rather than fixed, for the reason the whole port reproduces
+/// #326: tier 3 asserts the two renders are byte-identical, so a unilateral
+/// correction here would read as a port bug.
+fn water_at_wrapping_offset(out: &[u8], width: i64, px: i64, py: i64) -> bool {
+    let o = (py * width + px) * 4;
+    if o < 0 {
+        return false;
+    }
+    #[allow(clippy::cast_sign_loss)]
+    let o = o as usize;
+    if o + 2 >= out.len() {
+        return false;
+    }
+    is_nauvis_water(out[o], out[o + 1], out[o + 2])
+}
+
+/// Composite the Nauvis rock overlay over terrain that is already painted.
+///
+/// Rolls rather than thresholds, like the Vulcanus pass below: it draws the
+/// placement set's per-tile `U` and places where `U < rock_density(x, y)` AND
+/// the water restriction and collision gates pass.
+///
+/// Two things Vulcanus's pass does not have. The water gate is real here, and
+/// it appears TWICE for different reasons - once before the roll, where it is
+/// an optimisation reading painted pixels, and once inside the mark, where it
+/// keeps a 3x3 from spilling onto the sea. The gate that matters for
+/// correctness is neither: it is `tile_allowed` inside the placement set, which
+/// reads the tile resolver and is therefore a pure function of world position.
+///
+/// The 3x3 mark can straddle a tile seam, hence the halo-widened
+/// `placement_sweep_box` rather than the request's own pixel box.
+fn paint_nauvis_rocks(
+    req: &Request,
+    p: &NauvisParams,
+    stack: &NauvisStack,
+    catalog: &NauvisTileCatalog,
+    ctx: &NauvisCtx,
+    out: &mut [u8],
+) {
+    let mut params = RockFieldParams::defaults(req.seed0);
+    params.controls = ctx.rock_controls;
+    params.segmentation_multiplier = ctx.segmentation_multiplier;
+    params.moisture_frequency = ctx.moisture_frequency;
+    params.moisture_bias = ctx.moisture_bias;
+    params.aux_frequency = ctx.aux_frequency;
+    params.aux_bias = ctx.aux_bias;
+    params.starting_area_moisture_size = ctx.starting_area_moisture_size;
+    params.starting_area_moisture_frequency = ctx.starting_area_moisture_frequency;
+    params
+        .starting_positions
+        .clone_from(&ctx.starting_positions);
+    let fields = NauvisRockFields::new(&params);
+    let placement = NauvisRockPlacement::new(&fields, stack, catalog);
+    let set = placement.placement_set();
+
+    let width = i64::from(req.width);
+    let height = i64::from(req.height);
+    let (px0, px1, py0, py1) = sweep_pixel_range(req, p.placement_sweep_box);
+    for py in py0..py1 {
+        let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+        for px in px0..px1 {
+            if water_at_wrapping_offset(out, width, px, py) {
+                continue;
+            }
+            let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+            if !set.placed(wx, wy) {
+                continue;
+            }
+            paint_mark_skipping(
+                out,
+                (width, height),
+                px,
+                py,
+                ROCK_MAP_COLOR,
+                NAUVIS_ROCK_MARK_RADIUS_PX,
+                is_nauvis_water,
+            );
         }
     }
 }
@@ -993,6 +1090,12 @@ mod tests {
         ABI_VERSION, COMMON_BYTES, FULGORA_PARAMS_BYTES, MAGIC, NAUVIS_PARAMS_BYTES,
         VULCANUS_BEARINGS, VULCANUS_PARAMS_BYTES,
     };
+    // Both moved to `fmw_noise::tiles::nauvis_resolve` with the resolver; the
+    // early-out equivalence test below is the only remaining caller in this
+    // crate, so they are imported here rather than at file scope.
+    use fmw_noise::tiles::helpers::water_base;
+    use fmw_noise::tiles::nauvis_catalog::NauvisTileFields;
+    use fmw_noise::tiles::nauvis_resolve::WATER_EARLY_OUT_THRESHOLD;
 
     /// A common prefix for `planet`, sized for that planet's block.
     fn prefix(planet: u32, params_bytes: usize, width: u32, height: u32, seed0: u32) -> Vec<u8> {

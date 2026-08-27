@@ -11,5 +11,6 @@
 
 pub mod catalog;
 pub mod field;
+pub mod nauvis_placement;
 pub mod vulcanus_field;
 pub mod vulcanus_placement;

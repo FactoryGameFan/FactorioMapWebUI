@@ -1,9 +1,15 @@
 /**
  * Composite the rocks overlay onto a terrain ImageData: sweep the same pixel grid
  * as renderTerrain/renderEnemies, roll the game's per-tile placement draw against
- * the rock probability field, and paint a single `ROCK_MAP_COLOR` pixel wherever
- * it wins. Mutates `base` in place. 1 pixel per placed rock, no legibility block:
- * rocks are point-like, and a block would merge scattered rocks into a blob.
+ * the rock probability field, and paint a `ROCK_MAP_COLOR` mark wherever it wins.
+ * Mutates `base` in place.
+ *
+ * **The mark is 3x3, not a single pixel**, and this comment used to say
+ * otherwise ("1 pixel per placed rock, no legibility block"). It was true until
+ * 2026-07-28, when comparing against the game's own `--generate-map-preview`
+ * output moved BOTH planets to `NAUVIS_ROCK_MARK_RADIUS_PX = 1` - the game
+ * paints each rock's real footprint, and a 1x1 dot was 14x too little ink. The
+ * measurement is in `rockCatalog.ts` beside the constant.
  *
  * This rolls rather than thresholds: it draws `makePlacementSet`'s per-tile `U`
  * and places where `U < density(x, y)` AND the game's two arbitration gates pass

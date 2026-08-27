@@ -277,10 +277,13 @@ export function cliffCellQueryBox(req: ElevationRenderRequest): WorldBox {
  * is what fails without it, and it carries a separate case per overlay because a
  * window dense in one is empty of the other.
  *
- * The **Vulcanus rock overlay also uses this** and also paints a 3x3 mark
- * (`VULCANUS_ROCK_MARK_RADIUS_PX`). An older version of this comment said "both
- * rock overlays paint a 1x1 pixel and need no equivalent", which stopped being
- * true when the Vulcanus rock mark grew; only the Nauvis rock overlay is 1x1.
+ * **Both rock overlays also use this**, and both paint a 3x3 mark. This comment
+ * has now been wrong twice in the same place: it first said "both rock overlays
+ * paint a 1x1 pixel and need no equivalent", then was corrected to "only the
+ * Nauvis rock overlay is 1x1" - which was already false, because the
+ * 2026-07-28 preview comparison moved BOTH planets off 1x1 in one change.
+ * `NAUVIS_ROCK_MARK_RADIUS_PX` and `VULCANUS_ROCK_MARK_RADIUS_PX` are both 1,
+ * and `rockCatalog.ts` says "the planets agree" at the second one.
  *
  * This halo is exact and cannot be tightened - unlike the cliff one it faces
  * (`cliffCellQueryBox`), the mark really is symmetric. It is, however, where the
@@ -400,13 +403,13 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 }
 
 /**
- * The Rust engine's Nauvis path - the terrain view and the tree overlay.
+ * The Rust engine's Nauvis path - the terrain view, the tree overlay and the
+ * rock overlay.
  *
- * The four remaining overlays (resources, rocks, cliffs, enemies) are the
- * follow-up, so an `all` request still takes the TypeScript path in full rather
- * than coming back as terrain plus trees. The module refuses any other Nauvis
- * view with `unsupported planet or view`, so a mistake here is loud rather than
- * silent.
+ * The three remaining overlays (resources, cliffs, enemies) are the follow-up,
+ * so an `all` request still takes the TypeScript path in full rather than
+ * coming back missing them. The module refuses any other Nauvis view with
+ * `unsupported planet or view`, so a mistake here is loud rather than silent.
  *
  * **`waterLevel` is sent and deliberately ignored by the module** - issue #326.
  * `renderTerrain.ts` resolves every tile at `waterLevel = 0` however the slider
@@ -419,7 +422,7 @@ function isDefaultSpawn(points: readonly { x: number; y: number }[]): boolean {
 function renderNauvisThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
-  view: "terrain" | "trees",
+  view: "terrain" | "trees" | "rocks",
 ): ElevationRenderResult {
   const pixels = renderThroughWasm(engine, {
     planet: "nauvis",
@@ -451,6 +454,12 @@ function renderNauvisThroughWasm(
     temperatureBias: req.temperatureBias ?? 0,
     treesFrequency: req.treeControls?.frequency ?? 1,
     treesSize: req.treeControls?.size ?? 1,
+    rocksFrequency: req.rockControls?.frequency ?? 1,
+    rocksSize: req.rockControls?.size ?? 1,
+    // The same box `renderRocks` is handed on the TypeScript path, so the two
+    // sweep identical pixel ranges. `haloQueryBox` stays the one place that
+    // arithmetic lives.
+    placementSweepBox: placementMarkSweepBox(req),
   });
   const owned = new Uint8ClampedArray(pixels);
   return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
@@ -640,7 +649,7 @@ export function runRenderRequest(
     }
     // The Nauvis paths the Rust engine serves so far. Checked BEFORE the
     // TypeScript render rather than after, so the engine's work replaces it
-    // instead of being thrown away - and not for `all`, because four of the
+    // instead of being thrown away - and not for `all`, because three of the
     // five overlays are still unported and that request must not come back
     // missing them.
     //
@@ -650,7 +659,7 @@ export function runRenderRequest(
     // be a real difference rather than a slower answer.
     if (
       engine !== undefined &&
-      (req.view === "terrain" || req.view === "trees") &&
+      (req.view === "terrain" || req.view === "trees" || req.view === "rocks") &&
       isDefaultSpawn(req.startingPositions)
     ) {
       return renderNauvisThroughWasm(req, engine, req.view);

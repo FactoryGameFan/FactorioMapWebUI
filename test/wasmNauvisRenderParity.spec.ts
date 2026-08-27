@@ -286,7 +286,7 @@ const TREE_PIXELS_PER_WINDOW = [1417, 1754, 1353, 1574, 7074];
  * nothing, and "the render matched" is exactly what it reports.
  */
 const DENSE_WINDOW: Window = {
-  label: "dense forest at spawn",
+  label: "wide at spawn",
   width: 128,
   height: 128,
   originX: -128,
@@ -294,7 +294,7 @@ const DENSE_WINDOW: Window = {
   tilesPerPixel: 4,
 };
 
-const TREE_WINDOWS: readonly Window[] = [...WINDOWS, DENSE_WINDOW];
+const OVERLAY_WINDOWS: readonly Window[] = [...WINDOWS, DENSE_WINDOW];
 
 describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScript does", () => {
   const treeRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "trees" });
@@ -330,13 +330,15 @@ describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScr
       temperatureBias: 0,
       treesFrequency: 1,
       treesSize: 1,
+      rocksFrequency: 1,
+      rocksSize: 1,
     });
     expect(pixels.length).toBe(w.width * w.height * 4);
   }, 300000);
 
   it("is byte-identical across five windows", async () => {
     const e = await engine();
-    for (const w of TREE_WINDOWS) {
+    for (const w of OVERLAY_WINDOWS) {
       const wasm = new Uint8ClampedArray(runRenderRequest(treeRequest(w), e).buffer);
       const ts = new Uint8ClampedArray(runRenderRequest(treeRequest(w)).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
@@ -353,7 +355,7 @@ describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScr
     // in both directions and would fail on a blend toward any other colour.
     const e = await engine();
     const counts: number[] = [];
-    for (const w of TREE_WINDOWS) {
+    for (const w of OVERLAY_WINDOWS) {
       const trees = new Uint8ClampedArray(runRenderRequest(treeRequest(w), e).buffer);
       const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
       let changed = 0;
@@ -447,6 +449,165 @@ describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScr
       }
     }
     expect(Array.from(stitched)).toEqual(Array.from(whole));
+  }, 300000);
+});
+
+/**
+ * Rock pixels per window, measured on the TypeScript path before the port.
+ *
+ * Far sparser than the tree overlay's counts - a rock is a point placement
+ * painting a 3x3 mark, not a blend over every land pixel - but every window
+ * carries some, so unlike ore this needs no window set of its own.
+ */
+const ROCK_PIXELS_PER_WINDOW = [52, 18, 27, 18, 157];
+
+/** `ROCK_MAP_COLOR` in `src/noise/rocks/rockCatalog.ts`. Both planets share it. */
+const ROCK_RGB = [129, 105, 78] as const;
+
+describe("the WASM engine renders the Nauvis rock overlay exactly as the TypeScript does", () => {
+  const rockRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "rocks" });
+
+  it("serves the rocks view rather than refusing it", async () => {
+    // The discriminating test, first for the reason the tree block states:
+    // `runRenderRequest` falls back to TypeScript for a view the module
+    // refuses, so every byte-identity assertion below would otherwise be two
+    // runs of the same code.
+    const e = await engine();
+    const w = WINDOWS[0];
+    const pixels = renderThroughWasm(e, {
+      planet: "nauvis",
+      view: "rocks",
+      seed0: SEED,
+      width: w.width,
+      height: w.height,
+      originX: w.originX,
+      originY: w.originY,
+      tilesPerPixel: w.tilesPerPixel,
+      waterLevel: 0,
+      segmentationMultiplier: 1,
+      moistureFrequency: 1,
+      moistureBias: 0,
+      auxFrequency: 1,
+      auxBias: 0,
+      startingAreaMoistureSize: 1,
+      startingAreaMoistureFrequency: 1,
+      temperatureFrequency: 1,
+      temperatureBias: 0,
+      treesFrequency: 1,
+      treesSize: 1,
+      rocksFrequency: 1,
+      rocksSize: 1,
+    });
+    expect(pixels.length).toBe(w.width * w.height * 4);
+  }, 300000);
+
+  it("is byte-identical across five windows", async () => {
+    const e = await engine();
+    for (const w of OVERLAY_WINDOWS) {
+      const wasm = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
+      const ts = new Uint8ClampedArray(runRenderRequest(rockRequest(w)).buffer);
+      expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+    }
+  }, 300000);
+
+  it("paints rock pixels in every window, and only rock-coloured ones", async () => {
+    // Two assertions in one sweep, as the Vulcanus rock block does: the count
+    // of pixels the overlay CHANGED, and the count that ended up rock-coloured
+    // having not been before. They must be equal - a difference would mean the
+    // pass moved a pixel to something that is not the rock colour.
+    const e = await engine();
+    const counts: number[] = [];
+    for (const w of OVERLAY_WINDOWS) {
+      const rocks = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
+      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      let changed = 0;
+      let rockColoured = 0;
+      for (let i = 0; i < rocks.length; i += 4) {
+        const was =
+          terrain[i] === ROCK_RGB[0] &&
+          terrain[i + 1] === ROCK_RGB[1] &&
+          terrain[i + 2] === ROCK_RGB[2];
+        const is =
+          rocks[i] === ROCK_RGB[0] && rocks[i + 1] === ROCK_RGB[1] && rocks[i + 2] === ROCK_RGB[2];
+        if (
+          rocks[i] !== terrain[i] ||
+          rocks[i + 1] !== terrain[i + 1] ||
+          rocks[i + 2] !== terrain[i + 2]
+        ) {
+          changed++;
+        }
+        if (is && !was) rockColoured++;
+      }
+      expect(rockColoured, `${w.label}: every changed pixel must be rock-coloured`).toBe(changed);
+      counts.push(changed);
+    }
+    expect(counts).toEqual(ROCK_PIXELS_PER_WINDOW);
+  }, 300000);
+
+  it("moving each rock lever moves the render on both paths together", async () => {
+    // Measured on the TypeScript path first: 930 and 1,248 bytes change, so
+    // neither comparison is vacuous.
+    const e = await engine();
+    const base = rockRequest(DENSE_WINDOW);
+    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+    const baseWasm = flat(base, e);
+    expect(flat(base)).toEqual(baseWasm);
+    for (const [label, patch] of [
+      ["rockControls.frequency", { rockControls: { frequency: 3, size: 1 } }],
+      ["rockControls.size", { rockControls: { frequency: 1, size: 3 } }],
+    ] as const) {
+      const req = { ...base, ...patch } as ElevationRenderRequest;
+      const moved = flat(req, e);
+      expect(moved, `${label}: the two paths must agree`).toEqual(flat(req));
+      expect(moved, `${label}: must actually move the render`).not.toEqual(baseWasm);
+    }
+  }, 300000);
+
+  it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
+    // Unlike trees, a rock mark IS read off the image: it is a 3x3 centred on
+    // the hit's pixel, so a rock centred just outside a tile still owes that
+    // tile pixels. The sweep box is what carries them, and the second arm is
+    // what proves the box is doing work rather than being decoration.
+    const e = await engine();
+    const w = DENSE_WINDOW;
+    const whole = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
+    const full = {
+      originX: w.originX,
+      originY: w.originY,
+      width: w.width,
+      height: w.height,
+      tilesPerPixel: w.tilesPerPixel,
+    };
+    const renderTiled = (withHalo: boolean): Uint8ClampedArray => {
+      const stitched = new Uint8ClampedArray(whole.length);
+      for (const tile of planTiles(full, 32)) {
+        const px = new Uint8ClampedArray(
+          runRenderRequest(
+            {
+              ...rockRequest(w),
+              width: tile.width,
+              height: tile.height,
+              originX: tile.originX,
+              originY: tile.originY,
+              ...(withHalo ? { fullImage: full } : {}),
+            },
+            e,
+          ).buffer,
+        );
+        for (let ty = 0; ty < tile.height; ty++) {
+          for (let tx = 0; tx < tile.width; tx++) {
+            const src = (ty * tile.width + tx) * 4;
+            const dst = ((tile.dy + ty) * w.width + (tile.dx + tx)) * 4;
+            stitched.set(px.subarray(src, src + 4), dst);
+          }
+        }
+      }
+      return stitched;
+    };
+    expect(Array.from(renderTiled(true))).toEqual(Array.from(whole));
+    expect(Array.from(renderTiled(false))).not.toEqual(Array.from(whole));
   }, 300000);
 });
 
