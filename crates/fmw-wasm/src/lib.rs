@@ -1127,157 +1127,63 @@ pub extern "C" fn render_request(len: u32) -> u32 {
 // Tier 2 for phase 6 - the Nauvis expression core (#226).
 // ---------------------------------------------------------------------------
 
-use fmw_noise::cliffs::catalog::{CliffControls, CliffSettings, CLIFF_ELEVATION_0_DEFAULT};
-use fmw_noise::distance_from_nearest_point::Point as NauvisPoint;
-use fmw_noise::enemies::catalog::EnemyControls;
-use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisParity, NauvisStack};
-use fmw_noise::resources::resource_math::ResourceControlLevers;
-use fmw_noise::rocks::catalog::RockControls;
+// The ctx construction moved to `render::nauvis_ctx`, which is what took the
+// cliff, rock, enemy, resource and spawn imports with it. That is the change
+// this signature exists for: one definition of the wiring, shared by the
+// renderer and by tier 2.
+use fmw_noise::expressions::nauvis_stack::{NauvisParity, NauvisStack};
 use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
 
 /// Tier 2 for the Nauvis expression core, one named field at a time.
 ///
-/// **The parameters arrive as ARGUMENTS, not as a request**, which is the
-/// opposite of `checksum_vulcanus` and needs saying because that choice was
-/// deliberate there. Vulcanus reads its request so that the module builds its
-/// stack through the same `render::vulcanus_*` helpers the RENDERER uses,
-/// putting a mis-wired bearing inside the comparison. Nauvis has no render path
-/// yet, so there is no shared wiring to put inside anything, and a request
-/// block would be an ABI commitment made before the renderer that has to live
-/// with it exists.
+/// **The parameters arrive as a REQUEST**, the way `checksum_vulcanus`'s do,
+/// and this signature replaced twenty-nine arguments when the Nauvis render
+/// path landed. The old form's own doc said to revisit it then, for the reason
+/// Vulcanus records: a private copy of the renderer's wiring is reproduced
+/// identically on both sides of the comparison and stays invisible. There were
+/// two constructions of `NauvisCtx` - one here, one in `render_nauvis` - and a
+/// lever wired to the wrong layer in both would have folded to the same
+/// checksum.
 ///
-/// **When the Nauvis render path lands it should be revisited**, for exactly
-/// the reason Vulcanus records: a private copy of the renderer's wiring is
-/// reproduced identically on both sides and stays invisible.
+/// Now there is one, `render::nauvis_ctx`, and a mis-wiring is INSIDE the
+/// comparison.
 ///
-/// No trig crosses here, and that is not an omission - Nauvis reaches no
-/// transcendental at all, so the #270 hazard that made Fulgora's and Vulcanus's
-/// signatures as wide as they are does not apply. See
-/// `expressions::nauvis_stack`.
+/// Three things worth knowing about the conversion:
 ///
-/// `field` selects which named expression to fold, `0..nauvis_field_count()`.
-/// Same contract as the other checksums otherwise: rows outer,
-/// order-sensitive fold, strict bit equality, the signed-BigInt caveat, and
-/// the same limit - it detects divergence, it does not establish correctness.
+/// - **The resource block is per-resource now.** `NauvisCtx` carried a single
+///   triple applied to all six while the renderer built its own six-entry map
+///   from the ABI - so the eighteen levers the request carries were outside
+///   tier 2 entirely. They are inside it now.
+/// - **A request can express an off-grid sweep perfectly well.** The origin and
+///   `tiles_per_pixel` are plain `f64`; the spec sends non-binary values for the
+///   reason the header gives, and nothing about a request makes them binary.
+/// - **`water_level` is the one field still passed separately**, because the
+///   renderer pins it to zero for #326 and tier 2 must sweep the real value. It
+///   is a parameter of `nauvis_ctx` rather than a hard-coded constant in either
+///   caller, so the asymmetry is stated rather than duplicated.
 ///
-/// The spawn is fixed at the origin. Every Nauvis fixture was captured there,
-/// `starting_positions` is graded by its own cargo test in `nauvis_stack`, and
-/// a variable-length point list would need the scratch region for a parameter
-/// nothing in tier 1 moves.
-///
-/// The three `resource_*` levers apply to EVERY resource at once rather than
-/// arriving as eighteen arguments - see `NauvisCtx::resource_controls` for why
-/// that covers the paths, and for the one constraint on them: `resource_size`
-/// must stay above 0 or the resource fields fold zeros and compare nothing.
-///
-/// `trees_frequency` and `trees_size` reach the tree block, which is built only
-/// when a tree field is selected. Both are dead at the default, so a sweep that
-/// never moves them grades neither the per-species `input_scale` scaling nor
-/// the flat `0.2 * size` term.
-///
-/// The four `cliff_*` and two `rocks_*` levers reach the cliff and rock block,
-/// which is likewise built only when one of its fields is selected.
-///
-/// **`cliff_frequency` and `cliff_elevation_interval` have to be taken to the
-/// slider's EXTREME to grade anything, and that is measured.** Both reach the
-/// block by one path, `low_freq_lever`, and both are masked by two nested
-/// `min`s on the way. Over 1600 positions the count of moved field values is 0
-/// at frequencies 1.0 down to 0.25 and **21 of 9600 at 1/6**; the interval
-/// behaves the same, since it arrives as `40 / interval`. A sweep that sets
-/// them to anything milder grades neither, while looking like it grades both.
-/// `the_cliff_and_rock_levers_reach_their_block` in `nauvis_stack` carries the
-/// sweep.
-///
-/// `cliff_elevation_0` is deliberately absent - neither cliff field reads it.
-///
-/// `enemy_frequency` and `enemy_size` reach the enemy-base block, also built
-/// only when one of its fields is selected. Both are dead at the default -
-/// `size` enters as `sqrt(size)` and `frequency` as a plain multiplier - and
-/// `oracle-enemy-base` was captured at the defaults, so tier 1 grades neither
-/// and a sweep that leaves them at 1 grades neither either.
-///
-/// **A sweep of the enemy block also needs a window with spots in it.** The
-/// spot field is a max against a basement of -1000, so a window no cone reaches
-/// folds the same constant on both sides at every position - bit-identical, and
-/// comparing nothing. `oracle-enemy-base` is 96% basement, which is the scale of
-/// the problem.
+/// Nauvis crosses no trig at all, so the #270 hazard that forces Fulgora's and
+/// Vulcanus's wide signatures does not apply here.
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub extern "C" fn checksum_nauvis(
-    seed0: u32,
-    water_level: f64,
-    segmentation_multiplier: f64,
-    moisture_frequency: f64,
-    moisture_bias: f64,
-    aux_frequency: f64,
-    aux_bias: f64,
-    temperature_frequency: f64,
-    temperature_bias: f64,
-    starting_area_moisture_size: f64,
-    starting_area_moisture_frequency: f64,
-    resource_frequency: f64,
-    resource_size: f64,
-    resource_richness: f64,
-    trees_frequency: f64,
-    trees_size: f64,
-    cliff_frequency: f64,
-    cliff_continuity: f64,
-    cliff_elevation_interval: f64,
-    cliff_richness: f64,
-    rocks_frequency: f64,
-    rocks_size: f64,
-    enemy_frequency: f64,
-    enemy_size: f64,
-    field: u32,
-    x0: f64,
-    y0: f64,
-    step: f64,
-    n: u32,
-) -> u64 {
-    let ctx = NauvisCtx {
-        seed0,
-        water_level,
-        segmentation_multiplier,
-        moisture_frequency,
-        moisture_bias,
-        aux_frequency,
-        aux_bias,
-        temperature_frequency,
-        temperature_bias,
-        starting_area_moisture_size,
-        starting_area_moisture_frequency,
-        starting_positions: vec![NauvisPoint { x: 0.0, y: 0.0 }],
-        trees_frequency,
-        trees_size,
-        resource_controls: ResourceControlLevers {
-            frequency: resource_frequency,
-            size: resource_size,
-            richness: resource_richness,
-        },
-        cliff_controls: CliffControls {
-            frequency: cliff_frequency,
-            continuity: cliff_continuity,
-        },
-        // `cliff_elevation_0` is NOT crossed, because neither cliff field reads
-        // it - `cliffiness_nauvis` uses the interval and the richness, and
-        // `cliff_elevation_nauvis` uses neither. Sending it would add an
-        // argument a sweep could move with nothing to show for it.
-        // `the_cliff_and_rock_levers_reach_their_block` asserts that it stays
-        // unreachable, so this stops being true loudly rather than quietly.
-        cliff_settings: CliffSettings {
-            cliff_elevation_0: CLIFF_ELEVATION_0_DEFAULT,
-            cliff_elevation_interval,
-            richness: cliff_richness,
-        },
-        rock_controls: RockControls {
-            frequency: rocks_frequency,
-            size: rocks_size,
-        },
-        enemy_controls: EnemyControls {
-            frequency: enemy_frequency,
-            size: enemy_size,
-        },
+pub extern "C" fn checksum_nauvis(request_len: u32, field: u32) -> u64 {
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            core::ptr::addr_of!(SCRATCH).cast::<u8>(),
+            request_len as usize,
+        )
     };
+    let Ok(req) = abi::decode(bytes) else {
+        return 0;
+    };
+    let abi::Params::Nauvis(p) = req.params else {
+        return 0;
+    };
+
+    // Through the RENDERER's own helper, which is the whole point of this
+    // signature - see `render::nauvis_ctx`. The real water level, not the
+    // renderer's pinned zero: this compares the two ports' expression chains,
+    // and the TypeScript side reads the real one.
+    let ctx = render::nauvis_ctx(req.seed0, &p, p.water_level);
     let stack = NauvisStack::new(&ctx);
 
     // The parity selector rather than the stack's own, so the 21 tile
@@ -1287,22 +1193,22 @@ pub extern "C" fn checksum_nauvis(
     // The tree layer is built HERE rather than inside the selector, and only
     // when a tree field is being asked for. `TreeFields` borrows a `TreeBase`,
     // so a selector owning both would be self-referential; and this is one call
-    // per FIELD, so an unconditional build would make all 57 other fields pay
-    // for sixteen `Prepared` multioctaves they never read. The two locals have
-    // to outlive the borrow, hence the declaration before the `if`.
+    // per FIELD, so an unconditional build would make every other field pay for
+    // sixteen `Prepared` multioctaves it never reads. The two locals have to
+    // outlive the borrow, hence the declaration before the `if`.
     let tree_base;
     let tree_fields;
     let parity = if field >= NauvisParity::TREE_BASE {
-        let mut tree_params = TreeFieldParams::defaults(seed0);
-        tree_params.trees_frequency = trees_frequency;
-        tree_params.trees_size = trees_size;
-        tree_params.segmentation_multiplier = segmentation_multiplier;
-        tree_params.moisture_frequency = moisture_frequency;
-        tree_params.moisture_bias = moisture_bias;
-        tree_params.temperature_frequency = temperature_frequency;
-        tree_params.temperature_bias = temperature_bias;
-        tree_params.starting_area_moisture_size = starting_area_moisture_size;
-        tree_params.starting_area_moisture_frequency = starting_area_moisture_frequency;
+        let mut tree_params = TreeFieldParams::defaults(req.seed0);
+        tree_params.trees_frequency = ctx.trees_frequency;
+        tree_params.trees_size = ctx.trees_size;
+        tree_params.segmentation_multiplier = ctx.segmentation_multiplier;
+        tree_params.moisture_frequency = ctx.moisture_frequency;
+        tree_params.moisture_bias = ctx.moisture_bias;
+        tree_params.temperature_frequency = ctx.temperature_frequency;
+        tree_params.temperature_bias = ctx.temperature_bias;
+        tree_params.starting_area_moisture_size = ctx.starting_area_moisture_size;
+        tree_params.starting_area_moisture_frequency = ctx.starting_area_moisture_frequency;
         tree_base = TreeBase::new(&tree_params);
         tree_fields = TreeFields::new(&tree_base);
         NauvisParity::new(&stack, &ctx).with_trees(&tree_fields)
@@ -1310,11 +1216,18 @@ pub extern "C" fn checksum_nauvis(
         NauvisParity::new(&stack, &ctx)
     };
 
+    // The request's own pixel grid, swept in the renderer's own order, so
+    // there is one geometry convention rather than two.
+    //
+    // **A parity sweep still has to be off the f32 grid**, and a request can
+    // express that perfectly well - the origin and `tiles_per_pixel` are plain
+    // `f64`. The spec sends non-binary values for exactly that reason; nothing
+    // about carrying them in a request makes them binary.
     let mut acc = 0u64;
-    for j in 0..n {
-        let y = y0 + f64::from(j) * step;
-        for i in 0..n {
-            let x = x0 + f64::from(i) * step;
+    for py in 0..req.height {
+        let y = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let x = req.origin_x + f64::from(px) * req.tiles_per_pixel;
             acc = checksum::fold_f64(acc, parity.field(field, x, y));
         }
     }

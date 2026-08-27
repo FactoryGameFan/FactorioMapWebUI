@@ -1998,9 +1998,25 @@ running the wasm parity specs**, especially tier 3's byte-identical renders.
   bearing wired to the wrong layer is INSIDE the comparison. A private copy of
   that wiring would be reproduced identically on both sides and stay invisible.
   The sweep is the request's own pixel grid, swept in the renderer's own order,
-  so there is one geometry convention rather than two. **`checksum_nauvis` takes
-  ARGUMENTS instead**, deliberately, because there is no render path yet whose
-  wiring a request would enclose. **Move it to a request when that path lands.**
+  so there is one geometry convention rather than two. **`checksum_nauvis` does
+  the same since #337.** It took twenty-nine ARGUMENTS while there was no render
+  path for a request to enclose; once there was one, that form meant the module
+  built a second `NauvisCtx` beside the renderer's, and a lever wired to the
+  wrong layer in both would have folded to the same checksum on both sides and
+  stayed invisible. `render::nauvis_ctx` is the one definition now, and a
+  planted swap of `moisture_frequency` and `aux_frequency` in the RENDERER turns
+  tier 2 red - which the argument form could not have done, by construction.
+
+  Two things that conversion needed, both worth copying. `NauvisCtx.resource_controls`
+  became SIX triples rather than one applied to all six: the renderer was
+  already building its own six-entry map from the ABI's eighteen levers, so
+  those levers sat outside tier 2 entirely. And `water_level` is a PARAMETER of
+  `nauvis_ctx` rather than a field of it, because the renderer pins it to 0 for
+  #326 while tier 2 must sweep the real value - exactly one field outside the
+  shared wiring, for a reason that is itself a tracked defect. **A request
+  carries an off-grid sweep perfectly well**, so nothing about this form makes
+  the parity coordinates binary.
+
 - **No memo in the Rust chain, and that is not a shortcut.** The TypeScript
   wraps every field in `memoXY` because it builds a DAG of lazy closures; the
   Rust evaluates top to bottom in one pass and keeps intermediates in locals.

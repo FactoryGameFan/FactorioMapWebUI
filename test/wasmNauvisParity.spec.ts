@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
+import { encodeRenderRequest, type WasmRenderRequest } from "../src/noise/wasm/request";
+
 import { basisNoise, basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
 import { makeAux } from "../src/noise/expressions/aux";
 import { makeElevationIsland } from "../src/noise/expressions/elevationIsland";
@@ -73,38 +75,21 @@ const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine
 
 interface EngineExports {
   memory: WebAssembly.Memory;
+  scratch_ptr: () => number;
+  scratch_len: () => number;
   nauvis_field_count: () => number;
-  checksum_nauvis: (
-    seed0: number,
-    waterLevel: number,
-    segmentationMultiplier: number,
-    moistureFrequency: number,
-    moistureBias: number,
-    auxFrequency: number,
-    auxBias: number,
-    temperatureFrequency: number,
-    temperatureBias: number,
-    startingAreaMoistureSize: number,
-    startingAreaMoistureFrequency: number,
-    resourceFrequency: number,
-    resourceSize: number,
-    resourceRichness: number,
-    treesFrequency: number,
-    treesSize: number,
-    cliffFrequency: number,
-    cliffContinuity: number,
-    cliffElevationInterval: number,
-    cliffRichness: number,
-    rocksFrequency: number,
-    rocksSize: number,
-    enemyFrequency: number,
-    enemySize: number,
-    field: number,
-    x0: number,
-    y0: number,
-    step: number,
-    n: number,
-  ) => bigint;
+  /**
+   * **A REQUEST now, not twenty-nine arguments.**
+   *
+   * The old signature spelled every lever out, which meant the module built a
+   * second `NauvisCtx` beside the renderer's. A lever wired to the wrong layer
+   * in both would have folded to the same checksum on both sides of this
+   * comparison and stayed invisible - the private-copy trap #330 found in the
+   * enemy accessor. The module reads the request already in its scratch buffer
+   * and builds the stack through `render::nauvis_ctx`, the renderer's own
+   * helper, so a mis-wiring is inside the comparison.
+   */
+  checksum_nauvis: (requestLen: number, field: number) => bigint;
 }
 
 async function instantiate(): Promise<EngineExports> {
@@ -772,40 +757,63 @@ const FIELD_NAMES = [
   "enemyProbability",
 ] as const;
 
-const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint =>
-  u64(
-    engine.checksum_nauvis(
-      SEED0,
-      c.waterLevel,
-      c.segmentationMultiplier,
-      c.moistureFrequency,
-      c.moistureBias,
-      c.auxFrequency,
-      c.auxBias,
-      c.temperatureFrequency,
-      c.temperatureBias,
-      c.startingAreaMoistureSize,
-      c.startingAreaMoistureFrequency,
-      c.resourceFrequency,
-      c.resourceSize,
-      c.resourceRichness,
-      c.treesFrequency,
-      c.treesSize,
-      c.cliffFrequency,
-      c.cliffContinuity,
-      c.cliffElevationInterval,
-      c.cliffRichness,
-      c.rocksFrequency,
-      c.rocksSize,
-      c.enemyFrequency,
-      c.enemySize,
-      field,
-      c.x0,
-      c.y0,
-      c.step,
-      c.n,
-    ),
-  );
+/**
+ * The case as a Nauvis render request.
+ *
+ * The sweep geometry rides in the request too: `n` becomes the width and
+ * height, `x0`/`y0` the origin, and `step` the tiles-per-pixel. **A request
+ * expresses an off-grid sweep perfectly well** - those are plain `f64` on the
+ * wire - so the non-binary values the header insists on are unaffected by
+ * carrying them this way.
+ *
+ * Two fields have no case counterpart. `cliffElevation0` is sent at the game's
+ * default because neither cliff field reads it, which
+ * `the_cliff_and_rock_levers_reach_their_block` asserts stays true. And the six
+ * resource triples are six copies of the case's one, because a case moves every
+ * resource together on purpose - the three levers reach three different
+ * formulas, so moving them uniformly exercises every path.
+ */
+function nauvisRequest(c: Case, view: "terrain" = "terrain") {
+  const triple = [c.resourceFrequency, c.resourceSize, c.resourceRichness] as const;
+  return {
+    planet: "nauvis",
+    view,
+    seed0: SEED0,
+    width: c.n,
+    height: c.n,
+    originX: c.x0,
+    originY: c.y0,
+    tilesPerPixel: c.step,
+    waterLevel: c.waterLevel,
+    segmentationMultiplier: c.segmentationMultiplier,
+    moistureFrequency: c.moistureFrequency,
+    moistureBias: c.moistureBias,
+    auxFrequency: c.auxFrequency,
+    auxBias: c.auxBias,
+    startingAreaMoistureSize: c.startingAreaMoistureSize,
+    startingAreaMoistureFrequency: c.startingAreaMoistureFrequency,
+    temperatureFrequency: c.temperatureFrequency,
+    temperatureBias: c.temperatureBias,
+    treesFrequency: c.treesFrequency,
+    treesSize: c.treesSize,
+    rocksFrequency: c.rocksFrequency,
+    rocksSize: c.rocksSize,
+    enemyFrequency: c.enemyFrequency,
+    enemySize: c.enemySize,
+    cliffFrequency: c.cliffFrequency,
+    cliffContinuity: c.cliffContinuity,
+    cliffElevation0: 10,
+    cliffElevationInterval: c.cliffElevationInterval,
+    cliffRichness: c.cliffRichness,
+    resourceLevers: [triple, triple, triple, triple, triple, triple],
+  } as const;
+}
+
+const wasmChecksum = (engine: EngineExports, c: Case, field: number): bigint => {
+  const scratch = new Uint8Array(engine.memory.buffer, engine.scratch_ptr(), engine.scratch_len());
+  const written = encodeRenderRequest(scratch, nauvisRequest(c) as unknown as WasmRenderRequest);
+  return u64(engine.checksum_nauvis(written, field));
+};
 
 describe("Rust and TypeScript agree bit for bit across the Nauvis expression core", () => {
   it("covers every field the module exposes", async () => {
