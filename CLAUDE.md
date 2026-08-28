@@ -1193,8 +1193,8 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 2 (#221) | the `eval` layer - `multisample`, `memo_xy`, `memo_region`, `math`, `ctx`, `primitives` - plus `expressions/vulcanus_seed`                                                     | done     |
 | 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
-| 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view renders through the engine.**                                                                   | done     |
-| 6 (#226) | Nauvis - every expression, the TERRAIN render, and all FIVE overlays. Only the `all` composite remains                                                                         | **most** |
+| 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view the panel offers renders through the engine** (not `elevation` - see below).                    | done     |
+| 6 (#226) | Nauvis - every expression, the TERRAIN render, all FIVE overlays and the `all` composite. The `elevation` view is NOT ported                                                   | **most** |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1257,7 +1257,28 @@ shared pixel. The exception is kept by an `oil_mark` buffer and a
 `compare_priority` set computed once per render: uranium alone is outranked by
 oil today.
 
-Then the `all` COMPOSITE. **Every Nauvis view now renders through the engine.**
+Then the `all` COMPOSITE. **Every Nauvis view the gate LISTS renders through the
+engine - seven of the eight the request declares.**
+
+**The eighth is `view: "elevation"`, and it is not ported on ANY planet.** It is
+absent from all three engine gates and falls through to the TypeScript
+`renderElevation`, which dispatches across `elevation_lakes`, `elevation_nauvis`
+and `elevation_island`. This file used to claim otherwise, so read the gate
+rather than this line if the two ever disagree again. Measured 2026-08-27 by
+planting a `throw` in `renderElevation` and calling `runRenderRequest` with a
+live engine: all three map types ran the TypeScript, while a `view: "terrain"`
+control in the same file was served by the engine.
+
+It is not a dev-mode curiosity. `"elevation"` is the request DEFAULT, and
+`ElevationPreviewPanel`'s `effectiveView` returns it unconditionally for any
+Nauvis preset whose map type is not "nauvis" - **outside** the `devMode` branch -
+so it is what an ordinary user sees on every Lakes or Island preset, two of the
+three map types. The FIELDS are all ported; what is missing is the render.
+
+**So #227 cannot delete `preview/renderElevation.ts` until this view is ported or
+dropped.** Its dead-set sweep counted that file as removable because the walk
+skipped `preview/render*.ts` wholesale - the same flaw that surfaced
+`FULGORA_OCEAN_RGB`, one level up and much larger.
 
 **The paint order was WRONG in the module for four slices and nothing could
 tell.** The five `if`s ran trees, rocks, enemies, resources, cliffs; the
