@@ -302,7 +302,7 @@ export function placementMarkSweepBox(req: ElevationRenderRequest): WorldBox {
 }
 
 /**
- * The Rust engine's Vulcanus path - every view the planet has.
+ * The Rust engine's Vulcanus path - every view the panel offers for it.
  *
  * Vulcanus has no ocean and no scrap, so the land mask and the scrap footprint
  * are meaningless there rather than merely unimplemented; the module rejects
@@ -391,11 +391,13 @@ function renderFulgoraThroughWasm(
 }
 
 /**
- * The Rust engine's Nauvis path - EVERY view the planet has.
+ * The Rust engine's Nauvis path - seven of the eight views `view` declares.
  *
  * The terrain render, all five overlays, and the `all` composite. The module
  * refuses anything else with `unsupported planet or view`, so a mistake here is
  * loud rather than silent.
+ *
+ * **The eighth, `"elevation"`, is NOT ported** - see the gate below.
  *
  * **A caller-supplied `startingLakePositions` also stays on the TypeScript
  * path**, for the same reason a moved spawn does. The module derives the lake
@@ -657,7 +659,16 @@ export function runRenderRequest(
       }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
     }
-    // Every Nauvis view the Rust engine serves, which is now all of them.
+    // Every Nauvis view the Rust engine serves. That is SEVEN of the eight
+    // `view` declares, not all of them: `"elevation"` is absent here and from
+    // the Vulcanus and Fulgora gates above, so it falls through to the
+    // TypeScript `renderElevation` at the tail of this function. Measured
+    // rather than read (#227): with a live engine, all three of its map types
+    // ran the TypeScript while a `view: "terrain"` control was served by the
+    // module. That makes `renderElevation.ts` the sole renderer for the
+    // request's DEFAULT view, and for the view `ElevationPreviewPanel` forces
+    // on every Lakes or Island preset - so it cannot be deleted with the rest
+    // of the TypeScript branch until the view is ported or dropped.
     // Checked BEFORE the TypeScript render rather than after, so the engine's
     // work replaces it instead of being thrown away.
     //
