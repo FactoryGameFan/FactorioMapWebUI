@@ -9,6 +9,14 @@ const PLANET = "primitives:basisNoise";
 
 afterAll(flushRecording);
 
+/**
+ * Every row this spec records, declared once so a partial record run cannot
+ * pass its own count check. See `expectRecordedRows` in `tier2Frozen.ts`.
+ *
+ * 1 default seed pair + 3 alternate seed pairs.
+ */
+expectRecordedRows(PLANET, 4);
+
 import { basisNoise, basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
 
 /**
@@ -123,7 +131,6 @@ describe("Rust and TypeScript basisNoise agree bit for bit", () => {
     // Strict equality on a fold of raw bits. Not a tolerance: the two ports
     // must produce the SAME f32 at every one of the 4,096 points.
     expectFrozen(PLANET, "default seed pair", "checksum_basis_noise", fromWasm, fromTs);
-    expectRecordedRows(PLANET, 1);
   });
 
   it("would notice a single point differing by one ULP", async () => {
@@ -157,7 +164,6 @@ describe("Rust and TypeScript basisNoise agree bit for bit", () => {
         foldTypeScript(s0, s1, X0, Y0, STEP, N),
       );
     }
-    expectRecordedRows(PLANET, 3);
   });
 
   it("returns a different checksum for a different seed - but NOT for bit 0", async () => {

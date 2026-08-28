@@ -14,6 +14,14 @@ const PLANET = "primitives:multioctave";
 
 afterAll(flushRecording);
 
+/**
+ * Every row this spec records, declared once so a partial record run cannot
+ * pass its own count check. See `expectRecordedRows` in `tier2Frozen.ts`.
+ *
+ * 3 cases each for the plain, variable-persistence and quick multioctaves.
+ */
+expectRecordedRows(PLANET, 9);
+
 import { makeMultioctaveNoise } from "../src/noise/multioctaveNoise";
 import { makeQuickMultioctaveNoise } from "../src/noise/quickMultioctaveNoise";
 import { makeVariablePersistenceMultioctaveNoise } from "../src/noise/variablePersistenceMultioctaveNoise";
@@ -189,7 +197,6 @@ describe("Rust and TypeScript multioctave_noise agree bit for bit", () => {
         foldGrid(fn, X0, Y0, STEP, N),
       );
     }
-    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("would notice a single point differing by one ULP", async () => {
@@ -296,7 +303,6 @@ describe("Rust and TypeScript variable_persistence_multioctave_noise agree bit f
         foldGrid((x, y) => fn(x, y, c.p), X0, Y0, STEP, N),
       );
     }
-    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("is sensitive to offset_x, which is a single world-space translation here", async () => {
@@ -399,7 +405,6 @@ describe("Rust and TypeScript quick_multioctave_noise agree bit for bit", () => 
         foldGrid(fn, X0, Y0, STEP, N),
       );
     }
-    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("is sensitive to the octave multipliers, which are narrowed to f32", async () => {

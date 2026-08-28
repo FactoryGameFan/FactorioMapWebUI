@@ -9,6 +9,15 @@ const PLANET = "primitives:primitive";
 
 afterAll(flushRecording);
 
+/**
+ * Every row this spec records, declared once so a partial record run cannot
+ * pass its own count check. See `expectRecordedRows` in `tier2Frozen.ts`.
+ *
+ * Five blocks - random penalty, spot candidates, spot selection, starting
+ * lakes, distance from nearest point - contributing their own case tables.
+ */
+expectRecordedRows(PLANET, 18);
+
 import { distanceFromNearestPoint, type Point } from "../src/noise/distanceFromNearestPoint";
 import { randomPenaltyBatch } from "../src/noise/randomPenalty";
 import { spotCandidatePoints } from "../src/noise/spotCandidates";
@@ -168,7 +177,6 @@ describe("Rust and TypeScript random_penalty agree bit for bit", () => {
         foldAll(batchOf(c)),
       );
     }
-    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("would notice a single value differing by one ULP", async () => {
@@ -268,7 +276,6 @@ describe("Rust and TypeScript spot_noise candidates agree bit for bit", () => {
         foldAll(coordsOf(c)),
       );
     }
-    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("would notice a single candidate shifted by one tile", async () => {
@@ -415,7 +422,6 @@ describe("Rust and TypeScript spot_noise selection agree bit for bit", () => {
         foldAll(fieldsOf(c)),
       );
     }
-    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("emits a shrunken cone on the hard-target case, so fastCbrt is inside the fold", async () => {
@@ -504,7 +510,6 @@ describe("Rust and TypeScript starting_lake_positions agree bit for bit", () => 
         foldAll(coordsOf(c)),
       );
     }
-    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("draws one continuous stream, so more spawns is not more copies of one lake", async () => {
@@ -561,7 +566,6 @@ describe("Rust and TypeScript distance_from_nearest_point agree bit for bit", ()
         foldAll(valuesOf(c)),
       );
     }
-    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("actually reaches the cap on the capped case, and never on the uncapped one", async () => {

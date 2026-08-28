@@ -9,6 +9,17 @@ const PLANET = "primitives:voronoi";
 
 afterAll(flushRecording);
 
+/**
+ * Every row this spec records, declared once so a partial record run cannot
+ * pass its own count check. See `expectRecordedRows` in `tier2Frozen.ts`.
+ *
+ * 75 value rows - 5 cases x (4 distance types x 4 ops, less the one refused
+ * pyramid/minkowski3 pair) - plus one cell-index row per (case, distance
+ * type), which has no op dimension because the index is the same whichever op
+ * reads it.
+ */
+expectRecordedRows(PLANET, 95);
+
 import { makeVoronoi, type VoronoiDistanceType } from "../src/noise/voronoiNoise";
 
 /**
@@ -172,7 +183,6 @@ describe("Rust and TypeScript voronoi_* agree bit for bit", () => {
     // 5 cases x (4 distance types x 4 ops - the 1 refused pyramid/minkowski3
     // pair) = 5 x 15, each a 1,600-point sweep.
     expect(compared).toBe(75);
-    expectRecordedRows(PLANET, 75);
   });
 
   it("folds the stable cell INDEX too, which cell_id can collide on", async () => {
@@ -219,9 +229,6 @@ describe("Rust and TypeScript voronoi_* agree bit for bit", () => {
         );
       }
     }
-    // One row per (case, distance type) - no op dimension here, since the cell
-    // index is the same whichever op reads it.
-    expectRecordedRows(PLANET, CASES.length * DISTANCE_TYPES.length);
   });
 
   it("would notice a single sample differing by one ULP", async () => {

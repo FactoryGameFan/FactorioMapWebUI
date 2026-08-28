@@ -9,6 +9,16 @@ const PLANET = "primitives:eval";
 
 afterAll(flushRecording);
 
+/**
+ * Every row this spec records, declared once so a partial record run cannot
+ * pass its own count check. See `expectRecordedRows` in `tier2Frozen.ts`.
+ *
+ * 6 pow branches (five exponents plus cbrt) + 3 sliderToLinear ranges
+ * + 2 sliderRescale exponents + 1 seed-var sweep + 1 eval-math sweep
+ * + 3 memo pipeline cases.
+ */
+expectRecordedRows(PLANET, 16);
+
 import { basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
 import { clamp, lerp, max, min, sliderRescale, sliderToLinear } from "../src/noise/eval/math";
 import { memoRegion } from "../src/noise/eval/memoRegion";
@@ -133,8 +143,6 @@ describe("Rust and TypeScript agree bit for bit on the noise machine's `^`", () 
       u64(engine.checksum_pow(0, 1, X0, STEP, N)),
       foldAll(xs.map((x) => fastCbrt(x))),
     );
-    // Five exponent branches above plus this cbrt case.
-    expectRecordedRows(PLANET, 6);
   });
 
   it("would not agree if a branch were chosen differently", () => {
@@ -179,7 +187,11 @@ describe("Rust and TypeScript agree bit for bit on the slider functions", () => 
       );
       linearRows++;
     }
-    expectRecordedRows(PLANET, linearRows);
+    // The planet's total is declared once at module scope, so this block keeps
+    // its own count locally: a range dropped from the table above would leave
+    // the total short at flush time, which names the planet rather than the
+    // block that lost a case.
+    expect(linearRows).toBe(3);
   });
 
   it("folds 600 slider positions identically for the per-operation sliderRescale", async () => {
@@ -196,7 +208,7 @@ describe("Rust and TypeScript agree bit for bit on the slider functions", () => 
       );
       rescaleRows++;
     }
-    expectRecordedRows(PLANET, rescaleRows);
+    expect(rescaleRows).toBe(2);
   });
 
   /**
@@ -278,7 +290,6 @@ describe("Rust and TypeScript agree bit for bit on the engine seed variables", (
       u64(engine.checksum_seed_vars(START, STRIDE, N)),
       foldAll(values),
     );
-    expectRecordedRows(PLANET, 1);
   });
 
   it("the sweep really does reach the top of the range", () => {
@@ -309,7 +320,6 @@ describe("Rust and TypeScript agree bit for bit on the DSL math operators", () =
       u64(engine.checksum_eval_math(X0, STEP, N)),
       foldAll(values),
     );
-    expectRecordedRows(PLANET, 1);
   });
 
   it("the sweep crosses both clamp bounds and the signed zero, so it is not one branch", () => {
@@ -443,7 +453,6 @@ describe("Rust and TypeScript agree bit for bit on the composed eval pipeline", 
         foldAll(sweep(c)),
       );
     }
-    expectRecordedRows(PLANET, CASES.length);
   });
 
   it("the reverse pass is all cache hits, which is what puts the memos inside the comparison", () => {

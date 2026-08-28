@@ -154,7 +154,7 @@ export function expectFrozen(
 
 /**
  * Declare how many rows this planet's sweep must record before the table is
- * rewritten. A spec calls it with its own expected total.
+ * rewritten. Call it ONCE per planet, at module scope.
  *
  * **Without this a FAILED record run writes a partial table**, which is not
  * hypothetical - it happened twice while this file was being written. A
@@ -166,15 +166,37 @@ export function expectFrozen(
  * It is a COUNT rather than a flag because a planet can record across more than
  * one test - Vulcanus folds its three windows in one and its off-grid window in
  * another - so "this test finished" is not the same as "the sweep is whole".
- * Both call this with the same total, and only a run that recorded every row
- * satisfies it.
+ *
+ * **The total is one module-scope declaration, and calling this twice is an
+ * error rather than a sum.** An earlier version accumulated, so a spec could
+ * declare per-block counts. That opened the hole this guard exists to close: a
+ * block that never runs - filtered out by `-t`, or throwing before its own call
+ * - leaves `recorded` AND `expected` short by exactly the same amount, so the
+ * count check passes and `flushRecording` rewrites the section with only the
+ * rows that ran. Measured, not reasoned: under accumulate,
+ * `FMW_FREEZE_TIER2=1 pnpm vp test test/wasmEvalParity.spec.ts -t "slider"`
+ * exited 0 having cut `primitives:eval` from 16 rows to 5.
+ *
+ * A single declaration that no filter can skip is what makes a short run fall
+ * short of its own total, which is the condition `flushRecording` acts on.
+ *
+ * The five primitive specs pass a literal, because their totals span blocks and
+ * two of them come from loop counters, so there is nothing to derive it from.
+ * That buys a second guard for free: adding a case makes a record run DROP the
+ * planet until someone updates the number. The three planet specs derive theirs
+ * from `FIELD_NAMES` and their case tables instead, which is better there -
+ * `FIELD_NAMES` is already checked against the module's own
+ * `<planet>_field_count()` export, so the derived form inherits that check.
  */
 export function expectRecordedRows(planet: string, rows: number): void {
-  // ACCUMULATES rather than sets. A spec can record from several describe
-  // blocks, each knowing only its own case count, and the flush needs the
-  // total. A block that throws before reaching its call leaves the total short,
-  // so the planet is dropped - which is the behaviour this guard exists for.
-  expected.set(planet, (expected.get(planet) ?? 0) + rows);
+  const already = expected.get(planet);
+  if (already !== undefined) {
+    throw new Error(
+      `${planet}: row total declared twice (${already} then ${rows}) - declare it once, ` +
+        `at module scope, as the whole planet's total`,
+    );
+  }
+  expected.set(planet, rows);
 }
 
 const expected = new Map<string, number>();
