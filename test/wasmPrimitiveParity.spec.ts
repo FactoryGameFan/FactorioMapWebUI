@@ -1,6 +1,22 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import { expectFrozen, expectRecordedRows, flushRecording } from "./tier2Frozen";
+
+/** Its own section - see `tier2Frozen.ts`; each spec declares its own row count. */
+const PLANET = "primitives:primitive";
+
+afterAll(flushRecording);
+
+/**
+ * Every row this spec records, declared once so a partial record run cannot
+ * pass its own count check. See `expectRecordedRows` in `tier2Frozen.ts`.
+ *
+ * Five blocks - random penalty, spot candidates, spot selection, starting
+ * lakes, distance from nearest point - contributing their own case tables.
+ */
+expectRecordedRows(PLANET, 18);
 
 import { distanceFromNearestPoint, type Point } from "../src/noise/distanceFromNearestPoint";
 import { randomPenaltyBatch } from "../src/noise/randomPenalty";
@@ -153,7 +169,11 @@ describe("Rust and TypeScript random_penalty agree bit for bit", () => {
       const fromWasm = u64(
         engine.checksum_random_penalty(c.rpSeed, c.amplitude, c.sourceKind, X0, Y0, STEP, N),
       );
-      expect(fromWasm, `seed=${c.rpSeed} amp=${c.amplitude} src=${c.sourceKind}`).toBe(
+      expectFrozen(
+        PLANET,
+        `penalty seed=${c.rpSeed} amp=${c.amplitude} src=${c.sourceKind}`,
+        "checksum_random_penalty",
+        fromWasm,
         foldAll(batchOf(c)),
       );
     }
@@ -248,7 +268,13 @@ describe("Rust and TypeScript spot_noise candidates agree bit for bit", () => {
           c.count,
         ),
       );
-      expect(fromWasm, `seed0=${c.seed0} rs=${c.regionSize}`).toBe(foldAll(coordsOf(c)));
+      expectFrozen(
+        PLANET,
+        `candidates seed0=${c.seed0} rs=${c.regionSize}`,
+        "checksum_spot_candidates",
+        fromWasm,
+        foldAll(coordsOf(c)),
+      );
     }
   });
 
@@ -388,7 +414,11 @@ describe("Rust and TypeScript spot_noise selection agree bit for bit", () => {
           c.fav,
         ),
       );
-      expect(fromWasm, `seed1=${c.seed1} spacing=${c.spacing} hard=${c.hard}`).toBe(
+      expectFrozen(
+        PLANET,
+        `selection seed1=${c.seed1} spacing=${c.spacing} hard=${c.hard} fav=${c.fav}`,
+        "checksum_spot_selection",
+        fromWasm,
         foldAll(fieldsOf(c)),
       );
     }
@@ -472,7 +502,13 @@ describe("Rust and TypeScript starting_lake_positions agree bit for bit", () => 
     const engine = await instantiate();
     for (const c of CASES) {
       const fromWasm = u64(engine.checksum_starting_lakes(c.seed0, c.spawnCount));
-      expect(fromWasm, `seed0=${c.seed0} spawns=${c.spawnCount}`).toBe(foldAll(coordsOf(c)));
+      expectFrozen(
+        PLANET,
+        `lakes seed0=${c.seed0} spawns=${c.spawnCount}`,
+        "checksum_starting_lakes",
+        fromWasm,
+        foldAll(coordsOf(c)),
+      );
     }
   });
 
@@ -522,7 +558,13 @@ describe("Rust and TypeScript distance_from_nearest_point agree bit for bit", ()
           N,
         ),
       );
-      expect(fromWasm, `seed0=${c.seed0} max=${c.maximumDistance}`).toBe(foldAll(valuesOf(c)));
+      expectFrozen(
+        PLANET,
+        `distance seed0=${c.seed0} max=${c.maximumDistance}`,
+        "checksum_distance_from_nearest_point",
+        fromWasm,
+        foldAll(valuesOf(c)),
+      );
     }
   });
 

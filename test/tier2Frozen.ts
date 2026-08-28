@@ -92,14 +92,69 @@ export function record(planet: string, label: string, field: string, value: bigi
   dirty = true;
 }
 
+/**
+ * Every frozen row name, grouped by planet.
+ *
+ * Exists for `tier2Coverage.spec.ts`, which enumerates the module's actual
+ * exports and checks each has a row. Reading the table rather than any spec's
+ * case list is the point: a check sourced from the same array it validates can
+ * only catch a deletion, never an omission.
+ */
+export function frozenNames(): [string, string[]][] {
+  return Object.entries(table).map(([planet, rows]) => [planet, Object.keys(rows)]);
+}
+
 /** Number of entries the table holds for one planet. */
 export function frozenCount(planet: string): number {
   return Object.keys(table[planet] ?? {}).length;
 }
 
 /**
+ * Assert one fold against its frozen value, and against the reference arm while
+ * that arm still exists.
+ *
+ * This is the conversion #227 needs applied to every Rust-vs-TypeScript
+ * assertion: `expect(wasm).toBe(tsFold)` becomes
+ * `expectFrozen(planet, label, name, wasm, tsFold)`. While both ports exist all
+ * three agree, so the table cannot be wrong. When the TypeScript arm goes the
+ * call drops its last argument and the wasm arm keeps running against a value
+ * captured while the two demonstrably agreed.
+ *
+ * **Converting the existing parity specs rather than writing fresh minimal ones
+ * was the second attempt, and the first was wrong.** A hand-written spec that
+ * picked one case per export looked equivalent and was not: three review rounds
+ * found nine cases whose ARGUMENTS never reached the branch the op exists to
+ * get right - a `pow` sweep that missed the exact-sqrt path, a spot selection
+ * fixed on constant favorability so the sort comparator was unobservable, an
+ * `eval_math` range entirely below its clamp, a seed sweep that never wrapped.
+ * Those specs' constants ARE the coverage. Carry them; do not reinvent them.
+ */
+export function expectFrozen(
+  planet: string,
+  label: string,
+  name: string,
+  wasm: bigint,
+  reference?: bigint,
+): void {
+  const where = `${label}: ${name}`;
+  if (RECORDING) {
+    if (reference !== undefined && wasm !== reference) {
+      throw new Error(`${where}: refusing to record, arms disagree - ${wasm} vs ${reference}`);
+    }
+    record(planet, label, name, wasm);
+    return;
+  }
+  const want = frozen(planet, label, name);
+  if (want === undefined) throw new Error(`${where}: no frozen checksum`);
+  if (wasm !== want) throw new Error(`${where}: wasm ${wasm} != frozen ${want}`);
+  if (reference !== undefined && reference !== want) {
+    throw new Error(`${where}: reference ${reference} != frozen ${want}`);
+  }
+}
+
+/**
  * Declare how many rows this planet's sweep must record before the table is
- * rewritten. A spec calls it with its own expected total.
+ * rewritten. Call it ONCE per planet, at module scope.
  *
  * **Without this a FAILED record run writes a partial table**, which is not
  * hypothetical - it happened twice while this file was being written. A
@@ -111,10 +166,36 @@ export function frozenCount(planet: string): number {
  * It is a COUNT rather than a flag because a planet can record across more than
  * one test - Vulcanus folds its three windows in one and its off-grid window in
  * another - so "this test finished" is not the same as "the sweep is whole".
- * Both call this with the same total, and only a run that recorded every row
- * satisfies it.
+ *
+ * **The total is one module-scope declaration, and calling this twice is an
+ * error rather than a sum.** An earlier version accumulated, so a spec could
+ * declare per-block counts. That opened the hole this guard exists to close: a
+ * block that never runs - filtered out by `-t`, or throwing before its own call
+ * - leaves `recorded` AND `expected` short by exactly the same amount, so the
+ * count check passes and `flushRecording` rewrites the section with only the
+ * rows that ran. Measured, not reasoned: under accumulate,
+ * `FMW_FREEZE_TIER2=1 pnpm vp test test/wasmEvalParity.spec.ts -t "slider"`
+ * exited 0 having cut `primitives:eval` from 16 rows to 5.
+ *
+ * A single declaration that no filter can skip is what makes a short run fall
+ * short of its own total, which is the condition `flushRecording` acts on.
+ *
+ * The five primitive specs pass a literal, because their totals span blocks and
+ * two of them come from loop counters, so there is nothing to derive it from.
+ * That buys a second guard for free: adding a case makes a record run DROP the
+ * planet until someone updates the number. The three planet specs derive theirs
+ * from `FIELD_NAMES` and their case tables instead, which is better there -
+ * `FIELD_NAMES` is already checked against the module's own
+ * `<planet>_field_count()` export, so the derived form inherits that check.
  */
 export function expectRecordedRows(planet: string, rows: number): void {
+  const already = expected.get(planet);
+  if (already !== undefined) {
+    throw new Error(
+      `${planet}: row total declared twice (${already} then ${rows}) - declare it once, ` +
+        `at module scope, as the whole planet's total`,
+    );
+  }
   expected.set(planet, rows);
 }
 

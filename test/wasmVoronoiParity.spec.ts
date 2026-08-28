@@ -1,6 +1,24 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import { expectFrozen, expectRecordedRows, flushRecording } from "./tier2Frozen";
+
+/** Its own section - see `tier2Frozen.ts`; each spec declares its own row count. */
+const PLANET = "primitives:voronoi";
+
+afterAll(flushRecording);
+
+/**
+ * Every row this spec records, declared once so a partial record run cannot
+ * pass its own count check. See `expectRecordedRows` in `tier2Frozen.ts`.
+ *
+ * 75 value rows - 5 cases x (4 distance types x 4 ops, less the one refused
+ * pyramid/minkowski3 pair) - plus one cell-index row per (case, distance
+ * type), which has no op dimension because the index is the same whichever op
+ * reads it.
+ */
+expectRecordedRows(PLANET, 95);
 
 import { makeVoronoi, type VoronoiDistanceType } from "../src/noise/voronoiNoise";
 
@@ -152,10 +170,13 @@ describe("Rust and TypeScript voronoi_* agree bit for bit", () => {
             distanceType,
           });
           compared++;
-          expect(
-            fromWasm,
+          expectFrozen(
+            PLANET,
             `${op} ${distanceType} jitter=${c.jitter} grid=${c.gridSize} seed0=${c.seed0}`,
-          ).toBe(foldAll(sweep((x, y) => v[op](x, y))));
+            "checksum_voronoi",
+            fromWasm,
+            foldAll(sweep((x, y) => v[op](x, y))),
+          );
         }
       }
     }
@@ -199,7 +220,11 @@ describe("Rust and TypeScript voronoi_* agree bit for bit", () => {
             values.push(cellX, cellY);
           }
         }
-        expect(fromWasm, `${distanceType} jitter=${c.jitter} grid=${c.gridSize}`).toBe(
+        expectFrozen(
+          PLANET,
+          `index ${distanceType} jitter=${c.jitter} grid=${c.gridSize}`,
+          "checksum_voronoi_cell_index",
+          fromWasm,
           foldAll(values),
         );
       }

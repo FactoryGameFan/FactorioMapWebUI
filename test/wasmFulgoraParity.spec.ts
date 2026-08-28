@@ -336,6 +336,13 @@ const PLANET = "fulgora";
 
 afterAll(flushRecording);
 
+/**
+ * Every row this spec records, declared once at module scope so a partial
+ * record run cannot pass its own count check. See `expectRecordedRows` in
+ * `tier2Frozen.ts`.
+ */
+expectRecordedRows(PLANET, FIELD_NAMES.length * CASES.length);
+
 describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain", () => {
   it("covers every field the module exposes, so a new one cannot go untested", async () => {
     const engine = await instantiate();
@@ -386,7 +393,6 @@ describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain"
       }
     }
     expect(compared).toBe(FIELD_NAMES.length * CASES.length);
-    expectRecordedRows(PLANET, FIELD_NAMES.length * CASES.length);
 
     if (!RECORDING) expect(frozenCount(PLANET)).toBe(FIELD_NAMES.length * CASES.length);
   });

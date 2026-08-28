@@ -875,6 +875,13 @@ const PLANET = "nauvis";
 
 afterAll(flushRecording);
 
+/**
+ * Every row this spec records, declared once at module scope so a partial
+ * record run cannot pass its own count check. See `expectRecordedRows` in
+ * `tier2Frozen.ts`.
+ */
+expectRecordedRows(PLANET, FIELD_NAMES.length * CASES.length);
+
 describe("Rust and TypeScript agree bit for bit across the Nauvis expression core", () => {
   it("covers every field the module exposes", async () => {
     // The module owns the count, so a field added to the Rust chain cannot
@@ -910,7 +917,6 @@ describe("Rust and TypeScript agree bit for bit across the Nauvis expression cor
         expect(ts, `TypeScript ${c.label}: ${name}`).toBe(want);
       }
     }
-    expectRecordedRows(PLANET, FIELD_NAMES.length * CASES.length);
   }, 120000);
 
   it.skipIf(RECORDING)("freezes every field at every case, so #227 keeps this coverage", () => {

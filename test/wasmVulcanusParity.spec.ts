@@ -453,6 +453,15 @@ const OFF_GRID_LABEL = "off-grid";
 
 afterAll(flushRecording);
 
+/**
+ * Every row this spec records, declared once at module scope so a partial
+ * record run cannot pass its own count check. The `+ 1` window is the off-grid
+ * sweep, which records from a SECOND test - which is why this is a count for
+ * the whole planet rather than a per-test flag. See `expectRecordedRows` in
+ * `tier2Frozen.ts`.
+ */
+expectRecordedRows(PLANET, FIELD_NAMES.length * (SLIDERS.length * WINDOWS.length + 1));
+
 describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph", () => {
   it("covers every field the module exposes, so a new one cannot go untested", async () => {
     const engine = await instantiate();
@@ -491,7 +500,6 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
       }
     }
     expect(compared).toBe(FIELD_NAMES.length * SLIDERS.length * WINDOWS.length);
-    expectRecordedRows(PLANET, FIELD_NAMES.length * (SLIDERS.length * WINDOWS.length + 1));
 
     // +1 window for the off-grid sweep frozen in the test below.
     if (!RECORDING)
