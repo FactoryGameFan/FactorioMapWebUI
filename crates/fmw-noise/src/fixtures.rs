@@ -4279,6 +4279,176 @@ fn the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none() 
     assert_eq!(totals[0].matched + totals[0].wrong, 1525);
 }
 
+/// The game's own destruction set as an [`ApplyCollision`]: inside the region,
+/// destroy exactly the raw cells the game does not have; outside it, defer to
+/// `halo`.
+///
+/// Fitting those booleans is the point rather than a flaw - see
+/// [`the_games_own_destruction_set_reproduces_the_game_exactly`] for what is
+/// fitted and what is predicted.
+struct OracleKill<'a> {
+    /// The game's cliffs in this region, keyed as the scorer keys them.
+    game: &'a BTreeMap<(u64, u64), u8>,
+    /// `(x0, y0, x1, y1)`, half-open on the high edge as everywhere else here.
+    region: (f64, f64, f64, f64),
+    /// What runs OUTSIDE the region. `None` destroys nothing there.
+    halo: Option<&'a dyn ApplyCollision>,
+}
+
+impl OracleKill<'_> {
+    fn in_region(&self, x: f64, y: f64) -> bool {
+        let (x0, y0, x1, y1) = self.region;
+        x >= x0 && x < x1 && y >= y0 && y < y1
+    }
+}
+
+impl ApplyCollision for OracleKill<'_> {
+    fn collides(&self, orientation: u8, x: f64, y: f64) -> bool {
+        if self.in_region(x, y) {
+            !self.game.contains_key(&(x.to_bits(), y.to_bits()))
+        } else {
+            self.halo.is_some_and(|h| h.collides(orientation, x, y))
+        }
+    }
+}
+
+/// **The whole Vulcanus cliff residual is 31 destruction decisions, and nothing
+/// else** (#84). Hand the port the game's OWN destruction set in place of the
+/// lava and ore predicates, over all three oracle regions, and `applyCliffs`
+/// reproduces every one of the 1531 game cliffs - positions AND orientations.
+///
+/// This is the Rust side of `test/cliffDestructionResidual.spec.ts`, and it is
+/// STRONGER than any arm of
+/// [`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`]:
+/// all three of those carry our own collision model, so each one measures the
+/// port and the model together. Removing the model from the comparison is what
+/// isolates the residual to `Surface::wouldCollide`.
+///
+/// **What is fitted and what is predicted**, because that is the whole weight of
+/// the result:
+///
+/// - FITTED: the 225-cell destruction set, chosen as the raw cells the game
+///   lacks. 225 booleans.
+/// - PREDICTED: all 1531 orientations, including the 14 the cascade actively
+///   rewrites, each with 19 ways to be wrong; that the cascade destroys nothing
+///   beyond the 225, which would show as `missing`; and that the answer does not
+///   depend on what the halo does.
+///
+/// The second arm is the anti-vacuity control. The first destroys nothing
+/// outside the region, because no fixture says what the game did out there.
+/// Running our own lava + ore predicate in the halo instead gives the identical
+/// answer, so "exact" is not an artifact of a quiet halo.
+#[test]
+fn the_games_own_destruction_set_reproduces_the_game_exactly() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-entities.seed123456.json",
+        "2.1.12",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = fixture.get("seed").as_f64() as u32;
+
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let apply = LavaAndOre {
+        lava: VulcanusLavaTiles::new(&stack),
+        ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
+    };
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        ..CliffBands::default()
+    };
+
+    // [0] = nothing runs in the halo. [1] = our own lava + ore runs there.
+    let mut totals = [OrientationScore::default(); 2];
+    for case in fixture.get("cases").as_array() {
+        let r = case.get("region");
+        let (x0, y0) = (r.get("x0").as_f64(), r.get("y0").as_f64());
+        let (x1, y1) = (r.get("x1").as_f64(), r.get("y1").as_f64());
+
+        let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+        for e in case.get("cliffs").as_array() {
+            if e.get("name").as_str() != "cliff-vulcanus" {
+                continue;
+            }
+            let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+            if x < x0 || x >= x1 || y < y0 || y >= y1 {
+                continue;
+            }
+            let want = e.get("orientation").as_str();
+            if let Some(id) = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want) {
+                game.insert((x.to_bits(), y.to_bits()), id as u8);
+            }
+        }
+
+        // `generateCliffs`' queue over a 64-tile HALO: crossings and the repair
+        // pass, no rejection of any kind, which is what `applyCliffs` is handed.
+        let raw = CliffPlacement::new(&fields, bands).placed_cells(
+            x0 - 64.0,
+            y0 - 64.0,
+            x1 + 64.0,
+            y1 + 64.0,
+        );
+
+        let scored = |halo: Option<&dyn ApplyCollision>| -> OrientationScore {
+            let kill = OracleKill {
+                game: &game,
+                region: (x0, y0, x1, y1),
+                halo,
+            };
+            let port: BTreeMap<(u64, u64), u8> = apply_cliff_connections(
+                &raw,
+                &CliffConnectionOptions {
+                    collides: Some(&kill),
+                    ..Default::default()
+                },
+            )
+            .iter()
+            .filter(|c| c.x >= x0 && c.x < x1 && c.y >= y0 && c.y < y1)
+            .map(|c| ((c.x.to_bits(), c.y.to_bits()), c.orientation))
+            .collect();
+
+            let mut s = OrientationScore::default();
+            for (k, id) in &port {
+                match game.get(k) {
+                    None => s.surplus += 1,
+                    Some(want) if want == id => s.matched += 1,
+                    Some(_) => s.wrong += 1,
+                }
+            }
+            s.missing = game.keys().filter(|k| !port.contains_key(k)).count();
+            s
+        };
+
+        for (i, s) in [scored(None), scored(Some(&apply))].iter().enumerate() {
+            totals[i].matched += s.matched;
+            totals[i].wrong += s.wrong;
+            totals[i].surplus += s.surplus;
+            totals[i].missing += s.missing;
+        }
+    }
+
+    assert_eq!(
+        totals[0],
+        OrientationScore {
+            matched: 1531,
+            wrong: 0,
+            surplus: 0,
+            missing: 0,
+        },
+        "the game's own destruction set, nothing running in the halo"
+    );
+    assert_eq!(
+        totals[1], totals[0],
+        "the halo does not decide it: our own lava + ore predicate out there \
+         gives the identical answer"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Phase 5, part 3 (#225) - the Vulcanus ROCK and RESOURCE overlays.
 //
