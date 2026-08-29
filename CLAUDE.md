@@ -320,9 +320,13 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   opt-in behind `FMW_AUTO_START_DOCKER=1`.
 - `pnpm run verify` - `verify:lint` + `vp test` + `preview:test` +
   `verify:rust` in one gate. **It now needs a Rust toolchain**, which it did
-  not before #219 - `rust-toolchain.toml` pins 1.97.1 and rustup installs it on
-  the first cargo command, so a machine with no Rust pays that download once
-  before the gate can run at all. Nothing else about the gate changed: the
+  not before #219 - `rust-toolchain.toml` pins the version and rustup installs
+  it on the first cargo command, so a machine with no Rust pays that download
+  once before the gate can run at all. **Do not quote that pin here**, read it
+  with `grep channel rust-toolchain.toml`. This line named 1.97.1 from #219
+  until #316 moved the pin, and then stayed wrong - the same trap the
+  `engine.wasm` byte count already carries a warning about, and it cost a
+  second machine's setup notes the same error on 2026-08-29. Nothing else about the gate changed: the
   Rust phase adds ~1.6s cold. **~3m30s cold on a dev machine** (measured
   2026-08-15 at #207:
   3m28s wall, 218 test files, 1,922 tests). On a runner it is no longer one job -
