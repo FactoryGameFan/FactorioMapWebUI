@@ -88,6 +88,9 @@ export const VIEW = {
   all: 6,
   trees: 7,
   enemies: 8,
+  elevationLakes: 9,
+  elevationNauvis: 10,
+  elevationIsland: 11,
 } as const;
 
 /**

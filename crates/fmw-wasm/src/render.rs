@@ -21,6 +21,8 @@ use fmw_noise::enemies::catalog::{EnemyControls, ENEMY_MAP_COLOR};
 use fmw_noise::enemies::field::{EnemyBaseField, EnemyFieldParams};
 use fmw_noise::enemies::placement::NauvisEnemyPlacement;
 use fmw_noise::eval::ctx::{EvalCtx, ResourceLevers, VulcanusResourceControls};
+use fmw_noise::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
+use fmw_noise::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::FulgoraStack;
@@ -114,6 +116,31 @@ pub const VIEW_TREES: u32 = 7;
 /// enemy bases at all.
 pub const VIEW_ENEMIES: u32 = 8;
 
+/// `view` code for the raw ELEVATION render on the `lakes` tree.
+///
+/// **Three codes rather than one plus a `map_type` field**, because the common
+/// prefix has no such field and `view` is already a `u32`. Adding codes is free;
+/// adding a field is a layout change. The three trees are the three the
+/// TypeScript's `mapType` selects, and `renderElevation.ts` dispatches on
+/// exactly that.
+///
+/// This view is NOT the terrain palette. It paints two colours - water below
+/// zero, land at or above - which is what makes it the island finder's and the
+/// Lakes/Island presets' default view.
+pub const VIEW_ELEVATION_LAKES: u32 = 9;
+
+/// `view` code for the ELEVATION render on the `nauvis` tree.
+/// See [`VIEW_ELEVATION_LAKES`].
+pub const VIEW_ELEVATION_NAUVIS: u32 = 10;
+
+/// `view` code for the ELEVATION render on the `island` tree.
+///
+/// `elevation_island` is `elevation_lakes` with bias `-1000` and segmentation
+/// quartered, which `ElevationLakesParams::to_island` applies. The RAW user
+/// segmentation goes in and the divide happens there, so this path must not
+/// pre-divide or it lands twice.
+pub const VIEW_ELEVATION_ISLAND: u32 = 11;
+
 /// The land colour, `FULGORA_LANDMASK_LAND_RGB` in
 /// `src/noise/preview/renderFulgoraTerrain.ts`.
 ///
@@ -121,6 +148,15 @@ pub const VIEW_ENEMIES: u32 = 8;
 /// the image against the two ocean colours, so any non-ocean colour is correct,
 /// and one that could never be mistaken for terrain is honest about that.
 const LAND: [u8; 3] = [255, 0, 255];
+
+/// `WATER_RGBA` in `src/noise/preview/renderElevation.ts`.
+///
+/// The elevation view's whole palette is this and [`ELEVATION_LAND`]: the
+/// render is a sign test on the tree, not a tile lookup.
+const ELEVATION_WATER: [u8; 3] = [40, 90, 150];
+
+/// `LAND_RGBA` in `src/noise/preview/renderElevation.ts`.
+const ELEVATION_LAND: [u8; 3] = [70, 120, 60];
 
 /// `COLORS.shallow`.
 const SHALLOW: [u8; 3] = [74, 42, 43];
@@ -210,6 +246,9 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
                 | VIEW_CLIFFS
                 | VIEW_RESOURCES
                 | VIEW_ALL
+                | VIEW_ELEVATION_LAKES
+                | VIEW_ELEVATION_NAUVIS
+                | VIEW_ELEVATION_ISLAND
         )
     );
     if !supported {
@@ -563,6 +602,16 @@ pub fn nauvis_ctx(seed0: u32, p: &NauvisParams, water_level: f64) -> NauvisCtx {
 
 /// Sweep the window and paint each pixel's winning tile, then the overlays.
 fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
+    // The elevation views share the planet code and nothing else: they paint a
+    // sign test on one tree, with no tile argmax, no catalog and no overlay. So
+    // they leave before the terrain sweep builds a catalog they would not read.
+    if matches!(
+        req.view,
+        VIEW_ELEVATION_LAKES | VIEW_ELEVATION_NAUVIS | VIEW_ELEVATION_ISLAND
+    ) {
+        render_nauvis_elevation(req, p, out);
+        return;
+    }
     // Zero rather than `p.water_level` - see `nauvis_ctx`, and issue #326.
     let ctx = nauvis_ctx(req.seed0, p, 0.0);
     let stack = NauvisStack::new(&ctx);
@@ -607,6 +656,85 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     }
     if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
         paint_nauvis_cliffs(req, p, out);
+    }
+}
+
+/// The elevation render: a sign test on one of the three elevation trees.
+///
+/// This is `renderElevation.ts`'s ten-line paint loop. Sweep the window,
+/// evaluate the tree, and paint [`ELEVATION_WATER`] below zero and
+/// [`ELEVATION_LAND`] at or above. There is no tile argmax, no catalog and no
+/// overlay - which is why it is far cheaper than the terrain view despite
+/// running the same elevation chain underneath.
+///
+/// **`starting_lake_positions` is always derived here, never sent.** `None`
+/// tells the tree to compute the game's own positions from
+/// `(seed0, starting_positions)`, which is what the TypeScript does when the
+/// caller passes nothing. A caller-supplied list is a DIFFERENT answer rather
+/// than a slower one, and the common prefix has no room for a variable-length
+/// array in any case, so `runRenderRequest` keeps that case on the TypeScript
+/// path. See the note on [`crate::abi::NauvisParams::starting_positions`].
+fn render_nauvis_elevation(req: &Request, p: &NauvisParams, out: &mut [u8]) {
+    // An empty list renders the default planet rather than dividing by a spawn
+    // that is not there - the same rule `nauvis_ctx` applies, and the game's own
+    // default is a single origin spawn.
+    let starting_positions: Vec<NauvisPoint> = if p.starting_point_count() == 0 {
+        vec![NauvisPoint { x: 0.0, y: 0.0 }]
+    } else {
+        p.starting_points()
+            .iter()
+            .map(|xy| NauvisPoint { x: xy[0], y: xy[1] })
+            .collect()
+    };
+
+    // The tree is compiled ONCE, outside the pixel loops - the octave stacks and
+    // basis tables are the expensive part, and the TypeScript compiles its
+    // evaluator once for the same reason. Boxing it costs one indirect call per
+    // pixel and keeps the sweep below written a single time.
+    let eval_at: Box<dyn Fn(f64, f64) -> f64> = if req.view == VIEW_ELEVATION_NAUVIS {
+        let tree = ElevationNauvis::new(&ElevationNauvisParams {
+            water_level: p.water_level,
+            segmentation_multiplier: p.segmentation_multiplier,
+            starting_positions,
+            starting_lake_positions: None,
+            ..ElevationNauvisParams::defaults(req.seed0)
+        });
+        Box::new(move |x, y| tree.eval(x, y))
+    } else {
+        let base = ElevationLakesParams {
+            water_level: p.water_level,
+            segmentation_multiplier: p.segmentation_multiplier,
+            starting_positions,
+            starting_lake_positions: None,
+            ..ElevationLakesParams::defaults(req.seed0)
+        };
+        // `to_island` applies the bias AND the segmentation divide itself, so
+        // the raw control goes in here. Pre-dividing would apply it twice.
+        let params = if req.view == VIEW_ELEVATION_ISLAND {
+            base.to_island()
+        } else {
+            base
+        };
+        let tree = ElevationLakes::new(&params);
+        Box::new(move |x, y| tree.eval(x, y))
+    };
+
+    let mut offset = 0usize;
+    for py in 0..req.height {
+        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            let color = if eval_at(wx, wy) < 0.0 {
+                ELEVATION_WATER
+            } else {
+                ELEVATION_LAND
+            };
+            out[offset] = color[0];
+            out[offset + 1] = color[1];
+            out[offset + 2] = color[2];
+            out[offset + 3] = 255;
+            offset += 4;
+        }
     }
 }
 
