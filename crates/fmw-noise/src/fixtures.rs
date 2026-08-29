@@ -4420,7 +4420,7 @@ fn the_games_own_destruction_set_reproduces_the_game_exactly() {
                     Some(_) => s.wrong += 1,
                 }
             }
-            s.missing = game.keys().filter(|k| !port.contains_key(k)).count();
+            s.missing = game.keys().filter(|k| !port.contains_key(*k)).count();
             s
         };
 
