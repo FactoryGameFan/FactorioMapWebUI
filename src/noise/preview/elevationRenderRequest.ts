@@ -391,13 +391,17 @@ function renderFulgoraThroughWasm(
 }
 
 /**
- * The Rust engine's Nauvis path - seven of the eight views `view` declares.
+ * The Rust engine's Nauvis path - every view `view` declares, plus the three
+ * elevation codes.
  *
  * The terrain render, all five overlays, and the `all` composite. The module
  * refuses anything else with `unsupported planet or view`, so a mistake here is
  * loud rather than silent.
  *
- * **The eighth, `"elevation"`, is NOT ported** - see the gate below.
+ * **`"elevation"` is ported as of #227**, as three `view` codes rather than
+ * one, because the common prefix has no `mapType` field. See the gate at the
+ * tail of `runRenderRequest`, which still keeps two cases on the TypeScript
+ * path: a caller-supplied `startingLakePositions`, and a non-Nauvis `planet`.
  *
  * **A caller-supplied `startingLakePositions` also stays on the TypeScript
  * path**, for the same reason a moved spawn does. The module derives the lake
@@ -416,7 +420,17 @@ function renderFulgoraThroughWasm(
 function renderNauvisThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
-  view: "terrain" | "trees" | "rocks" | "enemies" | "cliffs" | "resources" | "all",
+  view:
+    | "terrain"
+    | "trees"
+    | "rocks"
+    | "enemies"
+    | "cliffs"
+    | "resources"
+    | "all"
+    | "elevationLakes"
+    | "elevationNauvis"
+    | "elevationIsland",
 ): ElevationRenderResult {
   const pixels = renderThroughWasm(engine, {
     planet: "nauvis",
@@ -659,16 +673,10 @@ export function runRenderRequest(
       }
       return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
     }
-    // Every Nauvis view the Rust engine serves. That is SEVEN of the eight
-    // `view` declares, not all of them: `"elevation"` is absent here and from
-    // the Vulcanus and Fulgora gates above, so it falls through to the
-    // TypeScript `renderElevation` at the tail of this function. Measured
-    // rather than read (#227): with a live engine, all three of its map types
-    // ran the TypeScript while a `view: "terrain"` control was served by the
-    // module. That makes `renderElevation.ts` the sole renderer for the
-    // request's DEFAULT view, and for the view `ElevationPreviewPanel` forces
-    // on every Lakes or Island preset - so it cannot be deleted with the rest
-    // of the TypeScript branch until the view is ported or dropped.
+    // Every Nauvis view the Rust engine serves. `"elevation"` is no longer the
+    // exception - it is served at the tail of this function under its own three
+    // `view` codes as of #227 - so this list is the seven TILE-family views and
+    // the elevation gate is separate because it paints a different palette.
     // Checked BEFORE the TypeScript render rather than after, so the engine's
     // work replaces it instead of being thrown away.
     //
@@ -811,6 +819,40 @@ export function runRenderRequest(
       });
     }
   } else {
+    // The elevation view, ported in #227. It rides the Nauvis param block,
+    // which already carries every lever the trees read - seed, water level,
+    // segmentation and the spawn list - so this needed three `view` codes and
+    // no layout change. `mapType` picks the code because the common prefix has
+    // no `mapType` field; see `VIEW` in `src/noise/wasm/request.ts`.
+    //
+    // **`startingLakePositions` still forces the TypeScript path.** That is a
+    // CORRECTNESS carve-out, not a speed one: the module derives the lake list
+    // from the seed and the spawn, which is the game's own rule and what the
+    // TypeScript does when the caller passes nothing, so an explicit list would
+    // be a wrong answer rather than a slow one. It is an ABI carve-out too -
+    // the request is a fixed-size struct with no room for a variable-length
+    // array. The app never sets it; only a test does, and not on this path.
+    //
+    // **A non-Nauvis `planet` also stays on TypeScript.** `mapType` spans the
+    // Nauvis family only, and the branch below ignores `planet` outright, so
+    // routing an odd pairing through the module would change behaviour for no
+    // gain. `planet` defaults to `"nauvis"`, so the app never sends one.
+    if (
+      engine !== undefined &&
+      planet === "nauvis" &&
+      req.startingLakePositions === undefined &&
+      req.startingPositions.length <= NAUVIS_MAX_STARTING_POINTS
+    ) {
+      return renderNauvisThroughWasm(
+        req,
+        engine,
+        req.mapType === "nauvis"
+          ? "elevationNauvis"
+          : req.mapType === "island"
+            ? "elevationIsland"
+            : "elevationLakes",
+      );
+    }
     image = renderElevation({
       seed0: req.seed0,
       width: req.width,
