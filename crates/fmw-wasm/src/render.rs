@@ -1849,6 +1849,209 @@ mod tests {
         assert!(water > 0, "the window must contain water to grade the skip");
     }
 
+    /// A Nauvis request with EVERY overlay lever live, over a window at `origin`.
+    ///
+    /// `nauvis_request` leaves the rock, enemy, cliff and resource levers at
+    /// zero, which would make an overlay paint nothing. The origin is a
+    /// parameter because the enemy overlay deliberately paints nothing near
+    /// spawn.
+    fn nauvis_overlay_request(width: u32, height: u32, view: u32, origin: f64) -> Vec<u8> {
+        let mut b = nauvis_request(width, height);
+        b[12..16].copy_from_slice(&view.to_le_bytes());
+        b[32..40].copy_from_slice(&origin.to_le_bytes());
+        b[40..48].copy_from_slice(&origin.to_le_bytes());
+        // trees_size, rocks, enemies, cliff frequency/continuity/richness.
+        for at in [144usize, 152, 160, 200, 208, 216, 224, 248] {
+            b[at..at + 8].copy_from_slice(&1.0f64.to_le_bytes());
+        }
+        b[232..240].copy_from_slice(&10.0f64.to_le_bytes());
+        b[240..248].copy_from_slice(&40.0f64.to_le_bytes());
+        // The world box the window covers, grown well past the mark radius, for
+        // the placement sweep and the cliff cell query alike. `nauvis_request`
+        // renders at 8 tiles per pixel.
+        let far = origin + f64::from(width) * 8.0 + 64.0;
+        for (i, v) in [origin - 64.0, origin - 64.0, far, far].iter().enumerate() {
+            b[168 + i * 8..176 + i * 8].copy_from_slice(&v.to_le_bytes());
+            b[256 + i * 8..264 + i * 8].copy_from_slice(&v.to_le_bytes());
+        }
+        for i in 0..6 {
+            let at = 288 + i * 24;
+            for k in 0..3 {
+                b[at + k * 8..at + k * 8 + 8].copy_from_slice(&1.0f64.to_le_bytes());
+            }
+        }
+        b
+    }
+
+    /// The paint-time water skip, graded directly, on BOTH water tiles.
+    ///
+    /// Ported from the four specs that each carried a "never paints over water"
+    /// claim for one overlay - `renderCliffs`, `renderRocks`, `renderEnemies`
+    /// and `renderResources` - which #227 deletes. Rust has the predicate
+    /// (`is_nauvis_water`, derived from the palette so it cannot drift) and
+    /// every overlay passes it, but the only test of it was the tree one.
+    ///
+    /// **This grades the mechanism rather than a window, and it names both
+    /// tiles rather than sampling one.** Two plants shaped it. Rendering each
+    /// overlay and checking no water pixel moved is nearly vacuous - rocks are
+    /// excluded from water at PLACEMENT time, so no mark gets the chance to
+    /// spill, and deleting the rock overlay's skip entirely leaves such a test
+    /// green. Sampling a water colour out of a render is vacuous the other way:
+    /// the window handed back deepwater, so a predicate that stopped
+    /// recognising shallow water also passed. Both were planted, not assumed.
+    #[test]
+    fn the_water_skip_spares_both_nauvis_water_tiles() {
+        const C: [u8; 3] = [10, 20, 30];
+        let (w, h) = (5i64, 5i64);
+
+        for (tile, name) in [
+            (NauvisTile::Water, "water"),
+            (NauvisTile::Deepwater, "deepwater"),
+        ] {
+            let rgb = nauvis_tile_color(tile);
+            let mut img = Vec::with_capacity((w * h * 4) as usize);
+            for _ in 0..(w * h) {
+                img.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            }
+            let before = img.clone();
+            paint_mark_skipping(&mut img, (w, h), 2, 2, C, 2, is_nauvis_water);
+            assert_eq!(img, before, "{name}: a mark painted over it");
+        }
+
+        // The same mark on a land base must paint all 25, or the loop above
+        // would hold for a painter that does nothing at all.
+        let mut land = vec![0u8; (w * h * 4) as usize];
+        paint_mark_skipping(&mut land, (w, h), 2, 2, C, 2, is_nauvis_water);
+        let painted = (0..land.len())
+            .step_by(4)
+            .filter(|&i| land[i..i + 3] == C)
+            .count();
+        assert_eq!(painted, 25, "the same mark must paint a land base");
+    }
+
+    /// Every Nauvis overlay renders, and none of them moves a water pixel.
+    ///
+    /// Weaker than it looks - see the test above for why - but it does pin that
+    /// each overlay paints SOMETHING in a real window, which the four deleted
+    /// specs also covered and nothing else here does.
+    #[test]
+    fn every_nauvis_overlay_paints_and_leaves_water_alone() {
+        let (w, h) = (48u32, 48u32);
+        let bytes = (w * h * 4) as usize;
+
+        for (view, name, origin) in [
+            (VIEW_CLIFFS, "cliffs", -256.0f64),
+            (VIEW_ROCKS, "rocks", -256.0),
+            (VIEW_RESOURCES, "resources", -256.0),
+            (VIEW_ENEMIES, "enemies", 2048.0),
+        ] {
+            let mut terrain = vec![0u8; bytes];
+            assert_eq!(
+                render(
+                    &nauvis_overlay_request(w, h, VIEW_TERRAIN, origin),
+                    &mut terrain
+                ),
+                Status::Ok,
+                "the terrain arm at {origin} must render"
+            );
+            let mut out = vec![0u8; bytes];
+            assert_eq!(
+                render(&nauvis_overlay_request(w, h, view, origin), &mut out),
+                Status::Ok,
+                "the {name} arm must render"
+            );
+
+            let mut changed = 0usize;
+            for i in (0..out.len()).step_by(4) {
+                if is_nauvis_water(terrain[i], terrain[i + 1], terrain[i + 2]) {
+                    assert_eq!(
+                        &out[i..i + 4],
+                        &terrain[i..i + 4],
+                        "{name}: water at byte {i} was painted over"
+                    );
+                } else if out[i..i + 4] != terrain[i..i + 4] {
+                    changed += 1;
+                }
+            }
+            // An overlay that painted nothing satisfies the loop above.
+            assert!(changed > 0, "{name} painted nothing");
+        }
+    }
+
+    /// Whether a pixel carries the colour, for the mark tests below.
+    fn mark_painted(out: &[u8], w: i64, x: i64, y: i64, color: [u8; 3]) -> bool {
+        #[allow(clippy::cast_sign_loss)]
+        let o = ((y * w + x) * 4) as usize;
+        out[o..o + 3] == color
+    }
+
+    /// `paint_mark` paints a `(2r+1)` square centred on the pixel.
+    ///
+    /// Ported from `test/renderCliffs.spec.ts`'s `paintMark` block for #227.
+    /// `render.rs` had no test for either painter, though every placement
+    /// overlay on both planets goes through them.
+    #[test]
+    fn a_mark_is_a_2r_plus_1_square_centred_on_the_pixel() {
+        const C: [u8; 3] = [10, 20, 30];
+        let (w, h) = (7i64, 7i64);
+        let mut out = vec![0u8; (w * h * 4) as usize];
+        paint_mark(&mut out, w, h, 3, 3, C, 1);
+
+        let painted = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| mark_painted(&out, w, x, y, C))
+            .count();
+        assert_eq!(painted, 9, "a radius of 1 is a 3x3 block");
+        for y in 2..=4 {
+            for x in 2..=4 {
+                assert!(mark_painted(&out, w, x, y, C), "({x},{y}) must be painted");
+            }
+        }
+    }
+
+    /// It clips at the edge rather than wrapping.
+    #[test]
+    fn a_mark_clips_at_the_image_edge_instead_of_wrapping() {
+        const C: [u8; 3] = [10, 20, 30];
+        let (w, h) = (4i64, 4i64);
+        let mut out = vec![0u8; (w * h * 4) as usize];
+        paint_mark(&mut out, w, h, 0, 0, C, 1);
+
+        let painted = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| mark_painted(&out, w, x, y, C))
+            .count();
+        assert_eq!(painted, 4, "a corner mark keeps only its in-image quarter");
+        // The opposite edges are what a wrap would have reached.
+        assert!(
+            !mark_painted(&out, w, w - 1, 0, C) && !mark_painted(&out, w, 0, h - 1, C),
+            "the mark wrapped instead of clipping"
+        );
+    }
+
+    /// It consults the skip predicate per pixel, not per mark.
+    #[test]
+    fn a_mark_honours_the_skip_predicate_per_pixel() {
+        const C: [u8; 3] = [10, 20, 30];
+        const SENTINEL: [u8; 3] = [99, 0, 0];
+        let (w, h) = (3i64, 3i64);
+        let mut out = vec![0u8; (w * h * 4) as usize];
+        // One pixel of the nine carries a colour the predicate rejects.
+        out[4 * 4] = SENTINEL[0];
+
+        paint_mark_skipping(&mut out, (w, h), 1, 1, C, 1, |r, _, _| r == SENTINEL[0]);
+
+        let painted = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| mark_painted(&out, w, x, y, C))
+            .count();
+        assert_eq!(painted, 8, "the skipped pixel must be the only one left");
+        assert!(
+            mark_painted(&out, w, 1, 1, SENTINEL),
+            "the skipped pixel must keep its own colour"
+        );
+    }
+
     /// One catalog entry's chart colour, by name.
     fn resource_color(name: &str) -> [u8; 3] {
         NAUVIS_RESOURCE_CATALOG
