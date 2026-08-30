@@ -1849,6 +1849,122 @@ mod tests {
         assert!(water > 0, "the window must contain water to grade the skip");
     }
 
+    /// One catalog entry's chart colour, by name.
+    fn resource_color(name: &str) -> [u8; 3] {
+        NAUVIS_RESOURCE_CATALOG
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("{name} is missing from NAUVIS_RESOURCE_CATALOG"))
+            .map_color
+    }
+
+    /// A Nauvis `resources` request over the 3x3 window centred on world tile
+    /// `(wx, wy)`, one tile per pixel, every resource at the same lever setting.
+    ///
+    /// Mirrors `markColors` in the deleted `test/renderResourcesPaintOrder.spec.ts`.
+    fn oil_probe_request(seed0: u32, wx: f64, wy: f64, control: f64) -> Vec<u8> {
+        let mut b = prefix(PLANET_NAUVIS, NAUVIS_PARAMS_BYTES, 3, 3, seed0);
+        b[12..16].copy_from_slice(&VIEW_RESOURCES.to_le_bytes());
+        b[32..40].copy_from_slice(&(wx - 1.0).to_le_bytes());
+        b[40..48].copy_from_slice(&(wy - 1.0).to_le_bytes());
+        b[48..56].copy_from_slice(&1.0f64.to_le_bytes());
+
+        // The climate levers the terrain under the overlay reads, plus the
+        // segmentation multiplier the oil placement reads. The two bias levers
+        // and `water_level` stay 0, which is the game's own default.
+        for at in [64usize, 72, 88, 104, 112, 120, 136] {
+            b[at..at + 8].copy_from_slice(&1.0f64.to_le_bytes());
+        }
+
+        // `placement_sweep_box`, the window grown by the mark radius so a well
+        // whose CENTRE lies outside still paints its halo into the window. The
+        // app's own writer computes this; a box that only covered the window
+        // would drop exactly the halo this test is about.
+        for (i, v) in [wx - 2.0, wy - 2.0, wx + 3.0, wy + 3.0].iter().enumerate() {
+            let at = COMMON_BYTES + 112 + i * 8;
+            b[at..at + 8].copy_from_slice(&v.to_le_bytes());
+        }
+
+        // Every resource at the same frequency and size, richness 1 - the
+        // spec's `allControls`.
+        for i in 0..6 {
+            let at = COMMON_BYTES + 232 + i * 24;
+            b[at..at + 8].copy_from_slice(&control.to_le_bytes());
+            b[at + 8..at + 16].copy_from_slice(&control.to_le_bytes());
+            b[at + 16..at + 24].copy_from_slice(&1.0f64.to_le_bytes());
+        }
+        b
+    }
+
+    /// The nine pixels of that window, as RGB.
+    fn oil_probe(seed0: u32, wx: f64, wy: f64, control: f64) -> Vec<[u8; 3]> {
+        let mut out = vec![0u8; 3 * 3 * 4];
+        assert_eq!(
+            render(&oil_probe_request(seed0, wx, wy, control), &mut out),
+            Status::Ok,
+            "the probe must render"
+        );
+        (0..9)
+            .map(|i| [out[i * 4], out[i * 4 + 1], out[i * 4 + 2]])
+            .collect()
+    }
+
+    /// Crude oil vs the thresholded resources: which one owns a shared pixel.
+    ///
+    /// Ported from `test/renderResourcesPaintOrder.spec.ts` for #227. The
+    /// mechanism is already here - `oil_mark` and `oil_outranks` in
+    /// `paint_nauvis_resources` - but nothing graded it, so an inverted
+    /// `compare_priority` would have shipped green.
+    ///
+    /// Oil's 3x3 marks are painted in pass 1 and the thresholded resources over
+    /// the top in pass 2. That is right for the four solids, whose autoplace
+    /// order "b" beats oil's "c", and **wrong for uranium**, which is also "c"
+    /// but sorts after oil. Issue #22 recorded the inversion as latent on one
+    /// measurement - over `[-2048,-2048]-[2048,2048]` at seed 123456 the oil and
+    /// uranium footprints share 0 tiles - and that turned out to be a property
+    /// of the seed, not of the geometry. A 1024-window sweep over 1.7e10 tiles
+    /// found 7 wells overwritten by uranium, 5 of them on all nine mark pixels.
+    ///
+    /// The four cases below are that sweep's output, one per behaviour the
+    /// paint order has to get right, at two control settings that differ by
+    /// three orders of magnitude in how often this happens.
+    #[test]
+    fn keeps_an_oil_well_that_a_uranium_patch_covers_at_default_controls() {
+        // About one well in 41,000 - rare, and real.
+        let oil = resource_color("crude-oil");
+        assert_eq!(oil_probe(2_980_111_949, -1584.0, 513.0, 1.0), vec![oil; 9]);
+    }
+
+    #[test]
+    fn keeps_an_oil_well_that_a_uranium_patch_covers_at_600_percent() {
+        // Seed 123456 - the very seed whose "0 shared tiles" made this look
+        // unreachable - hides two wells inside `[-1024, 1024)^2` at 600%, which
+        // is a notch the game's own map-gen GUI offers.
+        let oil = resource_color("crude-oil");
+        assert_eq!(oil_probe(123_456, 600.0, 895.0, 6.0), vec![oil; 9]);
+    }
+
+    #[test]
+    fn still_lets_iron_ore_cover_an_oil_well() {
+        // The arm that fails if the fix is "paint oil last" rather than "paint
+        // oil last where oil outranks the winner". Without it a guard that
+        // reversed the whole order would pass.
+        let iron = resource_color("iron-ore");
+        assert_eq!(oil_probe(123_456, 675.0, -508.0, 6.0), vec![iron; 9]);
+    }
+
+    #[test]
+    fn leaves_uranium_alone_where_no_oil_well_sits_under_it() {
+        // One tile off the hidden well above, outside its 3x3 mark. Without this
+        // the three assertions above would also pass a renderer that painted oil
+        // over everything.
+        let uranium = resource_color("uranium-ore");
+        assert_eq!(
+            oil_probe(2_980_111_949, -1584.0, 517.0, 1.0),
+            vec![uranium; 9]
+        );
+    }
+
     #[test]
     fn refuses_a_planet_or_view_it_cannot_render() {
         let mut out = vec![0u8; 4 * 4 * 4];
