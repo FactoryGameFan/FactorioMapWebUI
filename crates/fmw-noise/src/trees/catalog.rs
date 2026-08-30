@@ -28,8 +28,9 @@
 //! eyeballing the remainder - and **the filter dropped every line containing
 //! `control:trees:size`, which is the line `size_offset` lives on**. So the one
 //! term that varies was the one term excluded from the check.
-//! `test/treeCatalogExpressions.spec.ts` now rebuilds each row's Lua string and
-//! diffs it against the game data character for character instead.
+//! `every_species_reconstructs_the_games_own_lua_expression` now rebuilds
+//! each row's Lua string and diffs it against the game data character for
+//! character instead.
 
 /// One species' autoplace parameters.
 #[derive(Clone, Copy, Debug, PartialEq)]

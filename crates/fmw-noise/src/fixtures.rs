@@ -5804,6 +5804,143 @@ fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
     );
 }
 
+/// The five `tree_*` prototypes the port deliberately leaves out.
+///
+/// They are NOT decoratives, a claim the docs used to make: all five are real
+/// `type = "tree"` prototypes on `control = "trees"` that the game charts like
+/// any other tree. They are excluded on measured contribution - max density
+/// gain 0.038, about 1.5% of max alpha - and `tree_dry` is not even an
+/// independent species, being `0.2 * max(tree_01, tree_09, ...)`. See
+/// `docs/noise/trees-NOTES.md`.
+const EXCLUDED_TREE_EXPRESSIONS: [&str; 5] = [
+    "tree_dead_desert",
+    "tree_dead_dry_hairy",
+    "tree_dead_grey_trunk",
+    "tree_dry",
+    "tree_dry_hairy",
+];
+
+/// The `tree_*` keys the fixture holds, in file order.
+fn tree_expression_names(expressions: &Json) -> Vec<&str> {
+    match expressions {
+        Json::Obj(entries) => entries.iter().map(|(k, _)| k.as_str()).collect(),
+        other => panic!("expressions is not an object: {other:?}"),
+    }
+}
+
+#[test]
+fn every_species_reconstructs_the_games_own_lua_expression() {
+    // Ported from `test/treeCatalogExpressions.spec.ts` for #227, before that
+    // spec goes with `src/noise/trees/treeCatalog.ts`.
+    //
+    // Reconstruct-and-compare: rebuild each species' Lua string from its catalog
+    // row and diff it against the real 2.1.11 game data, character for
+    // character. **The point is that it has no filter.** The original uniformity
+    // claim was checked by filtering the terms common to every `tree_0*` block
+    // out and observing that nothing was left - but the filter dropped every
+    // line holding `control:trees:size`, which is the one line the per-species
+    // term lives on (`tree_05` and `tree_07` use 0.45, not 0.5). Four tasks were
+    // built on that wrong premise before an oracle caught it. A filter-then
+    // -compare check can only find what its filter lets through; this one lets
+    // everything through, so a single unaccounted constant fails it.
+    //
+    // Needs no Factorio install - the fixture is checked in.
+    let fixture = load("test/fixtures/tree-expressions.2.1.11.json");
+    let expressions = fixture.get("expressions");
+
+    // Lua prints 1 as "1", not "1.0". Rust's `Display` for f64 is the shortest
+    // round-tripping form, the same rule JavaScript's `String(n)` followed in
+    // the spec this replaces, so the two agree on every constant in the table.
+    fn num(n: f64) -> String {
+        format!("{n}")
+    }
+
+    for s in TREE_SPECIES.iter() {
+        let [tb, tt, tot, tob] = s.temp_ramp;
+        let [mb, mt, mot, mob] = s.moist_ramp;
+
+        let mut got = String::new();
+        got.push_str(&format!(
+            "min({}, trees_forest_path_cutout_faded,",
+            num(s.cap)
+        ));
+        got.push_str("min(0,");
+        got.push_str(&format!(
+            "asymmetric_ramps{{input=temperature, from_bottom={}, from_top={}, \
+             to_top={}, to_bottom={}}},",
+            num(tb),
+            num(tt),
+            num(tot),
+            num(tob)
+        ));
+        got.push_str(&format!(
+            "asymmetric_ramps{{input=moisture, from_bottom={}, from_top={}, \
+             to_top={}, to_bottom={}}})",
+            num(mb),
+            num(mt),
+            num(mot),
+            num(mob)
+        ));
+        got.push_str("+ min(0, distance/20 - 3)");
+        got.push_str(&format!(
+            "- {} + 0.2 * control:trees:size",
+            num(s.size_offset)
+        ));
+        got.push_str("+ tree_small_noise * 0.1");
+        got.push_str("+ multioctave_noise{x = x,y = y,persistence = 0.65,seed0 = map_seed,");
+        got.push_str(&format!("seed1 = '{}',octaves = 3,", s.seed1_name));
+        got.push_str(&format!(
+            "input_scale = 1/{} * control:trees:frequency,",
+            num(s.input_scale_div)
+        ));
+        got.push_str(&format!("output_scale = {}}})", num(s.output_scale)));
+
+        let want = expressions
+            .get_opt(s.name)
+            .unwrap_or_else(|| panic!("{} is missing from the fixture", s.name))
+            .as_str();
+        assert_eq!(got, want, "{} does not reconstruct", s.name);
+    }
+}
+
+#[test]
+fn accounts_for_every_tree_expression_in_the_game_data() {
+    // If 2.1.x ever adds a 16th species it lands in neither list, and this fails
+    // rather than the species being silently absent from the render.
+    let fixture = load("test/fixtures/tree-expressions.2.1.11.json");
+    let mut ported: Vec<&str> = TREE_SPECIES
+        .iter()
+        .map(|s| s.name)
+        .chain(EXCLUDED_TREE_EXPRESSIONS.iter().copied())
+        .collect();
+    ported.sort_unstable();
+
+    let mut in_game = tree_expression_names(fixture.get("expressions"));
+    in_game.sort_unstable();
+
+    assert_eq!(ported, in_game, "a tree_* expression is in neither list");
+}
+
+#[test]
+fn the_size_offset_exception_set_comes_from_the_game_data() {
+    // Belt and braces with `catalog.rs`'s own exception test: prove from the
+    // GAME DATA, not from the catalog, that exactly `tree_05` and `tree_07`
+    // carry the 0.45 offset. The catalog test would still pass if both the
+    // catalog and its test were wrong together.
+    let fixture = load("test/fixtures/tree-expressions.2.1.11.json");
+    let expressions = fixture.get("expressions");
+    let mut from_game: Vec<&str> = match expressions {
+        Json::Obj(entries) => entries
+            .iter()
+            .filter(|(_, v)| v.as_str().contains("- 0.45 + 0.2 * control:trees:size"))
+            .map(|(k, _)| k.as_str())
+            .collect(),
+        other => panic!("expressions is not an object: {other:?}"),
+    };
+    from_game.sort_unstable();
+    assert_eq!(from_game, ["tree_05", "tree_07"]);
+}
+
 // ---------------------------------------------------------------------------
 // Phase 6 (#226), the Nauvis cliff and rock fields.
 // ---------------------------------------------------------------------------
