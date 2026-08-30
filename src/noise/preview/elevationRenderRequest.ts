@@ -92,7 +92,8 @@ export interface ElevationRenderRequest {
    * versus ocean, skipping the eight-way land argmax whose answer the finder
    * discards. It is deliberately absent from `ElevationPreviewPanel`'s own view
    * union, so no dev-mode toggle can select it. On any planet without a port it
-   * falls back to that planet's terrain, like every other view here.
+   * falls back to that planet's terrain, like every other view here - see
+   * `servedView`, which makes that fall-back explicit rather than incidental.
    */
   view?:
     | "elevation"
@@ -492,9 +493,49 @@ function renderNauvisThroughWasm(
 }
 
 /**
+ * The view this request actually renders, which is not always the one it asks
+ * for.
+ *
+ * Four `(planet, view)` pairs have no renderer of their own: Vulcanus has no
+ * enemy bases, no trees and no ocean, and Nauvis has no land mask. Asking for
+ * one has always produced the planet's plain terrain, because the overlay
+ * blocks below simply never match and the land-mask branch is Fulgora's alone.
+ * The request rendered; it just rendered terrain.
+ *
+ * That silence is the problem. The Rust engine refuses all four outright - see
+ * the `supported` match in `crates/fmw-wasm/src/render.rs`, which pins
+ * `(Vulcanus, landmask)` as unsupported in its own test - so the fall-through
+ * has to become explicit BEFORE #227 deletes the TypeScript terrain renderers
+ * it lands on. Left alone, those four requests would stop rendering and start
+ * throwing, and Trap 2's error path would discard the reason.
+ *
+ * Normalising onto `"terrain"` rather than widening the engine's gate is what
+ * keeps the pixels identical: `"terrain"` is precisely what these four already
+ * draw. Widening the gate would ask the module for a render it has deliberately
+ * decided is meaningless.
+ *
+ * Nothing in the app can reach any of the four - `ElevationPreviewPanel`'s
+ * `effectiveView` emits only `terrain|resources|cliffs|rocks|all` on Vulcanus,
+ * and `"landmask"` is absent from its view union on every planet - so this
+ * closes a hole in the type surface rather than in anything a user sees. It is
+ * still worth closing: the type permits all four, and `findIslands` already
+ * posts a hand-built request rather than one the panel produced.
+ */
+function servedView(
+  planet: Planet,
+  view: ElevationRenderRequest["view"],
+): ElevationRenderRequest["view"] {
+  if (planet === "vulcanus" && (view === "enemies" || view === "trees" || view === "landmask")) {
+    return "terrain";
+  }
+  if (planet === "nauvis" && view === "landmask") return "terrain";
+  return view;
+}
+
+/**
  * Pure render step shared by the worker and its tests: run renderElevation or
- * renderTerrain (per `req.view`) and hand back the transferable RGBA buffer. No
- * Worker or DOM canvas involved.
+ * renderTerrain (per `req.view`, once `servedView` has normalised it) and hand
+ * back the transferable RGBA buffer. No Worker or DOM canvas involved.
  *
  * `engine` is optional and opt-in. When a caller supplies an instantiated Rust
  * engine AND the request is Fulgora's land mask - the one path #223 ports - the
@@ -511,23 +552,24 @@ export function runRenderRequest(
   engine?: EngineExports,
 ): ElevationRenderResult {
   const planet = req.planet ?? "nauvis";
+  const view = servedView(planet, req.view);
   let image: ImageData;
   if (
-    req.view === "terrain" ||
-    req.view === "resources" ||
-    req.view === "enemies" ||
-    req.view === "cliffs" ||
-    req.view === "trees" ||
-    req.view === "rocks" ||
-    req.view === "all" ||
-    req.view === "landmask"
+    view === "terrain" ||
+    view === "resources" ||
+    view === "enemies" ||
+    view === "cliffs" ||
+    view === "trees" ||
+    view === "rocks" ||
+    view === "all" ||
+    view === "landmask"
   ) {
     if (planet === "vulcanus") {
       // Vulcanus has its own resource and cliff overlays. The remaining three
       // Nauvis overlays (enemies, trees, rocks) have no Vulcanus port, so a
       // terrain-family view that asks for one still gets plain terrain rather
       // than a Nauvis field composited onto Vulcanus colors.
-      const wantsResources = req.view === "resources" || req.view === "all";
+      const wantsResources = view === "resources" || view === "all";
       // Checked BEFORE the TypeScript stack is built, for the reason the
       // Fulgora branch gives: `makeVulcanusStack` derives seed tables for the
       // whole biome, crack, climate and elevation chain, and building them only
@@ -539,13 +581,13 @@ export function runRenderRequest(
       // failed to load is slower and never wrong.
       if (
         engine !== undefined &&
-        (req.view === "terrain" ||
-          req.view === "cliffs" ||
-          req.view === "rocks" ||
-          req.view === "resources" ||
-          req.view === "all")
+        (view === "terrain" ||
+          view === "cliffs" ||
+          view === "rocks" ||
+          view === "resources" ||
+          view === "all")
       ) {
-        return renderVulcanusThroughWasm(req, engine, req.view);
+        return renderVulcanusThroughWasm(req, engine, view);
       }
       // ONE stack for the whole composite. Two things make this pay, and both
       // are needed: the overlays reuse the field objects terrain built, and
@@ -598,7 +640,7 @@ export function runRenderRequest(
           stack,
         });
       }
-      if (req.view === "rocks" || req.view === "all") {
+      if (view === "rocks" || view === "all") {
         renderVulcanusRocks(image, {
           seed0: req.seed0,
           originX: req.originX,
@@ -609,7 +651,7 @@ export function runRenderRequest(
           sharedStack: stack,
         });
       }
-      if (req.view === "cliffs" || req.view === "all") {
+      if (view === "cliffs" || view === "all") {
         renderVulcanusCliffs(image, {
           seed0: req.seed0,
           originX: req.originX,
@@ -627,8 +669,8 @@ export function runRenderRequest(
       // TypeScript stack is built, because `makeFulgoraStack` derives seed
       // tables for eight multioctave fields, and building them only to throw
       // them away would be most of the saving.
-      if (engine !== undefined && (req.view === "landmask" || req.view === "terrain")) {
-        return renderFulgoraThroughWasm(req, engine, req.view);
+      if (engine !== undefined && (view === "landmask" || view === "terrain")) {
+        return renderFulgoraThroughWasm(req, engine, view);
       }
       // Fulgora has a resources overlay now; it still has no cliffs and no
       // rocks, so those views fall back to plain terrain - the same fallback
@@ -655,12 +697,12 @@ export function runRenderRequest(
       };
       // Returns straight away: a land mask takes no overlays, and compositing
       // resources onto it would paint over the very bit the caller wants.
-      if (req.view === "landmask") {
+      if (view === "landmask") {
         const mask = renderFulgoraLandMask(fulgoraRender);
         return { id: req.id, buffer: mask.data.buffer, width: req.width, height: req.height };
       }
       image = renderFulgoraTerrain(fulgoraRender);
-      if (req.view === "resources" || req.view === "all") {
+      if (view === "resources" || view === "all") {
         renderFulgoraResources(image, {
           seed0: req.seed0,
           originX: req.originX,
@@ -691,17 +733,17 @@ export function runRenderRequest(
     // would be a wrong answer rather than a slow one. The app never sets it.
     if (
       engine !== undefined &&
-      (req.view === "terrain" ||
-        req.view === "trees" ||
-        req.view === "rocks" ||
-        req.view === "enemies" ||
-        req.view === "cliffs" ||
-        req.view === "resources" ||
-        req.view === "all") &&
+      (view === "terrain" ||
+        view === "trees" ||
+        view === "rocks" ||
+        view === "enemies" ||
+        view === "cliffs" ||
+        view === "resources" ||
+        view === "all") &&
       req.startingLakePositions === undefined &&
       req.startingPositions.length <= NAUVIS_MAX_STARTING_POINTS
     ) {
-      return renderNauvisThroughWasm(req, engine, req.view);
+      return renderNauvisThroughWasm(req, engine, view);
     }
     image = renderTerrain({
       seed0: req.seed0,
@@ -721,7 +763,7 @@ export function runRenderRequest(
         startingAreaMoistureFrequency: req.startingAreaMoistureFrequency,
       },
     });
-    if (req.view === "trees" || req.view === "all") {
+    if (view === "trees" || view === "all") {
       renderTrees(image, {
         seed0: req.seed0,
         originX: req.originX,
@@ -739,7 +781,7 @@ export function runRenderRequest(
         startingPositions: req.startingPositions,
       });
     }
-    if (req.view === "resources" || req.view === "all") {
+    if (view === "resources" || view === "all") {
       renderResources(image, {
         seed0: req.seed0,
         originX: req.originX,
@@ -763,7 +805,7 @@ export function runRenderRequest(
     // crossing an ore patch reads as the obstruction - same order as the
     // Vulcanus branch above. Trees stay under resources: a forest is cleared,
     // not an obstacle you route around.
-    if (req.view === "rocks" || req.view === "all") {
+    if (view === "rocks" || view === "all") {
       renderRocks(image, {
         seed0: req.seed0,
         originX: req.originX,
@@ -781,7 +823,7 @@ export function runRenderRequest(
         sweepBox: placementMarkSweepBox(req),
       });
     }
-    if (req.view === "enemies" || req.view === "all") {
+    if (view === "enemies" || view === "all") {
       renderEnemies(image, {
         seed0: req.seed0,
         originX: req.originX,
@@ -799,7 +841,7 @@ export function runRenderRequest(
         sweepBox: placementMarkSweepBox(req),
       });
     }
-    if (req.view === "cliffs" || req.view === "all") {
+    if (view === "cliffs" || view === "all") {
       renderCliffs(image, {
         seed0: req.seed0,
         originX: req.originX,
