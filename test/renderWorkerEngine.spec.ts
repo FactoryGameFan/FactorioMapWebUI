@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { ElevationRenderRequest } from "../src/noise/preview/elevationRenderRequest";
+import {
+  STARTING_LAKE_POSITIONS_UNSUPPORTED,
+  type ElevationRenderRequest,
+} from "../src/noise/preview/elevationRenderRequest";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 
 /**
@@ -189,5 +192,51 @@ describe("the render worker's engine handshake", () => {
     const message = replyAt(0);
     expect(message.id).toBe(7);
     expect(message.error).toContain("render engine failed to instantiate");
+  }, 120000);
+
+  it("posts a render failure rather than throwing out of onmessage", async () => {
+    // The case that used to take the whole slot down. `serve()` had no `try`, so
+    // a throw escaped `onmessage`, fired the worker's `error` event, and the
+    // host terminated the worker and rejected EVERY tile it was holding - one
+    // bad request failing every good one beside it, under a constant string
+    // that named none of them.
+    //
+    // A `startingLakePositions` override is simply the cheapest way to make
+    // `runRenderRequest` throw. The claim here is about the worker, not about
+    // that particular refusal.
+    const w = await loadWorker();
+    const module = await WebAssembly.compile(readFileSync(wasmPath));
+    w.onmessage?.({ data: { kind: "engine", module } });
+
+    expect(() => {
+      w.onmessage?.({ data: { ...request(11), startingLakePositions: [{ x: 300, y: 300 }] } });
+    }, "a failing render must not escape onmessage").not.toThrow();
+
+    expect(posted).toHaveLength(1);
+    const message = replyAt(0);
+    expect(message.id, "the error must carry the id, or the host strands it").toBe(11);
+    expect(message.error, "the REAL cause, not a constant").toBe(
+      STARTING_LAKE_POSITIONS_UNSUPPORTED,
+    );
+    expect(posted[0]?.transfer, "no buffer, so nothing to transfer").toBeUndefined();
+  }, 120000);
+
+  it("keeps serving its other requests after one of them fails", async () => {
+    // The whole point of catching rather than crashing: the sibling tiles in
+    // the same slot are unaffected. Before the wrap the second request never
+    // got an answer at all, because the worker was gone by the time it arrived.
+    const w = await loadWorker();
+    const module = await WebAssembly.compile(readFileSync(wasmPath));
+    w.onmessage?.({ data: { kind: "engine", module } });
+
+    w.onmessage?.({ data: { ...request(12), startingLakePositions: [] } });
+    w.onmessage?.({ data: request(13) });
+
+    expect(posted).toHaveLength(2);
+    expect(replyAt(0).id).toBe(12);
+    expect(replyAt(0).error).toBe(STARTING_LAKE_POSITIONS_UNSUPPORTED);
+    expect(replyAt(1).id).toBe(13);
+    expect(replyAt(1).error, "the good request must be a result, not an error").toBeUndefined();
+    expect(pixelsOf(1).length).toBe(12 * 9 * 4);
   }, 120000);
 });

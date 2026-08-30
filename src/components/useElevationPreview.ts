@@ -128,6 +128,25 @@ export function createWorkerHost(
     }
   }
 
+  /**
+   * The cause out of a worker `error` event.
+   *
+   * This used to take no argument at all and substitute the constant below, so
+   * a worker that died of a bad import, a syntax error or an out-of-memory
+   * reported the same six words as one that died of anything else. `ErrorEvent`
+   * carries `message`; a worker whose script failed to LOAD reports an empty
+   * one, and a test's fake carries whatever it likes - both fall back to the
+   * bare constant rather than to an empty string, which would read as no error
+   * at all.
+   */
+  function workerErrorMessage(e: unknown): string {
+    const raw =
+      typeof e === "object" && e !== null && "message" in e
+        ? String((e as { message: unknown }).message)
+        : "";
+    return raw === "" ? "Elevation render worker error" : `Elevation render worker error: ${raw}`;
+  }
+
   function dropWorker(slot: number) {
     const w = workers[slot];
     workers[slot] = null;
@@ -157,9 +176,9 @@ export function createWorkerHost(
     };
     // A worker crash would otherwise leave its tiles' promises pending forever.
     // Every tile this slot holds fails, not just the newest.
-    w.onerror = () => {
+    w.onerror = (e: unknown) => {
       dropWorker(slot);
-      rejectSlot(slot, "Elevation render worker error");
+      rejectSlot(slot, workerErrorMessage(e));
     };
     workers[slot] = w;
     return w;
