@@ -9,7 +9,7 @@
  */
 import type { AutoplaceSetting } from "./types";
 import type { VulcanusResourceControls, VulcanusResourceLevers } from "../noise/eval/ctx";
-import type { ResourceControlLevers } from "../noise/resources/resolveResource";
+import type { ResourceControlLevers } from "../noise/resources/resourceCatalog";
 import { RESOURCE_CATALOG } from "../noise/resources/resourceCatalog";
 
 const DEFAULT_LEVERS: ResourceControlLevers = { frequency: 1, size: 1, richness: 1 };

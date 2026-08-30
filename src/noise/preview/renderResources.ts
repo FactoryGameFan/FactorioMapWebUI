@@ -66,13 +66,9 @@ import {
   makePlacementSet,
 } from "../placement/placementRoll";
 import type { PlacementCollisionBox } from "../placement/placementRoll";
-import { RESOURCE_CATALOG } from "../resources/resourceCatalog";
+import { RESOURCE_CATALOG, type ResourceControlLevers } from "../resources/resourceCatalog";
 import { makeResourcePatches } from "../resources/resourcePatches";
-import {
-  comparePriority,
-  makeResourceResolver,
-  type ResourceControlLevers,
-} from "../resources/resolveResource";
+import { comparePriority, makeResourceResolver } from "../resources/resolveResource";
 import { makeTileResolver } from "../tiles/resolve";
 import { paintMark } from "./renderCliffs";
 

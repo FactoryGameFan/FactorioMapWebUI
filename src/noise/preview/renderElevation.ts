@@ -1,10 +1,7 @@
 import { makeElevationLakes, type ElevationLakesParams } from "../expressions/elevationLakes";
 import { makeElevationNauvis } from "../expressions/elevationNauvis";
 import { makeElevationIsland } from "../expressions/elevationIsland";
-
-/** RGBA for water (elevation < 0) and land, as [r, g, b, a] byte tuples. */
-export const WATER_RGBA: [number, number, number, number] = [40, 90, 150, 255];
-export const LAND_RGBA: [number, number, number, number] = [70, 120, 60, 255];
+import { LAND_RGBA, WATER_RGBA } from "./palette";
 
 export interface RenderElevationOptions {
   /** Map seed (= map_seed / seed0). Callers resolve a null "random" seed first. */

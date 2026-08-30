@@ -17,7 +17,7 @@ import {
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
-import { LAND_RGBA, WATER_RGBA } from "../src/noise/preview/renderElevation";
+import { LAND_RGBA, WATER_RGBA } from "../src/noise/preview/palette";
 
 /**
  * Tier 3 for the ELEVATION view (#227): the Rust engine's elevation render

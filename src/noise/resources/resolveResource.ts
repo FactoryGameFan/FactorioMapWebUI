@@ -22,14 +22,11 @@
  */
 import type { Point } from "../distanceFromNearestPoint";
 import { makeResourcePatches, type ResourcePatches } from "./resourcePatches";
-import { RESOURCE_CATALOG, type ResourceParams } from "./resourceCatalog";
-
-/** control:<res>:frequency|size|richness levers for one resource. */
-export interface ResourceControlLevers {
-  readonly frequency: number;
-  readonly size: number;
-  readonly richness: number;
-}
+import {
+  RESOURCE_CATALOG,
+  type ResourceControlLevers,
+  type ResourceParams,
+} from "./resourceCatalog";
 
 export interface ResourceResolverCtx {
   readonly seed0: number;

@@ -19,7 +19,7 @@ import {
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
-import { TREE_MAP_COLOR } from "../src/noise/preview/renderTrees";
+import { TREE_MAP_COLOR } from "../src/noise/preview/palette";
 import { planTiles } from "../src/noise/preview/tiling";
 
 /**
