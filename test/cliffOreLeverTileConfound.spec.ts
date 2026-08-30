@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import lever from "./fixtures/oracle-vulcanus-tile-lever.seed123456.json";
-import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/preview/renderVulcanusCliffs";
+import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/cliffs/cliffCatalog";
 import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
 import { DEFAULT_VULCANUS_RESOURCE_CONTROLS } from "../src/noise/eval/ctx";
 

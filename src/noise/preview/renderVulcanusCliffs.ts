@@ -25,6 +25,7 @@
 import type { EvalCtxInput } from "../eval/ctx";
 import { withCtxDefaults } from "../eval/ctx";
 import { makeCliffPlacementFromFields } from "../cliffs/cliffPlacement";
+import { VULCANUS_CLIFF_BLOCKING_TILES } from "../cliffs/cliffCatalog";
 import {
   VULCANUS_CLIFF_ELEVATION_0,
   VULCANUS_CLIFF_ELEVATION_INTERVAL,
@@ -39,20 +40,6 @@ import {
   makeVulcanusTileResolver,
   makeVulcanusTileResolverFrom,
 } from "../tiles/vulcanusCatalog";
-
-/**
- * The Vulcanus tiles whose `CollisionMask` shares a layer with the cliff's, so a
- * cliff whose collision box touches one is never placed.
- *
- * `tile_collision_masks.lava()` sets `water_tile = true` and the cliff mask
- * holds `water_tile`; no other Vulcanus tile does. Notably
- * `volcanic-jagged-ground` - the tile the ore patches paint, which the Lua
- * itself labels "CLIFF TILE" - is `tile_collision_masks.ground()`, which the
- * cliff mask does not touch, so ore does NOT exclude cliffs. That distinction is
- * the whole reason the earlier ore-separation work correctly found no exclusion
- * rule while this one exists.
- */
-export const VULCANUS_CLIFF_BLOCKING_TILES: ReadonlySet<string> = new Set(["lava", "lava-hot"]);
 
 export interface RenderVulcanusCliffsOptions {
   readonly seed0: number;

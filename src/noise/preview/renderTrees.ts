@@ -41,9 +41,8 @@
  */
 import { WATER_TILE_COLORS } from "./renderResources";
 import { makeTreeDensity, type TreeFieldParams } from "../trees/treeField";
+import { TREE_MAP_COLOR } from "./palette";
 
-/** `{0.19, 0.39, 0.19}` in 8-bit - utility-constants.lua:201. */
-export const TREE_MAP_COLOR: readonly [number, number, number] = [48, 99, 48];
 /** The alpha component of the same constant: fully-forested tiles blend at 40%. */
 export const TREE_MAX_ALPHA = 0.4;
 

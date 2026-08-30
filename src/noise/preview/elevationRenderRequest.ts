@@ -6,7 +6,7 @@ import type { EnemyControls } from "../enemies/enemyCatalog";
 import type { Planet } from "../../model/planets";
 import { PLACEMENT_MARK_RADIUS_PX } from "../placement/placementRoll";
 import { NAUVIS_MAX_STARTING_POINTS } from "../wasm/request";
-import type { ResourceControlLevers } from "../resources/resolveResource";
+import type { ResourceControlLevers } from "../resources/resourceCatalog";
 import type { RockControls } from "../rocks/rockCatalog";
 import { renderCliffs } from "./renderCliffs";
 import { renderElevation } from "./renderElevation";

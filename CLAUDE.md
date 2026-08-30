@@ -1362,9 +1362,12 @@ Three traps that slice paid for, all transferable:
   guard, not the correctness gate.
 
 **One TypeScript file in a ported directory was ported for a reason that is not
-obvious.** `cliffConnections.ts` has **zero `src/` consumers** - only 23
-investigation specs import it - so that #84's cliff investigation can be run
-against the engine.
+obvious.** `cliffConnections.ts` has **zero consumers of any kind** since #360 deleted the
+23 investigation specs that imported it. It is kept as the human-readable
+reference `crates/fmw-noise/src/cliffs/connections.rs` cites as its source, so
+that #84's cliff investigation can still be run against the engine. The
+type-checker still covers it, because `tsconfig.json` includes `src/**/*` by
+glob rather than by reachability.
 
 #### The three tiers, and what each one cannot see
 
