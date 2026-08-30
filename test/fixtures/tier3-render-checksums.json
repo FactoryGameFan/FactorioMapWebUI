@@ -73,5 +73,33 @@
     "wide, offset | rocks": "0x9d67c26e606466f2",
     "wide, offset | terrain": "0x4babfc28a8b1e8c2",
     "wide, offset | trees": "0x98d9f0592e35f2af"
+  },
+  "vulcanus:render": {
+    "coarse, all four entries | resources": "0xed733e24441722d2",
+    "fine, far field | all": "0x8fddaf34cfe294b9",
+    "fine, far field | cliffs": "0xb82d2e38be144659",
+    "fine, far field | rocks": "0x060e9f2448decb11",
+    "fine, far field | terrain": "0x99448f85a6c82c51",
+    "fine, fractional origin | resources": "0xcd65b95f7a66a95d",
+    "routes all | all": "0x6f85c24f8f751e7c",
+    "routes cliffs | cliffs": "0x64487f9330ae3acd",
+    "routes resources | resources": "0x30e6f99f8120a068",
+    "routes rocks | rocks": "0x8c3b15b002ab2cc4",
+    "routes terrain | terrain": "0x30e6f99f8120a068",
+    "square at origin | all": "0x6f85c24f8f751e7c",
+    "square at origin | cliffs": "0x64487f9330ae3acd",
+    "square at origin | rocks": "0x8c3b15b002ab2cc4",
+    "square at origin | terrain": "0x30e6f99f8120a068",
+    "square on a coal patch | resources": "0x7f43991be2199bd6",
+    "tall, coarse | all": "0xa2a15e3cfbd84bf0",
+    "tall, coarse | cliffs": "0x4b4cbe1b6f0b52dc",
+    "tall, coarse | resources": "0x5905256a2edce517",
+    "tall, coarse | rocks": "0x6f6227bf751044da",
+    "tall, coarse | terrain": "0xec7b122399c8e8d3",
+    "wide, offset | all": "0xe0e4f025147ce7e2",
+    "wide, offset | cliffs": "0xb6e42d366a8884a0",
+    "wide, offset | resources": "0x380c73e2d55f5b91",
+    "wide, offset | rocks": "0x8842b641dd4c5f05",
+    "wide, offset | terrain": "0x909cf2ad51797bcb"
   }
 }
