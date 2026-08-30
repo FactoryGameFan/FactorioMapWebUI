@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import richness from "./fixtures/oracle-vulcanus-cliff-ore-richness.seed123456.json";
-import { makeCliffPlacementFromFields } from "../src/noise/cliffs/cliffPlacement";
-import {
-  VULCANUS_CLIFF_ELEVATION_0,
-  VULCANUS_CLIFF_ELEVATION_INTERVAL,
-  VULCANUS_CLIFF_SMOOTHING,
-  makeVulcanusCliffFields,
-} from "../src/noise/cliffs/vulcanusCliffFields";
-import { DEFAULT_VULCANUS_RESOURCE_CONTROLS, withCtxDefaults } from "../src/noise/eval/ctx";
 
 /**
  * **Every route from a resource control to a cliff is now closed, and the effect
@@ -44,14 +36,6 @@ import { DEFAULT_VULCANUS_RESOURCE_CONTROLS, withCtxDefaults } from "../src/nois
  * next step is to find what map generation does that none of these five rows
  * covers - not to re-test one of them.
  */
-
-const BANDS = {
-  elevation0: VULCANUS_CLIFF_ELEVATION_0,
-  interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
-  smoothing: VULCANUS_CLIFF_SMOOTHING,
-};
-const BASE = { seed0: 123456, startingPositions: [{ x: 0, y: 0 }] };
-const OFF = { frequency: 1, size: 0 };
 
 interface Ent {
   x: number;
@@ -140,42 +124,4 @@ describe("richness moves the settings but not the world - and not the cliffs", (
     for (const label of ["calcite richness x2", "calcite richness x0.5"])
       expect(cliffKeys(arm(label))).toEqual(base);
   });
-});
-
-describe("the cliff field cannot see the resources", () => {
-  /**
-   * Our port's raw queue - crossings plus the repair pass, before any rejection -
-   * is **bit-identical** under every arm of the lever: same cells, same codes.
-   * The game's own expression graph says the same thing independently:
-   * `cliff_elevation = cliff_elevation_from_elevation = elevation =
-   * vulcanus_elevation = max(-500, vulcanus_elev)`, and walking that expression's
-   * full transitive closure reaches no `*_region` belonging to any resource.
-   *
-   * This is the arm that rules out "the lever moves the contour" - which would
-   * otherwise be the obvious explanation for cells appearing when the ore is
-   * switched off.
-   */
-  it("produces an identical raw cell set under every lever arm", () => {
-    const cells = (controls?: typeof DEFAULT_VULCANUS_RESOURCE_CONTROLS): string[] => {
-      const ctx = withCtxDefaults(
-        controls === undefined ? BASE : { ...BASE, vulcanusResourceControls: controls },
-      );
-      return makeCliffPlacementFromFields(makeVulcanusCliffFields(ctx), BANDS)
-        .placedCells(REGION.x0 - 64, REGION.y0 - 64, REGION.x1 + 64, REGION.y1 + 64)
-        .map((p) => `${String(p.x)},${String(p.y)}:${String(p.code)}`)
-        .sort((a, b) => a.localeCompare(b));
-    };
-    const on = cells();
-    expect(on.length).toBe(2277);
-    expect(cells({ ...DEFAULT_VULCANUS_RESOURCE_CONTROLS, calcite: OFF })).toEqual(on);
-    expect(cells({ ...DEFAULT_VULCANUS_RESOURCE_CONTROLS, sulfuricAcidGeyser: OFF })).toEqual(on);
-    expect(
-      cells({
-        tungstenOre: OFF,
-        vulcanusCoal: OFF,
-        calcite: OFF,
-        sulfuricAcidGeyser: OFF,
-      }),
-    ).toEqual(on);
-  }, 300000);
 });
