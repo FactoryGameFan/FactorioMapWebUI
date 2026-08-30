@@ -5101,6 +5101,201 @@ fn puts_every_nauvis_tile_where_the_game_puts_it_at_all_three_seeds() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// The native `expression_in_range` builtin, ported from
+// `test/expressionInRange.spec.ts` for #227.
+//
+// `tiles/expression_in_range.rs` has six tests, but all six assert shape on
+// hand-written inputs. **Nothing on this side read the oracle**, so
+// `oracle-expression-in-range.seed123456.json` was about to become an orphan
+// fixture - committed, version-pinned, and graded by nothing.
+//
+// The derived formula, RE'd from these sweeps (see
+// `docs/noise/expression-in-range-NOTES.md`):
+//
+//   m = min over dims i of min(value_i - from_i, to_i - value_i)
+//   result = min(peak_maximum, peak_multiplier * m)
+//
+// with no lower clamp, and `peak_maximum` possibly infinite.
+// ---------------------------------------------------------------------------
+
+use crate::tiles::expression_in_range::expression_in_range;
+
+/// One sweep's positions, scaled the way the capture's expression scales them.
+///
+/// The capture routes `(x/1000)` into the builtin, so a position of -1500 is a
+/// value of -1.5.
+fn eir_sweep(fixture: &Json, name: &str) -> (Vec<(f64, f64)>, Vec<f64>) {
+    let sweep = fixture.get("sweeps").get(name);
+    let positions = fixture_positions(sweep, "positions");
+    let values: Vec<f64> = sweep
+        .get("values")
+        .as_array()
+        .iter()
+        .map(Json::as_f64)
+        .collect();
+    assert_eq!(positions.len(), values.len(), "{name}: ragged sweep");
+    (positions, values)
+}
+
+#[test]
+fn reproduces_the_bounded_one_d_expression_in_range_sweep() {
+    // `expression_in_range(20, 1, (x/1000), -0.5, 0.5)`.
+    let fixture = load("test/fixtures/oracle-expression-in-range.seed123456.json");
+    assert_eq!(
+        fixture
+            .get("sweeps")
+            .get("oneD_20_1")
+            .get("expression")
+            .as_str(),
+        "expression_in_range(20, 1, (x/1000), -0.5, 0.5)",
+        "the sweep this test was written against"
+    );
+    let (positions, values) = eir_sweep(&fixture, "oneD_20_1");
+
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for ((x, _), want) in positions.iter().zip(values.iter()) {
+        let got = expression_in_range(20.0, 1.0, &[x / 1000.0], &[-0.5], &[0.5]);
+        if got == *want {
+            exact += 1;
+        }
+        worst = worst.max((got - want).abs());
+    }
+    // EXACT, not a bound. The assertion this replaces started life as a
+    // `toBeLessThan(8e-3)` ceiling that the wrong (f64) implementation passed
+    // comfortably - the real residual is about 9.5e-7, so that ceiling was some
+    // 8400x too loose and would have accepted almost any regression.
+    assert_eq!(exact, positions.len(), "bounded 1-D, worst {worst:e}");
+}
+
+#[test]
+fn reproduces_the_unbounded_one_d_sweep_and_does_not_clamp_in_range() {
+    // `expression_in_range(5, inf, (x/1000), -0.5, 0.5)`. The fixture stores the
+    // maximum as the STRING "inf", which is why this does not read it as a
+    // number.
+    let fixture = load("test/fixtures/oracle-expression-in-range.seed123456.json");
+    let sweep = fixture.get("sweeps").get("oneD_5_inf");
+    assert_eq!(
+        sweep.get("peakMaximum").as_str(),
+        "inf",
+        "the unbounded arm"
+    );
+    let (positions, values) = eir_sweep(&fixture, "oneD_5_inf");
+
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    let mut max_in_range = f64::NEG_INFINITY;
+    for ((x, _), want) in positions.iter().zip(values.iter()) {
+        let value = x / 1000.0;
+        let got = expression_in_range(5.0, f64::INFINITY, &[value], &[-0.5], &[0.5]);
+        if got == *want {
+            exact += 1;
+        }
+        worst = worst.max((got - want).abs());
+        if (-0.5..=0.5).contains(&value) {
+            max_in_range = max_in_range.max(got);
+        }
+    }
+    assert_eq!(exact, positions.len(), "unbounded 1-D, worst {worst:e}");
+
+    // The whole point of an infinite maximum: in-range values run past 1, peaking
+    // near 2.5 at the centre. A hard clamp to 1 would silently kill sand-1's
+    // coastal boost, and every value in this sweep would still be "close".
+    assert!(
+        max_in_range > 1.0,
+        "in-range peak {max_in_range} must exceed 1 - something clamped"
+    );
+}
+
+#[test]
+fn reproduces_the_two_d_expression_in_range_sweep_with_the_min_rule() {
+    // `expression_in_range(20, 1, (x/1000), (y/1000), -0.5, -0.5, 0.5, 0.5)`:
+    // the combination across dimensions is a min, not a product or a sum.
+    let fixture = load("test/fixtures/oracle-expression-in-range.seed123456.json");
+    let (positions, values) = eir_sweep(&fixture, "twoD");
+
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for ((x, y), want) in positions.iter().zip(values.iter()) {
+        let got = expression_in_range(
+            20.0,
+            1.0,
+            &[x / 1000.0, y / 1000.0],
+            &[-0.5, -0.5],
+            &[0.5, 0.5],
+        );
+        if got == *want {
+            exact += 1;
+        }
+        worst = worst.max((got - want).abs());
+    }
+    assert_eq!(exact, positions.len(), "2-D, worst {worst:e}");
+}
+
+#[test]
+fn the_pre_f32_f64_arithmetic_is_rejected_by_the_bounded_sweep() {
+    // **The f64 form must FAIL the fixture**, or the three tests above are just
+    // recording whatever the implementation happens to do. Same guard shape as
+    // `fast_approx`'s, and it matters more here because the exact assertions
+    // replaced a bound the f64 form passed.
+    let fixture = load("test/fixtures/oracle-expression-in-range.seed123456.json");
+    let (positions, values) = eir_sweep(&fixture, "oneD_20_1");
+
+    let eir_f64 = |pm: f64, pmax: f64, value: f64, from: f64, to: f64| {
+        let m = (value - from).min(to - value);
+        pmax.min(pm * m)
+    };
+
+    let mut wrong = 0usize;
+    for ((x, _), want) in positions.iter().zip(values.iter()) {
+        #[allow(clippy::cast_possible_truncation)]
+        let got = eir_f64(20.0, 1.0, x / 1000.0, -0.5, 0.5) as f32;
+        if got != *want as f32 {
+            wrong += 1;
+        }
+    }
+    // Frozen rather than "more than ten": a number that moves is a finding.
+    assert_eq!(wrong, 34, "positions where f64 arithmetic disagrees");
+}
+
+#[test]
+fn matches_the_hand_derived_formula_for_sand_ones_asymmetric_shape() {
+    // Sand-1's real production call is
+    // `expression_in_range(5, inf, elevation, aux, -1.5, 0.5, 1.5, 1)`, and no
+    // oracle sweep covers that shape - every captured sweep uses symmetric
+    // ranges on both axes. So this is a FORMULA-SHAPE guard, not an oracle test:
+    // which axis drives the min, and that an infinite maximum does not clamp.
+    //
+    // The tolerance is 1e-6 rather than something tighter on purpose. The
+    // builtin rounds every step to f32, and intermediates like `1 - 1.2` are not
+    // representable there, so -1.0 comes back as -1.000000238418579. Asserting
+    // the exact f32 result would mean recomputing the function inside the test
+    // and checking it against itself. Bit-exactness is the three sweeps above.
+    let eir =
+        |values: &[f64]| expression_in_range(5.0, f64::INFINITY, values, &[-1.5, 0.5], &[1.5, 1.0]);
+    let close = |got: f64, want: f64, what: &str| {
+        assert!(
+            (got - want).abs() < 1e-6,
+            "{what}: {got} is not within 1e-6 of {want}"
+        );
+    };
+
+    // Inside both ranges: elev 0 is 1.5 from its edge, aux 0.75 is 0.25 from
+    // its. m = 0.25, so the result is 1.25 - past 1, and not clamped.
+    close(eir(&[0.0, 0.75]), 1.25, "inside both");
+    assert!(
+        eir(&[0.0, 0.75]) > 1.0,
+        "an infinite maximum must not clamp"
+    );
+
+    // Outside on aux only: min(0.7, -0.2) = -0.2 drives it.
+    close(eir(&[0.0, 1.2]), -1.0, "outside on aux");
+
+    // Outside on elev only: min(3.5, -0.5) = -0.5 drives it.
+    close(eir(&[2.0, 0.75]), -2.5, "outside on elev");
+}
+
 /// The capture-grid snap is INERT on these three fixtures, and that is measured
 /// rather than assumed.
 ///
