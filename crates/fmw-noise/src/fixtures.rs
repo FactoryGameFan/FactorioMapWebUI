@@ -6068,6 +6068,7 @@ use crate::enemies::catalog::{
     ENEMY_PLACEMENT_CAP,
 };
 use crate::enemies::field::{EnemyBaseField, EnemyFieldParams};
+use crate::eval::math::min2;
 
 #[test]
 fn reproduces_the_games_enemy_base_field_at_both_seeds() {
@@ -6199,6 +6200,78 @@ fn the_enemy_fixture_is_mostly_basement_so_the_probability_would_grade_nothing()
             .filter(|(x, y)| field.probability(snap_coord(*x), snap_coord(*y)) > 0.0)
             .count();
         assert_eq!(ours, want_positive, "seed {seed} positive ported values");
+    }
+}
+
+#[test]
+fn the_port_and_the_game_never_straddle_the_footprint_cut() {
+    // The half of `test/enemyBaseField.spec.ts` that `worstAbs`/`worstRel` could
+    // not see, ported here for #227 before that spec goes with
+    // `src/noise/enemies/enemyBaseField.ts`.
+    //
+    // Both of those are aggregates. A residual small enough to pass them can
+    // still put the port on the far side of a cut from the game, and a cut is
+    // what the overlay actually does with this field. `PROBE_CUT` was
+    // `ENEMY_FOOTPRINT_THRESHOLD` until the overlay moved from thresholding the
+    // probability field to rolling against it, so it is a decision-boundary
+    // probe rather than a live threshold - the value it takes matters less than
+    // that some cut through the live part of the range is graded at all.
+    const PROBE_CUT: f64 = 0.05;
+    let in_footprint = |v: f64| min2(v, ENEMY_PLACEMENT_CAP) >= PROBE_CUT;
+
+    let fixture = load_captured_at("test/fixtures/oracle-enemy-base.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+
+    // (seed, positions inside the cut). Measured, not chosen.
+    let expected: [(u32, usize); 2] = [(123_456, 39), (777_771, 37)];
+    for (case, &(seed, want_inside)) in fixture.get("cases").as_array().iter().zip(expected.iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let field = EnemyBaseField::new(&EnemyFieldParams::defaults(seed));
+        let values = case.get("values").as_array();
+
+        let mut disagreements = 0usize;
+        let mut inside = 0usize;
+        let mut margin = f64::INFINITY;
+        for (i, (x, y)) in positions.iter().enumerate() {
+            let want = values[i].as_f64();
+            let port = f64::from(field.field(snap_coord(*x), snap_coord(*y)) as f32);
+            if in_footprint(port) != in_footprint(want) {
+                disagreements += 1;
+            }
+            if in_footprint(want) {
+                inside += 1;
+            }
+            margin = margin
+                .min((min2(want, ENEMY_PLACEMENT_CAP) - PROBE_CUT).abs())
+                .min((min2(port, ENEMY_PLACEMENT_CAP) - PROBE_CUT).abs());
+        }
+
+        assert_eq!(
+            disagreements, 0,
+            "seed {seed}: port and game fall on opposite sides of the cut"
+        );
+
+        // Anti-vacuity, and it is the reason this is not a one-liner: the cut
+        // has to actually separate this fixture. A port that returned a
+        // constant would satisfy the line above on its own.
+        assert_eq!(
+            inside,
+            want_inside,
+            "seed {seed}: positions inside the cut, of {}",
+            positions.len()
+        );
+        assert!(
+            inside > 0 && inside < positions.len(),
+            "seed {seed}: the cut does not separate"
+        );
+
+        // And no value sits near the cut, so the f32 read above cannot be what
+        // decides a side. Without this the zero above could be luck.
+        assert!(
+            margin > 1e-3,
+            "seed {seed}: a value sits {margin:e} from the cut - rounding could flip it"
+        );
     }
 }
 
