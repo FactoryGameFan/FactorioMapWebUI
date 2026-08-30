@@ -1,4 +1,24 @@
 {
+  "elevation:render": {
+    "island lake 64 @1 | elevation": "0x705be16f42169d2d",
+    "island spawn 128 @1 | elevation": "0xf8f955b5a038296e",
+    "island spawn 128 @32 | elevation": "0xdd319820379b2e84",
+    "island spawn 128 @8 | elevation": "0x0f588bf1aa0711ae",
+    "lakes lake 64 @1 | elevation": "0x705be16f42169d2d",
+    "lakes spawn 128 @1 | elevation": "0xf8f955b5a038296e",
+    "lakes spawn 128 @32 | elevation": "0xda7781d281e03446",
+    "lakes spawn 128 @8 | elevation": "0xb9478b2b6f2f4a26",
+    "moved spawn on lakes | elevation": "0x926c6f20b05b5144",
+    "nauvis lake 64 @1 | elevation": "0x306d4577830cd30d",
+    "nauvis spawn 128 @1 | elevation": "0xfb40fe8e00f73134",
+    "nauvis spawn 128 @32 | elevation": "0xeb8811843a689394",
+    "nauvis spawn 128 @8 | elevation": "0xf19ec1ff6fe1cf26",
+    "segmentationMultiplier 2 on island | elevation": "0xc7c4c3dbc3b14a6c",
+    "serves island | elevation": "0x0f588bf1aa0711ae",
+    "serves lakes | elevation": "0xb9478b2b6f2f4a26",
+    "serves nauvis | elevation": "0xf19ec1ff6fe1cf26",
+    "waterLevel 20 on lakes | elevation": "0xab0e1e70e3036d46"
+  },
   "nauvis:render": {
     "all six, far | all": "0xa20d3bd22615320e",
     "all six, far | resources": "0x233dc5950c87e4ee",

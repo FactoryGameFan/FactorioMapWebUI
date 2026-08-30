@@ -1,6 +1,16 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import {
+  RECORDING,
+  consultedCount,
+  expectFrozen,
+  expectRecordedRows,
+  flushRecording,
+  foldPixels,
+  frozenCount,
+} from "./tier3Frozen";
 
 import { compileEngine, instantiateEngine, renderThroughWasm } from "../src/noise/wasm/engine";
 import {
@@ -89,6 +99,42 @@ const WINDOWS: readonly Window[] = [
 
 const MAP_TYPES = ["lakes", "nauvis", "island"] as const;
 
+/**
+ * The tier-3 freeze section for this spec. See `tier3Frozen.ts`.
+ *
+ * The last of the three render specs to be frozen. Its TypeScript arm is
+ * `pixels(req)` with the engine left off; #227 deletes what that reaches, after
+ * which it would be the same code as the wasm arm and every comparison here
+ * would pass while grading nothing.
+ */
+const SECTION = "elevation:render";
+
+/**
+ * Rows this spec must record, as a literal.
+ *
+ * 12 byte-identity (3 map types x 4 windows) + 3 direct-module SERVES + 3
+ * lever and spawn cases.
+ *
+ * The `startingLakePositions` block is NOT counted, and deliberately: see the
+ * note on it below.
+ */
+const ROWS = 18;
+
+expectRecordedRows(SECTION, ROWS);
+afterAll(flushRecording);
+
+/**
+ * Freeze one render, and compare the two arms while both exist.
+ *
+ * **The map type has to be in the label.** The byte-identity block is a
+ * `describe.each` over `MAP_TYPES`, so the same four window labels come round
+ * three times; keyed on the window alone, the three trees would overwrite each
+ * other and the section would hold 4 rows where 12 ran.
+ */
+function freeze(label: string, name: string, wasm: ArrayLike<number>, ts: ArrayLike<number>): void {
+  expectFrozen(SECTION, label, name, foldPixels(wasm), foldPixels(ts));
+}
+
 function request(
   w: Window,
   mapType: (typeof MAP_TYPES)[number],
@@ -144,6 +190,7 @@ describe.each(MAP_TYPES)(
         const ts = pixels(req);
         expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
         expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+        freeze(`${mapType} ${w.label}`, "elevation", wasm, ts);
       }
     }, 300000);
 
@@ -229,6 +276,10 @@ describe("the module SERVES the elevation views rather than the gate falling bac
       const ts = pixels(request(w, mapType));
       expect(direct.length, "module returned no pixels").toBe(w.width * w.height * 4);
       expect(Array.from(direct), `${mapType}: module vs TypeScript`).toEqual(Array.from(ts));
+      // Frozen on the DIRECT module render rather than the gated one, which is
+      // what makes this row worth keeping after the deletion: it pins the
+      // module's own answer for the view code, with no fallback in front of it.
+      freeze(`serves ${mapType}`, "elevation", direct, ts);
     },
     300000,
   );
@@ -260,12 +311,13 @@ describe("the elevation levers move both paths together", () => {
     // which is what the byte-identical arms above already say.
     const base = request(w, "lakes");
     const moved = request(w, "lakes", { waterLevel: 20 });
-    expect(Array.from(pixels(moved, e)), "wasm vs ts at waterLevel 20").toEqual(
-      Array.from(pixels(moved)),
-    );
-    expect(Array.from(pixels(moved, e)), "waterLevel moved nothing").not.toEqual(
+    const movedWasm = pixels(moved, e);
+    const movedTs = pixels(moved);
+    expect(Array.from(movedWasm), "wasm vs ts at waterLevel 20").toEqual(Array.from(movedTs));
+    expect(Array.from(movedWasm), "waterLevel moved nothing").not.toEqual(
       Array.from(pixels(base, e)),
     );
+    freeze("waterLevel 20 on lakes", "elevation", movedWasm, movedTs);
   }, 300000);
 
   it("segmentationMultiplier moves the render, and identically on both paths", async () => {
@@ -275,15 +327,16 @@ describe("the elevation levers move both paths together", () => {
     // and it is also the one whose divide could land twice.
     const base = request(w, "island");
     const moved = request(w, "island", { segmentationMultiplier: 2 });
+    const movedWasm = pixels(moved, e);
+    const movedTs = pixels(moved);
     // Island quarters segmentation inside `to_island`. A path that applied the
     // divide twice, or skipped it, still renders - so the two-path comparison
     // under a MOVED lever is what grades it, not the default render.
-    expect(Array.from(pixels(moved, e)), "wasm vs ts at segmentation 2").toEqual(
-      Array.from(pixels(moved)),
-    );
-    expect(Array.from(pixels(moved, e)), "segmentation moved nothing").not.toEqual(
+    expect(Array.from(movedWasm), "wasm vs ts at segmentation 2").toEqual(Array.from(movedTs));
+    expect(Array.from(movedWasm), "segmentation moved nothing").not.toEqual(
       Array.from(pixels(base, e)),
     );
+    freeze("segmentationMultiplier 2 on island", "elevation", movedWasm, movedTs);
   }, 300000);
 
   it("a moved spawn renders THROUGH the engine, byte-identical to the TypeScript", async () => {
@@ -293,12 +346,13 @@ describe("the elevation levers move both paths together", () => {
     const w2: Window = { ...w, originX: 436, originY: -564 };
     const moved = request(w2, "lakes", { startingPositions: [{ x: 500, y: -500 }] });
     const origin = request(w2, "lakes");
-    expect(Array.from(pixels(moved, e)), "wasm vs ts at a moved spawn").toEqual(
-      Array.from(pixels(moved)),
-    );
-    expect(Array.from(pixels(moved, e)), "the spawn moved nothing").not.toEqual(
+    const movedWasm = pixels(moved, e);
+    const movedTs = pixels(moved);
+    expect(Array.from(movedWasm), "wasm vs ts at a moved spawn").toEqual(Array.from(movedTs));
+    expect(Array.from(movedWasm), "the spawn moved nothing").not.toEqual(
       Array.from(pixels(origin, e)),
     );
+    freeze("moved spawn on lakes", "elevation", movedWasm, movedTs);
   }, 300000);
 });
 
@@ -317,6 +371,16 @@ describe("a caller-supplied startingLakePositions stays on the TypeScript path",
   const w = WINDOWS[0];
   const explicit = [{ x: 300, y: 300 }];
 
+  // **Deliberately NOT frozen**, for the reason the Nauvis spec's ABI-cap test
+  // is not: both arms here are the TypeScript renderer - that is the whole
+  // claim - so a frozen row would capture an image the engine can never
+  // reproduce, and would fail the moment the carve-out goes.
+  //
+  // Unlike the spawn cap, this carve-out is documented as a CORRECTNESS one
+  // rather than a speed one, so #227 has to decide what a caller-supplied
+  // `startingLakePositions` means once there is no TypeScript path to fall back
+  // to. The app never sets it; only a test does.
+
   it("renders the TypeScript answer even with a live engine", async () => {
     const e = await engine();
     const req = request(w, "lakes", { startingLakePositions: explicit });
@@ -330,4 +394,19 @@ describe("a caller-supplied startingLakePositions stays on the TypeScript path",
       Array.from(pixels(derived)),
     );
   }, 300000);
+});
+
+describe("the tier-3 freeze covers this spec rather than merely existing", () => {
+  // Declared last on purpose: tests run in declaration order within a file, so
+  // this sees every `freeze` call the run made. Both numbers are asserted
+  // because they fail on opposite mistakes - the table count catches a
+  // re-record that wrote a different surface, the consulted count catches a
+  // call site that stopped asking.
+  //
+  // On the two specs frozen before this one, deleting a `freeze` call site left
+  // every other test in the file GREEN. This is what sees it.
+  it.skipIf(RECORDING)("consults every frozen row exactly once", () => {
+    expect(frozenCount(SECTION), "rows in the committed table").toBe(ROWS);
+    expect(consultedCount(SECTION), "distinct rows this run looked up").toBe(ROWS);
+  });
 });
