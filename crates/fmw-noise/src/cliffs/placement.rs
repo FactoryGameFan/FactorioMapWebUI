@@ -842,6 +842,227 @@ mod tests {
         );
     }
 
+    use crate::cliffs::fields::{CliffFieldParams, NauvisCliffFields};
+    use crate::cliffs::vulcanus_fields::{
+        VulcanusCliffFields, VULCANUS_CLIFF_ELEVATION_0, VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        VULCANUS_CLIFF_SMOOTHING,
+    };
+    use crate::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
+
+    // -----------------------------------------------------------------------
+    // `fixImpossibleCells`, ported from `test/fixImpossibleCellsRetry.spec.ts`
+    // and `test/cliffFixImpossibleCells.spec.ts` for #227.
+    //
+    // Two halves that the issue's port-first list merged into one entry, because
+    // both die with `src/noise/cliffs/cliffPlacement.ts`:
+    //
+    //   1. the RETRY branch, which is implemented here and reached by nothing;
+    //   2. the on/off comparison, whose headline result is a NEGATIVE one.
+    // -----------------------------------------------------------------------
+
+    /// A cell's code from the two vertical and two horizontal edge registers.
+    fn code_at(v: &[i8], h: &[i8], n: usize, cx: usize, cy: usize) -> u8 {
+        cell_code(
+            v[cy * (n + 1) + cx],
+            v[cy * (n + 1) + cx + 1],
+            h[cy * n + cx],
+            h[(cy + 1) * n + cx],
+        )
+    }
+
+    /// A corner cell whose only crossings are the two chunk-boundary edges it is
+    /// forbidden to clear.
+    ///
+    /// `L = +1`, `T = -1` gives code `0x4C`, which is not a placing code. `R` and
+    /// `B` are zero, so the L/T/R/B search finds nothing clearable and the first
+    /// pass is stuck - which is the only way to reach the retry.
+    fn stuck_corner() -> (Vec<i8>, Vec<i8>) {
+        let n = CHUNK_CELLS;
+        let mut v = vec![0i8; (n + 1) * n];
+        let mut h = vec![0i8; n * (n + 1)];
+        v[0] = 1;
+        h[0] = -1;
+        (v, h)
+    }
+
+    /// Every cell of the chunk is legal: either empty or a placing code.
+    fn assert_all_legal(v: &[i8], h: &[i8], n: usize) {
+        for cy in 0..n {
+            for cx in 0..n {
+                let code = code_at(v, h, n, cx, cy);
+                assert!(
+                    code == 0 || is_cliff_placed(code),
+                    "cell ({cx},{cy}) left illegal: {code:#04x}"
+                );
+            }
+        }
+    }
+
+    /// The retry exists, and the cell it is reached through really is stuck.
+    ///
+    /// `fix_impossible_cells_sweep` sets its own retry flag: on reaching a cell
+    /// it cannot fix it restarts the whole pass, this time first zeroing the
+    /// eight outer edges of the chunk's four corner cells, and a second failure
+    /// abandons the chunk. The port did not have this until 2026-07-30 (#18),
+    /// because the `bool` parameter read like a caller-supplied mode and
+    /// `crossingsForChunk` passes `false`.
+    ///
+    /// **These tests exist because the integration fixtures barely reach it.**
+    /// Over the committed captures the retry fires once in 512 chunks - one
+    /// chunk of Vulcanus `[1500,1500]`, zero across both Nauvis seeds and the
+    /// other two Vulcanus regions - and changes no placed cell. Real behaviour,
+    /// worth having right, and nowhere near #18's residual: do not read it as a
+    /// fix for that.
+    #[test]
+    fn the_stuck_corner_really_is_stuck_and_illegal() {
+        // Or none of the retry tests below prove anything.
+        let (v, h) = stuck_corner();
+        let n = CHUNK_CELLS;
+        let code = code_at(&v, &h, n, 0, 0);
+        assert_eq!(code, 0x4C, "the constructed code");
+        assert!(!is_cliff_placed(code), "0x4C must not be a placing code");
+        // Both crossings are on the chunk boundary: L at cx 0, T at cy 0.
+        // Neither is clearable, and the other two edges are already zero.
+        assert_eq!(v[1], 0, "R must be clear");
+        assert_eq!(h[n], 0, "B must be clear");
+    }
+
+    #[test]
+    fn the_retry_zeroes_the_corner_cells_outer_edges_and_makes_it_legal() {
+        let (mut v, mut h) = stuck_corner();
+        let n = CHUNK_CELLS;
+        fix_impossible_cells_sweep(&mut v, &mut h, n, n, SWEEP_EDGE_ORDER_LTRB);
+        // The retry's corner step is the only thing that can clear these two.
+        assert_eq!(v[0], 0, "L must be cleared");
+        assert_eq!(h[0], 0, "T must be cleared");
+        assert_eq!(code_at(&v, &h, n, 0, 0), 0, "the cell must end empty");
+        assert_all_legal(&v, &h, n);
+    }
+
+    #[test]
+    fn the_corner_step_does_not_fire_when_the_pass_completes_normally() {
+        // It clears eight edges unconditionally, so running it on a healthy
+        // chunk would delete real cliffs. `L = +1`, `T = +1` is code 0x44, which
+        // IS a placing code, so the sweep has nothing to do anywhere.
+        let n = CHUNK_CELLS;
+        let mut v = vec![0i8; (n + 1) * n];
+        let mut h = vec![0i8; n * (n + 1)];
+        v[0] = 1;
+        h[0] = 1;
+        assert!(
+            is_cliff_placed(code_at(&v, &h, n, 0, 0)),
+            "0x44 must be a placing code, or this grades the wrong branch"
+        );
+        fix_impossible_cells_sweep(&mut v, &mut h, n, n, SWEEP_EDGE_ORDER_LTRB);
+        assert_eq!(v[0], 1, "L must survive");
+        assert_eq!(h[0], 1, "T must survive");
+    }
+
+    #[test]
+    fn the_retry_fixes_two_stuck_corners_in_one_restart() {
+        // The restart re-sweeps the arrays AS ALREADY MUTATED by the abandoned
+        // pass rather than starting from the raw crossings, and one retry clears
+        // all eight corner edges - so both are fixed inside the single permitted
+        // restart. A second failure would abandon the chunk.
+        let n = CHUNK_CELLS;
+        let mut v = vec![0i8; (n + 1) * n];
+        let mut h = vec![0i8; n * (n + 1)];
+        v[0] = 1;
+        h[0] = -1;
+        v[(n - 1) * (n + 1) + n] = 1;
+        h[n * n + (n - 1)] = -1;
+        assert!(
+            !is_cliff_placed(code_at(&v, &h, n, n - 1, n - 1)),
+            "the second corner must start stuck too"
+        );
+        fix_impossible_cells_sweep(&mut v, &mut h, n, n, SWEEP_EDGE_ORDER_LTRB);
+        assert_all_legal(&v, &h, n);
+    }
+
+    #[test]
+    fn the_sweep_defaults_to_on_because_the_game_always_runs_it() {
+        // `crossingsForChunk` calls it unconditionally at its tail, so an
+        // omitted option must mean enabled. Contrast `smoothing`, which defaults
+        // to Nauvis's 0 rather than the prototype's 1 - the two deliberately
+        // default differently and it would be easy to "tidy" them into agreeing.
+        let d = CliffBands::default();
+        assert!(d.fix_impossible_cells, "the sweep must default to on");
+        assert_eq!(d.smoothing, 0.0, "smoothing must NOT follow it to 1");
+    }
+
+    /// The placed cells of one Nauvis chunk range, with the sweep on or off.
+    fn nauvis_cells(seed0: u32, fix: bool) -> Vec<(u64, u64, u8)> {
+        let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(seed0));
+        let bands = CliffBands {
+            fix_impossible_cells: fix,
+            ..CliffBands::default()
+        };
+        let mut cells: Vec<(u64, u64, u8)> = CliffPlacement::new(&fields, bands)
+            .placed_cells(512.0, 512.0, 1024.0, 1024.0)
+            .iter()
+            .map(|c| (c.x.to_bits(), c.y.to_bits(), c.code))
+            .collect();
+        cells.sort_unstable();
+        cells
+    }
+
+    #[test]
+    fn the_sweep_does_not_change_nauvis_by_a_single_cell() {
+        // **The headline result is a NEGATIVE one**, pinned so it cannot quietly
+        // revert to folklore: this pass does not move Nauvis at all, which
+        // falsifies the claim carried in `cliffs-NOTES.md` from 2026-07-20 that
+        // Nauvis's ~6% cliff residual "is `fixImpossibleCells`". It is not.
+        //
+        // Nauvis's `cliffiness_nauvis` is a hard 0-or-10 gate, so the crossing
+        // configurations it produces are already legal and the sweep finds
+        // nothing to repair. If this ever fails, that conclusion needs
+        // revisiting - it does not mean the port drifted.
+        // The counts are frozen beside the comparison because two EMPTY lists
+        // also compare equal. Without them a placement that stopped placing
+        // anything would satisfy this test perfectly.
+        for (seed, want) in [(123_456u32, 282usize), (777_771, 52)] {
+            let on = nauvis_cells(seed, true);
+            assert_eq!(on.len(), want, "seed {seed}: cells placed");
+            assert_eq!(
+                on,
+                nauvis_cells(seed, false),
+                "seed {seed}: the sweep moved Nauvis"
+            );
+        }
+    }
+
+    #[test]
+    fn the_sweep_does_fire_on_vulcanus_so_it_is_not_a_no_op_everywhere() {
+        // The necessary companion to the Nauvis test above: without it, "no
+        // change on Nauvis" would be equally consistent with the sweep doing
+        // nothing at all. Vulcanus's continuous `cliffiness_basic` produces
+        // configurations the orientation table rejects, and the sweep repairs
+        // them.
+        let ctx = crate::eval::ctx::EvalCtx::new(123_456);
+        let base = VulcanusBase::with_host_trig(&ctx);
+        let biomes = base.biomes_with_host_trig();
+        let stack = VulcanusStack::with_host_trig(&base, &biomes);
+        let fields = VulcanusCliffFields::new(&stack, 123_456);
+
+        let cells = |fix: bool| {
+            let bands = CliffBands {
+                elevation0: VULCANUS_CLIFF_ELEVATION_0,
+                interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+                smoothing: VULCANUS_CLIFF_SMOOTHING,
+                fix_impossible_cells: fix,
+                ..CliffBands::default()
+            };
+            let mut out: Vec<(u64, u64, u8)> = CliffPlacement::new(&fields, bands)
+                .placed_cells(0.0, 0.0, 256.0, 256.0)
+                .iter()
+                .map(|c| (c.x.to_bits(), c.y.to_bits(), c.code))
+                .collect();
+            out.sort_unstable();
+            out
+        };
+        assert_ne!(cells(true), cells(false), "the sweep changed nothing");
+    }
+
     /// An edge on the chunk's outer boundary is NOT clearable, which is what
     /// keeps the pass chunk-local and lets it run with no chunk-ordering
     /// dependence. A cell in the corner is therefore denied its first choice.
