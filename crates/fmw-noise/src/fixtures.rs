@@ -18,7 +18,7 @@ use crate::basis_gradient_table::{GRADIENT_X, GRADIENT_Y};
 use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
 use crate::eval::math::max2;
 use crate::test_json::{load, Json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Load a fixture and pin the game version its ground truth was captured from.
 ///
@@ -3704,7 +3704,10 @@ use crate::cliffs::catalog::{
     cliff_code_for_orientation, cliff_collision_tile_box, cliff_orientation_for_code,
     CLIFF_ORIENTATION_NAMES,
 };
-use crate::cliffs::connections::{apply_cliff_connections, ApplyCollision, CliffConnectionOptions};
+use crate::cliffs::connections::{
+    apply_cliff_connections, connected_sides, on_chunk_border, opposite_side, ApplyCollision,
+    CliffConnectionOptions, CLIFF_ORIENTATION_ENDS,
+};
 use crate::cliffs::placement::{
     CellRejection, CliffBands, CliffFields, CliffPlacement, PlacedCliffCell, TileCollision,
 };
@@ -6698,4 +6701,323 @@ fn the_spot_quantity_cube_is_powf_and_a_plain_product_would_diverge() {
         "powf vs a plain product: {differ} of {total} ({:.1}%)",
         fraction * 100.0
     );
+}
+
+// ---------------------------------------------------------------------------
+// #84 C1: the stage localisation, ported from
+// `test/cliffOreActsAtDestroyStage.spec.ts` before #227 deletes it.
+// ---------------------------------------------------------------------------
+
+/// Destroy exactly the cells named in `killed`, and only inside `region`.
+///
+/// This is the counterfactual instrument the localisation needs and
+/// [`OracleKill`] cannot give it. `OracleKill` derives its destruction set from
+/// the game's own cliffs, so it always destroys the same 225 cells. Here the set
+/// is handed in, which is what lets one cell be lifted out of it and the
+/// consequence measured.
+struct KillSet<'a> {
+    killed: &'a BTreeSet<(u64, u64)>,
+    /// `(x0, y0, x1, y1)`, half-open on the high edge as everywhere else here.
+    region: (f64, f64, f64, f64),
+}
+
+impl ApplyCollision for KillSet<'_> {
+    fn collides(&self, _orientation: u8, x: f64, y: f64) -> bool {
+        let (x0, y0, x1, y1) = self.region;
+        x >= x0 && x < x1 && y >= y0 && y < y1 && self.killed.contains(&(x.to_bits(), y.to_bits()))
+    }
+}
+
+/// One cell whose neighbour can tell destruction from non-generation.
+#[derive(Debug, PartialEq, Eq)]
+struct Decision {
+    cell: (u64, u64),
+    neighbour: (u64, u64),
+    /// Which resource's arm suppressed the cell.
+    cause: &'static str,
+    /// The name the game gave the NEIGHBOUR's orientation.
+    game: &'static str,
+    /// Whether the neighbour's facing end is gone in the game's own data.
+    end_gone: bool,
+}
+
+/// Does orientation `o` carry an end on `side`?
+fn has_end(o: u8, side: u8) -> bool {
+    CLIFF_ORIENTATION_ENDS
+        .get(o as usize)
+        .is_some_and(|e| e.0 == side || e.1 == side)
+}
+
+/// **The ore suppression DESTROYS a queued cliff; it does not stop one being
+/// queued** (#84). The n=1 stage localisation from
+/// `test/cliffOreActsAtDestroyStage.spec.ts`, moved here because #227 deletes
+/// that file and nothing in Rust computed a counterfactual of this shape.
+///
+/// A frozen aggregate cannot stand in for it. Removing one cell from a
+/// 1,500-cell queue moves a total by one either way, which says nothing about
+/// WHICH neighbour lost an end - and the neighbour is the whole result.
+///
+/// **The rule being applied** is #122's: destruction runs `Cliff::onDestroy` on
+/// the connected neighbour unconditionally, while a cell that was never queued
+/// only costs a neighbour its end when that neighbour sits on a chunk border. So
+/// a non-border neighbour whose facing end is gone in the game's own data can
+/// only have lost it to a destruction.
+///
+/// **The oracle is thin here and that is the first thing this reports.** Of the
+/// 31 cells the lever attributes to the ore, exactly one has a neighbour that
+/// can decide it. The rest have neighbours the game also lacks, neighbours on a
+/// chunk border, or no facing end. This is an n=1 localisation, not a survey,
+/// and the third assertion is what stops the second reading as a general
+/// property.
+#[test]
+fn the_ore_destroys_a_queued_cliff_rather_than_never_queueing_it() {
+    let entities = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-entities.seed123456.json",
+        "2.1.12",
+    );
+    let ore_fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-ore-direction.seed123456.json",
+        "2.1.12",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = entities.get("seed").as_f64() as u32;
+
+    // Case 1 is the [1500,1500] entity region, which is the one the ore arms
+    // also cover. The other two carry no ON/OFF pair.
+    let cases = entities.get("cases").as_array();
+    let case = cases
+        .get(1)
+        .expect("oracle-vulcanus-cliff-entities has three cases");
+    let r = case.get("region");
+    let (x0, y0) = (r.get("x0").as_f64(), r.get("y0").as_f64());
+    let (x1, y1) = (r.get("x1").as_f64(), r.get("y1").as_f64());
+
+    // The game's own cliffs in this region, carrying the orientation it gave.
+    let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+    for e in case.get("cliffs").as_array() {
+        if e.get("name").as_str() != "cliff-vulcanus" {
+            continue;
+        }
+        let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+        if x < x0 || x >= x1 || y < y0 || y >= y1 {
+            continue;
+        }
+        let want = e.get("orientation").as_str();
+        if let Some(id) = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want) {
+            #[allow(clippy::cast_possible_truncation)]
+            game.insert((x.to_bits(), y.to_bits()), id as u8);
+        }
+    }
+
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        ..CliffBands::default()
+    };
+
+    // `generateCliffs`' queue over a 64-tile halo, no rejection of any kind -
+    // exactly what `applyCliffs` is handed.
+    let raw = CliffPlacement::new(&fields, bands).placed_cells(
+        x0 - 64.0,
+        y0 - 64.0,
+        x1 + 64.0,
+        y1 + 64.0,
+    );
+    let mut raw_map: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+    for c in &raw {
+        if let Some(o) = cliff_orientation_for_code(c.code) {
+            raw_map.insert(cell_key(c), o);
+        }
+    }
+
+    // The paired ON/OFF arms. They are not cumulative - each turns one control
+    // off through `map_gen_settings.autoplace_controls` and regenerates.
+    let arm = |label: &str| -> BTreeSet<(u64, u64)> {
+        let cases = ore_fixture.get("cases").as_array();
+        let c = cases
+            .iter()
+            .find(|q| q.get("label").as_str() == label)
+            .unwrap_or_else(|| panic!("no arm {label}"));
+        let r = c.get("region");
+        let (ax0, ay0) = (r.get("x0").as_f64(), r.get("y0").as_f64());
+        let (ax1, ay1) = (r.get("x1").as_f64(), r.get("y1").as_f64());
+        let mut out = BTreeSet::new();
+        for e in c.get("cliffs").as_array() {
+            if e.get("name").as_str() != "cliff-vulcanus" {
+                continue;
+            }
+            let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+            if x >= ax0 && x < ax1 && y >= ay0 && y < ay1 {
+                out.insert((x.to_bits(), y.to_bits()));
+            }
+        }
+        out
+    };
+    let on = arm("entity region, resources ON");
+    let all_off = arm("entity region, ALL resources OFF");
+    let geyser_off = arm("entity region, geyser OFF");
+
+    // The cells the ore costs us: present with the resources off, gone with them
+    // on. This is the 31 the lever attributes to the ore.
+    let suppressed: Vec<(u64, u64)> = all_off.difference(&on).copied().collect();
+
+    // The game's own destruction set: raw cells inside the region the game does
+    // not have. Lifting one cell out of this is the counterfactual.
+    let game_kill: BTreeSet<(u64, u64)> = raw_map
+        .keys()
+        .filter(|(xb, yb)| {
+            let (x, y) = (f64::from_bits(*xb), f64::from_bits(*yb));
+            x >= x0 && x < x1 && y >= y0 && y < y1
+        })
+        .filter(|k| !game.contains_key(*k))
+        .copied()
+        .collect();
+
+    // Which of the 31 have a neighbour that can decide the stage.
+    const SIDE_STEP: [(f64, f64); 4] = [(0.0, -4.0), (4.0, 0.0), (0.0, 4.0), (-4.0, 0.0)];
+    let mut decidable: Vec<Decision> = Vec::new();
+    for cell in &suppressed {
+        let Some(&o) = raw_map.get(cell) else {
+            continue;
+        };
+        let (x, y) = (f64::from_bits(cell.0), f64::from_bits(cell.1));
+        for s in connected_sides(o) {
+            let (dx, dy) = SIDE_STEP[s as usize];
+            let (nx, ny) = (x + dx, y + dy);
+            let nk = (nx.to_bits(), ny.to_bits());
+            let facing = opposite_side(s);
+            // The neighbour has to be queued with an end facing us, present in
+            // the game's data, and off a chunk border - or it decides nothing.
+            let Some(&queued) = raw_map.get(&nk) else {
+                continue;
+            };
+            if !has_end(queued, facing) {
+                continue;
+            }
+            let Some(&game_o) = game.get(&nk) else {
+                continue;
+            };
+            if on_chunk_border(nx, ny) {
+                continue;
+            }
+            decidable.push(Decision {
+                cell: *cell,
+                neighbour: nk,
+                cause: if geyser_off.contains(cell) {
+                    "geyser"
+                } else {
+                    "calcite"
+                },
+                game: CLIFF_ORIENTATION_NAMES[game_o as usize],
+                end_gone: !has_end(game_o, facing),
+            });
+        }
+    }
+
+    assert_eq!(suppressed.len(), 31, "cells the ore arm suppresses");
+    assert_eq!(
+        decidable.len(),
+        1,
+        "of those, the ones a neighbour can decide"
+    );
+    assert_eq!(
+        decidable[0],
+        Decision {
+            cell: (1546.0_f64.to_bits(), 1550.5_f64.to_bits()),
+            neighbour: (1546.0_f64.to_bits(), 1546.5_f64.to_bits()),
+            cause: "geyser",
+            game: "north-to-none",
+            end_gone: true,
+        }
+    );
+
+    // Score a queue against the game, destroying exactly `killed`.
+    let score_with =
+        |cells: &[PlacedCliffCell], killed: &BTreeSet<(u64, u64)>| -> (usize, Vec<(u64, u64)>) {
+            let kill = KillSet {
+                killed,
+                region: (x0, y0, x1, y1),
+            };
+            let out = apply_cliff_connections(
+                cells,
+                &CliffConnectionOptions {
+                    collides: Some(&kill),
+                    ..Default::default()
+                },
+            );
+            let mut wrong = 0;
+            let mut at: Vec<(u64, u64)> = Vec::new();
+            for c in out.iter() {
+                if c.x < x0 || c.x >= x1 || c.y < y0 || c.y >= y1 {
+                    continue;
+                }
+                let k = (c.x.to_bits(), c.y.to_bits());
+                if let Some(&want) = game.get(&k) {
+                    if want != c.orientation {
+                        wrong += 1;
+                        at.push(k);
+                    }
+                }
+            }
+            at.sort_unstable();
+            (wrong, at)
+        };
+
+    // The baseline: the game's own destruction set reproduces the region
+    // exactly. Without this the counterfactual below has nothing to move away
+    // from.
+    assert_eq!(
+        score_with(&raw, &game_kill).0,
+        0,
+        "the game's own destruction set should reproduce the region exactly"
+    );
+
+    // Treat the one decidable cell as NEVER QUEUED: drop it from the queue and
+    // from the destruction set together. The game's data then contradicts us at
+    // exactly the neighbour, which is the whole localisation - a never-queued
+    // cell leaves a non-border neighbour's end intact, and the game's is gone.
+    let target = (1546.0_f64.to_bits(), 1550.5_f64.to_bits());
+    let without: Vec<PlacedCliffCell> = raw
+        .iter()
+        .filter(|p| cell_key(p) != target)
+        .copied()
+        .collect();
+    let killed: BTreeSet<(u64, u64)> = game_kill
+        .iter()
+        .filter(|k| **k != target)
+        .copied()
+        .collect();
+    let (wrong, at) = score_with(&without, &killed);
+    assert_eq!(wrong, 1, "never-queueing 1546,1550.5 must cost exactly one");
+    assert_eq!(
+        at,
+        vec![(1546.0_f64.to_bits(), 1546.5_f64.to_bits())],
+        "and it must be the neighbour, not somewhere else"
+    );
+
+    // The contrast arm. Every OTHER suppressed cell can be treated the same way
+    // for free, which is what "only one is decidable" means in practice.
+    let mut changed = 0;
+    for cell in &suppressed {
+        if *cell == target {
+            continue;
+        }
+        let without: Vec<PlacedCliffCell> = raw
+            .iter()
+            .filter(|p| cell_key(p) != *cell)
+            .copied()
+            .collect();
+        let killed: BTreeSet<(u64, u64)> =
+            game_kill.iter().filter(|k| *k != cell).copied().collect();
+        if score_with(&without, &killed).0 > 0 {
+            changed += 1;
+        }
+    }
+    assert_eq!(changed, 0, "the other 30 must each cost nothing");
 }
