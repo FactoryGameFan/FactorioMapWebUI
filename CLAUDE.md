@@ -1409,7 +1409,7 @@ measured rather than assumed:
   exactly 14,406, because the shape of the sweep does not depend on the host.
 
 **Tier 2's shelf life is now a FREEZE rather than a deadline.** It compared Rust
-against TypeScript, and #227 deletes the TypeScript, so all 942 folds are
+against TypeScript, and #227 deletes the TypeScript, so all 1,168 folds are
 committed to `test/fixtures/tier2-checksums.json` and each spec asserts BOTH
 arms against the frozen value instead of against each other. When the TypeScript
 arm goes, the wasm arm keeps running against a number captured while the two
@@ -1431,6 +1431,60 @@ the table is for. **Read a moved number, do not adjust it.**
 
 Record with `FMW_FREEZE_TIER2=1`, then run the specs normally - a record run
 compares nothing and so proves nothing.
+
+**Tier 3 now carries the same freeze, for the same reason (#227).** The render
+parity specs got their TypeScript arm by calling `runRenderRequest` with the
+engine argument left off, so after the deletion both arms would be the SAME
+code - a comparison that passes while grading nothing. `test/tier3Frozen.ts`
+freezes each render to a checksum in
+`test/fixtures/tier3-render-checksums.json`; `nauvis:render` holds 73 rows.
+Record with `FMW_FREEZE_TIER3=1`.
+
+**The plumbing is shared and the tables are not.** `test/frozenTable.ts` holds
+the machinery, and both `tier2Frozen.ts` and `tier3Frozen.ts` are thin wrappers
+over `makeFrozenTable`, so the guards live in one place rather than two. Tier 3
+keeps its own FILE because a row means a different thing - one rendered image,
+not a field folded over a grid - and because `tier2Coverage.spec.ts` anchors
+tier 2's rows to the module's own `checksum_*` exports, which render rows do
+not have.
+
+**The tier-3 fold runs in JavaScript**, not Rust. Both arms already hand back
+RGBA bytes, so folding there keeps them symmetric and adds no export - which
+means freezing tier 3 rebuilds no `engine.wasm` and cannot go stale against the
+committed binary. The fold takes the byte LENGTH first, so a truncated buffer
+cannot collide with a shorter render that shares a prefix.
+
+**Each tier-3 spec asserts its own COVERAGE**, the way the three tier-2 planet
+specs do. `expectRecordedRows` guards only a RECORD run - it feeds
+`flushRecording`, which returns immediately unless the environment variable is
+set - so without a second guard nothing checks that the rows are consulted on a
+normal run, and a deleted `freeze` call site would leave its row in the table
+un-consulted while every gate stayed green. `frozenTable.ts` tracks the distinct
+rows each run looks up, and the spec asserts BOTH that count and the table's.
+The two fail on opposite mistakes: the table count catches a re-record that
+wrote a different surface, the consulted count catches a call site that stopped
+asking. A literal compared only against the file would move with neither.
+
+Three planted breaks were RUN rather than predicted:
+
+- a corrupted row reddens the wasm arm by name
+  (`wasm 11549297961623709281 != frozen 16045690984833335023`)
+- a deleted row fails "no frozen checksum" rather than skipping quietly
+- **a deleted `freeze` call site leaves all 37 other tests GREEN**, and is
+  caught only by the coverage guard, at "expected 72 to be 73"
+
+The row-count guard also fired for real - a first record run declared 73 and
+recorded 60, and `flushRecording` DROPPED the section rather than committing a
+short table. The 13 missing rows were the four overlay lever loops, which share
+an identical body.
+
+**One test is deliberately NOT frozen**: `refuses the engine for a spawn list
+longer than the ABI cap`. Both its arms are the TypeScript renderer, which is
+its whole claim, so a frozen row would capture a picture the engine can never
+reproduce. It belongs to the `> 8` spawn carve-out, and the #227 deletion
+removes both together. The spawn census on #227 is why that is safe: the most
+starting points any exchange string in the repo carries is two, against a cap
+of eight.
 
 **Parity sweeps must use NON-binary origins and steps**, or they agree by
 construction. `test/wasmNauvisParity.spec.ts` freezes 2,365 of 2,420 positions
