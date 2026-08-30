@@ -1,7 +1,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+
+import {
+  RECORDING,
+  consultedCount,
+  expectFrozen,
+  expectRecordedRows,
+  flushRecording,
+  foldPixels,
+  frozenCount,
+} from "./tier3Frozen";
 
 import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
@@ -38,6 +48,38 @@ import {
  */
 const FIXTURES = join(import.meta.dirname, "fixtures");
 const SIZE = 1024;
+
+/**
+ * The tier-3 freeze section for this spec. See `tier3Frozen.ts`.
+ *
+ * Every Rust-against-TypeScript render below is ALSO checked against a frozen
+ * checksum, so the assertion survives #227 deleting the TypeScript arm. Without
+ * it, `runRenderRequest(req)` with the engine left off stops being an
+ * independent arm the moment the Vulcanus branch goes, and the comparison would
+ * pass while grading nothing.
+ */
+const SECTION = "vulcanus:render";
+
+/**
+ * Rows this spec must record, as a literal - the same guard tier 2 documents:
+ * adding a case makes a record run DROP the section until this is updated.
+ *
+ * 4 terrain windows + 5 routed views + 4 rocks + 5 resources + 4 composite
+ * + 4 cliffs.
+ *
+ * The three `renderTiled` helpers are NOT here: every one of their calls passes
+ * the engine, so they compare tiled against whole rather than Rust against
+ * TypeScript, and the deletion leaves them intact.
+ */
+const ROWS = 26;
+
+expectRecordedRows(SECTION, ROWS);
+afterAll(flushRecording);
+
+/** Freeze one render, and compare the two arms while both exist. */
+function freeze(label: string, name: string, wasm: ArrayLike<number>, ts: ArrayLike<number>): void {
+  expectFrozen(SECTION, label, name, foldPixels(wasm), foldPixels(ts));
+}
 
 /** `surfaceSeedForPlanet("vulcanus", 123456)`. */
 const VULCANUS_SURFACE_SEED = 1249936247;
@@ -175,6 +217,7 @@ describe("the WASM engine renders Vulcanus terrain exactly as the TypeScript doe
       const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "terrain", wasm, ts);
     }
   }, 300000);
 
@@ -219,6 +262,9 @@ describe("the WASM engine renders Vulcanus terrain exactly as the TypeScript doe
       const withEngine = new Uint8ClampedArray(runRenderRequest(composite, e).buffer);
       const withoutEngine = new Uint8ClampedArray(runRenderRequest(composite).buffer);
       expect(Array.from(withEngine), `${view}: engine vs none`).toEqual(Array.from(withoutEngine));
+      // Prefixed: this block sweeps WINDOWS[0] through every view, so a bare
+      // window label would collide with the per-view blocks below.
+      freeze(`routes ${view}`, view, withEngine, withoutEngine);
     }
 
     // And `all` really does differ from bare terrain here, so the assertion
@@ -268,6 +314,7 @@ describe("the WASM engine renders the Vulcanus rock overlay exactly as the TypeS
       const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "rocks", wasm, ts);
     }
   }, 300000);
 
@@ -442,6 +489,7 @@ describe("the WASM engine renders the Vulcanus resource overlay exactly as the T
       const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "resources", wasm, ts);
     }
   }, 300000);
 
@@ -543,6 +591,7 @@ describe("the WASM engine renders the Vulcanus composite exactly as the TypeScri
       const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
       const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "all", wasm, ts);
       counts.push(paintedOver(wasm, new Uint8ClampedArray(runRenderRequest(request(w), e).buffer)));
     }
     expect(counts).toEqual(ALL_PIXELS_PER_WINDOW);
@@ -622,6 +671,7 @@ describe("the WASM engine renders Vulcanus cliffs exactly as the TypeScript does
       const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "cliffs", wasm, ts);
     }
   }, 300000);
 
@@ -836,4 +886,22 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
     // seed derivation is load-bearing rather than incidental.
     expect(differing).toBeGreaterThan(DIFFERING_PX * 10);
   }, 300000);
+});
+
+describe("the tier-3 freeze covers this spec rather than merely existing", () => {
+  // Declared last on purpose: tests run in declaration order within a file, so
+  // this sees every `freeze` call the run made. See the same guard on
+  // `wasmNauvisRenderParity.spec.ts`, where deleting one call site left all 37
+  // other tests green.
+  //
+  // `expectRecordedRows` guards only a RECORD run, so without this a deleted
+  // `freeze` call site would leave its row in the table un-consulted while
+  // every gate stayed green. Both numbers are asserted because they fail on
+  // opposite mistakes: the table count catches a re-record that wrote a
+  // different surface, the consulted count catches a call site that stopped
+  // asking.
+  it.skipIf(RECORDING)("consults every frozen row exactly once", () => {
+    expect(frozenCount(SECTION), "rows in the committed table").toBe(ROWS);
+    expect(consultedCount(SECTION), "distinct rows this run looked up").toBe(ROWS);
+  });
 });
