@@ -244,6 +244,23 @@ POISONED_TESTS=(
   # test that pins its value.
   resources::vulcanus_catalog::tests::the_measured_peak_is_far_below_a_solid_ores
 
+  # Fulgora scrap's placement roll (#363). No hook of its own: it composes
+  # `resolve_chunk`'s `poison::bool_result`, the same one the two
+  # `placement::roll` entries above read, and its probability comes from
+  # `expressions::fulgora_scrap`, which `fixtures::reproduces_the_fulgora_scrap_
+  # probability_at_every_captured_position` already grades.
+  #
+  # Watched going red rather than assumed to: the perturbation inverts every
+  # accept, so the window's placements go from 177 to 16,207 of 16,384 and the
+  # test's upper bound trips.
+  #
+  # Its sibling `the_collision_box_cannot_reject_anything` is deliberately
+  # ABSENT. That one compares a poisoned arm against a poisoned arm, so the
+  # perturbation cancels and it stays green - the relational shape `poison.rs`
+  # records for the capture-grid snap test. Adding it here would fail the gate
+  # for being correct.
+  resources::fulgora_catalog::tests::places_a_strict_nonempty_subset_of_the_footprint
+
   # The only grading of `cliffs::connections` against anything - that module is
   # on no render path, so without this it would be a 445-line port with unit
   # tests and no measurement.

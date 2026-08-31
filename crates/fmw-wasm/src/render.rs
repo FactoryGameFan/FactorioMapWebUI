@@ -31,6 +31,7 @@ use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
+use fmw_noise::resources::fulgora_catalog::SCRAP_MAP_COLOR;
 use fmw_noise::resources::nauvis_catalog::NAUVIS_RESOURCE_CATALOG;
 use fmw_noise::resources::nauvis_oil::{crude_oil, NauvisOilPlacement};
 use fmw_noise::resources::resolve_resource::{
@@ -181,7 +182,12 @@ const DEEP: [u8; 3] = [
 /// The game's own `map_color` for scrap is `{0.9, 0.9, 0.9} * 255` = 229, and
 /// that triple was confirmed against the preview PNG rather than from the Lua
 /// alone. This view paints it so the two images can be compared directly.
-const SCRAP_FOOTPRINT: [u8; 3] = [229, 229, 229];
+///
+/// **Re-exported rather than re-typed** (#363). This file held its own literal
+/// until the scrap catalog landed in `fmw-noise`; two copies of a map colour
+/// with nothing comparing them is exactly the shape #364 removed for the
+/// Vulcanus cliff tiles.
+const SCRAP_FOOTPRINT: [u8; 3] = SCRAP_MAP_COLOR;
 
 /// The eight land tile colours, read from each tile's `map_color` in
 /// `tiles-fulgora.lua` rather than picked by eye.
