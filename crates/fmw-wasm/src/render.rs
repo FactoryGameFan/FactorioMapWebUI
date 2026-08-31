@@ -7,6 +7,7 @@
 use crate::abi::{
     self, FulgoraParams, NauvisParams, Params, Request, Status, VulcanusBearing, VulcanusParams,
 };
+use core::cell::RefCell;
 use fmw_noise::cliffs::catalog::{modified_elevation_interval, CliffControls, CliffSettings};
 use fmw_noise::cliffs::catalog::{CLIFF_MAP_COLOR, CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX};
 use fmw_noise::cliffs::fields::{CliffFieldParams, NauvisCliffFields};
@@ -31,7 +32,7 @@ use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
-use fmw_noise::resources::fulgora_catalog::SCRAP_MAP_COLOR;
+use fmw_noise::resources::fulgora_catalog::{FulgoraScrapPlacement, SCRAP_MAP_COLOR};
 use fmw_noise::resources::nauvis_catalog::NAUVIS_RESOURCE_CATALOG;
 use fmw_noise::resources::nauvis_oil::{crude_oil, NauvisOilPlacement};
 use fmw_noise::resources::resolve_resource::{
@@ -239,7 +240,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         (req.planet, req.view),
         (
             PLANET_FULGORA,
-            VIEW_LANDMASK | VIEW_TERRAIN | VIEW_SCRAP_FOOTPRINT
+            VIEW_LANDMASK | VIEW_TERRAIN | VIEW_SCRAP_FOOTPRINT | VIEW_RESOURCES | VIEW_ALL
         ) | (
             PLANET_VULCANUS,
             VIEW_TERRAIN | VIEW_CLIFFS | VIEW_ROCKS | VIEW_RESOURCES | VIEW_ALL
@@ -295,20 +296,44 @@ fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
         islands_frequency: p.islands_frequency,
         islands_size: p.islands_size,
     };
+    let controls = ScrapControls {
+        frequency: p.scrap_frequency,
+        size: p.scrap_size,
+    };
     // ONE stack for the whole window, so the four Voronoi point caches are warm
     // across it - the same reason the TypeScript renderer shares a stack.
-    let mut stack = FulgoraStack::new(
+    //
+    // Behind a `RefCell` because the composite views need it in two places at
+    // once: the terrain pass walks it directly, and the scrap placement reads
+    // it through `PlacementSource::probability`, which gets `&self`. The two
+    // never hold a borrow at the same time - the terrain pass drops its borrow
+    // before asking `placed()`.
+    let stack = RefCell::new(FulgoraStack::new(
         &ctx,
-        &ScrapControls::default(),
+        &controls,
         AngleTrig::new(p.sin_start, p.cos_start),
         AngleTrig::new(p.sin_vault, p.cos_vault),
-    );
+    ));
+
+    // Built for every view rather than only the composites. It is lazy - a
+    // `PlacementSet` resolves a chunk on first ask and caches it - so a terrain
+    // render that never calls `placed()` pays for an empty `BTreeMap`.
+    let placement = FulgoraScrapPlacement::new(&stack);
+    let placed = placement.placement_set();
+
+    // Fulgora has no cliffs and no rocks, so `all` and `resources` are the same
+    // picture: terrain with the scrap overlay on it. Both codes are served
+    // because the dispatcher and the panel each ask with a different one, and
+    // collapsing them here rather than at the call site keeps the two answers
+    // provably identical.
+    let overlay = matches!(req.view, VIEW_RESOURCES | VIEW_ALL);
+
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let fields = stack.eval(wx, wy);
+            let fields = stack.borrow_mut().eval(wx, wy);
             let color = match req.view {
                 VIEW_TERRAIN => tile_color(fields.tile()),
                 VIEW_SCRAP_FOOTPRINT => {
@@ -316,6 +341,16 @@ fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
                         SCRAP_FOOTPRINT
                     } else {
                         [0, 0, 0]
+                    }
+                }
+                _ if overlay => {
+                    // Terrain first, then the overlay paints over it - the
+                    // TypeScript's order, where `renderFulgoraResources`
+                    // mutates the terrain image in place.
+                    if placed.placed(wx, wy) {
+                        SCRAP_MAP_COLOR
+                    } else {
+                        tile_color(fields.tile())
                     }
                 }
                 _ => match ocean_tile(&fields.elevation) {

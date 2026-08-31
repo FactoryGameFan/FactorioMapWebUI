@@ -362,7 +362,7 @@ function renderVulcanusThroughWasm(
 function renderFulgoraThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
-  which: "landmask" | "terrain",
+  which: "landmask" | "terrain" | "resources" | "all",
 ): ElevationRenderResult {
   const view = renderThroughWasm(engine, {
     view: which,
@@ -374,6 +374,11 @@ function renderFulgoraThroughWasm(
     tilesPerPixel: req.tilesPerPixel,
     islandsFrequency: req.fulgoraIslandControls?.frequency ?? 1,
     islandsSize: req.fulgoraIslandControls?.size ?? 1,
+    // Passed through UNDEFAULTED on purpose. `writeFulgoraParams` is the one
+    // place that turns an absent slider into the neutral 1; adding a `?? 1`
+    // here would be a second copy of that constant, and the two could drift.
+    scrapFrequency: req.fulgoraScrapControls?.frequency,
+    scrapSize: req.fulgoraScrapControls?.size,
   });
   const owned = new Uint8ClampedArray(view);
   return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
@@ -640,11 +645,26 @@ export function runRenderRequest(
       throw new Error(unsupportedPair(planet, view));
     }
     if (planet === "fulgora") {
-      // The one path the Rust engine serves so far (#223). Checked BEFORE the
+      // Every view an ordinary user can reach, as of #363. Checked BEFORE the
       // TypeScript stack is built, because `makeFulgoraStack` derives seed
       // tables for eight multioctave fields, and building them only to throw
       // them away would be most of the saving.
-      if (engine !== undefined && (view === "landmask" || view === "terrain")) {
+      //
+      // `"all"` is the one that matters: `ElevationPreviewPanel.vue`'s
+      // `effectiveView` returns it for every non-dev-mode Fulgora request, so
+      // until this line it was the DEFAULT view that fell to TypeScript while
+      // the two dev-mode views went to the engine. `"resources"` is the same
+      // picture - Fulgora has no cliffs and no rocks - and the module collapses
+      // the two codes onto one arm rather than the caller doing it.
+      //
+      // The TypeScript arm below is NOT dead. It still serves an engineless
+      // request, which is what `test/tiledEquality.spec.ts` and the no-engine
+      // half of the parity specs run, and it is the thing the engine is graded
+      // against.
+      if (
+        engine !== undefined &&
+        (view === "landmask" || view === "terrain" || view === "resources" || view === "all")
+      ) {
         return renderFulgoraThroughWasm(req, engine, view);
       }
       // Fulgora has a resources overlay now; it still has no cliffs and no

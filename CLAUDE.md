@@ -1199,6 +1199,8 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done  |
 | 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view the panel offers renders through the engine** (not `elevation` - see below).                    | done  |
 | 6 (#226) | Nauvis - every expression, the TERRAIN render, all FIVE overlays and the `all` composite. The `elevation` view is ported too, as of #227                                       | done  |
+| 7 (#227) | delete the ported TypeScript under `src/noise/`                                                                                                                                | done  |
+| 8 (#363) | Fulgora's `resources` and `all` composites, so **every planet's DEFAULT view renders through the engine**                                                                      | done  |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1789,13 +1791,45 @@ below. What stays here is the part that is a RULE rather than a record.
 
 **The request layout is at v2 and is per-planet.** A 56-byte common prefix
 declares `params_bytes`, then a per-planet block follows. Fulgora's request is
-104 bytes; Vulcanus's is 368.
+120 bytes; Vulcanus's is 368; Nauvis's is 568 and is the largest, so
+`REQUEST_BYTES` is Nauvis's.
 
 **A planet block can grow with NO version bump, and that is the split working.**
-The Vulcanus block has grown three times (248 -> 280 -> 312 -> 368) and
-Fulgora's has not moved a byte. `BadParamsLength` refuses a writer whose
-declared length disagrees. **A version bump is for a change to the COMMON
-prefix**, which every planet reads.
+The Vulcanus block has grown three times (248 -> 280 -> 312 -> 368), and
+Fulgora's grew for the first time in #363 (48 -> 64, so the request went 104 -> 120) when the scrap overlay needed `control:scrap:frequency` and `:size` to
+cross. `BadParamsLength` refuses a writer whose declared length disagrees. **A
+version bump is for a change to the COMMON prefix**, which every planet reads.
+
+**The Fulgora block is append-only, and the two scrap sliders sit AFTER the
+trig rather than beside the two island sliders.** Grouping them with the other
+controls would have moved the trig block, which every existing reader already
+knows the offsets of. `test/fixtures/verify-wasm-request.py` - the third
+implementation, neither the writer nor the Rust reader - checks both new
+offsets, and a planted swap of the two is one of the breaks confirmed caught.
+
+**The module does NOT default the scrap sliders**, and `FulgoraParams`'s
+`Default` gives 0 rather than the neutral 1 on purpose, so a writer that forgot
+them renders visibly wrong rather than plausibly right. The single place an
+absent slider becomes 1 is `writeFulgoraParams` in `src/noise/wasm/request.ts`.
+Do not add a second.
+
+**`VIEW_SCRAP_FOOTPRINT` is not the scrap overlay, and #363's issue body was
+written believing it was.** The footprint view paints every tile where the
+probability is positive; the `all` composite paints the subset a placement ROLL
+accepts. Measured over a 128x128 window at seed 123456: 708 footprint tiles
+against 177 placed, so substituting one for the other moves 531 pixels. The
+footprint is deliberately not a roll, because diffing rolled pixels against the
+game's drawn pixels measures the salt rather than the model -
+`crates/fmw-wasm/src/render.rs` says so at the constant.
+
+**`control:scrap:frequency` above neutral does not move the picture**, measured
+2026-08-31 on a 64x64 window at (-500, 3000), seed 123456: `(4, 1)` is
+byte-identical to `(1, 1)` at 149 scrap pixels, while `(0.25, 1)` gives 104.
+`size` moves both ways - 194 at 3, 118 at 0.25. This is not a curiosity: a
+parity test that moves `frequency` UPWARD grades nothing, and one written that
+way was measured passing against a module that ignored the field outright.
+`test/wasmFulgoraRenderParity.spec.ts` moves one slider at a time and pins the
+dead zone.
 
 **Nauvis's block landed at 64 bytes with no bump and has since grown five
 times** - 96 for the tree overlay's four levers, 144 for the rock overlay's two
