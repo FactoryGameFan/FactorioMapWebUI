@@ -70,10 +70,14 @@ pub const PLACEMENT_MARK_RADIUS_PX: i64 = 1;
 /// [`the unit test`](placement_roll_word) can pin the reverse-engineered
 /// constants against it.
 ///
-/// Only the two Vulcanus overlays are here. The TypeScript table also carries
-/// Nauvis rocks, enemy bases, crude oil, the three `random_penalty` stand-ins
-/// and Fulgora scrap; each lands with the overlay that reads it, the same way
-/// the resource catalog landed partial with the cliff stack.
+/// Each salt lands with the overlay that reads it, the same way the resource
+/// catalog landed partial with the cliff stack. As of #363 that is the whole
+/// TypeScript table: `PLACEMENT_SALT` in
+/// `src/noise/placement/placementRoll.ts` has nine entries and so does this
+/// module. **The two tables must agree value for value** - a salt is the
+/// entire content of a stream, so a mismatch moves every placed entity while
+/// leaving the probability field bit-exact, which no field-level fixture can
+/// see.
 pub mod salt {
     /// Vulcanus rocks. Zero on purpose - see the module docs.
     pub const VULCANUS_ROCKS: u32 = 0;
@@ -97,6 +101,10 @@ pub mod salt {
     /// Crude oil's `random_penalty{source = 1, amplitude = 48}` draw, the same
     /// batch-op stand-in the two spawner penalties are.
     pub const CRUDE_OIL_PENALTY: u32 = 0x0091_c40d;
+    /// Fulgora scrap - the planet's one resource, and the one that ROLLS
+    /// rather than thresholding, because its probability is capped at 0.5 by
+    /// the Lua's own `min` and so never saturates into a patch.
+    pub const FULGORA_SCRAP: u32 = 0x003b_a58c;
 }
 
 /// `max(341, 0x3FBE2C + 7919*chunkX + 7907*chunkY + salt)` in `u32` arithmetic.
@@ -385,6 +393,33 @@ mod tests {
     fn clamps_to_341_rather_than_returning_a_tiny_word() {
         let salt = 5_u32.wrapping_sub(0x003f_be2c);
         assert_eq!(placement_roll_word(0, 0, salt), 341);
+    }
+
+    /// Every salt in the table is distinct, and Fulgora scrap's matches the
+    /// TypeScript's literal.
+    ///
+    /// A salt IS the stream, so a wrong one moves every placed entity while
+    /// leaving the probability field bit-exact. No field-level fixture can see
+    /// that, which is why the value is pinned here against its counterpart in
+    /// `src/noise/placement/placementRoll.ts` rather than only being distinct.
+    #[test]
+    fn the_salt_table_is_distinct_and_matches_the_typescripts() {
+        let all = [
+            salt::VULCANUS_ROCKS,
+            salt::VULCANUS_GEYSER,
+            salt::NAUVIS_ROCKS,
+            salt::ENEMY_BASES,
+            salt::ENEMY_BITER_PENALTY,
+            salt::ENEMY_SPITTER_PENALTY,
+            salt::CRUDE_OIL,
+            salt::CRUDE_OIL_PENALTY,
+            salt::FULGORA_SCRAP,
+        ];
+        let mut sorted = all.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), all.len(), "two overlays share a salt");
+        assert_eq!(salt::FULGORA_SCRAP, 0x003b_a58c);
     }
 
     /// Different salts give different streams, which is the whole content of
