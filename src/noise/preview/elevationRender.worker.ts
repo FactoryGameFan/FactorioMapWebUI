@@ -82,8 +82,27 @@ function serve(req: ElevationRenderRequest): void {
     self.postMessage(message);
     return;
   }
-  const result = runRenderRequest(req, engine);
-  self.postMessage(result, [result.buffer]);
+  // A render that throws must be REPORTED, not allowed to escape.
+  //
+  // Letting it escape `onmessage` fires the worker's `error` event, and the
+  // host treats that as a crashed worker: it terminates the slot and rejects
+  // every tile the slot holds. So one bad request - a view the module refuses,
+  // a spawn list over the ABI cap, a `startingLakePositions` override - failed
+  // every OTHER render in flight beside it, and did so with a constant string
+  // that named none of those causes.
+  //
+  // Catching it here settles exactly the request that failed, with the reason,
+  // and leaves the worker and its siblings alone.
+  try {
+    const result = runRenderRequest(req, engine);
+    self.postMessage(result, [result.buffer]);
+  } catch (err) {
+    const message: RenderErrorMessage = {
+      id: req.id,
+      error: err instanceof Error ? err.message : String(err),
+    };
+    self.postMessage(message);
+  }
 }
 
 self.onmessage = (e: MessageEvent<ElevationRenderRequest | EngineMessage>) => {

@@ -15,6 +15,7 @@ import {
 import { compileEngine, instantiateEngine, renderThroughWasm } from "../src/noise/wasm/engine";
 import {
   runRenderRequest,
+  STARTING_LAKE_POSITIONS_UNSUPPORTED,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
 import { LAND_RGBA, WATER_RGBA } from "../src/noise/preview/palette";
@@ -356,43 +357,82 @@ describe("the elevation levers move both paths together", () => {
   }, 300000);
 });
 
-describe("a caller-supplied startingLakePositions stays on the TypeScript path", () => {
+describe("a caller-supplied startingLakePositions is refused", () => {
   /**
-   * The one carve-out in the gate, and it is a CORRECTNESS one rather than a
+   * This block asserted the opposite until #227: that an explicit lake list
+   * forced the TypeScript path, which was a CORRECTNESS carve-out rather than a
    * speed one. The module derives the lake list from the seed and the spawn -
-   * the game's own rule, and what the TypeScript does when the caller passes
-   * nothing - so an explicit list is a different answer, not a slower one. The
-   * request is also a fixed-size struct with no room for a variable-length
-   * array, so there is nowhere to put one without an ABI change.
+   * the game's own rule - so an explicit list was a different answer, not a
+   * slower one, and the request is a fixed-size struct with nowhere to put a
+   * variable-length array besides.
    *
-   * Planted rather than read: the gate is asserted by giving the engine a
-   * request it would answer DIFFERENTLY, and requiring the TypeScript answer.
+   * With the TypeScript arm going there is no path left that could honour it,
+   * so the choice is between refusing and silently ignoring. Ignoring would
+   * render a different map than the caller asked for and say nothing, so it
+   * refuses.
+   *
+   * **Both arms are asserted.** With an engine present the request would
+   * otherwise route through WASM ignoring the list, which is precisely the
+   * wrong-answer case the carve-out existed to prevent; without one it would
+   * have taken the TypeScript path. Neither may quietly succeed.
    */
   const w = WINDOWS[0];
   const explicit = [{ x: 300, y: 300 }];
 
-  // **Deliberately NOT frozen**, for the reason the Nauvis spec's ABI-cap test
-  // is not: both arms here are the TypeScript renderer - that is the whole
-  // claim - so a frozen row would capture an image the engine can never
-  // reproduce, and would fail the moment the carve-out goes.
-  //
-  // Unlike the spawn cap, this carve-out is documented as a CORRECTNESS one
-  // rather than a speed one, so #227 has to decide what a caller-supplied
-  // `startingLakePositions` means once there is no TypeScript path to fall back
-  // to. The app never sets it; only a test does.
-
-  it("renders the TypeScript answer even with a live engine", async () => {
+  it("throws with the engine present and with it absent", async () => {
     const e = await engine();
     const req = request(w, "lakes", { startingLakePositions: explicit });
-    expect(Array.from(pixels(req, e)), "engine path taken").toEqual(Array.from(pixels(req)));
+    expect(() => pixels(req, e), "with an engine").toThrow(STARTING_LAKE_POSITIONS_UNSUPPORTED);
+    expect(() => pixels(req), "without an engine").toThrow(STARTING_LAKE_POSITIONS_UNSUPPORTED);
   }, 300000);
 
-  it("and that list actually changes the render, so the check above is not vacuous", async () => {
-    const withList = request(w, "lakes", { startingLakePositions: explicit });
-    const derived = request(w, "lakes");
-    expect(Array.from(pixels(withList)), "explicit lakes changed nothing").not.toEqual(
-      Array.from(pixels(derived)),
-    );
+  it("refuses an EMPTY list too, which used to mean far-field only", () => {
+    // `elevationLakes.ts` documented "Pass `[]` for the old far-field-only
+    // behavior", so `[]` is a meaningful value rather than an absent one -
+    // rendering the derived lakes for a caller who asked for none is a wrong
+    // answer, not a default.
+    //
+    // Planted: this does NOT discriminate `!== undefined` from a truthiness
+    // test, because `[]` is truthy and both forms refuse it. What it catches is
+    // a LENGTH test, `!== undefined && length > 0`, which is the plausible
+    // mistake - it reads like a tidy-up and silently restores the old
+    // behaviour for the one value that used to select it.
+    const req = request(w, "lakes", { startingLakePositions: [] });
+    expect(() => pixels(req)).toThrow(STARTING_LAKE_POSITIONS_UNSUPPORTED);
+  });
+
+  it("refuses on every planet and view, not only the one the old checks reached", async () => {
+    // The two checks this guard replaced sat inside leaves of the view/planet
+    // dispatch, and between them missed three cases: the Vulcanus branch
+    // returns before the Nauvis gate is ever evaluated, the Fulgora branch
+    // likewise - and that one is live, since `findIslands` posts
+    // `planet: "fulgora", view: "landmask"` - and `"landmask"` on Nauvis is in
+    // the outer view test but absent from the Nauvis gate's allowlist.
+    //
+    // Every other assertion in this describe is Nauvis `lakes`, so a guard put
+    // back into a dispatch leaf would satisfy all of them and still let these
+    // three through. This is the block that grades the guard's PLACEMENT.
+    const e = await engine();
+    const holes = [
+      { label: "vulcanus terrain", planet: "vulcanus", view: "terrain" },
+      { label: "fulgora landmask", planet: "fulgora", view: "landmask" },
+      { label: "nauvis landmask", planet: "nauvis", view: "landmask" },
+    ] as const;
+    for (const h of holes) {
+      const req = request(w, "lakes", {
+        planet: h.planet,
+        view: h.view,
+        startingLakePositions: explicit,
+      });
+      expect(() => pixels(req, e), h.label).toThrow(STARTING_LAKE_POSITIONS_UNSUPPORTED);
+    }
+  }, 300000);
+
+  it("still renders when the field is simply absent", async () => {
+    // The guard runs before everything, so a bug in it would take out every
+    // render rather than only the overriding ones.
+    const e = await engine();
+    expect(pixels(request(w, "lakes"), e).length).toBe(w.width * w.height * 4);
   }, 300000);
 });
 

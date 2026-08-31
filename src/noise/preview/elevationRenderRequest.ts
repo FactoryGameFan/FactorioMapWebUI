@@ -55,7 +55,15 @@ export interface ElevationRenderRequest {
    * Vulcanus terrain colors rather than a Nauvis field composited on top.
    */
   planet?: Planet;
-  /** Omitted => the game's real lake positions are computed inside the render. */
+  /**
+   * **Refused.** Kept on the interface only because `eval/ctx.ts` and
+   * `expressions/elevationIsland.ts` still carry the field, so the type outlives
+   * every module that acted on it. Passing one - including `[]`, which used to
+   * mean "far-field only" - throws
+   * `STARTING_LAKE_POSITIONS_UNSUPPORTED`. The lake positions are derived inside
+   * the render from the seed and the starting positions, which is the game's own
+   * rule.
+   */
   startingLakePositions?: Point[];
   /**
    * Climate controls (Task 12b) - consumed only when `view: "terrain"`; the
@@ -402,13 +410,14 @@ function renderFulgoraThroughWasm(
  * **`"elevation"` is ported as of #227**, as three `view` codes rather than
  * one, because the common prefix has no `mapType` field. See the gate at the
  * tail of `runRenderRequest`, which still keeps two cases on the TypeScript
- * path: a caller-supplied `startingLakePositions`, and a non-Nauvis `planet`.
+ * path: a spawn list over the ABI cap, and a non-Nauvis `planet`.
  *
- * **A caller-supplied `startingLakePositions` also stays on the TypeScript
- * path**, for the same reason a moved spawn does. The module derives the lake
- * list from the seed and the origin spawn - the game's own rule, and what the
- * TypeScript does when the caller passes nothing - so an explicit list would be
- * a wrong answer rather than a slow one. The app never sets it; only tests do.
+ * **A caller-supplied `startingLakePositions` is refused outright** rather
+ * than routed anywhere - see `STARTING_LAKE_POSITIONS_UNSUPPORTED` and the
+ * guard at the top of `runRenderRequest`. The module derives the lake list from
+ * the seed and the origin spawn, which is the game's own rule, so an explicit
+ * list was always a wrong answer rather than a slow one; once the TypeScript
+ * arm goes there is nothing left that could honour it. The app never set it.
  *
  * **`waterLevel` is sent and deliberately ignored by the module** - issue #326.
  * `renderTerrain.ts` resolves every tile at `waterLevel = 0` however the slider
@@ -493,6 +502,16 @@ function renderNauvisThroughWasm(
 }
 
 /**
+ * What a caller-supplied `startingLakePositions` is refused with.
+ *
+ * Exported so specs assert the exact string rather than a substring of whatever
+ * the `Error` happened to say.
+ */
+export const STARTING_LAKE_POSITIONS_UNSUPPORTED =
+  "startingLakePositions is not supported: the render derives the lake list from " +
+  "the seed and the starting positions, which is the game's own rule";
+
+/**
  * The view this request actually renders, which is not always the one it asks
  * for.
  *
@@ -551,6 +570,33 @@ export function runRenderRequest(
   req: ElevationRenderRequest,
   engine?: EngineExports,
 ): ElevationRenderResult {
+  // FIRST, before the planet split, and deliberately so.
+  //
+  // The two checks this replaces sat inside leaves of the view/planet dispatch
+  // and between them missed three cases: the Vulcanus branch returns before the
+  // Nauvis gate is ever evaluated, the Fulgora branch likewise - and that one is
+  // reachable, since `findIslands` posts `planet: "fulgora", view: "landmask"` -
+  // and `"landmask"` on Nauvis is in the outer view test but absent from the
+  // Nauvis gate's allowlist. A guard that runs before any of that has no leaves
+  // to miss.
+  //
+  // `!== undefined` rather than a truthiness test because it states the type's
+  // own distinction, `Point[] | undefined`, instead of relying on a coincidence.
+  // The coincidence is real and was measured: `[]` is TRUTHY in JavaScript, so
+  // a truthiness test refuses an empty list too and the two forms agree on
+  // every value this field can legally hold. The form to avoid is a length
+  // test - `!== undefined && length > 0` - which would wave `[]` through, and
+  // `[]` is a meaningful value rather than an absent one: `elevationLakes.ts`
+  // documented "Pass `[]` for the old far-field-only behavior".
+  //
+  // An error rather than a silent no-op because the TYPE outlives every
+  // consumer: `eval/ctx.ts` and `expressions/elevationIsland.ts` survive #227
+  // while every module that acted on the override does not. Accepting and
+  // ignoring it would render a different planet than the caller asked for and
+  // say nothing.
+  if (req.startingLakePositions !== undefined) {
+    throw new Error(STARTING_LAKE_POSITIONS_UNSUPPORTED);
+  }
   const planet = req.planet ?? "nauvis";
   const view = servedView(planet, req.view);
   let image: ImageData;
@@ -727,10 +773,10 @@ export function runRenderRequest(
     // reaches the same distance terms. An over-long list is refused by the
     // writer rather than silently shortened, so it cannot arrive here wrong.
     //
-    // `startingLakePositions` still does force it: the module derives the lake
-    // list from the seed and the spawn, which is the game's own rule and what
-    // the TypeScript does when the caller passes nothing, so an explicit list
-    // would be a wrong answer rather than a slow one. The app never sets it.
+    // `startingLakePositions` no longer appears here: it is refused outright at
+    // the top of this function, so by the time the gate is evaluated there is
+    // nothing left to test. The spawn-list cap still forces the TypeScript path,
+    // and it is the last thing that does.
     if (
       engine !== undefined &&
       (view === "terrain" ||
@@ -740,7 +786,6 @@ export function runRenderRequest(
         view === "cliffs" ||
         view === "resources" ||
         view === "all") &&
-      req.startingLakePositions === undefined &&
       req.startingPositions.length <= NAUVIS_MAX_STARTING_POINTS
     ) {
       return renderNauvisThroughWasm(req, engine, view);
@@ -867,13 +912,13 @@ export function runRenderRequest(
     // no layout change. `mapType` picks the code because the common prefix has
     // no `mapType` field; see `VIEW` in `src/noise/wasm/request.ts`.
     //
-    // **`startingLakePositions` still forces the TypeScript path.** That is a
-    // CORRECTNESS carve-out, not a speed one: the module derives the lake list
-    // from the seed and the spawn, which is the game's own rule and what the
-    // TypeScript does when the caller passes nothing, so an explicit list would
-    // be a wrong answer rather than a slow one. It is an ABI carve-out too -
-    // the request is a fixed-size struct with no room for a variable-length
-    // array. The app never sets it; only a test does, and not on this path.
+    // **`startingLakePositions` is gone from this gate**, because it is refused
+    // at the top of the function now. It was a CORRECTNESS carve-out rather
+    // than a speed one - the module derives the lake list from the seed and the
+    // spawn, which is the game's own rule - and an ABI one besides, the request
+    // being a fixed-size struct with no room for a variable-length array. With
+    // the TypeScript arm going there is no path that could honour it, so the
+    // honest answer is to refuse rather than to ignore.
     //
     // **A non-Nauvis `planet` also stays on TypeScript.** `mapType` spans the
     // Nauvis family only, and the branch below ignores `planet` outright, so
@@ -882,7 +927,6 @@ export function runRenderRequest(
     if (
       engine !== undefined &&
       planet === "nauvis" &&
-      req.startingLakePositions === undefined &&
       req.startingPositions.length <= NAUVIS_MAX_STARTING_POINTS
     ) {
       return renderNauvisThroughWasm(

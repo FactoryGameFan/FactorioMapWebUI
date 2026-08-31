@@ -248,8 +248,13 @@ async function generate() {
       // blit) - that is the latency a user feels, and what tiling had to move.
       elapsedMs.value = Math.round(performance.now() - startedAt);
     }
-  } catch {
-    error.value = "Preview failed.";
+  } catch (e) {
+    // The real cause, not a constant. A bare `catch` here discarded every
+    // render failure's message - issue #341 - and produced the same
+    // "Preview failed." that `PreviewPanel.vue` produces from the unrelated
+    // Docker preview service, which is what made the two hard to tell apart.
+    // Same idiom as `IslandFinderPanel.vue`.
+    error.value = e instanceof Error ? e.message : "Preview failed.";
   } finally {
     loading.value = false;
   }

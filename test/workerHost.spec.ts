@@ -89,4 +89,32 @@ describe("createWorkerHost", () => {
     host.dispose();
     expect(made[0]!.terminate).toHaveBeenCalled();
   });
+
+  it("carries the crash's own message into every tile the slot held", async () => {
+    // `onerror` was declared with NO argument and substituted a constant, so a
+    // worker that died of a bad import and one that died of anything else
+    // reported the same six words. Failing every tile in the slot was already
+    // right - a crashed worker cannot answer any of them - but each one now
+    // says what happened.
+    const w = fakeWorker();
+    const host = createWorkerHost(() => w, 1);
+    const first = host.execute(req(1), 0);
+    const second = host.execute(req(2), 0);
+    // Synchronously, before the fake's queued replies run.
+    w.onerror?.({ message: "Cannot find module './engine.wasm'" });
+    await expect(first).rejects.toThrow("Cannot find module './engine.wasm'");
+    await expect(second).rejects.toThrow("Cannot find module './engine.wasm'");
+    host.dispose();
+  });
+
+  it("keeps the bare label when the crash carries no message", async () => {
+    // A worker whose SCRIPT failed to load reports an empty `message`. An empty
+    // string would read as no error at all, so the constant stays as the floor.
+    const w = fakeWorker();
+    const host = createWorkerHost(() => w, 1);
+    const only = host.execute(req(1), 0);
+    w.onerror?.({ message: "" });
+    await expect(only).rejects.toThrow("Elevation render worker error");
+    host.dispose();
+  });
 });
