@@ -70,13 +70,15 @@
 //!  48  f64  tiles_per_pixel
 //!  56  = COMMON_BYTES
 //!
-//! fulgora block (48 bytes, so a Fulgora request is 104 - unchanged from v1)
+//! fulgora block (64 bytes, so a Fulgora request is 120)
 //!  +0  f64  islands_frequency
 //!  +8  f64  islands_size
 //! +16  f64  sin_start      sine of the starting bearing
 //! +24  f64  cos_start
 //! +32  f64  sin_vault      sine of the vault bearing (the starting one + 180)
 //! +40  f64  cos_vault
+//! +48  f64  scrap_frequency   read by the scrap overlay only
+//! +56  f64  scrap_size        read by the scrap overlay only
 //!
 //! vulcanus block (312 bytes, so a Vulcanus request is 368)
 //!  +0  f64  volcanism_frequency
@@ -123,11 +125,13 @@
 //!                crude-oil, uranium-ore
 //! ```
 //!
-//! **The Vulcanus block has grown twice with no version bump - 248 to 280 for
-//! the cliff view, 280 to 312 for the rock and resource overlays - and that is
-//! the split working rather than a shortcut.** The prefix declares its own
-//! block length, [`Status::BadParamsLength`] refuses a writer that disagrees
-//! with it, and Fulgora's request has not moved a byte through either change.
+//! **Three blocks have now grown with no version bump, which is the split
+//! working rather than a shortcut.** Vulcanus went 248 to 280 for the cliff
+//! view and 280 to 312 for the rock and resource overlays; Fulgora went 48 to
+//! 64 for the scrap overlay (#363), which is the first time its block has
+//! moved since v1. The prefix declares its own block length,
+//! [`Status::BadParamsLength`] refuses a writer that disagrees with it, and no
+//! other planet's request moved a byte through any of the three.
 //! Both halves ship together in this repository and
 //! `test/fixtures/wasm-request.v2.json` pins the encoding for each planet, so
 //! there is no third party whose old requests could still be in flight. A
@@ -161,7 +165,7 @@ pub const ABI_VERSION: u32 = 2;
 pub const COMMON_BYTES: usize = 56;
 
 /// Size of Fulgora's parameter block.
-pub const FULGORA_PARAMS_BYTES: usize = 48;
+pub const FULGORA_PARAMS_BYTES: usize = 64;
 
 /// Size of Vulcanus's parameter block.
 pub const VULCANUS_PARAMS_BYTES: usize = 312;
@@ -310,6 +314,17 @@ pub struct FulgoraParams {
     pub cos_start: f64,
     pub sin_vault: f64,
     pub cos_vault: f64,
+    /// `control:scrap:frequency`, wire value. Neutral is 1.
+    ///
+    /// **Sent rather than defaulted, and `Default` gives 0 rather than 1 here
+    /// deliberately.** A zero is not the neutral slider, so a caller that
+    /// forgets to write these fields gets a visibly wrong render rather than a
+    /// plausible one. The one constructor the app uses fills them from the
+    /// request, defaulting to 1 there where the neutral value belongs.
+    pub scrap_frequency: f64,
+    /// `control:scrap:size`, wire value. Neutral is 1. See
+    /// [`FulgoraParams::scrap_frequency`].
+    pub scrap_size: f64,
 }
 
 /// Vulcanus's block.
@@ -609,6 +624,8 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
             cos_start: f64_at(bytes, p + 24),
             sin_vault: f64_at(bytes, p + 32),
             cos_vault: f64_at(bytes, p + 40),
+            scrap_frequency: f64_at(bytes, p + 48),
+            scrap_size: f64_at(bytes, p + 56),
         }),
         PLANET_NAUVIS => Params::Nauvis(NauvisParams {
             water_level: f64_at(bytes, p),
@@ -925,7 +942,7 @@ mod tests {
     /// third party to keep compatible.
     #[test]
     fn the_split_left_a_fulgora_request_the_size_it_was_in_v1() {
-        assert_eq!(COMMON_BYTES + FULGORA_PARAMS_BYTES, 104);
+        assert_eq!(COMMON_BYTES + FULGORA_PARAMS_BYTES, 120);
         assert_eq!(COMMON_BYTES + VULCANUS_PARAMS_BYTES, 368);
         // **`REQUEST_BYTES` is NAUVIS's now.** It equalled Vulcanus's request
         // for three planets and this assertion read `368` the whole time,

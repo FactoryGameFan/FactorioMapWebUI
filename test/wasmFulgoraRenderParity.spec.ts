@@ -21,6 +21,7 @@ import {
   renderFulgoraLandMask,
   renderFulgoraTerrain,
 } from "../src/noise/preview/renderFulgoraTerrain";
+import { renderFulgoraResources } from "../src/noise/preview/renderFulgoraResources";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 
 /**
@@ -109,7 +110,13 @@ const WINDOWS: readonly Window[] = [
   },
 ];
 
-function typescriptPixels(w: Window, view: "landmask" | "terrain"): Uint8ClampedArray {
+type FulgoraView = "landmask" | "terrain" | "resources" | "all";
+
+function typescriptPixels(
+  w: Window,
+  view: FulgoraView,
+  scrap?: { readonly frequency?: number; readonly size?: number },
+): Uint8ClampedArray {
   const opts = {
     seed0: SEED0,
     width: w.width,
@@ -119,8 +126,60 @@ function typescriptPixels(w: Window, view: "landmask" | "terrain"): Uint8Clamped
     tilesPerPixel: w.tilesPerPixel,
     ctx: { islandsFrequency: w.islandsFrequency, islandsSize: w.islandsSize },
   };
-  return (view === "landmask" ? renderFulgoraLandMask(opts) : renderFulgoraTerrain(opts)).data;
+  if (view === "landmask") return renderFulgoraLandMask(opts).data;
+  const image = renderFulgoraTerrain(opts);
+  // The composite, in the dispatcher's own order: terrain, then the scrap
+  // overlay mutating it in place. `"resources"` and `"all"` take the same
+  // branch there because Fulgora has no cliffs and no rocks.
+  if (view === "resources" || view === "all") {
+    renderFulgoraResources(image, {
+      seed0: SEED0,
+      originX: w.originX,
+      originY: w.originY,
+      tilesPerPixel: w.tilesPerPixel,
+      ctx: { islandsFrequency: w.islandsFrequency, islandsSize: w.islandsSize },
+      scrapControls: scrap,
+    });
+  }
+  return image.data;
 }
+
+/**
+ * Windows chosen for SCRAP, which the four above have almost none of.
+ *
+ * Measured 2026-08-31 at seed 123456, counting pixels where the `all`
+ * composite differs from plain terrain: the four parameter-varying windows
+ * carry 0, 1, 11 and 0. That is 12 pixels of overlay in 7,685, so a
+ * byte-identity test over them alone is very nearly a terrain test with extra
+ * steps.
+ *
+ * These two carry 149 and 134. They were found by sweeping origins on a
+ * +/-3000 grid. Near spawn there is no scrap at all, because the starting mask
+ * suppresses it, which is why the "origin" window reads 0 rather than being
+ * unlucky.
+ */
+const SCRAP_WINDOWS: readonly Window[] = [
+  {
+    label: "scrap-dense, south-west",
+    width: 64,
+    height: 64,
+    originX: -500,
+    originY: 3000,
+    tilesPerPixel: 1,
+    islandsFrequency: 1,
+    islandsSize: 1,
+  },
+  {
+    label: "scrap-dense, west",
+    width: 64,
+    height: 64,
+    originX: -2000,
+    originY: 1000,
+    tilesPerPixel: 1,
+    islandsFrequency: 1,
+    islandsSize: 1,
+  },
+];
 
 describe("the WASM engine renders Fulgora's land mask byte-identically", () => {
   it.each(["landmask", "terrain"] as const)(
@@ -234,7 +293,7 @@ describe("the request encoding is pinned on both sides", () => {
   });
 
   /**
-   * A Fulgora request is 104 bytes and a Vulcanus one is 368, so the encoder
+   * A Fulgora request is 120 bytes and a Vulcanus one is 368, so the encoder
    * returns a LENGTH rather than the buffer's capacity.
    *
    * Asserted because v1 had one size and the two were interchangeable there;
@@ -259,13 +318,16 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.nauvis.totalBytes).toBe(568);
     expect(REQUEST_BYTES).toBe(fixture.nauvis.totalBytes);
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.vulcanus.totalBytes);
-    expect(fixture.fulgora.totalBytes).toBe(104);
+    // Fulgora's block moved for the first time since v1: 48 to 64 bytes, so
+    // 104 to 120, when #363 appended the two scrap sliders. It is still the
+    // smallest of the three by a wide margin.
+    expect(fixture.fulgora.totalBytes).toBe(120);
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.fulgora.totalBytes);
   });
 
   it("refuses a target buffer too small to hold the request", () => {
     expect(() =>
-      encodeRenderRequest(new Uint8Array(103), {
+      encodeRenderRequest(new Uint8Array(119), {
         seed0: 1,
         width: 1,
         height: 1,
@@ -275,12 +337,12 @@ describe("the request encoding is pinned on both sides", () => {
         islandsFrequency: 1,
         islandsSize: 1,
       }),
-    ).toThrow(/fulgora request needs 104 bytes/);
+    ).toThrow(/fulgora request needs 120 bytes/);
 
     // A Vulcanus request does not fit in a buffer that a Fulgora one does, and
     // the message says which planet - the whole point of the per-planet length.
     expect(() =>
-      encodeRenderRequest(new Uint8Array(104), {
+      encodeRenderRequest(new Uint8Array(120), {
         planet: "vulcanus",
         seed0: 1,
         width: 1,
@@ -568,4 +630,207 @@ describe("the WASM engine's scrap footprint contains the game's scrap", () => {
     expect(share).toBeGreaterThan(0.01);
     expect(share).toBeLessThan(0.5);
   }, 300000);
+});
+
+/**
+ * **The composite, which is what an ordinary user actually sees.**
+ *
+ * `ElevationPreviewPanel.vue`'s `effectiveView` returns `"all"` for every
+ * non-dev-mode Fulgora request, so until #363 the DEFAULT Fulgora render was
+ * the one view still served by TypeScript, while the two dev-mode views went
+ * to the engine. This block is what lets the gate widen.
+ *
+ * The engine's overlay is a placement ROLL - `FulgoraScrapPlacement` in
+ * `crates/fmw-noise/src/resources/fulgora_catalog.rs` - and NOT the scrap
+ * footprint. `VIEW_SCRAP_FOOTPRINT` paints every tile where the probability is
+ * positive, which is a much larger set: 708 tiles against 177 over a 128x128
+ * window at seed 123456. Substituting one for the other passes no test here.
+ */
+describe("the WASM engine renders Fulgora's composite byte-identically", () => {
+  it.each(["resources", "all"] as const)(
+    "matches the TypeScript %s composite on every pixel of every window",
+    async (view) => {
+      const e = await engine();
+      for (const w of [...WINDOWS, ...SCRAP_WINDOWS]) {
+        const wasm = renderThroughWasm(e, { view, seed0: SEED0, ...w });
+        const ts = typescriptPixels(w, view);
+        expect(wasm.length, `${w.label}: length`).toBe(ts.length);
+
+        let first = -1;
+        for (let i = 0; i < ts.length; i++) {
+          if (wasm[i] !== ts[i]) {
+            first = i;
+            break;
+          }
+        }
+        if (first >= 0) {
+          const px = Math.floor(first / 4) % w.width;
+          const py = Math.floor(first / 4 / w.width);
+          expect.fail(
+            `${w.label}: first difference at pixel (${String(px)}, ${String(py)}), ` +
+              `byte ${String(first % 4)}: wasm ${String(wasm[first])} vs ts ${String(ts[first])}`,
+          );
+        }
+      }
+    },
+  );
+
+  /**
+   * `"resources"` and `"all"` are the same picture on Fulgora, and the module
+   * collapses them onto one arm. Asserted rather than assumed, because the
+   * claim is what justifies the collapse - if Fulgora ever gains a second
+   * overlay this test is what notices that the two stopped being equal.
+   */
+  it("serves resources and all as the same picture, which is why one arm does both", async () => {
+    const e = await engine();
+    const w = WINDOWS[0] as Window;
+    const resources = renderThroughWasm(e, { view: "resources", seed0: SEED0, ...w }).slice();
+    const all = renderThroughWasm(e, { view: "all", seed0: SEED0, ...w });
+    expect(Array.from(all)).toEqual(Array.from(resources));
+  });
+
+  /**
+   * The overlay draws SOMETHING, and does not draw everything.
+   *
+   * Without this the byte-identity test above passes vacuously whenever the
+   * window holds no scrap: two terrain renders agreeing is not a test of the
+   * overlay. This counts the pixels the composite changed against plain
+   * terrain, per window, and the count is reported so a future reader can see
+   * which windows carry the weight.
+   */
+  it("the overlay actually paints, so the composite is not just terrain again", async () => {
+    const e = await engine();
+    const counts: string[] = [];
+    const perWindow = new Map<string, number>();
+    let total = 0;
+    for (const w of [...WINDOWS, ...SCRAP_WINDOWS]) {
+      const terrain = renderThroughWasm(e, { view: "terrain", seed0: SEED0, ...w }).slice();
+      const all = renderThroughWasm(e, { view: "all", seed0: SEED0, ...w });
+      let changed = 0;
+      for (let i = 0; i < terrain.length; i += 4) {
+        if (
+          all[i] !== terrain[i] ||
+          all[i + 1] !== terrain[i + 1] ||
+          all[i + 2] !== terrain[i + 2]
+        ) {
+          changed++;
+        }
+      }
+      const pixels = w.width * w.height;
+      perWindow.set(w.label, changed);
+      counts.push(`${w.label}: ${String(changed)}/${String(pixels)}`);
+      expect(changed, `${w.label}: the overlay painted the WHOLE window`).toBeLessThan(pixels);
+      total += changed;
+    }
+    // The four parameter-varying windows are NOT required to carry scrap: they
+    // are chosen to move the request's fields, and three of them hold
+    // essentially none. The two scrap windows are, and they are the reason the
+    // byte-identity test above grades the overlay rather than the terrain.
+    for (const sw of SCRAP_WINDOWS) {
+      const n = perWindow.get(sw.label) ?? 0;
+      expect(n, `${sw.label}: overlay pixels`).toBeGreaterThan(50);
+    }
+    expect(total, `no window painted any scrap - ${counts.join(", ")}`).toBeGreaterThan(0);
+    console.log(`MEASURED composite overlay pixels - ${counts.join(", ")}`);
+  });
+});
+
+/**
+ * **The two new ABI fields, graded end to end and INDEPENDENTLY.**
+ *
+ * `scrapFrequency` and `scrapSize` grew the Fulgora block from 48 to 64 bytes
+ * (#363). Nothing else in this file would notice if the module ignored either:
+ * every other test sends the neutral 1, and a module reading neither field
+ * would still be byte-identical to a TypeScript renderer also running at
+ * neutral.
+ *
+ * **One field at a time, because moving both together hides one of them.** The
+ * first version of this test moved `frequency` to 4 and `size` to 3 at once,
+ * and hard-coding `scrap_frequency` to the neutral 1 in the module passed it.
+ * Two things were wrong with it. The picture still changed, because `size` was
+ * still moving; and the two sides still agreed, because of what the sweep below
+ * then turned up.
+ *
+ * **`scrapFrequency` above neutral does not move this window at all.** Measured
+ * 2026-08-31 on the scrap-dense south-west window, counting scrap pixels: at
+ * `(1, 1)` there are 149, and at `(4, 1)` there are 149 and every byte is
+ * identical. Below neutral it moves: `(0.25, 1)` gives 104. So 4 was in a dead
+ * zone. `size` moves in both directions - `(1, 3)` gives 194 and `(1, 0.25)`
+ * gives 118.
+ *
+ * That is consistent with the probability being capped by the Lua's own `min`,
+ * which `expressions::fulgora_scrap`'s module docs record, but it is stated
+ * here as the measurement rather than as the mechanism: what the test needs is
+ * a value that demonstrably moves the picture, and 4 is not one.
+ */
+describe("the scrap sliders cross the ABI and are read", () => {
+  const w = SCRAP_WINDOWS[0] as Window;
+
+  /**
+   * Each case moves ONE slider off neutral to a value the sweep above showed
+   * moving the picture. `frequency` goes DOWN because up is a dead zone.
+   */
+  const CASES = [
+    { label: "frequency below neutral", scrap: { frequency: 0.25, size: 1 } },
+    { label: "size above neutral", scrap: { frequency: 1, size: 3 } },
+    { label: "size below neutral", scrap: { frequency: 1, size: 0.25 } },
+  ] as const;
+
+  it.each(CASES)("$label changes the engine's picture", async ({ scrap }) => {
+    const e = await engine();
+    const neutral = renderThroughWasm(e, { view: "all", seed0: SEED0, ...w }).slice();
+    const moved = renderThroughWasm(e, {
+      view: "all",
+      seed0: SEED0,
+      ...w,
+      scrapFrequency: scrap.frequency,
+      scrapSize: scrap.size,
+    });
+    expect(Array.from(moved)).not.toEqual(Array.from(neutral));
+  });
+
+  it.each(CASES)("$label agrees with the TypeScript, byte for byte", async ({ scrap }) => {
+    const e = await engine();
+    const wasm = renderThroughWasm(e, {
+      view: "all",
+      seed0: SEED0,
+      ...w,
+      scrapFrequency: scrap.frequency,
+      scrapSize: scrap.size,
+    });
+    const ts = typescriptPixels(w, "all", scrap);
+    expect(wasm.length).toBe(ts.length);
+    let first = -1;
+    for (let i = 0; i < ts.length; i++) {
+      if (wasm[i] !== ts[i]) {
+        first = i;
+        break;
+      }
+    }
+    if (first >= 0) {
+      const px = Math.floor(first / 4) % w.width;
+      const py = Math.floor(first / 4 / w.width);
+      expect.fail(
+        `first difference at pixel (${String(px)}, ${String(py)}), ` +
+          `byte ${String(first % 4)}: wasm ${String(wasm[first])} vs ts ${String(ts[first])}`,
+      );
+    }
+  });
+
+  /**
+   * The dead zone itself, pinned so it is a known property rather than a
+   * surprise the next person rediscovers by writing the test I wrote first.
+   */
+  it("raising frequency above neutral is a no-op on this window, which is why the cases lower it", async () => {
+    const e = await engine();
+    const neutral = renderThroughWasm(e, { view: "all", seed0: SEED0, ...w }).slice();
+    const raised = renderThroughWasm(e, {
+      view: "all",
+      seed0: SEED0,
+      ...w,
+      scrapFrequency: 4,
+      scrapSize: 1,
+    });
+    expect(Array.from(raised)).toEqual(Array.from(neutral));
+  });
 });
