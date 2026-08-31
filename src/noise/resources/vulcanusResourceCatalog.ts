@@ -9,8 +9,15 @@
  * before `space-age`, coal's true global registration index actually *precedes*
  * tungsten-ore and calcite, not follows them as this array's order suggests.
  *
- * Among those three the order is functionally inert: all three autoplace
- * `order = "b"`, so ties fall back to registration order, but their
+ * **This module is a table, not an engine.** The probability expressions, the
+ * footprint test and the placement threshold were ported to Rust in #227 and
+ * live in `crates/fmw-noise/src/resources/vulcanus_catalog.rs`; the renderer
+ * that walks them is `crates/fmw-wasm/src/render.rs:1400-1443`. What survives
+ * here is the order and the map colours, which
+ * `test/wasmVulcanusRenderParity.spec.ts` grades the engine's pixels against.
+ *
+ * Among the three solid ores the order is functionally inert: all three
+ * autoplace `order = "b"`, so ties fall back to registration order, but their
  * favorabilities gate on disjoint biomes (basalts / mountains / ashlands), so
  * two of them are never simultaneously eligible at the same pixel and the
  * tie-break never fires. Listed in this order for readability, not correctness -
@@ -23,67 +30,30 @@
  * be eligible at the same pixel and the tie-break fires for the first time.
  * **The geyser is last on purpose.** The game arbitrates a tile among competing
  * autoplacers by maximum probability; calcite's probability saturates to ~1
- * inside its footprint while the geyser's peaks below 0.09 (measured - see
- * `sulfuricAcidGeyserProbability`), so calcite wins that pixel. The renderer
- * reproduces that outcome by painting the geyser's roll marks FIRST and the
- * three thresholded ores over the top, so a solid ore still wins a shared pixel
- * (`renderVulcanusResources.ts`).
+ * inside its footprint while the geyser's peaks below 0.09 (measured at
+ * **0.0858645**, at (2481, -1985) on seed 123456, where `patchy` is 1.2172893 -
+ * see `sulfuric_acid_geyser_probability` in the Rust catalog), so calcite wins
+ * that pixel. The renderer reproduces that outcome by painting the geyser's roll
+ * marks FIRST and the three thresholded ores over the top, so a solid ore still
+ * wins a shared pixel.
  */
-import type { VulcanusResourceControls, VulcanusResourceLevers } from "../eval/ctx";
-import type { VulcanusResources } from "../expressions/vulcanusResources";
-
-/**
- * The threshold a `"threshold"` entry's probability must clear for the game to
- * have placed an ore entity on that tile: `probability >= 0.5`.
- *
- * **This lives here rather than in the renderer because it now has two
- * consumers.** `renderVulcanusResources` paints with it, and
- * `makeVulcanusOreRejection` (`../cliffs/vulcanusOreRejection.ts`) asks the same
- * question to decide whether an ore entity suppresses a cliff. Two copies of the
- * number could drift apart and the cliff overlay would then reject against a
- * footprint the ore overlay does not draw - a disagreement that would be
- * invisible in both renders. `test/cliffOreRejection.spec.ts` pins the two
- * footprints equal on top of sharing this constant.
- */
-export const RESOURCE_PROBABILITY_THRESHOLD = 0.5;
-
-/**
- * Does the game hold a solid-ore entity on the tile whose centre is
- * `(x + 0.5, y + 0.5)`?
- *
- * The three solid ores THRESHOLD (see `VulcanusResourcePlacement`), so their
- * footprint is exactly `1000 * region >= RESOURCE_PROBABILITY_THRESHOLD` over
- * the entries whose `size` lever is positive. A disabled ore occupies nothing,
- * which is not a special case bolted on: it is the same `size = 0` lever the
- * game itself was driven with to establish that ore suppresses cliffs (#99).
- *
- * The geyser is deliberately absent - it ROLLS rather than thresholds, so it has
- * no footprint expressible this way. Callers that want it pass their own
- * predicate.
- */
-export function makeVulcanusOreFootprint(
-  resources: VulcanusResources,
-  controls: VulcanusResourceControls,
-): (x: number, y: number) => boolean {
-  const active = VULCANUS_RESOURCE_CATALOG.filter(
-    (p) => p.placement === "threshold" && p.levers(controls).size > 0,
-  ).map((p) => p.region(resources));
-  if (active.length === 0) return () => false;
-  return (x, y) => active.some((region) => 1000 * region(x, y) >= RESOURCE_PROBABILITY_THRESHOLD);
-}
 
 /**
  * How this entry decides where it is drawn.
  *
- * - `"threshold"` - draw wherever the entry's own probability clears
- *   `PROBABILITY_THRESHOLD`, i.e. paint the patch as a solid footprint. Right
- *   for the three solid ores, whose probability saturates to ~1 inside a patch
- *   and 0 outside: the threshold *is* the patch boundary.
- * - `"roll"` - draw where the game's per-tile placement draw beats `probability`
- *   (`docs/noise/placement-roll-NOTES.md`), subject to the two arbitration
- *   gates. Right for the geyser, whose probability never exceeds ~0.09
- *   anywhere: there is no threshold that yields a footprint, because a geyser
- *   is an individual entity the game rolls for, not a patch.
+ * - `"threshold"` - draw wherever the entry's own probability clears the
+ *   placement threshold, i.e. paint the patch as a solid footprint. Right for
+ *   the three solid ores, whose probability saturates to ~1 inside a patch and 0
+ *   outside: the threshold *is* the patch boundary.
+ * - `"roll"` - draw where the game's per-tile placement draw beats
+ *   `probability` (`docs/noise/placement-roll-NOTES.md`), subject to the two
+ *   arbitration gates. Right for the geyser, whose probability never exceeds
+ *   ~0.09 anywhere: there is no threshold that yields a footprint, because a
+ *   geyser is an individual entity the game rolls for, not a patch.
+ *
+ * Mirrors `VulcanusResourcePlacement` in
+ * `crates/fmw-noise/src/resources/vulcanus_catalog.rs`, which is what actually
+ * branches on it.
  */
 export type VulcanusResourcePlacement = "threshold" | "roll";
 
@@ -94,75 +64,8 @@ export interface VulcanusResourceParams {
   readonly controlName: string;
   /** `map_color`, scaled to 0..255 (rounded), as the game's preview tints it. */
   readonly mapColor: readonly [number, number, number];
-  /**
-   * Which `VulcanusResources` region this entry is built from.
-   *
-   * For a `"threshold"` entry this is the game's own probability expression up
-   * to the `1000 *` scale the renderer applies, and it decides the footprint.
-   * For the `"roll"` entry the renderer does NOT consult it - it is the field
-   * `probability` is a formula over, kept here because the geyser's extent
-   * ("where the game would roll at all") is still `region > 0`.
-   */
-  readonly region: (r: VulcanusResources) => (x: number, y: number) => number;
-  /** Which `VulcanusResourceControls` entry gates this ore's size/frequency. */
-  readonly levers: (c: VulcanusResourceControls) => VulcanusResourceLevers;
-  /** How the renderer turns this entry into pixels. */
+  /** How the engine turns this entry into pixels. */
   readonly placement: VulcanusResourcePlacement;
-  /**
-   * The game's `entity:<name>:probability` at a tile, for `"roll"` entries. May
-   * be negative where the entry cannot place - a negative probability simply
-   * never wins the roll, exactly as in the game's expression.
-   */
-  readonly probability?: (r: VulcanusResources) => (x: number, y: number) => number;
-}
-
-/**
- * `vulcanus_sulfuric_acid_geyser_probability`, verbatim from
- * `space-age/prototypes/planet/planet-vulcanus-map-gen.lua:849` (2.1.12):
- *
- * ```
- * (control:sulfuric_acid_geyser:size > 0)
- *   * (0.025 * ((vulcanus_sulfuric_acid_region_patchy > 0)
- *               + 2 * vulcanus_sulfuric_acid_region_patchy))
- * ```
- *
- * It reaches the geyser via
- * `property_expression_names["entity:sulfuric-acid-geyser:probability"]`
- * (`planet-map-gen.lua:21`), which replaces the prototype's own
- * `probability_expression = 0`. **There is no `random_penalty` wrapper** - unlike
- * its calcite/coal/tungsten neighbours in the same file, and unlike the Nauvis
- * spawners, both of which do wrap theirs. Read from source rather than trusted
- * from the comment this replaced.
- *
- * The leading `size > 0` factor is applied by the renderer's `enabled` filter,
- * so it is not repeated here.
- *
- * **The peak is not 0.065, and it is not 0.0883 either.** 0.065 sat in this
- * file as a reasoned bound (assuming `region <= 1` and `patches <= 0.8`) and it
- * is wrong: `region` is a `max` against `vulcanus_starting_sulfur`, which is
- * not capped at 1. It was replaced by a measurement - sweeping +/-3000 tiles at
- * seed 123456 on a 7-tile grid and refining around the argmax found the peak at
- * (2481, -1985), "where `patchy` is 1.217", and recorded **0.0883**.
- *
- * Those two numbers do not agree with each other, which the Rust port noticed
- * (2026-08-24) while pinning the peak as a test. This expression at
- * `patchy = 1.217` is `0.025 * (1 + 2*1.217) = 0.08585`, and evaluating the
- * chain at that exact position at seed 123456 gives `patchy = 1.2172893` and
- * **0.0858645**. So the position and the `patchy` are right and the recorded
- * probability is not; 0.0883 would need a `patchy` of 1.266.
- *
- * Nothing depends on the difference - both are two orders of magnitude below
- * calcite's saturated ~1, which is all the catalog ordering argument needs.
- * Corrected rather than left, because a number nobody re-derives is a number
- * that gets quoted.
- */
-export function sulfuricAcidGeyserProbability(
-  r: VulcanusResources,
-): (x: number, y: number) => number {
-  return (x, y) => {
-    const patchy = r.sulfuricAcidRegionPatchy(x, y);
-    return 0.025 * ((patchy > 0 ? 1 : 0) + 2 * patchy);
-  };
 }
 
 export const VULCANUS_RESOURCE_CATALOG: readonly VulcanusResourceParams[] = [
@@ -171,8 +74,6 @@ export const VULCANUS_RESOURCE_CATALOG: readonly VulcanusResourceParams[] = [
     controlName: "tungsten_ore",
     // map_color = {r = 98/256, g = 86/256, b = 150/256} -> Math.round(v * 255)
     mapColor: [98, 86, 149],
-    region: (r) => (x, y) => r.tungstenRegion(x, y),
-    levers: (c) => c.tungstenOre,
     placement: "threshold",
   },
   {
@@ -180,8 +81,6 @@ export const VULCANUS_RESOURCE_CATALOG: readonly VulcanusResourceParams[] = [
     controlName: "calcite",
     // map_color = {0.8, 0.7, 0.7}
     mapColor: [204, 179, 179],
-    region: (r) => (x, y) => r.calciteRegion(x, y),
-    levers: (c) => c.calcite,
     placement: "threshold",
   },
   {
@@ -189,35 +88,26 @@ export const VULCANUS_RESOURCE_CATALOG: readonly VulcanusResourceParams[] = [
     controlName: "vulcanus_coal",
     // map_color = {0, 0, 0} (base/prototypes/entity/resources.lua)
     mapColor: [0, 0, 0],
-    region: (r) => (x, y) => r.coalRegion(x, y),
-    levers: (c) => c.vulcanusCoal,
     placement: "threshold",
   },
   {
     // The geyser is NOT a solid patch: every geyser in-game comes from a
-    // per-tile RNG roll against `sulfuricAcidGeyserProbability`, which peaks
-    // below 0.09, so no threshold on it yields a footprint. Until 2026-07-27
-    // this entry thresholded anyway and drew the whole *patch extent* - the
-    // region where the game would roll at all - which overstates the geysers'
-    // area by **4.2x** (measured: 371 placements at 2.8 x 2.8 against 12130
-    // footprint tiles over a +/-2000-tile sample, 0.240). Earlier text here and
-    // in the notes said "more than an order of magnitude"; that was reasoned
-    // from the pre-collision roll rate, never measured, and is wrong. It now
-    // rolls (`docs/noise/placement-roll-NOTES.md`), and the roll's density is
-    // validated against the game in `test/entityDensity.spec.ts`.
-    //
-    // `region` stays `sulfuricAcidRegionPatchy` - the field the probability is
-    // built from, and NOT the plain `sulfuricAcidRegion` that richness uses -
-    // because `probability > 0` is exactly `patchy > 0`, so it is still the
-    // right answer to "could a geyser roll here". The renderer no longer draws
-    // it.
+    // per-tile RNG roll against the probability expression, which peaks below
+    // 0.09, so no threshold on it yields a footprint. Until 2026-07-27 this
+    // entry thresholded anyway and drew the whole *patch extent* - the region
+    // where the game would roll at all - which overstates the geysers' area by
+    // **4.2x** (measured: 371 placements at 2.8 x 2.8 against 12130 footprint
+    // tiles over a +/-2000-tile sample, 0.240). Earlier text here and in the
+    // notes said "more than an order of magnitude"; that was reasoned from the
+    // pre-collision roll rate, never measured, and is wrong. It now rolls
+    // (`docs/noise/placement-roll-NOTES.md`), and the roll's density is
+    // validated against the game's own counts in `test/oracle/entityCounts.ts`,
+    // whose fourth region exists precisely to give the geyser overlay something
+    // to compare against.
     name: "sulfuric-acid-geyser",
     controlName: "sulfuric_acid_geyser",
     // map_color = {0.78, 0.78, 0.1} (space-age/prototypes/entity/resources.lua)
     mapColor: [199, 199, 26],
-    region: (r) => (x, y) => r.sulfuricAcidRegionPatchy(x, y),
-    levers: (c) => c.sulfuricAcidGeyser,
     placement: "roll",
-    probability: sulfuricAcidGeyserProbability,
   },
 ];

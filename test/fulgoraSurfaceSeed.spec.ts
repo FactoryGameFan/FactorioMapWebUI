@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
@@ -6,6 +9,7 @@ import {
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
+import { compileEngine, instantiateEngine } from "../src/noise/wasm/engine";
 
 /**
  * The one Fulgora defect no oracle fixture can catch.
@@ -99,8 +103,13 @@ describe("fulgora render request dispatch", () => {
     expect(Array.from(got)).toEqual(Array.from(direct.data));
   });
 
-  it("planet 'fulgora' differs from the Nauvis terrain render at the same point", () => {
-    const nauvis = new Uint8ClampedArray(runRenderRequest({ ...BASE, planet: "nauvis" }).buffer);
+  it("planet 'fulgora' differs from the Nauvis terrain render at the same point", async () => {
+    // Nauvis needs the engine as of #227 and Fulgora does not, which is #363
+    // rather than an asymmetry this test cares about. The claim is only that
+    // the two planets draw different pictures at the same point.
+    const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
+    const e = await instantiateEngine(await compileEngine(readFileSync(wasmPath)));
+    const nauvis = new Uint8ClampedArray(runRenderRequest({ ...BASE, planet: "nauvis" }, e).buffer);
     const fulgora = new Uint8ClampedArray(runRenderRequest({ ...BASE, planet: "fulgora" }).buffer);
     expect(Array.from(fulgora)).not.toEqual(Array.from(nauvis));
   });

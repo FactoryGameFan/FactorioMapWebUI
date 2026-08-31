@@ -27,7 +27,6 @@ import { multisample } from "../src/noise/eval/multisample";
 import { basisNoiseExpr } from "../src/noise/eval/primitives";
 import { seedNormalized, seedSmall } from "../src/noise/expressions/vulcanusSeed";
 import { fastCbrt } from "../src/noise/fastApprox";
-import { noiseMachinePow } from "../src/noise/quickMultioctaveNoise";
 
 /**
  * Tier 2 of the Rust port's gate for the `eval` layer (#221): strict bit
@@ -107,7 +106,13 @@ function foldAll(values: readonly number[]): bigint {
 
 const f32 = Math.fround;
 
-describe("Rust and TypeScript agree bit for bit on the noise machine's `^`", () => {
+/**
+ * `noiseMachinePow` went with `quickMultioctaveNoise.ts` in #227, so the five
+ * exponent rows are graded against the frozen table alone - `tier2Frozen.ts`
+ * explains why that is still worth running inside `wasm32-unknown-unknown`.
+ * `fastCbrt` survives in `fastApprox.ts`, so its row keeps both arms.
+ */
+describe("The noise machine's `^` folds to its frozen checksums", () => {
   // Bases stay positive - `fastLog2` of a non-positive base is not a value
   // either port promises anything about. The step is not a binary fraction, so
   // the sweep does not sit on values where every candidate agrees.
@@ -117,7 +122,7 @@ describe("Rust and TypeScript agree bit for bit on the noise machine's `^`", () 
 
   const bases = (): number[] => Array.from({ length: N }, (_, i) => f32(X0 + i * STEP));
 
-  it("folds 400 bases identically for each of the three branches, plus fastCbrt", async () => {
+  it("folds 400 bases to the frozen checksum for each of the three branches, plus fastCbrt", async () => {
     const engine = await instantiate();
     const xs = bases();
 
@@ -130,7 +135,6 @@ describe("Rust and TypeScript agree bit for bit on the noise machine's `^`", () 
         `pow exponent=${exponent}`,
         "checksum_pow",
         u64(engine.checksum_pow(exponent, 0, X0, STEP, N)),
-        foldAll(xs.map((x) => noiseMachinePow(x, exponent))),
       );
     }
 
@@ -145,14 +149,26 @@ describe("Rust and TypeScript agree bit for bit on the noise machine's `^`", () 
     );
   });
 
-  it("would not agree if a branch were chosen differently", () => {
+  it("would not agree if a branch were chosen differently", async () => {
     // Anti-vacuity for the block above: the three branches really do return
     // different numbers, so folding them cannot coincide. Without this, an
     // exponent where all three agreed would make the test above vacuous.
-    const xs = bases();
-    const squaring = foldAll(xs.map((x) => noiseMachinePow(x, 2)));
-    const viaFastapprox = foldAll(xs.map((x) => noiseMachinePow(x, 2.0000001)));
-    const viaSqrt = foldAll(xs.map((x) => noiseMachinePow(x, 0.5)));
+    //
+    // Asked of the engine since #227 deleted the TypeScript arm. It is the same
+    // claim, made about the side that is still running.
+    //
+    // The exponent that leaves the squaring branch is ONE f32 ULP past 2, not
+    // the 2.0000001 the TypeScript arm was handed. `checksum_pow` takes its
+    // exponent as an `f32` (`crates/fmw-wasm/src/lib.rs`), so 2.0000001
+    // narrows to exactly 2 at the boundary and picks squaring after all.
+    // Measured: written with 2.0000001 this test failed, both folds equal.
+    const justPastTwo = 2 + 2 ** -22;
+    expect(Math.fround(justPastTwo), "the perturbation must survive the f32 boundary").not.toBe(2);
+
+    const engine = await instantiate();
+    const squaring = u64(engine.checksum_pow(2, 0, X0, STEP, N));
+    const viaFastapprox = u64(engine.checksum_pow(justPastTwo, 0, X0, STEP, N));
+    const viaSqrt = u64(engine.checksum_pow(0.5, 0, X0, STEP, N));
     expect(squaring).not.toBe(viaFastapprox);
     expect(squaring).not.toBe(viaSqrt);
   });

@@ -11,15 +11,9 @@ import {
   record,
 } from "./tier2Frozen";
 
-import { makeCliffinessBasic } from "../src/noise/cliffs/vulcanusCliffFields";
 import { distanceFromNearestPoint } from "../src/noise/distanceFromNearestPoint";
 import { type EvalCtxInput, withCtxDefaults } from "../src/noise/eval/ctx";
 import { makeVulcanusTemperature } from "../src/noise/expressions/vulcanusElevation";
-import { sulfuricAcidGeyserProbability } from "../src/noise/resources/vulcanusResourceCatalog";
-import {
-  makeVulcanusDecorativeKnockout,
-  makeVulcanusRockFields,
-} from "../src/noise/rocks/vulcanusRockField";
 import {
   makeMountainLavaSpots,
   makeVulcanusRockNoise,
@@ -217,6 +211,29 @@ const FIELD_NAMES = [
   "resolvedTile",
 ];
 
+/**
+ * The six fields whose TypeScript arm #227 deleted, in field order.
+ *
+ * `vulcanusCliffFields.ts`, `vulcanusRockField.ts` and the two math functions
+ * trimmed out of `vulcanusResourceCatalog.ts` all went with the source
+ * deletion. The engine still folds these six, and the frozen table still holds
+ * the value both ports agreed on when it was captured - see `tier2Frozen.ts`.
+ * What is gone is the second opinion, for these six only; the other 68 fields
+ * are still graded against live TypeScript.
+ *
+ * The list is asserted against what `tsFields` actually withholds, so a
+ * seventh field losing its arm is a test failure rather than a silent
+ * downgrade.
+ */
+const NO_TS_ARM: readonly string[] = [
+  "geyserProbability",
+  "cliffinessBasic",
+  "decorativeKnockout",
+  "rockHuge",
+  "rockBig",
+  "rockDensity",
+];
+
 /** The index of a named field, so an assertion never hard-codes a position. */
 function fieldIndex(name: string): number {
   const at = FIELD_NAMES.indexOf(name);
@@ -315,8 +332,14 @@ function ctxInput(s: Sliders): EvalCtxInput {
   return { seed0: SEED0, ...s.ctx };
 }
 
-/** Every field, at every point of `w`, in the module's field order. */
-function tsFields(s: Sliders, w: Window): number[][] {
+/**
+ * Every field, at every point of `w`, in the module's field order.
+ *
+ * `undefined` where #227 deleted the reference implementation - see
+ * `NO_TS_ARM`. The slot is held rather than dropped so field indices still
+ * line up with `FIELD_NAMES` and with the module's own field order.
+ */
+function tsFields(s: Sliders, w: Window): (number[] | undefined)[] {
   const input = ctxInput(s);
   const ctx = withCtxDefaults(input);
   // ONE stack, so every accessor below reads the same field objects - and
@@ -326,12 +349,8 @@ function tsFields(s: Sliders, w: Window): number[][] {
   const { helpers, spawn, cracks, biomes, climate, elevation, resources } = stack;
 
   const temperature = makeVulcanusTemperature(ctx, climate, biomes, elevation);
-  const geyser = sulfuricAcidGeyserProbability(resources);
   const mountainLavaSpots = makeMountainLavaSpots(helpers, biomes);
   const rockNoise = makeVulcanusRockNoise(ctx.seed0);
-  const knockout = makeVulcanusDecorativeKnockout(ctx.seed0);
-  const cliffiness = makeCliffinessBasic(ctx.seed0);
-  const rocks = makeVulcanusRockFields(ctx, stack);
 
   const tileFields: VulcanusTileFields = {
     elev: (x, y) => elevation.elev(x, y),
@@ -350,7 +369,8 @@ function tsFields(s: Sliders, w: Window): number[][] {
   };
   const catalog = makeVulcanusTileCatalog(tileFields);
 
-  const accessors: ((x: number, y: number) => number)[] = [
+  // `null` is a field with no TypeScript left to read - see `NO_TS_ARM`.
+  const accessors: (((x: number, y: number) => number) | null)[] = [
     helpers.wobbleX,
     helpers.wobbleY,
     helpers.wobbleLargeX,
@@ -396,28 +416,36 @@ function tsFields(s: Sliders, w: Window): number[][] {
     (x, y) => resources.sulfuricAcidPatches(x, y),
     (x, y) => resources.sulfuricAcidRegionPatchy(x, y),
     (x, y) => resources.metalTile(x, y),
-    geyser,
+    null, // geyserProbability - `sulfuricAcidGeyserProbability`, deleted by #227
     mountainLavaSpots,
     rockNoise,
     (x, y) => distanceFromNearestPoint(x, y, ctx.startingPositions),
-    cliffiness,
-    knockout,
-    rocks.rockHuge,
-    rocks.rockBig,
-    rocks.density,
+    null, // cliffinessBasic - `makeCliffinessBasic`, deleted by #227
+    null, // decorativeKnockout - `makeVulcanusDecorativeKnockout`, deleted by #227
+    null, // rockHuge - `makeVulcanusRockFields`, deleted by #227
+    null, // rockBig - same
+    null, // rockDensity - same
     ...catalog.map((t) => (x: number, y: number) => t.probability(x, y)),
     (x, y) => TILE_NAMES.indexOf(resolveVulcanusTile(x, y, catalog).name),
   ];
 
-  const out: number[][] = accessors.map(() => []);
+  const out: (number[] | undefined)[] = accessors.map((read) => (read === null ? undefined : []));
   for (let j = 0; j < w.size; j++) {
     const y = w.originY + j * w.tilesPerPixel;
     for (let i = 0; i < w.size; i++) {
       const x = w.originX + i * w.tilesPerPixel;
-      for (const [f, read] of accessors.entries()) (out[f] as number[]).push(read(x, y));
+      for (const [f, read] of accessors.entries()) {
+        if (read !== null) (out[f] as number[]).push(read(x, y));
+      }
     }
   }
   return out;
+}
+
+/** One field's TypeScript fold, or `undefined` where #227 deleted the arm. */
+function tsFold(ts: (number[] | undefined)[], field: number): bigint | undefined {
+  const values = ts[field];
+  return values === undefined ? undefined : foldAll(values);
 }
 
 /** The request the module reads its parameters and its sweep geometry from. */
@@ -478,12 +506,14 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
         const label = `${s.label}, ${w.label}`;
         for (const [field, name] of FIELD_NAMES.entries()) {
           const wasm = u64(engine.checksum_vulcanus(len, field));
-          const tsFold = foldAll(ts[field] as number[]);
+          const ref = tsFold(ts, field);
 
           // Recording compares the two arms first, so the table can only ever
-          // capture a value both ports already agree on.
+          // capture a value both ports already agree on. The six fields in
+          // `NO_TS_ARM` have no second arm to compare, which is why a record
+          // run is a deliberate act rather than a repair.
           if (RECORDING) {
-            expect(wasm, `${name} (${label})`).toBe(tsFold);
+            if (ref !== undefined) expect(wasm, `${name} (${label})`).toBe(ref);
             record(PLANET, label, name, wasm);
             compared++;
             continue;
@@ -494,7 +524,7 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
           const want = frozen(PLANET, label, name);
           expect(want, `no frozen checksum for ${name} (${label})`).toBeDefined();
           expect(wasm, `wasm ${name} (${label})`).toBe(want);
-          expect(tsFold, `TypeScript ${name} (${label})`).toBe(want);
+          if (ref !== undefined) expect(ref, `TypeScript ${name} (${label})`).toBe(want);
           compared++;
         }
       }
@@ -525,24 +555,28 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
     const ts = tsFields(s, OFF_GRID);
     const len = writeRequest(engine, request(s, OFF_GRID));
 
-    const diverging = FIELD_NAMES.filter(
-      (_, field) => u64(engine.checksum_vulcanus(len, field)) !== foldAll(ts[field] as number[]),
-    );
+    const diverging = FIELD_NAMES.filter((_, field) => {
+      const ref = tsFold(ts, field);
+      return ref !== undefined && u64(engine.checksum_vulcanus(len, field)) !== ref;
+    });
     expect(diverging).toEqual([]);
 
     // The off-grid window is a fourth sweep and it dies with the TypeScript arm
     // like the other three, so it is frozen too. It is the one that closes
     // #309, which makes it the last sweep anybody would want to lose.
+    const offGrid: bigint[] = [];
     for (const [field, name] of FIELD_NAMES.entries()) {
       const wasm = u64(engine.checksum_vulcanus(len, field));
+      offGrid.push(wasm);
       if (RECORDING) {
         record(PLANET, OFF_GRID_LABEL, name, wasm);
         continue;
       }
+      const ref = tsFold(ts, field);
       const want = frozen(PLANET, OFF_GRID_LABEL, name);
       expect(want, `no frozen checksum for ${name} (${OFF_GRID_LABEL})`).toBeDefined();
       expect(wasm, `wasm ${name} (${OFF_GRID_LABEL})`).toBe(want);
-      expect(foldAll(ts[field] as number[]), `TypeScript ${name} (${OFF_GRID_LABEL})`).toBe(want);
+      if (ref !== undefined) expect(ref, `TypeScript ${name} (${OFF_GRID_LABEL})`).toBe(want);
     }
 
     // Anti-vacuity, and it is not optional: "nothing diverges" is exactly what a
@@ -551,10 +585,16 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
     // really a DIFFERENT sweep from the on-grid one - if the folds matched the
     // spawn window's, the coordinates never left the grid and the comparison
     // above would be a re-run of the main fold.
-    const onGrid = tsFields(s, WINDOWS[0] as Window);
+    //
+    // Asked of the engine rather than of `tsFields`, because the claim is about
+    // all 74 fields and six of them no longer have a TypeScript arm. The count
+    // is unchanged by the switch: every field with both arms is asserted equal
+    // to its frozen value above, so the two arms cannot disagree about which
+    // folds moved. Note the on-grid request is written AFTER the off-grid folds
+    // are read - `writeRequest` reuses the one scratch region.
+    const onGridLen = writeRequest(engine, request(s, WINDOWS[0] as Window));
     const moved = FIELD_NAMES.filter(
-      (name, field) =>
-        foldAll(ts[field] as number[]) !== foldAll(onGrid[FIELD_NAMES.indexOf(name)] as number[]),
+      (_, field) => offGrid[field] !== u64(engine.checksum_vulcanus(onGridLen, field)),
     );
     expect(moved.length, "the off-grid window must sweep different points").toBe(
       FIELD_NAMES.length,
@@ -622,16 +662,26 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
     expect(u64(engine.checksum_vulcanus(fulgoraLen, 0)), "wrong planet").toBe(0n);
   });
 
-  it("the second slider setting really is a different chain, so running both says something", () => {
+  it("the second slider setting really is a different chain, so running both says something", async () => {
     // Anti-vacuity. At the default sliders `vulcanus_scale_multiplier` is
     // exactly 1 and every `sliderRescale` returns exactly 1, so a one-setting
     // spec would not exercise a single lever.
+    //
+    // Read from the engine since #227: six fields have no TypeScript arm left
+    // and the count is over all 74. The main fold pins both arms to the same
+    // frozen value for the other 68, so the number below cannot move by the
+    // change of arm alone.
+    const engine = await instantiate();
     const w = WINDOWS[0] as Window;
-    const a = tsFields(SLIDERS[0] as Sliders, w);
-    const b = tsFields(SLIDERS[1] as Sliders, w);
+    const foldsAt = (s: Sliders): bigint[] => {
+      const len = writeRequest(engine, request(s, w));
+      return FIELD_NAMES.map((_, field) => u64(engine.checksum_vulcanus(len, field)));
+    };
+    const a = foldsAt(SLIDERS[0] as Sliders);
+    const b = foldsAt(SLIDERS[1] as Sliders);
     let differing = 0;
     for (const [i] of FIELD_NAMES.entries()) {
-      if (foldAll(a[i] as number[]) !== foldAll(b[i] as number[])) differing++;
+      if (a[i] !== b[i]) differing++;
     }
     // Frozen at the measured 50 of 74, like every other count in this file,
     // rather than left as the floor it started as. The argument for a floor was
@@ -644,15 +694,21 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
     expect(differing).toBe(50);
   }, 300000);
 
-  it("the two windows are different regimes, so running both says something", () => {
+  it("the two windows are different regimes, so running both says something", async () => {
     // Anti-vacuity for the geometry. The spawn window exists to reach fields the
     // far window saturates; if the two folded alike, one of them is redundant.
+    // Read from the engine for the same reason as the slider guard above.
+    const engine = await instantiate();
     const s = SLIDERS[0] as Sliders;
-    const a = tsFields(s, WINDOWS[0] as Window);
-    const b = tsFields(s, WINDOWS[1] as Window);
+    const foldsIn = (w: Window): bigint[] => {
+      const len = writeRequest(engine, request(s, w));
+      return FIELD_NAMES.map((_, field) => u64(engine.checksum_vulcanus(len, field)));
+    };
+    const a = foldsIn(WINDOWS[0] as Window);
+    const b = foldsIn(WINDOWS[1] as Window);
     let differing = 0;
     for (const [i] of FIELD_NAMES.entries()) {
-      if (foldAll(a[i] as number[]) !== foldAll(b[i] as number[])) differing++;
+      if (a[i] !== b[i]) differing++;
     }
     // EVERY field, measured - not a floor. The two windows share no fold at all,
     // which is the strongest form this guard can take.
@@ -671,6 +727,15 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
       const v = ts[fieldIndex(name)] as number[];
       expect(Math.max(...v), `${name} rises above zero somewhere`).toBeGreaterThan(0);
     }
+  }, 300000);
+
+  it("withholds a TypeScript arm for exactly the six fields #227 deleted", () => {
+    // Without this, a seventh field quietly losing its reference implementation
+    // would downgrade that field to a frozen-only check and nothing would say
+    // so. `NO_TS_ARM` is the claim; this is what makes it one.
+    const ts = tsFields(SLIDERS[0] as Sliders, WINDOWS[0] as Window);
+    const withheld = FIELD_NAMES.filter((_, field) => ts[field] === undefined);
+    expect(withheld).toEqual(NO_TS_ARM);
   }, 300000);
 
   it("the sweep places several different tiles, so the argmax fold is not one constant", () => {
