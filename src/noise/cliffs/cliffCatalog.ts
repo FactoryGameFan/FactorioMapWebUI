@@ -441,7 +441,13 @@ export function cliffCollisionTileBox(
  * rule while this one exists.
  *
  * Lives here rather than beside the Vulcanus renderer because that renderer is
- * deleted by #227 and this rule is not. The Rust carries the same pair inlined
- * at `crates/fmw-noise/src/cliffs/vulcanus_fields.rs:218`.
+ * deleted by #227 and this rule is not.
+ *
+ * **This is the only definition on the TypeScript side, and the Rust side's only
+ * definition is `VulcanusTile::is_cliff_blocking` in
+ * `crates/fmw-noise/src/tiles/vulcanus_catalog.rs`.** The two are held together
+ * by `test/wasmVulcanusParity.spec.ts`, which hashes this set and compares it
+ * against the module's `vulcanus_cliff_blocking_names_fnv1a64()`. Before #364
+ * the set was written out four times with nothing checking the four agreed.
  */
 export const VULCANUS_CLIFF_BLOCKING_TILES: ReadonlySet<string> = new Set(["lava", "lava-hot"]);

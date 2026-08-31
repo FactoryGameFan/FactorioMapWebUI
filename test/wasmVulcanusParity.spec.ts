@@ -11,6 +11,7 @@ import {
   record,
 } from "./tier2Frozen";
 
+import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/cliffs/cliffCatalog";
 import { distanceFromNearestPoint } from "../src/noise/distanceFromNearestPoint";
 import { type EvalCtxInput, withCtxDefaults } from "../src/noise/eval/ctx";
 import { makeVulcanusTemperature } from "../src/noise/expressions/vulcanusElevation";
@@ -85,7 +86,9 @@ interface EngineExports {
   memory: WebAssembly.Memory;
   scratch_ptr: () => number;
   scratch_len: () => number;
+  fnv1a64: (len: number) => bigint;
   vulcanus_field_count: () => number;
+  vulcanus_cliff_blocking_names_fnv1a64: () => bigint;
   checksum_vulcanus: (requestLen: number, field: number) => bigint;
 }
 
@@ -494,6 +497,63 @@ describe("Rust and TypeScript agree bit for bit across the Vulcanus field graph"
   it("covers every field the module exposes, so a new one cannot go untested", async () => {
     const engine = await instantiate();
     expect(FIELD_NAMES).toHaveLength(engine.vulcanus_field_count());
+  });
+
+  /**
+   * The two ports agree on WHICH tiles refuse a cliff, not merely how many
+   * (#364).
+   *
+   * The set is written once per side - `VULCANUS_CLIFF_BLOCKING_TILES` here,
+   * `VulcanusTile::is_cliff_blocking` in Rust - and before #364 it was written
+   * four times with nothing comparing them. This is what makes a change to one
+   * side that misses the other loud.
+   *
+   * **Names, not a count.** A count cannot tell `lava` from `volcanic-folds`,
+   * and swapping one blocking tile for another is exactly the drift worth
+   * catching.
+   *
+   * **Hashed through the module's own `fnv1a64` rather than reimplemented
+   * here.** A second FNV-1a written in TypeScript would be one more thing that
+   * can disagree, and its disagreement would look identical to the drift this
+   * is trying to find.
+   *
+   * Sorted before hashing, so the two sides do not also have to agree on an
+   * order - catalog order is ground truth for the argmax's tie-break, but a
+   * `Set` of two strings does not carry it.
+   */
+  it("agrees with the module about which tiles block a Vulcanus cliff", async () => {
+    const engine = await instantiate();
+    const joined = [...VULCANUS_CLIFF_BLOCKING_TILES].sort().join("\n");
+    const bytes = new TextEncoder().encode(joined);
+    expect(bytes.length).toBeLessThanOrEqual(engine.scratch_len());
+    new Uint8Array(engine.memory.buffer, engine.scratch_ptr(), bytes.length).set(bytes);
+
+    expect(u64(engine.fnv1a64(bytes.length))).toBe(
+      u64(engine.vulcanus_cliff_blocking_names_fnv1a64()),
+    );
+  });
+
+  /**
+   * The control on the test above: it can actually fail.
+   *
+   * Without this, a bug that made both sides hash the empty string - or made
+   * `fnv1a64` ignore its length - would leave the parity assertion green while
+   * comparing nothing. Same argument as `verify-rust.sh`'s anti-vacuity phase,
+   * at the scale of one test.
+   */
+  it("would notice a set that gained, lost or swapped a tile", async () => {
+    const engine = await instantiate();
+    const rust = u64(engine.vulcanus_cliff_blocking_names_fnv1a64());
+    const hash = (names: string[]): bigint => {
+      const bytes = new TextEncoder().encode(names.sort().join("\n"));
+      new Uint8Array(engine.memory.buffer, engine.scratch_ptr(), bytes.length).set(bytes);
+      return u64(engine.fnv1a64(bytes.length));
+    };
+    const actual = [...VULCANUS_CLIFF_BLOCKING_TILES];
+
+    expect(hash([...actual, "volcanic-folds"])).not.toBe(rust);
+    expect(hash(actual.slice(1))).not.toBe(rust);
+    expect(hash(["lava", "volcanic-jagged-ground"])).not.toBe(rust);
   });
 
   it("folds 676 grid points identically for every field, at two slider settings in two windows", async () => {
