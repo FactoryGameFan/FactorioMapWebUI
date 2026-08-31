@@ -3629,8 +3629,18 @@ fn classifies_every_vulcanus_lava_tile_correctly() {
     let biomes = base.biomes_with_host_trig();
     let stack = VulcanusStack::with_host_trig(&base, &biomes);
 
-    let is_lava = |t: VulcanusTile| matches!(t, VulcanusTile::Lava | VulcanusTile::LavaHot);
-    let want_lava = |name: &str| name == "lava" || name == "lava-hot";
+    // Both sides go through `is_cliff_blocking`, which is the whole point of
+    // #364: these two lines used to say the same thing in two vocabularies - one
+    // by enum, one by string literal - and could drift apart without either file
+    // changing. The name side resolves through `VulcanusTile::from_name` rather
+    // than matching strings, so a fixture name the catalog does not know is a
+    // loud failure rather than a silent `false`.
+    let is_lava = VulcanusTile::is_cliff_blocking;
+    let want_lava = |name: &str| {
+        VulcanusTile::from_name(name)
+            .unwrap_or_else(|| panic!("fixture names a tile the catalog does not place: {name}"))
+            .is_cliff_blocking()
+    };
 
     let positions = fixture.get("positions").as_array();
     let want = fixture.get("tileNames").as_array();

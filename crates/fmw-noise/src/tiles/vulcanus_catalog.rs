@@ -136,6 +136,111 @@ impl VulcanusTile {
             Self::VolcanicAshSoil => [48, 48, 43],
         }
     }
+
+    /// The tile whose prototype name is `name`, if Vulcanus places one.
+    ///
+    /// The inverse of [`Self::name`], resolved through [`TILE_ORDER`] so the two
+    /// cannot disagree. It exists because the oracle fixtures record tile
+    /// NAMES, not enum variants, and a caller holding a name used to have no way
+    /// to reach the enum except by matching strings of its own (#364).
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        TILE_ORDER.into_iter().find(|tile| tile.name() == name)
+    }
+
+    /// Whether a cliff whose collision box touches this tile is refused.
+    ///
+    /// `tile_collision_masks.lava()` sets `water_tile = true` and the cliff mask
+    /// holds `water_tile`; no other Vulcanus tile does. Notably
+    /// `volcanic-jagged-ground` - the tile the ore patches paint, which the Lua
+    /// itself labels "CLIFF TILE" - is `tile_collision_masks.ground()`, which
+    /// the cliff mask does not touch, so ore does NOT exclude cliffs through
+    /// this rule. That distinction is why the earlier ore-separation work
+    /// correctly found no exclusion here while the removal rule in
+    /// [`crate::cliffs::vulcanus_ore_rejection`] exists.
+    ///
+    /// **Measured rather than deduced.** Switching lava and lava-hot out of the
+    /// tile autoplace category and regenerating is what established the set, not
+    /// a reading of `tile_collision_masks`. A future tile that blocks cliffs
+    /// would be found the same way.
+    ///
+    /// **This is the only definition on the Rust side, and that is the point of
+    /// it (#364).** There were four: here, `cliffs::vulcanus_fields`, and twice
+    /// in `fixtures.rs` - one of those two by name and its neighbour by enum, so
+    /// the string form and the enum form could drift apart without either file
+    /// changing. TypeScript keeps its own single definition,
+    /// `VULCANUS_CLIFF_BLOCKING_TILES` in `cliffCatalog.ts`, and
+    /// [`cliff_blocking_names_fnv1a64`] is what stops the two sides drifting.
+    /// **Two other gates pick the same two tiles and MUST NOT be folded into
+    /// this one.** `rocks::vulcanus_placement` and `resources::vulcanus_geyser`
+    /// each refuse lava as well, and all three sets are equal today - but they
+    /// are reached by three unrelated routes in the game's data, so the equality
+    /// is a coincidence rather than a shared rule:
+    ///
+    /// | gate | what actually decides it |
+    /// | --- | --- |
+    /// | cliffs, here | the cliff's collision mask holds `water_tile`, and `tile_collision_masks.lava()` sets it |
+    /// | rocks | the four rock prototypes' `vulcanus_tiles_cold` / `vulcanus_tiles_hot` autoplace lists, whose union is every tile but these |
+    /// | geysers | `type = "resource"`'s default mask is `{resource = true}`, which `tile_collision_masks.lava()` also lists |
+    ///
+    /// Change the tile data on any one of those three axes and the three sets
+    /// come apart. A single shared predicate would then be wrong in two places
+    /// at once, and silently, which is worse than the duplication #364 removed.
+    /// Each gate keeps its own definition and its own comment saying which
+    /// mechanism it reads.
+    #[must_use]
+    pub fn is_cliff_blocking(self) -> bool {
+        matches!(self, Self::Lava | Self::LavaHot)
+    }
+}
+
+/// FNV-1a 64 over every cliff-blocking tile's name, sorted, joined by `\n`.
+///
+/// The cross-language half of #364. TypeScript holds the same set as
+/// `VULCANUS_CLIFF_BLOCKING_TILES`, and `fmw-wasm` exports this so a spec can
+/// hash the TypeScript set through the module's own `fnv1a64` and compare the
+/// two in process. A change to one side that misses the other then fails a
+/// test instead of sitting there.
+///
+/// **Sorted, so the two sides do not also have to agree on an order.** Catalog
+/// order is ground truth for the argmax's tie-break, but it is not something
+/// the TypeScript set carries - it is a `Set` of two strings - so hashing in
+/// catalog order would make this assertion depend on a fact it is not trying
+/// to check.
+///
+/// Insertion sort over a fixed buffer rather than `Vec::sort`: the WASM build
+/// has no allocator, and at 19 tiles the cost is irrelevant.
+#[must_use]
+pub fn cliff_blocking_names_fnv1a64() -> u64 {
+    let mut names = [""; TILE_ORDER.len()];
+    let mut count = 0;
+    for tile in TILE_ORDER {
+        if tile.is_cliff_blocking() {
+            names[count] = tile.name();
+            count += 1;
+        }
+    }
+    let names = &mut names[..count];
+    for i in 1..names.len() {
+        let mut j = i;
+        while j > 0 && names[j - 1] > names[j] {
+            names.swap(j - 1, j);
+            j -= 1;
+        }
+    }
+
+    // 19 names of at most 26 bytes, plus separators, fits with room to spare.
+    let mut buf = [0u8; 1024];
+    let mut len = 0;
+    for (i, name) in names.iter().enumerate() {
+        if i > 0 {
+            buf[len] = b'\n';
+            len += 1;
+        }
+        buf[len..len + name.len()].copy_from_slice(name.as_bytes());
+        len += name.len();
+    }
+    crate::checksum::fnv1a64(&buf[..len])
 }
 
 /// `vulcanus_rock_noise` (`planet-vulcanus-map-gen.lua` ~line 872).
@@ -522,5 +627,57 @@ mod tests {
         let before = names.len();
         names.dedup();
         assert_eq!(names.len(), before, "duplicate tile name");
+    }
+
+    /// `from_name` is the exact inverse of `name` for every tile, and refuses
+    /// anything else.
+    ///
+    /// The refusal half is the one that matters: `fixtures.rs` resolves the
+    /// oracle's recorded tile names through this, and a mapping that answered
+    /// `Some` for a name Vulcanus does not place would make that grader read a
+    /// typo as a real tile.
+    #[test]
+    fn from_name_inverts_name_and_refuses_anything_else() {
+        for tile in TILE_ORDER {
+            assert_eq!(VulcanusTile::from_name(tile.name()), Some(tile));
+        }
+        assert_eq!(VulcanusTile::from_name("lava-warm"), None);
+        assert_eq!(VulcanusTile::from_name("water"), None);
+        assert_eq!(VulcanusTile::from_name(""), None);
+    }
+
+    /// The cliff-blocking set is exactly `lava` and `lava-hot`, frozen.
+    ///
+    /// Frozen on purpose. The set was established by measurement - switching
+    /// the two out of the tile autoplace category and regenerating - so a
+    /// future change to it is a new measurement, and this test is what makes
+    /// that change deliberate rather than incidental. Update the count and the
+    /// names together, and say in the commit what was regenerated.
+    #[test]
+    fn exactly_two_tiles_block_a_cliff_and_they_are_the_lava_pair() {
+        let blocking: Vec<&str> = TILE_ORDER
+            .iter()
+            .filter(|t| t.is_cliff_blocking())
+            .map(|t| t.name())
+            .collect();
+        assert_eq!(blocking, vec!["lava", "lava-hot"]);
+    }
+
+    /// The exported hash is over the SORTED names, so the TypeScript side can
+    /// reproduce it without knowing catalog order.
+    ///
+    /// Computed here the long way rather than restating a magic constant: a
+    /// hardcoded digest would still pass if `cliff_blocking_names_fnv1a64`
+    /// hashed the wrong thing and someone updated the constant to match.
+    #[test]
+    fn the_exported_hash_is_fnv1a64_of_the_sorted_names_joined_by_newlines() {
+        let mut names: Vec<&str> = TILE_ORDER
+            .iter()
+            .filter(|t| t.is_cliff_blocking())
+            .map(|t| t.name())
+            .collect();
+        names.sort_unstable();
+        let expected = crate::checksum::fnv1a64(names.join("\n").as_bytes());
+        assert_eq!(cliff_blocking_names_fnv1a64(), expected);
     }
 }

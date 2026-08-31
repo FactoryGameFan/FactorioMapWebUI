@@ -33,7 +33,6 @@ use crate::poison;
 use crate::quick_multioctave_noise::{
     octave_terms, sum_octaves, QuickMultioctaveParams, QuickOctaves,
 };
-use crate::tiles::vulcanus_catalog::VulcanusTile;
 
 /// `cliff_elevation_0` from `planet_map_gen.vulcanus()`'s `cliff_settings`.
 pub const VULCANUS_CLIFF_ELEVATION_0: f64 = 70.0;
@@ -183,18 +182,11 @@ impl CliffFields for VulcanusCliffFields<'_, '_> {
 /// The Vulcanus tiles whose `CollisionMask` shares a layer with the cliff's, so
 /// a cliff whose collision box touches one is never placed.
 ///
-/// `tile_collision_masks.lava()` sets `water_tile = true` and the cliff mask
-/// holds `water_tile`; no other Vulcanus tile does. Notably
-/// `volcanic-jagged-ground` - the tile the ore patches paint, which the Lua
-/// itself labels "CLIFF TILE" - is `tile_collision_masks.ground()`, which the
-/// cliff mask does not touch, so ore does NOT exclude cliffs through this rule.
-/// That distinction is why the earlier ore-separation work correctly found no
-/// exclusion here while the removal rule in
-/// [`super::vulcanus_ore_rejection`] exists.
-///
-/// **Measured rather than deduced.** Switching lava and lava-hot out of the
-/// tile autoplace category and regenerating is what established the set, not a
-/// reading of `tile_collision_masks`.
+/// **Which tiles those are is not a rule of its own.** It is
+/// [`VulcanusTile::is_cliff_blocking`](crate::tiles::vulcanus_catalog::VulcanusTile::is_cliff_blocking),
+/// which is also where the measurement behind the set is written down. This
+/// used to inline `Lava | LavaHot` and restate that measurement in its own
+/// words, one of four copies (#364).
 ///
 /// It resolves the tile through the ported argmax rather than reading back a
 /// rendered pixel, and that is load-bearing for tiled rendering: the collision
@@ -215,7 +207,7 @@ impl TileCollision for VulcanusLavaTiles<'_, '_> {
     fn collides(&self, x: i64, y: i64) -> bool {
         #[allow(clippy::cast_precision_loss)]
         let tile = self.stack.tile(x as f64, y as f64);
-        matches!(tile, VulcanusTile::Lava | VulcanusTile::LavaHot)
+        tile.is_cliff_blocking()
     }
 }
 
