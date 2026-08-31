@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ENGINE_REQUIRED,
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
@@ -132,23 +133,22 @@ describe("the four views with no renderer of their own render that planet's terr
   }, 120000);
 
   /**
-   * **The arm #227 deletes.**
+   * The block that used to sit here rendered each pair with no engine at all
+   * and asserted the two arms agreed - the render these pairs drew before
+   * `servedView` existed, and the one #362 had to preserve. #227 deleted
+   * `renderTerrain` and `renderVulcanusTerrain`, so there is no second arm to
+   * ask, and it went as its own comment said it would. The engine-side
+   * assertions above were deliberately kept separate rather than folded into
+   * it, so nothing else moves with it.
    *
-   * While the TypeScript terrain renderers still exist, each of the four can be
-   * rendered with no engine at all, and that render is the one this change had
-   * to preserve - it is what these pairs drew before `servedView` existed. Once
-   * `renderTerrain` and `renderVulcanusTerrain` are deleted there is no second
-   * arm and this block goes with them, which is why the engine-side assertions
-   * are kept above rather than folded in here.
+   * `runRenderRequest` now refuses all four without an engine, which is the
+   * remaining observable and the one this asserts.
    */
-  it("renders identically with and without the engine, for all four", async () => {
-    const e = await engine();
+  it("refuses all four without an engine, now that there is no fallback", () => {
     for (const c of FALL_THROUGH) {
-      const withEngine = pixels(c.planet, c.view, e);
-      const withoutEngine = pixels(c.planet, c.view);
-      expect(Array.from(withEngine), `${c.label}: engine vs none`).toEqual(
-        Array.from(withoutEngine),
+      expect(() => pixels(c.planet, c.view), `${c.label}: must need the engine`).toThrow(
+        ENGINE_REQUIRED,
       );
     }
-  }, 120000);
+  });
 });

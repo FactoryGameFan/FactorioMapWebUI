@@ -21,6 +21,7 @@ import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
 import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
 import { VULCANUS_RESOURCE_CATALOG } from "../src/noise/resources/vulcanusResourceCatalog";
 import {
+  ENGINE_REQUIRED,
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
@@ -52,11 +53,11 @@ const SIZE = 1024;
 /**
  * The tier-3 freeze section for this spec. See `tier3Frozen.ts`.
  *
- * Every Rust-against-TypeScript render below is ALSO checked against a frozen
- * checksum, so the assertion survives #227 deleting the TypeScript arm. Without
- * it, `runRenderRequest(req)` with the engine left off stops being an
- * independent arm the moment the Vulcanus branch goes, and the comparison would
- * pass while grading nothing.
+ * Every render below is checked against a frozen checksum. #227 has now
+ * deleted the TypeScript arm, so that is the only check left: with the Vulcanus
+ * branch gone, `runRenderRequest(req)` with the engine left off no longer
+ * returns a second opinion, it refuses. Had the freeze not landed first, the
+ * comparison would have passed while grading nothing.
  */
 const SECTION = "vulcanus:render";
 
@@ -77,8 +78,18 @@ expectRecordedRows(SECTION, ROWS);
 afterAll(flushRecording);
 
 /** Freeze one render, and compare the two arms while both exist. */
-function freeze(label: string, name: string, wasm: ArrayLike<number>, ts: ArrayLike<number>): void {
-  expectFrozen(SECTION, label, name, foldPixels(wasm), foldPixels(ts));
+/**
+ * `ts` is omitted where #227 deleted the TypeScript renderer this block used to
+ * compare against - see `tier3Frozen.ts`. The engine's fold is still graded
+ * against the frozen value captured while the two demonstrably agreed.
+ */
+function freeze(
+  label: string,
+  name: string,
+  wasm: ArrayLike<number>,
+  ts?: ArrayLike<number>,
+): void {
+  expectFrozen(SECTION, label, name, foldPixels(wasm), ts && foldPixels(ts));
 }
 
 /** `surfaceSeedForPlanet("vulcanus", 123456)`. */
@@ -208,16 +219,14 @@ function request(w: Window): ElevationRenderRequest {
   };
 }
 
-describe("the WASM engine renders Vulcanus terrain exactly as the TypeScript does", () => {
-  it("is byte-identical across four windows", async () => {
+describe("the WASM engine renders Vulcanus terrain to its frozen bytes", () => {
+  it("matches its frozen bytes across four windows", async () => {
     const e = await engine();
     for (const w of WINDOWS) {
       const req = request(w);
       const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
-      freeze(w.label, "terrain", wasm, ts);
+      freeze(w.label, "terrain", wasm);
     }
   }, 300000);
 
@@ -260,11 +269,20 @@ describe("the WASM engine renders Vulcanus terrain exactly as the TypeScript doe
     for (const view of ["terrain", "cliffs", "rocks", "resources", "all"] as const) {
       const composite = { ...request(w), view };
       const withEngine = new Uint8ClampedArray(runRenderRequest(composite, e).buffer);
-      const withoutEngine = new Uint8ClampedArray(runRenderRequest(composite).buffer);
-      expect(Array.from(withEngine), `${view}: engine vs none`).toEqual(Array.from(withoutEngine));
+
+      // This used to render the same request twice - once with the engine and
+      // once without - and assert the two agreed. #227 makes that the sharper
+      // statement it was always standing in for: with no TypeScript left to
+      // fall back to, a view that reaches the engine is exactly a view that
+      // REFUSES to render without one. A view that quietly returned pixels here
+      // would be a view the module still serves off some other path.
+      expect(() => runRenderRequest(composite), `${view}: must need the engine`).toThrow(
+        ENGINE_REQUIRED,
+      );
+
       // Prefixed: this block sweeps WINDOWS[0] through every view, so a bare
       // window label would collide with the per-view blocks below.
-      freeze(`routes ${view}`, view, withEngine, withoutEngine);
+      freeze(`routes ${view}`, view, withEngine);
     }
 
     // And `all` really does differ from bare terrain here, so the assertion
@@ -303,18 +321,16 @@ const isColor = (px: Uint8ClampedArray, i: number, c: readonly number[]): boolea
  * deterministic, plausible, and wrong at every tile. Byte-identity against the
  * TypeScript is what says the stream and the greedy collision pass agree.
  */
-describe("the WASM engine renders the Vulcanus rock overlay exactly as the TypeScript does", () => {
+describe("the WASM engine renders the Vulcanus rock overlay to its frozen bytes", () => {
   const rockRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "rocks" });
 
-  it("is byte-identical across four windows", async () => {
+  it("matches its frozen bytes across four windows", async () => {
     const e = await engine();
     for (const w of WINDOWS) {
       const req = rockRequest(w);
       const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
-      freeze(w.label, "rocks", wasm, ts);
+      freeze(w.label, "rocks", wasm);
     }
   }, 300000);
 
@@ -415,7 +431,7 @@ describe("the WASM engine renders the Vulcanus rock overlay exactly as the TypeS
  * geysers, which is why it is here at all - it is the one window that grades
  * the rolled pass.
  */
-describe("the WASM engine renders the Vulcanus resource overlay exactly as the TypeScript does", () => {
+describe("the WASM engine renders the Vulcanus resource overlay to its frozen bytes", () => {
   const ORE_WINDOWS: Window[] = [
     {
       label: "square on a coal patch",
@@ -481,15 +497,13 @@ describe("the WASM engine renders the Vulcanus resource overlay exactly as the T
     tilesPerPixel: w.tilesPerPixel,
   });
 
-  it("is byte-identical across five windows", async () => {
+  it("matches its frozen bytes across five windows", async () => {
     const e = await engine();
     for (const w of ORE_WINDOWS) {
       const req = oreRequest(w);
       const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
-      freeze(w.label, "resources", wasm, ts);
+      freeze(w.label, "resources", wasm);
     }
   }, 300000);
 
@@ -580,18 +594,16 @@ describe("the WASM engine renders the Vulcanus resource overlay exactly as the T
  * overlay shares the whole field DAG below the tile argmax, so splitting them
  * would build that chain four times.
  */
-describe("the WASM engine renders the Vulcanus composite exactly as the TypeScript does", () => {
+describe("the WASM engine renders the Vulcanus composite to its frozen bytes", () => {
   const allRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "all" });
 
-  it("is byte-identical across four windows", async () => {
+  it("matches its frozen bytes across four windows", async () => {
     const e = await engine();
     const counts: number[] = [];
     for (const w of WINDOWS) {
       const req = allRequest(w);
       const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
-      freeze(w.label, "all", wasm, ts);
+      freeze(w.label, "all", wasm);
       counts.push(paintedOver(wasm, new Uint8ClampedArray(runRenderRequest(request(w), e).buffer)));
     }
     expect(counts).toEqual(ALL_PIXELS_PER_WINDOW);
@@ -657,21 +669,19 @@ describe("the WASM engine renders the Vulcanus composite exactly as the TypeScri
  * to draw on its own, and the two passes share the whole field DAG below the
  * tile argmax, which splitting would build twice.
  */
-describe("the WASM engine renders Vulcanus cliffs exactly as the TypeScript does", () => {
+describe("the WASM engine renders Vulcanus cliffs to its frozen bytes", () => {
   const cliffRequest = (w: Window): ElevationRenderRequest => ({
     ...request(w),
     view: "cliffs",
   });
 
-  it("is byte-identical across four windows", async () => {
+  it("matches its frozen bytes across four windows", async () => {
     const e = await engine();
     for (const w of WINDOWS) {
       const req = cliffRequest(w);
       const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
-      freeze(w.label, "cliffs", wasm, ts);
+      freeze(w.label, "cliffs", wasm);
     }
   }, 300000);
 

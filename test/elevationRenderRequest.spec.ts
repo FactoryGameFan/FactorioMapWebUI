@@ -1,9 +1,13 @@
-import { describe, it, expect } from "vite-plus/test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { beforeAll, describe, it, expect } from "vite-plus/test";
 import {
   cliffCellQueryBox,
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
+import { compileEngine, instantiateEngine, type EngineExports } from "../src/noise/wasm/engine";
 import { RESOURCE_CATALOG } from "../src/noise/resources/resourceCatalog";
 import { ENEMY_MAP_COLOR } from "../src/noise/enemies/enemyCatalog";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
@@ -23,9 +27,25 @@ const REQ: ElevationRenderRequest = {
   startingPositions: [{ x: 0, y: 0 }],
 };
 
+/**
+ * The engine every Nauvis and Vulcanus render below needs as of #227.
+ *
+ * These are behavioural rows rather than parity rows - they ask what the
+ * renderer draws, not whether two renderers agree - so they simply move onto
+ * the surviving path. Fulgora still renders in TypeScript (#363), and passing
+ * an engine to a Fulgora request is harmless: only the branches that need one
+ * ask for it.
+ */
+let engine: EngineExports;
+
+beforeAll(async () => {
+  const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
+  engine = await instantiateEngine(await compileEngine(readFileSync(wasmPath)));
+});
+
 describe("runRenderRequest", () => {
   it("echoes id/width/height and returns an RGBA buffer of the right size", () => {
-    const r = runRenderRequest(REQ);
+    const r = runRenderRequest(REQ, engine);
     expect(r.id).toBe(7);
     expect(r.width).toBe(8);
     expect(r.height).toBe(6);
@@ -47,9 +67,9 @@ describe("runRenderRequest", () => {
       startingPositions: [{ x: 0, y: 0 }],
       view: "terrain",
     };
-    const terrain = new Uint8ClampedArray(runRenderRequest(terrainReq).buffer);
+    const terrain = new Uint8ClampedArray(runRenderRequest(terrainReq, engine).buffer);
     const withOre = new Uint8ClampedArray(
-      runRenderRequest({ ...terrainReq, view: "resources" }).buffer,
+      runRenderRequest({ ...terrainReq, view: "resources" }, engine).buffer,
     );
 
     const catalogColors = new Set(RESOURCE_CATALOG.map((r) => r.mapColor.join(",")));
@@ -86,9 +106,9 @@ describe("runRenderRequest", () => {
       startingPositions: [{ x: 0, y: 0 }],
       view: "terrain",
     };
-    const terrain = new Uint8ClampedArray(runRenderRequest(terrainReq).buffer);
+    const terrain = new Uint8ClampedArray(runRenderRequest(terrainReq, engine).buffer);
     const withOre = new Uint8ClampedArray(
-      runRenderRequest({ ...terrainReq, view: "resources" }).buffer,
+      runRenderRequest({ ...terrainReq, view: "resources" }, engine).buffer,
     );
     const water = new Set([
       [38, 64, 73].join(","), // deepwater
@@ -132,12 +152,15 @@ describe("runRenderRequest", () => {
       }
       return n;
     };
-    const withIron = new Uint8ClampedArray(runRenderRequest(base).buffer);
+    const withIron = new Uint8ClampedArray(runRenderRequest(base, engine).buffer);
     const noIron = new Uint8ClampedArray(
-      runRenderRequest({
-        ...base,
-        resourceControls: { "iron-ore": { frequency: 1, size: 0, richness: 1 } },
-      }).buffer,
+      runRenderRequest(
+        {
+          ...base,
+          resourceControls: { "iron-ore": { frequency: 1, size: 0, richness: 1 } },
+        },
+        engine,
+      ).buffer,
     );
     expect(countIron(withIron)).toBeGreaterThan(0);
     expect(countIron(noIron)).toBe(0);
@@ -165,8 +188,10 @@ describe("runRenderRequest", () => {
       view: "enemies",
       enemyControls: { frequency: 1, size: 1 },
     };
-    const terrain = new Uint8ClampedArray(runRenderRequest({ ...req, view: "terrain" }).buffer);
-    const withEnemies = new Uint8ClampedArray(runRenderRequest(req).buffer);
+    const terrain = new Uint8ClampedArray(
+      runRenderRequest({ ...req, view: "terrain" }, engine).buffer,
+    );
+    const withEnemies = new Uint8ClampedArray(runRenderRequest(req, engine).buffer);
     expect(Array.from(withEnemies)).not.toEqual(Array.from(terrain));
     let changed = 0;
     for (let i = 0; i < terrain.length; i += 4) {
@@ -203,8 +228,10 @@ describe("runRenderRequest", () => {
       cliffControls: { frequency: 1, continuity: 1 },
       cliffSettings: { cliffElevation0: 10, cliffElevationInterval: 40, richness: 1 },
     };
-    const terrain = new Uint8ClampedArray(runRenderRequest({ ...req, view: "terrain" }).buffer);
-    const withCliffs = new Uint8ClampedArray(runRenderRequest(req).buffer);
+    const terrain = new Uint8ClampedArray(
+      runRenderRequest({ ...req, view: "terrain" }, engine).buffer,
+    );
+    const withCliffs = new Uint8ClampedArray(runRenderRequest(req, engine).buffer);
     expect(Array.from(withCliffs)).not.toEqual(Array.from(terrain));
 
     let painted = 0;
@@ -235,13 +262,16 @@ describe("runRenderRequest", () => {
       startingPositions: [{ x: 0, y: 0 }],
       view: "cliffs",
     };
-    const withDefaults = new Uint8ClampedArray(runRenderRequest(req).buffer);
+    const withDefaults = new Uint8ClampedArray(runRenderRequest(req, engine).buffer);
     const explicit = new Uint8ClampedArray(
-      runRenderRequest({
-        ...req,
-        cliffControls: { frequency: 1, continuity: 1 },
-        cliffSettings: { cliffElevation0: 10, cliffElevationInterval: 40, richness: 1 },
-      }).buffer,
+      runRenderRequest(
+        {
+          ...req,
+          cliffControls: { frequency: 1, continuity: 1 },
+          cliffSettings: { cliffElevation0: 10, cliffElevationInterval: 40, richness: 1 },
+        },
+        engine,
+      ).buffer,
     );
     expect(Array.from(withDefaults)).toEqual(Array.from(explicit));
   });
@@ -300,9 +330,9 @@ describe("runRenderRequest", () => {
       startingPositions: [{ x: 0, y: 0 }],
       view: "terrain",
     };
-    const terrain = new Uint8ClampedArray(runRenderRequest(req).buffer);
+    const terrain = new Uint8ClampedArray(runRenderRequest(req, engine).buffer);
     const bufFor = (view: ElevationRenderRequest["view"]) =>
-      new Uint8ClampedArray(runRenderRequest({ ...req, view }).buffer);
+      new Uint8ClampedArray(runRenderRequest({ ...req, view }, engine).buffer);
     const diffPixels = (buf: Uint8ClampedArray): Set<number> => {
       const s = new Set<number>();
       for (let i = 0; i < terrain.length; i += 4)
@@ -407,9 +437,9 @@ describe("runRenderRequest", () => {
       startingPositions: [{ x: 0, y: 0 }],
       view: "terrain",
     };
-    const terrain = new Uint8ClampedArray(runRenderRequest(req).buffer);
+    const terrain = new Uint8ClampedArray(runRenderRequest(req, engine).buffer);
     const bufFor = (view: ElevationRenderRequest["view"]) =>
-      new Uint8ClampedArray(runRenderRequest({ ...req, view }).buffer);
+      new Uint8ClampedArray(runRenderRequest({ ...req, view }, engine).buffer);
     const diffPixels = (buf: Uint8ClampedArray): Set<number> => {
       const s = new Set<number>();
       for (let i = 0; i < terrain.length; i += 4)
@@ -468,8 +498,8 @@ describe("view: trees", () => {
   };
 
   it("renders terrain with the tree overlay composited on top", () => {
-    const terrain = runRenderRequest({ ...base, view: "terrain" });
-    const trees = runRenderRequest({ ...base, view: "trees" });
+    const terrain = runRenderRequest({ ...base, view: "terrain" }, engine);
+    const trees = runRenderRequest({ ...base, view: "trees" }, engine);
     expect(Array.from(new Uint8ClampedArray(trees.buffer))).not.toEqual(
       Array.from(new Uint8ClampedArray(terrain.buffer)),
     );
@@ -481,9 +511,9 @@ describe("view: trees", () => {
   // silently wrong forest layout. A bias this large pushes temperature out of
   // every species' ramp, so the overlay must vanish back to bare terrain.
   it("forwards temperatureBias through to the tree overlay", () => {
-    const terrain = runRenderRequest({ ...base, view: "terrain" });
-    const trees = runRenderRequest({ ...base, view: "trees" });
-    const frozen = runRenderRequest({ ...base, view: "trees", temperatureBias: -1000 });
+    const terrain = runRenderRequest({ ...base, view: "terrain" }, engine);
+    const trees = runRenderRequest({ ...base, view: "trees" }, engine);
+    const frozen = runRenderRequest({ ...base, view: "trees", temperatureBias: -1000 }, engine);
     // The overlay is doing something to begin with...
     expect(Array.from(new Uint8ClampedArray(trees.buffer))).not.toEqual(
       Array.from(new Uint8ClampedArray(terrain.buffer)),
@@ -495,40 +525,46 @@ describe("view: trees", () => {
   });
 
   it("forwards temperatureFrequency through to the tree overlay", () => {
-    const trees = runRenderRequest({ ...base, view: "trees" });
-    const warped = runRenderRequest({ ...base, view: "trees", temperatureFrequency: 4 });
+    const trees = runRenderRequest({ ...base, view: "trees" }, engine);
+    const warped = runRenderRequest({ ...base, view: "trees", temperatureFrequency: 4 }, engine);
     expect(Array.from(new Uint8ClampedArray(warped.buffer))).not.toEqual(
       Array.from(new Uint8ClampedArray(trees.buffer)),
     );
   });
 
   it("includes trees in the all-composite", () => {
-    const withoutTrees = runRenderRequest({ ...base, view: "cliffs" });
-    const all = runRenderRequest({ ...base, view: "all" });
+    const withoutTrees = runRenderRequest({ ...base, view: "cliffs" }, engine);
+    const all = runRenderRequest({ ...base, view: "all" }, engine);
     expect(Array.from(new Uint8ClampedArray(all.buffer))).not.toEqual(
       Array.from(new Uint8ClampedArray(withoutTrees.buffer)),
     );
   });
 
   it("honors treeControls", () => {
-    const a = runRenderRequest({ ...base, view: "trees" });
-    const b = runRenderRequest({
-      ...base,
-      view: "trees",
-      treeControls: { frequency: 3, size: 2 },
-    });
+    const a = runRenderRequest({ ...base, view: "trees" }, engine);
+    const b = runRenderRequest(
+      {
+        ...base,
+        view: "trees",
+        treeControls: { frequency: 3, size: 2 },
+      },
+      engine,
+    );
     expect(Array.from(new Uint8ClampedArray(a.buffer))).not.toEqual(
       Array.from(new Uint8ClampedArray(b.buffer)),
     );
   });
 
   it("defaults treeControls to 1/1 when omitted", () => {
-    const implicit = runRenderRequest({ ...base, view: "trees" });
-    const explicit = runRenderRequest({
-      ...base,
-      view: "trees",
-      treeControls: { frequency: 1, size: 1 },
-    });
+    const implicit = runRenderRequest({ ...base, view: "trees" }, engine);
+    const explicit = runRenderRequest(
+      {
+        ...base,
+        view: "trees",
+        treeControls: { frequency: 1, size: 1 },
+      },
+      engine,
+    );
     expect(Array.from(new Uint8ClampedArray(implicit.buffer))).toEqual(
       Array.from(new Uint8ClampedArray(explicit.buffer)),
     );
@@ -604,17 +640,20 @@ describe("fulgora scrap is gated on the view", () => {
    * nothing behind it. These rows are what give that string its meaning.
    */
   function fulgoraImage(view: string): Uint8ClampedArray {
-    const r = runRenderRequest({
-      id: 1,
-      seed0: 123456,
-      planet: "fulgora",
-      view,
-      width: 256,
-      height: 256,
-      originX: -128,
-      originY: -128,
-      tilesPerPixel: 1,
-    } as unknown as ElevationRenderRequest);
+    const r = runRenderRequest(
+      {
+        id: 1,
+        seed0: 123456,
+        planet: "fulgora",
+        view,
+        width: 256,
+        height: 256,
+        originX: -128,
+        originY: -128,
+        tilesPerPixel: 1,
+      } as unknown as ElevationRenderRequest,
+      engine,
+    );
     return new Uint8ClampedArray(r.buffer);
   }
 
@@ -649,49 +688,24 @@ describe("fulgora scrap is gated on the view", () => {
     expect(scrapPixels("terrain")).toBe(0);
   }, 120000);
 
-  it("KNOWN HOLE: view 'elevation' renders the NAUVIS field, not Fulgora at all", () => {
-    // Not a scrap bug - a wrong-planet bug, and the reason the panel fix that
-    // accompanies this test matters more than "the overlay was missing".
-    //
-    // `runRenderRequest` puts its whole planet dispatch inside a view test that
-    // lists terrain/resources/enemies/cliffs/trees/rocks/all. "elevation" is
-    // not in that list, so it never reaches the Fulgora branch and falls
-    // through to `renderElevation`, which evaluates the Nauvis elevation
-    // field. The output is BYTE-IDENTICAL to `planet: "nauvis"` at the same
-    // seed0 - measured, which is what the second assertion below pins.
-    //
-    // This is exactly the failure `ElevationPreviewPanel`'s `supported` comment
-    // says its guard exists to prevent ("would silently fall through
-    // runRenderRequest's dispatch ... and render mislabeled Nauvis colors").
-    // That guard covers the PLANET axis; the map-type axis re-opened the same
-    // hole, because `effectiveView` forced "elevation" whenever the preset's
-    // own map type was Lakes or Island.
-    //
-    // The panel no longer asks for it (see elevationPreviewPanel.spec.ts), so
-    // this is unreachable from the UI. It is pinned rather than fixed because
+  it("refuses view 'elevation' on Fulgora rather than drawing the Nauvis field", () => {
+    // **The hole this row used to pin is closed, and this is the flip its own
+    // comment asked for.** It read: "It is pinned rather than fixed because
     // closing it properly means making `runRenderRequest` itself refuse a
     // Nauvis-only view for a non-Nauvis planet, which changes Vulcanus too -
-    // a wider change than this fix. Vulcanus has the identical hole and is
-    // likewise unreachable. If that lands, this test should flip to asserting
-    // the refusal.
-    const fulgoraElevation = fulgoraImage("elevation");
-    const nauvisElevation = new Uint8ClampedArray(
-      runRenderRequest({
-        id: 1,
-        seed0: 123456,
-        planet: "nauvis",
-        view: "elevation",
-        width: 256,
-        height: 256,
-        originX: -128,
-        originY: -128,
-        tilesPerPixel: 1,
-        waterLevel: 0,
-        segmentationMultiplier: 1,
-        startingPositions: [{ x: 0, y: 0 }],
-      } as unknown as ElevationRenderRequest).buffer,
-    );
-    expect(scrapPixels("elevation")).toBe(0);
-    expect(Array.from(fulgoraElevation)).toEqual(Array.from(nauvisElevation));
+    // a wider change than this fix. If that lands, this test should flip to
+    // asserting the refusal."
+    //
+    // #227 is that wider change. The dispatch used to put the whole planet
+    // test inside a view test listing terrain/resources/enemies/cliffs/trees/
+    // rocks/all; "elevation" was not in that list, so a Fulgora request never
+    // reached the Fulgora branch and fell through to `renderElevation`, which
+    // evaluates the NAUVIS elevation field. The output was byte-identical to
+    // `planet: "nauvis"` at the same seed - a wrong-planet bug, not a missing
+    // overlay.
+    //
+    // Vulcanus had the identical hole and it closes the same way: the refusal
+    // is on the pair, not on Fulgora.
+    expect(() => fulgoraImage("elevation")).toThrow(/no renderer for planet fulgora/);
   }, 120000);
 });

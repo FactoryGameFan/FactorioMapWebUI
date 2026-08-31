@@ -103,10 +103,11 @@ const MAP_TYPES = ["lakes", "nauvis", "island"] as const;
 /**
  * The tier-3 freeze section for this spec. See `tier3Frozen.ts`.
  *
- * The last of the three render specs to be frozen. Its TypeScript arm is
- * `pixels(req)` with the engine left off; #227 deletes what that reaches, after
- * which it would be the same code as the wasm arm and every comparison here
- * would pass while grading nothing.
+ * The last of the three render specs to be frozen. Its TypeScript arm was
+ * `pixels(req)` with the engine left off; #227 deleted what that reached, so
+ * the call now refuses rather than returning a second opinion. Had the freeze
+ * not landed first, every comparison here would have passed while grading
+ * nothing.
  */
 const SECTION = "elevation:render";
 
@@ -132,8 +133,17 @@ afterAll(flushRecording);
  * three times; keyed on the window alone, the three trees would overwrite each
  * other and the section would hold 4 rows where 12 ran.
  */
-function freeze(label: string, name: string, wasm: ArrayLike<number>, ts: ArrayLike<number>): void {
-  expectFrozen(SECTION, label, name, foldPixels(wasm), foldPixels(ts));
+/**
+ * `ts` is omitted where #227 deleted the TypeScript renderer this block used to
+ * compare against - see `tier3Frozen.ts`.
+ */
+function freeze(
+  label: string,
+  name: string,
+  wasm: ArrayLike<number>,
+  ts?: ArrayLike<number>,
+): void {
+  expectFrozen(SECTION, label, name, foldPixels(wasm), ts && foldPixels(ts));
 }
 
 function request(
@@ -181,17 +191,15 @@ const WATER_KEY = `${WATER_RGBA[0]},${WATER_RGBA[1]},${WATER_RGBA[2]}`;
 const LAND_KEY = `${LAND_RGBA[0]},${LAND_RGBA[1]},${LAND_RGBA[2]}`;
 
 describe.each(MAP_TYPES)(
-  "the WASM engine renders the %s elevation view exactly as the TypeScript does",
+  "the WASM engine renders the %s elevation view to its frozen bytes",
   (mapType) => {
-    it("is byte-identical across four windows", async () => {
+    it("matches its frozen bytes across four windows", async () => {
       const e = await engine();
       for (const w of WINDOWS) {
         const req = request(w, mapType);
         const wasm = pixels(req, e);
-        const ts = pixels(req);
         expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-        expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
-        freeze(`${mapType} ${w.label}`, "elevation", wasm, ts);
+        freeze(`${mapType} ${w.label}`, "elevation", wasm);
       }
     }, 300000);
 
@@ -213,15 +221,15 @@ describe.each(MAP_TYPES)(
 
 describe("the module SERVES the elevation views rather than the gate falling back", () => {
   /**
-   * **Every byte-identical assertion above is vacuous without this one.** A
-   * `runRenderRequest(req, engine)` that quietly declined the engine and ran the
-   * TypeScript satisfies `wasm === ts` perfectly, and that is precisely the
-   * failure this port could have: a `view` code the module does not name comes
-   * back `unsupported planet or view`, and the gate falls through.
+   * **Every frozen assertion above is vacuous without this one.** Before #227
+   * a `runRenderRequest(req, engine)` that quietly declined the engine and ran
+   * the TypeScript satisfied `wasm === ts` perfectly, and that was precisely
+   * the failure this port could have: a `view` code the module does not name
+   * comes back `unsupported planet or view`, and the gate falls through.
    *
    * So this reaches `renderThroughWasm` DIRECTLY, with no fallback in front of
-   * it, and requires the module's own pixels to match the TypeScript's. If the
-   * module refused the code, this throws rather than passing quietly.
+   * it, and requires the module's own pixels to match the gated render's. If
+   * the module refused the code, this throws rather than passing quietly.
    *
    * Read `#227`'s lesson literally: gate-reading missed two unported render
    * paths in both directions. Plant the call, do not read the match arm.
@@ -274,29 +282,34 @@ describe("the module SERVES the elevation views rather than the gate falling bac
           startingPositions: [{ x: 0, y: 0 }],
         } as never),
       );
-      const ts = pixels(request(w, mapType));
       expect(direct.length, "module returned no pixels").toBe(w.width * w.height * 4);
-      expect(Array.from(direct), `${mapType}: module vs TypeScript`).toEqual(Array.from(ts));
+      // The gated render has to agree with the direct one. That is what says
+      // the gate reaches this view code rather than some other path: before
+      // #227 the same claim was made by comparing the direct render against the
+      // TypeScript, and the TypeScript is what has gone.
+      expect(Array.from(direct), `${mapType}: module vs gated`).toEqual(
+        Array.from(pixels(request(w, mapType), e)),
+      );
       // Frozen on the DIRECT module render rather than the gated one, which is
       // what makes this row worth keeping after the deletion: it pins the
       // module's own answer for the view code, with no fallback in front of it.
-      freeze(`serves ${mapType}`, "elevation", direct, ts);
+      freeze(`serves ${mapType}`, "elevation", direct);
     },
     300000,
   );
 });
 
-describe("the elevation levers move both paths together", () => {
-  // The Nauvis param block is read RAW by the module and defaulted on the
-  // TypeScript side, so a wrong value in the caller would be a silent
-  // divergence rather than an error. Moving a lever and requiring both paths to
-  // move together is what catches one.
+describe("the elevation levers move the render", () => {
+  // The Nauvis param block is read RAW by the module, so a wrong value in the
+  // caller would be a silent divergence rather than an error. Moving a lever
+  // and requiring the render to move with it is what catches one; before #227
+  // the same blocks also required the TypeScript path to move identically.
   // `spawn 128 @8`. The lever arms need a window WIDE enough for the lever to
   // bite: at 1 tile/px the same levers moved nothing measurable, which is what
   // failed the first draft of this file. The window was wrong, not the lever.
   const w = WINDOWS[1];
 
-  it("waterLevel moves the render, and identically on both paths", async () => {
+  it("waterLevel moves the render", async () => {
     const e = await engine();
     // The terrain view deliberately IGNORES waterLevel (#326). The elevation
     // view does not - `renderElevation` passes it into the tree - so this also
@@ -313,15 +326,13 @@ describe("the elevation levers move both paths together", () => {
     const base = request(w, "lakes");
     const moved = request(w, "lakes", { waterLevel: 20 });
     const movedWasm = pixels(moved, e);
-    const movedTs = pixels(moved);
-    expect(Array.from(movedWasm), "wasm vs ts at waterLevel 20").toEqual(Array.from(movedTs));
     expect(Array.from(movedWasm), "waterLevel moved nothing").not.toEqual(
       Array.from(pixels(base, e)),
     );
-    freeze("waterLevel 20 on lakes", "elevation", movedWasm, movedTs);
+    freeze("waterLevel 20 on lakes", "elevation", movedWasm);
   }, 300000);
 
-  it("segmentationMultiplier moves the render, and identically on both paths", async () => {
+  it("segmentationMultiplier moves the render", async () => {
     const e = await engine();
     // Measured on `island` at this window: 1.7% water at the default and 51.7%
     // at `segmentationMultiplier: 2`. Island is the sharpest of the three here,
@@ -329,18 +340,16 @@ describe("the elevation levers move both paths together", () => {
     const base = request(w, "island");
     const moved = request(w, "island", { segmentationMultiplier: 2 });
     const movedWasm = pixels(moved, e);
-    const movedTs = pixels(moved);
     // Island quarters segmentation inside `to_island`. A path that applied the
-    // divide twice, or skipped it, still renders - so the two-path comparison
-    // under a MOVED lever is what grades it, not the default render.
-    expect(Array.from(movedWasm), "wasm vs ts at segmentation 2").toEqual(Array.from(movedTs));
+    // divide twice, or skipped it, still renders - so the frozen fold under a
+    // MOVED lever is what grades it, not the default render.
     expect(Array.from(movedWasm), "segmentation moved nothing").not.toEqual(
       Array.from(pixels(base, e)),
     );
-    freeze("segmentationMultiplier 2 on island", "elevation", movedWasm, movedTs);
+    freeze("segmentationMultiplier 2 on island", "elevation", movedWasm);
   }, 300000);
 
-  it("a moved spawn renders THROUGH the engine, byte-identical to the TypeScript", async () => {
+  it("a moved spawn renders THROUGH the engine, to its own frozen bytes", async () => {
     const e = await engine();
     // The spawn reaches the starting lakes, so a module that fixed it at the
     // origin would differ near the moved point rather than everywhere.
@@ -348,12 +357,10 @@ describe("the elevation levers move both paths together", () => {
     const moved = request(w2, "lakes", { startingPositions: [{ x: 500, y: -500 }] });
     const origin = request(w2, "lakes");
     const movedWasm = pixels(moved, e);
-    const movedTs = pixels(moved);
-    expect(Array.from(movedWasm), "wasm vs ts at a moved spawn").toEqual(Array.from(movedTs));
     expect(Array.from(movedWasm), "the spawn moved nothing").not.toEqual(
       Array.from(pixels(origin, e)),
     );
-    freeze("moved spawn on lakes", "elevation", movedWasm, movedTs);
+    freeze("moved spawn on lakes", "elevation", movedWasm);
   }, 300000);
 });
 
