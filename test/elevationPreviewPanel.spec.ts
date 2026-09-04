@@ -394,18 +394,41 @@ describe("ElevationPreviewPanel", () => {
     expect(putImageData).toHaveBeenCalledTimes(4);
   });
 
-  it("shows an error when the render rejects", async () => {
+  it("shows the render's OWN message when it rejects, not a constant", async () => {
+    // Issue #341. This asserted only that the element existed, which stayed
+    // true while a bare `catch` replaced every cause with "Preview failed." -
+    // the same string `PreviewPanel.vue` produces from the unrelated Docker
+    // preview service, which is what made the two impossible to tell apart.
     stubCanvas();
     const renderer: ElevationRenderer = {
       render: vi.fn(async () => {
-        throw new Error("boom");
+        throw new Error("engine.wasm speaks ABI v3, this bundle writes v4");
       }),
       dispose: vi.fn(),
     };
     const w = setup("lakes", renderer);
     await w.find('[data-test="generate"]').trigger("click");
     await flushPromises();
-    expect(w.find('[data-test="preview-error"]').exists()).toBe(true);
+    const shown = w.find('[data-test="preview-error"]');
+    expect(shown.exists()).toBe(true);
+    expect(shown.text()).toContain("engine.wasm speaks ABI v3, this bundle writes v4");
+  });
+
+  it("falls back to a readable line when the render throws a non-Error", async () => {
+    // `e instanceof Error` is false for a thrown string or a rejected promise
+    // carrying one, and `String(e)` on some of those reads as "[object Object]".
+    // The constant is the floor rather than the default.
+    stubCanvas();
+    const renderer: ElevationRenderer = {
+      render: vi.fn(async () => {
+        throw "not an Error";
+      }),
+      dispose: vi.fn(),
+    };
+    const w = setup("lakes", renderer);
+    await w.find('[data-test="generate"]').trigger("click");
+    await flushPromises();
+    expect(w.find('[data-test="preview-error"]').text()).toContain("Preview failed.");
   });
 
   it("hides the view toggles when dev mode is off", () => {

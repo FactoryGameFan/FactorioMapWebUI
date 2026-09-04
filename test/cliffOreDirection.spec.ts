@@ -2,16 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import direction from "./fixtures/oracle-vulcanus-cliff-ore-direction.seed123456.json";
 import entities from "./fixtures/oracle-vulcanus-cliff-entities.seed123456.json";
-import { makeCliffPlacementFromFields } from "../src/noise/cliffs/cliffPlacement";
-import {
-  VULCANUS_CLIFF_ELEVATION_0,
-  VULCANUS_CLIFF_ELEVATION_INTERVAL,
-  VULCANUS_CLIFF_SMOOTHING,
-  makeVulcanusCliffFields,
-} from "../src/noise/cliffs/vulcanusCliffFields";
-import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/preview/renderVulcanusCliffs";
-import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
-import { withCtxDefaults } from "../src/noise/eval/ctx";
 
 const key = (x: number, y: number): string => `${String(x)},${String(y)}`;
 
@@ -200,16 +190,6 @@ describe("the mechanism is not a collision", () => {
     for (const n of ["big-volcanic-rock", "huge-volcanic-rock", "crater-cliff"])
       expect(p[n]?.layers.filter((l) => cliff.has(l)).length).toBeGreaterThan(0);
   });
-
-  /**
-   * **`VULCANUS_CLIFF_BLOCKING_TILES` is measured, not deduced.** The cliff mask
-   * above is what makes `lava` and `lava-hot` the only Vulcanus tiles that can
-   * block a cliff, and the constant the renderer ships has to equal that.
-   */
-  it("pins the tile-collision constant to the mask the game reports", () => {
-    expect([...VULCANUS_CLIFF_BLOCKING_TILES].sort()).toEqual(["lava", "lava-hot"]);
-    expect(new Set(ON.protos["cliff-vulcanus"]?.layers).has("water_tile")).toBe(true);
-  });
 });
 
 /**
@@ -289,33 +269,5 @@ describe("the rejection geometry", () => {
     let keptAdj = 0;
     for (const k of cliffCells(ON)) if (nbrs(k).some((n) => set.has(n))) keptAdj++;
     expect(keptAdj).toBe(8);
-  }, 120000);
-
-  /**
-   * **What porting it is worth.** Every one of the 31 cells the game suppresses
-   * is a cell the port currently places, so the rule is pure precision: it can
-   * only remove surplus, and it removes 31 of the 42 the port over-places at
-   * this region.
-   */
-  it("all 31 are cells the port currently places", () => {
-    const input = { seed0: 123456, startingPositions: [{ x: 0, y: 0 }] };
-    const fields = makeVulcanusCliffFields(withCtxDefaults(input));
-    const tileAt = makeVulcanusTileResolver(input);
-    const r = ON.region;
-    const placed = new Set(
-      makeCliffPlacementFromFields(fields, {
-        elevation0: VULCANUS_CLIFF_ELEVATION_0,
-        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
-        smoothing: VULCANUS_CLIFF_SMOOTHING,
-        tileCollides: (x, y) => VULCANUS_CLIFF_BLOCKING_TILES.has(tileAt(x, y).name),
-      })
-        .placedCells(r.x0, r.y0, r.x1, r.y1)
-        .map((p) => key(p.x, p.y)),
-    );
-    expect(suppressed.filter((k) => placed.has(k)).length).toBe(31);
-    // And they are surplus, not matches: none of them is a cliff the game kept.
-    const game = cliffCells(ON);
-    expect(suppressed.filter((k) => game.has(k))).toEqual([]);
-    expect([...placed].filter((k) => !game.has(k)).length).toBe(42);
   }, 120000);
 });

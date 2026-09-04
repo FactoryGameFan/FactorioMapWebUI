@@ -23,8 +23,6 @@ afterAll(flushRecording);
 expectRecordedRows(PLANET, 9);
 
 import { makeMultioctaveNoise } from "../src/noise/multioctaveNoise";
-import { makeQuickMultioctaveNoise } from "../src/noise/quickMultioctaveNoise";
-import { makeVariablePersistenceMultioctaveNoise } from "../src/noise/variablePersistenceMultioctaveNoise";
 
 /**
  * Tier 2 of the Rust port's gate for the multioctave family: strict bit
@@ -233,7 +231,13 @@ describe("Rust and TypeScript multioctave_noise agree bit for bit", () => {
   });
 });
 
-describe("Rust and TypeScript variable_persistence_multioctave_noise agree bit for bit", () => {
+/**
+ * The TypeScript arm went with `variablePersistenceMultioctaveNoise.ts` in
+ * #227, so these rows are graded against the frozen table alone. See
+ * `tier2Frozen.ts` for why that is still the only thing running this op's
+ * arithmetic inside `wasm32-unknown-unknown`.
+ */
+describe("variable_persistence_multioctave_noise folds to its frozen checksums", () => {
   // Persistence is a single value per call here rather than per point. The real
   // op takes a spatially varying one, but computing a per-point persistence
   // would put arithmetic that is NOT the op under test on both sides of the
@@ -262,7 +266,7 @@ describe("Rust and TypeScript variable_persistence_multioctave_noise agree bit f
     { seed0: 654321, seed1: 7, octaves: 3, inputScale: 0.2, outputScale: 2, offsetX: 5000, p: 0.9 },
   ] as const;
 
-  it("folds 4,096 grid points to the identical checksum, over several cases", async () => {
+  it("folds 4,096 grid points to the frozen checksum, over several cases", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
       const fromWasm = u64(
@@ -280,27 +284,18 @@ describe("Rust and TypeScript variable_persistence_multioctave_noise agree bit f
           N,
         ),
       );
-      const fn = makeVariablePersistenceMultioctaveNoise({
-        seed0: c.seed0,
-        seed1: c.seed1,
-        octaves: c.octaves,
-        inputScale: c.inputScale,
-        outputScale: c.outputScale,
-        offsetX: c.offsetX,
-      });
-      // Handed to both sides UN-narrowed. This used to be `Math.fround(c.p)`,
-      // with a comment explaining that the WASM boundary took `persistence` as
-      // an f32 - which was true, and was the bug: the accumulator multiply is
-      // `f32(acc * persistence)` against an f64 persistence, so narrowing here
-      // made the two sides agree by construction on the one term that actually
-      // differed. Two of the cases above (0.62, 0.9) are not f32-exact, so this
-      // comparison now grades the operand width. See #226 and #254.
+      // `p` reaches the engine UN-narrowed, and the cases keep it that way.
+      // The comparison this replaced used to narrow it with `Math.fround`,
+      // which made the two sides agree by construction on the one term that
+      // actually differed - the accumulator multiply is `f32(acc * persistence)`
+      // against an f64 persistence. Two of the cases above (0.62, 0.9) are not
+      // f32-exact, so the operand width is still inside what the frozen value
+      // pins. See #226 and #254.
       expectFrozen(
         PLANET,
         `varpersist octaves=${c.octaves} offset=${c.offsetX} p=${c.p}`,
         "checksum_variable_persistence",
         fromWasm,
-        foldGrid((x, y) => fn(x, y, c.p), X0, Y0, STEP, N),
       );
     }
   });
@@ -330,7 +325,11 @@ describe("Rust and TypeScript variable_persistence_multioctave_noise agree bit f
   });
 });
 
-describe("Rust and TypeScript quick_multioctave_noise agree bit for bit", () => {
+/**
+ * The TypeScript arm went with `quickMultioctaveNoise.ts` in #227, so these
+ * rows are graded against the frozen table alone. See `tier2Frozen.ts`.
+ */
+describe("quick_multioctave_noise folds to its frozen checksums", () => {
   // The climate trees' own shapes, plus the fixture's 6-octave case. The
   // multipliers deliberately include values with no exact f32 form (0.6, 0.65,
   // 0.55), because narrowing the parameters is the single biggest term of this
@@ -368,7 +367,7 @@ describe("Rust and TypeScript quick_multioctave_noise agree bit for bit", () => 
     },
   ] as const;
 
-  it("folds 4,096 grid points to the identical checksum, over several cases", async () => {
+  it("folds 4,096 grid points to the frozen checksum, over several cases", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
       const fromWasm = u64(
@@ -387,22 +386,11 @@ describe("Rust and TypeScript quick_multioctave_noise agree bit for bit", () => 
           N,
         ),
       );
-      const fn = makeQuickMultioctaveNoise({
-        seed0: c.seed0,
-        seed1: c.seed1,
-        octaves: c.octaves,
-        inputScale: c.inputScale,
-        outputScale: c.outputScale,
-        octaveOutputScaleMultiplier: c.oosm,
-        octaveInputScaleMultiplier: c.oism,
-        offsetX: c.offsetX,
-      });
       expectFrozen(
         PLANET,
         `quick octaves=${c.octaves} oism=${c.oism} seed1=${c.seed1}`,
         "checksum_quick_multioctave",
         fromWasm,
-        foldGrid(fn, X0, Y0, STEP, N),
       );
     }
   });

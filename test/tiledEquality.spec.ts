@@ -1,9 +1,13 @@
-import { describe, it, expect } from "vite-plus/test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { beforeAll, describe, it, expect } from "vite-plus/test";
 import {
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
 import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
+import { compileEngine, instantiateEngine, type EngineExports } from "../src/noise/wasm/engine";
 
 // The definitive correctness gate for region tiling: rendering an area as tiles
 // must reproduce the single whole-image render byte for byte. The renderer is
@@ -18,6 +22,23 @@ import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tili
 const SEAM_SEED = 123456;
 const SEAM_ORIGIN_X = 320;
 const SEAM_ORIGIN_Y = 64;
+
+/**
+ * The engine every render below goes through.
+ *
+ * **This spec used to pass none at all**, which meant it graded the TypeScript
+ * renderers and could not see the WASM gate: a tiling bug that existed only on
+ * the engine path was invisible here. #227 deleted those renderers, so the
+ * engine is now the only thing to render with - and the gate this spec could
+ * never reach is the one it now tests. One instance for the file: renders are
+ * sequential and synchronous, which is exactly how the worker drives it.
+ */
+let engine: EngineExports;
+
+beforeAll(async () => {
+  const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
+  engine = await instantiateEngine(await compileEngine(readFileSync(wasmPath)));
+});
 
 function baseReq(over: Partial<ElevationRenderRequest> = {}): ElevationRenderRequest {
   return {
@@ -52,14 +73,17 @@ function renderTiled(req: ElevationRenderRequest, tileSize: number): Uint8Clampe
     height: full.height,
   };
   const tiles = planTiles(full, tileSize).map((t) => {
-    const out = runRenderRequest({
-      ...req,
-      originX: t.originX,
-      originY: t.originY,
-      width: t.width,
-      height: t.height,
-      fullImage,
-    });
+    const out = runRenderRequest(
+      {
+        ...req,
+        originX: t.originX,
+        originY: t.originY,
+        width: t.width,
+        height: t.height,
+        fullImage,
+      },
+      engine,
+    );
     return {
       dx: t.dx,
       dy: t.dy,
@@ -72,7 +96,7 @@ function renderTiled(req: ElevationRenderRequest, tileSize: number): Uint8Clampe
 }
 
 function renderWhole(req: ElevationRenderRequest): Uint8ClampedArray {
-  return new Uint8ClampedArray(runRenderRequest(req).buffer);
+  return new Uint8ClampedArray(runRenderRequest(req, engine).buffer);
 }
 
 describe("tiled render equals untiled render", () => {

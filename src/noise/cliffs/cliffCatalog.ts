@@ -427,3 +427,27 @@ export function cliffCollisionTileBox(
     bottom: Math.floor(centerY + b),
   };
 }
+
+/**
+ * The Vulcanus tiles whose `CollisionMask` shares a layer with the cliff's, so a
+ * cliff whose collision box touches one is never placed.
+ *
+ * `tile_collision_masks.lava()` sets `water_tile = true` and the cliff mask
+ * holds `water_tile`; no other Vulcanus tile does. Notably
+ * `volcanic-jagged-ground` - the tile the ore patches paint, which the Lua
+ * itself labels "CLIFF TILE" - is `tile_collision_masks.ground()`, which the
+ * cliff mask does not touch, so ore does NOT exclude cliffs. That distinction is
+ * the whole reason the earlier ore-separation work correctly found no exclusion
+ * rule while this one exists.
+ *
+ * Lives here rather than beside the Vulcanus renderer because that renderer is
+ * deleted by #227 and this rule is not.
+ *
+ * **This is the only definition on the TypeScript side, and the Rust side's only
+ * definition is `VulcanusTile::is_cliff_blocking` in
+ * `crates/fmw-noise/src/tiles/vulcanus_catalog.rs`.** The two are held together
+ * by `test/wasmVulcanusParity.spec.ts`, which hashes this set and compares it
+ * against the module's `vulcanus_cliff_blocking_names_fnv1a64()`. Before #364
+ * the set was written out four times with nothing checking the four agreed.
+ */
+export const VULCANUS_CLIFF_BLOCKING_TILES: ReadonlySet<string> = new Set(["lava", "lava-hot"]);

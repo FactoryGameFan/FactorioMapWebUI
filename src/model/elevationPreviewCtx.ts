@@ -3,7 +3,7 @@ import type { Point } from "../noise/distanceFromNearestPoint";
 import type { VulcanusResourceControls } from "../noise/eval/ctx";
 import { readMapType } from "./mapType";
 import { readResourceControls, readVulcanusResourceControls } from "./resourceReads";
-import type { ResourceControlLevers } from "../noise/resources/resolveResource";
+import type { ResourceControlLevers } from "../noise/resources/resourceCatalog";
 import type { Preset } from "./types";
 import { ENEMY_CONTROL_NAME, type EnemyControls } from "../noise/enemies/enemyCatalog";
 import {

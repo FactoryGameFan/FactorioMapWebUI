@@ -120,8 +120,9 @@
  * | `oppositeSide` | immediate `0x01000302` | `N<->S`, `E<->W` |
  * | `destroyEnd` | 4 jump tables under `0x102cfc9db` | `side -> none`, else destroy |
  *
- * `test/cliffConnections.spec.ts` re-derives all four from the names and asserts
- * they match, so a transcription slip fails rather than shifts the model.
+ * `crates/fmw-noise/src/cliffs/connections.rs` re-derives all four from the names
+ * and asserts they match, so a transcription slip fails rather than shifts the
+ * model. The TypeScript spec that used to do this went with #227.
  */
 
 import {
@@ -131,7 +132,22 @@ import {
   CLIFF_GRID_SIZE,
   CLIFF_ORIENTATION_NAMES,
 } from "./cliffCatalog";
-import type { PlacedCliffCell } from "./cliffPlacement";
+
+/**
+ * A placed cliff: the cell centre, plus the 8-bit edge-crossing `code` it was
+ * placed by. The code is carried out rather than discarded because it is the
+ * only thing that names the cliff's ORIENTATION, and therefore its collision
+ * box - `cliffOrientationForCode(code)` in `cliffCatalog.ts`.
+ *
+ * Inlined from `cliffPlacement.ts`, which #227 deletes. This module is kept as
+ * the reference `crates/fmw-noise/src/cliffs/connections.rs` cites, so it must
+ * not import anything that deletion removes.
+ */
+export interface PlacedCliffCell {
+  readonly x: number;
+  readonly y: number;
+  readonly code: number;
+}
 
 /**
  * `CellSide`, in the engine's enum order. Read off `getNeighborPosition`
@@ -310,8 +326,8 @@ export interface CliffConnectionOptions {
  * `<= 0x31`, so during a real generation sweep a cliff pointing into a
  * not-yet-generated chunk keeps its end, and this model destroys it. It is
  * therefore an UPPER bound on how much the rule removes - see
- * `test/cliffConnections.spec.ts`, which is what measures whether that bound is
- * tight.
+ * `crates/fmw-noise/src/fixtures.rs`, which runs over the same fixture and is
+ * what measures whether that bound is tight.
  */
 export function applyCliffConnections(
   cells: readonly PlacedCliffCell[],

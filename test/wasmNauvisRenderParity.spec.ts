@@ -1,16 +1,26 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { withDiffArtifacts } from "./diffArtifacts";
+import {
+  RECORDING,
+  consultedCount,
+  expectFrozen,
+  expectRecordedRows,
+  flushRecording,
+  foldPixels,
+  frozenCount,
+} from "./tier3Frozen";
 import { decodePng } from "./oracle/decodePng";
 import { compileEngine, instantiateEngine, renderThroughWasm } from "../src/noise/wasm/engine";
 import {
+  ENGINE_REQUIRED,
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
-import { TREE_MAP_COLOR } from "../src/noise/preview/renderTrees";
+import { TREE_MAP_COLOR } from "../src/noise/preview/palette";
 import { planTiles } from "../src/noise/preview/tiling";
 
 /**
@@ -36,6 +46,55 @@ import { planTiles } from "../src/noise/preview/tiling";
 const FIXTURES = join(import.meta.dirname, "fixtures");
 const SIZE = 1024;
 const SEED = 123456;
+
+/**
+ * The tier-3 freeze section for this spec. See `tier3Frozen.ts`.
+ *
+ * Every render below is checked against a frozen checksum. #227 has now
+ * deleted the TypeScript arm, so that is the only check left: the wasm arm runs
+ * against a value captured while the two demonstrably agreed. Had the freeze
+ * not landed first, `runRenderRequest(req)` with the engine left off would have
+ * become the same code as the wasm arm and every comparison would have passed
+ * while grading nothing.
+ */
+const SECTION = "nauvis:render";
+
+/**
+ * Rows this spec must record before the table is rewritten, as a literal.
+ *
+ * A literal rather than a derived total because the rows span seven describe
+ * blocks and several come from inline lever tables, so there is no single array
+ * to derive it from. That buys the guard tier 2 documents: adding a case makes
+ * a record run DROP the section until this number is updated, rather than
+ * quietly writing a shorter table.
+ *
+ * 15 terrain (4 windows, 9 climate, 2 spawn) + 10 trees + 8 rocks + 8 enemies
+ * + 12 cliffs + 9 resources + 11 composite.
+ */
+const ROWS = 73;
+
+expectRecordedRows(SECTION, ROWS);
+afterAll(flushRecording);
+
+/**
+ * Freeze one render, and compare the two arms while both exist.
+ *
+ * The label/name pair is the row key, so it has to be unique across the whole
+ * section - which is why the composite block prefixes its per-view rows with
+ * `routes` rather than reusing a bare window label.
+ */
+/**
+ * `ts` is omitted where #227 deleted the TypeScript renderer this block used to
+ * compare against - see `tier3Frozen.ts`.
+ */
+function freeze(
+  label: string,
+  name: string,
+  wasm: ArrayLike<number>,
+  ts?: ArrayLike<number>,
+): void {
+  expectFrozen(SECTION, label, name, foldPixels(wasm), ts && foldPixels(ts));
+}
 
 /**
  * The game draws enemy bases in its capture and our terrain view does not.
@@ -199,15 +258,14 @@ async function engine() {
   return instantiateEngine(compiled);
 }
 
-describe("the WASM engine renders Nauvis terrain exactly as the TypeScript does", () => {
+describe("the WASM engine renders Nauvis terrain to its frozen bytes", () => {
   it("is byte-identical across four windows", async () => {
     const e = await engine();
     for (const w of WINDOWS) {
       const req = request(w);
       const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(req).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "terrain", wasm);
     }
   }, 300000);
 
@@ -226,7 +284,7 @@ describe("the WASM engine renders Nauvis terrain exactly as the TypeScript does"
     }
   }, 300000);
 
-  it("moving the climate levers moves the render on both paths together", async () => {
+  it("moving the climate levers moves the render", async () => {
     // The eight-lever block is defaulted on the TypeScript side inside
     // `makeMoisture` / `makeAux` and read raw by the module, so a wrong default
     // in `renderNauvisThroughWasm` would be a silent divergence. Moving each
@@ -250,10 +308,10 @@ describe("the WASM engine renders Nauvis terrain exactly as the TypeScript does"
       originY: -256,
       tilesPerPixel: 4,
     };
-    const flat = (r: ElevationRenderRequest, eng?: typeof e) =>
+    const flat = (r: ElevationRenderRequest, eng: typeof e) =>
       Array.from(new Uint8ClampedArray(runRenderRequest(r, eng).buffer));
     const baseWasm = flat(base, e);
-    expect(flat(base)).toEqual(baseWasm);
+    freeze("climate base", "terrain", baseWasm);
 
     const moved: Partial<ElevationRenderRequest>[] = [
       { segmentationMultiplier: 2 },
@@ -268,10 +326,14 @@ describe("the WASM engine renders Nauvis terrain exactly as the TypeScript does"
     for (const patch of moved) {
       const req = { ...base, ...patch } as ElevationRenderRequest;
       const w = flat(req, e);
-      const t = flat(req);
       const name = Object.keys(patch)[0];
-      expect(w, `${name}: wasm vs ts`).toEqual(t);
+      // JOINED rather than `[0]`, because the last two patches share a first
+      // key - `startingAreaMoistureSize` alone, then the same key with the
+      // frequency moved with it. A row name taken from `[0]` would collide, and
+      // the section would silently record six rows where seven ran.
+      const rowName = Object.keys(patch).join("+");
       expect(w, `${name}: must actually move the render`).not.toEqual(baseWasm);
+      freeze(`climate ${rowName}`, "terrain", w);
     }
 
     // **`startingAreaMoistureFrequency` alone is INERT, and that is a property
@@ -285,13 +347,12 @@ describe("the WASM engine renders Nauvis terrain exactly as the TypeScript does"
     // live on its own fails here instead of silently widening what the sweep
     // covers.
     const freqOnly = { ...base, startingAreaMoistureFrequency: 3 } as ElevationRenderRequest;
-    expect(flat(freqOnly, e), "frequency alone must stay inert at the default size").toEqual(
-      baseWasm,
-    );
-    expect(flat(freqOnly)).toEqual(baseWasm);
+    const freqOnlyWasm = flat(freqOnly, e);
+    expect(freqOnlyWasm, "frequency alone must stay inert at the default size").toEqual(baseWasm);
+    freeze("climate startingAreaMoistureFrequency alone", "terrain", freqOnlyWasm);
   }, 300000);
 
-  it("a moved spawn renders THROUGH the engine, byte-identical to the TypeScript", async () => {
+  it("a moved spawn renders THROUGH the engine, to its own frozen bytes", async () => {
     // The Nauvis block carries the spawn list as of #227, so the engine is no
     // longer refused here. That inverts what this test proves. It used to check
     // that `runRenderRequest` REFUSED the engine for a moved spawn, and it
@@ -309,8 +370,7 @@ describe("the WASM engine renders Nauvis terrain exactly as the TypeScript does"
       startingPositions: [{ x: 512, y: -256 }],
     };
     const withEngine = Array.from(new Uint8ClampedArray(runRenderRequest(moved, e).buffer));
-    const withoutEngine = Array.from(new Uint8ClampedArray(runRenderRequest(moved).buffer));
-    expect(withEngine).toEqual(withoutEngine);
+    freeze("spawn moved", "terrain", withEngine);
 
     // Anti-vacuity, and it is what makes the equality above mean something: the
     // spawn has to actually move the render. If it did not, a module that
@@ -330,28 +390,40 @@ describe("the WASM engine renders Nauvis terrain exactly as the TypeScript does"
         { x: -300.5, y: 96.25 },
       ],
     };
-    expect(Array.from(new Uint8ClampedArray(runRenderRequest(two, e).buffer))).toEqual(
-      Array.from(new Uint8ClampedArray(runRenderRequest(two).buffer)),
-    );
-    expect(Array.from(new Uint8ClampedArray(runRenderRequest(two, e).buffer))).not.toEqual(
-      withEngine,
-    );
+    const twoWasm = Array.from(new Uint8ClampedArray(runRenderRequest(two, e).buffer));
+    expect(twoWasm).not.toEqual(withEngine);
+    freeze("spawn two points", "terrain", twoWasm);
   }, 300000);
 
-  it("refuses the engine for a spawn list longer than the ABI cap", async () => {
-    // The cap is a real edge rather than a formality: over it the writer throws
-    // instead of silently dropping points, so `runRenderRequest` has to keep
-    // such a request on the TypeScript path. Nine points, one past the eight
-    // the block holds.
+  it("refuses a spawn list longer than the ABI cap, rather than dropping points", async () => {
+    // The block this replaces asserted the OPPOSITE, and said so: "This test
+    // belongs to the carve-out, and the #227 deletion removes both together."
+    // While the TypeScript renderer existed, a list over the cap was kept off
+    // the engine and rendered there instead; it was deliberately not frozen,
+    // because both of its arms were that renderer.
+    //
+    // With the carve-out gone the cap is a refusal. Over it the writer throws
+    // rather than silently dropping points, which is the property worth having
+    // - a dropped spawn would move the render and nothing would say so. Nine
+    // points, one past the eight the block holds.
+    //
+    // Removing the carve-out is safe for the reason the spawn census on #227
+    // gives: the most starting points any exchange string in the repo carries
+    // is two.
     const e = await engine();
     const many = {
       ...request(WINDOWS[0]),
       startingPositions: Array.from({ length: 9 }, (_, i) => ({ x: i * 64, y: -i * 32 })),
     };
-    expect(() => runRenderRequest(many, e)).not.toThrow();
-    expect(Array.from(new Uint8ClampedArray(runRenderRequest(many, e).buffer))).toEqual(
-      Array.from(new Uint8ClampedArray(runRenderRequest(many).buffer)),
-    );
+    expect(() => runRenderRequest(many, e)).toThrow(/ABI cap/);
+
+    // And eight is not over the cap, so the refusal is the list's length rather
+    // than the presence of a list.
+    const eight = {
+      ...request(WINDOWS[0]),
+      startingPositions: Array.from({ length: 8 }, (_, i) => ({ x: i * 64, y: -i * 32 })),
+    };
+    expect(() => runRenderRequest(eight, e)).not.toThrow();
   }, 300000);
 });
 
@@ -396,7 +468,7 @@ const DENSE_WINDOW: Window = {
 
 const OVERLAY_WINDOWS: readonly Window[] = [...WINDOWS, DENSE_WINDOW];
 
-describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScript does", () => {
+describe("the WASM engine renders the Nauvis tree overlay to its frozen bytes", () => {
   const treeRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "trees" });
 
   it("serves the trees view rather than refusing it", async () => {
@@ -417,9 +489,8 @@ describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScr
     const e = await engine();
     for (const w of OVERLAY_WINDOWS) {
       const wasm = new Uint8ClampedArray(runRenderRequest(treeRequest(w), e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(treeRequest(w)).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "trees", wasm);
     }
   }, 300000);
 
@@ -455,7 +526,7 @@ describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScr
     expect(counts).toEqual(TREE_PIXELS_PER_WINDOW);
   }, 300000);
 
-  it("moving each tree lever moves the render on both paths together", async () => {
+  it("moving each tree lever moves the render", async () => {
     // The four levers this slice adds to the ABI block. A lever written to the
     // wrong offset decodes as a neighbour's value, which the round-trip fixture
     // cannot see - only rendering with it moved can. Each patch was measured on
@@ -467,10 +538,10 @@ describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScr
       width: 128,
       height: 128,
     };
-    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+    const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
       Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
     const baseWasm = flat(base, e);
-    expect(flat(base)).toEqual(baseWasm);
+    freeze("trees base", "trees", baseWasm);
 
     const patches: readonly (readonly [string, Partial<ElevationRenderRequest>])[] = [
       ["treeControls.frequency", { treeControls: { frequency: 3, size: 1 } }],
@@ -481,8 +552,11 @@ describe("the WASM engine renders the Nauvis tree overlay exactly as the TypeScr
     for (const [label, patch] of patches) {
       const req = { ...base, ...patch } as ElevationRenderRequest;
       const moved = flat(req, e);
-      expect(moved, `${label}: the two paths must agree`).toEqual(flat(req));
       expect(moved, `${label}: must actually move the render`).not.toEqual(baseWasm);
+      // `label` alone is the row key across all four overlay blocks, because
+      // every lever name is already qualified - treeControls, rockControls,
+      // enemyControls, cliffControls, cliffSettings, waterLevel.
+      freeze(label, "lever", moved);
     }
   }, 300000);
 
@@ -541,7 +615,7 @@ const ROCK_PIXELS_PER_WINDOW = [52, 18, 27, 18, 157];
 /** `ROCK_MAP_COLOR` in `src/noise/rocks/rockCatalog.ts`. Both planets share it. */
 const ROCK_RGB = [129, 105, 78] as const;
 
-describe("the WASM engine renders the Nauvis rock overlay exactly as the TypeScript does", () => {
+describe("the WASM engine renders the Nauvis rock overlay to its frozen bytes", () => {
   const rockRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "rocks" });
 
   it("serves the rocks view rather than refusing it", async () => {
@@ -559,9 +633,8 @@ describe("the WASM engine renders the Nauvis rock overlay exactly as the TypeScr
     const e = await engine();
     for (const w of OVERLAY_WINDOWS) {
       const wasm = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(rockRequest(w)).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "rocks", wasm);
     }
   }, 300000);
 
@@ -599,23 +672,26 @@ describe("the WASM engine renders the Nauvis rock overlay exactly as the TypeScr
     expect(counts).toEqual(ROCK_PIXELS_PER_WINDOW);
   }, 300000);
 
-  it("moving each rock lever moves the render on both paths together", async () => {
+  it("moving each rock lever moves the render", async () => {
     // Measured on the TypeScript path first: 930 and 1,248 bytes change, so
     // neither comparison is vacuous.
     const e = await engine();
     const base = rockRequest(DENSE_WINDOW);
-    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+    const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
       Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
     const baseWasm = flat(base, e);
-    expect(flat(base)).toEqual(baseWasm);
+    freeze("rocks base", "rocks", baseWasm);
     for (const [label, patch] of [
       ["rockControls.frequency", { rockControls: { frequency: 3, size: 1 } }],
       ["rockControls.size", { rockControls: { frequency: 1, size: 3 } }],
     ] as const) {
       const req = { ...base, ...patch } as ElevationRenderRequest;
       const moved = flat(req, e);
-      expect(moved, `${label}: the two paths must agree`).toEqual(flat(req));
       expect(moved, `${label}: must actually move the render`).not.toEqual(baseWasm);
+      // `label` alone is the row key across all four overlay blocks, because
+      // every lever name is already qualified - treeControls, rockControls,
+      // enemyControls, cliffControls, cliffSettings, waterLevel.
+      freeze(label, "lever", moved);
     }
   }, 300000);
 
@@ -729,7 +805,7 @@ const ENEMY_PIXELS_PER_WINDOW = [150, 44, 116, 84, 208];
  */
 const ENEMY_OVERLAY_RGB = [255, 26, 26] as const;
 
-describe("the WASM engine renders the Nauvis enemy overlay exactly as the TypeScript does", () => {
+describe("the WASM engine renders the Nauvis enemy overlay to its frozen bytes", () => {
   const enemyRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "enemies" });
 
   it("serves the enemies view rather than refusing it", async () => {
@@ -743,9 +819,8 @@ describe("the WASM engine renders the Nauvis enemy overlay exactly as the TypeSc
     const e = await engine();
     for (const w of ENEMY_WINDOWS) {
       const wasm = new Uint8ClampedArray(runRenderRequest(enemyRequest(w), e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(enemyRequest(w)).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "enemies", wasm);
     }
   }, 300000);
 
@@ -781,24 +856,27 @@ describe("the WASM engine renders the Nauvis enemy overlay exactly as the TypeSc
     expect(counts).toEqual(ENEMY_PIXELS_PER_WINDOW);
   }, 300000);
 
-  it("moving each enemy lever moves the render on both paths together", async () => {
+  it("moving each enemy lever moves the render", async () => {
     // The window is the FAR one, not the near-spawn one every other block uses:
     // `frequency` moves 0 bytes near spawn, so that test would be vacuous. Here
     // the two levers move 328 and 587 bytes, measured on the TypeScript path.
     const e = await engine();
     const base = enemyRequest(ENEMY_WINDOWS[4]);
-    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+    const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
       Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
     const baseWasm = flat(base, e);
-    expect(flat(base)).toEqual(baseWasm);
+    freeze("enemies base", "enemies", baseWasm);
     for (const [label, patch] of [
       ["enemyControls.frequency", { enemyControls: { frequency: 3, size: 1 } }],
       ["enemyControls.size", { enemyControls: { frequency: 1, size: 3 } }],
     ] as const) {
       const req = { ...base, ...patch } as ElevationRenderRequest;
       const moved = flat(req, e);
-      expect(moved, `${label}: the two paths must agree`).toEqual(flat(req));
       expect(moved, `${label}: must actually move the render`).not.toEqual(baseWasm);
+      // `label` alone is the row key across all four overlay blocks, because
+      // every lever name is already qualified - treeControls, rockControls,
+      // enemyControls, cliffControls, cliffSettings, waterLevel.
+      freeze(label, "lever", moved);
     }
   }, 300000);
 
@@ -887,7 +965,7 @@ const CLIFF_PIXELS_PER_WINDOW = [425, 152, 1125, 1080, 2584];
 /** `CLIFF_MAP_COLOR` in `src/noise/cliffs/cliffCatalog.ts`. Both planets share it. */
 const CLIFF_RGB = [144, 119, 87] as const;
 
-describe("the WASM engine renders the Nauvis cliff overlay exactly as the TypeScript does", () => {
+describe("the WASM engine renders the Nauvis cliff overlay to its frozen bytes", () => {
   const cliffRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "cliffs" });
 
   it("serves the cliffs view rather than refusing it", async () => {
@@ -900,9 +978,8 @@ describe("the WASM engine renders the Nauvis cliff overlay exactly as the TypeSc
     const e = await engine();
     for (const w of CLIFF_WINDOWS) {
       const wasm = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(cliffRequest(w)).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "cliffs", wasm);
     }
   }, 300000);
 
@@ -938,7 +1015,7 @@ describe("the WASM engine renders the Nauvis cliff overlay exactly as the TypeSc
     expect(counts).toEqual(CLIFF_PIXELS_PER_WINDOW);
   }, 300000);
 
-  it("moving each cliff lever moves the render on both paths together", async () => {
+  it("moving each cliff lever moves the render", async () => {
     // Six levers, and `waterLevel` is one of them - which is the interesting
     // case. The TERRAIN view ignores it (#326, reproduced deliberately), so
     // this is the first Nauvis pass where the module must actually READ the
@@ -946,10 +1023,10 @@ describe("the WASM engine renders the Nauvis cliff overlay exactly as the TypeSc
     // request.
     const e = await engine();
     const base = cliffRequest(CLIFF_WINDOWS[4]);
-    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+    const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
       Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
     const baseWasm = flat(base, e);
-    expect(flat(base)).toEqual(baseWasm);
+    freeze("cliffs base", "cliffs", baseWasm);
     for (const [label, patch] of [
       // Frequency has to reach the slider's MINIMUM to grade much - see the
       // cliff-lever note in CLAUDE.md, measured over 1600 positions.
@@ -967,12 +1044,15 @@ describe("the WASM engine renders the Nauvis cliff overlay exactly as the TypeSc
     ] as const) {
       const req = { ...base, ...patch } as ElevationRenderRequest;
       const moved = flat(req, e);
-      expect(moved, `${label}: the two paths must agree`).toEqual(flat(req));
       expect(moved, `${label}: must actually move the render`).not.toEqual(baseWasm);
+      // `label` alone is the row key across all four overlay blocks, because
+      // every lever name is already qualified - treeControls, rockControls,
+      // enemyControls, cliffControls, cliffSettings, waterLevel.
+      freeze(label, "lever", moved);
     }
   }, 300000);
 
-  it("richness 0 disables the overlay entirely on both paths", async () => {
+  it("richness 0 disables the overlay entirely", async () => {
     // A separate case because it is the one lever whose effect is REMOVAL. It
     // must take the render back to bare terrain exactly, not merely change it.
     const e = await engine();
@@ -982,8 +1062,9 @@ describe("the WASM engine renders the Nauvis cliff overlay exactly as the TypeSc
       cliffSettings: { cliffElevation0: 10, cliffElevationInterval: 40, richness: 0 },
     } as ElevationRenderRequest;
     const terrain = Array.from(new Uint8ClampedArray(runRenderRequest(request(w), e).buffer));
-    expect(Array.from(new Uint8ClampedArray(runRenderRequest(off, e).buffer))).toEqual(terrain);
-    expect(Array.from(new Uint8ClampedArray(runRenderRequest(off).buffer))).toEqual(terrain);
+    const offWasm = Array.from(new Uint8ClampedArray(runRenderRequest(off, e).buffer));
+    expect(offWasm).toEqual(terrain);
+    freeze("cliffs richness 0", "cliffs", offWasm);
   }, 300000);
 
   it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
@@ -1127,7 +1208,7 @@ const ORE_RGB = [
   [0, 179, 0],
 ] as const;
 
-describe("the WASM engine renders the Nauvis resource overlay exactly as the TypeScript does", () => {
+describe("the WASM engine renders the Nauvis resource overlay to its frozen bytes", () => {
   const resourceRequest = (w: Window): ElevationRenderRequest => ({
     ...request(w),
     view: "resources",
@@ -1144,9 +1225,8 @@ describe("the WASM engine renders the Nauvis resource overlay exactly as the Typ
     const e = await engine();
     for (const w of RESOURCE_WINDOWS) {
       const wasm = new Uint8ClampedArray(runRenderRequest(resourceRequest(w), e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(resourceRequest(w)).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "resources", wasm);
     }
   }, 300000);
 
@@ -1182,10 +1262,10 @@ describe("the WASM engine renders the Nauvis resource overlay exactly as the Typ
     const e = await engine();
     const w = RESOURCE_WINDOWS[1];
     const base = resourceRequest(w);
-    const flat = (req: ElevationRenderRequest, eng?: typeof e): number[] =>
+    const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
       Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
     const baseWasm = flat(base, e);
-    expect(flat(base)).toEqual(baseWasm);
+    freeze("resources base", "resources", baseWasm);
 
     const withLevers = (name: string): ElevationRenderRequest => ({
       ...base,
@@ -1193,8 +1273,8 @@ describe("the WASM engine renders the Nauvis resource overlay exactly as the Typ
     });
     const iron = flat(withLevers("iron-ore"), e);
     const copper = flat(withLevers("copper-ore"), e);
-    expect(iron, "iron: the two paths must agree").toEqual(flat(withLevers("iron-ore")));
-    expect(copper, "copper: the two paths must agree").toEqual(flat(withLevers("copper-ore")));
+    freeze("resources iron-ore levers", "resources", iron);
+    freeze("resources copper-ore levers", "resources", copper);
     expect(iron, "iron levers must move the render").not.toEqual(baseWasm);
     expect(copper, "copper levers must move the render").not.toEqual(baseWasm);
     expect(iron, "iron and copper must not be the same edit").not.toEqual(copper);
@@ -1285,7 +1365,7 @@ const ALL_WINDOWS: readonly Window[] = [
   },
 ];
 
-describe("the WASM engine renders the Nauvis `all` composite exactly as the TypeScript does", () => {
+describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes", () => {
   const allRequest = (w: Window): ElevationRenderRequest => ({ ...request(w), view: "all" });
 
   it("serves the all view rather than refusing it", async () => {
@@ -1299,9 +1379,8 @@ describe("the WASM engine renders the Nauvis `all` composite exactly as the Type
     const e = await engine();
     for (const w of ALL_WINDOWS) {
       const wasm = new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer);
-      const ts = new Uint8ClampedArray(runRenderRequest(allRequest(w)).buffer);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
-      expect(Array.from(wasm), `${w.label}: pixels`).toEqual(Array.from(ts));
+      freeze(w.label, "all", wasm);
     }
   }, 300000);
 
@@ -1392,10 +1471,19 @@ describe("the WASM engine renders the Nauvis `all` composite exactly as the Type
       "all",
     ] as const) {
       const req = { ...request(w), view } as ElevationRenderRequest;
-      expect(
-        Array.from(new Uint8ClampedArray(runRenderRequest(req, e).buffer)),
-        `${view}: engine and TypeScript must agree`,
-      ).toEqual(Array.from(new Uint8ClampedArray(runRenderRequest(req).buffer)));
+      const wasm = Array.from(new Uint8ClampedArray(runRenderRequest(req, e).buffer));
+
+      // This used to render the same request twice - once with the engine and
+      // once without - and assert the two agreed. #227 makes it the sharper
+      // statement it stood in for: with no TypeScript to fall back to, a view
+      // that reaches the engine is exactly a view that REFUSES to render
+      // without one. A view that still returned pixels here would be a view
+      // served off some other path.
+      expect(() => runRenderRequest(req), `${view}: must need the engine`).toThrow(ENGINE_REQUIRED);
+
+      // Prefixed, because this block sweeps ALL_WINDOWS[2] through every view
+      // and a bare window label would collide with the per-view blocks above.
+      freeze(`routes ${w.label}`, view, wasm);
     }
     const all = Array.from(new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer));
     const terrain = Array.from(new Uint8ClampedArray(runRenderRequest(request(w), e).buffer));
@@ -1472,4 +1560,30 @@ describe("the WASM engine's Nauvis terrain against the game's own preview", () =
       },
     );
   }, 300000);
+});
+
+describe("the tier-3 freeze covers this spec rather than merely existing", () => {
+  // **Declared at the end on purpose**: tests run in declaration order within a
+  // file, so this sees every `freeze` call the run made.
+  //
+  // `expectRecordedRows` guards only a RECORD run - it feeds `flushRecording`,
+  // which returns immediately unless FMW_FREEZE_TIER3=1. So without this, a
+  // deleted `freeze` call site would leave its row in the table un-consulted
+  // and every gate would stay green while coverage shrank. That is the
+  // direction the three tier-2 planet specs guard with `frozenCount`, and it
+  // matters more here: after #227 deletes the TypeScript arm, this table is the
+  // only thing grading these renders.
+  //
+  // BOTH numbers are asserted because they fail on opposite mistakes. The table
+  // count catches a re-record that wrote a different surface; the consulted
+  // count catches a call site that stopped asking. A literal compared only
+  // against the file would move with neither.
+  //
+  // Under `-t` this test is filtered out like any other, so a partial run does
+  // not fail it - it simply does not run, the same way a partial RECORD run
+  // falls short of its declared total instead of writing a short table.
+  it.skipIf(RECORDING)("consults every frozen row exactly once", () => {
+    expect(frozenCount(SECTION), "rows in the committed table").toBe(ROWS);
+    expect(consultedCount(SECTION), "distinct rows this run looked up").toBe(ROWS);
+  });
 });

@@ -21,7 +21,8 @@
  * v1 was one fixed 104-byte struct with Fulgora's two island sliders and four
  * trig values baked in. Vulcanus needs 31 more `f64`, and Nauvis will need its
  * own set again, so the reserved word became `params_bytes` and each planet
- * declares its own block. A Fulgora request is still exactly 104 bytes.
+ * declares its own block. A Fulgora request was 104 bytes until #363 added the
+ * two scrap sliders, and is 120 now.
  */
 
 import { f32 } from "../eval/f32";
@@ -37,7 +38,7 @@ export const ABI_VERSION = 2;
 export const COMMON_BYTES = 56;
 
 /** Must equal `fmw_wasm::abi::FULGORA_PARAMS_BYTES`. */
-export const FULGORA_PARAMS_BYTES = 48;
+export const FULGORA_PARAMS_BYTES = 64;
 
 /** Must equal `fmw_wasm::abi::VULCANUS_PARAMS_BYTES`. */
 export const VULCANUS_PARAMS_BYTES = 312;
@@ -88,6 +89,9 @@ export const VIEW = {
   all: 6,
   trees: 7,
   enemies: 8,
+  elevationLakes: 9,
+  elevationNauvis: 10,
+  elevationIsland: 11,
 } as const;
 
 /**
@@ -124,6 +128,21 @@ export interface FulgoraRenderRequest extends CommonRenderRequest {
   readonly planet?: "fulgora";
   readonly islandsFrequency: number;
   readonly islandsSize: number;
+  /**
+   * `control:scrap:frequency` and `control:scrap:size`, wire values, neutral
+   * at 1.
+   *
+   * **Optional, for the reason `planet` is**, so the existing Fulgora call
+   * sites need no change. `writeFulgoraParams` substitutes the neutral 1.
+   *
+   * **The module does NOT default these**, which is why the substitution has to
+   * happen and why it happens exactly once. `FulgoraParams` reads both straight
+   * into `ScrapControls`, so an unwritten field would encode 0 - a real slider
+   * setting, and not the neutral one. One encoder-side default is the whole
+   * defence, so do not add a second at a call site.
+   */
+  readonly scrapFrequency?: number;
+  readonly scrapSize?: number;
 }
 
 /** One resource autoplace control's two sliders. Richness is not read. */
@@ -387,7 +406,7 @@ export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }
  * Write a request into `target`, returning the bytes written.
  *
  * The return value is the LENGTH of this request, not the buffer's capacity -
- * a Fulgora request is 104 bytes and a Vulcanus one is 368, and the module is
+ * a Fulgora request is 120 bytes and a Vulcanus one is 368, and the module is
  * handed the length so it can check the declared block against what arrived.
  */
 export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest): number {
@@ -530,6 +549,10 @@ function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {
   view.setFloat64(p + 24, trig.cosStart, true);
   view.setFloat64(p + 32, trig.sinVault, true);
   view.setFloat64(p + 40, trig.cosVault, true);
+  // The ONE place an absent scrap slider becomes the neutral 1. See the field
+  // docs on `FulgoraRenderRequest`.
+  view.setFloat64(p + 48, req.scrapFrequency ?? 1, true);
+  view.setFloat64(p + 56, req.scrapSize ?? 1, true);
 }
 
 function writeVulcanusParams(view: DataView, req: VulcanusRenderRequest): void {

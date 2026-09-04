@@ -18,11 +18,8 @@ afterAll(flushRecording);
  */
 expectRecordedRows(PLANET, 18);
 
-import { distanceFromNearestPoint, type Point } from "../src/noise/distanceFromNearestPoint";
-import { randomPenaltyBatch } from "../src/noise/randomPenalty";
 import { spotCandidatePoints } from "../src/noise/spotCandidates";
 import { selectSpots } from "../src/noise/spotSelection";
-import { startingLakePositions } from "../src/noise/startingLakes";
 
 /**
  * Tier 2 of the Rust port's gate for the phase-1 primitives that do NOT compose
@@ -127,23 +124,17 @@ function foldAll(values: readonly number[]): bigint {
   return acc;
 }
 
-/**
- * The spawn list both lake exports build, duplicated from `spawns()` in
- * `crates/fmw-wasm/src/lib.rs`. The boundary takes scalars, so a list would
- * have to go through the scratch region - machinery that would itself need
- * testing. Keep the two rules in step.
- */
-function spawns(count: number): Point[] {
-  return Array.from({ length: count }, (_unused, k) => ({ x: k * 1000, y: k * -700 }));
-}
-
 // Off the lattice, and a step that is not a simple binary fraction.
 const X0 = -3.5;
 const Y0 = 7.25;
 const STEP = 0.37;
 const N = 32;
 
-describe("Rust and TypeScript random_penalty agree bit for bit", () => {
+/**
+ * The TypeScript arm went with `randomPenalty.ts` in #227, so these rows are
+ * graded against the frozen table alone. See `tier2Frozen.ts`.
+ */
+describe("random_penalty folds to its frozen checksums", () => {
   // `sourceKind` 1 is `x`, which goes negative over half this grid, so the
   // `source <= 0` pass-through and the draw it does NOT consume are inside the
   // comparison. A batch of all-positive sources would never reach that branch.
@@ -153,17 +144,7 @@ describe("Rust and TypeScript random_penalty agree bit for bit", () => {
     { rpSeed: 13, amplitude: 0.5, sourceKind: 1 },
   ] as const;
 
-  const batchOf = (c: (typeof CASES)[number]): number[] => {
-    const positions: Point[] = [];
-    for (let j = 0; j < N; j++) {
-      const y = Y0 + j * STEP;
-      for (let i = 0; i < N; i++) positions.push({ x: X0 + i * STEP, y });
-    }
-    const source = positions.map((p) => (c.sourceKind === 0 ? 1 : p.x));
-    return randomPenaltyBatch(positions, source, { seed: c.rpSeed, amplitude: c.amplitude });
-  };
-
-  it("folds a 1,024-position batch to the identical checksum, over several cases", async () => {
+  it("folds a 1,024-position batch to the frozen checksum, over several cases", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
       const fromWasm = u64(
@@ -174,26 +155,24 @@ describe("Rust and TypeScript random_penalty agree bit for bit", () => {
         `penalty seed=${c.rpSeed} amp=${c.amplitude} src=${c.sourceKind}`,
         "checksum_random_penalty",
         fromWasm,
-        foldAll(batchOf(c)),
       );
     }
   });
 
-  it("would notice a single value differing by one ULP", async () => {
-    // The anti-vacuity check for this block. A fold that ignored its input, or
-    // a comparison of something against itself, would pass the test above.
+  it("would notice the amplitude moving by one ULP", async () => {
+    // The anti-vacuity check for this block. A fold that ignored its input
+    // would pass the test above.
+    //
+    // It used to perturb one value of the TypeScript batch by a single ULP and
+    // show the fold moved. #227 deleted that arm, so the ULP goes into the one
+    // input still reachable from outside: `amplitude` scales every penalty in
+    // the batch and crosses the boundary as an f64, so one ULP of it is one ULP
+    // the fold has to see.
     const engine = await instantiate();
     const c = CASES[0];
-    const fromWasm = u64(
-      engine.checksum_random_penalty(c.rpSeed, c.amplitude, c.sourceKind, X0, Y0, STEP, N),
-    );
-    const perturbed = batchOf(c);
-    const buf = new Float32Array(1);
-    const bits = new Uint32Array(buf.buffer);
-    buf[0] = perturbed[500];
-    bits[0] += 1;
-    perturbed[500] = buf[0];
-    expect(foldAll(perturbed)).not.toBe(fromWasm);
+    const at = (amplitude: number): bigint =>
+      u64(engine.checksum_random_penalty(c.rpSeed, amplitude, c.sourceKind, X0, Y0, STEP, N));
+    expect(at(c.amplitude)).not.toBe(at(c.amplitude + Number.EPSILON * c.amplitude));
   });
 
   it("is order dependent, which is what makes it a batch op", async () => {
@@ -484,7 +463,17 @@ describe("Rust and TypeScript spot_noise selection agree bit for bit", () => {
   });
 });
 
-describe("Rust and TypeScript starting_lake_positions agree bit for bit", () => {
+/**
+ * The TypeScript arm went with `startingLakes.ts` in #227, so these rows are
+ * graded against the frozen table alone. See `tier2Frozen.ts`.
+ *
+ * The block lost its companion check, "draws one continuous stream, so more
+ * spawns is not more copies of one lake". That one read each lake's offset from
+ * its own spawn, and `checksum_starting_lakes` returns a single fold over every
+ * coordinate, which cannot be decomposed back into per-lake offsets. Restoring
+ * it needs an engine export that emits the lakes rather than their checksum.
+ */
+describe("starting_lake_positions folds to its frozen checksums", () => {
   const CASES = [
     { seed0: 123456, spawnCount: 1 },
     { seed0: 123456, spawnCount: 4 },
@@ -495,10 +484,7 @@ describe("Rust and TypeScript starting_lake_positions agree bit for bit", () => 
     { seed0: 4294967295, spawnCount: 2 },
   ] as const;
 
-  const coordsOf = (c: (typeof CASES)[number]): number[] =>
-    startingLakePositions(c.seed0, spawns(c.spawnCount)).flatMap((p) => [p.x, p.y]);
-
-  it("folds every lake to the identical checksum, including below the seed clamp", async () => {
+  it("folds every lake to the frozen checksum, including below the seed clamp", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
       const fromWasm = u64(engine.checksum_starting_lakes(c.seed0, c.spawnCount));
@@ -507,22 +493,18 @@ describe("Rust and TypeScript starting_lake_positions agree bit for bit", () => 
         `lakes seed0=${c.seed0} spawns=${c.spawnCount}`,
         "checksum_starting_lakes",
         fromWasm,
-        foldAll(coordsOf(c)),
       );
     }
   });
-
-  it("draws one continuous stream, so more spawns is not more copies of one lake", async () => {
-    // A port that re-seeded per spawn would still agree with itself and pass
-    // everything above. The lakes sit at radius 75 around DIFFERENT spawns, so
-    // compare the offsets rather than the absolute positions.
-    const lakes = startingLakePositions(123456, spawns(4));
-    const offsets = lakes.map((p, k) => `${p.x - k * 1000},${p.y - k * -700}`);
-    expect(new Set(offsets).size).toBeGreaterThan(1);
-  });
 });
 
-describe("Rust and TypeScript distance_from_nearest_point agree bit for bit", () => {
+/**
+ * `distanceFromNearestPoint` itself survives #227, but its points came from
+ * `startingLakePositions`, which did not - so there is no TypeScript arm left
+ * to build the same input on. These rows are graded against the frozen table,
+ * and both of the block's anti-vacuity checks are asked of the engine instead.
+ */
+describe("distance_from_nearest_point folds to its frozen checksums", () => {
   // A cap that the grid actually reaches, and one it never does. With every
   // point inside the cap the `bestSq < maxSq` branch is the only one that ever
   // runs, and the capped return would be dead on both sides.
@@ -532,19 +514,7 @@ describe("Rust and TypeScript distance_from_nearest_point agree bit for bit", ()
     { seed0: 999, spawnCount: 2, maximumDistance: Infinity },
   ] as const;
 
-  const valuesOf = (c: (typeof CASES)[number]): number[] => {
-    const points = startingLakePositions(c.seed0, spawns(c.spawnCount));
-    const out: number[] = [];
-    for (let j = 0; j < N; j++) {
-      const y = Y0 + j * STEP;
-      for (let i = 0; i < N; i++) {
-        out.push(distanceFromNearestPoint(X0 + i * STEP, y, points, c.maximumDistance));
-      }
-    }
-    return out;
-  };
-
-  it("folds 1,024 grid points to the identical checksum, capped and uncapped", async () => {
+  it("folds 1,024 grid points to the frozen checksum, capped and uncapped", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
       const fromWasm = u64(
@@ -563,7 +533,6 @@ describe("Rust and TypeScript distance_from_nearest_point agree bit for bit", ()
         `distance seed0=${c.seed0} max=${c.maximumDistance}`,
         "checksum_distance_from_nearest_point",
         fromWasm,
-        foldAll(valuesOf(c)),
       );
     }
   });
@@ -571,26 +540,58 @@ describe("Rust and TypeScript distance_from_nearest_point agree bit for bit", ()
   it("actually reaches the cap on the capped case, and never on the uncapped one", async () => {
     // Anti-vacuity for the case list above: if no grid point saturated, the two
     // cases would exercise the same single branch.
-    expect(valuesOf(CASES[1]).some((v) => v === 50)).toBe(true);
-    expect(valuesOf(CASES[2]).every((v) => Number.isFinite(v))).toBe(true);
+    //
+    // Asked of the engine since #227 took the TypeScript arm. Raising the cap
+    // moves the fold if and only if some point was being clamped by it, which
+    // is the claim the old array scan made. The uncapped case is shown the
+    // other way round: a cap of 1e300 is indistinguishable from Infinity, so
+    // nothing in that grid comes anywhere near saturating.
+    const engine = await instantiate();
+    const at = (c: (typeof CASES)[number], maximumDistance: number): bigint =>
+      u64(
+        engine.checksum_distance_from_nearest_point(
+          c.seed0,
+          c.spawnCount,
+          maximumDistance,
+          X0,
+          Y0,
+          STEP,
+          N,
+        ),
+      );
+    expect(at(CASES[1], 50)).not.toBe(at(CASES[1], Infinity));
+    expect(at(CASES[2], Infinity)).toBe(at(CASES[2], 1e300));
   });
 
-  it("would notice a single distance differing by one ULP", async () => {
-    const engine = await instantiate();
-    const c = CASES[0];
-    const fromWasm = u64(
-      engine.checksum_distance_from_nearest_point(
-        c.seed0,
-        c.spawnCount,
-        c.maximumDistance,
-        X0,
-        Y0,
-        STEP,
-        N,
-      ),
+  it("would notice the cap moving by one f32 ULP", async () => {
+    // The ULP check this block used to make against a perturbed TypeScript
+    // array. The capped case saturates - the test above proves it - so a move
+    // in the cap is a move in every value that clamps to it.
+    //
+    // One f32 ULP, not one f64 ULP. The export folds
+    // `f64::from(distance_from_nearest_point(...))` and that function returns
+    // an `f32`, so a cap nudged below f32 resolution comes back as the very
+    // same number. Measured: written with `Number.EPSILON` this test failed,
+    // both folds equal. At 50 the f32 ULP is 2^-18.
+    const c = CASES[1];
+    const nudged = c.maximumDistance + 2 ** -18;
+    expect(Math.fround(nudged), "the perturbation must survive the f32 return").not.toBe(
+      c.maximumDistance,
     );
-    const perturbed = valuesOf(c);
-    perturbed[900] = perturbed[900] + Number.EPSILON * perturbed[900];
-    expect(foldAll(perturbed)).not.toBe(fromWasm);
+
+    const engine = await instantiate();
+    const at = (maximumDistance: number): bigint =>
+      u64(
+        engine.checksum_distance_from_nearest_point(
+          c.seed0,
+          c.spawnCount,
+          maximumDistance,
+          X0,
+          Y0,
+          STEP,
+          N,
+        ),
+      );
+    expect(at(c.maximumDistance)).not.toBe(at(nudged));
   });
 });

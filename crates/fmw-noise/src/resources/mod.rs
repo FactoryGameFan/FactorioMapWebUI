@@ -17,6 +17,7 @@
 //! changing any of it - it inventories the argument orders, the narrowing
 //! points and the eight constants that moved between 2.0.77 and 2.1.9.
 
+pub mod fulgora_catalog;
 pub mod nauvis_catalog;
 pub mod nauvis_oil;
 pub mod regular_patches;

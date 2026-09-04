@@ -29,7 +29,7 @@ import sys
 MAGIC = 0x52574D46
 ABI_VERSION = 2
 COMMON_BYTES = 56
-FULGORA_PARAMS_BYTES = 48
+FULGORA_PARAMS_BYTES = 64
 VULCANUS_PARAMS_BYTES = 312
 PLANET = {"fulgora": 0, "vulcanus": 1, "nauvis": 2}
 VIEW = {
@@ -98,12 +98,25 @@ def decode_common(b, req, params_bytes):
 
 
 def decode_fulgora(b, req):
-    if len(b) != COMMON_BYTES + FULGORA_PARAMS_BYTES:
-        raise AssertionError(f"fulgora request is {len(b)} bytes, expected 104")
+    want = COMMON_BYTES + FULGORA_PARAMS_BYTES
+    if len(b) != want:
+        raise AssertionError(f"fulgora request is {len(b)} bytes, expected {want}")
     decode_common(b, req, FULGORA_PARAMS_BYTES)
     p = COMMON_BYTES
     check("islandsFrequency", f64(b, p), req["islandsFrequency"])
     check("islandsSize", f64(b, p + 8), req["islandsSize"])
+    # The two scrap sliders (#363), which grew this block from 48 to 64. They
+    # sit AFTER the trig rather than beside the island sliders, because the
+    # block is append-only - putting them with the other controls would move
+    # the trig and break every reader that already knows its offsets.
+    #
+    # `req` may omit them, because `FulgoraRenderRequest` makes them optional
+    # and `writeFulgoraParams` substitutes the neutral 1. This decoder
+    # substitutes the same 1, from the layout table rather than from the
+    # writer, so a writer that defaulted to 0 - the `Default` value on the Rust
+    # side, and the plausible mistake - fails here.
+    check("scrapFrequency", f64(b, p + 48), req.get("scrapFrequency", 1))
+    check("scrapSize", f64(b, p + 56), req.get("scrapSize", 1))
     trig = {
         "sinStart": f64(b, p + 16),
         "cosStart": f64(b, p + 24),
@@ -496,11 +509,13 @@ def main():
             "test/wasmFulgoraRenderParity.spec.ts asserts src/noise/wasm/request.ts writes exactly "
             "these bytes. The layout tables are in crates/fmw-wasm/src/abi.rs. v2 replaced v1's "
             "single fixed 104-byte struct with a common 56-byte prefix plus a per-planet block "
-            "whose length the prefix declares; a Fulgora request is still exactly 104 bytes, and a "
+            "whose length the prefix declares. A Fulgora request is 120 bytes - it was 104 until "
+            "#363 appended the two scrap sliders for the scrap overlay - and a "
             "Vulcanus one is 368 - it grew from 304 to 336 when the cliffs view added a cell query "
             "box and from 336 to 368 when the rock and resource overlays added a placement sweep "
-            "box, neither time with a version bump, because the prefix declares its own block "
-            "length and Fulgora's request has not moved a byte through either. These bytes were checked by an INDEPENDENT Python decoder - a "
+            "box. None of the three bumped the version, because the prefix declares its own block "
+            "length, so a planet's block can grow without moving any other planet's request. "
+            "These bytes were checked by an INDEPENDENT Python decoder - a "
             "third implementation written from the layout table, not the TypeScript writer under "
             "test and not the Rust reader - which agreed on every offset and every scalar field. "
             "It deliberately does NOT check the trig VALUES: those are V8's Math.sin after an f32 "

@@ -1058,6 +1058,24 @@ pub extern "C" fn vulcanus_field_count() -> u32 {
     VulcanusParity::FIELD_COUNT
 }
 
+/// FNV-1a 64 over the sorted names of the tiles that block a Vulcanus cliff.
+///
+/// The set is written on both sides of the port - here as
+/// [`fmw_noise::tiles::vulcanus_catalog::VulcanusTile::is_cliff_blocking`], in
+/// TypeScript as `VULCANUS_CLIFF_BLOCKING_TILES` - and before #364 nothing
+/// asserted the two agreed. A spec hashes the TypeScript set through this
+/// module's own [`fnv1a64`] and compares, so the two sides cannot drift.
+///
+/// Names rather than a count, because a count cannot tell `lava` from
+/// `volcanic-folds`. Sorted, so the sides need not also agree on an order.
+///
+/// **Returns a `u64`, so the same signed-BigInt caveat as [`fnv1a64`] applies:**
+/// the caller must apply `BigInt.asUintN(64, x)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn vulcanus_cliff_blocking_names_fnv1a64() -> u64 {
+    fmw_noise::tiles::vulcanus_catalog::cliff_blocking_names_fnv1a64()
+}
+
 // ---------------------------------------------------------------------------
 // The render boundary (#223). See `abi.rs` for the request layout and
 // `render.rs` for what it does.

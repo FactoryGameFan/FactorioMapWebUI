@@ -59,6 +59,13 @@ export interface ResourceParams {
  */
 export type ResourcePlacement = "threshold" | "roll";
 
+/** control:<res>:frequency|size|richness levers for one resource. */
+export interface ResourceControlLevers {
+  readonly frequency: number;
+  readonly size: number;
+  readonly richness: number;
+}
+
 /** map_color (0..1) -> 0..255, rounded, matching the game's preview tint. */
 function color255(r: number, g: number, b: number): readonly [number, number, number] {
   return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];

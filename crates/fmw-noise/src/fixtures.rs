@@ -18,7 +18,7 @@ use crate::basis_gradient_table::{GRADIENT_X, GRADIENT_Y};
 use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
 use crate::eval::math::max2;
 use crate::test_json::{load, Json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Load a fixture and pin the game version its ground truth was captured from.
 ///
@@ -3629,8 +3629,18 @@ fn classifies_every_vulcanus_lava_tile_correctly() {
     let biomes = base.biomes_with_host_trig();
     let stack = VulcanusStack::with_host_trig(&base, &biomes);
 
-    let is_lava = |t: VulcanusTile| matches!(t, VulcanusTile::Lava | VulcanusTile::LavaHot);
-    let want_lava = |name: &str| name == "lava" || name == "lava-hot";
+    // Both sides go through `is_cliff_blocking`, which is the whole point of
+    // #364: these two lines used to say the same thing in two vocabularies - one
+    // by enum, one by string literal - and could drift apart without either file
+    // changing. The name side resolves through `VulcanusTile::from_name` rather
+    // than matching strings, so a fixture name the catalog does not know is a
+    // loud failure rather than a silent `false`.
+    let is_lava = VulcanusTile::is_cliff_blocking;
+    let want_lava = |name: &str| {
+        VulcanusTile::from_name(name)
+            .unwrap_or_else(|| panic!("fixture names a tile the catalog does not place: {name}"))
+            .is_cliff_blocking()
+    };
 
     let positions = fixture.get("positions").as_array();
     let want = fixture.get("tileNames").as_array();
@@ -3704,7 +3714,10 @@ use crate::cliffs::catalog::{
     cliff_code_for_orientation, cliff_collision_tile_box, cliff_orientation_for_code,
     CLIFF_ORIENTATION_NAMES,
 };
-use crate::cliffs::connections::{apply_cliff_connections, ApplyCollision, CliffConnectionOptions};
+use crate::cliffs::connections::{
+    apply_cliff_connections, connected_sides, on_chunk_border, opposite_side, ApplyCollision,
+    CliffConnectionOptions, CLIFF_ORIENTATION_ENDS,
+};
 use crate::cliffs::placement::{
     CellRejection, CliffBands, CliffFields, CliffPlacement, PlacedCliffCell, TileCollision,
 };
@@ -5101,6 +5114,201 @@ fn puts_every_nauvis_tile_where_the_game_puts_it_at_all_three_seeds() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// The native `expression_in_range` builtin, ported from
+// `test/expressionInRange.spec.ts` for #227.
+//
+// `tiles/expression_in_range.rs` has six tests, but all six assert shape on
+// hand-written inputs. **Nothing on this side read the oracle**, so
+// `oracle-expression-in-range.seed123456.json` was about to become an orphan
+// fixture - committed, version-pinned, and graded by nothing.
+//
+// The derived formula, RE'd from these sweeps (see
+// `docs/noise/expression-in-range-NOTES.md`):
+//
+//   m = min over dims i of min(value_i - from_i, to_i - value_i)
+//   result = min(peak_maximum, peak_multiplier * m)
+//
+// with no lower clamp, and `peak_maximum` possibly infinite.
+// ---------------------------------------------------------------------------
+
+use crate::tiles::expression_in_range::expression_in_range;
+
+/// One sweep's positions, scaled the way the capture's expression scales them.
+///
+/// The capture routes `(x/1000)` into the builtin, so a position of -1500 is a
+/// value of -1.5.
+fn eir_sweep(fixture: &Json, name: &str) -> (Vec<(f64, f64)>, Vec<f64>) {
+    let sweep = fixture.get("sweeps").get(name);
+    let positions = fixture_positions(sweep, "positions");
+    let values: Vec<f64> = sweep
+        .get("values")
+        .as_array()
+        .iter()
+        .map(Json::as_f64)
+        .collect();
+    assert_eq!(positions.len(), values.len(), "{name}: ragged sweep");
+    (positions, values)
+}
+
+#[test]
+fn reproduces_the_bounded_one_d_expression_in_range_sweep() {
+    // `expression_in_range(20, 1, (x/1000), -0.5, 0.5)`.
+    let fixture = load("test/fixtures/oracle-expression-in-range.seed123456.json");
+    assert_eq!(
+        fixture
+            .get("sweeps")
+            .get("oneD_20_1")
+            .get("expression")
+            .as_str(),
+        "expression_in_range(20, 1, (x/1000), -0.5, 0.5)",
+        "the sweep this test was written against"
+    );
+    let (positions, values) = eir_sweep(&fixture, "oneD_20_1");
+
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for ((x, _), want) in positions.iter().zip(values.iter()) {
+        let got = expression_in_range(20.0, 1.0, &[x / 1000.0], &[-0.5], &[0.5]);
+        if got == *want {
+            exact += 1;
+        }
+        worst = worst.max((got - want).abs());
+    }
+    // EXACT, not a bound. The assertion this replaces started life as a
+    // `toBeLessThan(8e-3)` ceiling that the wrong (f64) implementation passed
+    // comfortably - the real residual is about 9.5e-7, so that ceiling was some
+    // 8400x too loose and would have accepted almost any regression.
+    assert_eq!(exact, positions.len(), "bounded 1-D, worst {worst:e}");
+}
+
+#[test]
+fn reproduces_the_unbounded_one_d_sweep_and_does_not_clamp_in_range() {
+    // `expression_in_range(5, inf, (x/1000), -0.5, 0.5)`. The fixture stores the
+    // maximum as the STRING "inf", which is why this does not read it as a
+    // number.
+    let fixture = load("test/fixtures/oracle-expression-in-range.seed123456.json");
+    let sweep = fixture.get("sweeps").get("oneD_5_inf");
+    assert_eq!(
+        sweep.get("peakMaximum").as_str(),
+        "inf",
+        "the unbounded arm"
+    );
+    let (positions, values) = eir_sweep(&fixture, "oneD_5_inf");
+
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    let mut max_in_range = f64::NEG_INFINITY;
+    for ((x, _), want) in positions.iter().zip(values.iter()) {
+        let value = x / 1000.0;
+        let got = expression_in_range(5.0, f64::INFINITY, &[value], &[-0.5], &[0.5]);
+        if got == *want {
+            exact += 1;
+        }
+        worst = worst.max((got - want).abs());
+        if (-0.5..=0.5).contains(&value) {
+            max_in_range = max_in_range.max(got);
+        }
+    }
+    assert_eq!(exact, positions.len(), "unbounded 1-D, worst {worst:e}");
+
+    // The whole point of an infinite maximum: in-range values run past 1, peaking
+    // near 2.5 at the centre. A hard clamp to 1 would silently kill sand-1's
+    // coastal boost, and every value in this sweep would still be "close".
+    assert!(
+        max_in_range > 1.0,
+        "in-range peak {max_in_range} must exceed 1 - something clamped"
+    );
+}
+
+#[test]
+fn reproduces_the_two_d_expression_in_range_sweep_with_the_min_rule() {
+    // `expression_in_range(20, 1, (x/1000), (y/1000), -0.5, -0.5, 0.5, 0.5)`:
+    // the combination across dimensions is a min, not a product or a sum.
+    let fixture = load("test/fixtures/oracle-expression-in-range.seed123456.json");
+    let (positions, values) = eir_sweep(&fixture, "twoD");
+
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for ((x, y), want) in positions.iter().zip(values.iter()) {
+        let got = expression_in_range(
+            20.0,
+            1.0,
+            &[x / 1000.0, y / 1000.0],
+            &[-0.5, -0.5],
+            &[0.5, 0.5],
+        );
+        if got == *want {
+            exact += 1;
+        }
+        worst = worst.max((got - want).abs());
+    }
+    assert_eq!(exact, positions.len(), "2-D, worst {worst:e}");
+}
+
+#[test]
+fn the_pre_f32_f64_arithmetic_is_rejected_by_the_bounded_sweep() {
+    // **The f64 form must FAIL the fixture**, or the three tests above are just
+    // recording whatever the implementation happens to do. Same guard shape as
+    // `fast_approx`'s, and it matters more here because the exact assertions
+    // replaced a bound the f64 form passed.
+    let fixture = load("test/fixtures/oracle-expression-in-range.seed123456.json");
+    let (positions, values) = eir_sweep(&fixture, "oneD_20_1");
+
+    let eir_f64 = |pm: f64, pmax: f64, value: f64, from: f64, to: f64| {
+        let m = (value - from).min(to - value);
+        pmax.min(pm * m)
+    };
+
+    let mut wrong = 0usize;
+    for ((x, _), want) in positions.iter().zip(values.iter()) {
+        #[allow(clippy::cast_possible_truncation)]
+        let got = eir_f64(20.0, 1.0, x / 1000.0, -0.5, 0.5) as f32;
+        if got != *want as f32 {
+            wrong += 1;
+        }
+    }
+    // Frozen rather than "more than ten": a number that moves is a finding.
+    assert_eq!(wrong, 34, "positions where f64 arithmetic disagrees");
+}
+
+#[test]
+fn matches_the_hand_derived_formula_for_sand_ones_asymmetric_shape() {
+    // Sand-1's real production call is
+    // `expression_in_range(5, inf, elevation, aux, -1.5, 0.5, 1.5, 1)`, and no
+    // oracle sweep covers that shape - every captured sweep uses symmetric
+    // ranges on both axes. So this is a FORMULA-SHAPE guard, not an oracle test:
+    // which axis drives the min, and that an infinite maximum does not clamp.
+    //
+    // The tolerance is 1e-6 rather than something tighter on purpose. The
+    // builtin rounds every step to f32, and intermediates like `1 - 1.2` are not
+    // representable there, so -1.0 comes back as -1.000000238418579. Asserting
+    // the exact f32 result would mean recomputing the function inside the test
+    // and checking it against itself. Bit-exactness is the three sweeps above.
+    let eir =
+        |values: &[f64]| expression_in_range(5.0, f64::INFINITY, values, &[-1.5, 0.5], &[1.5, 1.0]);
+    let close = |got: f64, want: f64, what: &str| {
+        assert!(
+            (got - want).abs() < 1e-6,
+            "{what}: {got} is not within 1e-6 of {want}"
+        );
+    };
+
+    // Inside both ranges: elev 0 is 1.5 from its edge, aux 0.75 is 0.25 from
+    // its. m = 0.25, so the result is 1.25 - past 1, and not clamped.
+    close(eir(&[0.0, 0.75]), 1.25, "inside both");
+    assert!(
+        eir(&[0.0, 0.75]) > 1.0,
+        "an infinite maximum must not clamp"
+    );
+
+    // Outside on aux only: min(0.7, -0.2) = -0.2 drives it.
+    close(eir(&[0.0, 1.2]), -1.0, "outside on aux");
+
+    // Outside on elev only: min(3.5, -0.5) = -0.5 drives it.
+    close(eir(&[2.0, 0.75]), -2.5, "outside on elev");
+}
+
 /// The capture-grid snap is INERT on these three fixtures, and that is measured
 /// rather than assumed.
 ///
@@ -5804,6 +6012,143 @@ fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
     );
 }
 
+/// The five `tree_*` prototypes the port deliberately leaves out.
+///
+/// They are NOT decoratives, a claim the docs used to make: all five are real
+/// `type = "tree"` prototypes on `control = "trees"` that the game charts like
+/// any other tree. They are excluded on measured contribution - max density
+/// gain 0.038, about 1.5% of max alpha - and `tree_dry` is not even an
+/// independent species, being `0.2 * max(tree_01, tree_09, ...)`. See
+/// `docs/noise/trees-NOTES.md`.
+const EXCLUDED_TREE_EXPRESSIONS: [&str; 5] = [
+    "tree_dead_desert",
+    "tree_dead_dry_hairy",
+    "tree_dead_grey_trunk",
+    "tree_dry",
+    "tree_dry_hairy",
+];
+
+/// The `tree_*` keys the fixture holds, in file order.
+fn tree_expression_names(expressions: &Json) -> Vec<&str> {
+    match expressions {
+        Json::Obj(entries) => entries.iter().map(|(k, _)| k.as_str()).collect(),
+        other => panic!("expressions is not an object: {other:?}"),
+    }
+}
+
+#[test]
+fn every_species_reconstructs_the_games_own_lua_expression() {
+    // Ported from `test/treeCatalogExpressions.spec.ts` for #227, before that
+    // spec goes with `src/noise/trees/treeCatalog.ts`.
+    //
+    // Reconstruct-and-compare: rebuild each species' Lua string from its catalog
+    // row and diff it against the real 2.1.11 game data, character for
+    // character. **The point is that it has no filter.** The original uniformity
+    // claim was checked by filtering the terms common to every `tree_0*` block
+    // out and observing that nothing was left - but the filter dropped every
+    // line holding `control:trees:size`, which is the one line the per-species
+    // term lives on (`tree_05` and `tree_07` use 0.45, not 0.5). Four tasks were
+    // built on that wrong premise before an oracle caught it. A filter-then
+    // -compare check can only find what its filter lets through; this one lets
+    // everything through, so a single unaccounted constant fails it.
+    //
+    // Needs no Factorio install - the fixture is checked in.
+    let fixture = load("test/fixtures/tree-expressions.2.1.11.json");
+    let expressions = fixture.get("expressions");
+
+    // Lua prints 1 as "1", not "1.0". Rust's `Display` for f64 is the shortest
+    // round-tripping form, the same rule JavaScript's `String(n)` followed in
+    // the spec this replaces, so the two agree on every constant in the table.
+    fn num(n: f64) -> String {
+        format!("{n}")
+    }
+
+    for s in TREE_SPECIES.iter() {
+        let [tb, tt, tot, tob] = s.temp_ramp;
+        let [mb, mt, mot, mob] = s.moist_ramp;
+
+        let mut got = String::new();
+        got.push_str(&format!(
+            "min({}, trees_forest_path_cutout_faded,",
+            num(s.cap)
+        ));
+        got.push_str("min(0,");
+        got.push_str(&format!(
+            "asymmetric_ramps{{input=temperature, from_bottom={}, from_top={}, \
+             to_top={}, to_bottom={}}},",
+            num(tb),
+            num(tt),
+            num(tot),
+            num(tob)
+        ));
+        got.push_str(&format!(
+            "asymmetric_ramps{{input=moisture, from_bottom={}, from_top={}, \
+             to_top={}, to_bottom={}}})",
+            num(mb),
+            num(mt),
+            num(mot),
+            num(mob)
+        ));
+        got.push_str("+ min(0, distance/20 - 3)");
+        got.push_str(&format!(
+            "- {} + 0.2 * control:trees:size",
+            num(s.size_offset)
+        ));
+        got.push_str("+ tree_small_noise * 0.1");
+        got.push_str("+ multioctave_noise{x = x,y = y,persistence = 0.65,seed0 = map_seed,");
+        got.push_str(&format!("seed1 = '{}',octaves = 3,", s.seed1_name));
+        got.push_str(&format!(
+            "input_scale = 1/{} * control:trees:frequency,",
+            num(s.input_scale_div)
+        ));
+        got.push_str(&format!("output_scale = {}}})", num(s.output_scale)));
+
+        let want = expressions
+            .get_opt(s.name)
+            .unwrap_or_else(|| panic!("{} is missing from the fixture", s.name))
+            .as_str();
+        assert_eq!(got, want, "{} does not reconstruct", s.name);
+    }
+}
+
+#[test]
+fn accounts_for_every_tree_expression_in_the_game_data() {
+    // If 2.1.x ever adds a 16th species it lands in neither list, and this fails
+    // rather than the species being silently absent from the render.
+    let fixture = load("test/fixtures/tree-expressions.2.1.11.json");
+    let mut ported: Vec<&str> = TREE_SPECIES
+        .iter()
+        .map(|s| s.name)
+        .chain(EXCLUDED_TREE_EXPRESSIONS.iter().copied())
+        .collect();
+    ported.sort_unstable();
+
+    let mut in_game = tree_expression_names(fixture.get("expressions"));
+    in_game.sort_unstable();
+
+    assert_eq!(ported, in_game, "a tree_* expression is in neither list");
+}
+
+#[test]
+fn the_size_offset_exception_set_comes_from_the_game_data() {
+    // Belt and braces with `catalog.rs`'s own exception test: prove from the
+    // GAME DATA, not from the catalog, that exactly `tree_05` and `tree_07`
+    // carry the 0.45 offset. The catalog test would still pass if both the
+    // catalog and its test were wrong together.
+    let fixture = load("test/fixtures/tree-expressions.2.1.11.json");
+    let expressions = fixture.get("expressions");
+    let mut from_game: Vec<&str> = match expressions {
+        Json::Obj(entries) => entries
+            .iter()
+            .filter(|(_, v)| v.as_str().contains("- 0.45 + 0.2 * control:trees:size"))
+            .map(|(k, _)| k.as_str())
+            .collect(),
+        other => panic!("expressions is not an object: {other:?}"),
+    };
+    from_game.sort_unstable();
+    assert_eq!(from_game, ["tree_05", "tree_07"]);
+}
+
 // ---------------------------------------------------------------------------
 // Phase 6 (#226), the Nauvis cliff and rock fields.
 // ---------------------------------------------------------------------------
@@ -6068,6 +6413,7 @@ use crate::enemies::catalog::{
     ENEMY_PLACEMENT_CAP,
 };
 use crate::enemies::field::{EnemyBaseField, EnemyFieldParams};
+use crate::eval::math::min2;
 
 #[test]
 fn reproduces_the_games_enemy_base_field_at_both_seeds() {
@@ -6203,6 +6549,78 @@ fn the_enemy_fixture_is_mostly_basement_so_the_probability_would_grade_nothing()
 }
 
 #[test]
+fn the_port_and_the_game_never_straddle_the_footprint_cut() {
+    // The half of `test/enemyBaseField.spec.ts` that `worstAbs`/`worstRel` could
+    // not see, ported here for #227 before that spec goes with
+    // `src/noise/enemies/enemyBaseField.ts`.
+    //
+    // Both of those are aggregates. A residual small enough to pass them can
+    // still put the port on the far side of a cut from the game, and a cut is
+    // what the overlay actually does with this field. `PROBE_CUT` was
+    // `ENEMY_FOOTPRINT_THRESHOLD` until the overlay moved from thresholding the
+    // probability field to rolling against it, so it is a decision-boundary
+    // probe rather than a live threshold - the value it takes matters less than
+    // that some cut through the live part of the range is graded at all.
+    const PROBE_CUT: f64 = 0.05;
+    let in_footprint = |v: f64| min2(v, ENEMY_PLACEMENT_CAP) >= PROBE_CUT;
+
+    let fixture = load_captured_at("test/fixtures/oracle-enemy-base.seed123456.json", "2.1.11");
+    let positions = fixture_positions(&fixture, "positions");
+
+    // (seed, positions inside the cut). Measured, not chosen.
+    let expected: [(u32, usize); 2] = [(123_456, 39), (777_771, 37)];
+    for (case, &(seed, want_inside)) in fixture.get("cases").as_array().iter().zip(expected.iter())
+    {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let field = EnemyBaseField::new(&EnemyFieldParams::defaults(seed));
+        let values = case.get("values").as_array();
+
+        let mut disagreements = 0usize;
+        let mut inside = 0usize;
+        let mut margin = f64::INFINITY;
+        for (i, (x, y)) in positions.iter().enumerate() {
+            let want = values[i].as_f64();
+            let port = f64::from(field.field(snap_coord(*x), snap_coord(*y)) as f32);
+            if in_footprint(port) != in_footprint(want) {
+                disagreements += 1;
+            }
+            if in_footprint(want) {
+                inside += 1;
+            }
+            margin = margin
+                .min((min2(want, ENEMY_PLACEMENT_CAP) - PROBE_CUT).abs())
+                .min((min2(port, ENEMY_PLACEMENT_CAP) - PROBE_CUT).abs());
+        }
+
+        assert_eq!(
+            disagreements, 0,
+            "seed {seed}: port and game fall on opposite sides of the cut"
+        );
+
+        // Anti-vacuity, and it is the reason this is not a one-liner: the cut
+        // has to actually separate this fixture. A port that returned a
+        // constant would satisfy the line above on its own.
+        assert_eq!(
+            inside,
+            want_inside,
+            "seed {seed}: positions inside the cut, of {}",
+            positions.len()
+        );
+        assert!(
+            inside > 0 && inside < positions.len(),
+            "seed {seed}: the cut does not separate"
+        );
+
+        // And no value sits near the cut, so the f32 read above cannot be what
+        // decides a side. Without this the zero above could be luck.
+        assert!(
+            margin > 1e-3,
+            "seed {seed}: a value sits {margin:e} from the cut - rounding could flip it"
+        );
+    }
+}
+
+#[test]
 fn every_enemy_distance_scalar_saturates_at_2400_tiles() {
     // `enemy_intensity` clamps its distance at 2400, so the radius, quantity,
     // frequency and density are all flat past it. A sweep placed beyond 2400
@@ -6293,4 +6711,323 @@ fn the_spot_quantity_cube_is_powf_and_a_plain_product_would_diverge() {
         "powf vs a plain product: {differ} of {total} ({:.1}%)",
         fraction * 100.0
     );
+}
+
+// ---------------------------------------------------------------------------
+// #84 C1: the stage localisation, ported from
+// `test/cliffOreActsAtDestroyStage.spec.ts` before #227 deletes it.
+// ---------------------------------------------------------------------------
+
+/// Destroy exactly the cells named in `killed`, and only inside `region`.
+///
+/// This is the counterfactual instrument the localisation needs and
+/// [`OracleKill`] cannot give it. `OracleKill` derives its destruction set from
+/// the game's own cliffs, so it always destroys the same 225 cells. Here the set
+/// is handed in, which is what lets one cell be lifted out of it and the
+/// consequence measured.
+struct KillSet<'a> {
+    killed: &'a BTreeSet<(u64, u64)>,
+    /// `(x0, y0, x1, y1)`, half-open on the high edge as everywhere else here.
+    region: (f64, f64, f64, f64),
+}
+
+impl ApplyCollision for KillSet<'_> {
+    fn collides(&self, _orientation: u8, x: f64, y: f64) -> bool {
+        let (x0, y0, x1, y1) = self.region;
+        x >= x0 && x < x1 && y >= y0 && y < y1 && self.killed.contains(&(x.to_bits(), y.to_bits()))
+    }
+}
+
+/// One cell whose neighbour can tell destruction from non-generation.
+#[derive(Debug, PartialEq, Eq)]
+struct Decision {
+    cell: (u64, u64),
+    neighbour: (u64, u64),
+    /// Which resource's arm suppressed the cell.
+    cause: &'static str,
+    /// The name the game gave the NEIGHBOUR's orientation.
+    game: &'static str,
+    /// Whether the neighbour's facing end is gone in the game's own data.
+    end_gone: bool,
+}
+
+/// Does orientation `o` carry an end on `side`?
+fn has_end(o: u8, side: u8) -> bool {
+    CLIFF_ORIENTATION_ENDS
+        .get(o as usize)
+        .is_some_and(|e| e.0 == side || e.1 == side)
+}
+
+/// **The ore suppression DESTROYS a queued cliff; it does not stop one being
+/// queued** (#84). The n=1 stage localisation from
+/// `test/cliffOreActsAtDestroyStage.spec.ts`, moved here because #227 deletes
+/// that file and nothing in Rust computed a counterfactual of this shape.
+///
+/// A frozen aggregate cannot stand in for it. Removing one cell from a
+/// 1,500-cell queue moves a total by one either way, which says nothing about
+/// WHICH neighbour lost an end - and the neighbour is the whole result.
+///
+/// **The rule being applied** is #122's: destruction runs `Cliff::onDestroy` on
+/// the connected neighbour unconditionally, while a cell that was never queued
+/// only costs a neighbour its end when that neighbour sits on a chunk border. So
+/// a non-border neighbour whose facing end is gone in the game's own data can
+/// only have lost it to a destruction.
+///
+/// **The oracle is thin here and that is the first thing this reports.** Of the
+/// 31 cells the lever attributes to the ore, exactly one has a neighbour that
+/// can decide it. The rest have neighbours the game also lacks, neighbours on a
+/// chunk border, or no facing end. This is an n=1 localisation, not a survey,
+/// and the third assertion is what stops the second reading as a general
+/// property.
+#[test]
+fn the_ore_destroys_a_queued_cliff_rather_than_never_queueing_it() {
+    let entities = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-entities.seed123456.json",
+        "2.1.12",
+    );
+    let ore_fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-ore-direction.seed123456.json",
+        "2.1.12",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = entities.get("seed").as_f64() as u32;
+
+    // Case 1 is the [1500,1500] entity region, which is the one the ore arms
+    // also cover. The other two carry no ON/OFF pair.
+    let cases = entities.get("cases").as_array();
+    let case = cases
+        .get(1)
+        .expect("oracle-vulcanus-cliff-entities has three cases");
+    let r = case.get("region");
+    let (x0, y0) = (r.get("x0").as_f64(), r.get("y0").as_f64());
+    let (x1, y1) = (r.get("x1").as_f64(), r.get("y1").as_f64());
+
+    // The game's own cliffs in this region, carrying the orientation it gave.
+    let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+    for e in case.get("cliffs").as_array() {
+        if e.get("name").as_str() != "cliff-vulcanus" {
+            continue;
+        }
+        let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+        if x < x0 || x >= x1 || y < y0 || y >= y1 {
+            continue;
+        }
+        let want = e.get("orientation").as_str();
+        if let Some(id) = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want) {
+            #[allow(clippy::cast_possible_truncation)]
+            game.insert((x.to_bits(), y.to_bits()), id as u8);
+        }
+    }
+
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        ..CliffBands::default()
+    };
+
+    // `generateCliffs`' queue over a 64-tile halo, no rejection of any kind -
+    // exactly what `applyCliffs` is handed.
+    let raw = CliffPlacement::new(&fields, bands).placed_cells(
+        x0 - 64.0,
+        y0 - 64.0,
+        x1 + 64.0,
+        y1 + 64.0,
+    );
+    let mut raw_map: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+    for c in &raw {
+        if let Some(o) = cliff_orientation_for_code(c.code) {
+            raw_map.insert(cell_key(c), o);
+        }
+    }
+
+    // The paired ON/OFF arms. They are not cumulative - each turns one control
+    // off through `map_gen_settings.autoplace_controls` and regenerates.
+    let arm = |label: &str| -> BTreeSet<(u64, u64)> {
+        let cases = ore_fixture.get("cases").as_array();
+        let c = cases
+            .iter()
+            .find(|q| q.get("label").as_str() == label)
+            .unwrap_or_else(|| panic!("no arm {label}"));
+        let r = c.get("region");
+        let (ax0, ay0) = (r.get("x0").as_f64(), r.get("y0").as_f64());
+        let (ax1, ay1) = (r.get("x1").as_f64(), r.get("y1").as_f64());
+        let mut out = BTreeSet::new();
+        for e in c.get("cliffs").as_array() {
+            if e.get("name").as_str() != "cliff-vulcanus" {
+                continue;
+            }
+            let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+            if x >= ax0 && x < ax1 && y >= ay0 && y < ay1 {
+                out.insert((x.to_bits(), y.to_bits()));
+            }
+        }
+        out
+    };
+    let on = arm("entity region, resources ON");
+    let all_off = arm("entity region, ALL resources OFF");
+    let geyser_off = arm("entity region, geyser OFF");
+
+    // The cells the ore costs us: present with the resources off, gone with them
+    // on. This is the 31 the lever attributes to the ore.
+    let suppressed: Vec<(u64, u64)> = all_off.difference(&on).copied().collect();
+
+    // The game's own destruction set: raw cells inside the region the game does
+    // not have. Lifting one cell out of this is the counterfactual.
+    let game_kill: BTreeSet<(u64, u64)> = raw_map
+        .keys()
+        .filter(|(xb, yb)| {
+            let (x, y) = (f64::from_bits(*xb), f64::from_bits(*yb));
+            x >= x0 && x < x1 && y >= y0 && y < y1
+        })
+        .filter(|k| !game.contains_key(*k))
+        .copied()
+        .collect();
+
+    // Which of the 31 have a neighbour that can decide the stage.
+    const SIDE_STEP: [(f64, f64); 4] = [(0.0, -4.0), (4.0, 0.0), (0.0, 4.0), (-4.0, 0.0)];
+    let mut decidable: Vec<Decision> = Vec::new();
+    for cell in &suppressed {
+        let Some(&o) = raw_map.get(cell) else {
+            continue;
+        };
+        let (x, y) = (f64::from_bits(cell.0), f64::from_bits(cell.1));
+        for s in connected_sides(o) {
+            let (dx, dy) = SIDE_STEP[s as usize];
+            let (nx, ny) = (x + dx, y + dy);
+            let nk = (nx.to_bits(), ny.to_bits());
+            let facing = opposite_side(s);
+            // The neighbour has to be queued with an end facing us, present in
+            // the game's data, and off a chunk border - or it decides nothing.
+            let Some(&queued) = raw_map.get(&nk) else {
+                continue;
+            };
+            if !has_end(queued, facing) {
+                continue;
+            }
+            let Some(&game_o) = game.get(&nk) else {
+                continue;
+            };
+            if on_chunk_border(nx, ny) {
+                continue;
+            }
+            decidable.push(Decision {
+                cell: *cell,
+                neighbour: nk,
+                cause: if geyser_off.contains(cell) {
+                    "geyser"
+                } else {
+                    "calcite"
+                },
+                game: CLIFF_ORIENTATION_NAMES[game_o as usize],
+                end_gone: !has_end(game_o, facing),
+            });
+        }
+    }
+
+    assert_eq!(suppressed.len(), 31, "cells the ore arm suppresses");
+    assert_eq!(
+        decidable.len(),
+        1,
+        "of those, the ones a neighbour can decide"
+    );
+    assert_eq!(
+        decidable[0],
+        Decision {
+            cell: (1546.0_f64.to_bits(), 1550.5_f64.to_bits()),
+            neighbour: (1546.0_f64.to_bits(), 1546.5_f64.to_bits()),
+            cause: "geyser",
+            game: "north-to-none",
+            end_gone: true,
+        }
+    );
+
+    // Score a queue against the game, destroying exactly `killed`.
+    let score_with =
+        |cells: &[PlacedCliffCell], killed: &BTreeSet<(u64, u64)>| -> (usize, Vec<(u64, u64)>) {
+            let kill = KillSet {
+                killed,
+                region: (x0, y0, x1, y1),
+            };
+            let out = apply_cliff_connections(
+                cells,
+                &CliffConnectionOptions {
+                    collides: Some(&kill),
+                    ..Default::default()
+                },
+            );
+            let mut wrong = 0;
+            let mut at: Vec<(u64, u64)> = Vec::new();
+            for c in out.iter() {
+                if c.x < x0 || c.x >= x1 || c.y < y0 || c.y >= y1 {
+                    continue;
+                }
+                let k = (c.x.to_bits(), c.y.to_bits());
+                if let Some(&want) = game.get(&k) {
+                    if want != c.orientation {
+                        wrong += 1;
+                        at.push(k);
+                    }
+                }
+            }
+            at.sort_unstable();
+            (wrong, at)
+        };
+
+    // The baseline: the game's own destruction set reproduces the region
+    // exactly. Without this the counterfactual below has nothing to move away
+    // from.
+    assert_eq!(
+        score_with(&raw, &game_kill).0,
+        0,
+        "the game's own destruction set should reproduce the region exactly"
+    );
+
+    // Treat the one decidable cell as NEVER QUEUED: drop it from the queue and
+    // from the destruction set together. The game's data then contradicts us at
+    // exactly the neighbour, which is the whole localisation - a never-queued
+    // cell leaves a non-border neighbour's end intact, and the game's is gone.
+    let target = (1546.0_f64.to_bits(), 1550.5_f64.to_bits());
+    let without: Vec<PlacedCliffCell> = raw
+        .iter()
+        .filter(|p| cell_key(p) != target)
+        .copied()
+        .collect();
+    let killed: BTreeSet<(u64, u64)> = game_kill
+        .iter()
+        .filter(|k| **k != target)
+        .copied()
+        .collect();
+    let (wrong, at) = score_with(&without, &killed);
+    assert_eq!(wrong, 1, "never-queueing 1546,1550.5 must cost exactly one");
+    assert_eq!(
+        at,
+        vec![(1546.0_f64.to_bits(), 1546.5_f64.to_bits())],
+        "and it must be the neighbour, not somewhere else"
+    );
+
+    // The contrast arm. Every OTHER suppressed cell can be treated the same way
+    // for free, which is what "only one is decidable" means in practice.
+    let mut changed = 0;
+    for cell in &suppressed {
+        if *cell == target {
+            continue;
+        }
+        let without: Vec<PlacedCliffCell> = raw
+            .iter()
+            .filter(|p| cell_key(p) != *cell)
+            .copied()
+            .collect();
+        let killed: BTreeSet<(u64, u64)> =
+            game_kill.iter().filter(|k| *k != cell).copied().collect();
+        if score_with(&without, &killed).0 > 0 {
+            changed += 1;
+        }
+    }
+    assert_eq!(changed, 0, "the other 30 must each cost nothing");
 }

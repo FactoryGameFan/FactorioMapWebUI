@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { withCtxDefaults } from "../src/noise/eval/ctx";
-import { PLACEMENT_SALT, makePlacementRoll } from "../src/noise/placement/placementRoll";
 import { ROCK_FIELD_LATTICE, latticeSnapped } from "../src/noise/rocks/rockCatalog";
-import { makeRockFields } from "../src/noise/rocks/rockField";
-import { makeVulcanusRockFields } from "../src/noise/rocks/vulcanusRockField";
 
 /**
  * Coarse rock field sampling: evaluate the probability field on a lattice while
@@ -57,45 +53,6 @@ describe("rock field lattice", () => {
    * way, but with only ~313 placements in the window that proxy is noise, not a
    * counter-example.
    */
-  const TOLERANCE = 0.03; // measured worst 1.18%; a rock either way is ~0.04% / 0.3%
-
-  for (const stride of [2, 4]) {
-    it(`preserves placed density at stride ${String(stride)} on Vulcanus`, () => {
-      const ctx = withCtxDefaults({ seed0: 123456, startingPositions: [{ x: 0, y: 0 }] });
-      const { density } = makeVulcanusRockFields(ctx);
-      const count = (s: number): number => {
-        const field = latticeSnapped(density, s);
-        const roll = makePlacementRoll(PLACEMENT_SALT.vulcanusRocks);
-        let n = 0;
-        for (let y = -256; y < 256; y++)
-          for (let x = -256; x < 256; x++) if (roll(x, y) < field(x, y)) n++;
-        return n;
-      };
-      const fine = count(1);
-      const coarse = count(stride);
-      expect(Math.abs(coarse - fine) / fine).toBeLessThan(TOLERANCE);
-    }, 120000);
-  }
-
-  for (const stride of [2, 4]) {
-    it(`preserves placed density at stride ${String(stride)} on Nauvis`, () => {
-      const { density } = makeRockFields({ seed0: 123456, startingPositions: [{ x: 0, y: 0 }] });
-      const count = (s: number): number => {
-        const field = latticeSnapped(density, s);
-        const roll = makePlacementRoll(PLACEMENT_SALT.nauvisRocks);
-        let n = 0;
-        for (let y = -256; y < 256; y++)
-          for (let x = -256; x < 256; x++) if (roll(x, y) < field(x, y)) n++;
-        return n;
-      };
-      const fine = count(1);
-      const coarse = count(stride);
-      // Nauvis's window holds ~313 placements against Vulcanus's ~2448, so a
-      // single rock is 0.3% here - this case is far weaker evidence than the
-      // Vulcanus one and is here for planet coverage, not for its power.
-      expect(Math.abs(coarse - fine) / fine).toBeLessThan(TOLERANCE);
-    }, 120000);
-  }
 
   it("ships disabled, because the saving cannot pay for the clumping", () => {
     // Guards the CONSTANT, so enabling the lattice is a deliberate act that has

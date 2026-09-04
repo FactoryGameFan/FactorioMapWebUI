@@ -1195,14 +1195,16 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 
 #### Where the port stands
 
-| phase    | scope                                                                                                                                                                          | state    |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
-| 1 (#220) | primitives: `taus88`, `fast_approx`, `basis_noise`, the four multioctave ops, `random_penalty`, the spot ops, `distance_from_nearest_point`, `starting_lakes`, `voronoi_noise` | done     |
-| 2 (#221) | the `eval` layer - `multisample`, `memo_xy`, `memo_region`, `math`, `ctx`, `primitives` - plus `expressions/vulcanus_seed`                                                     | done     |
-| 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done     |
-| 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done     |
-| 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view the panel offers renders through the engine** (not `elevation` - see below).                    | done     |
-| 6 (#226) | Nauvis - every expression, the TERRAIN render, all FIVE overlays and the `all` composite. The `elevation` view is NOT ported                                                   | **most** |
+| phase    | scope                                                                                                                                                                          | state |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----- |
+| 1 (#220) | primitives: `taus88`, `fast_approx`, `basis_noise`, the four multioctave ops, `random_penalty`, the spot ops, `distance_from_nearest_point`, `starting_lakes`, `voronoi_noise` | done  |
+| 2 (#221) | the `eval` layer - `multisample`, `memo_xy`, `memo_region`, `math`, `ctx`, `primitives` - plus `expressions/vulcanus_seed`                                                     | done  |
+| 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done  |
+| 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done  |
+| 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view the panel offers renders through the engine** (not `elevation` - see below).                    | done  |
+| 6 (#226) | Nauvis - every expression, the TERRAIN render, all FIVE overlays and the `all` composite. The `elevation` view is ported too, as of #227                                       | done  |
+| 7 (#227) | delete the ported TypeScript under `src/noise/`                                                                                                                                | done  |
+| 8 (#363) | Fulgora's `resources` and `all` composites, so **every planet's DEFAULT view renders through the engine**                                                                      | done  |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at
@@ -1266,27 +1268,44 @@ shared pixel. The exception is kept by an `oil_mark` buffer and a
 oil today.
 
 Then the `all` COMPOSITE. **Every Nauvis view the gate LISTS renders through the
-engine - seven of the eight the request declares.**
+engine.**
 
-**The eighth is `view: "elevation"`, and it is not ported on ANY planet.** It is
-absent from all three engine gates and falls through to the TypeScript
-`renderElevation`, which dispatches across `elevation_lakes`, `elevation_nauvis`
-and `elevation_island`. This file used to claim otherwise, so read the gate
-rather than this line if the two ever disagree again. Measured 2026-08-27 by
-planting a `throw` in `renderElevation` and calling `runRenderRequest` with a
-live engine: all three map types ran the TypeScript, while a `view: "terrain"`
-control in the same file was served by the engine.
+**`view: "elevation"` was the eighth and the last, and it is ported as of
+#227.** It is three `view` codes - `elevationLakes`, `elevationNauvis`,
+`elevationIsland` - rather than one plus a `mapType` field, because the common
+prefix has no such field and `view` has been a `u32` since v1. Adding codes is
+free; adding a field is a layout change. `render_nauvis` takes them before it
+builds a tile catalog, since the view is a sign test on one tree with no argmax
+and no overlay.
 
-It is not a dev-mode curiosity. `"elevation"` is the request DEFAULT, and
-`ElevationPreviewPanel`'s `effectiveView` returns it unconditionally for any
-Nauvis preset whose map type is not "nauvis" - **outside** the `devMode` branch -
-so it is what an ordinary user sees on every Lakes or Island preset, two of the
-three map types. The FIELDS are all ported; what is missing is the render.
+It was never a dev-mode curiosity, which is why it was worth porting.
+`"elevation"` is the request DEFAULT, and `ElevationPreviewPanel`'s
+`effectiveView` returns it unconditionally for any Nauvis preset whose map type
+is not "nauvis" - **outside** the `devMode` branch - so it is what an ordinary
+user sees on every Lakes or Island preset, two of the three map types.
 
-**So #227 cannot delete `preview/renderElevation.ts` until this view is ported or
-dropped.** Its dead-set sweep counted that file as removable because the walk
-skipped `preview/render*.ts` wholesale - the same flaw that surfaced
-`FULGORA_OCEAN_RGB`, one level up and much larger.
+**Two cases still take the TypeScript path, both deliberately.** A
+caller-supplied `startingLakePositions`, because the module derives the lake
+list from the seed and the spawn - the game's own rule - so an explicit list is
+a WRONG answer rather than a slow one, and because the request is a fixed-size
+struct with nowhere to put a variable-length array. And a non-Nauvis `planet`,
+because `mapType` spans the Nauvis family only and the branch ignores `planet`
+outright, so routing an odd pairing through the module would change behaviour
+for no gain. Neither is reachable from the app.
+
+`test/wasmElevationRenderParity.spec.ts` grades it, and its windows are
+MEASURED rather than chosen: two obvious far-field windows turned out to be a
+single flat colour on one or more trees, which a byte-identical assertion passes
+without grading anything. It also reaches `renderThroughWasm` directly on each
+of the three codes, because a gate that quietly declined the engine would
+satisfy every `wasm === ts` assertion in the file.
+
+**One measured oddity worth knowing: `waterLevel` is inert on
+`elevation_island`.** Water fraction holds at 1.7% from -20 to +20 across a
+128x128 window at 8 tiles/px, while the same sweep moves `elevation_lakes` from
+2.5% to 42.0%. The -1000 island bias swamps the water term. That is a property
+of the tree, not of the port - both renderers do it, which the byte-identical
+arms already say.
 
 **The paint order was WRONG in the module for four slices and nothing could
 tell.** The five `if`s ran trees, rocks, enemies, resources, cliffs; the
@@ -1349,9 +1368,12 @@ Three traps that slice paid for, all transferable:
   guard, not the correctness gate.
 
 **One TypeScript file in a ported directory was ported for a reason that is not
-obvious.** `cliffConnections.ts` has **zero `src/` consumers** - only 23
-investigation specs import it - so that #84's cliff investigation can be run
-against the engine.
+obvious.** `cliffConnections.ts` has **zero consumers of any kind** since #360 deleted the
+23 investigation specs that imported it. It is kept as the human-readable
+reference `crates/fmw-noise/src/cliffs/connections.rs` cites as its source, so
+that #84's cliff investigation can still be run against the engine. The
+type-checker still covers it, because `tsconfig.json` includes `src/**/*` by
+glob rather than by reachability.
 
 #### The three tiers, and what each one cannot see
 
@@ -1396,7 +1418,7 @@ measured rather than assumed:
   exactly 14,406, because the shape of the sweep does not depend on the host.
 
 **Tier 2's shelf life is now a FREEZE rather than a deadline.** It compared Rust
-against TypeScript, and #227 deletes the TypeScript, so all 942 folds are
+against TypeScript, and #227 deletes the TypeScript, so all 1,168 folds are
 committed to `test/fixtures/tier2-checksums.json` and each spec asserts BOTH
 arms against the frozen value instead of against each other. When the TypeScript
 arm goes, the wasm arm keeps running against a number captured while the two
@@ -1418,6 +1440,60 @@ the table is for. **Read a moved number, do not adjust it.**
 
 Record with `FMW_FREEZE_TIER2=1`, then run the specs normally - a record run
 compares nothing and so proves nothing.
+
+**Tier 3 now carries the same freeze, for the same reason (#227).** The render
+parity specs got their TypeScript arm by calling `runRenderRequest` with the
+engine argument left off, so after the deletion both arms would be the SAME
+code - a comparison that passes while grading nothing. `test/tier3Frozen.ts`
+freezes each render to a checksum in
+`test/fixtures/tier3-render-checksums.json`; `nauvis:render` holds 73 rows.
+Record with `FMW_FREEZE_TIER3=1`.
+
+**The plumbing is shared and the tables are not.** `test/frozenTable.ts` holds
+the machinery, and both `tier2Frozen.ts` and `tier3Frozen.ts` are thin wrappers
+over `makeFrozenTable`, so the guards live in one place rather than two. Tier 3
+keeps its own FILE because a row means a different thing - one rendered image,
+not a field folded over a grid - and because `tier2Coverage.spec.ts` anchors
+tier 2's rows to the module's own `checksum_*` exports, which render rows do
+not have.
+
+**The tier-3 fold runs in JavaScript**, not Rust. Both arms already hand back
+RGBA bytes, so folding there keeps them symmetric and adds no export - which
+means freezing tier 3 rebuilds no `engine.wasm` and cannot go stale against the
+committed binary. The fold takes the byte LENGTH first, so a truncated buffer
+cannot collide with a shorter render that shares a prefix.
+
+**Each tier-3 spec asserts its own COVERAGE**, the way the three tier-2 planet
+specs do. `expectRecordedRows` guards only a RECORD run - it feeds
+`flushRecording`, which returns immediately unless the environment variable is
+set - so without a second guard nothing checks that the rows are consulted on a
+normal run, and a deleted `freeze` call site would leave its row in the table
+un-consulted while every gate stayed green. `frozenTable.ts` tracks the distinct
+rows each run looks up, and the spec asserts BOTH that count and the table's.
+The two fail on opposite mistakes: the table count catches a re-record that
+wrote a different surface, the consulted count catches a call site that stopped
+asking. A literal compared only against the file would move with neither.
+
+Three planted breaks were RUN rather than predicted:
+
+- a corrupted row reddens the wasm arm by name
+  (`wasm 11549297961623709281 != frozen 16045690984833335023`)
+- a deleted row fails "no frozen checksum" rather than skipping quietly
+- **a deleted `freeze` call site leaves all 37 other tests GREEN**, and is
+  caught only by the coverage guard, at "expected 72 to be 73"
+
+The row-count guard also fired for real - a first record run declared 73 and
+recorded 60, and `flushRecording` DROPPED the section rather than committing a
+short table. The 13 missing rows were the four overlay lever loops, which share
+an identical body.
+
+**One test is deliberately NOT frozen**: `refuses the engine for a spawn list
+longer than the ABI cap`. Both its arms are the TypeScript renderer, which is
+its whole claim, so a frozen row would capture a picture the engine can never
+reproduce. It belongs to the `> 8` spawn carve-out, and the #227 deletion
+removes both together. The spawn census on #227 is why that is safe: the most
+starting points any exchange string in the repo carries is two, against a cap
+of eight.
 
 **Parity sweeps must use NON-binary origins and steps**, or they agree by
 construction. `test/wasmNauvisParity.spec.ts` freezes 2,365 of 2,420 positions
@@ -1719,13 +1795,45 @@ below. What stays here is the part that is a RULE rather than a record.
 
 **The request layout is at v2 and is per-planet.** A 56-byte common prefix
 declares `params_bytes`, then a per-planet block follows. Fulgora's request is
-104 bytes; Vulcanus's is 368.
+120 bytes; Vulcanus's is 368; Nauvis's is 568 and is the largest, so
+`REQUEST_BYTES` is Nauvis's.
 
 **A planet block can grow with NO version bump, and that is the split working.**
-The Vulcanus block has grown three times (248 -> 280 -> 312 -> 368) and
-Fulgora's has not moved a byte. `BadParamsLength` refuses a writer whose
-declared length disagrees. **A version bump is for a change to the COMMON
-prefix**, which every planet reads.
+The Vulcanus block has grown three times (248 -> 280 -> 312 -> 368), and
+Fulgora's grew for the first time in #363 (48 -> 64, so the request went 104 -> 120) when the scrap overlay needed `control:scrap:frequency` and `:size` to
+cross. `BadParamsLength` refuses a writer whose declared length disagrees. **A
+version bump is for a change to the COMMON prefix**, which every planet reads.
+
+**The Fulgora block is append-only, and the two scrap sliders sit AFTER the
+trig rather than beside the two island sliders.** Grouping them with the other
+controls would have moved the trig block, which every existing reader already
+knows the offsets of. `test/fixtures/verify-wasm-request.py` - the third
+implementation, neither the writer nor the Rust reader - checks both new
+offsets, and a planted swap of the two is one of the breaks confirmed caught.
+
+**The module does NOT default the scrap sliders**, and `FulgoraParams`'s
+`Default` gives 0 rather than the neutral 1 on purpose, so a writer that forgot
+them renders visibly wrong rather than plausibly right. The single place an
+absent slider becomes 1 is `writeFulgoraParams` in `src/noise/wasm/request.ts`.
+Do not add a second.
+
+**`VIEW_SCRAP_FOOTPRINT` is not the scrap overlay, and #363's issue body was
+written believing it was.** The footprint view paints every tile where the
+probability is positive; the `all` composite paints the subset a placement ROLL
+accepts. Measured over a 128x128 window at seed 123456: 708 footprint tiles
+against 177 placed, so substituting one for the other moves 531 pixels. The
+footprint is deliberately not a roll, because diffing rolled pixels against the
+game's drawn pixels measures the salt rather than the model -
+`crates/fmw-wasm/src/render.rs` says so at the constant.
+
+**`control:scrap:frequency` above neutral does not move the picture**, measured
+2026-08-31 on a 64x64 window at (-500, 3000), seed 123456: `(4, 1)` is
+byte-identical to `(1, 1)` at 149 scrap pixels, while `(0.25, 1)` gives 104.
+`size` moves both ways - 194 at 3, 118 at 0.25. This is not a curiosity: a
+parity test that moves `frequency` UPWARD grades nothing, and one written that
+way was measured passing against a module that ignored the field outright.
+`test/wasmFulgoraRenderParity.spec.ts` moves one slider at a time and pins the
+dead zone.
 
 **Nauvis's block landed at 64 bytes with no bump and has since grown five
 times** - 96 for the tree overlay's four levers, 144 for the rock overlay's two

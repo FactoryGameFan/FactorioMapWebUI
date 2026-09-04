@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   CLIFF_MAP_COLOR,
+  VULCANUS_CLIFF_BLOCKING_TILES,
   getModifiedElevationInterval,
   getModifiedRichness,
   isCliffPlaced,
@@ -44,5 +45,15 @@ describe("cliff orientation predicate", () => {
     expect(placing).toEqual([
       1, 3, 4, 5, 12, 15, 16, 17, 28, 48, 51, 52, 64, 67, 68, 80, 192, 193, 204, 240,
     ]);
+  });
+});
+
+// #360 deleted the block in cliffOreDirection.spec.ts that pinned this literal.
+// The set survives and two specs still read it, so the value is re-pinned here.
+// The Rust holds the same pair inlined twice, at
+// `crates/fmw-noise/src/cliffs/vulcanus_fields.rs:218` and `fixtures.rs`.
+describe("VULCANUS_CLIFF_BLOCKING_TILES", () => {
+  it("is exactly the two lava tiles", () => {
+    expect([...VULCANUS_CLIFF_BLOCKING_TILES].sort()).toEqual(["lava", "lava-hot"]);
   });
 });
