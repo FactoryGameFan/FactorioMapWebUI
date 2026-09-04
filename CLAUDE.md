@@ -192,10 +192,14 @@ pin - older versions are simply untested, not known-broken.
 
 **`.node-version` is machinery now, not documentation.** That changed when
 `.github/workflows/verify.yml` landed: `actions/setup-node` reads the file via
-`node-version-file`, so it is what CI actually installs. Nothing _local_ consumes
-it still (node comes from Homebrew, no version manager is installed) and
-Cloudflare Pages never builds this repo - `deploy:app` uploads an already-built
-`dist` - so an edit to it changes the version the gate runs on and nothing else.
+`node-version-file`, so it is what CI actually installs. It is read locally too:
+the Vite+ shims on `PATH` resolve it per directory, so a bare `node` here runs
+the managed build under `~/.vite-plus/js_runtime/node/`, not Homebrew's. That
+only holds while `~/.vite-plus/bin` comes first on `PATH`; when something else
+wins, the shims are skipped silently and `vp env doctor` marks each tool
+`(not vp shim)` while still printing `All checks passed`. Cloudflare Pages never
+builds this repo - `deploy:app` uploads an already-built `dist` - so an edit to
+it changes the version the gate runs on and nothing else.
 Bump it only alongside a local `pnpm run verify` on the new version.
 
 Adding a root dependency needs `pnpm add -w` (or `--workspace-root`); a bare
