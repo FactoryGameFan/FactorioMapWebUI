@@ -183,18 +183,19 @@ jobs:
   # there gets identical blocking behaviour with no ruleset PUT and no two-step.
   # See CLAUDE.md for when a genuinely new required name is warranted.
   #
-  # No toolchain action, pinned or otherwise: `rust-toolchain.toml` pins 1.97.1
-  # with rustfmt, clippy and the wasm32 target, and rustup installs that on the
-  # first cargo command. Expect a `syncing channel updates` line in the log even
-  # though the image already ships Cargo 1.97.1 - rustup treats `1.97.1-<host>`
-  # and `stable-<host>` as separate installs of the same compiler, so the pin
-  # costs one download per runner.
+  # No toolchain action, pinned or otherwise: `rust-toolchain.toml` pins the
+  # channel - read the file, do not quote it here - with rustfmt, clippy and the
+  # wasm32 target, and rustup installs that on the first cargo command. Expect a
+  # `syncing channel updates` line in the log even when the image already ships
+  # the same Cargo: rustup treats `<version>-<host>` and `stable-<host>` as
+  # separate installs of one compiler, so the pin costs one download per runner.
   #
-  # Measured on this job's first run (#230): `info: syncing channel updates for
-  # 1.97.1-x86_64-unknown-linux-gnu`, `info: downloading 6 components`, 10s of
-  # the job's 19s. The whole job is still the cheapest in the workflow, and the
-  # runner reports `rustc 1.97.1 (8bab26f4f 2026-07-14)` - the same build as the
-  # dev machine, which is what makes the byte comparison below possible at all.
+  # Measured on this job's first run (#230), when the pin was 1.97.1: `info:
+  # syncing channel updates for 1.97.1-x86_64-unknown-linux-gnu`, `info:
+  # downloading 6 components`, 10s of the job's 19s. The pin has moved since;
+  # the shape of the cost has not. The whole job is still the cheapest in the
+  # workflow, and the runner reports the same build as the dev machine, which is
+  # what makes the byte comparison below possible at all.
   rust:
     runs-on: ubuntu-latest
     # The whole job is seconds of compiling two tiny crates on top of the
