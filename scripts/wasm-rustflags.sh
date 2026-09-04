@@ -23,14 +23,18 @@
 # with `rust-src` present they resolve to a LOCAL ABSOLUTE PATH instead of the
 # remapped `/rustc/<commit-hash>/` form the prebuilt std uses.
 #
-# Measured, changing only that component inside one linux/arm64 container:
+# Measured at #299, changing only that component inside one linux/arm64
+# container. Both sizes below are from THAT build: the pin has moved since -
+# read `rust-toolchain.toml` - and the module has grown a long way past these
+# numbers, so read neither as a current size. `verify-rust.sh` is what knows
+# the committed module, by rebuilding it and comparing bytes.
 #
-#   rust:1.97.1, no rust-src            84,171 bytes  <- the committed module
+#   rust:1.97.1, no rust-src            84,171 bytes  <- what was committed then
 #   same container, + rustup component add rust-src    84,283 bytes
 #
 # 117 of those 120 bytes are three paths that are 39 characters longer each; the
 # rest is adjacent length prefixes. Every byte of the delta is in the DATA
-# section - `code` is 74,523 either way, and its bytes move only because
+# section - `code` was 74,523 either way, and its bytes move only because
 # data-segment pointers shift underneath them.
 #
 # The host was NOT the variable, which is worth stating because the issue was
