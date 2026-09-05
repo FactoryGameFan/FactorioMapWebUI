@@ -1,0 +1,10 @@
+{
+  "fulgora:finder": {
+    "radius 600, refine 1 | ranked islands": "0x21a60177f0dd60aa"
+  },
+  "fulgora:survey": {
+    "box -1200..1200 x -900..900 | sweep": "0x5e78a6a0a5ca1a84",
+    "box -1500..1500 | island list": "0x1c0cd708f627c24e",
+    "box -400..400 x -300..300 | sweep": "0x9c17700912b115e9"
+  }
+}

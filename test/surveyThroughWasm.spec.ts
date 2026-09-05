@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { compileEngine, instantiateEngine, type EngineExports } from "../src/noise/wasm/engine";
 import { surveyCellsThroughWasm } from "../src/noise/islands/surveyThroughWasm";
@@ -8,6 +8,15 @@ import { surveyIslands, surveyStep } from "../src/noise/islands/cellSurvey";
 import { makeFulgoraStack } from "../src/noise/tiles/fulgoraCatalog";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 import { bearingTrig } from "../src/noise/wasm/request";
+import {
+  consultedCount,
+  expectFrozen,
+  expectRecordedRows,
+  flushRecording,
+  foldJson,
+  frozenCount,
+  RECORDING,
+} from "./islandsFrozen";
 
 /**
  * The engine-backed cell survey against the TypeScript one, position for
@@ -26,6 +35,26 @@ import { bearingTrig } from "../src/noise/wasm/request";
  */
 const SEED0 = surfaceSeedForPlanet("fulgora", 123456);
 const CTX = { seed0: SEED0 };
+
+/**
+ * The freeze section for this spec. See `islandsFrozen.ts`.
+ *
+ * Every comparison below ALSO folds the engine's answer against a frozen
+ * value, captured while the TypeScript arm still existed and the two
+ * agreed. #371 deletes that arm; the fold is what grades the survey after.
+ */
+const SECTION = "fulgora:survey";
+
+/** Two raw sweeps and one candidate list. A literal, for the reason every other section gives. */
+const ROWS = 3;
+
+expectRecordedRows(SECTION, ROWS);
+afterAll(flushRecording);
+
+/** Freeze one structure, and compare the two arms while both exist. */
+function freeze(label: string, name: string, wasm: unknown, ts: unknown): void {
+  expectFrozen(SECTION, label, name, foldJson(wasm), foldJson(ts));
+}
 
 async function engine(): Promise<EngineExports> {
   const bytes = readFileSync(
@@ -76,14 +105,16 @@ describe("the WASM cell survey agrees with the TypeScript one", () => {
     for (let i = 0; i < ts.length; i++) {
       expect(wasm[i], `position ${String(i)}`).toEqual(ts[i]);
     }
+    freeze("box -1200..1200 x -900..900", "sweep", wasm, ts);
 
     // Anti-vacuity: a sweep that agreed on nothing but zeros would pass every
     // assertion above. Freeze that the box carries many distinct cells and a
     // real spread of ids, so a box drifting off the interesting region fails
-    // rather than silently comparing ocean.
-    const cells = new Set(ts.map((p) => `${String(p.cellX)},${String(p.cellY)}`));
+    // rather than silently comparing ocean. Read off the WASM arm, so it
+    // survives #371.
+    const cells = new Set(wasm.map((p) => `${String(p.cellX)},${String(p.cellY)}`));
     expect(cells.size).toBeGreaterThan(50);
-    expect(ts.filter((p) => p.id >= 0.33).length).toBeGreaterThan(100);
+    expect(wasm.filter((p) => p.id >= 0.33).length).toBeGreaterThan(100);
   }, 300000);
 
   it("bands without dropping, duplicating or reordering a position", async () => {
@@ -96,6 +127,7 @@ describe("the WASM cell survey agrees with the TypeScript one", () => {
     const whole = wasmSweep(e, box, STEP);
     const ts = tsSweep(box, STEP);
     expect(whole).toEqual(ts);
+    freeze("box -400..400 x -300..300", "sweep", whole, ts);
 
     // Sweeping the same box as two stacked halves must reproduce the whole,
     // which is what a band boundary is. Rows are the unit, so the split is on a
@@ -122,11 +154,12 @@ describe("the WASM cell survey agrees with the TypeScript one", () => {
     const wasm = surveyIslands(CTX, box, undefined, e);
 
     expect(wasm).toEqual(ts);
+    freeze("box -1500..1500", "island list", wasm, ts);
     // Anti-vacuity: two empty lists are equal. Freeze that this box really
     // finds islands, so a box drifting into open ocean fails rather than
-    // silently comparing nothing.
-    expect(ts.length).toBeGreaterThan(30);
-    expect(ts.reduce((n, c) => n + c.sampleCount, 0)).toBeGreaterThan(500);
+    // silently comparing nothing. Read off the WASM arm, so it survives #371.
+    expect(wasm.length).toBeGreaterThan(30);
+    expect(wasm.reduce((n, c) => n + c.sampleCount, 0)).toBeGreaterThan(500);
   }, 300000);
 
   it("derives the same step from the module as from the TypeScript stack", async () => {
@@ -177,5 +210,18 @@ describe("the WASM cell survey agrees with the TypeScript one", () => {
     expect(() => wasmSweep(e, { x0: 0, y0: 0, x1: (wide - 1) * STEP, y1: 0 }, STEP)).toThrow(
       /exceeds the engine's buffer/,
     );
+  });
+});
+
+describe("the freeze covers this spec rather than merely existing", () => {
+  // `expectRecordedRows` guards only a RECORD run. On a normal run nothing
+  // above checks that the rows are actually consulted: a deleted `freeze`
+  // call site would leave its row in the table un-consulted and every gate
+  // green while coverage shrank. Once #371 deletes the TypeScript arm this
+  // table is the only thing grading these comparisons. Both numbers, because
+  // they fail on opposite mistakes - see `wasmNauvisRenderParity.spec.ts`.
+  it.skipIf(RECORDING)("consults every frozen row exactly once", () => {
+    expect(frozenCount(SECTION), "rows in the committed table").toBe(ROWS);
+    expect(consultedCount(SECTION), "distinct rows this run looked up").toBe(ROWS);
   });
 });

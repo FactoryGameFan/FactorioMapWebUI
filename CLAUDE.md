@@ -1452,6 +1452,12 @@ recorded 2026-09-04 ahead of #371, which deletes the Fulgora TypeScript arm
 the way #227 deleted the other two.
 Record with `FMW_FREEZE_TIER3=1`.
 
+**The island finder has a freeze of the same shape** - `test/islandsFrozen.ts`
+over `test/fixtures/island-finder-checksums.json`, four rows in two sections,
+because the survey and the finder's ranked list were the last two things still
+compared against the TypeScript Fulgora chain. A row there is a structure
+folded through its JSON, not an image. Record with `FMW_FREEZE_ISLANDS=1`.
+
 **The plumbing is shared and the tables are not.** `test/frozenTable.ts` holds
 the machinery, and both `tier2Frozen.ts` and `tier3Frozen.ts` are thin wrappers
 over `makeFrozenTable`, so the guards live in one place rather than two. Tier 3
