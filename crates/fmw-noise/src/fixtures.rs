@@ -283,6 +283,339 @@ fn the_scorer_resolves_a_single_wrong_point() {
 // destroying bit-exactness (see the tables in the TypeScript specs).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The basis_noise narrowing fixtures (#269, #290, #293) and the seeding
+// fixture, graded here as of #371.
+//
+// Each of these five captures had exactly one reader: a TypeScript spec
+// (`basisInputScale`, `basisOutputScale`, `basisCallerScales`,
+// `vulcanusPlasmaDecomposition`, `basisNoiseSeeding`) that graded the
+// TypeScript port against it. #371 deletes that port, and a fixture graded by
+// nothing is a capture nobody can trust next time the toolchain moves. So the
+// grades move here first, the way #359 moved the stage localisation ahead of
+// #227's deletion.
+//
+// The models are written as FORMULAS over `basis_noise`, not as calls into
+// `basis_noise_expr`, so they grade the arithmetic the port is supposed to do
+// rather than whatever the port happens to do. The counts are the ones the
+// TypeScript specs froze; every one was re-measured here before landing.
+// ---------------------------------------------------------------------------
+
+/// The model #290 settled: input scale held at f32 and the coordinate product
+/// narrowed; output scale held at f32 and that product narrowed too.
+fn fully_narrowed(x: f64, y: f64, is: f64, os: f64, t: &BasisNoiseTables) -> f32 {
+    let is = f64::from(is as f32);
+    let v = basis_noise(f64::from((x * is) as f32), f64::from((y * is) as f32), t);
+    (f64::from(os as f32) * f64::from(v)) as f32
+}
+
+/// What shipped before #269 and #290: f64 constants and f64 products on both
+/// sides. The CONTROL: a case on which this scores a full house cannot
+/// discriminate, and the frozen counts say which cases do.
+fn unnarrowed(x: f64, y: f64, is: f64, os: f64, t: &BasisNoiseTables) -> f32 {
+    (os * f64::from(basis_noise(x * is, y * is, t))) as f32
+}
+
+/// Output side narrowed, input side not - what shipped between #269 and #290.
+fn output_narrowed_only(x: f64, y: f64, is: f64, os: f64, t: &BasisNoiseTables) -> f32 {
+    (f64::from(os as f32) * f64::from(basis_noise(x * is, y * is, t))) as f32
+}
+
+/// Output PRODUCT narrowed but the output constant held at f64.
+fn output_product_only(x: f64, y: f64, is: f64, os: f64, t: &BasisNoiseTables) -> f32 {
+    (os * f64::from(basis_noise(x * is, y * is, t))) as f32
+}
+
+/// Exact f32 matches of `model` against one case's values over the positions.
+fn exact_at(positions: &[Json], values: &[f64], model: impl Fn(f64, f64) -> f32) -> usize {
+    assert_eq!(positions.len(), values.len(), "positions and values");
+    positions
+        .iter()
+        .zip(values)
+        .filter(|(p, want)| f64::from(model(p.get("x").as_f64(), p.get("y").as_f64())) == **want)
+        .count()
+}
+
+#[test]
+fn holds_input_scale_at_f32_and_narrows_the_coordinate_product() {
+    // #269's second question. Seven input scales at output scale 1; the first
+    // two (0.125 and 0.5) are exact in f32, so no model can be told apart on
+    // them, which is why the control's row starts with two full houses.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-basis-input-scale.seed123456.json",
+        "2.1.14",
+    );
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 196);
+    assert_eq!(fixture.get("outputScale").as_f64(), 1.0);
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let seed1 = fixture.get("seed1").as_f64() as u32;
+    let t = tables_from_seed(seed0, seed1);
+
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), 7);
+    let mut full = Vec::new();
+    let mut control = Vec::new();
+    for c in cases {
+        let is = c.get("inputScale").as_f64();
+        let values = c.get("values").as_f64_array();
+        full.push(exact_at(positions, &values, |x, y| {
+            fully_narrowed(x, y, is, 1.0, &t)
+        }));
+        control.push(exact_at(positions, &values, |x, y| {
+            unnarrowed(x, y, is, 1.0, &t)
+        }));
+    }
+    // test/basisInputScale.spec.ts froze the same two rows.
+    assert_eq!(full, [196; 7], "fully narrowed");
+    assert_eq!(control, [196, 196, 3, 4, 3, 20, 79], "un-narrowed control");
+}
+
+#[test]
+fn holds_output_scale_at_f32_and_narrows_the_output_product() {
+    // #269's first question. Input scale fixed at 0.125, exact in f32, so only
+    // the output side is in play. The control here narrows the PRODUCT but
+    // holds the constant at f64, which is enough on 1, 0.75 and 125 - all
+    // exact in f32 - and not on 0.6 or 0.51.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-basis-output-scale.seed123456.json",
+        "2.1.14",
+    );
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 196);
+    let is = fixture.get("inputScale").as_f64();
+    assert_eq!(is, 0.125);
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let seed1 = fixture.get("seed1").as_f64() as u32;
+    let t = tables_from_seed(seed0, seed1);
+
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), 5);
+    let mut full = Vec::new();
+    let mut control = Vec::new();
+    for c in cases {
+        let os = c.get("outputScale").as_f64();
+        let values = c.get("values").as_f64_array();
+        full.push(exact_at(positions, &values, |x, y| {
+            fully_narrowed(x, y, is, os, &t)
+        }));
+        control.push(exact_at(positions, &values, |x, y| {
+            output_product_only(x, y, is, os, &t)
+        }));
+    }
+    // test/basisOutputScale.spec.ts froze the same two rows.
+    assert_eq!(full, [196; 5], "fully narrowed");
+    assert_eq!(control, [196, 110, 151, 196, 196], "product-only control");
+}
+
+#[test]
+fn reproduces_the_game_at_every_real_caller_scale() {
+    // #290, at the exact (input_scale, output_scale, seed1) triples Vulcanus's
+    // hairline_cracks, mountain_plasma and mountain_basis_noise call with. The
+    // control is the output-only narrowing that shipped at the time, which is
+    // worst at every one of them.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-basis-caller-scales.seed123456.json",
+        "2.1.14",
+    );
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 196);
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+
+    let cases = fixture.get("cases").as_array();
+    let names: Vec<&str> = cases.iter().map(|c| c.get("name").as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "hairline_cracks A",
+            "hairline_cracks B",
+            "mountain_plasma A",
+            "mountain_plasma B",
+            "mountain_basis_noise",
+        ]
+    );
+    let mut full = Vec::new();
+    let mut control = Vec::new();
+    for c in cases {
+        let t = tables_from_seed(seed0, c.get("seed1").as_f64() as u32);
+        let is = c.get("inputScale").as_f64();
+        let os = c.get("outputScale").as_f64();
+        let values = c.get("values").as_f64_array();
+        full.push(exact_at(positions, &values, |x, y| {
+            fully_narrowed(x, y, is, os, &t)
+        }));
+        control.push(exact_at(positions, &values, |x, y| {
+            output_narrowed_only(x, y, is, os, &t)
+        }));
+    }
+    // test/basisCallerScales.spec.ts froze the same two rows.
+    assert_eq!(full, [196; 5], "fully narrowed");
+    assert_eq!(control, [3, 4, 27, 74, 77], "output-only control");
+}
+
+#[test]
+fn reproduces_the_seeding_fixture_at_every_seed_pair() {
+    // Nine (seed0, seed1) pairs through the seed combine, the salt and the
+    // clamp, at 48 points each. The TypeScript spec held these to a 1e-5
+    // bound from before the gradient table was recovered from the game (#234);
+    // the count is exact now, and asserted as such.
+    let fixture = load_captured_at("test/fixtures/basis-noise-seeding.game.json", "2.1.12");
+    let is = fixture.get("inputScale").as_f64();
+    let points = fixture.get("points").as_array();
+    assert_eq!(points.len(), 48);
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), 9);
+
+    let mut exact = 0usize;
+    let mut worst = 0.0f64;
+    for c in cases {
+        let t = tables_from_seed(
+            c.get("seed0").as_f64() as u32,
+            c.get("seed1").as_f64() as u32,
+        );
+        let values = c.get("values").as_f64_array();
+        for (p, want) in points.iter().zip(&values) {
+            // The f64 product, as the TypeScript spec and `score` above form it.
+            let got = f64::from(basis_noise(
+                p.get("x").as_f64() * is,
+                p.get("y").as_f64() * is,
+                &t,
+            ));
+            worst = worst.max((got - want).abs());
+            if got == *want {
+                exact += 1;
+            }
+        }
+    }
+    assert_eq!(exact, 432, "exact f32 matches of 432");
+    assert_eq!(worst, 0.0, "worst absolute error");
+}
+
+#[test]
+fn reproduces_both_plasma_leaves_and_the_hairline_composite_exactly() {
+    // #293's decomposition probe: the game's own two basis_noise leaves of
+    // vulcanus_hairline_cracks, and the composite, at the same 61 positions.
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-plasma-decomposition.seed123456.json",
+        "2.1.14",
+    );
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 61);
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+
+    // Every position is on the 1/256 grid already, so the snap other sweeps
+    // apply is the identity here - asserted rather than applied, per
+    // test/captureGrid.ts's rule for a snap that has reached zero.
+    for p in positions {
+        for key in ["x", "y"] {
+            let v = p.get(key).as_f64();
+            assert_eq!(snap_coord(v), v, "position {key} = {v} is off the grid");
+        }
+    }
+
+    // The leaves, through the #290 model.
+    for (name, key, values_key) in [
+        ("leafA", "leafA", "leafAValues"),
+        ("leafB", "leafB", "leafBValues"),
+    ] {
+        let leaf = fixture.get(key);
+        let t = tables_from_seed(seed0, leaf.get("seed1").as_f64() as u32);
+        let is = leaf.get("inputScale").as_f64();
+        let os = leaf.get("outputScale").as_f64();
+        let values = fixture.get(values_key).as_f64_array();
+        let exact = exact_at(positions, &values, |x, y| fully_narrowed(x, y, is, os, &t));
+        assert_eq!(exact, 61, "{name} exact");
+    }
+    assert_eq!(fixture.get("leafA").get("seed1").as_f64(), 12643.0);
+    assert_eq!(
+        fixture.get("leafB").get("seed1").as_f64(),
+        f64::from(13423 + 15223)
+    );
+
+    // The composite, through the shipped crack layer.
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let helpers = VulcanusHelpers::new(&ctx);
+    let cracks = VulcanusCracks::new(&helpers);
+    let hairline = fixture.get("hairlineCracks").as_f64_array();
+    let exact = exact_at(positions, &hairline, |x, y| {
+        cracks.eval(x, y).hairline_cracks as f32
+    });
+    assert_eq!(exact, 61, "hairline_cracks exact");
+
+    // With the port removed entirely: the game's own leaves do NOT compose to
+    // the game's own composite as `abs(A - B)`, at the scales the port asked
+    // for. 7 of 61, frozen - this is the measurement that settled #293, and
+    // it involves no line of ours.
+    let a = fixture.get("leafAValues").as_f64_array();
+    let b = fixture.get("leafBValues").as_f64_array();
+    let composed = a
+        .iter()
+        .zip(&b)
+        .zip(&hairline)
+        .filter(|((la, lb), want)| f64::from((*la - *lb).abs() as f32) == **want)
+        .count();
+    assert_eq!(
+        composed, 7,
+        "game leaves composed as abs(A - B) agreeing with the game"
+    );
+}
+
+#[test]
+fn the_two_hairline_captures_agree_wherever_they_sample_the_same_point() {
+    // oracle-vulcanus-cracks (2.1.12) and the decomposition probe (2.1.14)
+    // both record hairline_cracks. A version difference and a grid difference
+    // look identical from inside a count (#295), so this compares VALUES at
+    // the positions the two captures share - 52 of them once the older
+    // capture's 21 off-grid positions are snapped - and they are bit-identical.
+    // The control is a different field from the same capture, which matches
+    // at none of them.
+    let probe = load_captured_at(
+        "test/fixtures/oracle-vulcanus-plasma-decomposition.seed123456.json",
+        "2.1.14",
+    );
+    let cracks = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cracks.seed123456.json",
+        "2.1.12",
+    );
+    let key = |x: f64, y: f64| (x.to_bits(), y.to_bits());
+    let mut at_point = BTreeMap::new();
+    let hairline = probe.get("hairlineCracks").as_f64_array();
+    for (p, v) in probe.get("positions").as_array().iter().zip(&hairline) {
+        at_point.insert(key(p.get("x").as_f64(), p.get("y").as_f64()), *v);
+    }
+
+    let positions = cracks.get("positions").as_array();
+    let want_hairline = cracks.get("hairlineCracks").as_f64_array();
+    let control_field = cracks.get("floodCracksA").as_f64_array();
+    let mut off_grid = 0usize;
+    let mut shared = 0usize;
+    let mut identical = 0usize;
+    let mut control = 0usize;
+    for (i, p) in positions.iter().enumerate() {
+        let (x, y) = (p.get("x").as_f64(), p.get("y").as_f64());
+        if snap_coord(x) != x || snap_coord(y) != y {
+            off_grid += 1;
+        }
+        let Some(want) = at_point.get(&key(snap_coord(x), snap_coord(y))) else {
+            continue;
+        };
+        shared += 1;
+        if want_hairline[i].to_bits() == want.to_bits() {
+            identical += 1;
+        }
+        if control_field[i].to_bits() == want.to_bits() {
+            control += 1;
+        }
+    }
+    assert_eq!(off_grid, 21, "off-grid positions in the older capture");
+    assert_eq!(shared, 52, "points the two captures share");
+    assert_eq!(control, 0, "control - a different field must not match");
+    assert_eq!(
+        identical, shared,
+        "hairline_cracks identical at every shared point"
+    );
+}
+
 use crate::multioctave_noise::{multioctave_noise, MultioctaveParams};
 use crate::quick_multioctave_noise::{
     quick_multioctave_noise, quick_multioctave_noise_persistence, QuickMultioctaveParams,
