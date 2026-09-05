@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { findIslands } from "../src/noise/islands/findIslands";
 import {
@@ -9,6 +9,15 @@ import {
 } from "../src/noise/preview/elevationRenderRequest";
 import { compileEngine, instantiateEngine } from "../src/noise/wasm/engine";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
+import {
+  consultedCount,
+  expectFrozen,
+  expectRecordedRows,
+  flushRecording,
+  foldJson,
+  frozenCount,
+  RECORDING,
+} from "./islandsFrozen";
 
 /**
  * **The integration check #223 asks for: the island finder, run against the
@@ -35,6 +44,21 @@ const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine
 const SEED0 = surfaceSeedForPlanet("fulgora", 123456);
 const RADIUS = 600;
 const REFINE = 1;
+
+/**
+ * The freeze section for this spec. See `islandsFrozen.ts`.
+ *
+ * The ranked list below is ALSO folded against a frozen value, captured
+ * while the TypeScript arm still existed and the two agreed. #371 deletes
+ * that arm; the fold is what grades the finder's whole output after.
+ */
+const SECTION = "fulgora:finder";
+
+/** One ranked list. */
+const ROWS = 1;
+
+expectRecordedRows(SECTION, ROWS);
+afterAll(flushRecording);
 
 describe("the island finder agrees between the two engines", () => {
   it("returns an identical ranked list, and really does use the WASM path", async () => {
@@ -79,6 +103,13 @@ describe("the island finder agrees between the two engines", () => {
       expect(w.rect, `rank ${String(i)} rect`).toEqual(t?.rect);
     }
     expect(fromWasm).toEqual(fromTypescript);
+    expectFrozen(
+      SECTION,
+      `radius ${String(RADIUS)}, refine ${String(REFINE)}`,
+      "ranked islands",
+      foldJson(fromWasm),
+      foldJson(fromTypescript),
+    );
   }, 300000);
 
   it("the engine really is being used - the same request differs when it is withheld", async () => {
@@ -134,4 +165,17 @@ describe("the island finder agrees between the two engines", () => {
     const without = new Uint8ClampedArray(runRenderRequest(req).buffer);
     expect(Array.from(withEngine)).toEqual(Array.from(without));
   }, 120000);
+});
+
+describe("the freeze covers this spec rather than merely existing", () => {
+  // `expectRecordedRows` guards only a RECORD run. On a normal run nothing
+  // above checks that the rows are actually consulted: a deleted `freeze`
+  // call site would leave its row in the table un-consulted and every gate
+  // green while coverage shrank. Once #371 deletes the TypeScript arm this
+  // table is the only thing grading these comparisons. Both numbers, because
+  // they fail on opposite mistakes - see `wasmNauvisRenderParity.spec.ts`.
+  it.skipIf(RECORDING)("consults every frozen row exactly once", () => {
+    expect(frozenCount(SECTION), "rows in the committed table").toBe(ROWS);
+    expect(consultedCount(SECTION), "distinct rows this run looked up").toBe(ROWS);
+  });
 });
