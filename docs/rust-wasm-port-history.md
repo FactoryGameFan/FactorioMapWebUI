@@ -1345,3 +1345,28 @@ fraction now, held between 20% and 30%, with `total` still frozen at exactly
 `r.powf(3.0)` - drives it to `0 of 14406 (0.0%)` and fails loudly, so the
 widened form is not vacuous. The rule is in `CLAUDE.md` beside the tier-2 libm
 bullet.
+
+### 2026-09-05 - the five orphaned basis fixtures, graded in Rust ahead of #371's deletion
+
+#371 deletes the last of the TypeScript math, and five game captures had no
+reader but a TypeScript spec: `oracle-basis-input-scale`,
+`oracle-basis-output-scale`, `oracle-basis-caller-scales`,
+`basis-noise-seeding.game` and `oracle-vulcanus-plasma-decomposition`. Their
+grades moved to `crates/fmw-noise/src/fixtures.rs` first, as #359 did for the
+stage localisation before #227. The counts, every one matching the row the
+TypeScript spec had frozen:
+
+| fixture | model | exact |
+| --- | --- | --- |
+| input scale, 7 cases | #290 narrowing | 196/196 each; un-narrowed control `[196, 196, 3, 4, 3, 20, 79]` |
+| output scale, 5 cases | #290 narrowing | 196/196 each; product-only control `[196, 110, 151, 196, 196]` |
+| caller scales, 5 cases | #290 narrowing | 196/196 each; output-only control `[3, 4, 27, 74, 77]` |
+| seeding, 9 pairs x 48 | `tables_from_seed` + `basis_noise` | **432/432, worst 0** - the spec had only a 1e-5 bound |
+| plasma decomposition | leaves and `hairline_cracks` | 61/61 each; the game's own `abs(A - B)` agrees at 7/61 |
+
+Two fixtures from that first-pass list were NOT ported and stay as recorded
+losses when their specs go: `oracle-vulcanus-tile-lever` (4.4 MB, the tile
+argmax under per-resource overrides) and `oracle-fulgora-scrap-entities` (the
+scrap roll against the game's per-region entity counts, which costs tens of
+seconds a region in a debug build). Both fixtures stay committed with their
+provenance; a future test can pick either up.
