@@ -1446,7 +1446,10 @@ parity specs got their TypeScript arm by calling `runRenderRequest` with the
 engine argument left off, so after the deletion both arms would be the SAME
 code - a comparison that passes while grading nothing. `test/tier3Frozen.ts`
 freezes each render to a checksum in
-`test/fixtures/tier3-render-checksums.json`; `nauvis:render` holds 73 rows.
+`test/fixtures/tier3-render-checksums.json`; `nauvis:render` holds 73 rows,
+`vulcanus:render` 26, `elevation:render` 18 and `fulgora:render` 23 - the last
+recorded 2026-09-04 ahead of #371, which deletes the Fulgora TypeScript arm
+the way #227 deleted the other two.
 Record with `FMW_FREEZE_TIER3=1`.
 
 **The plumbing is shared and the tables are not.** `test/frozenTable.ts` holds

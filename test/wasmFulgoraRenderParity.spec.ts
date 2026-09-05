@@ -1,10 +1,19 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
+import {
+  consultedCount,
+  expectFrozen,
+  expectRecordedRows,
+  flushRecording,
+  foldPixels,
+  frozenCount,
+  RECORDING,
+} from "./tier3Frozen";
 import { compileEngine, instantiateEngine, renderThroughWasm } from "../src/noise/wasm/engine";
 import {
   ABI_VERSION,
@@ -43,6 +52,45 @@ async function engine(): Promise<Awaited<ReturnType<typeof instantiateEngine>>> 
 }
 
 const SEED0 = surfaceSeedForPlanet("fulgora", 123456);
+
+/**
+ * The tier-3 freeze section for this spec. See `tier3Frozen.ts`.
+ *
+ * Fulgora is the last planet whose render parity still gets its reference
+ * arm from the TypeScript renderers - `typescriptPixels` below. #371 deletes
+ * that arm, the way #227 deleted the Nauvis and Vulcanus ones, and the same
+ * argument applies: once it is gone, a comparison against it grades nothing.
+ * So every byte-identity assertion in this file ALSO folds the engine's
+ * pixels against a checksum captured while the two arms demonstrably agreed,
+ * and that fold is what survives the deletion.
+ */
+const SECTION = "fulgora:render";
+
+/**
+ * Rows this spec must record, as a literal - the same guard the other three
+ * sections carry: adding a window or a case makes a record run DROP the
+ * section until this is updated, rather than quietly writing a short table.
+ *
+ * 2 views x 4 windows (land mask, terrain) + 2 views x 6 windows (resources,
+ * all - the four parameter windows plus the two scrap windows) + 3 slider
+ * cases.
+ */
+const ROWS = 23;
+
+expectRecordedRows(SECTION, ROWS);
+afterAll(flushRecording);
+
+/**
+ * Freeze one render, and compare the two arms while both exist.
+ *
+ * The label/name pair is the row key, so it has to be unique across the
+ * section. Window labels are unique across `WINDOWS` and `SCRAP_WINDOWS`,
+ * and the slider block prefixes its rows with `scrap` because it renders one
+ * scrap window three ways.
+ */
+function freeze(label: string, name: string, wasm: ArrayLike<number>, ts: ArrayLike<number>): void {
+  expectFrozen(SECTION, label, name, foldPixels(wasm), foldPixels(ts));
+}
 
 interface Window {
   readonly label: string;
@@ -207,6 +255,7 @@ describe("the WASM engine renders Fulgora's land mask byte-identically", () => {
           `${view} ${w.label}: first difference at byte ${String(firstDiff)}, pixel (${String(px)}, ${String(py)}), ` +
             `world (${String(w.originX + px * w.tilesPerPixel)}, ${String(w.originY + py * w.tilesPerPixel)})`,
         ).toBe(-1);
+        freeze(w.label, view, wasm, ts);
       }
     },
     120000,
@@ -671,6 +720,7 @@ describe("the WASM engine renders Fulgora's composite byte-identically", () => {
               `byte ${String(first % 4)}: wasm ${String(wasm[first])} vs ts ${String(ts[first])}`,
           );
         }
+        freeze(w.label, view, wasm, ts);
       }
     },
   );
@@ -789,7 +839,7 @@ describe("the scrap sliders cross the ABI and are read", () => {
     expect(Array.from(moved)).not.toEqual(Array.from(neutral));
   });
 
-  it.each(CASES)("$label agrees with the TypeScript, byte for byte", async ({ scrap }) => {
+  it.each(CASES)("$label agrees with the TypeScript, byte for byte", async ({ label, scrap }) => {
     const e = await engine();
     const wasm = renderThroughWasm(e, {
       view: "all",
@@ -815,6 +865,7 @@ describe("the scrap sliders cross the ABI and are read", () => {
           `byte ${String(first % 4)}: wasm ${String(wasm[first])} vs ts ${String(ts[first])}`,
       );
     }
+    freeze(`scrap ${label}`, "all", wasm, ts);
   });
 
   /**
@@ -832,5 +883,27 @@ describe("the scrap sliders cross the ABI and are read", () => {
       scrapSize: 1,
     });
     expect(Array.from(raised)).toEqual(Array.from(neutral));
+  });
+});
+
+describe("the tier-3 freeze covers this spec rather than merely existing", () => {
+  // `expectRecordedRows` guards only a RECORD run - it feeds `flushRecording`,
+  // which returns immediately unless the environment variable is set. So on a
+  // normal run nothing above checks that the rows are actually consulted: a
+  // deleted `freeze` call site would leave its row in the table un-consulted
+  // and every gate would stay green while coverage shrank. Once #371 deletes
+  // the TypeScript arm this table is the only thing grading these renders.
+  //
+  // BOTH numbers are asserted because they fail on opposite mistakes. The table
+  // count catches a re-record that wrote a different surface; the consulted
+  // count catches a call site that stopped asking. A literal compared only
+  // against the file would move with neither.
+  //
+  // Under `-t` this test is filtered out like any other, so a partial run does
+  // not fail it - it simply does not run, the same way a partial RECORD run
+  // falls short of its declared total instead of writing a short table.
+  it.skipIf(RECORDING)("consults every frozen row exactly once", () => {
+    expect(frozenCount(SECTION), "rows in the committed table").toBe(ROWS);
+    expect(consultedCount(SECTION), "distinct rows this run looked up").toBe(ROWS);
   });
 });
