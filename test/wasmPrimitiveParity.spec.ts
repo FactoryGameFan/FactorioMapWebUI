@@ -18,9 +18,6 @@ afterAll(flushRecording);
  */
 expectRecordedRows(PLANET, 18);
 
-import { spotCandidatePoints } from "../src/noise/spotCandidates";
-import { selectSpots } from "../src/noise/spotSelection";
-
 /**
  * Tier 2 of the Rust port's gate for the phase-1 primitives that do NOT compose
  * `basis_noise`: `random_penalty`, the `spot_noise` pair, `starting_lakes` and
@@ -186,7 +183,7 @@ describe("random_penalty folds to its frozen checksums", () => {
   });
 });
 
-describe("Rust and TypeScript spot_noise candidates agree bit for bit", () => {
+describe("spot_noise candidates fold to their frozen checksums", () => {
   // Seeds spanning the u32 range, negative region indices, and a region size
   // that is not a power of two - the seed word's three primes and its wrapping
   // reduction are what these exercise.
@@ -212,28 +209,7 @@ describe("Rust and TypeScript spot_noise candidates agree bit for bit", () => {
     },
   ] as const;
 
-  const coordsOf = (c: (typeof CASES)[number]): number[] => {
-    const out: number[] = [];
-    for (let ry = 0; ry < c.regions; ry++) {
-      for (let rx = 0; rx < c.regions; rx++) {
-        for (const p of spotCandidatePoints(
-          {
-            seed0: c.seed0,
-            seed1: c.seed1,
-            regionX: c.regionX0 + rx,
-            regionY: c.regionY0 + ry,
-          },
-          c.regionSize,
-          c.count,
-        )) {
-          out.push(p.x, p.y);
-        }
-      }
-    }
-    return out;
-  };
-
-  it("folds every candidate of a region block to the identical checksum", async () => {
+  it("folds every candidate of a region block to the frozen checksum", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
       const fromWasm = u64(
@@ -252,28 +228,19 @@ describe("Rust and TypeScript spot_noise candidates agree bit for bit", () => {
         `candidates seed0=${c.seed0} rs=${c.regionSize}`,
         "checksum_spot_candidates",
         fromWasm,
-        foldAll(coordsOf(c)),
       );
     }
   });
 
-  it("would notice a single candidate shifted by one tile", async () => {
-    const engine = await instantiate();
-    const c = CASES[0];
-    const fromWasm = u64(
-      engine.checksum_spot_candidates(
-        c.seed0,
-        c.seed1,
-        c.regionX0,
-        c.regionY0,
-        c.regions,
-        c.regionSize,
-        c.count,
-      ),
-    );
-    const perturbed = coordsOf(c);
-    perturbed[17] += 1;
-    expect(foldAll(perturbed)).not.toBe(fromWasm);
+  it("the fold would notice a single candidate shifted by one tile", () => {
+    // The anti-vacuity check for the freeze. This used to shift one of the
+    // TypeScript candidates; with that arm gone (#371) it shifts one of a
+    // synthetic block of the same shape, which is the same claim about the
+    // same fold.
+    const coords = Array.from({ length: 2 * 8 * 9 }, (_v, k) => (k * 37) % 1024);
+    const perturbed = [...coords];
+    perturbed[17] = (perturbed[17] as number) + 1;
+    expect(foldAll(perturbed)).not.toBe(foldAll(coords));
   });
 
   it("is sensitive to seed1, which enters the word through its own prime", async () => {
@@ -286,9 +253,7 @@ describe("Rust and TypeScript spot_noise candidates agree bit for bit", () => {
   });
 });
 
-describe("Rust and TypeScript spot_noise selection agree bit for bit", () => {
-  const FAVORABILITY: Array<(x: number, y: number) => number> = [() => 1, (x) => x, (x) => -x];
-
+describe("spot_noise selection folds to its frozen checksums", () => {
   // The fixture's own parameter space: a tight spacing that accepts nearly
   // everything, a huge one that leans on the 15/16 decay, both skip offsets,
   // and the hard-target branch that is the only route to `fastCbrt`.
@@ -355,25 +320,7 @@ describe("Rust and TypeScript spot_noise selection agree bit for bit", () => {
     },
   ] as const;
 
-  const fieldsOf = (c: (typeof CASES)[number]): number[] => {
-    const spots = selectSpots(
-      { seed0: c.seed0, seed1: c.seed1, regionX: c.regionX, regionY: c.regionY },
-      {
-        regionSize: c.regionSize,
-        candidateSpotCount: c.count,
-        spacing: c.spacing,
-        skipSpan: c.skipSpan,
-        skipOffset: c.skipOffset,
-        hardRegionTargetQuantity: c.hard === 1,
-        density: () => c.density,
-        quantity: () => c.quantity,
-        favorability: FAVORABILITY[c.fav],
-      },
-    );
-    return spots.flatMap((s) => [s.x, s.y, s.quantity, s.coneScale]);
-  };
-
-  it("folds every selected spot's fields to the identical checksum", async () => {
+  it("folds every selected spot's fields to the frozen checksum", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
       const fromWasm = u64(
@@ -398,42 +345,24 @@ describe("Rust and TypeScript spot_noise selection agree bit for bit", () => {
         `selection seed1=${c.seed1} spacing=${c.spacing} hard=${c.hard} fav=${c.fav}`,
         "checksum_spot_selection",
         fromWasm,
-        foldAll(fieldsOf(c)),
       );
     }
   });
 
-  it("emits a shrunken cone on the hard-target case, so fastCbrt is inside the fold", async () => {
-    // Without this the hard-target branch could be dead in both ports and every
-    // checksum above would still agree. `coneScale` is 1 for a full spot, so a
-    // value strictly between 0 and 1 is the branch's signature.
-    const shrunk = fieldsOf(CASES[2]).filter((_v, i) => i % 4 === 3);
-    expect(shrunk.some((s) => s > 0 && s < 1)).toBe(true);
-  });
+  // A guard used to sit here: "emits a shrunken cone on the hard-target case,
+  // so fastCbrt is inside the fold" - it read each selected spot's
+  // `coneScale` off the TypeScript arm and asserted one strictly between 0
+  // and 1 on CASES[2]. `checksum_spot_selection` returns one fold, which
+  // cannot be decomposed back into spots, so it is recorded on #367 as a
+  // lost anti-vacuity control rather than rewritten as something weaker.
 
-  it("would notice a single field differing by one ULP", async () => {
-    const engine = await instantiate();
-    const c = CASES[0];
-    const fromWasm = u64(
-      engine.checksum_spot_selection(
-        c.seed0,
-        c.seed1,
-        c.regionX,
-        c.regionY,
-        c.regionSize,
-        c.count,
-        c.spacing,
-        c.skipSpan,
-        c.skipOffset,
-        c.hard,
-        c.density,
-        c.quantity,
-        c.fav,
-      ),
-    );
-    const perturbed = fieldsOf(c);
-    perturbed[2] = perturbed[2] + Number.EPSILON * perturbed[2];
-    expect(foldAll(perturbed)).not.toBe(fromWasm);
+  it("the fold would notice a single field differing by one ULP", () => {
+    // Synthetic since #371, for the reason the candidates block gives.
+    const fields = Array.from({ length: 4 * 6 }, (_v, k) => 1 + k * 0.37);
+    const perturbed = [...fields];
+    perturbed[2] = (perturbed[2] as number) + Number.EPSILON * (perturbed[2] as number);
+    expect(perturbed[2]).not.toBe(fields[2]);
+    expect(foldAll(perturbed)).not.toBe(foldAll(fields));
   });
 
   it("is sensitive to the favorability shape, which drives the sort", async () => {

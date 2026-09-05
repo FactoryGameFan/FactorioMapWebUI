@@ -310,12 +310,13 @@ describe("tiled render equals untiled render", () => {
   // and needs no `sweepBox` halo - this is the case that proves that, rather
   // than assuming it.
   //
-  // Origin (-256, 872), 64x64: `test/fulgoraScrapDensity.spec.ts`'s own dense
-  // regions sit near (0,0)-(256,256) and (-1200,800)-(-944,1056), and this
-  // window was checked directly against `makeFulgoraScrapPlacement` before
-  // use - it holds 205 rolled placements in the 4096-pixel box, not the
-  // suppressed empty chunk at (0,128)-(32,160) that
-  // `fulgoraScrapDensity.spec.ts` documents. The `resources` case below
+  // Origin (-256, 872), 64x64: the scrap-entity fixture's own dense regions
+  // (`oracle-fulgora-scrap-entities`, once graded by the retired
+  // fulgoraScrapDensity spec) sit near (0,0)-(256,256) and
+  // (-1200,800)-(-944,1056), and this window was checked directly against
+  // the TypeScript scrap placement before use - it held 205 rolled placements
+  // in the 4096-pixel box, not the suppressed empty chunk at (0,128)-(32,160)
+  // that spec documented (#201). The `resources` case below
   // re-checks this at the pixel level: its output must differ from the
   // `terrain` render of the same window, or the tiled-equality assertion
   // would be comparing two identical, scrap-free images and proving nothing.

@@ -19,14 +19,8 @@ afterAll(flushRecording);
  */
 expectRecordedRows(PLANET, 16);
 
-import { basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
 import { clamp, lerp, max, min, sliderRescale, sliderToLinear } from "../src/noise/eval/math";
-import { memoRegion } from "../src/noise/eval/memoRegion";
-import { memoXY } from "../src/noise/eval/memoXY";
-import { multisample } from "../src/noise/eval/multisample";
-import { basisNoiseExpr } from "../src/noise/eval/primitives";
 import { seedNormalized, seedSmall } from "../src/noise/expressions/vulcanusSeed";
-import { fastCbrt } from "../src/noise/fastApprox";
 
 /**
  * Tier 2 of the Rust port's gate for the `eval` layer (#221): strict bit
@@ -104,13 +98,11 @@ function foldAll(values: readonly number[]): bigint {
   return acc;
 }
 
-const f32 = Math.fround;
-
 /**
  * `noiseMachinePow` went with `quickMultioctaveNoise.ts` in #227, so the five
  * exponent rows are graded against the frozen table alone - `tier2Frozen.ts`
  * explains why that is still worth running inside `wasm32-unknown-unknown`.
- * `fastCbrt` survives in `fastApprox.ts`, so its row keeps both arms.
+ * `fastCbrt` went with `fastApprox.ts` in #371, so its row is frozen-only too.
  */
 describe("The noise machine's `^` folds to its frozen checksums", () => {
   // Bases stay positive - `fastLog2` of a non-positive base is not a value
@@ -120,11 +112,8 @@ describe("The noise machine's `^` folds to its frozen checksums", () => {
   const STEP = 0.911;
   const N = 400;
 
-  const bases = (): number[] => Array.from({ length: N }, (_, i) => f32(X0 + i * STEP));
-
   it("folds 400 bases to the frozen checksum for each of the three branches, plus fastCbrt", async () => {
     const engine = await instantiate();
-    const xs = bases();
 
     // 2.5 takes fastapprox, 0.5 takes the exact sqrt, 2 and 7 take exponentiation
     // by squaring. All four go through the same dispatcher on both sides, so a
@@ -140,13 +129,7 @@ describe("The noise machine's `^` folds to its frozen checksums", () => {
 
     // And the cube root separately, so `ONE_THIRD_F32` is inside the comparison
     // rather than beside it.
-    expectFrozen(
-      PLANET,
-      "pow cbrt",
-      "checksum_pow",
-      u64(engine.checksum_pow(0, 1, X0, STEP, N)),
-      foldAll(xs.map((x) => fastCbrt(x))),
-    );
+    expectFrozen(PLANET, "pow cbrt", "checksum_pow", u64(engine.checksum_pow(0, 1, X0, STEP, N)));
   });
 
   it("would not agree if a branch were chosen differently", async () => {
@@ -368,7 +351,7 @@ describe("Rust and TypeScript agree bit for bit on the DSL math operators", () =
   });
 });
 
-describe("Rust and TypeScript agree bit for bit on the composed eval pipeline", () => {
+describe("the composed eval pipeline folds to its frozen checksums", () => {
   // Whole-number step, so coordinates stay integral and `memoRegion` caches
   // rather than bypassing. A fractional step would silently turn the reverse
   // pass into fresh evaluations and this test would still pass, proving nothing
@@ -413,38 +396,7 @@ describe("Rust and TypeScript agree bit for bit on the composed eval pipeline", 
     },
   ];
 
-  /**
-   * The same composition the Rust export builds: `basisNoiseExpr` read through
-   * `multisample`, through `memoXY`, through `memoRegion`, swept forward and
-   * then in reverse so the memos are INSIDE the comparison.
-   */
-  function sweep(c: PipelineCase): number[] {
-    const tables = basisNoiseTablesFromSeed(c.seed0, c.seed1);
-    const params = {
-      seed0: c.seed0,
-      seed1: c.seed1,
-      inputScale: c.inputScale,
-      outputScale: c.outputScale,
-      offsetX: c.offsetX,
-    };
-    const inner = (x: number, y: number): number => basisNoiseExpr(x, y, params, tables);
-    const shifted = (x: number, y: number): number => multisample(inner, x, y, c.dx, c.dy);
-    const region = memoRegion(memoXY(shifted));
-
-    const out: number[] = [];
-    for (let pass = 0; pass < 2; pass++) {
-      for (let j = 0; j < N; j++) {
-        for (let i = 0; i < N; i++) {
-          const ii = pass === 0 ? i : N - 1 - i;
-          const jj = pass === 0 ? j : N - 1 - j;
-          out.push(region(X0 + ii * STEP, Y0 + jj * STEP));
-        }
-      }
-    }
-    return out;
-  }
-
-  it("folds 1,152 reads - two passes over 576 points - identically", async () => {
+  it("folds 1,152 reads - two passes over 576 points - to the frozen checksum", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
       expectFrozen(
@@ -466,51 +418,40 @@ describe("Rust and TypeScript agree bit for bit on the composed eval pipeline", 
             N,
           ),
         ),
-        foldAll(sweep(c)),
       );
     }
   });
 
-  it("the reverse pass is all cache hits, which is what puts the memos inside the comparison", () => {
-    // Anti-vacuity. If the second pass recomputed, the fold would still match
-    // between the ports and this test would say nothing about the caches. It is
-    // asserted by counting evaluations of the wrapped function.
-    const c = CASES[0];
-    const tables = basisNoiseTablesFromSeed(c.seed0, c.seed1);
-    let evaluations = 0;
-    const inner = (x: number, y: number): number => {
-      evaluations++;
-      return basisNoiseExpr(
-        x,
-        y,
-        {
-          seed0: c.seed0,
-          seed1: c.seed1,
-          inputScale: c.inputScale,
-          outputScale: c.outputScale,
-          offsetX: c.offsetX,
-        },
-        tables,
-      );
-    };
-    const region = memoRegion(memoXY((x, y) => multisample(inner, x, y, c.dx, c.dy)));
-    for (let pass = 0; pass < 2; pass++) {
-      for (let j = 0; j < N; j++) {
-        for (let i = 0; i < N; i++) {
-          const ii = pass === 0 ? i : N - 1 - i;
-          const jj = pass === 0 ? j : N - 1 - j;
-          region(X0 + ii * STEP, Y0 + jj * STEP);
-        }
-      }
-    }
-    expect(evaluations, "the reverse pass must not recompute anything").toBe(N * N);
-  });
+  // "the reverse pass is all cache hits" used to sit here. It counted
+  // evaluations of the wrapped TypeScript function to prove the memos were
+  // inside the comparison. That was a property of the TypeScript memo layer,
+  // which #371 deleted; the Rust chain keeps no memo (see CLAUDE.md), so the
+  // claim has nothing left to be about. The two-pass fold above still walks
+  // the reverse pass, frozen.
 
-  it("the offsets really move the sampled field, so a dx of 0 is not what is being compared", () => {
+  it("the offsets really move the sampled field, so a dx of 0 is not what is being compared", async () => {
     // Anti-vacuity for `dx`/`dy`: if the shift did nothing, the two shifted
-    // cases would be indistinguishable from the unshifted one.
-    const [a, b] = [CASES[1], CASES[2]];
-    expect(foldAll(sweep(a))).not.toBe(foldAll(sweep({ ...a, dx: 0, dy: 0 })));
-    expect(foldAll(sweep(b))).not.toBe(foldAll(sweep({ ...b, dx: 0, dy: 0 })));
+    // cases would be indistinguishable from the unshifted one. Asked of the
+    // engine since #371, which is the same claim about the side still running.
+    const engine = await instantiate();
+    const at = (c: PipelineCase): bigint =>
+      u64(
+        engine.checksum_eval_pipeline(
+          c.seed0,
+          c.seed1,
+          c.inputScale,
+          c.outputScale,
+          c.offsetX,
+          c.dx,
+          c.dy,
+          X0,
+          Y0,
+          STEP,
+          N,
+        ),
+      );
+    const [a, b] = [CASES[1] as PipelineCase, CASES[2] as PipelineCase];
+    expect(at(a)).not.toBe(at({ ...a, dx: 0, dy: 0 }));
+    expect(at(b)).not.toBe(at({ ...b, dx: 0, dy: 0 }));
   });
 });

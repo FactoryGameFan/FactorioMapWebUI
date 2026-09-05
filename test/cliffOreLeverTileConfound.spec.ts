@@ -2,8 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import lever from "./fixtures/oracle-vulcanus-tile-lever.seed123456.json";
 import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/cliffs/cliffCatalog";
-import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
-import { DEFAULT_VULCANUS_RESOURCE_CONTROLS } from "../src/noise/eval/ctx";
 
 /**
  * **`autoplace_controls` is NOT an entity-only lever - it moves 5% of the tiles -
@@ -181,56 +179,11 @@ describe("the resource lever moves tiles in the GAME", () => {
  * pointed at it - and it is what lets the port's "0 blocking flips anywhere" be
  * read as covering the tiles the capture did not sample.
  */
-describe("our port reproduces the same tile response", () => {
-  const REGION = lever.region as { x0: number; y0: number; x1: number; y1: number };
-  const BASE = { seed0: 123456, startingPositions: [{ x: 0, y: 0 }] };
-  const OFF = { frequency: 1, size: 0 };
 
-  it("moves 3335 of 65536 tiles under calcite OFF, none of them blocking", () => {
-    const on = makeVulcanusTileResolver(BASE);
-    const off = makeVulcanusTileResolver({
-      ...BASE,
-      vulcanusResourceControls: { ...DEFAULT_VULCANUS_RESOURCE_CONTROLS, calcite: OFF },
-    });
-    let changed = 0;
-    let gained = 0;
-    let lost = 0;
-    for (let x = REGION.x0; x < REGION.x1; x++)
-      for (let y = REGION.y0; y < REGION.y1; y++) {
-        const a = on(x, y).name;
-        const b = off(x, y).name;
-        if (a === b) continue;
-        changed++;
-        if (!BLOCKING.has(a) && BLOCKING.has(b)) gained++;
-        if (BLOCKING.has(a) && !BLOCKING.has(b)) lost++;
-      }
-    expect(changed).toBe(3335);
-    expect(gained).toBe(0);
-    expect(lost).toBe(0);
-
-    // The rates agree: 3335/65536 against the game's 841/16384.
-    const portRate = changed / 65536;
-    const gameRate = diff("calcite OFF").changed / 16384;
-    expect(Math.abs(portRate - gameRate)).toBeLessThan(0.001);
-  }, 300000);
-
-  /**
-   * **Tungsten moves nothing here**, which is the control: `vulcanus_metal_tile`
-   * reads `vulcanus_tungsten_ore_probability`, but there is no tungsten in this
-   * region - it is the resource that fills `[0,0]`, where #126 measured the ore
-   * suppressing zero cliffs. A lever with no region to act on moves no tile, and
-   * that is the arm proving the 3335 above is calcite's doing rather than an
-   * artifact of rebuilding the resolver.
-   */
-  it("changes nothing when tungsten is switched off in a region with none", () => {
-    const on = makeVulcanusTileResolver(BASE);
-    const off = makeVulcanusTileResolver({
-      ...BASE,
-      vulcanusResourceControls: { ...DEFAULT_VULCANUS_RESOURCE_CONTROLS, tungstenOre: OFF },
-    });
-    let changed = 0;
-    for (let x = REGION.x0; x < REGION.x1; x++)
-      for (let y = REGION.y0; y < REGION.y1; y++) if (on(x, y).name !== off(x, y).name) changed++;
-    expect(changed).toBe(0);
-  }, 300000);
-});
+// A second describe used to follow: "our port reproduces the same tile
+// response", which swept the TypeScript resolver over the fixture's region
+// with calcite off and froze 3,335 of 65,536 tiles moving, none of them
+// blocking, at a rate within 0.001 of the game's. That port is gone (#371)
+// and NO Rust test reads oracle-vulcanus-tile-lever yet, so the port half of
+// this finding is a recorded loss; the fixture stays committed for it. The
+// game half above reads the game's own tiles and stands on its own.

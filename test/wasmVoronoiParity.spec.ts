@@ -20,8 +20,6 @@ afterAll(flushRecording);
  */
 expectRecordedRows(PLANET, 95);
 
-import { makeVoronoi, type VoronoiDistanceType } from "../src/noise/voronoiNoise";
-
 /**
  * Tier 2 of the Rust port's gate for the four `voronoi_*` ops: strict bit
  * equality between the two ports over a shared grid, folded order-sensitively.
@@ -105,7 +103,7 @@ function foldAll(values: readonly number[]): bigint {
 }
 
 /** The game's own `DistanceType` order, which is what indexes its jump table. */
-const DISTANCE_TYPES: VoronoiDistanceType[] = ["chebyshev", "manhattan", "euclidean", "minkowski3"];
+const DISTANCE_TYPES = ["chebyshev", "manhattan", "euclidean", "minkowski3"] as const;
 /** Matches the `op` selector on the Rust export. */
 const OPS = ["cellId", "spotNoise", "facetNoise", "pyramidNoise"] as const;
 
@@ -138,8 +136,8 @@ const CASES = [
   { seed0: 123456, seed1: 0, gridSize: 155.65736389160156, jitter: 0.6 },
 ] as const;
 
-describe("Rust and TypeScript voronoi_* agree bit for bit", () => {
-  it("folds 1,600 grid points to the identical checksum, over every op x distance_type x case", async () => {
+describe("the engine's voronoi_* ops fold to their frozen checksums", () => {
+  it("folds 1,600 grid points to the frozen checksum, over every op x distance_type x case", async () => {
     const engine = await instantiate();
     let compared = 0;
     for (const c of CASES) {
@@ -162,20 +160,12 @@ describe("Rust and TypeScript voronoi_* agree bit for bit", () => {
               N,
             ),
           );
-          const v = makeVoronoi({
-            seed0: c.seed0,
-            seed1: c.seed1,
-            gridSize: c.gridSize,
-            jitter: c.jitter,
-            distanceType,
-          });
           compared++;
           expectFrozen(
             PLANET,
             `${op} ${distanceType} jitter=${c.jitter} grid=${c.gridSize} seed0=${c.seed0}`,
             "checksum_voronoi",
             fromWasm,
-            foldAll(sweep((x, y) => v[op](x, y))),
           );
         }
       }
@@ -205,51 +195,31 @@ describe("Rust and TypeScript voronoi_* agree bit for bit", () => {
             N,
           ),
         );
-        const v = makeVoronoi({
-          seed0: c.seed0,
-          seed1: c.seed1,
-          gridSize: c.gridSize,
-          jitter: c.jitter,
-          distanceType,
-        });
-        const values: number[] = [];
-        for (let j = 0; j < N; j++) {
-          const y = Y0 + j * STEP;
-          for (let i = 0; i < N; i++) {
-            const { cellX, cellY } = v.cellIndex(X0 + i * STEP, y);
-            values.push(cellX, cellY);
-          }
-        }
         expectFrozen(
           PLANET,
           `index ${distanceType} jitter=${c.jitter} grid=${c.gridSize}`,
           "checksum_voronoi_cell_index",
           fromWasm,
-          foldAll(values),
         );
       }
     }
   });
 
-  it("would notice a single sample differing by one ULP", async () => {
-    // The anti-vacuity check for this file. A fold that ignored its input, or a
-    // comparison of something against itself, would pass everything above.
-    const engine = await instantiate();
-    const fromWasm = u64(engine.checksum_voronoi(123456, 1, 64, 0.6, 2, 1, X0, Y0, STEP, N));
-    const v = makeVoronoi({
-      seed0: 123456,
-      seed1: 1,
-      gridSize: 64,
-      jitter: 0.6,
-      distanceType: "euclidean",
-    });
-    const perturbed = sweep((x, y) => v.spotNoise(x, y));
+  it("the fold would notice a single sample differing by one ULP", () => {
+    // The anti-vacuity check for the freeze. A fold that ignored its input
+    // would freeze to a stable number and catch nothing. This used to bend
+    // the TypeScript sweep at one of its 1,600 samples; with that arm gone
+    // (#371) it bends a synthetic sweep of the same length, which is the same
+    // claim about the same fold.
+    const values = sweep((x, y) => Math.sin(x * 0.11) * Math.cos(y * 0.07));
+    const perturbed = [...values];
     const buf = new Float32Array(1);
     const bits = new Uint32Array(buf.buffer);
-    buf[0] = perturbed[777];
+    buf[0] = perturbed[777] as number;
     bits[0] += 1;
     perturbed[777] = buf[0];
-    expect(foldAll(perturbed)).not.toBe(fromWasm);
+    expect(perturbed[777]).not.toBe(values[777]);
+    expect(foldAll(perturbed)).not.toBe(foldAll(values));
   });
 
   it("is sensitive to jitter, grid size and both seeds", async () => {

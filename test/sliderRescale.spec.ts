@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import elevationFixture from "./fixtures/oracle-fulgora-elevation.seed123456.json";
-import { withCtxDefaults } from "../src/noise/eval/ctx";
 import { sliderRescale } from "../src/noise/eval/math";
-import { makeVulcanusHelpers } from "../src/noise/expressions/vulcanusHelpers";
 import { sliderRescale as sliderRescaleViaRocks } from "../src/noise/rocks/rockCatalog";
 
 /**
@@ -88,15 +86,6 @@ describe("slider_rescale is the per-operation f32 form, everywhere (#270)", () =
     for (const n of [2, 3, 1.5]) {
       const differing = STEPS.filter((s) => sliderRescale(s, n) !== roundedOnce(s, n));
       expect(differing.length, `n=${n}`).toBe(10);
-    }
-  });
-
-  it("makeVulcanusHelpers reads it, at every reachable volcanism setting", () => {
-    for (const s of STEPS) {
-      const helpers = makeVulcanusHelpers(
-        withCtxDefaults({ seed0: 123456, vulcanusVolcanismFrequency: s }),
-      );
-      expect(helpers.scaleMultiplier, `volcanism frequency = ${s}`).toBe(sliderRescale(s, 3));
     }
   });
 

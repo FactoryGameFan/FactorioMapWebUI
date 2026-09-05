@@ -17,21 +17,21 @@ afterAll(flushRecording);
  */
 expectRecordedRows(PLANET, 4);
 
-import { basisNoise, basisNoiseTablesFromSeed } from "../src/noise/basisNoise";
-
 /**
- * Tier 2 of the Rust port's gate: strict bit equality between the two ports
- * over a shared point grid, folded order-sensitively (#220).
+ * Tier 2 of the Rust port's gate: the engine's order-sensitive fold over a
+ * shared point grid, against the value frozen while the TypeScript port still
+ * existed and the two agreed bit for bit (#220, #227).
  *
  * This runs in process against the committed `engine.wasm`, so there is no dump
- * binary, no intermediate file, and no way for the two sides to drift between a
+ * binary, no intermediate file, and no way for the module to drift between a
  * capture and a comparison. It is also what keeps the wasm loading path
  * exercised from the first module rather than making it a late surprise.
  *
- * **It detects divergence; it does not establish correctness.** Both ports
- * could agree and both be wrong. Correctness is tier 1 - the oracle fixtures -
- * which each port is graded against separately: `test/basisNoise.spec.ts` here
- * and `crates/fmw-noise/src/fixtures.rs` there, both reading the same files.
+ * **It detects the port moving; it does not establish correctness.** The
+ * frozen value was captured from two ports that agreed, and both could have
+ * been wrong. Correctness is tier 1 - the oracle fixtures - graded in
+ * `crates/fmw-noise/src/fixtures.rs`. The TypeScript arm this file used to
+ * compare against went with #371.
  */
 const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
 
@@ -66,6 +66,9 @@ const MASK64 = (1n << 64n) - 1n;
  * Folds RAW BITS, little-endian, and is order-sensitive. FNV-1a rather than the
  * spikes' XOR fold because XOR is blind to order and cancels pairs: swap two
  * points, or break two identically, and an XOR fold does not move.
+ *
+ * Kept after the TypeScript arm went, because the sensitivity test below is a
+ * claim about THIS fold - the one the frozen table was recorded with.
  */
 const scratch = new DataView(new ArrayBuffer(8));
 function foldF64(acc: bigint, value: number): bigint {
@@ -78,38 +81,13 @@ function foldF64(acc: bigint, value: number): bigint {
   return hash;
 }
 
-/** The same grid the Rust export walks: rows outer, columns inner. */
-function foldTypeScript(
-  seed0: number,
-  seed1: number,
-  x0: number,
-  y0: number,
-  step: number,
-  n: number,
-  perturbIndex = -1,
-): bigint {
-  const tables = basisNoiseTablesFromSeed(seed0, seed1);
-  let acc = 0n;
-  let k = 0;
-  for (let j = 0; j < n; j++) {
-    const y = y0 + j * step;
-    for (let i = 0; i < n; i++) {
-      const x = x0 + i * step;
-      let v = basisNoise(x, y, tables);
-      if (k === perturbIndex) {
-        // One ULP up, in f32, which is the smallest difference the two ports
-        // could possibly have.
-        const buf = new Float32Array(1);
-        const bits = new Uint32Array(buf.buffer);
-        buf[0] = v;
-        bits[0] += 1;
-        v = buf[0];
-      }
-      acc = foldF64(acc, v);
-      k++;
-    }
-  }
-  return acc;
+/** One f32 ULP up - the smallest difference two ports could possibly have. */
+function bumpOneUlp(v: number): number {
+  const buf = new Float32Array(1);
+  const bits = new Uint32Array(buf.buffer);
+  buf[0] = v;
+  bits[0] += 1;
+  return buf[0];
 }
 
 const SEED0 = 123456;
@@ -122,29 +100,31 @@ const Y0 = 7.25;
 const STEP = 0.37;
 const N = 64;
 
-describe("Rust and TypeScript basisNoise agree bit for bit", () => {
-  it("folds 4,096 grid points to the identical checksum", async () => {
+describe("the engine's basisNoise folds to its frozen checksums", () => {
+  it("folds 4,096 grid points to the frozen checksum", async () => {
     const engine = await instantiate();
     const fromWasm = u64(engine.checksum_basis_noise(SEED0, SEED1, X0, Y0, STEP, N));
-    const fromTs = foldTypeScript(SEED0, SEED1, X0, Y0, STEP, N);
 
-    // Strict equality on a fold of raw bits. Not a tolerance: the two ports
-    // must produce the SAME f32 at every one of the 4,096 points.
-    expectFrozen(PLANET, "default seed pair", "checksum_basis_noise", fromWasm, fromTs);
+    // Strict equality on a fold of raw bits. Not a tolerance: the module must
+    // produce the SAME f32 at every one of the 4,096 points it did when the
+    // row was recorded.
+    expectFrozen(PLANET, "default seed pair", "checksum_basis_noise", fromWasm);
   });
 
-  it("would notice a single point differing by one ULP", async () => {
-    // The anti-vacuity check for THIS test. A fold that ignored its input, or a
-    // comparison that compared something to itself, would pass the test above
-    // and catch nothing. Here the TypeScript side is bent at one of 4,096
-    // points and the checksums must part.
-    const engine = await instantiate();
-    const fromWasm = u64(engine.checksum_basis_noise(SEED0, SEED1, X0, Y0, STEP, N));
-    const bent = foldTypeScript(SEED0, SEED1, X0, Y0, STEP, N, 1234);
-    expect(bent).not.toBe(fromWasm);
+  it("the fold would notice a single value differing by one ULP", () => {
+    // The anti-vacuity check for the freeze. A fold that ignored its input
+    // would freeze to a stable number and catch nothing. This used to bend the
+    // TypeScript arm at one of its 4,096 points; with that arm gone it bends a
+    // synthetic sweep of the same length, which is the same claim about the
+    // same fold.
+    const values = Array.from({ length: N * N }, (_v, k) => Math.sin(k * 0.37) * 4.2);
+    const fold = (vs: readonly number[]): bigint => vs.reduce((acc, v) => foldF64(acc, v), 0n);
+    const bent = values.map((v, k) => (k === 1234 ? bumpOneUlp(v) : v));
+    expect(bent[1234]).not.toBe(values[1234]);
+    expect(fold(bent)).not.toBe(fold(values));
   });
 
-  it("agrees on a second seed, so the seed plumbing is graded too", async () => {
+  it("holds its frozen checksum on a second seed, so the seed plumbing is graded too", async () => {
     // seed1 is what distinguishes the many basis_noise calls a map-gen program
     // makes, and its LOW BYTE is deliberately not in the taus88 seed word - it
     // picks the salt instead. A port that dropped either would still pass the
@@ -156,13 +136,7 @@ describe("Rust and TypeScript basisNoise agree bit for bit", () => {
       [1, 0],
     ] as const) {
       const fromWasm = u64(engine.checksum_basis_noise(s0, s1, X0, Y0, STEP, N));
-      expectFrozen(
-        PLANET,
-        `seeds ${s0}/${s1}`,
-        "checksum_basis_noise",
-        fromWasm,
-        foldTypeScript(s0, s1, X0, Y0, STEP, N),
-      );
+      expectFrozen(PLANET, `seeds ${s0}/${s1}`, "checksum_basis_noise", fromWasm);
     }
   });
 
