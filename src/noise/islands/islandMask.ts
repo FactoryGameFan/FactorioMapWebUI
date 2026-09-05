@@ -11,7 +11,7 @@
  *    can actually walk and build across. If two neighbouring cells' land
  *    touches, that IS one island, and a per-cell test would wrongly split it.
  */
-import { FULGORA_OCEAN_RGB } from "../preview/renderFulgoraTerrain";
+import { FULGORA_OCEAN_RGB } from "../preview/palette";
 
 /** 1 where the pixel is any land tile, 0 where it is either ocean colour. */
 export function landMaskFromImage(

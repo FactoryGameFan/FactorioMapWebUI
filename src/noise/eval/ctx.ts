@@ -1,7 +1,16 @@
-import type { Point } from "../distanceFromNearestPoint";
 import { seedNormalized, seedSmall } from "../expressions/vulcanusSeed";
 
-export type { Point };
+/**
+ * A point in world tiles.
+ *
+ * Declared here since #371 deleted `distanceFromNearestPoint.ts`, whose port is
+ * `crates/fmw-noise/src/distance_from_nearest_point.rs`. The spawn and lake
+ * lists a render request carries are what still needs it on this side.
+ */
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
 
 /**
  * `control:<resource>:frequency|size` for one Vulcanus resource. Richness is

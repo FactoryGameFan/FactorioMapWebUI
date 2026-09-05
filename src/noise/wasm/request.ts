@@ -328,7 +328,8 @@ function trigOf(angleDegrees: number): { sin: number; cos: number } {
  * closes the question instead of bounding it.
  *
  * **Every step is narrowed to f32, and this must stay token-for-token identical
- * to `fulgoraShared.ts`** (#279). The Rust side reads `spot.trig.sin` straight
+ * to `fulgoraShared.ts`** (#279), which #371 deleted - the port is
+ * `crates/fmw-noise/src/expressions/fulgora_shared.rs`. The Rust side reads `spot.trig.sin` straight
  * into the arithmetic without re-narrowing, so an un-narrowed value sent from
  * here would make the WASM render differ from the TypeScript one - which is
  * precisely what tier 3's byte-identical RGBA comparison exists to catch, and it
@@ -363,7 +364,8 @@ export function bearingTrig(seed0: number): {
  * planet with its biomes rotated, which no bound and no smoke test would catch.
  *
  * The narrowings differ per group and are transcribed from the call sites
- * rather than normalised:
+ * rather than normalised. The TypeScript files named below went in #371; their
+ * ports under `crates/fmw-noise/src/expressions/` keep the same narrowings:
  *
  * - the three SPAWN angles are narrowed by `vulcanusSpawn.ts`, with
  *   `f32(120 * direction)` narrowed separately before the add;

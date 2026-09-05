@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { floodFillFrom, landMaskFromImage } from "../src/noise/islands/islandMask";
-import { FULGORA_OCEAN_RGB } from "../src/noise/preview/renderFulgoraTerrain";
+import { FULGORA_OCEAN_RGB } from "../src/noise/preview/palette";
 
 /** Paint an RGBA buffer from an ASCII picture: "#" land, "." shallow, "~" deep. */
 function image(rows: string[]): { rgba: Uint8ClampedArray; w: number; h: number } {

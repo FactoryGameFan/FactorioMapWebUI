@@ -31,7 +31,7 @@ import { countFullChunks } from "./fullChunks";
 import { surveyIslands, type IslandCandidate } from "./cellSurvey";
 import { floodFillFrom, landMaskFromImage } from "./islandMask";
 import { chainComponents, type PlacedMask } from "./chainGraph";
-import type { FulgoraCtx } from "../expressions/fulgoraShared";
+import type { FulgoraCtx } from "./surveyThroughWasm";
 import type { EngineExports } from "../wasm/engine";
 import {
   ENGINE_REQUIRED,

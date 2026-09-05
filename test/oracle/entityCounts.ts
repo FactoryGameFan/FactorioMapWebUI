@@ -3,7 +3,8 @@
  * places in a region, for the default preset.
  *
  * This is the ground truth the approximate placement roll
- * (`src/noise/placement/placementRoll.ts`) is validated against. The roll drops
+ * (`crates/fmw-noise/src/placement/roll.rs`, the port of the `placementRoll.ts`
+ * that #371 deleted) is validated against. The roll drops
  * the game's cross-overlay arbitration and its per-placement jitter draws, so
  * individual entity POSITIONS are not expected to match - only how many tiles
  * come up placed over a region. That is exactly what a count answers and what
