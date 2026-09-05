@@ -318,7 +318,7 @@ describe("IslandFinderPanel", () => {
   it("forwards the preset's fulgora_islands slider values into ctx, not just seed0", async () => {
     // `FulgoraCtx.islandsFrequency`/`islandsSize` change the Voronoi grid
     // constant both the survey step and every render window derive from
-    // (see elevationPreviewCtx.ts / fulgoraShared.ts). A ctx carrying only
+    // (see elevationPreviewCtx.ts / surveyThroughWasm.ts). A ctx carrying only
     // seed0 makes the finder survey and render the DEFAULT grid even when
     // the preset moved these sliders - a different map than the preview
     // beside it shows.

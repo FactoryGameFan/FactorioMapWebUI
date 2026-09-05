@@ -2,7 +2,7 @@
  * Stage 1 of the island finder: find WHERE the islands are, cheaply.
  *
  * Fulgora's map is a Voronoi tiling and every island is one cell (see
- * `fulgoraCells.ts`), so enumerating islands is enumerating cells rather than
+ * `crates/fmw-noise/src/expressions/fulgora_cells.rs`), so enumerating islands is enumerating cells rather than
  * flood-filling pixels. One `cells` evaluation costs about 2.33 us, against
  * about 48 us for a rendered pixel, so this stage is a rounding error in the
  * finder's total cost.
@@ -11,7 +11,7 @@
  * this does NOT invert the grid to find cell centres. It scans world positions
  * and groups them by the cell each one lands in.
  */
-import type { FulgoraCtx } from "../expressions/fulgoraShared";
+import type { FulgoraCtx } from "./surveyThroughWasm";
 import type { EngineExports } from "../wasm/engine";
 import { surveyCellsThroughWasm } from "./surveyThroughWasm";
 import { bearingTrig } from "../wasm/request";

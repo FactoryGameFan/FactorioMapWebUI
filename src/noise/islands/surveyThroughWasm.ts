@@ -1,7 +1,6 @@
 import { encodeRenderRequest, PLANET, bearingTrig } from "../wasm/request";
 import type { WasmRenderRequest } from "../wasm/request";
 import type { EngineExports } from "../wasm/engine";
-import type { FulgoraCtx } from "../expressions/fulgoraShared";
 
 /**
  * The engine-backed half of the island finder's stage 1.
@@ -10,8 +9,8 @@ import type { FulgoraCtx } from "../expressions/fulgoraShared";
  * **96.3% of island-finding** measured in Chrome - against 3.7% for the graph,
  * rectangle and chunk work, which is pure JavaScript and stays here. So this is
  * the only part of `islands/` that has to cross into Rust, and it is a
- * correctness requirement rather than an optimisation: #227 deletes the
- * TypeScript chain `makeFulgoraStack` runs on.
+ * correctness requirement rather than an optimisation: #371 deleted the
+ * TypeScript chain `makeFulgoraStack` used to run on.
  *
  * ## Why it sweeps in BANDS
  *
@@ -32,6 +31,26 @@ import type { FulgoraCtx } from "../expressions/fulgoraShared";
  * ocean threshold). The consumer already has a loop; this hands it one position
  * at a time and keeps the module's buffer as the only large allocation.
  */
+
+/**
+ * The free variables Fulgora's shared layer reads.
+ *
+ * `seed0` is `map_seed` as the noise program sees it - i.e. the FULGORA SURFACE
+ * seed, not the user's map seed. Derive it with
+ * `surfaceSeedForPlanet("fulgora", mapSeed)` before constructing this.
+ *
+ * Declared here since #371 deleted `expressions/fulgoraShared.ts`; the port is
+ * `crates/fmw-noise/src/expressions/fulgora_shared.rs`, and the ABI carries
+ * these three as the Fulgora block's seed and two island sliders.
+ */
+export interface FulgoraCtx {
+  /** `map_seed` on the Fulgora surface. */
+  readonly seed0: number;
+  /** `control:fulgora_islands:frequency` (wire value). Neutral/default = 1. */
+  readonly islandsFrequency?: number;
+  /** `control:fulgora_islands:size` (wire value). Neutral/default = 1. */
+  readonly islandsSize?: number;
+}
 
 /** A strided world box to sweep, matching `cellSurvey`'s own `SearchBox`. */
 export interface SurveyBox {

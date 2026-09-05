@@ -1,6 +1,5 @@
 import { readClimateControls } from "./climateReads";
-import type { Point } from "../noise/distanceFromNearestPoint";
-import type { VulcanusResourceControls } from "../noise/eval/ctx";
+import type { Point, VulcanusResourceControls } from "../noise/eval/ctx";
 import { readMapType } from "./mapType";
 import { readResourceControls, readVulcanusResourceControls } from "./resourceReads";
 import type { ResourceControlLevers } from "../noise/resources/resourceCatalog";

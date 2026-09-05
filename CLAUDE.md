@@ -1200,16 +1200,16 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 
 #### Where the port stands
 
-| phase    | scope                                                                                                                                                                          | state |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----- |
-| 1 (#220) | primitives: `taus88`, `fast_approx`, `basis_noise`, the four multioctave ops, `random_penalty`, the spot ops, `distance_from_nearest_point`, `starting_lakes`, `voronoi_noise` | done  |
-| 2 (#221) | the `eval` layer - `multisample`, `memo_xy`, `memo_region`, `math`, `ctx`, `primitives` - plus `expressions/vulcanus_seed`                                                     | done  |
-| 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                      | done  |
-| 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                          | done  |
-| 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view the panel offers renders through the engine** (not `elevation` - see below).                    | done  |
-| 6 (#226) | Nauvis - every expression, the TERRAIN render, all FIVE overlays and the `all` composite. The `elevation` view is ported too, as of #227                                       | done  |
-| 7 (#227) | delete the ported TypeScript under `src/noise/`                                                                                                                                | done  |
-| 8 (#363) | Fulgora's `resources` and `all` composites, so **every planet's DEFAULT view renders through the engine**                                                                      | done  |
+| phase    | scope                                                                                                                                                                                                                  | state |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| 1 (#220) | primitives: `taus88`, `fast_approx`, `basis_noise`, the four multioctave ops, `random_penalty`, the spot ops, `distance_from_nearest_point`, `starting_lakes`, `voronoi_noise`                                         | done  |
+| 2 (#221) | the `eval` layer - `multisample`, `memo_xy`, `memo_region`, `math`, `ctx`, `primitives` - plus `expressions/vulcanus_seed`                                                                                             | done  |
+| 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                                                              | done  |
+| 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                                                                  | done  |
+| 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view the panel offers renders through the engine** (not `elevation` - see below).                                                            | done  |
+| 6 (#226) | Nauvis - every expression, the TERRAIN render, all FIVE overlays and the `all` composite. The `elevation` view is ported too, as of #227                                                                               | done  |
+| 7 (#227) | delete the ported TypeScript under `src/noise/` - Nauvis and the render fallbacks in #227, then Fulgora and the Vulcanus expressions in #371, which left `src/noise/` holding orchestration, catalogs and the ABI only | done  |
+| 8 (#363) | Fulgora's `resources` and `all` composites, so **every planet's DEFAULT view renders through the engine**                                                                                                              | done  |
 
 Phase 6 has ported every Nauvis _expression_: `nauvis_shared`,
 `elevation_lakes` (which also yields `elevation_island` - the same tree at

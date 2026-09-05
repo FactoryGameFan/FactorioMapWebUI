@@ -1,17 +1,26 @@
-import type { Point } from "../distanceFromNearestPoint";
 import { CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX } from "../cliffs/cliffCatalog";
 import type { CliffControls, CliffSettingsInput } from "../cliffs/cliffCatalog";
-import type { VulcanusResourceControls } from "../eval/ctx";
+import type { Point, VulcanusResourceControls } from "../eval/ctx";
 import type { EnemyControls } from "../enemies/enemyCatalog";
 import type { Planet } from "../../model/planets";
-import { PLACEMENT_MARK_RADIUS_PX } from "../placement/placementRoll";
 import type { ResourceControlLevers } from "../resources/resourceCatalog";
 import type { RockControls } from "../rocks/rockCatalog";
 import { renderThroughWasm, type EngineExports } from "../wasm/engine";
 import { RESOURCE_CATALOG } from "../resources/resourceCatalog";
-import type { FulgoraScrapControls } from "../expressions/fulgoraScrap";
 
 /** A render job posted to the worker. `id` tags the response for staleness. */
+/**
+ * `control:scrap:frequency` / `:size`, the two scrap levers the Fulgora block
+ * of the ABI carries. Declared here since #371 deleted `fulgoraScrap.ts`; the
+ * port that reads them is `crates/fmw-noise/src/expressions/fulgora_scrap.rs`.
+ */
+export interface FulgoraScrapControls {
+  /** `control:scrap:frequency` (wire value). Neutral/default = 1. */
+  readonly frequency?: number;
+  /** `control:scrap:size` (wire value). Neutral/default = 1. */
+  readonly size?: number;
+}
+
 export interface ElevationRenderRequest {
   id: number;
   seed0: number;
@@ -252,6 +261,21 @@ function haloQueryBox(req: ElevationRenderRequest, backPx: number, fwdPx: number
 export function cliffCellQueryBox(req: ElevationRenderRequest): WorldBox {
   return haloQueryBox(req, CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX - CLIFF_MARK_BACK_PX - 1);
 }
+
+/**
+ * The (2*1+1) = 3x3 legibility mark radius for the roll overlays that use one:
+ * Nauvis enemy bases, Nauvis crude oil and the Vulcanus sulfuric-acid geyser.
+ * A spawner is 7.4 x 6.4 tiles, a geyser and an oil well 2.8 x 2.8, and all
+ * three place rarely enough that a 1px dot disappears.
+ *
+ * The engine paints the mark from its own copy,
+ * `crates/fmw-noise/src/placement/roll.rs`'s `PLACEMENT_MARK_RADIUS_PX`; this
+ * one only widens the tiled sweep below so marks are not clipped at
+ * worker-tile seams. The two must agree, and `test/tiledEquality.spec.ts` is
+ * what fails when they do not. Declared here since #371 deleted
+ * `placementRoll.ts`, whose only surviving consumer this was.
+ */
+const PLACEMENT_MARK_RADIUS_PX = 1;
 
 /**
  * The world box to sweep for a placement roll that paints a 3x3 mark -

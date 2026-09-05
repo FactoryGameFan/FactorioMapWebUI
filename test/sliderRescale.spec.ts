@@ -23,13 +23,12 @@ import { sliderRescale as sliderRescaleViaRocks } from "../src/noise/rocks/rockC
  *
  * ## What is covered by an assertion here, and what by the type checker
  *
- * Deleting `src/noise/eval/sliderRescale.ts` makes any missed call site a type
- * error, and `vp check` type-checks, so the compiler covers the call sites this
- * file cannot reach cheaply (`vulcanusResources.ts` holds its four values in
- * locals, `vulcanusBiomes.ts` folds its two into an unexported `volcanism`).
- * The two that ARE reachable get real assertions: `scaleMultiplier` is on the
- * `VulcanusHelpers` interface, and the rocks module re-exports the function
- * itself, so identity settles that side.
+ * Deleting `src/noise/eval/sliderRescale.ts` made any missed call site a type
+ * error, and `vp check` type-checks. The four Vulcanus readers went to Rust
+ * and #371 deleted their TypeScript, so the port's copy in
+ * `crates/fmw-noise/src/eval/math.rs` is graded by tier 1 rather than here.
+ * The one TypeScript reader left is the rocks module, which re-exports the
+ * function itself, so identity settles that side.
  *
  * ## Why the input space is 12 values, not a range
  *
