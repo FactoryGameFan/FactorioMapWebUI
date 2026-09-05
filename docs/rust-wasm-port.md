@@ -257,9 +257,12 @@ passes while grading nothing. Tier 2's 1,168 folds live in
 `test/fixtures/tier2-checksums.json`; tier 3's renders live in
 `test/fixtures/tier3-render-checksums.json`, where `nauvis:render` holds 73
 rows, `vulcanus:render` 26, `elevation:render` 18 and `fulgora:render` 23 - the
-last recorded 2026-09-04 ahead of #371, which deletes the Fulgora TypeScript
-arm the way #227 deleted the other two. Each spec asserts BOTH arms against the
-frozen value.
+last recorded 2026-09-04 ahead of #371, which deleted the Fulgora TypeScript
+arm the way #227 deleted the other two. **Each spec now asserts the WASM arm
+against a value captured while both arms still agreed.** While both existed the
+table could not be wrong, because each arm was checked against it; with the
+reference gone, a row can no longer find a NEW disagreement, but it still
+catches the port moving - including underneath it in the toolchain.
 
 **The island finder has a freeze of the same shape** - `test/islandsFrozen.ts`
 over `test/fixtures/island-finder-checksums.json`, four rows in two sections,
@@ -574,15 +577,28 @@ record.
 **The request layout is at v2 and is per-planet.** A 56-byte common prefix
 declares `params_bytes`, then a per-planet block follows:
 
-| planet   | block                | request |
-| -------- | -------------------- | ------- |
-| Fulgora  | 64                   | 120     |
-| Nauvis   | 376                  | 432     |
-| Vulcanus | 312 (largest at 368) | 368     |
+| planet   | block | request |
+| -------- | ----- | ------- |
+| Fulgora  | 64    | 120     |
+| Nauvis   | 512   | 568     |
+| Vulcanus | 312   | 368     |
+
+**Nauvis is the largest, so `REQUEST_BYTES` is 568.** Do not quote that table
+from here - it has gone stale once already, because a block grows whenever an
+overlay lands. The constants are declared in three places that must agree, and
+reading all three at once is both the current answer and the check that they
+have not drifted:
+
+```bash
+grep -n '_BYTES' crates/fmw-wasm/src/abi.rs src/noise/wasm/request.ts \
+  test/fixtures/verify-wasm-request.py
+```
 
 **A planet block can grow with NO version bump, and that is the split working.**
-Vulcanus's has grown three times, Fulgora's once (#363, for
-`control:scrap:frequency` and `:size`), Nauvis's five times.
+Vulcanus's has grown twice (248 -> 280 for the cliff view, 280 -> 312 for the
+overlays), Fulgora's once (#363, 48 -> 64, for `control:scrap:frequency` and
+`:size`), and Nauvis's six times (64 -> 96 -> 144 -> 160 -> 232 -> 376 -> 512,
+the last of them #339 appending the spawn list).
 `BadParamsLength` refuses a writer whose declared length disagrees. **A version
 bump is for a change to the COMMON prefix**, which every planet reads.
 
@@ -592,13 +608,14 @@ controls would have moved the trig block, whose offsets every existing reader
 already knows.
 
 **`REQUEST_BYTES` is a `max`, not `COMMON_BYTES + VULCANUS_PARAMS_BYTES`.** Both
-sides had it written the second way, which was correct for three planets and
-silently wrong the moment a fourth block overtook it - the failure being a
-scratch buffer too small, which surfaces as a truncated request rather than as a
-size error. The Rust test asserts the PROPERTY (the capacity equals the largest
-request) rather than repeating a literal. A Nauvis request being between the
-other two is what makes "the encoder returns a LENGTH, not the capacity" a real
-statement rather than a two-case coincidence.
+sides had it written the second way, which was correct while Vulcanus's block
+was the largest, and went silently wrong the moment Nauvis's overtook it in
+#335 - the failure being a scratch buffer too small, which surfaces as a
+truncated request rather than as a size error. The Rust test asserts the PROPERTY (the
+capacity equals the largest request) rather than repeating a literal. A Nauvis
+request sat BETWEEN the other two through its first five sizes, which is what
+makes "the encoder returns a LENGTH, not the capacity" a real statement rather
+than a two-case coincidence.
 
 **Nauvis carries ONE world box; Vulcanus carries TWO; trees need none.** Which
 overlays need one is not guessable. The terrain view paints one pixel per pixel.

@@ -1390,6 +1390,14 @@ The text below is lifted verbatim from `CLAUDE.md` at `bf601a1`, immediately
 before the trim, so nothing in it can have been lost in the condensation. Read
 it when a rule in the live doc is too terse to act on.
 
+**Its numbers are point-in-time and are NOT edited when the port moves**, the
+same rule the 2026-08-25 snapshot carries. Two in the ABI block were already
+overtaken when it was lifted: it says a Nauvis request is 432 (it is 568, since
+#339 appended the spawn list) and it writes the Vulcanus growth chain as
+`248 -> 280 -> 312 -> 368`, whose last entry is a REQUEST size rather than a
+block size - the block grew twice, to 312. `docs/rust-wasm-port.md` carries the
+current table.
+
 ### The Rust/WASM noise engine (`crates/`) - phases 1-5 done, phase 6 all but the overlays
 
 A Cargo workspace at the repository root, landed empty on purpose (#219) so the
