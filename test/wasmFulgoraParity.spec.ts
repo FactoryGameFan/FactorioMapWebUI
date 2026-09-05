@@ -11,15 +11,6 @@ import {
   record,
 } from "./tier2Frozen";
 
-import { makeFulgoraScrap } from "../src/noise/expressions/fulgoraScrap";
-import {
-  type FulgoraTile,
-  makeFulgoraLandProbabilities,
-  makeFulgoraOceanTestFrom,
-  makeFulgoraStack,
-  makeFulgoraTileResolverFrom,
-} from "../src/noise/tiles/fulgoraCatalog";
-
 /**
  * Tier 2 of the Rust port's gate for Fulgora's landmask chain (#223): strict
  * bit equality between the two ports over a swept grid, folded
@@ -73,27 +64,6 @@ async function instantiate(): Promise<EngineExports> {
 /** A WASM `u64` arrives in JavaScript as a SIGNED BigInt. See wasmEngine.spec.ts. */
 const u64 = (x: bigint): bigint => BigInt.asUintN(64, x);
 
-const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
-const FNV_PRIME = 0x100000001b3n;
-const MASK64 = (1n << 64n) - 1n;
-
-const scratch = new DataView(new ArrayBuffer(8));
-function foldF64(acc: bigint, value: number): bigint {
-  let hash = acc === 0n ? FNV_OFFSET_BASIS : acc;
-  scratch.setFloat64(0, value, true);
-  for (let i = 0; i < 8; i++) {
-    hash ^= BigInt(scratch.getUint8(i));
-    hash = (hash * FNV_PRIME) & MASK64;
-  }
-  return hash;
-}
-
-function foldAll(values: readonly number[]): bigint {
-  let acc = 0n;
-  for (const v of values) acc = foldF64(acc, v);
-  return acc;
-}
-
 /**
  * The field order the Rust `checksum_fulgora` selector uses, as accessor names.
  *
@@ -125,125 +95,6 @@ const CASES: readonly Case[] = [
   { label: "default sliders", islandsFrequency: 1, islandsSize: 1 },
   { label: "frequency 2, size 3", islandsFrequency: 2, islandsSize: 3 },
 ];
-
-function tsFields(c: Case): number[][] {
-  const ctx = {
-    seed0: SEED0,
-    islandsFrequency: c.islandsFrequency,
-    islandsSize: c.islandsSize,
-  };
-  // ONE stack, so the ocean test reads the same field objects - and therefore
-  // the same memo caches - the individual accessors below read. Building a
-  // second set would be correct and would evaluate the whole chain twice.
-  const stack = makeFulgoraStack(ctx);
-  const { shared, cells, chain: elevation, masks, roads, ruins } = stack;
-  const ocean = makeFulgoraOceanTestFrom(stack);
-  const scrap = makeFulgoraScrap(stack);
-  const resolve = makeFulgoraTileResolverFrom(stack);
-  const landProbabilities = makeFulgoraLandProbabilities(ctx);
-  const TILE_CODE: Record<string, number> = {
-    "fulgoran-dust": 0,
-    "fulgoran-dunes": 1,
-    "fulgoran-sand": 2,
-    "fulgoran-rock": 3,
-    "fulgoran-paving": 4,
-    "fulgoran-walls": 5,
-    "fulgoran-conduit": 6,
-    "fulgoran-machinery": 7,
-    shallow: 8,
-    deep: 9,
-  };
-
-  const accessors: ((x: number, y: number) => number)[] = [
-    shared.wobbleInfluence,
-    shared.wobbleMask,
-    shared.wobbleX,
-    shared.wobbleY,
-    shared.ox,
-    shared.oy,
-    shared.wx,
-    shared.wy,
-    shared.startingCone,
-    shared.startingVaultCone,
-    shared.startingMask,
-    shared.startingVaultMask,
-    cells.cells,
-    cells.pyramids,
-    cells.spots,
-    cells.spotsInv,
-    cells.blanks,
-    cells.mesa,
-    cells.sprawl,
-    cells.vaults,
-    cells.vaultsAndStartingVault,
-    elevation.basis,
-    elevation.basisOil,
-    elevation.rock,
-    elevation.dunes,
-    elevation.scrapMedium,
-    elevation.natural,
-    elevation.sprawlPyramids,
-    elevation.vaultPyramids,
-    elevation.vaultPyramidsAndStart,
-    elevation.moats,
-    elevation.mixPyramids,
-    elevation.mixNatural,
-    elevation.mixMoats,
-    elevation.vaultSpots,
-    elevation.mixSpots,
-    elevation.oilMask,
-    elevation.mixOil,
-    elevation.sandBasins,
-    elevation.preElevation,
-    elevation.elevation,
-    (x, y): number => {
-      const wet = ocean(x, y);
-      return wet === undefined ? 0 : wet === "shallow" ? 1 : 2;
-    },
-    masks.naturalMask,
-    masks.naturalAndMesaMask,
-    masks.artificialMask,
-    roads.roadCells,
-    roads.roadPyramids,
-    roads.pyramidsBanding,
-    roads.spotsPrebanding,
-    roads.spotsBanding,
-    roads.structureCells,
-    roads.structureSubnoise,
-    roads.structureFacets,
-    roads.roadPavingThin,
-    roads.roadPaving2,
-    roads.roadPaving2b,
-    roads.roadPaving2c,
-    roads.roadDust,
-    ruins.ruinsWalls,
-    ruins.ruinsPaving,
-    ruins.tileRuinPaving,
-    ruins.tileRuinWalls,
-    ruins.tileRuinConduit,
-    ruins.tileRuinMachinery,
-    scrap.probability,
-    scrap.structTerm,
-    scrap.vaultTerm,
-    ...Array.from(
-      { length: 8 },
-      (_, k) =>
-        (x: number, y: number): number =>
-          landProbabilities(x, y)[k] as number,
-    ),
-    (x, y): number => TILE_CODE[resolve(x, y) as FulgoraTile] as number,
-  ];
-
-  const out: number[][] = accessors.map(() => []);
-  for (let j = 0; j < N; j++) {
-    const y = Y0 + j * STEP;
-    for (let i = 0; i < N; i++) {
-      const x = X0 + i * STEP;
-      for (const [f, read] of accessors.entries()) (out[f] as number[]).push(read(x, y));
-    }
-  }
-  return out;
-}
 
 /** The two bearings, computed in V8 and handed to the module. */
 function trig(): [number, number, number, number] {
@@ -343,18 +194,17 @@ afterAll(flushRecording);
  */
 expectRecordedRows(PLANET, FIELD_NAMES.length * CASES.length);
 
-describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain", () => {
+describe("Fulgora's landmask chain folds to its frozen checksums", () => {
   it("covers every field the module exposes, so a new one cannot go untested", async () => {
     const engine = await instantiate();
     expect(FIELD_NAMES).toHaveLength(engine.fulgora_field_count());
   });
 
-  it("folds 676 grid points identically for all 76 fields, at two slider settings", async () => {
+  it("folds 676 grid points to the frozen checksum for all 76 fields, at two slider settings", async () => {
     const engine = await instantiate();
     const [sinStart, cosStart, sinVault, cosVault] = trig();
     let compared = 0;
     for (const c of CASES) {
-      const ts = tsFields(c);
       for (const [field, name] of FIELD_NAMES.entries()) {
         const wasm = u64(
           engine.checksum_fulgora(
@@ -372,23 +222,20 @@ describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain"
             N,
           ),
         );
-        const tsFold = foldAll(ts[field] as number[]);
 
-        // Recording compares the two arms first, so the table can only ever
-        // capture a value both ports already agree on.
+        // A record run since #371 has only the engine to record. The rows in
+        // the committed table were captured while the TypeScript arm existed
+        // and agreed, which is why re-recording is a deliberate act rather
+        // than a repair - see `tier2Frozen.ts`.
         if (RECORDING) {
-          expect(wasm, `${name} (${c.label})`).toBe(tsFold);
           record(PLANET, c.label, name, wasm);
           compared++;
           continue;
         }
 
-        // Both arms against the frozen value rather than against each other -
-        // see `test/tier2Frozen.ts` for why that outlives #227.
         const want = frozen(PLANET, c.label, name);
         expect(want, `no frozen checksum for ${name} (${c.label})`).toBeDefined();
         expect(wasm, `wasm ${name} (${c.label})`).toBe(want);
-        expect(tsFold, `TypeScript ${name} (${c.label})`).toBe(want);
         compared++;
       }
     }
@@ -397,25 +244,42 @@ describe("Rust and TypeScript agree bit for bit across Fulgora's landmask chain"
     if (!RECORDING) expect(frozenCount(PLANET)).toBe(FIELD_NAMES.length * CASES.length);
   });
 
-  it("the second slider case really is a different chain, so running both says something", () => {
+  it("the second slider case really is a different chain, so running both says something", async () => {
     // Anti-vacuity. At the default sliders `grid` is exactly 175 and
     // `sliderRescale(1, 2)` is exactly 1, so a one-case spec would not exercise
-    // either lever at all.
-    const a = tsFields(CASES[0] as Case);
-    const b = tsFields(CASES[1] as Case);
+    // either lever at all. Asked of the engine since #371 - the same claim,
+    // about the side still running, and the count is unchanged: every field
+    // is asserted against its frozen value above.
+    const engine = await instantiate();
+    const [sinStart, cosStart, sinVault, cosVault] = trig();
+    const fold = (c: Case, field: number): bigint =>
+      u64(
+        engine.checksum_fulgora(
+          SEED0,
+          c.islandsFrequency,
+          c.islandsSize,
+          sinStart,
+          cosStart,
+          sinVault,
+          cosVault,
+          field,
+          X0,
+          Y0,
+          STEP,
+          N,
+        ),
+      );
     let differing = 0;
     for (const [i] of FIELD_NAMES.entries()) {
-      if (foldAll(a[i] as number[]) !== foldAll(b[i] as number[])) differing++;
+      if (fold(CASES[0] as Case, i) !== fold(CASES[1] as Case, i)) differing++;
     }
     expect(differing).toBeGreaterThan(30);
   });
 
-  it("the sweep reaches land, shallow and deep, so the ocean fold is not one constant", () => {
-    // Anti-vacuity for the last field: a window entirely at sea would fold a
-    // column of 2s and agree between the ports while testing nothing.
-    const ocean = tsFields(CASES[0] as Case)[FIELD_NAMES.indexOf("oceanTile")] as number[];
-    for (const want of [0, 1, 2]) {
-      expect(ocean.filter((v) => v === want).length, `class ${want}`).toBeGreaterThan(0);
-    }
-  });
+  // A guard used to sit here: "the sweep reaches land, shallow and deep, so
+  // the ocean fold is not one constant". It read the `oceanTile` column off
+  // the TypeScript arm and asserted all three classes were present.
+  // `checksum_fulgora` returns one fold per field, which cannot be decomposed
+  // back into classes, so it is recorded on #367 as a lost anti-vacuity
+  // control; the predicate-counting export proposed there restores it.
 });

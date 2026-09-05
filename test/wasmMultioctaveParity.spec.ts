@@ -22,8 +22,6 @@ afterAll(flushRecording);
  */
 expectRecordedRows(PLANET, 9);
 
-import { makeMultioctaveNoise } from "../src/noise/multioctaveNoise";
-
 /**
  * Tier 2 of the Rust port's gate for the multioctave family: strict bit
  * equality between the two ports over a shared grid, folded order-sensitively.
@@ -152,7 +150,7 @@ const Y0 = 7.25;
 const STEP = 0.37;
 const N = 64;
 
-describe("Rust and TypeScript multioctave_noise agree bit for bit", () => {
+describe("the engine's multioctave_noise folds to its frozen checksums", () => {
   // Parameters chosen so nothing degenerate hides a mistake: a persistence with
   // no exact f32 form (so the RMS normalisation's fastapprox path runs and the
   // `1/P == 1` shortcut does not), several octave counts, and two seeds.
@@ -162,7 +160,7 @@ describe("Rust and TypeScript multioctave_noise agree bit for bit", () => {
     { seed0: 654321, seed1: 260, octaves: 4, persistence: 0.7, inputScale: 0.08, outputScale: 0.6 },
   ] as const;
 
-  it("folds 4,096 grid points to the identical checksum, over several cases", async () => {
+  it("folds 4,096 grid points to the frozen checksum, over several cases", async () => {
     const engine = await instantiate();
     for (const c of CASES) {
       const fromWasm = u64(
@@ -179,46 +177,23 @@ describe("Rust and TypeScript multioctave_noise agree bit for bit", () => {
           N,
         ),
       );
-      const fn = makeMultioctaveNoise({
-        seed0: c.seed0,
-        seed1: c.seed1,
-        octaves: c.octaves,
-        persistence: c.persistence,
-        inputScale: c.inputScale,
-        outputScale: c.outputScale,
-      });
       expectFrozen(
         PLANET,
         `multioctave octaves=${c.octaves} p=${c.persistence} seed1=${c.seed1}`,
         "checksum_multioctave_noise",
         fromWasm,
-        foldGrid(fn, X0, Y0, STEP, N),
       );
     }
   });
 
-  it("would notice a single point differing by one ULP", async () => {
-    // The anti-vacuity check for this file. A fold that ignored its input, or a
-    // comparison of something against itself, would pass the test above and
-    // catch nothing.
-    const engine = await instantiate();
-    const c = CASES[0];
-    const fromWasm = u64(
-      engine.checksum_multioctave_noise(
-        c.seed0,
-        c.seed1,
-        c.octaves,
-        c.persistence,
-        c.inputScale,
-        c.outputScale,
-        X0,
-        Y0,
-        STEP,
-        N,
-      ),
-    );
-    const fn = makeMultioctaveNoise({ ...c });
-    expect(foldGrid(fn, X0, Y0, STEP, N, 1234)).not.toBe(fromWasm);
+  it("the fold would notice a single point differing by one ULP", () => {
+    // The anti-vacuity check for the freeze. A fold that ignored its input
+    // would freeze to a stable number and catch nothing. This used to bend
+    // the TypeScript grid at one of its 4,096 points; with that arm gone
+    // (#371) it bends a synthetic field on the same grid, which is the same
+    // claim about the same fold.
+    const field = (x: number, y: number): number => Math.sin(x * 0.3) * Math.cos(y * 0.2);
+    expect(foldGrid(field, X0, Y0, STEP, N, 1234)).not.toBe(foldGrid(field, X0, Y0, STEP, N));
   });
 
   it("is sensitive to persistence, which drives the fastapprox normalisation", async () => {

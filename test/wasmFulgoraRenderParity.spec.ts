@@ -26,11 +26,6 @@ import {
   VULCANUS_PARAMS_BYTES,
   type WasmRenderRequest,
 } from "../src/noise/wasm/request";
-import {
-  renderFulgoraLandMask,
-  renderFulgoraTerrain,
-} from "../src/noise/preview/renderFulgoraTerrain";
-import { renderFulgoraResources } from "../src/noise/preview/renderFulgoraResources";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 
 /**
@@ -56,13 +51,12 @@ const SEED0 = surfaceSeedForPlanet("fulgora", 123456);
 /**
  * The tier-3 freeze section for this spec. See `tier3Frozen.ts`.
  *
- * Fulgora is the last planet whose render parity still gets its reference
- * arm from the TypeScript renderers - `typescriptPixels` below. #371 deletes
- * that arm, the way #227 deleted the Nauvis and Vulcanus ones, and the same
- * argument applies: once it is gone, a comparison against it grades nothing.
- * So every byte-identity assertion in this file ALSO folds the engine's
- * pixels against a checksum captured while the two arms demonstrably agreed,
- * and that fold is what survives the deletion.
+ * Fulgora was the last planet whose render parity got its reference arm from
+ * the TypeScript renderers. #375 froze every one of those comparisons while
+ * both arms existed and agreed; #371 then deleted the arm, the way #227
+ * deleted the Nauvis and Vulcanus ones. Every render here is graded against
+ * the value captured then - see `tier3Frozen.ts` for why a comparison against
+ * a deleted arm would otherwise pass while grading nothing.
  */
 const SECTION = "fulgora:render";
 
@@ -81,15 +75,15 @@ expectRecordedRows(SECTION, ROWS);
 afterAll(flushRecording);
 
 /**
- * Freeze one render, and compare the two arms while both exist.
+ * Assert one render against its frozen checksum.
  *
  * The label/name pair is the row key, so it has to be unique across the
  * section. Window labels are unique across `WINDOWS` and `SCRAP_WINDOWS`,
  * and the slider block prefixes its rows with `scrap` because it renders one
  * scrap window three ways.
  */
-function freeze(label: string, name: string, wasm: ArrayLike<number>, ts: ArrayLike<number>): void {
-  expectFrozen(SECTION, label, name, foldPixels(wasm), foldPixels(ts));
+function freeze(label: string, name: string, wasm: ArrayLike<number>): void {
+  expectFrozen(SECTION, label, name, foldPixels(wasm));
 }
 
 interface Window {
@@ -158,40 +152,6 @@ const WINDOWS: readonly Window[] = [
   },
 ];
 
-type FulgoraView = "landmask" | "terrain" | "resources" | "all";
-
-function typescriptPixels(
-  w: Window,
-  view: FulgoraView,
-  scrap?: { readonly frequency?: number; readonly size?: number },
-): Uint8ClampedArray {
-  const opts = {
-    seed0: SEED0,
-    width: w.width,
-    height: w.height,
-    originX: w.originX,
-    originY: w.originY,
-    tilesPerPixel: w.tilesPerPixel,
-    ctx: { islandsFrequency: w.islandsFrequency, islandsSize: w.islandsSize },
-  };
-  if (view === "landmask") return renderFulgoraLandMask(opts).data;
-  const image = renderFulgoraTerrain(opts);
-  // The composite, in the dispatcher's own order: terrain, then the scrap
-  // overlay mutating it in place. `"resources"` and `"all"` take the same
-  // branch there because Fulgora has no cliffs and no rocks.
-  if (view === "resources" || view === "all") {
-    renderFulgoraResources(image, {
-      seed0: SEED0,
-      originX: w.originX,
-      originY: w.originY,
-      tilesPerPixel: w.tilesPerPixel,
-      ctx: { islandsFrequency: w.islandsFrequency, islandsSize: w.islandsSize },
-      scrapControls: scrap,
-    });
-  }
-  return image.data;
-}
-
 /**
  * Windows chosen for SCRAP, which the four above have almost none of.
  *
@@ -229,33 +189,15 @@ const SCRAP_WINDOWS: readonly Window[] = [
   },
 ];
 
-describe("the WASM engine renders Fulgora's land mask byte-identically", () => {
+describe("the WASM engine renders Fulgora's land mask and terrain to their frozen bytes", () => {
   it.each(["landmask", "terrain"] as const)(
-    "matches the TypeScript %s renderer on every pixel of every window",
+    "renders %s to its frozen bytes on every window",
     async (view) => {
       const e = await engine();
       for (const w of WINDOWS) {
         const wasm = renderThroughWasm(e, { view, seed0: SEED0, ...w });
-        const ts = typescriptPixels(w, view);
-        expect(wasm.length, `${w.label}: length`).toBe(ts.length);
-
-        // Report the FIRST differing pixel with its coordinates rather than a
-        // count, so a red test points at a place on the map you can sample.
-        let firstDiff = -1;
-        for (let i = 0; i < ts.length; i++) {
-          if (wasm[i] !== ts[i]) {
-            firstDiff = i;
-            break;
-          }
-        }
-        const px = Math.floor(firstDiff / 4) % w.width;
-        const py = Math.floor(firstDiff / 4 / w.width);
-        expect(
-          firstDiff,
-          `${view} ${w.label}: first difference at byte ${String(firstDiff)}, pixel (${String(px)}, ${String(py)}), ` +
-            `world (${String(w.originX + px * w.tilesPerPixel)}, ${String(w.originY + py * w.tilesPerPixel)})`,
-        ).toBe(-1);
-        freeze(w.label, view, wasm, ts);
+        expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+        freeze(w.label, view, wasm);
       }
     },
     120000,
@@ -461,7 +403,7 @@ describe("the request encoding is pinned on both sides", () => {
  * announced itself as a seed problem.
  */
 describe("the WASM engine agrees with the game's own preview PNG", () => {
-  it("differs on exactly the same pixels the TypeScript renderer does", async () => {
+  it("differs from the game's PNG on exactly the frozen pixel count", async () => {
     const png = readFileSync(
       join(import.meta.dirname, "fixtures", "oracle-preview-fulgora-terrain.seed123456.png"),
     );
@@ -695,32 +637,15 @@ describe("the WASM engine's scrap footprint contains the game's scrap", () => {
  * positive, which is a much larger set: 708 tiles against 177 over a 128x128
  * window at seed 123456. Substituting one for the other passes no test here.
  */
-describe("the WASM engine renders Fulgora's composite byte-identically", () => {
+describe("the WASM engine renders Fulgora's composite to its frozen bytes", () => {
   it.each(["resources", "all"] as const)(
-    "matches the TypeScript %s composite on every pixel of every window",
+    "renders the %s composite to its frozen bytes on every window",
     async (view) => {
       const e = await engine();
       for (const w of [...WINDOWS, ...SCRAP_WINDOWS]) {
         const wasm = renderThroughWasm(e, { view, seed0: SEED0, ...w });
-        const ts = typescriptPixels(w, view);
-        expect(wasm.length, `${w.label}: length`).toBe(ts.length);
-
-        let first = -1;
-        for (let i = 0; i < ts.length; i++) {
-          if (wasm[i] !== ts[i]) {
-            first = i;
-            break;
-          }
-        }
-        if (first >= 0) {
-          const px = Math.floor(first / 4) % w.width;
-          const py = Math.floor(first / 4 / w.width);
-          expect.fail(
-            `${w.label}: first difference at pixel (${String(px)}, ${String(py)}), ` +
-              `byte ${String(first % 4)}: wasm ${String(wasm[first])} vs ts ${String(ts[first])}`,
-          );
-        }
-        freeze(w.label, view, wasm, ts);
+        expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
+        freeze(w.label, view, wasm);
       }
     },
   );
@@ -839,7 +764,7 @@ describe("the scrap sliders cross the ABI and are read", () => {
     expect(Array.from(moved)).not.toEqual(Array.from(neutral));
   });
 
-  it.each(CASES)("$label agrees with the TypeScript, byte for byte", async ({ label, scrap }) => {
+  it.each(CASES)("$label renders to its frozen bytes", async ({ label, scrap }) => {
     const e = await engine();
     const wasm = renderThroughWasm(e, {
       view: "all",
@@ -848,24 +773,8 @@ describe("the scrap sliders cross the ABI and are read", () => {
       scrapFrequency: scrap.frequency,
       scrapSize: scrap.size,
     });
-    const ts = typescriptPixels(w, "all", scrap);
-    expect(wasm.length).toBe(ts.length);
-    let first = -1;
-    for (let i = 0; i < ts.length; i++) {
-      if (wasm[i] !== ts[i]) {
-        first = i;
-        break;
-      }
-    }
-    if (first >= 0) {
-      const px = Math.floor(first / 4) % w.width;
-      const py = Math.floor(first / 4 / w.width);
-      expect.fail(
-        `first difference at pixel (${String(px)}, ${String(py)}), ` +
-          `byte ${String(first % 4)}: wasm ${String(wasm[first])} vs ts ${String(ts[first])}`,
-      );
-    }
-    freeze(`scrap ${label}`, "all", wasm, ts);
+    expect(wasm.length).toBe(w.width * w.height * 4);
+    freeze(`scrap ${label}`, "all", wasm);
   });
 
   /**

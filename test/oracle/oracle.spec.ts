@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
-import { basisNoise, basisNoiseTablesFromSeed } from "../../src/noise/basisNoise";
 import basisFixture from "../fixtures/oracle-basis.seed123456.json";
 import {
   buildControlLua,
@@ -247,32 +246,11 @@ describe("oracle harness - sampleExpression wiring", () => {
   });
 });
 
-describe("oracle fixture is genuine ground truth", () => {
-  // CI-safe: no Factorio needed. If our pure basisNoise reproduces the committed
-  // dump, the harness captured real game values (and basisNoise is still correct).
-  it("pure basisNoise reproduces the committed oracle-basis fixture to the noise floor", () => {
-    const tables = basisNoiseTablesFromSeed(basisFixture.seed0, basisFixture.seed1);
-    let worst = 0;
-    let exact = 0;
-    for (const p of basisFixture.points) {
-      const got = basisNoise(p.x * basisFixture.inputScale, p.y * basisFixture.inputScale, tables);
-      worst = Math.max(worst, Math.abs(got - p.v));
-      if (Math.fround(got) === p.v) exact++;
-    }
-    // Measured EXACTLY 0 since 2026-08-18 (#234), when the gradient table
-    // stopped being derived from a formula and started being recovered from the
-    // game. It was 5.9605e-8 after #214 gave the kernel the game's own
-    // arithmetic, and the bound before that was 2e-6 - the game's fastapprox
-    // self-consistency floor - which is 33x slack and passed throughout the
-    // period the kernel was wrong.
-    expect(worst).toBe(0);
-    // All 38 exactly, up from 36. The other two were 2 ULP out, and both were
-    // the formula table rather than our arithmetic - they went away with the
-    // table and the kernel did not change. This is the assertion that
-    // discriminates; see test/basisNoise.spec.ts for why a bound alone cannot.
-    expect(exact).toBe(38);
-  });
-});
+// The "oracle fixture is genuine ground truth" block that used to sit here
+// graded the TypeScript basisNoise against oracle-basis at 38 of 38. That
+// port is gone (#371); the same 38 of 38 is
+// `reproduces_the_seed_derived_oracle_basis_fixture_exactly` in
+// crates/fmw-noise/src/fixtures.rs, which reads the same file.
 
 describe("tile-name oracle (get_tile) - pure parsing", () => {
   it("parseTileDump parses a canned dump into {x, y, name} entries", () => {

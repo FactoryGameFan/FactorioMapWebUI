@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import fixture from "./fixtures/oracle-vulcanus-tile-names.natural-mapseed123456.json";
-import { makeVulcanusTileResolver } from "../src/noise/tiles/vulcanusCatalog";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 
 /**
@@ -32,28 +31,11 @@ describe("Vulcanus renders the surface a real save at map seed 123456 produces",
     expect(surfaceSeedForPlanet("vulcanus", mapSeed)).toBe(fixture.seed0);
   });
 
-  it("agrees with the placed tile at a high fraction of positions", () => {
-    const resolve = makeVulcanusTileResolver({ seed0: surfaceSeedForPlanet("vulcanus", mapSeed) });
-    let agree = 0;
-    for (let i = 0; i < fixture.positions.length; i++) {
-      const p = fixture.positions[i];
-      if (resolve(p.x, p.y).name === fixture.tileNames[i]) agree++;
-    }
-    // Floor 0.955 (measured 0.9659), the same headroom-over-measured that
-    // `vulcanusTiles.spec.ts` uses for its own sample.
-    expect(agree / fixture.positions.length).toBeGreaterThan(0.955);
-  });
-
-  it("scores near-zero at the RAW map seed, which is what the bug looked like", () => {
-    const resolve = makeVulcanusTileResolver({ seed0: mapSeed });
-    let agree = 0;
-    for (let i = 0; i < fixture.positions.length; i++) {
-      const p = fixture.positions[i];
-      if (resolve(p.x, p.y).name === fixture.tileNames[i]) agree++;
-    }
-    // ~9.7%: chance-level for this tile distribution. Asserting the FAILURE mode
-    // keeps the test above honest - it could otherwise pass on a fixture that
-    // was insensitive to the seed at all.
-    expect(agree / fixture.positions.length).toBeLessThan(0.2);
-  });
+  // The two tile-agreement blocks that used to follow - a high fraction at
+  // the derived seed, near zero at the raw map seed - graded the TypeScript
+  // resolver, which is gone (#371). Both arms live on as
+  // `puts_every_vulcanus_tile_where_the_game_puts_it_at_a_real_saves_surface_seed`
+  // in crates/fmw-noise/src/fixtures.rs, against this same fixture and as an
+  // exact count rather than a fraction. What stays here is the one claim the
+  // app's own seed derivation makes about the file.
 });
