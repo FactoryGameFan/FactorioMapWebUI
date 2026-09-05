@@ -31,10 +31,16 @@ import type { EngineExports } from "../wasm/engine";
  * stays synchronous and message ordering needs no reasoning about pending
  * promises.
  */
-export interface EngineMessage {
-  readonly kind: "engine";
-  readonly module: WebAssembly.Module;
-}
+export type EngineMessage =
+  | { readonly kind: "engine"; readonly module: WebAssembly.Module }
+  /**
+   * The host could not fetch or compile the module. Posted so the worker
+   * can SETTLE: a handshake that never arrived would hold every queued
+   * request forever, which is the "Rendering..." hang `useElevationPreview`
+   * records - and exactly what a swallowed fetch failure produced once
+   * #227 made the queue the rule.
+   */
+  | { readonly kind: "engine"; readonly error: string };
 
 /**
  * What the worker posts when it cannot render at all.
@@ -108,11 +114,16 @@ function serve(req: ElevationRenderRequest): void {
 self.onmessage = (e: MessageEvent<ElevationRenderRequest | EngineMessage>) => {
   const data = e.data;
   if (isEngineMessage(data)) {
-    try {
-      engine = instantiateEngineSync(data.module);
-    } catch (err) {
+    if ("error" in data) {
       engine = undefined;
-      engineError = `render engine failed to instantiate: ${String(err)}`;
+      engineError = `render engine failed to load: ${data.error}`;
+    } else {
+      try {
+        engine = instantiateEngineSync(data.module);
+      } catch (err) {
+        engine = undefined;
+        engineError = `render engine failed to instantiate: ${String(err)}`;
+      }
     }
     engineSettled = true;
     // Drained in arrival order, and the array is emptied BEFORE serving so a

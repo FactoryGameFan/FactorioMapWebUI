@@ -7,11 +7,8 @@ import type { Planet } from "../../model/planets";
 import { PLACEMENT_MARK_RADIUS_PX } from "../placement/placementRoll";
 import type { ResourceControlLevers } from "../resources/resourceCatalog";
 import type { RockControls } from "../rocks/rockCatalog";
-import { renderFulgoraLandMask, renderFulgoraTerrain } from "./renderFulgoraTerrain";
 import { renderThroughWasm, type EngineExports } from "../wasm/engine";
-import { renderFulgoraResources } from "./renderFulgoraResources";
 import { RESOURCE_CATALOG } from "../resources/resourceCatalog";
-import { makeFulgoraStack } from "../tiles/fulgoraCatalog";
 import type { FulgoraScrapControls } from "../expressions/fulgoraScrap";
 
 /** A render job posted to the worker. `id` tags the response for staleness. */
@@ -528,27 +525,29 @@ export const STARTING_LAKE_POSITIONS_UNSUPPORTED =
  * The view this request actually renders, which is not always the one it asks
  * for.
  *
- * Four `(planet, view)` pairs have no renderer of their own: Vulcanus has no
- * enemy bases, no trees and no ocean, and Nauvis has no land mask. Asking for
- * one has always produced the planet's plain terrain, because the overlay
- * blocks below simply never match and the land-mask branch is Fulgora's alone.
- * The request rendered; it just rendered terrain.
+ * Eight `(planet, view)` pairs have no renderer of their own: Vulcanus has no
+ * enemy bases, no trees and no ocean, Nauvis has no land mask, and Fulgora
+ * has no enemy bases, no cliffs, no trees and no rocks. Asking for one has
+ * always produced the planet's plain terrain, because the overlay blocks
+ * below simply never match and the land-mask branch is Fulgora's alone. The
+ * request rendered; it just rendered terrain.
  *
- * That silence is the problem. The Rust engine refuses all four outright - see
+ * That silence is the problem. The Rust engine refuses them all outright - see
  * the `supported` match in `crates/fmw-wasm/src/render.rs`, which pins
  * `(Vulcanus, landmask)` as unsupported in its own test - so the fall-through
- * has to become explicit BEFORE #227 deletes the TypeScript terrain renderers
- * it lands on. Left alone, those four requests would stop rendering and start
- * throwing, and Trap 2's error path would discard the reason.
+ * had to become explicit BEFORE #227 and #371 deleted the TypeScript terrain
+ * renderers it landed on. Left alone, those requests would stop rendering and
+ * start throwing, and Trap 2's error path would discard the reason.
  *
  * Normalising onto `"terrain"` rather than widening the engine's gate is what
- * keeps the pixels identical: `"terrain"` is precisely what these four already
+ * keeps the pixels identical: `"terrain"` is precisely what these pairs already
  * draw. Widening the gate would ask the module for a render it has deliberately
  * decided is meaningless.
  *
- * Nothing in the app can reach any of the four - `ElevationPreviewPanel`'s
- * `effectiveView` emits only `terrain|resources|cliffs|rocks|all` on Vulcanus,
- * and `"landmask"` is absent from its view union on every planet - so this
+ * Nothing in the app can reach any of the eight - `ElevationPreviewPanel`'s
+ * `effectiveView` emits only `terrain|resources|cliffs|rocks|all` on Vulcanus
+ * and `terrain|all` on Fulgora, and `"landmask"` is absent from its view union
+ * on every planet - so this
  * closes a hole in the type surface rather than in anything a user sees. It is
  * still worth closing: the type permits all four, and `findIslands` already
  * posts a hand-built request rather than one the panel produced.
@@ -561,6 +560,12 @@ function servedView(
     return "terrain";
   }
   if (planet === "nauvis" && view === "landmask") return "terrain";
+  if (
+    planet === "fulgora" &&
+    (view === "enemies" || view === "cliffs" || view === "trees" || view === "rocks")
+  ) {
+    return "terrain";
+  }
   return view;
 }
 
@@ -645,72 +650,24 @@ export function runRenderRequest(
       throw new Error(unsupportedPair(planet, view));
     }
     if (planet === "fulgora") {
-      // Every view an ordinary user can reach, as of #363. Checked BEFORE the
-      // TypeScript stack is built, because `makeFulgoraStack` derives seed
-      // tables for eight multioctave fields, and building them only to throw
-      // them away would be most of the saving.
+      // Every view the planet has, served by the module and nothing else -
+      // #363 widened the gate to the default `"all"`, and #371 removed the
+      // TypeScript arm that served an engineless request under it. That arm
+      // was the one tier 3 compared against; `fulgora:render` in
+      // `test/fixtures/tier3-render-checksums.json` is that comparison frozen
+      // (#375), so deleting it lost no grading.
       //
-      // `"all"` is the one that matters: `ElevationPreviewPanel.vue`'s
-      // `effectiveView` returns it for every non-dev-mode Fulgora request, so
-      // until this line it was the DEFAULT view that fell to TypeScript while
-      // the two dev-mode views went to the engine. `"resources"` is the same
-      // picture - Fulgora has no cliffs and no rocks - and the module collapses
-      // the two codes onto one arm rather than the caller doing it.
-      //
-      // The TypeScript arm below is NOT dead. It still serves an engineless
-      // request, which is what `test/tiledEquality.spec.ts` and the no-engine
-      // half of the parity specs run, and it is the thing the engine is graded
-      // against.
-      if (
-        engine !== undefined &&
-        (view === "landmask" || view === "terrain" || view === "resources" || view === "all")
-      ) {
-        return renderFulgoraThroughWasm(req, engine, view);
+      // `"resources"` and `"all"` are the same picture - Fulgora has no cliffs
+      // and no rocks - and the module collapses the two codes onto one arm
+      // rather than the caller doing it. `enemies`, `cliffs`, `trees` and
+      // `rocks` cannot arrive here: `servedView` normalises all four onto
+      // `"terrain"`, so the throw below is a type obligation rather than a
+      // reachable state. It still names the pair, for the reason the Vulcanus
+      // one gives.
+      if (view === "landmask" || view === "terrain" || view === "resources" || view === "all") {
+        return renderFulgoraThroughWasm(req, requireEngine(engine), view);
       }
-      // Fulgora has a resources overlay now; it still has no cliffs and no
-      // rocks, so those views fall back to plain terrain - the same fallback
-      // the Vulcanus branch applies to the overlays it lacks. A view that asks
-      // for an overlay this planet has no port for gets the terrain, never a
-      // Nauvis field composited onto another planet's colours.
-      const fulgoraCtx = {
-        islandsFrequency: req.fulgoraIslandControls?.frequency,
-        islandsSize: req.fulgoraIslandControls?.size,
-      };
-      // Unconditional now. `unsharedStacks` existed only so
-      // `test/vulcanusStackCache.spec.ts` could compare a shared Vulcanus stack
-      // against an unshared one on the TypeScript path. That spec and that path
-      // both go with #227, and nothing ever set the flag on a Fulgora request,
-      // so this is a no-op for every caller.
-      const stack = makeFulgoraStack({ seed0: req.seed0, ...fulgoraCtx });
-      const fulgoraRender = {
-        seed0: req.seed0,
-        width: req.width,
-        height: req.height,
-        originX: req.originX,
-        originY: req.originY,
-        tilesPerPixel: req.tilesPerPixel,
-        ctx: fulgoraCtx,
-        stack,
-      };
-      // Returns straight away: a land mask takes no overlays, and compositing
-      // resources onto it would paint over the very bit the caller wants.
-      if (view === "landmask") {
-        const mask = renderFulgoraLandMask(fulgoraRender);
-        return { id: req.id, buffer: mask.data.buffer, width: req.width, height: req.height };
-      }
-      const image = renderFulgoraTerrain(fulgoraRender);
-      if (view === "resources" || view === "all") {
-        renderFulgoraResources(image, {
-          seed0: req.seed0,
-          originX: req.originX,
-          originY: req.originY,
-          tilesPerPixel: req.tilesPerPixel,
-          ctx: fulgoraCtx,
-          scrapControls: req.fulgoraScrapControls,
-          stack,
-        });
-      }
-      return { id: req.id, buffer: image.data.buffer, width: req.width, height: req.height };
+      throw new Error(unsupportedPair(planet, view));
     }
     // Every Nauvis tile-family view, all of them served by the module. The
     // TypeScript renderers this used to fall back to are deleted in #227, so

@@ -11,7 +11,6 @@
  * this does NOT invert the grid to find cell centres. It scans world positions
  * and groups them by the cell each one lands in.
  */
-import { makeFulgoraStack } from "../tiles/fulgoraCatalog";
 import type { FulgoraCtx } from "../expressions/fulgoraShared";
 import type { EngineExports } from "../wasm/engine";
 import { surveyCellsThroughWasm } from "./surveyThroughWasm";
@@ -86,19 +85,20 @@ interface Acc {
 export function surveyIslands(
   ctx: FulgoraCtx,
   box: SearchBox,
+  engine: EngineExports,
   stepOverride?: number,
-  engine?: EngineExports,
 ): IslandCandidate[] {
   const acc = new Map<string, Acc>();
 
   /**
    * Fold one swept position into the accumulator.
    *
-   * Shared by both paths deliberately. This is the part that decides which
-   * cell a sample belongs to and what `IslandCandidate.points` holds, and
-   * duplicating it per path is how the two would drift while every value they
-   * read still matched - the private-copy trap `checksum_vulcanus` records,
-   * one level up from numbers.
+   * This is the part that decides which cell a sample belongs to and what the
+   * candidate's bounds and centroid are built from. It used to be shared by
+   * the engine sweep and a TypeScript one, deliberately, so the two could not
+   * drift while every value they read still matched; #371 removed the
+   * TypeScript sweep and `test/surveyThroughWasm.spec.ts` grades what is left
+   * against the list frozen while both agreed.
    */
   const fold = (x: number, y: number, id: number, cellX: number, cellY: number): void => {
     if (id < OCEAN_BELOW) return;
@@ -128,46 +128,24 @@ export function surveyIslands(
     }
   };
 
-  if (engine !== undefined) {
-    // The engine path never builds a `FulgoraStack`, which is the whole point:
-    // stage 1 is 96.3% cell evaluation, and that is what crosses. The step has
-    // to come from the module too - `surveyStep` is `grid / 8` and `grid` moves
-    // with `islandsFrequency`, so deriving it here would need the very stack
-    // this avoids building.
-    const trig = bearingTrig(ctx.seed0);
-    const step =
-      stepOverride ??
-      engine.fulgora_survey_step(
-        ctx.seed0,
-        ctx.islandsFrequency ?? 1,
-        ctx.islandsSize ?? 1,
-        trig.sinStart,
-        trig.cosStart,
-        trig.sinVault,
-        trig.cosVault,
-      );
-    surveyCellsThroughWasm(engine, ctx, box, step, fold);
-  } else {
-    const stack = makeFulgoraStack(ctx);
-    const step = stepOverride ?? surveyStep(stack.shared.grid);
-    const cellIndex = stack.cells.voronoiCells.cellIndex;
-    const cellsAt = stack.cells.cells;
-    const wx = stack.shared.wx;
-    const wy = stack.shared.wy;
-    for (let y = box.y0; y <= box.y1; y += step) {
-      for (let x = box.x0; x <= box.x1; x += step) {
-        // `cellsAt` reads `manhattan.cellId` at the WARPED position
-        // (`shared.wx`/`shared.wy`), not at the raw sample - see
-        // `fulgoraCells.ts`'s `cells` field. `cellIndex` has to be read at the
-        // same warped position, or the (cellX, cellY) key would name the cell
-        // that owns the raw point rather than the one that produced `id`, and
-        // the two would silently disagree. The module does the same, inside
-        // `FulgoraCells::eval`.
-        const { cellX, cellY } = cellIndex(wx(x, y), wy(x, y));
-        fold(x, y, cellsAt(x, y), cellX, cellY);
-      }
-    }
-  }
+  // The module does the whole sweep, and the step comes from the module too:
+  // `surveyStep` is `grid / 8` and `grid` moves with `islandsFrequency`, so
+  // deriving it here would need the Fulgora stack #371 deleted. Stage 1 is
+  // 96.3% of the finder's cost, measured in Chrome, and this call is that
+  // 96.3%.
+  const trig = bearingTrig(ctx.seed0);
+  const step =
+    stepOverride ??
+    engine.fulgora_survey_step(
+      ctx.seed0,
+      ctx.islandsFrequency ?? 1,
+      ctx.islandsSize ?? 1,
+      trig.sinStart,
+      trig.cosStart,
+      trig.sinVault,
+      trig.cosVault,
+    );
+  surveyCellsThroughWasm(engine, ctx, box, step, fold);
 
   return [...acc.values()].map((a) => {
     const n = a.points.length;
