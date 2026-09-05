@@ -90,18 +90,16 @@ const DEFAULT_RADIUS = 1024;
  * succession share one compile. `loadEngineModule` memoises the module too, so
  * this is a second cheap layer over an already-shared one.
  */
-let engineOnce: Promise<EngineExports | undefined> | undefined;
-async function surveyEngine(): Promise<EngineExports | undefined> {
-  engineOnce ??= (async () => {
-    try {
-      return instantiateEngineSync(await loadEngineModule());
-    } catch {
-      // Falls back to the TypeScript survey, which is slower and identical -
-      // `test/surveyThroughWasm.spec.ts` asserts the two produce the same
-      // island list. Not swallowable once #227 removes that arm.
-      return undefined;
-    }
-  })();
+let engineOnce: Promise<EngineExports> | undefined;
+function surveyEngine(): Promise<EngineExports> {
+  // A failure is NOT swallowed. It used to be, with the finder falling back
+  // to a TypeScript survey that produced the same list more slowly; #371
+  // deleted that survey, so a module that will not load leaves nothing to
+  // survey with, and the honest response is the module's own message in
+  // the panel - the same call the render worker makes. `loadEngineModule`
+  // memoises a rejected compile too, so a second click reports the same
+  // failure rather than retrying the fetch.
+  engineOnce ??= loadEngineModule().then(instantiateEngineSync);
   return engineOnce;
 }
 
@@ -280,9 +278,8 @@ async function search() {
     // `find` injected this is skipped entirely, so an injected test never
     // touches the network.
     //
-    // A failure is swallowed and the finder falls back to the TypeScript
-    // survey, which still exists. When #227 deletes it this has to become an
-    // error, the same way the render worker's did.
+    // A failure propagates to the `catch` below and lands in the panel as
+    // the module's own message - see `surveyEngine`.
     const engine = props.find ? undefined : await surveyEngine();
     // With `find` injected, `ensureHost()` must never be called - not even to
     // build the `execute` argument - or every test would try to spawn a real

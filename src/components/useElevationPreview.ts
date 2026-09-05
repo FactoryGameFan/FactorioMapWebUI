@@ -61,19 +61,23 @@ function createRenderWorker(): WorkerLike {
   // vitest points at a dev server that is not running. Loading beside the real
   // `new Worker` means only the real browser path ever reaches the network.
   //
-  // **A render dispatched before the engine arrives is not a bug**, and that is
-  // what makes this cutover safe rather than merely tested: the two render
-  // paths are byte-identical, so a request that lands first takes the
-  // TypeScript path and returns the same pixels. There is no window in which
-  // the worker is wrong, only one in which it is slower - which is also why a
-  // failed fetch or compile is swallowed. A missing `engine.wasm` costs speed,
-  // not correctness.
+  // **A render dispatched before the engine arrives is QUEUED by the worker**
+  // (#227), so the handshake has to settle one way or the other: a failed
+  // fetch or compile is REPORTED to the worker rather than swallowed. This
+  // used to swallow it, on the grounds that the TypeScript path rendered the
+  // same pixels more slowly - and once #227 removed that path the swallow
+  // became a hang, with every tile waiting on an engine message that would
+  // never come. With the failure posted, the worker fails each queued and
+  // later request with the reason, which the host rejects by id.
   void loadEngineModule().then(
     (module) => {
       worker.postMessage({ kind: "engine", module });
     },
-    () => {
-      /* no engine; the TypeScript path renders exactly the same pixels */
+    (err: unknown) => {
+      worker.postMessage({
+        kind: "engine",
+        error: err instanceof Error ? err.message : String(err),
+      });
     },
   );
   return worker;

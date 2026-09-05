@@ -6,6 +6,13 @@ import { usePresetsStore } from "../src/store/presets";
 import { useUiStore } from "../src/store/ui";
 import type { FindOptions, IslandResult } from "../src/noise/islands/findIslands";
 
+// What a missing or unservable `engine.wasm` looks like to the panel. Only the
+// one test that mounts WITHOUT an injected `find` ever reaches this; every
+// other test injects one and never loads the module.
+vi.mock("../src/noise/wasm/load", () => ({
+  loadEngineModule: () => Promise.reject(new Error("engine.wasm: 404 Not Found")),
+}));
+
 function row(over: Partial<IslandResult> = {}): IslandResult {
   return {
     cellX: 1,
@@ -281,6 +288,23 @@ describe("IslandFinderPanel", () => {
     await flushPromises();
     expect(w.find('[data-test="island-search"]').attributes("disabled")).toBeUndefined();
     expect(w.find('[data-test="island-cancel"]').exists()).toBe(false);
+  });
+
+  it("reports a module that will not load as the panel's error, rather than searching without it", async () => {
+    // No `find` injected, so the real `findIslands` path runs - and stops at
+    // the engine, before `ensureHost()` is ever reached. This used to be
+    // swallowed, with a fall back to a TypeScript survey; #371 deleted that
+    // survey, so the failure has to surface the way the render worker's does.
+    setActivePinia(createPinia());
+    const store = usePresetsStore();
+    store.createFromBuiltin("Default", "t");
+    const w = mount(IslandFinderPanel, { props: { planet: "fulgora" } });
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    expect(w.find('[data-test="island-error"]').text()).toContain("404");
+    expect(w.findAll('[data-test="island-row"]')).toHaveLength(0);
+    // And the button is back, so the failure is not a stuck "searching".
+    expect(w.find('[data-test="island-search"]').attributes("disabled")).toBeUndefined();
   });
 
   it("is inert for a planet other than fulgora", () => {

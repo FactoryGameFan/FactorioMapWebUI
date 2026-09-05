@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { beforeAll, describe, expect, it } from "vite-plus/test";
 import {
   findIslands,
   nearestLandPixel,
@@ -12,10 +14,22 @@ import {
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
+import { compileEngine, instantiateEngine, type EngineExports } from "../src/noise/wasm/engine";
 
 const SEED0 = 2967702466;
+
+/**
+ * The engine, compiled once for the file. Every survey and every render here
+ * goes through it - there is no other path since #371.
+ */
+let engine: EngineExports;
+beforeAll(async () => {
+  const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
+  engine = await instantiateEngine(await compileEngine(readFileSync(wasmPath)));
+});
+
 /** In-process executor - the same seam `createRenderPool` uses in its tests. */
-const execute = async (req: ElevationRenderRequest) => runRenderRequest(req);
+const execute = async (req: ElevationRenderRequest) => runRenderRequest(req, engine);
 
 /**
  * The refine count for every test here that asserts nothing about the SIZE of
@@ -135,9 +149,10 @@ describe("findIslands", () => {
     const seen: string[] = [];
     const spy = async (req: ElevationRenderRequest) => {
       seen.push(String(req.view));
-      return runRenderRequest(req);
+      return runRenderRequest(req, engine);
     };
     await findIslands({
+      engine,
       ctx: { seed0: SEED0 },
       radius: 600,
       execute: spy,
@@ -150,6 +165,7 @@ describe("findIslands", () => {
 
   it("returns islands with a rectangle no larger than their land area", async () => {
     const found = await findIslands({
+      engine,
       ctx: { seed0: SEED0 },
       radius: 600,
       execute,
@@ -194,6 +210,7 @@ describe("findIslands", () => {
     // below with "expected false to be true", because refined row (-2,-3)
     // moves down past two unrefined rows.
     const found = await findIslands({
+      engine,
       ctx: { seed0: SEED0 },
       radius: 600,
       execute,
@@ -229,6 +246,7 @@ describe("findIslands", () => {
     // re-rendering each result's own window and re-flood-filling from its
     // own centroid, rather than trusting `findIslands`'s internal bookkeeping.
     const found = await findIslands({
+      engine,
       ctx: { seed0: SEED0 },
       radius: 600,
       execute,
@@ -262,6 +280,7 @@ describe("findIslands", () => {
     // happens at pad 256 for this island (confirmed unchanged at pad 400, so
     // the 3-growth cap is not itself the limit here).
     const found = await findIslands({
+      engine,
       ctx: { seed0: SEED0 },
       radius: 600,
       execute,
@@ -279,6 +298,7 @@ describe("findIslands", () => {
 
   it("marks exactly the refined rows as refined", async () => {
     const found = await findIslands({
+      engine,
       ctx: { seed0: SEED0 },
       radius: 600,
       execute,
@@ -294,6 +314,7 @@ describe("findIslands", () => {
     // equal, so this would pass on the very bug it exists to catch.
     const seen: [number, number][] = [];
     await findIslands({
+      engine,
       ctx: { seed0: SEED0 },
       radius: 600,
       execute,
@@ -322,9 +343,10 @@ describe("findIslands", () => {
     let calls = 0;
     const counting = async (req: ElevationRenderRequest) => {
       if (++calls === 3) ac.abort();
-      return runRenderRequest(req);
+      return runRenderRequest(req, engine);
     };
     const found = await findIslands({
+      engine,
       ctx: { seed0: SEED0 },
       radius: 2000,
       execute: counting,

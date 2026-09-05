@@ -492,11 +492,16 @@ re-deriving:
   not bound by one file either: it paired two heavy specs, putting 503s of its
   653s on 2 of its 4 workers.
 
-**The heaviest file is `test/findIslands.spec.ts` at 134.6s**, measured locally
-where the spread is small. It was 240.4s until four of its tests were cut to a
-small `refineCount` for identical coverage. One test in that file **cannot** be
-cheapened the same way and its own comment explains why, so do not "finish the
-job" by lowering its refine count.
+**`test/findIslands.spec.ts` WAS the heaviest file, and is not any more.** It
+measured 134.6s on the Mac, where the spread is small, and 240.4s before four
+of its tests were cut to a small `refineCount` for identical coverage. Then
+#371's engine-mandatory change put every render and survey in it through the
+engine, and on Menehune, run alone, it went from **386.2s to 48.4s** (measured
+2026-09-04, `pnpm vp test test/findIslands.spec.ts` on each side of the
+change). Which file is heaviest now has not been re-derived; read it off a
+verbose run rather than off this paragraph. One test in that file **cannot**
+be cheapened by lowering its refine count and its own comment explains why,
+so do not "finish the job" that way.
 
 **What breaks under load is a per-test TIMEOUT, not the gate wall.** On a
 docs-only change an unchanged test hit its 120s budget at 150.5s; the same code
@@ -1284,14 +1289,16 @@ It was never a dev-mode curiosity, which is why it was worth porting.
 is not "nauvis" - **outside** the `devMode` branch - so it is what an ordinary
 user sees on every Lakes or Island preset, two of the three map types.
 
-**Two cases still take the TypeScript path, both deliberately.** A
-caller-supplied `startingLakePositions`, because the module derives the lake
-list from the seed and the spawn - the game's own rule - so an explicit list is
-a WRONG answer rather than a slow one, and because the request is a fixed-size
-struct with nowhere to put a variable-length array. And a non-Nauvis `planet`,
-because `mapType` spans the Nauvis family only and the branch ignores `planet`
-outright, so routing an odd pairing through the module would change behaviour
-for no gain. Neither is reachable from the app.
+**Two cases are REFUSED rather than routed anywhere, both deliberately.** A
+caller-supplied `startingLakePositions` throws
+`STARTING_LAKE_POSITIONS_UNSUPPORTED` (#365), because the module derives the
+lake list from the seed and the spawn - the game's own rule - so an explicit
+list is a WRONG answer rather than a slow one, and because the request is a
+fixed-size struct with nowhere to put a variable-length array. And a
+non-Nauvis `planet` with an elevation view throws `unsupportedPair`, because
+`mapType` spans the Nauvis family only. There is no TypeScript path left for
+either to take: #227 deleted the Nauvis and Vulcanus arms and #371 the
+Fulgora one. Neither case is reachable from the app.
 
 `test/wasmElevationRenderParity.spec.ts` grades it, and its windows are
 MEASURED rather than chosen: two obvious far-field windows turned out to be a
@@ -1939,13 +1946,20 @@ guard rather than a missing optimisation - `startingPositions` reaches
 `elevation_nauvis`'s distance term and `moisture`'s starting-area blend, so
 taking the engine there would be a wrong answer rather than a slow one.
 
-**A render dispatched before the engine message arrives is not a bug**, and that
-is what makes the cutover safe rather than merely tested: the two paths are
-byte-identical, so an early request takes the TypeScript path and returns the
-same pixels. There is no window in which the worker is wrong, only one in which
-it is slower - which is also why a failed fetch or compile is swallowed.
-`test/renderWorkerEngine.spec.ts` compares the pixels from before the handshake
-against the pixels from after it.
+**A render dispatched before the engine message arrives is QUEUED, and the
+handshake must SETTLE.** This paragraph used to say an early request was "not
+a bug" because it took the byte-identical TypeScript path, and that a failed
+fetch or compile was therefore swallowed. Both halves expired with #227: with
+no TypeScript to fall back to, the worker holds a request until the engine
+message arrives - and a swallowed load failure then meant the message never
+arrived and every tile hung on "Rendering..." (found and fixed in #371's
+engine-mandatory change). `createRenderWorker` now posts
+`{ kind: "engine", error }` on failure, the worker fails each queued and later
+request with `render engine failed to load: ...`, and the host rejects them by
+id. `IslandFinderPanel`'s `surveyEngine()` stopped swallowing for the same
+reason; its failure lands in the panel as the module's own message.
+`test/renderWorkerEngine.spec.ts` grades the queue, the bad-module case and the
+no-module case.
 
 **The engine load sits in `createRenderWorker`, not in `createWorkerHost`, and
 that is not stylistic.** Every test that exercises the host constructs it with a

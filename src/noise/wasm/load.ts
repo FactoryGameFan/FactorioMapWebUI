@@ -17,10 +17,11 @@ let compiling: Promise<WebAssembly.Module> | undefined;
 /**
  * The compiled engine, compiled at most once for the life of the page.
  *
- * Rejects if the module cannot be fetched or compiled. Callers treat that as
- * "no engine" and fall back to the TypeScript renderer rather than failing the
- * render - the two paths are byte-identical, so a missing module costs speed
- * and nothing else.
+ * Rejects if the module cannot be fetched or compiled, and the rejection is
+ * memoised with the promise. There is no TypeScript renderer to fall back to
+ * since #227 and #371, so callers report the failure: the render host posts
+ * it to the worker, which fails its requests with it, and the island finder
+ * shows it in its panel.
  */
 export function loadEngineModule(): Promise<WebAssembly.Module> {
   compiling ??= (async () => {

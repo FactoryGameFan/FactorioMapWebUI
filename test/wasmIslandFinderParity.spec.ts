@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { findIslands } from "../src/noise/islands/findIslands";
 import {
+  ENGINE_REQUIRED,
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
@@ -20,10 +21,10 @@ import {
 } from "./islandsFrozen";
 
 /**
- * **The integration check #223 asks for: the island finder, run against the
+ * **The integration check #223 asked for: the island finder, run against the
  * Rust engine, agrees with the TypeScript one exactly.**
  *
- * `test/wasmFulgoraRenderParity.spec.ts` already proves the two renderers produce
+ * `test/wasmFulgoraRenderParity.spec.ts` proves the renderers produce
  * byte-identical RGBA over four windows. This is a different question and a
  * stronger one, because the finder is not a unit test: it renders candidate
  * windows, re-renders any whose island mask touches the border at a doubled
@@ -31,14 +32,16 @@ import {
  * steps reads pixels, and a single wrong pixel at a border can change whether a
  * window is re-rendered - which changes the ranking, not just a number.
  *
- * So this asserts the whole ranked output is identical, field by field, not
- * that the images match.
+ * **The TypeScript arm is gone as of #371**, so the comparison is against the
+ * frozen fold in `test/fixtures/island-finder-checksums.json`, captured while
+ * both arms existed and agreed (#376). The engine's ranked output is folded
+ * through its JSON and compared to that value; a row that moves is a finding,
+ * not a value to adjust.
  *
- * `refineCount` is small on purpose. The finder's own spec measures 240.4s at
- * the full count and cuts four of its tests the same way for identical
- * coverage; the question here is agreement between two renderers, and that does
- * not need the expensive refinement pass to be exercised at its production
- * depth.
+ * `refineCount` is small on purpose. The finder's own spec cuts four of its
+ * tests the same way for identical coverage; the question here is whether the
+ * whole pipeline reproduces its frozen output, and that does not need the
+ * expensive refinement pass exercised at its production depth.
  */
 const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
 const SEED0 = surfaceSeedForPlanet("fulgora", 123456);
@@ -48,9 +51,8 @@ const REFINE = 1;
 /**
  * The freeze section for this spec. See `islandsFrozen.ts`.
  *
- * The ranked list below is ALSO folded against a frozen value, captured
- * while the TypeScript arm still existed and the two agreed. #371 deletes
- * that arm; the fold is what grades the finder's whole output after.
+ * The row was recorded from the TypeScript-backed finder while it still
+ * existed, and asserted against both arms at once. Now it grades the engine.
  */
 const SECTION = "fulgora:finder";
 
@@ -60,120 +62,98 @@ const ROWS = 1;
 expectRecordedRows(SECTION, ROWS);
 afterAll(flushRecording);
 
-describe("the island finder agrees between the two engines", () => {
-  it("returns an identical ranked list, and really does use the WASM path", async () => {
+function request(id: number, view: ElevationRenderRequest["view"]): ElevationRenderRequest {
+  return {
+    id,
+    seed0: SEED0,
+    width: 16,
+    height: 16,
+    originX: -64,
+    originY: -64,
+    tilesPerPixel: 4,
+    waterLevel: 0,
+    segmentationMultiplier: 1,
+    startingPositions: [{ x: 0, y: 0 }],
+    planet: "fulgora",
+    view,
+  };
+}
+
+describe("the island finder reproduces its frozen output through the engine", () => {
+  it("returns the frozen ranked list, and really does render", async () => {
     const engine = await instantiateEngine(await compileEngine(readFileSync(wasmPath)));
 
-    let wasmRenders = 0;
+    let renders = 0;
     const viaWasm = (req: ElevationRenderRequest): Promise<ReturnType<typeof runRenderRequest>> => {
-      wasmRenders++;
+      renders++;
       return Promise.resolve(runRenderRequest(req, engine));
     };
-    let tsRenders = 0;
-    const viaTypescript = (
-      req: ElevationRenderRequest,
-    ): Promise<ReturnType<typeof runRenderRequest>> => {
-      tsRenders++;
-      return Promise.resolve(runRenderRequest(req));
-    };
 
-    const options = {
+    const found = await findIslands({
       ctx: { seed0: SEED0 },
       radius: RADIUS,
       concurrency: 4,
       refineCount: REFINE,
-    };
-    const fromWasm = await findIslands({ ...options, execute: viaWasm });
-    const fromTypescript = await findIslands({ ...options, execute: viaTypescript });
+      engine,
+      execute: viaWasm,
+    });
 
-    // Non-vacuity, in both directions. A finder that rendered nothing would
-    // return an empty list from both arms and "agree".
-    expect(wasmRenders).toBeGreaterThan(0);
-    expect(tsRenders).toBe(wasmRenders);
-    expect(fromWasm.length).toBeGreaterThan(0);
+    // Non-vacuity. A finder that rendered nothing would return an empty list,
+    // and an empty list folds to a perfectly stable checksum.
+    expect(renders).toBeGreaterThan(0);
+    expect(found.length).toBeGreaterThan(0);
 
-    // The ranked output, field by field. `toEqual` on the arrays would compare
-    // the same thing, but naming the fields makes a failure say WHICH one moved
-    // rather than printing two large structures.
-    expect(fromWasm.length).toBe(fromTypescript.length);
-    for (const [i, w] of fromWasm.entries()) {
-      const t = fromTypescript[i];
-      expect(w.landTiles, `rank ${String(i)} landTiles`).toBe(t?.landTiles);
-      expect(w.fullChunks, `rank ${String(i)} fullChunks`).toBe(t?.fullChunks);
-      expect(w.rect, `rank ${String(i)} rect`).toEqual(t?.rect);
-    }
-    expect(fromWasm).toEqual(fromTypescript);
     expectFrozen(
       SECTION,
       `radius ${String(RADIUS)}, refine ${String(REFINE)}`,
       "ranked islands",
-      foldJson(fromWasm),
-      foldJson(fromTypescript),
+      foldJson(found),
     );
   }, 300000);
 
-  it("the engine really is being used - the same request differs when it is withheld", async () => {
-    // The guard that stops the test above passing on an engine that is silently
-    // ignored. It cannot compare OUTPUT, because the two paths are
-    // byte-identical by design; it compares whether the WASM path ran at all,
-    // by asking the module for a render the TypeScript path never touches.
-    const engine = await instantiateEngine(await compileEngine(readFileSync(wasmPath)));
-    const req: ElevationRenderRequest = {
-      id: 1,
-      seed0: SEED0,
-      width: 16,
-      height: 16,
-      originX: -64,
-      originY: -64,
-      tilesPerPixel: 4,
-      waterLevel: 0,
-      segmentationMultiplier: 1,
-      startingPositions: [{ x: 0, y: 0 }],
-      planet: "fulgora",
-      view: "landmask",
-    };
+  it("refuses to search without the engine rather than surveying nothing", async () => {
+    // The survey has no other path since #371. A finder that quietly returned
+    // an empty list here would read as "no islands", which is a legitimate
+    // answer for a real map and so cannot be told from a failure.
+    await expect(
+      findIslands({
+        ctx: { seed0: SEED0 },
+        radius: RADIUS,
+        concurrency: 1,
+        refineCount: REFINE,
+        execute: (req) => Promise.resolve(runRenderRequest(req)),
+      }),
+    ).rejects.toThrow(ENGINE_REQUIRED);
+  });
 
+  it("every Fulgora view needs the engine, and the land mask fills the module's buffer", async () => {
+    // This used to assert that a non-landmask view "still takes the TypeScript
+    // path". #371 makes it the sharper statement it was standing in for: with
+    // no TypeScript left, a view the module serves is exactly a view that
+    // REFUSES to render without it. A view that quietly returned pixels here
+    // would be one the dispatcher still serves off some other path.
+    const engine = await instantiateEngine(await compileEngine(readFileSync(wasmPath)));
+    for (const view of ["landmask", "terrain", "resources", "all"] as const) {
+      expect(() => runRenderRequest(request(2, view)), `${view}: must need the engine`).toThrow(
+        ENGINE_REQUIRED,
+      );
+    }
+
+    // And the engine path really is the module: the render buffer changes.
     const before = new Uint8Array(engine.memory.buffer, engine.render_ptr(), 64).slice();
-    runRenderRequest(req); // TypeScript path: must not touch the module at all
-    const afterTs = new Uint8Array(engine.memory.buffer, engine.render_ptr(), 64).slice();
-    expect(Array.from(afterTs)).toEqual(Array.from(before));
-
-    runRenderRequest(req, engine); // WASM path: must fill the module's buffer
-    const afterWasm = new Uint8Array(engine.memory.buffer, engine.render_ptr(), 64).slice();
-    expect(Array.from(afterWasm)).not.toEqual(Array.from(before));
-  }, 120000);
-
-  it("a non-landmask Fulgora view still takes the TypeScript path", async () => {
-    // The engine renders exactly one view. A request for another must fall
-    // through rather than error or return a land mask painted as terrain.
-    const engine = await instantiateEngine(await compileEngine(readFileSync(wasmPath)));
-    const req: ElevationRenderRequest = {
-      id: 2,
-      seed0: SEED0,
-      width: 8,
-      height: 8,
-      originX: 0,
-      originY: 0,
-      tilesPerPixel: 8,
-      waterLevel: 0,
-      segmentationMultiplier: 1,
-      startingPositions: [{ x: 0, y: 0 }],
-      planet: "fulgora",
-      view: "terrain",
-    };
-    const withEngine = new Uint8ClampedArray(runRenderRequest(req, engine).buffer);
-    const without = new Uint8ClampedArray(runRenderRequest(req).buffer);
-    expect(Array.from(withEngine)).toEqual(Array.from(without));
+    runRenderRequest(request(1, "landmask"), engine);
+    const after = new Uint8Array(engine.memory.buffer, engine.render_ptr(), 64).slice();
+    expect(Array.from(after)).not.toEqual(Array.from(before));
   }, 120000);
 });
 
 describe("the freeze covers this spec rather than merely existing", () => {
   // `expectRecordedRows` guards only a RECORD run. On a normal run nothing
-  // above checks that the rows are actually consulted: a deleted `freeze`
+  // above checks that the rows are actually consulted: a deleted `expectFrozen`
   // call site would leave its row in the table un-consulted and every gate
-  // green while coverage shrank. Once #371 deletes the TypeScript arm this
-  // table is the only thing grading these comparisons. Both numbers, because
-  // they fail on opposite mistakes - see `wasmNauvisRenderParity.spec.ts`.
+  // green while coverage shrank. This table is the only thing grading the
+  // finder's output now. Both numbers, because they fail on opposite mistakes -
+  // see `wasmNauvisRenderParity.spec.ts`.
   it.skipIf(RECORDING)("consults every frozen row exactly once", () => {
     expect(frozenCount(SECTION), "rows in the committed table").toBe(ROWS);
     expect(consultedCount(SECTION), "distinct rows this run looked up").toBe(ROWS);

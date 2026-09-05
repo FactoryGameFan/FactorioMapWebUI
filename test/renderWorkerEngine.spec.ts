@@ -194,6 +194,30 @@ describe("the render worker's engine handshake", () => {
     expect(message.error).toContain("render engine failed to instantiate");
   }, 120000);
 
+  it("fails a queued request when the host reports the engine could not be loaded", async () => {
+    // The other way a handshake can fail: not a bad module, but no module at
+    // all - a 404 on `engine.wasm`, or a compile error on the main thread.
+    // The host used to swallow that on the grounds that the TypeScript path
+    // rendered the same pixels; since #227 the worker QUEUES until the
+    // handshake, so a swallowed failure held every tile forever. The host now
+    // posts the failure, and the worker must settle the queue with it.
+    const w = await loadWorker();
+    w.onmessage?.({ data: request(8) });
+    expect(posted).toHaveLength(0);
+
+    w.onmessage?.({ data: { kind: "engine", error: "engine.wasm: 404 Not Found" } });
+
+    expect(posted, "the queued request must be settled, not dropped").toHaveLength(1);
+    expect(replyAt(0).id).toBe(8);
+    expect(replyAt(0).error).toContain("render engine failed to load");
+    expect(replyAt(0).error).toContain("404");
+
+    // And a later request fails the same way rather than queueing again.
+    w.onmessage?.({ data: request(9) });
+    expect(posted).toHaveLength(2);
+    expect(replyAt(1).id).toBe(9);
+  }, 120000);
+
   it("posts a render failure rather than throwing out of onmessage", async () => {
     // The case that used to take the whole slot down. `serve()` had no `try`, so
     // a throw escaped `onmessage`, fired the worker's `error` event, and the

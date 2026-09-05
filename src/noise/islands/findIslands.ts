@@ -33,9 +33,10 @@ import { floodFillFrom, landMaskFromImage } from "./islandMask";
 import { chainComponents, type PlacedMask } from "./chainGraph";
 import type { FulgoraCtx } from "../expressions/fulgoraShared";
 import type { EngineExports } from "../wasm/engine";
-import type {
-  ElevationRenderRequest,
-  ElevationRenderResult,
+import {
+  ENGINE_REQUIRED,
+  type ElevationRenderRequest,
+  type ElevationRenderResult,
 } from "../preview/elevationRenderRequest";
 
 export const COARSE_TILES_PER_PIXEL = 8;
@@ -137,10 +138,13 @@ export interface FindOptions {
   readonly execute: (req: ElevationRenderRequest, slot: number) => Promise<ElevationRenderResult>;
   readonly concurrency: number;
   /**
-   * The WASM engine, if the caller has one.
+   * The WASM engine. Required in practice: the survey has had no other path
+   * since #371, and a call without one throws `ENGINE_REQUIRED` before it
+   * renders anything. Optional in the TYPE only so `IslandFinderPanel`'s
+   * injection seam can omit it - an injected `find` never surveys.
    *
    * Reaches `surveyIslands` and nothing else: stage 1 is 96.3% of the finder's
-   * cost and the only part that runs the noise chain #227 deletes. The refine
+   * cost and the only part that runs the noise chain directly. The refine
    * pass already goes through `execute`, which is the render worker and so
    * already engine-backed.
    *
@@ -407,10 +411,10 @@ export async function findIslands(opts: FindOptions): Promise<IslandResult[]> {
   const { ctx, radius, execute, concurrency, signal } = opts;
   const refineCount = opts.refineCount ?? DEFAULT_REFINE_COUNT;
 
+  if (opts.engine === undefined) throw new Error(ENGINE_REQUIRED);
   const candidates = surveyIslands(
     ctx,
     { x0: -radius, y0: -radius, x1: radius, y1: radius },
-    undefined,
     opts.engine,
   );
 
