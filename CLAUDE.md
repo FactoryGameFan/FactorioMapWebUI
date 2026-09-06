@@ -684,9 +684,18 @@ measured on #380 and #381 rather than read off its docs.
   undone. Which verdict arrives is a property of the new diff, and it is not
   predictable from how completely you answered the last round.
 
-  So a hand dismissal is the tool for a standing review you do not intend to
-  satisfy, rather than a step every round needs. Put the reasoning in the
-  message - it is the only record of why:
+  A THIRD outcome exists and it is the one that traps you: on #384's `f9d37c8`
+  the `CodeRabbit` check went green with `Review completed` and **no review was
+  submitted at all** - no approval, no new findings, nothing. The
+  `CHANGES_REQUESTED` from the previous commit therefore stood unopposed, and
+  the PR sat `BLOCKED` with every one of its eleven checks passing, fourteen
+  minutes after the check had finished. A push cannot clear that, because
+  nothing arrives to replace the old verdict.
+
+  So a hand dismissal is the tool for a standing review that nothing is going
+  to supersede - whether because you declined its findings or because the
+  re-review said nothing. Put the reasoning in the message - it is the only
+  record of why:
 
   ```bash
   gh api --method PUT \
