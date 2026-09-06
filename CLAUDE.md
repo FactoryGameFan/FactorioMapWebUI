@@ -670,11 +670,18 @@ measured on #380 and #381 rather than read off its docs.
   `build`. But it submits `CHANGES_REQUESTED`, and a standing one of those
   blocks the merge even at `required_approving_review_count: 0` -
   `mergeStateStatus` goes `BLOCKED` with every check green.
-- **Pushing the fix does NOT clear it**, because `EJ` sets
-  `dismiss_stale_reviews_on_push: false`. On #381 the fix push left the first
-  review standing and CodeRabbit added a **second** `CHANGES_REQUESTED` rather
-  than superseding its own. Two blocking reviews, no way out by pushing. Clear
-  one by hand, and put the reasoning in the message - it is the only record:
+- **A push clears it only when the re-review has nothing left to say.** `EJ`
+  sets `dismiss_stale_reviews_on_push: false`, so the push itself dismisses
+  nothing - but the re-review's verdict REPLACES the old one, and an `APPROVED`
+  supersedes a standing `CHANGES_REQUESTED`. Measured on three PRs the same day:
+  **#383** went `CHANGES_REQUESTED` -> took both findings -> `APPROVED`, leaving
+  `reviewDecision` empty and `merge=CLEAN` with no dismissal at all. **#381**
+  took round one's findings but DECLINED round two's, so round two came back
+  `CHANGES_REQUESTED` and it stayed blocked behind two standing reviews.
+
+  So the rule is about the findings, not the push: take them and it unblocks
+  itself; decline one and a human must dismiss. Put the reasoning in the
+  dismissal message - it is the only record of why:
 
   ```bash
   gh api --method PUT \
