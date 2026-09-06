@@ -29,10 +29,12 @@
  * This module changes no bound and relaxes no comparison. `withDiffArtifacts`
  * runs the caller's `expect` calls untouched and re-throws the SAME error
  * object with a line appended to its message. If the assertions pass, not one
- * byte is written and not one pixel is walked - its callers are the two
- * heaviest files in the suite (`wasmVulcanusRenderParity.spec.ts` at 79.8s and
- * `wasmNauvisRenderParity.spec.ts` at 58.1s, measured 2026-09-05), and a green
- * run must stay free.
+ * byte is written and not one pixel is walked. Its three callers are the wasm
+ * render-parity specs, and two of them are the heaviest files in the whole
+ * suite - `wasmVulcanusRenderParity.spec.ts` at 79.8s and
+ * `wasmNauvisRenderParity.spec.ts` at 58.1s, with
+ * `wasmFulgoraRenderParity.spec.ts` a much cheaper 5.4s (measured 2026-09-05).
+ * A green run must stay free.
  *
  * Wrapping the assertions rather than re-testing the bound is deliberate. The
  * obvious alternative, `if (differing >= 200) writeDiffArtifacts(...)`, states

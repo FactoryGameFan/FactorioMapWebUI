@@ -6,8 +6,9 @@
 # That premise was re-measured on 2026-09-05 and the numbers below replace an
 # earlier header claiming "1.62s cold, 0.84s warm" - wrong by more than a
 # hundredfold, and impossible for a script that runs the crate's tests twice.
-# Warm, each phase timed on its own: poison 82.4s, `cargo test --workspace`
-# 26.0s, wasm32 release build 2.8s, `cargo deny` 0.6s, fmt + clippy 0.3s.
+# Warm, each phase timed on its own: `cargo test --locked -p fmw-noise
+# --features poison` 82.4s, `cargo test --locked --workspace` 26.0s, the
+# wasm32 release build 2.8s, `cargo deny check` 0.6s, fmt + clippy 0.3s.
 # That is 112.0s, which is 54% of `pnpm run verify` and its LARGEST phase.
 #
 # The poison phase's cost is the poison, not the test count: filtering to

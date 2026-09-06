@@ -358,13 +358,18 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   tests, all green), and **the COMPOSITION has inverted since it was last
   written down**, which matters more than the total:
 
-  | phase          |       time |   share |
-  | -------------- | ---------: | ------: |
-  | `verify:rust`  | **112.0s** | **54%** |
-  | `vp test`      |  **80.3s** | **39%** |
-  | `preview:test` |       8.0s |      4% |
-  | `check:vue`    |       3.8s |      2% |
-  | `vp check`     |       2.0s |      1% |
+  | phase                             |       time |   share |
+  | --------------------------------- | ---------: | ------: |
+  | `verify:rust`                     | **112.0s** | **54%** |
+  | `vp run --cache test` (on a MISS) |  **80.3s** | **39%** |
+  | `preview:test`                    |       8.0s |      4% |
+  | `check:vue`                       |       3.8s |      2% |
+  | `vp check`                        |       2.0s |      1% |
+
+  The test row is the **uncached** cost, which is what CI always pays and what
+  a real edit pays locally; on a cache hit that phase is ~0.6s and the shares
+  above are meaningless. `verify:rust` is not cached at all, so it pays 112.0s
+  every single time - which is the practical reason it now dominates.
 
   The old note said the Rust phase "adds ~1.6s" and that `vp test` was 88% of
   the gate. Both are dead. #227 and #371 deleted the TypeScript noise math, so
