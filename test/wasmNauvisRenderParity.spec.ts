@@ -110,14 +110,15 @@ const ENEMY_RGB = [255, 25, 25] as const;
  * Measured on the TypeScript path: 1,189 enemy pixels, and 8 of the remaining
  * 1,047,387 differ - 99.9992%.
  *
- * **`previewAgreement.spec.ts` says 10 in a comment, and that has drifted.** It
- * asserts `toBeLessThan(200)`, so the number in its prose was never checked by
+ * **`previewAgreement.spec.ts` said 10 in a comment, and that had drifted.** It
+ * asserted `toBeLessThan(200)`, so the number in its prose was never checked by
  * anything and the port has moved since it was written - the same way four rows
  * of `test/captureGrid.ts`'s table had. This spec freezes it exactly instead.
  *
  * **These are the TypeScript renderer's own numbers and they have to be**,
  * because the first describe block asserts the two renders are byte-identical.
- * `previewAgreement.spec.ts` reaches the same figures through a separate run.
+ * `previewAgreement.spec.ts` reached the same figures through a separate run,
+ * until #360 deleted it; these frozen figures now stand alone.
  * Asserted EXACTLY here for the reason #162 records: a bound reported a real
  * improvement as a regression once, and an exact count cannot.
  */

@@ -438,8 +438,9 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
       }
     }
 
-    // An EXACT count, not a bound. `test/previewAgreement.spec.ts` bounds the
-    // TypeScript's same comparison at < 4% and records the same 34,788; the two
+    // An EXACT count, not a bound. `test/previewAgreement.spec.ts` bounded the
+    // TypeScript's same comparison at < 4% and recorded the same 34,788 before
+    // #360 deleted it; the two
     // renders are byte-identical, so this must be that number and not merely
     // under a bound. If it moves, one of those two facts changed and the test
     // names which.
@@ -461,7 +462,7 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     // is not the same thing as a better image - but it is not a rule that this
     // class of fix never helps. It depends on whether the field is upstream of
     // what the image is made of.
-    // Wrapped for the same reason previewAgreement's comparisons are, and with
+    // Wrapped for the same reason previewAgreement's comparisons were, and with
     // MORE reason: this is the tighter of the two. An exact `toBe` trips on a
     // one-pixel move, where its twin one file over needs 0.04 of the image to
     // shift - and per CLAUDE.md the frozen-exact assertions are the only ones
@@ -528,8 +529,8 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
  *
  * **A SUPERSET assertion, and against the FOOTPRINT rather than a rendered
  * overlay** - both deliberate, and both inherited from
- * `test/previewAgreement.spec.ts`, which asks the same question of the
- * TypeScript.
+ * `test/previewAgreement.spec.ts`, which asked the same question of the
+ * TypeScript before #360 deleted it.
  *
  * Superset, never equality, because `ResourceEntityPrototype::map_grid` defaults
  * to true: the game draws solid ore as a 2x2-block checkerboard and shows about
@@ -582,7 +583,8 @@ describe("the WASM engine's scrap footprint contains the game's scrap", () => {
       if (footprint[i * 4] === 0) outside++;
     }
 
-    // The same numbers `previewAgreement.spec.ts` measures for the TypeScript.
+    // The same numbers `previewAgreement.spec.ts` measured for the TypeScript
+    // before #360 deleted it.
     //
     // `gameScrap` is a property of the PNG pair alone - it counts pixels the
     // game's own two renders differ on - so no change to this port can move it.

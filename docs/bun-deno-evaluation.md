@@ -49,8 +49,16 @@ One real `findIslands` pass, `ISLANDS=35` on every arm, seed 2967702466, radius
 | **vitest as it ships**  | **V8** | **21.86s** |
 
 **bun is 10% slower than the runtime already installed.** Deno's 4% edge is
-inside noise. The 4x gap is the harness, not the runtime - that is issue #267,
-and it is reachable without changing runtimes at all.
+inside noise. The 4x gap is the harness, not the runtime - that was issue #267.
+
+**The runtime half of this page still stands; the #267 half does NOT.** #267
+was re-measured on 2026-09-05 and closed as refuted: its own A/B on
+`test/findIslands.spec.ts` now returns **0.99x** over three interleaved rounds
+per arm, 11/11 passing each time. The 4x was real and it was a property of a
+99-module `src/noise/`; #227 and #371 cut that graph to 25 modules and the tax
+went with it. Suite-wide, `import` fell from 29.8% to 3.8%. Do not cite the
+21.86s / 5.46s rows above as a live cost - they describe a tree that no longer
+exists. See `CLAUDE.md` for the current line items.
 
 ## The supply-chain guard is strictly weaker in both, and that was measured
 

@@ -295,10 +295,32 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
 - `pnpm run verify:rust` - `scripts/verify-rust.sh`: `cargo fmt --check`,
   `clippy -D warnings`, `cargo test`, the zero-shipped-dependencies assertion,
   a byte comparison against the committed `src/noise/wasm/engine.wasm`, and
-  `cargo deny check`. This is the `rust` CI job. **Cheap, and that is measured
-  rather than assumed: 1.62 / 1.64 / 1.62s over three `cargo clean` runs and
-  0.84 / 0.85 / 0.87s warm** - both under `vp check`'s 2.0s, so its position
-  last in `verify` costs almost nothing.
+  `cargo deny check`. This is the `rust` CI job, and it is the
+  **largest phase of `verify`**: 112.0s warm on a dev machine, 54% of the gate
+  (measured 2026-09-05).
+
+  **This line said "Cheap ... 1.62s cold, 0.84s warm" and was wrong by more
+  than a hundredfold.** Those figures cannot have described this script, which
+  runs the crate's tests twice - once clean and once under `--features poison`.
+  Where the time goes, each phase timed on its own, warm:
+
+  | phase                                                   |      time |
+  | ------------------------------------------------------- | --------: |
+  | `cargo test --features poison`                          | **82.4s** |
+  | `cargo test --locked --workspace`                       |     26.0s |
+  | `cargo build --release --target wasm32-unknown-unknown` |      2.8s |
+  | `cargo deny check`                                      |      0.6s |
+  | `cargo fmt --check` + `cargo clippy`                    |      0.3s |
+
+  **The poison phase's cost is the POISON, not the test count**, and narrowing
+  it was measured and REJECTED: filtering to `fixtures::` runs 108 tests
+  instead of 452 and still costs **81.3s against 82.4s**. The tests the gate
+  requires to go red ARE the expensive ones. What makes them expensive is the
+  perturbation itself - those same 108 tests cost **20.8s clean and 81.2s
+  poisoned, a 3.9x blowup** - so poisoning every op's return value drives the
+  code into much slower paths. Whether that is inherent to perturbing a noise
+  graph or a pathology worth fixing has NOT been measured; do not assume
+  either.
 
   Two things about it that are easy to get wrong:
   - **It probes cargo-deny with `cargo deny --version`, never
@@ -330,12 +352,31 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   with `grep channel rust-toolchain.toml`. This line named 1.97.1 from #219
   until #316 moved the pin, and then stayed wrong - the same trap the
   `engine.wasm` byte count already carries a warning about, and it cost a
-  second machine's setup notes the same error on 2026-08-29. Nothing else about the gate changed: the
-  Rust phase adds ~1.6s cold. **~3m30s cold on a dev machine** (measured
-  2026-08-15 at #207:
-  3m28s wall, 218 test files, 1,922 tests). On a runner it is no longer one job -
-  see the CI section, which shards it. This line has been wrong twice and in the
-  same direction, so treat the number as perishable. It claimed `~9.5s` for a
+  second machine's setup notes the same error on 2026-08-29.
+
+  **~3m26s on a dev machine** (measured 2026-09-05: 125 test files, 1,168
+  tests, all green), and **the COMPOSITION has inverted since it was last
+  written down**, which matters more than the total:
+
+  | phase                             |       time |   share |
+  | --------------------------------- | ---------: | ------: |
+  | `verify:rust`                     | **112.0s** | **54%** |
+  | `vp run --cache test` (on a MISS) |  **80.3s** | **39%** |
+  | `preview:test`                    |       8.0s |      4% |
+  | `check:vue`                       |       3.8s |      2% |
+  | `vp check`                        |       2.0s |      1% |
+
+  The test row is the **uncached** cost, which is what CI always pays and what
+  a real edit pays locally; on a cache hit that phase is ~0.6s and the shares
+  above are meaningless. `verify:rust` is not cached at all, so it pays 112.0s
+  every single time - which is the practical reason it now dominates.
+
+  The old note said the Rust phase "adds ~1.6s" and that `vp test` was 88% of
+  the gate. Both are dead. #227 and #371 deleted the TypeScript noise math, so
+  the test phase fell by more than half while the Rust phase grew - and the one
+  phase `verify` caches is now the SECOND largest. On a runner it is no longer one job -
+  see the CI section, which shards it. This line has now been wrong THREE times
+  and always in the same direction, so treat the number as perishable. It claimed `~9.5s` for a
   long time - wrong by a factor of six even before `check:vue` existed, because
   the suite grew through the Vulcanus and cliff work. It was then corrected to
   `~65-90s`, which the island finder (#207) invalidated within two weeks by
@@ -391,16 +432,34 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
     correctly, but `vp test --merge-reports` does not merge, it **re-runs**: a
     57-file shard's blob came back reporting 114 files. Vite+ is not bare vitest
     on this path. That is why the sharded CI job uploads no artifacts.
-  - **The wall clock was set by the slowest FILE, not by total CPU** - true on
-    2026-08-03 at 171 files (497s of CPU in 68s of wall on 12 cores, with
-    `test/previewAgreement.spec.ts` alone 67s of that 68s), and **no longer
-    true**. Re-measured 2026-08-10 at 201 files: total per-file wall is 503s and
-    previewAgreement is **72.9s of it (14.5%)**, with ten files over 20s. The
-    #84 cliff work added the rest. `environment: "node"` by default was worth
-    ~3s (only ~30 of 164 spec files touch `document`/`window`) and has not been
-    re-measured since. See #119 for the CI consequence: the single-file floor is
-    what made N=4 look pointless, and once it stopped dominating, N=4 became a
-    32% cut of the gate.
+  - **The wall clock is set by the slowest FILE, not by total CPU** - true on
+    2026-08-03, then false on 2026-08-10, and **true again now**. This has
+    flipped twice, so measure it rather than quoting any of the three states.
+    Re-measured 2026-09-05 at 125 files: 208.3s of per-file wall in **80.3s of
+    wall clock on 12 cores, with `test/wasmVulcanusRenderParity.spec.ts` alone
+    79.8s of that 80.3s**. Two files are 66% of all test time and four are 84%.
+    The 2026-08-10 reading (503s spread over ten files above 20s) was correct
+    for the tree it measured; #227 and #371 then deleted the TypeScript noise
+    math and left the wasm parity specs standing alone. See #119 for the CI
+    consequence: the single-file floor is what made N=4 look pointless, and
+    once it stopped dominating, N=4 became a 32% cut of the gate.
+  - **Switching to `environment: "node"` was measured and REFUTED - the cost
+    RELOCATES.** This note used to claim `node` was already the default and
+    worth ~3s; `vite.config.ts` sets `happy-dom`, so the claim was wrong twice
+    over. On `test/base64.spec.ts`, which touches no DOM at all, the two arms
+    are indistinguishable end to end (159/156ms against 154/165ms) because the
+    time only moves between two line items:
+
+    | arm                       | environment |    setup |
+    | ------------------------- | ----------: | -------: |
+    | `happy-dom` (the default) |        83ms |     11ms |
+    | `--environment=node`      |     **0ms** | **91ms** |
+
+    `test/setup.ts` constructs its own happy-dom `Window` to install
+    `localStorage`, so `node` does not avoid loading happy-dom - it just pays
+    for it under `setup` instead. **Reading the `environment` column alone
+    shows a fake 20.9s win.** 105 of the 125 spec files need no DOM, so the
+    migration is available; it is the payoff that is zero.
 
   **A fourth, measured 2026-08-18: bun and deno are refuted, and the premise
   under the question was refuted with them.** The suite is transform **0.7%**,
@@ -412,10 +471,28 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   close - and both exit 0 having installed no `node_modules` for either
   preview-service workspace. Full arm-by-arm numbers, the deno flag-spelling
   trap that produces a false negative, and the one result that would reopen it
-  are in `docs/bun-deno-evaluation.md`. What that work DID find is issue #267:
-  vitest's per-module transform costs **3.7x** on the noise graph
-  (`test/findIslands.spec.ts`, 162.11s against 43.63s pre-bundled, 11 tests
-  passing both ways), which is reachable without changing runtime at all.
+  are in `docs/bun-deno-evaluation.md`. That work also opened issue #267 -
+  vitest's per-module transform costing 3.7x on the noise graph - and **#267 is
+  now CLOSED as refuted, by re-running its own A/B** (2026-09-05). Three
+  interleaved rounds per arm, 11/11 passing every run: as it ships 20.61 /
+  21.27 / 20.82s, pre-bundled 20.83 / 21.06 / 20.95s. **Ratio 0.99x.** The
+  162.11s baseline is gone with the code that caused it - #227 and #371 took
+  `src/noise/` from 99 modules to 25, and #267 itself predicted this, naming
+  the deletion as the thing that removes the tax "from the other side."
+
+  The suite-wide line items moved the same way. Do not budget against the old
+  ones:
+
+  | line item   | 2026-08-18 |         2026-09-05 |
+  | ----------- | ---------: | -----------------: |
+  | tests       |      67.3% | **85.3%** (208.3s) |
+  | import      |  **29.8%** |    **3.8%** (9.4s) |
+  | environment |       2.1% |       8.5% (20.9s) |
+  | transform   |       0.7% |        1.9% (4.6s) |
+
+  `import` is the line the tax landed in, and it has collapsed. On the heaviest
+  file, the entire non-test overhead is now **193ms** (import 58ms, transform
+  55ms, environment 80ms) out of 77.2s.
 
 - `pnpm refs:sync` - report which reference material is readable at the
   installed binary's version (`--check` exits 1 when it is not; `--fixtures`
@@ -485,12 +562,19 @@ re-deriving:
   Vitest shards by sha1 of each spec's path, sorted, then sliced into N
   contiguous chunks. Adding any spec file changes the count and re-slices every
   shard, so names picked to spread today do not stay spread.
-- **Splitting the heaviest spec file was measured and REJECTED** (#203). Import
-  time is a first-order cost - one shard spent 332s importing against 260s
-  running tests - and `isolate: true` is required here, so turning one file into
-  four adds three more full re-imports of the noise graph. The binding shard is
-  not bound by one file either: it paired two heavy specs, putting 503s of its
-  653s on 2 of its 4 workers.
+- **Splitting the heaviest spec file was REJECTED in #203, and that
+  rejection's COST ARGUMENT has since expired.** #203 rested on import being a
+  first-order cost - one shard spent 332s importing against 260s running tests
+  - with `isolate: true` making each added file re-import the whole 99-module
+    noise graph. Re-measured 2026-09-05: import is **9.4s against 208.3s of test
+    execution** on a 26-module graph, and the heaviest file's own import line is
+    **58ms**. Splitting it costs about 193ms per file added, not a re-import.
+
+  **#203's DURABLE point still stands and is the one to reason from:** adding
+  any spec file re-slices every shard, so names picked to spread today do not
+  stay spread. A split is therefore a reliable win on a dev machine, where the
+  wall is one file, and a lottery on CI. Nothing here says to do it - it says
+  the old arithmetic no longer decides it.
 
 **`test/findIslands.spec.ts` WAS the heaviest file, and is not any more.** It
 measured 134.6s on the Mac, where the spread is small, and 240.4s before four
@@ -498,10 +582,21 @@ of its tests were cut to a small `refineCount` for identical coverage. Then
 #371's engine-mandatory change put every render and survey in it through the
 engine, and on Menehune, run alone, it went from **386.2s to 48.4s** (measured
 2026-09-04, `pnpm vp test test/findIslands.spec.ts` on each side of the
-change). Which file is heaviest now has not been re-derived; read it off a
-verbose run rather than off this paragraph. One test in that file **cannot**
-be cheapened by lowering its refine count and its own comment explains why,
-so do not "finish the job" that way.
+change). One test in that file **cannot** be cheapened by lowering its refine
+count and its own comment explains why, so do not "finish the job" that way.
+
+**Re-derived 2026-09-05, and the concentration is the point.** Per-file wall on
+this Mac, 125 files, 208.3s of test execution in an 80.3s wall:
+
+| file                                    |  wall | share | cumulative |
+| --------------------------------------- | ----: | ----: | ---------: |
+| `test/wasmVulcanusRenderParity.spec.ts` | 79.8s | 38.3% |      38.3% |
+| `test/wasmNauvisRenderParity.spec.ts`   | 58.1s | 27.9% |      66.2% |
+| `test/findIslands.spec.ts`              | 23.8s | 11.4% |      77.7% |
+| `test/wasmVulcanusParity.spec.ts`       | 12.7s |  6.1% |      83.8% |
+
+Only 12 files exceed 1s at all. Read it off a verbose run rather than off this
+table when it matters - the ranking has changed twice in a month.
 
 **What breaks under load is a per-test TIMEOUT, not the gate wall.** On a
 docs-only change an unchanged test hit its 120s budget at 150.5s; the same code
@@ -1148,8 +1243,9 @@ the code agreed with each other while both disagreed with the game.
 
 ### Diff artifacts are NOT fixtures - `test-output/` vs `test/fixtures/`
 
-When an image comparison in `test/previewAgreement.spec.ts` or
-`test/wasmFulgoraRenderParity.spec.ts` fails, `test/diffArtifacts.ts` writes the
+When an image comparison in `test/wasmFulgoraRenderParity.spec.ts`,
+`test/wasmNauvisRenderParity.spec.ts` or `test/wasmVulcanusRenderParity.spec.ts`
+fails, `test/diffArtifacts.ts` writes the
 reference, our render, a magenta mask, a false-coloured magnitude view and a
 `stats.json` into `test-output/preview-diffs/<spec>/<case>/`, and the assertion
 message names that directory - both repo-relative and absolute, because the

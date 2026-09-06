@@ -107,8 +107,10 @@ const MASKED_PX = 118890;
  *
  * **This is the TypeScript renderer's own number**, and it has to be, because
  * the first describe block asserts the two renders are byte-identical.
- * `previewAgreement.spec.ts` records the same 98.664% over the same 929,686
+ * `previewAgreement.spec.ts` recorded the same 98.664% over the same 929,686
  * compared pixels, from a completely separate run through the TypeScript path.
+ * **#360 deleted that spec with the rest of the ported TypeScript**, so the
+ * corroborating run is gone and this frozen number now stands on its own.
  *
  * The gap is not diagnosed and this does not bless it - #225's remaining work
  * (the cliff, rock and resource stacks) sits behind part of it. Freezing the
@@ -781,8 +783,8 @@ describe("the WASM engine renders Vulcanus cliffs to its frozen bytes", () => {
 
 describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () => {
   /**
-   * The same 1024x1024 comparison `previewAgreement.spec.ts` makes of the
-   * TypeScript renderer, run through the real boundary.
+   * The same 1024x1024 comparison `previewAgreement.spec.ts` made of the
+   * TypeScript renderer (deleted in #360), run through the real boundary.
    *
    * **The count is EXACT, not a bound**, and that is available only because the
    * first describe block holds: the two renders are byte-identical, so this must
@@ -791,8 +793,9 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
    *
    * Rocks and cliffs are masked because Vulcanus has no control that can disable
    * them, so they are in the reference capture whatever the request says. Their
-   * coverage is a separate finding with its own assertions in
-   * `previewAgreement.spec.ts`; this is the terrain layer alone.
+   * coverage was a separate finding with its own assertions in
+   * `previewAgreement.spec.ts`, which #360 deleted; this is the terrain layer
+   * alone, and nothing asserts that other finding today.
    */
   it("differs on exactly the same pixels the TypeScript renderer does", async () => {
     const e = await engine();
@@ -850,7 +853,8 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
       },
       () => {
         // Frozen exact counts, measured 2026-08-24. `previewAgreement.spec.ts`
-        // asserts a 2% BOUND on the same comparison; this side freezes the
+        // asserted a 2% BOUND on the same comparison before #360 deleted it;
+        // this side freezes the
         // number, because the byte-identity above means it CAN be exact and
         // #162 is the standing record of a tolerance hiding a real defect.
         expect(masked).toBe(MASKED_PX);

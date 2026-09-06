@@ -3,12 +3,19 @@
 #
 # Runs LAST in `verify`, after `vp test`, per issue #219 - on the reasoning that
 # a cold cargo build should not sit in front of the phases that fail fastest.
-# That premise turned out to be much smaller than assumed, and the numbers are
-# here rather than the assumption: three runs after `cargo clean` measure
-# 1.62 / 1.64 / 1.62s, and three warm runs measure 0.84 / 0.85 / 0.87s. Both
-# are under `vp check`'s 2.0s, so the ordering is nearly free either way and is
-# left where #219 put it rather than churned. On the CI runner the whole job is
-# 19s, of which this script is 2s and the pinned-toolchain sync is 10s.
+# That premise was re-measured on 2026-09-05 and the numbers below replace an
+# earlier header claiming "1.62s cold, 0.84s warm" - wrong by more than a
+# hundredfold, and impossible for a script that runs the crate's tests twice.
+# Warm, each phase timed on its own: `cargo test --locked -p fmw-noise
+# --features poison` 82.4s, `cargo test --locked --workspace` 26.0s, the
+# wasm32 release build 2.8s, `cargo deny check` 0.6s, fmt + clippy 0.3s.
+# That is 112.0s, which is 54% of `pnpm run verify` and its LARGEST phase.
+#
+# The poison phase's cost is the poison, not the test count: filtering to
+# `fixtures::` runs 108 tests instead of 452 and still costs 81.3s, and those
+# same 108 tests cost 20.8s clean against 81.2s poisoned. Perturbing every op
+# drives the code into much slower paths. Narrowing this phase was measured
+# and buys nothing; whether the 3.9x itself is inherent is NOT measured.
 #
 # The cost that IS real is the FIRST run on a machine with no Rust: rustup
 # installs the pinned toolchain and its components before anything here runs.
