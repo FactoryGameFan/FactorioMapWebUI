@@ -694,6 +694,19 @@ measured on #380 and #381 rather than read off its docs.
     --field message='why' --field event=DISMISS
   ```
 
+- **Count its findings from the REVIEW BODY, not from the inline endpoint.**
+  The body opens with `Actionable comments posted: N` and then lists all N. On
+  #383 that said **3** while `GET /pulls/383/comments` returned **2** - two of
+  the three were reported at the same line and only one thread came back. A
+  session that counts threads therefore misses findings silently, which is how
+  a wrong claim reached `CLAUDE.md` in this very section. Read the body's list,
+  then reconcile it against the threads:
+
+  ```bash
+  gh api repos/FactoryGameFan/FactorioMapWebUI/pulls/<n>/reviews \
+    --jq '.[] | select(.state=="CHANGES_REQUESTED") | .body' | head -40
+  ```
+
 - **It reads the PR description as evidence about the code.** A wrong claim in
   a PR body becomes a finding against correct code, so the body is part of what
   gets reviewed.
