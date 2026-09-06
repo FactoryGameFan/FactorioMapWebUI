@@ -59,6 +59,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { inflateSync } from "node:zlib";
 
 const run = promisify(execFile);
 
@@ -99,6 +100,37 @@ interface StringsFixture {
   readonly _factorioVersion: string;
   readonly _exchangeFormatTag: string;
   readonly strings: Record<string, string>;
+}
+
+/**
+ * The four-part exchange format tag, read out of a string this run just
+ * captured.
+ *
+ * **This used to be `process.env.EXCHANGE_TAG ?? ""`, and nobody ever set it.**
+ * The field defaulted to empty silently, so `map-exchange-2.1.15.strings.json`
+ * and `map-exchange-2.1.16.strings.json` both carry `""` where 2.1.14 carries
+ * `"2.1.14.1"`. An empty metadata field looks like "not applicable" rather than
+ * "the capture forgot", which is why two versions went by without anyone
+ * noticing. Deriving it removes the way to get it wrong.
+ *
+ * The tag is the first four `u16` LE of the inflated payload - the same bytes
+ * `decodeExchangeString` reads. This does it with `node:zlib` rather than by
+ * importing the codec, because the point of the field is to record what the
+ * GAME emitted; deriving it through our own decoder would make the fixture
+ * agree with the codec by construction, and the tag is one of the things
+ * `test/mapExchangeVersions.spec.ts` asserts.
+ */
+function formatTagOf(exchangeString: string): string {
+  const compact = exchangeString.replaceAll(/\s+/g, "");
+  if (!compact.startsWith(">>>") || !compact.endsWith("<<<")) {
+    throw new Error("captured string is missing its >>> <<< envelope");
+  }
+  const payload = inflateSync(Buffer.from(compact.slice(3, -3), "base64"));
+  if (payload.length < 8) {
+    throw new Error(`captured payload too short to hold a version (${payload.length} bytes)`);
+  }
+  const view = new DataView(payload.buffer, payload.byteOffset, 8);
+  return [0, 2, 4, 6].map((o) => view.getUint16(o, true)).join(".");
 }
 
 /**
@@ -272,7 +304,7 @@ async function main(): Promise<void> {
     firstReparsed ??= out.reparsed;
   }
 
-  const tag = process.env.EXCHANGE_TAG ?? "";
+  const tag = formatTagOf(strings[settingsDump.cases[0].label]);
   await writeFile(
     join(FIXTURES, `map-exchange-${gameVersion}.strings.json`),
     `${JSON.stringify(

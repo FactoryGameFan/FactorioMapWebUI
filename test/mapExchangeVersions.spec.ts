@@ -82,6 +82,52 @@ describe("exchange format versions", () => {
 });
 
 /**
+ * Every strings fixture records the exchange tag it was captured at, and this
+ * asserts that record against the strings themselves.
+ *
+ * **It exists because the field went silently empty for two versions.** The
+ * capture script read the tag from `process.env.EXCHANGE_TAG ?? ""`, which
+ * nobody ever set, so `map-exchange-2.1.15` and `map-exchange-2.1.16` shipped
+ * with `""` while 2.1.14 carried `"2.1.14.1"`. An empty metadata field reads as
+ * "not applicable" rather than "the capture forgot", which is why two versions
+ * went by. The script derives it from the captured payload now, and this is the
+ * guard that keeps it derived.
+ *
+ * **The two sides are independent, so this is a cross-check rather than a
+ * tautology.** The recorded value comes from the capture script's own
+ * `node:zlib` inflate plus a raw `DataView` read of four `u16`s; the expected
+ * value here comes from `decodeExchangeString`, which is the thing under test
+ * everywhere else in this file. A bug in either one alone fails this.
+ *
+ * Asserted for EVERY fixture rather than only the ones with a value, because a
+ * guard that skips empty tags has a hole in exactly the shape of the bug it
+ * guards against.
+ */
+describe("every fixture records the tag it was captured at", () => {
+  const FIXTURES = [
+    { version: "2.1.12", fixture },
+    { version: "2.1.14", fixture: fixture214 },
+    { version: "2.1.15", fixture: fixture215 },
+    { version: "2.1.16", fixture: fixture216 },
+    { version: "2.1.17", fixture: fixture217 },
+  ] as const;
+
+  it.each(FIXTURES)("$version", ({ version, fixture: f }) => {
+    const recorded = f._exchangeFormatTag;
+    // Not merely non-empty: the first three parts are the game version, so a
+    // tag copied from the wrong fixture fails here rather than at the compare.
+    expect(recorded, `${version} records no tag`).not.toBe("");
+    expect(recorded.startsWith(version + ".")).toBe(true);
+
+    const strings = Object.entries(f.strings as Record<string, string>);
+    expect(strings.length).toBeGreaterThanOrEqual(5);
+    for (const [label, s] of strings) {
+      expect(decodeExchangeString(s).version.join("."), `${version} ${label}`).toBe(recorded);
+    }
+  });
+});
+
+/**
  * Factorio 2.1.14 moved the format again - to `2.1.14.1` - and this time the
  * PAYLOAD moved too, which 2.1.12 did not. `map-settings.lua` gained
  * `enemy_expansion.build_base_unit_dispatch_cooldown` (30 * 60 ticks) between

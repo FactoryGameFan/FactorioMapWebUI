@@ -1,7 +1,7 @@
 {
   "_comment": "Map-exchange strings produced by Factorio 2.1.17 via game.get_map_exchange_string(), five cases mirroring map-exchange-2.1.16.strings.json setting-for-setting - each case's map-gen settings are the game's OWN parse of that fixture's string for the same case, fed back as --map-gen-settings, so the mirror is a mechanism rather than a claim. Regenerate: node --experimental-strip-types scripts/probes/exchange-format/capture.ts 2.1.17",
   "_factorioVersion": "2.1.17",
-  "_exchangeFormatTag": "",
+  "_exchangeFormatTag": "2.1.17.0",
   "strings": {
     "default-seed123456": ">>>eNpjYmBkEGQAA0aHR4wMDS1yYPy/nkHh/38QBrIeAGUfgJU0MDA02ANpoCAyUHAEYieIHBAzMjJWi6xzf1g1xZ4RokDPAcr4ABU5kAQT8YQx/BxwSqnAGCZI5jAy9r7duuD7sQt2jH9Wfrzkm5Rgz2joKvLug9E6O6AkK8i9zCCCDc6C6H0AcxWHA7oIkDFrJgi8tIcYwIXQpuDAuKAHyDvgzczAyMEOZAnwAQmwmIIMXJkdzFARB8Y0MPhmz2gMBo9hjMsYLgD60AZklRyIOAEiWBE2MzgA/QNh9DswOsjDZCURSoD6jRiQ3ZAC4kH8chJm7WEk+9EcghnCyP5AE4Er5kBigEMqBU68YEYO7wvsMJ7DfAdwXDCAVH1hhMYMWAZmFIQWcGAUAVLM8ET2wR41CYEYIEOWlGW/AQBpQ2If<<<",
     "seed777771": ">>>eNpjYmBkEGQAA0bte9wMDS1yYPy/nkHh/38QBrIeAGUfgJU0MDA02ANpoCAyUHAEYieIHBAzMjJWi6xzf1g1xZ4RokDPAcr4ABU5kAQT8YQx/BxwSqnAGCZI5jAy9r7duuD7sQt2jH9Wfrzkm5Rgz2joKvLug9E6O6AkK8i9zCCCDc6C6H0AcxWHA7oIkDFrJgi8tIcYwIXQpuDAuKAHyDvgzczAyMEOZAnwAQmwmIIMXJkdzFARB8Y0MPhmz2gMBo9hjMsYLgD60AZklRyIOAEiWBE2MzgA/QNh9DswOsjDZCURSoD6jRiQ3ZAC4kH8chJm7WEk+9EcghnCyP5AE4Er5kBigEMqBU68YEYO7wvsMJ7DfAdwXDCAVH1hhMYMWAZmFIQWcGAUAVLM8ET2wR41CYEYIEO6vi3+AQBB0mK6<<<",
