@@ -39,4 +39,20 @@ describe("eval/math", () => {
     expect(sliderToLinear(1, 0, 10)).toBeCloseTo(5, 12);
     expect(sliderToLinear(6, 0, 10)).toBeCloseTo(10, 12);
   });
+
+  // Moved here from test/cliffCatalog.spec.ts by #324, which deleted the
+  // second, plain-f64 `sliderToLinear` that used to live in the cliff catalog.
+  // These are anchors, not the grading - what settles which form is right is
+  // test/sliderToLinearOracle.spec.ts, against the game's own values.
+  it("sliderToLinear anchors on the cliff gate's own two ranges", () => {
+    expect(sliderToLinear(1, -1, 1)).toBeCloseTo(0, 12);
+    expect(sliderToLinear(6, -1, 1)).toBeCloseTo(1, 12);
+    expect(sliderToLinear(1 / 6, -1, 1)).toBeCloseTo(-1, 12);
+    // EXACT, not toBeCloseTo. The f64 copy this replaced also returned 0 here,
+    // so a tolerance would accept either and the anchor would be blind to the
+    // one range in the game data whose bounds f32 cannot hold. Narrowing the
+    // bounds first is what makes this exactly 0 rather than 4.77e-8.
+    expect(sliderToLinear(1, -1.7, 1.7)).toBe(0);
+    expect(sliderToLinear(6, -1.7, 1.7)).toBe(Math.fround(1.7));
+  });
 });

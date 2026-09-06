@@ -22,11 +22,18 @@
 //!
 //! ## `log2` and `2^x` ARE ported, and the residual risk is stated
 //!
-//! `slider_to_linear` and `slider_rescale` need both. Unlike the noise machine's
-//! `^`, they resolve on the PROTOTYPE side - Lua, not the noise VM - so they use
-//! exact math rather than `fast_approx`, which is measured rather than assumed:
-//! fastapprox misses 6 of the 7 probe points, including breaking the exact `1`
-//! at the default slider.
+//! `slider_to_linear` and `slider_rescale` need both, and they use exact math
+//! rather than `fast_approx`. That is measured rather than assumed: fastapprox
+//! misses 6 of the 7 probe points, including breaking the exact `1` at the
+//! default slider.
+//!
+//! **The REASON given here used to be wrong.** This said the two "resolve on the
+//! PROTOTYPE side - Lua, not the noise VM". They do not: both are declared
+//! `type = "noise-function"` in `core/prototypes/noise-functions.lua`, so they
+//! are inlined into their callers and evaluated by the machine like anything
+//! else. The conclusion survives and is now better supported - #324's probe
+//! passes `x`, a position variable, so nothing can be constant-folded, and exact
+//! `log2` still takes all 39 captured cells. Do not restate the old reason.
 //!
 //! So this module calls `f64::log2` and `f64::powf`, which reach libm - the same
 //! class of function the game itself reaches from Lua. **What is graded is 7
@@ -217,11 +224,31 @@ pub fn log2(x: f64) -> f64 {
 /// numerators, and at `s = 6` the ratio is exactly 1 whatever `log2(6)` is, so
 /// a four-point sweep that skipped 3 would have "confirmed" the f64 form.
 ///
+/// **The BOUNDS are narrowed first, and that is the whole of #324.** The
+/// measurement above was made at `(-50, 50)`, and 50 is exactly representable
+/// in f32 - as are `(-1, 1)` and `(-0.5, 0.5)`, the only other ranges the game
+/// data uses anywhere except the cliff gate. On such a range narrowing the
+/// bounds is a no-op, so no capture ever made before #324 could see whether it
+/// happens. `(-1.7, 1.7)` is the one non-dyadic range in the whole of
+/// `factorio-data`, and it is read by `cliffiness_nauvis`
+/// (`noise-programs.lua:358`).
+///
+/// `scripts/probes/cliff-slider-to-linear` sampled the game across three ranges
+/// and 13 sliders. Narrowing the bounds scores **39 of 39** exact; not
+/// narrowing them scores 31 of 39, losing 8 of the 13 cells on `(-1.7, 1.7)`
+/// alone. See `test/sliderToLinearOracle.spec.ts`.
+///
+/// This is the same class as the `structure_subnoise` finding: an f64 literal
+/// has to be narrowed to f32 BEFORE it is used, and narrowing the product
+/// afterwards buys nothing.
+///
 /// The `f64` -> `f32` casts are written out at each step rather than by typing
 /// the whole chain `f32`, so this reads token-for-token against the TypeScript
 /// it is graded against.
 #[must_use]
 pub fn slider_to_linear(s: f64, lo: f64, hi: f64) -> f32 {
+    let lo = f64::from(lo as f32);
+    let hi = f64::from(hi as f32);
     let ratio = slider_ratio(s);
     let half_span = (0.5 * f64::from((hi - lo) as f32)) as f32;
     let scaled = (f64::from(half_span) * f64::from((1.0 + f64::from(ratio)) as f32)) as f32;
@@ -389,6 +416,31 @@ mod tests {
         assert_eq!(slider_to_linear(1.0, -50.0, 50.0), 0.0);
         assert_eq!(slider_to_linear(6.0, -50.0, 50.0), 50.0);
         assert_eq!(slider_to_linear(1.0, -0.5, 0.5), 0.0);
+    }
+
+    /// The bounds are narrowed to f32 BEFORE use, and only a range whose bounds
+    /// f32 cannot hold exactly can tell (#324).
+    ///
+    /// `(-1.7, 1.7)` is that range, and it is the only one in the whole of
+    /// `factorio-data`; `cliffiness_nauvis` reads it
+    /// (`noise-programs.lua:358`). The game's own values live in
+    /// `test/fixtures/oracle-slider-to-linear.seed123456.json` and are graded on
+    /// the TypeScript side by `test/sliderToLinearOracle.spec.ts` - this test is
+    /// the Rust half, pinning the two cells that discriminate so a "simplify the
+    /// casts" edit reads as the behaviour change it would be.
+    #[test]
+    fn slider_to_linear_narrows_its_bounds_before_using_them() {
+        // s = 1 makes the ratio exactly 0, so the result is the midpoint. With
+        // the bounds narrowed first that midpoint is exactly 0, which is what
+        // the game returns; without, it is 4.7683716e-8.
+        assert_eq!(slider_to_linear(1.0, -1.7, 1.7), 0.0);
+        // s = 6 makes the ratio exactly 1, so the result is `hi` AS F32.
+        assert_eq!(slider_to_linear(6.0, -1.7, 1.7), 1.7f32);
+        // The control: on a range whose bounds ARE f32-exact the narrowing is a
+        // no-op, so it must change nothing. If this ever fails, the fix leaked
+        // past the one call site it was measured for.
+        assert_eq!(slider_to_linear(6.0, -1.0, 1.0), 1.0);
+        assert_eq!(slider_to_linear(3.0, -50.0, 50.0), 30.657_356);
     }
 
     /// The two shipped `slider_rescale` forms are NOT interchangeable, and the

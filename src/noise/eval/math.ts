@@ -92,15 +92,39 @@ export function cos(x: number): number {
  * numerators, and at `s = 6` the ratio is exactly 1 whatever `log2(6)` is - so
  * a four-point sweep that skipped 3 would have "confirmed" the f64 form.
  *
+ * **The BOUNDS are narrowed to f32 first, and that is the whole of #324.** The
+ * measurement above was taken at `(-50, 50)`, and 50 is exactly representable
+ * in f32 - as are `(-1, 1)` and `(-0.5, 0.5)`, the only other ranges the game
+ * data uses anywhere except the cliff gate. On such a range narrowing the
+ * bounds is a no-op, so no capture made before #324 could see whether it
+ * happens at all. `(-1.7, 1.7)` is the one non-dyadic range in the whole of
+ * `factorio-data`, read by `cliffiness_nauvis` (`noise-programs.lua:358`).
+ *
+ * `scripts/probes/cliff-slider-to-linear` sampled the game over three ranges
+ * and 13 sliders. Narrowing the bounds scores 39 of 39 exact; not narrowing
+ * them scores 31 of 39, losing 8 of the 13 cells on `(-1.7, 1.7)` alone.
+ * `test/sliderToLinearOracle.spec.ts` is that comparison. Same class as the
+ * `structure_subnoise` finding: narrow the f64 LITERAL before it is used, not
+ * the product afterwards.
+ *
  * `log2` here stays EXACT (`Math.log2`). The fastapprox variant was tried and
  * is refuted: it misses all five, including breaking the exact 175 at the
- * default `s = 1` (it gives 175.00005). `slider_to_linear` is evaluated on the
- * prototype side, not by the noise machine, so `Math::log2` never enters it.
+ * default `s = 1` (it gives 175.00005).
+ *
+ * **A note here used to say `slider_to_linear` is "evaluated on the prototype
+ * side, not by the noise machine", and that is wrong** - it is declared
+ * `type = "noise-function"` in `core/prototypes/noise-functions.lua:10`, so it
+ * is inlined into its callers and evaluated by the machine like anything else.
+ * The conclusion survives the correction and is now better supported: the #324
+ * probe passes `x`, a position variable, so nothing is constant-folded, and
+ * exact `log2` still takes all 39 cells.
  */
 export function sliderToLinear(s: number, lo: number, hi: number): number {
   const f = Math.fround;
+  const l = f(lo);
+  const h = f(hi);
   const ratio = f(f(log2(s)) / f(log2(6)));
-  return f(lo + f(f(0.5 * f(hi - lo)) * f(1 + ratio)));
+  return f(l + f(f(0.5 * f(h - l)) * f(1 + ratio)));
 }
 
 /**

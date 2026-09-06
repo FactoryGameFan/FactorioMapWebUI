@@ -678,7 +678,7 @@
     "pow exponent=7 | checksum_pow": "0x4e22710bdb885d87",
     "seed vars wrapping | checksum_seed_vars": "0x27f18c61f12b0626",
     "slider linear [-0.5, 0.5] | checksum_slider": "0x66c3752b1963398d",
-    "slider linear [-1.7, 1.7] | checksum_slider": "0xf4271fb8b7a290de",
+    "slider linear [-1.7, 1.7] | checksum_slider": "0xa2cf011cb89ea854",
     "slider linear [-50, 50] | checksum_slider": "0x840c4444ce70a5ac",
     "slider rescale n=2 | checksum_slider": "0x90712018410e68da",
     "slider rescale n=3 | checksum_slider": "0xd8922f4a24b5ab19"

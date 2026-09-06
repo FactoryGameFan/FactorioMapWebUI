@@ -410,9 +410,12 @@ and the raw one. A test asserting only the good number would pass again if the
 snap were removed and the counts re-frozen to match, which is exactly how this
 shipped the first time. There are three such tests.
 
-**2.1.14, 2.1.15 and 2.1.16 are ONE oracle** for map-gen, because the data Lua
-is byte-identical across them. So `refs:sync --fixtures` overstates staleness by
-three versions.
+**2.1.14 through 2.1.17 are ONE oracle** for map-gen, because the data Lua is
+byte-identical across them - 2.1.17's whole diff against 2.1.16 is four
+`info.json` bumps, the changelog and `elevated-rail-pictures.lua`, none of it
+map-gen. So `refs:sync --fixtures` overstates staleness by four versions, and a
+fixture captured at any of them is comparable with one captured at any other.
+`oracle-slider-to-linear.seed123456.json` is the first captured at 2.1.17.
 
 ### The findings this port produced, and how they were settled
 
@@ -422,10 +425,10 @@ unilateral fix on the Rust side reads as a port bug in tier 2, which is the
 whole point of having tier 2. The precision findings are all landed: #269, #270,
 #273, #279, #290, #293, #309.
 
-**#320 is LANDED and one remains.** The Rust reproduced #320 on purpose while
-there was a TypeScript arm for it to agree with; #380 deleted that arm, which
-left the pinned zero agreeing with nothing, and the fix went in as its own
-graded change:
+**#320 and #324 are both LANDED, and nothing is left open.** The Rust reproduced
+#320 on purpose while there was a TypeScript arm for it to agree with; #380
+deleted that arm, which left the pinned zero agreeing with nothing. Each fix
+went in as its own graded change:
 
 - **#320 - `waterLevel` never reached the Nauvis tile argmax. FIXED.**
   `render_nauvis` handed `nauvis_ctx` a hard-coded 0, so the `terrain` view,
@@ -445,17 +448,53 @@ graded change:
   +/-3000, where 1,731 of 3,600 pixels move (48.1%, arriving independently at
   the 47.5% of tiles #320 measured). The near-spawn case is asserted rather
   than avoided, so a sweep cannot quietly drift back onto a dead window.
-- **#324 - a DUPLICATED FUNCTION rather than a narrowing.**
-  `src/noise/cliffs/cliffCatalog.ts` carries its own plain-f64
-  `sliderToLinear`, and `cliffFields.ts` is its only consumer. The form in
-  `src/noise/eval/math.ts` rounds every operation to f32 and is the one measured
-  against the game. The two disagree at 11 of 22 slider positions across the two
-  ranges the cliff gate reads, worst 1.4e-7. No committed fixture can grade it:
-  all three cliff fixtures were captured at default settings, where the two
-  forms agree exactly on `(-1, 1)`, and the one range where they differ is
-  masked by a `min` whose other argument is the `(-1, 1)` zero.
-  `test/cliffCatalog.spec.ts` asserts the anchor to 12 decimal places, which the
-  game-validated form would fail.
+- **#324 - BOTH `slider_to_linear` forms were wrong, not one. FIXED.** The
+  issue framed it as a duplicated function where one copy was right.
+  `scripts/probes/cliff-slider-to-linear` asked the game over 3 ranges x 13
+  sliders and refuted both:
+
+  | candidate | (-1,1) | (-1.7,1.7) | (-50,50) | total |
+  | --- | ---: | ---: | ---: | ---: |
+  | per-op f32 **+ bounds narrowed** | 13/13 | **13/13** | 13/13 | **39/39** |
+  | per-op f32, what `eval/math.ts` shipped | 13/13 | 5/13 | 13/13 | 31/39 |
+  | f64 rounded once | 7/13 | 8/13 | 6/13 | 21/39 |
+  | plain f64, what `cliffCatalog.ts` shipped | 2/13 | 1/13 | 2/13 | 5/39 |
+
+  The f64 copy **fails a control**: at `s = 6` the ratio is exactly 1, so every
+  implementation must return `hi` whatever `log2(6)` is, and it returns `1.7`
+  where the game returns `f32(1.7)`. The per-operation form narrowed every
+  operation but not the **bounds**. Both duplicate copies are deleted; the
+  cliff lever calls `eval::math::slider_to_linear`.
+
+  **Why a year of evidence could not see it.** `(-1.7, 1.7)` is the only range
+  in all of `factorio-data` whose bounds are not exactly representable in f32.
+  Every other use is `(-1, 1)`, `(-0.5, 0.5)` or `(-50, 50)`, where narrowing
+  the bounds is a no-op - and `fulgora_grid`'s `(-50, 50)` is what the original
+  5/5 validation used. The measurement was sound and its input class could not
+  discriminate the hypothesis. This is #320's lesson in another costume:
+  ask which INPUT the evidence holds constant, not just how much evidence there
+  is.
+
+  **It moved exactly one frozen row**, `slider linear [-1.7, 1.7] |
+  checksum_slider`, which is the correct signature. No cliff fixture moved, and
+  that is asserted rather than hoped:
+  `the_lever_is_zero_at_the_default_controls_and_live_off_them` pins both the
+  default 0 and the lever being live off the default, so the test cannot pass
+  by the lever having been wired to a constant.
+
+  Probe design worth copying: pass the slider as `x` so the capture POSITIONS
+  are the slider positions, and select the range with `y` as a mask-sum
+  (`0 * finite` is exactly 0 and `0 + w` is exactly `w`, so the selection adds
+  no rounding). Keep the bounds LITERAL - computing `-1.7` as `-1 - 0.7` rounds
+  the bound and contaminates the measurement.
+
+  It also corrected a comment that appeared in both `eval/math.rs` and
+  `eval/math.ts`: `slider_to_linear` does NOT "resolve on the prototype side -
+  Lua, not the noise VM". It is declared `type = "noise-function"`, so it is
+  inlined into its callers and evaluated by the machine. The conclusion that
+  comment supported - exact `log2`, not `fast_approx` - survives and is better
+  supported now, because the probe passes a position variable that cannot be
+  constant-folded.
 
 Five rules came out of the sweep work, and they are the transferable part:
 
@@ -515,7 +554,7 @@ confirmed.** It expected `moats`, `vaultSpots` and `spotsPrebanding` to reach
 101/101 once the cones moved; measured, they reach 69, 69 and 98. They improved
 and did not close, so each still has to be applied and re-scored one at a time.
 
-### One open finding, and do not "fix" it
+### No open findings, and do not "fix" the next one inside the port
 
 `variable_persistence_multioctave_noise` takes its `persistence` operand as
 **f64**, matching the TypeScript. `oracle-variable-persistence-multioctave`

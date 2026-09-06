@@ -500,6 +500,10 @@
     "oracle-vulcanus-plasma-decomposition.seed123456.json": {
       "factorioVersion": "2.1.14",
       "evidence": "stated in the fixture's own _comment"
+    },
+    "oracle-slider-to-linear.seed123456.json": {
+      "factorioVersion": "2.1.17",
+      "evidence": "captured 2026-09-05 by scripts/probes/cliff-slider-to-linear through factorio-oracle, which recorded the binary as \"Version: 2.1.17 (build 87315, mac-arm64, steam)\" in its own run provenance. Not inferred: that string comes from the run that produced these numbers, not from the installed binary read afterwards."
     }
   },
   "notFixtures": {
