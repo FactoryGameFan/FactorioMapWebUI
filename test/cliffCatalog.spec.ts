@@ -5,17 +5,13 @@ import {
   getModifiedElevationInterval,
   getModifiedRichness,
   isCliffPlaced,
-  sliderToLinear,
 } from "../src/noise/cliffs/cliffCatalog";
 
 describe("cliff catalog math", () => {
-  // slider_to_linear(1) = midpoint; (6) = hi; (1/6) = lo (log2(6)/log2(6)=1, log2(1/6)/log2(6)=-1)
-  it("sliderToLinear anchors", () => {
-    expect(sliderToLinear(1, -1, 1)).toBeCloseTo(0, 12);
-    expect(sliderToLinear(6, -1, 1)).toBeCloseTo(1, 12);
-    expect(sliderToLinear(1 / 6, -1, 1)).toBeCloseTo(-1, 12);
-    expect(sliderToLinear(1, -1.7, 1.7)).toBeCloseTo(0, 12);
-  });
+  // `sliderToLinear` is no longer part of this catalog - #324 deleted the f64
+  // copy that lived here. Its anchors moved to test/eval/math.spec.ts, and the
+  // game comparison that settled which form is right is
+  // test/sliderToLinearOracle.spec.ts.
   // interval = base/frequency; richness = base*continuity; both identity at slider 1
   it("lever modifiers", () => {
     expect(getModifiedElevationInterval(40, 1)).toBeCloseTo(40, 12);

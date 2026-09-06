@@ -1,0 +1,77 @@
+{
+  "_comment": "slider_to_linear sampled straight out of the noise machine, by scripts/probes/cliff-slider-to-linear, against Factorio 2.1.17 (build 87315, mac-arm64, steam) on 2026-09-05. The probe registers `slider_to_linear(x, lo, hi)` as the elevation property, so the capture positions ARE the slider positions; `y` picks the range. Settles #324: narrowing the BOUNDS to f32 before use scores 39/39 exact, the shipped per-operation form without that narrowing scores 31/39, and the plain-f64 copy that used to live in cliffCatalog.ts scores 5/39 and fails a control.",
+  "ranges": {
+    "narrow": [
+      -1,
+      1
+    ],
+    "wide": [
+      -1.7,
+      1.7
+    ],
+    "fulgora": [
+      -50,
+      50
+    ]
+  },
+  "sliders": [
+    0.25,
+    0.5,
+    0.75,
+    1,
+    1.25,
+    1.5,
+    1.75,
+    2,
+    2.5,
+    3,
+    4,
+    5,
+    6
+  ],
+  "narrow": [
+    -0.7737056016921997,
+    -0.38685280084609985,
+    -0.16055840253829956,
+    0,
+    0.12453877925872803,
+    0.2262943983078003,
+    0.31232750415802,
+    0.3868527412414551,
+    0.5113916397094727,
+    0.6131471395492554,
+    0.7737056016921997,
+    0.8982443809509277,
+    1
+  ],
+  "wide": [
+    -1.3152995109558105,
+    -0.6576497554779053,
+    -0.27294933795928955,
+    0,
+    0.2117159366607666,
+    0.3847005367279053,
+    0.5309567451477051,
+    0.6576497554779053,
+    0.869365930557251,
+    1.0423500537872314,
+    1.3152995109558105,
+    1.5270154476165771,
+    1.7000000476837158
+  ],
+  "fulgora": [
+    -38.685279846191406,
+    -19.342639923095703,
+    -8.02791976928711,
+    0,
+    6.226940155029297,
+    11.314720153808594,
+    15.616378784179688,
+    19.342636108398438,
+    25.569580078125,
+    30.65735626220703,
+    38.685279846191406,
+    44.91221618652344,
+    50
+  ]
+}

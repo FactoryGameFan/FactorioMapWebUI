@@ -28,10 +28,19 @@ things this survey could not know:
 - **How blind the gate fold is was measured by planting**, not estimated: it
   misses a 6e-4 shift in `main_cliffiness` and catches 6e-3.
 - `cliffCatalog.ts` has its own plain-f64 `sliderToLinear`, separate from the
-  game-validated f32-per-operation form in `eval/math.ts`, and `cliffFields.ts`
-  is its only consumer. The port reproduces the f64 form and the finding is
-  issue #324. Section 2.2 does not mention it because the survey read the call
-  site and not the import.
+  f32-per-operation form in `eval/math.ts`, and `cliffFields.ts` is its only
+  consumer. The port reproduces the f64 form and the finding is issue #324.
+  Section 2.2 does not mention it because the survey read the call site and not
+  the import.
+
+  **Since resolved, and the survey's framing of it was too narrow.** #324 was
+  fixed by measuring both forms against the game rather than picking one:
+  neither was right. The f64 copy scored 5 of 39 and failed a control; the
+  f32-per-operation form scored 31 of 39 because it narrowed every operation
+  but not the **bounds**. Narrowing those first scores 39 of 39, and both
+  duplicate copies are gone. Calling `eval/math.ts` "game-validated" was true
+  of the evidence and false of the function - the validation used `(-50, 50)`,
+  and only `(-1.7, 1.7)` can discriminate the two.
 
 Siblings: `docs/nauvis-resources-port-survey.md` and
 `docs/nauvis-trees-port-survey.md`, and the ports they produced. Three

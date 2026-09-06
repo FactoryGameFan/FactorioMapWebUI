@@ -1496,13 +1496,17 @@ companion doc.
   `log2`, `exp`, `cbrt`, `sin` or `cos` sits inside the predicate being counted,
   freeze a FRACTION and say why.
 
-#### One open finding, and do not "fix" it inside the port
+#### NO open findings, and do not "fix" the next one inside the port
 
 The port found real defects in shipped TypeScript. **None was fixed inside the
 port** - each got an issue and landed as its own graded change, because a
 unilateral fix on the Rust side reads as a port bug in tier 2, which is the
-whole point of having tier 2. The precision findings are landed (#269, #270,
-#273, #279, #290, #293, #309), and #320 with them. ONE remains:
+whole point of having tier 2. All of them are landed now: the precision
+findings (#269, #270, #273, #279, #290, #293, #309), then #320 and #324. The
+rule stands for the next one.
+
+Two are worth carrying forward, because both were hidden the same way - the
+evidence held one input constant everywhere it looked:
 
 - **#320 - `waterLevel` never reached the Nauvis tile argmax. FIXED.** The
   Rust reproduced it on purpose while `renderTerrain.ts` existed to be
@@ -1513,10 +1517,23 @@ whole point of having tier 2. The precision findings are landed (#269, #270,
   it otherwise covers thoroughly. And a near-spawn window reports 0 of 6400
   differing at every water level, which is how it stayed hidden; the new rows
   sweep +/-3000, where 48.1% of pixels move.
-- **#324 - a DUPLICATED FUNCTION.** `cliffs/cliffCatalog.ts` carries its own
-  plain-f64 `sliderToLinear`; the `eval/math.ts` form rounds every operation to
-  f32 and is the one measured against the game. They disagree at 11 of 22
-  slider positions, worst 1.4e-7. No committed fixture can grade it.
+- **#324 - BOTH `slider_to_linear` forms were wrong. FIXED.** The issue framed
+  it as "one of two forms is right"; a probe against the game refuted both.
+  The plain-f64 copy scored **5 of 39** and fails a control - at `s = 6` the
+  ratio is exactly 1, so every implementation must return `hi`, and it returns
+  `1.7` where the game returns `f32(1.7)`. The shipped per-operation f32 form
+  scored **31 of 39**: it narrowed every operation but not the **bounds**.
+  Narrowing those first scores **39 of 39**, and both duplicate copies are
+  deleted rather than fixed.
+
+  **Only `(-1.7, 1.7)` can see it** - the one range in all of `factorio-data`
+  whose bounds f32 cannot hold exactly. Every other use is `(-1, 1)`,
+  `(-0.5, 0.5)` or `(-50, 50)`, where narrowing the bounds is a no-op, and
+  `fulgora_grid`'s `(-50, 50)` is what the original 5/5 validation used. So a
+  year of evidence confirmed the form on exactly the input class that cannot
+  discriminate it. Same shape as #320's table: ask which INPUT the evidence
+  holds constant. It moved one frozen row of the tier-2 table, which is the
+  correct signature.
 
 #### `verify:rust`'s cost is a RANGE
 

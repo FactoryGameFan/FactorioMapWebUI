@@ -5,13 +5,14 @@
 //! planet behaviour, so it is shared by every planet that places cliffs.
 //! Vulcanus has no cliff autoplace control at all.
 //!
-//! The Nauvis lever math that shares the TypeScript file arrived with #226 and
-//! now lives here too: [`cliff_slider_to_linear`], [`modified_elevation_interval`]
-//! and [`modified_richness`]. This module doc used to say that block was
-//! deliberately absent because "`slider_to_linear` already lives in
-//! [`crate::eval::math`]". That reasoning turned out to be wrong, and the
-//! reason it was wrong is the one thing in this file worth reading twice - see
-//! [`cliff_slider_to_linear`].
+//! Part of the Nauvis lever math that shares the TypeScript file arrived with
+//! #226 and lives here too: [`modified_elevation_interval`] and
+//! [`modified_richness`]. The slider narrowing does NOT, and the round trip is
+//! worth reading twice. This module doc once said that block was deliberately
+//! absent because "`slider_to_linear` already lives in [`crate::eval::math`]";
+//! #226 judged that reasoning wrong and added a local f64 copy beside these
+//! two. #324 then asked the game, and the ORIGINAL reasoning was right - the
+//! copy scored 5 of 39 and is deleted. See the comment where it used to sit.
 //!
 //! ## What was read out of the binary, and where
 //!
@@ -104,45 +105,20 @@ impl CliffSettings {
     }
 }
 
-/// `slider_to_linear` **as the cliff lever math computes it** - all f64, one
-/// rounding at the end.
-///
-/// # This is NOT [`crate::eval::math::slider_to_linear`], and the difference is
-/// a finding rather than a detail
-///
-/// The TypeScript has two implementations of the same GUI helper.
-/// `src/noise/eval/math.ts` rounds every operation to f32, which is the form
-/// that was measured against the game: `fulgora_grid` was sampled at five
-/// slider positions on a real 2.1.14 surface, and an f64 chain rounded once at
-/// the end misses `s = 3` by one f32 ULP while the per-operation form matches
-/// all five. `src/noise/cliffs/cliffCatalog.ts` carries a second, plain-f64
-/// copy, and `cliffFields.ts` is its only consumer.
-///
-/// **The two disagree at 11 of 22 slider positions tested** across the two
-/// ranges the cliff gate reads, `(-1, 1)` and `(-1.7, 1.7)`. The largest gap
-/// measured is 1.4e-7, at `s = 1.5` on `(-1.7, 1.7)`.
-///
-/// This port reproduces the f64 form, because the rule is to port the
-/// TypeScript faithfully and let a finding land as its own graded change - it is
-/// issue #324. Do
-/// not "fix" it by calling [`crate::eval::math::slider_to_linear`] here - that
-/// would be a unilateral change on the Rust side, and tier 2 would report it as
-/// a port bug, which is exactly the signal tier 2 exists to give.
-///
-/// ## Why no committed fixture can see it
-///
-/// All three cliff fixtures were captured at default settings, and at `s = 1`
-/// the two forms agree exactly on `(-1, 1)` - both return 0. They do NOT agree
-/// on `(-1.7, 1.7)`, where the f32 form returns 4.768372e-8 rather than 0. The
-/// cliff gate reads that range only inside
-/// `min(slider_to_linear(freq, -1.7, 1.7), slider_to_linear(richness, -1, 1))`,
-/// and at the defaults the `min` picks the `(-1, 1)` zero, so the difference is
-/// masked by an argument it never chooses. Move either lever off 1 and it stops
-/// being masked - which is why the tier-2 sweep moves them.
-#[must_use]
-pub fn cliff_slider_to_linear(v: f64, lo: f64, hi: f64) -> f64 {
-    lo + 0.5 * (hi - lo) * (1.0 + crate::eval::math::log2(v) / crate::eval::math::log2(6.0))
-}
+// `cliff_slider_to_linear` USED TO LIVE HERE, and #324 deleted it rather than
+// fixing it in place.
+//
+// It was a second implementation of `slider_to_linear` computed entirely in f64
+// and never rounded, mirroring `src/noise/cliffs/cliffCatalog.ts`. The port
+// reproduced it deliberately, on the rule that a finding lands as its own graded
+// change rather than as a unilateral fix on the Rust side.
+//
+// `scripts/probes/cliff-slider-to-linear` then asked the game directly, over
+// three ranges and 13 sliders. The f64 form scored 5 of 39 and FAILED a control
+// - at `s = 6` the ratio is exactly 1, so every implementation must return
+// exactly `hi`, and it returned 1.7 where the game returns f32(1.7). The whole
+// cliff lever now calls `crate::eval::math::slider_to_linear`, which scores
+// 39 of 39. Do not reintroduce a local copy.
 
 /// Higher frequency gives tighter (smaller) elevation bands between cliff
 /// lines: `base_interval / frequency`.

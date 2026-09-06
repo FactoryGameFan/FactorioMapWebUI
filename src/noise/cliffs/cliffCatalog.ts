@@ -106,13 +106,11 @@ export interface CliffSettingsInput {
   richness: number;
 }
 
-/**
- * Maps a geometric slider value (1/6..6, with 1 = 100%/midpoint) to a linear
- * value in `[lo, hi]`. Mirrors the game's `slider_to_linear` GUI helper.
- */
-export function sliderToLinear(v: number, lo: number, hi: number): number {
-  return lo + 0.5 * (hi - lo) * (1 + Math.log2(v) / Math.log2(6));
-}
+// `sliderToLinear` USED TO LIVE HERE, computed entirely in f64. #324 deleted
+// it rather than fixing it: `src/noise/eval/math.ts` exports the one graded
+// implementation, and this copy had no production consumer left after #227
+// removed `cliffFields.ts`. `scripts/probes/cliff-slider-to-linear` scored the
+// f64 form at 5 of 39 against the game, failing a control at `s = 6`.
 
 /** Higher frequency -> tighter (smaller) elevation bands between cliff lines. */
 export function getModifiedElevationInterval(baseInterval: number, frequency: number): number {

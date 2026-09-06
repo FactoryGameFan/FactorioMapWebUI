@@ -28,14 +28,14 @@
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::cliffs::placement::CliffFields;
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{min, min2};
+use crate::eval::math::{min, min2, slider_to_linear};
 use crate::eval::primitives::{basis_noise_expr, BasisExprParams};
 use crate::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
 use crate::expressions::nauvis_shared::{NauvisShared, NauvisSharedParams};
 
 use super::catalog::{
-    cliff_slider_to_linear, modified_elevation_interval, modified_richness, CliffControls,
-    CliffSettings, LOW_FREQ_CLIFFINESS_SEED1,
+    modified_elevation_interval, modified_richness, CliffControls, CliffSettings,
+    LOW_FREQ_CLIFFINESS_SEED1,
 };
 
 /// Free variables of the Nauvis cliff fields.
@@ -116,11 +116,18 @@ impl NauvisCliffFields {
 
         // `min2`, not `f64::min`, and in the TypeScript's own argument order -
         // see `eval::math::min2` for why that matters on signed zero.
+        //
+        // `eval::math::slider_to_linear`, not a second local copy. A plain-f64
+        // copy used to live in `super::catalog` and was read only here; #324
+        // measured both against the game and it lost 5 of 39, failing a control
+        // at `s = 6`. This is the ONLY call site in the codebase that passes a
+        // range whose bounds are not exactly representable in f32, so it is the
+        // only one whose value moves.
         let low_freq_lever = min2(
-            cliff_slider_to_linear(cliff_frequency, -1.7, 1.7),
-            cliff_slider_to_linear(cliff_richness, -1.0, 1.0),
+            f64::from(slider_to_linear(cliff_frequency, -1.7, 1.7)),
+            f64::from(slider_to_linear(cliff_richness, -1.0, 1.0)),
         );
-        let cliff_gap_size = 0.5 - 0.5 * cliff_slider_to_linear(cliff_richness, -1.0, 1.0);
+        let cliff_gap_size = 0.5 - 0.5 * f64::from(slider_to_linear(cliff_richness, -1.0, 1.0));
         // `**` in the TypeScript, which is `Math.pow` - exact, not the noise
         // machine's fastapprox. This resolves on the prototype side, the same
         // place `slider_rescale`'s `^` does.
@@ -289,5 +296,56 @@ mod trait_impl_tests {
         // above however it were wired. `cliffiness_nauvis` is a hard 0 or 10,
         // so this counts the positions where it actually answers 10.
         assert!(moved > 0, "the swept window must contain cliffy positions");
+    }
+
+    /// Why #324 moved no frozen count, stated as an assertion rather than as a
+    /// hope.
+    ///
+    /// The lever is `min(slider_to_linear(cliff_frequency, -1.7, 1.7),
+    /// slider_to_linear(cliff_richness, -1, 1))`. Every committed cliff fixture
+    /// was captured at the default controls, where `cliff_richness` is 1 and the
+    /// second argument is therefore exactly 0 - and the first is 0 too, so the
+    /// `min` is 0 whichever implementation computes it. That is the whole reason
+    /// swapping the refuted f64 copy for `eval::math::slider_to_linear` left all
+    /// 453 tests green.
+    ///
+    /// The second half is the anti-vacuity control. A test that only pinned the
+    /// default to 0 would pass just as well if the lever had been wired to a
+    /// constant, so it also asserts the lever is LIVE off the default - which is
+    /// where the fix does change what ships.
+    #[test]
+    fn the_lever_is_zero_at_the_default_controls_and_live_off_them() {
+        let lever = |frequency: f64, richness: f64| {
+            NauvisCliffFields::new(&CliffFieldParams {
+                controls: CliffControls {
+                    frequency,
+                    continuity: 1.0,
+                },
+                settings: CliffSettings {
+                    richness,
+                    ..CliffSettings::defaults()
+                },
+                ..CliffFieldParams::defaults(123_456)
+            })
+            .low_freq_lever
+        };
+
+        // The default, and the reason no fixture can see this change.
+        assert_eq!(lever(1.0, 1.0), 0.0);
+        // At the default richness the `min` stays pinned to that 0 for every
+        // frequency AT OR ABOVE 1, because the frequency arm is then >= 0 too.
+        // This is the masking the issue described, and it is why the default is
+        // not a lucky single point.
+        assert_eq!(lever(2.0, 1.0), 0.0);
+        assert_eq!(lever(6.0, 1.0), 0.0);
+
+        // Below 1 the frequency arm goes negative and WINS the min, so the
+        // masking stops - `(-1.7, 1.7)` is the range whose bounds f32 cannot
+        // hold, and this is the case that reads it.
+        assert!(lever(0.5, 1.0) < 0.0);
+
+        // And the richness arm is live in both directions off its own default.
+        assert!(lever(1.0, 0.5) < 0.0);
+        assert!(lever(1.5, 2.0) > 0.0);
     }
 }
