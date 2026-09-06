@@ -651,6 +651,56 @@ Two settings whose reasoning is not guessable from the outside:
   whole section exists to prevent. 25 hours clears pnpm and still drops the wait
   from 3 days to ~1.
 
+### CodeRabbit reviews every PR, and it can block one
+
+Added 2026-09-05. It reviews on open and again on **every push**, and it is a
+different kind of gate from the CI jobs above - all of the following was
+measured on #380 and #381 rather than read off its docs.
+
+- **It runs on defaults.** There is no `.coderabbit.yaml` in the tree; its
+  review body reports `Configuration used: Organization UI`, profile `CHILL`.
+  So it grades this repo against general conventions, not against the
+  invariants in this file - frozen exact counts instead of tolerance bounds,
+  "never edit a fixture to make a test pass", byte-exact deflate, and
+  `crates/fmw-noise/src/cliffs/connections.rs`, 578 lines that `fmw-wasm` never
+  references and whose only consumer is the `#[cfg(test)]` fixtures harness.
+  Each of those reads as a defect to a general reviewer and is deliberate here.
+- **Its status check cannot block, but its REVIEW can.** The `CodeRabbit`
+  context is not in ruleset `EJ`, whose required checks are only `verify` and
+  `build`. But it submits `CHANGES_REQUESTED`, and a standing one of those
+  blocks the merge even at `required_approving_review_count: 0` -
+  `mergeStateStatus` goes `BLOCKED` with every check green.
+- **Pushing the fix does NOT clear it**, because `EJ` sets
+  `dismiss_stale_reviews_on_push: false`. On #381 the fix push left the first
+  review standing and CodeRabbit added a **second** `CHANGES_REQUESTED` rather
+  than superseding its own. Two blocking reviews, no way out by pushing. Clear
+  one by hand, and put the reasoning in the message - it is the only record:
+
+  ```bash
+  gh api --method PUT \
+    repos/FactoryGameFan/FactorioMapWebUI/pulls/<n>/reviews/<id>/dismissals \
+    --field message='why' --field event=DISMISS
+  ```
+
+- **It reads the PR description as evidence about the code.** A wrong claim in
+  a PR body becomes a finding against correct code, so the body is part of what
+  gets reviewed.
+- **It runs markdownlint; this repo does not.** MD018 fires on a line starting
+  `#339`, reading it as a heading with no space. It is not one: CommonMark
+  needs a space after the hash, and GitHub's own renderer returns a `<p>`
+  (`gh api markdown --field text=...`, measured). The style appears **14 times**
+  across `CLAUDE.md` and the two port docs, and only the ones inside a diff get
+  flagged - so taking the fix makes those lines inconsistent with the rest.
+
+**Read its findings; do not assume they are noise.** On #381 its first two were
+both real and both mine: an ABI table recording Nauvis as a 376-byte block with
+a 432-byte request (it is 512 and 568 - `engine.wasm` answers
+`request_bytes() = 568` when asked directly), and a paragraph still claiming
+tier 2 and tier 3 "assert BOTH arms" after #227 and #371 deleted every
+TypeScript arm. `vp check` passes on both, because neither is a lint error.
+The rule from #380 still holds in the other direction: a finding can rest on a
+false premise, and showing that it does is a valid answer.
+
 ### Branch protection is a **ruleset**, and one Renovate rule depends on it
 
 `main` is protected by a repository ruleset named **`EJ`** (2026-07-30, issue
@@ -1318,13 +1368,15 @@ whole point of having tier 2. The precision findings are landed (#269, #270,
 #273, #279, #290, #293, #309). Two remain, and the Rust reproduces both so tier
 3 stays byte-identical:
 
-- **#326 - `waterLevel` never reaches the Nauvis tile argmax.** The `terrain`
+- **#320 - `waterLevel` never reaches the Nauvis tile argmax.** The `terrain`
   view and the terrain base of `all` resolve every tile at `water_level = 0`
   however the slider is set, while `elevation`, `resources` and `cliffs` in the
   same panel honour it. Over a 162x162 grid spanning +/-3000 tiles,
   `control:water:size = 2` moves 12,471 of 26,244 tiles (47.5%). A user-visible
   bug, not a precision question - and a near-spawn window reports 0 of 6400,
-  which is how it stayed hidden.
+  which is how it stayed hidden. **#326 is the CLOSED duplicate** - it was
+  filed a day later, carries the same root cause, and its measurements were
+  moved onto #320 when it was closed `NOT_PLANNED` on 2026-08-26. Cite #320.
 - **#324 - a DUPLICATED FUNCTION.** `cliffs/cliffCatalog.ts` carries its own
   plain-f64 `sliderToLinear`; the `eval/math.ts` form rounds every operation to
   f32 and is the one measured against the game. They disagree at 11 of 22
