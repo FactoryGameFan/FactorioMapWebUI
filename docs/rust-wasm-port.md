@@ -118,7 +118,7 @@ five threshold.
 
 **The cliff overlay is the only Nauvis pass that reads the REAL water level.**
 It builds its own `NauvisCliffFields` rather than sharing the render's stack,
-whose `water_level` is pinned to 0 for #326. So one request carries a water
+whose `water_level` is pinned to 0 for #320. So one request carries a water
 level the terrain pass ignores and the cliff pass honours. It is also the only
 overlay with an even-sided mark (`px - 2 ..= px + 1`, anchored not centred) and
 the only one needing a SECOND ABI box.
@@ -171,7 +171,7 @@ sites, so it gets stated once here rather than at each. **Sweep the map for the
 thing first, then choose the window** - and vary width, height, origin and
 tiles-per-pixel independently across what is left.
 
-- **Near-spawn windows are not a sample of any far-field lever.** #326's first
+- **Near-spawn windows are not a sample of any far-field lever.** #320's first
   measurement used an 80x80 grid at step 7 over +/-280 tiles and reported 0 of
   6400 tiles differing at every water level. Widening to +/-3000 reverses the
   answer entirely: 47.5% differ at `control:water:size = 2`. The starting-lake
@@ -425,14 +425,16 @@ whole point of having tier 2. The precision findings are all landed: #269, #270,
 **Two remain open, and the Rust reproduces both** so tier 3 stays
 byte-identical and each fix can land as its own graded change:
 
-- **#326 - `waterLevel` never reaches the Nauvis tile argmax.**
+- **#320 - `waterLevel` never reaches the Nauvis tile argmax.**
   `renderTerrain.ts` drives the `terrain` view and the terrain base of `all`;
   `TileResolverParams` has no such field, so every tile resolves at
   `water_level = 0` however the slider is set, while the `elevation`,
   `resources` and `cliffs` views in the same panel all honour it. Measured over
   a 162x162 grid spanning +/-3000 tiles: `control:water:size = 2` moves 12,471
   of 26,244 tiles (47.5%), and size 8 moves 74.4%. This is a user-visible bug,
-  not a precision question.
+  not a precision question. **#326 is the CLOSED duplicate** - filed a day
+  later from the same root cause, closed `NOT_PLANNED` on 2026-08-26 with its
+  measurements moved onto #320. Cite #320.
 - **#324 - a DUPLICATED FUNCTION rather than a narrowing.**
   `src/noise/cliffs/cliffCatalog.ts` carries its own plain-f64
   `sliderToLinear`, and `cliffFields.ts` is its only consumer. The form in
@@ -926,7 +928,7 @@ running the wasm parity specs**, especially tier 3's byte-identical renders.
   all six: the renderer was already building its own six-entry map from the
   ABI's eighteen levers, so those levers sat outside tier 2 entirely. And
   `water_level` is a PARAMETER of `nauvis_ctx` rather than a field of it,
-  because the renderer pins it to 0 for #326 while tier 2 must sweep the real
+  because the renderer pins it to 0 for #320 while tier 2 must sweep the real
   value - exactly one field outside the shared wiring, for a reason that is
   itself a tracked defect. **A request carries an off-grid sweep perfectly
   well**, so nothing about this form makes the parity coordinates binary.
