@@ -410,13 +410,29 @@ describe("the WASM engine renders Nauvis terrain to its frozen bytes", () => {
 
     // A FRACTION rather than an exact count, because the chain reaches libm and
     // an exact count with libm inside is not host-portable (#327 was green on
-    // macOS three times and red on every CI run). The Rust arm measures 1,731
-    // of 3,600 pixels, 48.1%, so a third is a floor well clear of the measured
-    // value without pinning a number the host can move.
-    const movedPixels = baseWasm.filter((v, i) => v !== raised[i]).length / 4;
-    expect(movedPixels * 3, `only ${String(movedPixels)} of 3600 pixels moved`).toBeGreaterThan(
-      3600,
-    );
+    // macOS three times and red on every CI run). Both arms measure **1,731 of
+    // 3,600 pixels (48.1%)** on this window - the native `cargo test` build and
+    // the wasm one agree exactly, and that lands independently on the 47.5% of
+    // TILES #320 measured over a different grid. A third is a floor well clear
+    // of that without pinning a number the host can move.
+    // PIXELS, not components over four. A changed tile moves one to three
+    // channels and never the alpha, which is always 255, so dividing the
+    // component count by four undercounts by at least a quarter and could fail
+    // this assertion on a render that did move a third of the window.
+    let movedPixels = 0;
+    for (let i = 0; i < baseWasm.length; i += 4) {
+      const same =
+        baseWasm[i] === raised[i] &&
+        baseWasm[i + 1] === raised[i + 1] &&
+        baseWasm[i + 2] === raised[i + 2] &&
+        baseWasm[i + 3] === raised[i + 3];
+      if (!same) movedPixels += 1;
+    }
+    const total = baseWasm.length / 4;
+    expect(
+      movedPixels * 3,
+      `only ${String(movedPixels)} of ${String(total)} pixels moved`,
+    ).toBeGreaterThan(total);
   }, 300000);
 
   it("a moved spawn renders THROUGH the engine, to its own frozen bytes", async () => {

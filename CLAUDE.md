@@ -1359,7 +1359,7 @@ companion doc.
   `log2`, `exp`, `cbrt`, `sin` or `cos` sits inside the predicate being counted,
   freeze a FRACTION and say why.
 
-#### Two open findings, and do not "fix" either inside the port
+#### One open finding, and do not "fix" it inside the port
 
 The port found real defects in shipped TypeScript. **None was fixed inside the
 port** - each got an issue and landed as its own graded change, because a
