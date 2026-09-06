@@ -4,9 +4,11 @@ import fixture from "./fixtures/map-exchange-2.1.12.strings.json";
 import fixture214 from "./fixtures/map-exchange-2.1.14.strings.json";
 import fixture215 from "./fixtures/map-exchange-2.1.15.strings.json";
 import fixture216 from "./fixtures/map-exchange-2.1.16.strings.json";
+import fixture217 from "./fixtures/map-exchange-2.1.17.strings.json";
 import parsed214 from "./fixtures/map-exchange-parsed.2.1.14-default.dump.json";
 import parsed215 from "./fixtures/map-exchange-parsed.2.1.15-default.dump.json";
 import parsed216 from "./fixtures/map-exchange-parsed.2.1.16-default.dump.json";
+import parsed217 from "./fixtures/map-exchange-parsed.2.1.17-default.dump.json";
 import builtins from "./fixtures/builtin-presets.json";
 import {
   SUPPORTED_VERSIONS,
@@ -75,6 +77,7 @@ describe("exchange format versions", () => {
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.14.1");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.15.2");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.16.0");
+    expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.17.0");
   });
 });
 
@@ -212,8 +215,8 @@ describe("exchange format 2.1.14", () => {
  * Every version AFTER 2.1.14 that reuses its tail layout, each mirrored against
  * the one before it.
  *
- * There are two of these and there will be more, so this is a table rather than
- * a third copy-pasted describe block. Each entry names the version, the exact
+ * There are three of these and there will be more, so this is a table rather
+ * than a third copy-pasted describe block. Each entry names the version, the exact
  * format tag, its own captures and the game's own parse of its default string,
  * plus the PREVIOUS version's captures - which is what "the five cases mirror
  * setting-for-setting" is checked against.
@@ -239,13 +242,23 @@ const LAYOUT_HEIRS = [
     priorVersion: "2.1.15",
     prior: fixture215.strings as Record<string, string>,
   },
+  {
+    version: "2.1.17",
+    tag: "2.1.17.0",
+    strings: fixture217.strings as Record<string, string>,
+    parsed: parsed217,
+    priorVersion: "2.1.16",
+    prior: fixture216.strings as Record<string, string>,
+  },
 ] as const;
 
 /**
- * Factorio moved the format tag again at 2.1.15 and again at 2.1.16, and NEITHER
- * moved the payload. Both were found the same way and on the same day: Steam
- * auto-updated the binary and import broke, which is the same mechanism as
- * 2.1.12 and 2.1.14 - the game is the one version nobody here controls.
+ * Factorio moved the format tag again at 2.1.15, again at 2.1.16 and again at
+ * 2.1.17, and NONE of them moved the payload. All three were found the same way:
+ * Steam auto-updated the binary and import broke, which is the same mechanism as
+ * 2.1.12 and 2.1.14 - the game is the one version nobody here controls. 2.1.15
+ * and 2.1.16 arrived on the same day; 2.1.17 followed on 2026-09-06 and was
+ * caught by `test/factorioTarget.spec.ts` rather than by a user.
  *
  * ## Why these reuse the 2.1.14 tail layout rather than getting their own
  *
@@ -254,7 +267,8 @@ const LAYOUT_HEIRS = [
  * 1. `base/prototypes/map-settings.lua` is absent from each tag-to-tag diff
  *    entirely. At 2.1.15 `map-settings.example.json` DID change and is a red
  *    herring - it was catching up to the 2.1.14 default change it had missed.
- *    2.1.16 changes nothing but `info.json` versions and the changelog.
+ *    2.1.16 changes nothing but `info.json` versions and the changelog, and
+ *    2.1.17 adds only `elevated-rail-pictures.lua` to that same set.
  * 2. Every case re-captured inflates to exactly the byte count its predecessor
  *    does, `controls-off`'s odd 750 included. Pinned below rather than described.
  * 3. The game's own parse of each new default string is identical to the
@@ -262,8 +276,8 @@ const LAYOUT_HEIRS = [
  *
  * ## The tag is NOT guessable from the version number
  *
- * `2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`, `2.1.16.0` - the fourth part
- * does not increase and does not track the patch. Read it off the binary:
+ * `2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`, `2.1.16.0`, `2.1.17.0` - the
+ * fourth part does not increase and does not track the patch. Read it off the binary:
  * `factorio --version` prints `Map output version: X.Y.Z-W`, and W is that part.
  * Confirmed against a binary whose tag was already known (2.1.14 prints
  * `2.1.14-1`), so it is a control rather than a pattern match.
