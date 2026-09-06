@@ -1,8 +1,10 @@
 /**
  * Turn a failed image comparison into something you can look at.
  *
- * `test/previewAgreement.spec.ts` compares a 1024x1024 render against the
- * game's own preview and asserts scalars. When one of those bounds trips, the
+ * The wasm render-parity specs compare a 1024x1024 render against the game's
+ * own preview and assert scalars. (`test/previewAgreement.spec.ts` was the
+ * original caller and the case this module was built for; #360 deleted it with
+ * the rest of the ported TypeScript.) When one of those bounds trips, the
  * entire report is `expected 237 to be less than 200`. That says a render
  * moved. It does not say WHERE, BY HOW MUCH PER CHANNEL, or IN WHAT SHAPE - and
  * in this repo the shape has repeatedly been the answer. The Fulgora
@@ -27,8 +29,10 @@
  * This module changes no bound and relaxes no comparison. `withDiffArtifacts`
  * runs the caller's `expect` calls untouched and re-throws the SAME error
  * object with a line appended to its message. If the assertions pass, not one
- * byte is written and not one pixel is walked - `previewAgreement.spec.ts` is
- * among the heaviest files in the suite, and a green run must stay free.
+ * byte is written and not one pixel is walked - its callers are the two
+ * heaviest files in the suite (`wasmVulcanusRenderParity.spec.ts` at 79.8s and
+ * `wasmNauvisRenderParity.spec.ts` at 58.1s, measured 2026-09-05), and a green
+ * run must stay free.
  *
  * Wrapping the assertions rather than re-testing the bound is deliberate. The
  * obvious alternative, `if (differing >= 200) writeDiffArtifacts(...)`, states

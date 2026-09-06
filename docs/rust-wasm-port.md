@@ -734,9 +734,12 @@ real browser path ever reaches the network.
 | Node, inside vitest |    1134 ms |     50.7 ms |     22.4x |
 
 The same TypeScript is 246 ms in the browser and ~1130 ms under vitest, and its
-warm-up trace is flat from the first pass, so that is not a cold JIT - it is
-issue **#267**, vitest's per-module transform. Only one of the two arms pays
-that tax. The WASM arm differs the other way (50.7 ms in Node against 99.7 ms in
+warm-up trace is flat from the first pass, so that is not a cold JIT - at the
+time it was read as issue **#267**, vitest's per-module transform, and only one
+of the two arms paid that tax. **#267 was refuted and closed on 2026-09-05**
+(its own A/B now returns 0.99x, because #227 and #371 took `src/noise/` from 99
+modules to 25), so the mechanism behind this particular gap is no longer
+established - the measurement stands, its explanation does not. The WASM arm differs the other way (50.7 ms in Node against 99.7 ms in
 Chrome), so neither engine is uniformly faster.
 
 **The lesson generalises past this number.** Any A/B where the two arms go

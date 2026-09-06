@@ -61,6 +61,17 @@
 # whichever one vitest's hash-split happens to load with several heavy files.
 # Re-measure before raising N again - and re-measure on CI, not locally.
 #
+# RE-MEASURED LOCALLY 2026-09-05, and the shape above has reversed again. The
+# paragraph before this one is kept as the paper trail; it is not current.
+# `previewAgreement.spec.ts` no longer exists - #360 deleted it with the rest of
+# the ported TypeScript - and the suite is 125 files, not 201. Concentration
+# came BACK: 208.3s of per-file wall in 80.3s of local wall, with
+# wasmVulcanusRenderParity.spec.ts alone 79.8s of that 80.3s, and two files
+# holding 66% of all test time. So on a 12-core dev box the wall IS one file
+# again. What that means for a 4-core shard is NOT established - the N=4
+# decision above was measured on CI and nothing here re-measures it, so do not
+# read this note as a reason to change the shard count. See CLAUDE.md.
+#
 # The production build runs too, in the separate `build` job below - see its
 # own comment for why it is not a phase inside `verify`.
 #
