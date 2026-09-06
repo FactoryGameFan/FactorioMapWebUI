@@ -1365,18 +1365,17 @@ The port found real defects in shipped TypeScript. **None was fixed inside the
 port** - each got an issue and landed as its own graded change, because a
 unilateral fix on the Rust side reads as a port bug in tier 2, which is the
 whole point of having tier 2. The precision findings are landed (#269, #270,
-#273, #279, #290, #293, #309). Two remain, and the Rust reproduces both so tier
-3 stays byte-identical:
+#273, #279, #290, #293, #309), and #320 with them. ONE remains:
 
-- **#320 - `waterLevel` never reaches the Nauvis tile argmax.** The `terrain`
-  view and the terrain base of `all` resolve every tile at `water_level = 0`
-  however the slider is set, while `elevation`, `resources` and `cliffs` in the
-  same panel honour it. Over a 162x162 grid spanning +/-3000 tiles,
-  `control:water:size = 2` moves 12,471 of 26,244 tiles (47.5%). A user-visible
-  bug, not a precision question - and a near-spawn window reports 0 of 6400,
-  which is how it stayed hidden. **#326 is the CLOSED duplicate** - it was
-  filed a day later, carries the same root cause, and its measurements were
-  moved onto #320 when it was closed `NOT_PLANNED` on 2026-08-26. Cite #320.
+- **#320 - `waterLevel` never reached the Nauvis tile argmax. FIXED.** The
+  Rust reproduced it on purpose while `renderTerrain.ts` existed to be
+  mirrored; #380 deleted that file, so the pinned zero agreed with nothing.
+  Two lessons worth keeping, both in `docs/rust-wasm-port.md`: the fix moved
+  exactly ONE frozen row of 73, because every other row is captured at the
+  default controls where `waterLevel` IS 0 - a table can be blind to a defect
+  it otherwise covers thoroughly. And a near-spawn window reports 0 of 6400
+  differing at every water level, which is how it stayed hidden; the new rows
+  sweep +/-3000, where 48.1% of pixels move.
 - **#324 - a DUPLICATED FUNCTION.** `cliffs/cliffCatalog.ts` carries its own
   plain-f64 `sliderToLinear`; the `eval/math.ts` form rounds every operation to
   f32 and is the one measured against the game. They disagree at 11 of 22

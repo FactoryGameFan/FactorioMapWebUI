@@ -557,10 +557,11 @@ fn nauvis_tile_color(tile: NauvisTile) -> [u8; 3] {
 /// holds three `NauvisShared` layers and their octave tables, and rebuilding
 /// them per pixel is the mistake `multioctave_noise` already cost 20x for.
 ///
-/// **`water_level` is decoded and NOT used, which is issue #326.** The shipped
-/// `renderTerrain.ts` resolves every Nauvis tile at `water_level = 0` however
-/// the slider is set, and tier 3 asserts these two ports agree - so fixing it
-/// here alone would turn a TypeScript defect into a Rust one.
+/// **`water_level` reaches the tile argmax as of #320.** It did not for a long
+/// time: this sweep pinned it to zero to mirror `renderTerrain.ts`, which
+/// resolved every tile at zero however the slider was set. #380 deleted that
+/// file, which left the pinned zero agreeing with nothing, so the mirror came
+/// out. The lever is invisible near spawn - see `nauvis_water_request`.
 /// The [`NauvisCtx`] a Nauvis request describes.
 ///
 /// **This and the renderer are the ONE place a Nauvis request becomes a
@@ -571,18 +572,15 @@ fn nauvis_tile_color(tile: NauvisTile) -> [u8; 3] {
 /// same reason `vulcanus_ctx` is shared. That was #330's finding on the enemy
 /// accessor, one level up.
 ///
-/// # `water_level` is a PARAMETER, and that is the one deliberate asymmetry
+/// # `water_level` used to be a PARAMETER, and #320 removed the asymmetry
 ///
-/// The renderer passes 0 because `renderTerrain.ts` resolves every tile at zero
-/// however the slider is set - issue #326, reproduced on purpose so tier 3 stays
-/// byte-identical. Tier 2 passes the request's real value, because it compares
-/// this port's expression chain against the TypeScript's, which reads the real
-/// one. Handing both callers a hard-coded 0 would make tier 2 red for a reason
-/// that is not a port bug; hard-coding the real value would break tier 3.
-///
-/// So exactly one field sits outside the shared wiring, for a reason that is
-/// itself a tracked defect. When #326 is fixed this parameter should go.
-pub fn nauvis_ctx(seed0: u32, p: &NauvisParams, water_level: f64) -> NauvisCtx {
+/// Until #320 the renderer handed this function a hard-coded 0 while tier 2
+/// handed it the request's real value, because `renderTerrain.ts` resolved
+/// every tile at zero and tier 3 asserted the two ports agreed byte for byte.
+/// #380 deleted that TypeScript, so the pinned zero had nothing left to agree
+/// with. Both callers read `p.water_level` now and the parameter is gone, so
+/// every Nauvis lever reaches the stack through this one function.
+pub fn nauvis_ctx(seed0: u32, p: &NauvisParams) -> NauvisCtx {
     let mut resource_controls = [ResourceControlLevers::defaults(); NAUVIS_RESOURCE_COUNT];
     for (i, levers) in resource_controls.iter_mut().enumerate() {
         let [frequency, size, richness] = p.resource_levers(i);
@@ -594,7 +592,7 @@ pub fn nauvis_ctx(seed0: u32, p: &NauvisParams, water_level: f64) -> NauvisCtx {
     }
     NauvisCtx {
         seed0,
-        water_level,
+        water_level: p.water_level,
         segmentation_multiplier: p.segmentation_multiplier,
         moisture_frequency: p.moisture_frequency,
         moisture_bias: p.moisture_bias,
@@ -653,8 +651,7 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
         render_nauvis_elevation(req, p, out);
         return;
     }
-    // Zero rather than `p.water_level` - see `nauvis_ctx`, and issue #326.
-    let ctx = nauvis_ctx(req.seed0, p, 0.0);
+    let ctx = nauvis_ctx(req.seed0, p);
     let stack = NauvisStack::new(&ctx);
     let catalog = NauvisTileCatalog::new(req.seed0);
 
@@ -2338,5 +2335,88 @@ mod tests {
                 assert_eq!([out[at], out[at + 1], out[at + 2]], want, "at {px},{py}");
             }
         }
+    }
+    /// A Nauvis request at a FAR-FIELD window, for the water-level tests below.
+    ///
+    /// **The window is the whole difficulty here.** The starting-lake and
+    /// starting-island terms dominate inside the starting area and mask the
+    /// water-level term completely: #320's first measurement used an 80x80 grid
+    /// at step 7 over +/-280 tiles and reported 0 of 6400 tiles differing at
+    /// every water level, which reads exactly like "the lever does nothing".
+    /// This spans +/-3000 instead. A window must contain the thing it grades.
+    fn nauvis_water_request(view: u32, water_level: f64) -> Vec<u8> {
+        let (w, h) = (60u32, 60u32);
+        let mut b = nauvis_request(w, h);
+        b[12..16].copy_from_slice(&view.to_le_bytes());
+        // -3000 .. +3000, so the far field is inside the window.
+        b[32..40].copy_from_slice(&(-3000.0f64).to_le_bytes());
+        b[40..48].copy_from_slice(&(-3000.0f64).to_le_bytes());
+        b[48..56].copy_from_slice(&100.0f64.to_le_bytes());
+        // `water_level` is the Nauvis block's first field, so COMMON_BYTES + 0.
+        b[COMMON_BYTES..COMMON_BYTES + 8].copy_from_slice(&water_level.to_le_bytes());
+        b
+    }
+
+    /// Render one far-field window and hand back its bytes.
+    fn nauvis_water_render(view: u32, water_level: f64) -> Vec<u8> {
+        let mut out = vec![0u8; (60 * 60 * 4) as usize];
+        assert_eq!(
+            render(&nauvis_water_request(view, water_level), &mut out),
+            Status::Ok,
+            "the request must render"
+        );
+        out
+    }
+
+    fn differing_pixels(a: &[u8], b: &[u8]) -> usize {
+        let (a, b) = (a.as_chunks::<4>().0, b.as_chunks::<4>().0);
+        a.iter().zip(b.iter()).filter(|(x, y)| x != y).count()
+    }
+
+    /// `water_level = 10` is `control:water:size = 2`, the case #320 measured.
+    const WATER_SIZE_2: f64 = 10.0;
+
+    /// The CONTROL for the test below: the elevation view already reads the
+    /// lever, so this proves the window and the lever can show a difference at
+    /// all. Without it, a green "terrain moved" test could be measuring a
+    /// window that moves under any change whatever, and a red one could be
+    /// blaming the renderer for a window that shows nothing.
+    #[test]
+    fn the_nauvis_elevation_view_reads_the_water_level() {
+        let flat = nauvis_water_render(VIEW_ELEVATION_NAUVIS, 0.0);
+        let raised = nauvis_water_render(VIEW_ELEVATION_NAUVIS, WATER_SIZE_2);
+        let moved = differing_pixels(&flat, &raised);
+        assert!(
+            moved > 0,
+            "the control is vacuous: the elevation view must move when the water \
+             level does, or this window grades nothing"
+        );
+    }
+
+    /// Issue #320: the tile argmax must read the water level.
+    ///
+    /// The renderer used to hand `nauvis_ctx` a hard-coded 0 to mirror
+    /// `renderTerrain.ts`, which resolved every tile at zero however the slider
+    /// was set. That TypeScript is gone (#380 deleted it), so there is no longer
+    /// a reference for the pinned zero to agree with - only the defect.
+    #[test]
+    fn the_nauvis_terrain_view_reads_the_water_level() {
+        let flat = nauvis_water_render(VIEW_TERRAIN, 0.0);
+        let raised = nauvis_water_render(VIEW_TERRAIN, WATER_SIZE_2);
+        let total = flat.len() / 4;
+        let moved = differing_pixels(&flat, &raised);
+        // A THIRD of the window, not an exact count. The lever reaches the
+        // argmax through `elevation_nauvis`, whose chain carries libm calls, and
+        // an exact count with libm inside it is not host-portable - #327 was
+        // green on macOS three times and red on every CI run for exactly that.
+        // The floor is far below what is measured (1,731 of 3,600, 48.1%, which
+        // is #320's own 47.5% of tiles arrived at from a different grid), so it
+        // discriminates the defect without pinning a number the host can move.
+        assert!(
+            moved * 3 > total,
+            "the terrain view is not reading the water level: {moved} of {total} \
+             pixels moved between water_level 0 and {WATER_SIZE_2}, expected more \
+             than a third (issue #320)"
+        );
     }
 }
