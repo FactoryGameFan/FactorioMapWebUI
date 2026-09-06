@@ -1083,14 +1083,16 @@ Consequences that constrain any change here:
   change. Both halves were proven by planting them and watching each go red.
 
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
-  known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`, `2.1.16.0`) and
+  known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`, `2.1.16.0`,
+  `2.1.17.0`) and
   never a range, because the schemas here are empirical: accepting an unseen
   format would decode a changed layout into plausible wrong values. A version
   joins the list only with a fixture proving a real string of it round-trips
   byte-exact (`test/mapExchangeVersions.spec.ts`). This has now been a live bug
-  **four times**: the app rejected every string from Factorio 2.1.12 until
-  2026-07-28, from 2.1.14 until 2026-08-13, and from 2.1.15 and 2.1.16 until
-  2026-08-24 - **the last two on the same day, because Wube shipped both**. Every
+  **five times**: the app rejected every string from Factorio 2.1.12 until
+  2026-07-28, from 2.1.14 until 2026-08-13, from 2.1.15 and 2.1.16 until
+  2026-08-24 - **those two on the same day, because Wube shipped both** - and
+  from 2.1.17 until 2026-09-06. Every
   time the game moved under a Steam auto-update, and every time it was found by a
   version audit rather than by a user. The UI advertises the target so the next
   drift is visible, and `test/factorioTarget.spec.ts` fails the build if
@@ -1102,9 +1104,9 @@ Consequences that constrain any change here:
   four-part exchange tag - confirmed on a binary whose tag we already knew
   (2.1.14 prints `2.1.14-1`, and `[2,1,14,1]` is what the list carries), which is
   a control rather than a pattern match. The fourth part is **not monotonic and
-  does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0` across 2.1.9 to
-  2.1.16. It FELL to zero at 2.1.16. It cannot be guessed, and one `--version`
-  answers "has import broken?" in a second.
+  does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0`, `.0` across 2.1.9 to
+  2.1.17. It FELL to zero at 2.1.16 and stayed there. It cannot be guessed, and
+  one `--version` answers "has import broken?" in a second.
 
   **This machine's Steam tracks the EXPERIMENTAL branch**, which is why two
   format moves arrived within hours of each other. Expect drift here to be more
@@ -1116,14 +1118,14 @@ Consequences that constrain any change here:
   `factorio-oracle`, five cases in about 10 seconds:
 
   ```bash
-  node --experimental-strip-types scripts/probes/exchange-format/capture.ts 2.1.16
+  node --experimental-strip-types scripts/probes/exchange-format/capture.ts 2.1.17
   ```
 
   It reads each case's settings back out of the PREVIOUS version's fixture with
   the game's own `helpers.parse_map_exchange_string`, so "the five cases mirror
   the last version's setting-for-setting" is a mechanism instead of a claim. The
   previous version is DERIVED - the newest committed strings fixture older than
-  the target - so chaining 2.1.14 -> 2.1.15 -> 2.1.16 needed no edit.
+  the target - so chaining 2.1.14 -> 2.1.15 -> 2.1.16 -> 2.1.17 needed no edit.
 
   **The one trap, measured rather than reasoned:** feed a whole parse back as
   `--map-gen-settings` and every case inflates from 711 bytes to 1387, because
@@ -1145,17 +1147,18 @@ Consequences that constrain any change here:
   in `src/codec/mapExchangeString.ts` picks the layout, matched on the **exact**
   tag for the same reason `SUPPORTED_VERSIONS` is a list rather than a floor.
 
-  **2.1.15 and 2.1.16 both share that layout rather than getting their own**,
-  which is why the constants are named for the FIELD
+  **2.1.15, 2.1.16 and 2.1.17 all share that layout rather than getting their
+  own**, which is why the constants are named for the FIELD
   (`TAIL_DISPATCH_COOLDOWN_*`) and the selector reads a list of tags. Three
   independent readings per version, none of them "it looked the same":
   `base/prototypes/map-settings.lua` is absent from each tag-to-tag diff
   entirely; all five re-captured cases inflate to the exact byte counts their
-  predecessors do; and the game's own parse of each new default string is
+  predecessors do (711/711/750/711/711); and the game's own parse of each new
+  default string is
   identical across all 186 leaf fields. At 2.1.15 `map-settings.example.json`
   DID change and is a red herring - it was catching up to the 2.1.14 default
   change it had missed. 2.1.16's whole data diff is `info.json` version bumps
-  and the changelog.
+  and the changelog, and 2.1.17 adds only `elevated-rail-pictures.lua` to that.
 
   The spec covers these with a `describe.each` over a `LAYOUT_HEIRS` table, each
   entry mirrored against the version before it - three near-identical describe

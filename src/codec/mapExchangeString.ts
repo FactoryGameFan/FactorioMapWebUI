@@ -249,15 +249,28 @@ function writeStartingPoints(writer: BinaryWriter, points: MapPosition[]): void 
  *   `info.json` version bumps and the changelog.
  *
  *   **Note its fourth part is `0`.** The sequence across this list is 3, 2, 1,
- *   2, 0 - it does not increase and does not track the patch number, so the tag
- *   can never be guessed. `factorio --version` prints
+ *   2, 0, 0 - it does not increase and does not track the patch number, so the
+ *   tag can never be guessed. `factorio --version` prints
  *   `Map output version: X.Y.Z-W` and W is that part.
+ *
+ * - `2.1.17.0` - what Factorio 2.1.17 (experimental) emits. Added 2026-09-06, a
+ *   FOURTH time the game moved out from under the app, and found the same way -
+ *   a fixture captured from the shipping binary tripped
+ *   `test/factorioTarget.spec.ts`. Another tag-only move, read the same three
+ *   ways: `base/prototypes/map-settings.lua` is absent from the 2.1.16 -> 2.1.17
+ *   data diff (which is four `info.json` bumps, the changelog and
+ *   `elevated-rail-pictures.lua`); all five re-captured cases inflate to exactly
+ *   their 2.1.16 counts (711/711/750/711/711); and the game's own parse of the
+ *   new default string is identical to the 2.1.16 one on every leaf field. So it
+ *   joins the 2.1.14 tail layout rather than getting one of its own.
  *
  * Note the two directions are not symmetric, and only one has ever been broken:
  * 2.1.12 accepts a `2.1.9.3` string fine, 2.1.14 accepts one too, and 2.1.15
  * parses all five `2.1.14.1` captures (all verified through the game's own
  * `helpers.parse_map_exchange_string`), so EXPORT was never affected - the app's
- * output stayed loadable throughout. Import was the broken half, three times.
+ * output stayed loadable throughout. Import was the broken half every time:
+ * five versions across four incidents, since 2.1.15 and 2.1.16 landed the same
+ * day.
  */
 export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 9, 3],
@@ -265,6 +278,7 @@ export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 14, 1],
   [2, 1, 15, 2],
   [2, 1, 16, 0],
+  [2, 1, 17, 0],
 ];
 
 /** Human-readable list for UI and error messages, e.g. "2.1.9.3, 2.1.12.2". */
@@ -462,6 +476,7 @@ const TAIL_DISPATCH_COOLDOWN_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 14, 1],
   [2, 1, 15, 2],
   [2, 1, 16, 0],
+  [2, 1, 17, 0],
 ];
 
 function tailSchemaFor(version: FormatVersion): Schema {
