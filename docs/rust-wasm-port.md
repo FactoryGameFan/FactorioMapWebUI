@@ -116,10 +116,10 @@ buffer and a `compare_priority` set computed once per render; uranium alone is
 outranked by oil today. Crude oil is also the ONLY rolled resource - the other
 five threshold.
 
-**The cliff overlay is the only Nauvis pass that reads the REAL water level.**
-It builds its own `NauvisCliffFields` rather than sharing the render's stack,
-whose `water_level` is pinned to 0 for #320. So one request carries a water
-level the terrain pass ignores and the cliff pass honours. It is also the only
+**The cliff overlay builds its own `NauvisCliffFields`** rather than sharing
+the render's stack. It was once the only Nauvis pass reading the REAL water
+level, because that stack pinned it to 0 for #320; both read the request now.
+It is also the only
 overlay with an even-sided mark (`px - 2 ..= px + 1`, anchored not centred) and
 the only one needing a SECOND ABI box.
 
@@ -422,19 +422,29 @@ unilateral fix on the Rust side reads as a port bug in tier 2, which is the
 whole point of having tier 2. The precision findings are all landed: #269, #270,
 #273, #279, #290, #293, #309.
 
-**Two remain open, and the Rust reproduces both** so tier 3 stays
-byte-identical and each fix can land as its own graded change:
+**#320 is LANDED and one remains.** The Rust reproduced #320 on purpose while
+there was a TypeScript arm for it to agree with; #380 deleted that arm, which
+left the pinned zero agreeing with nothing, and the fix went in as its own
+graded change:
 
-- **#320 - `waterLevel` never reaches the Nauvis tile argmax.**
-  `renderTerrain.ts` drives the `terrain` view and the terrain base of `all`;
-  `TileResolverParams` has no such field, so every tile resolves at
-  `water_level = 0` however the slider is set, while the `elevation`,
-  `resources` and `cliffs` views in the same panel all honour it. Measured over
-  a 162x162 grid spanning +/-3000 tiles: `control:water:size = 2` moves 12,471
-  of 26,244 tiles (47.5%), and size 8 moves 74.4%. This is a user-visible bug,
-  not a precision question. **#326 is the CLOSED duplicate** - filed a day
-  later from the same root cause, closed `NOT_PLANNED` on 2026-08-26 with its
-  measurements moved onto #320. Cite #320.
+- **#320 - `waterLevel` never reached the Nauvis tile argmax. FIXED.**
+  `render_nauvis` handed `nauvis_ctx` a hard-coded 0, so the `terrain` view,
+  the terrain base of `all`, and the trees, resources, rocks and enemies
+  overlays all resolved at `water_level = 0` however the slider was set, while
+  `elevation` and `cliffs` honoured it. It reads `p.water_level` now and the
+  parameter is gone, so no Nauvis lever sits outside the shared wiring.
+  **#326 is the CLOSED duplicate**, `NOT_PLANNED` on 2026-08-26 with its
+  measurements moved onto #320.
+
+  Two things about the grading are worth copying. **The fix moved exactly one
+  frozen row of 73** - `waterLevel | lever` - because every other tier-3 row
+  is captured at the default controls, where `waterLevel` IS 0, so reading 0
+  and pinning 0 produce identical bytes. A table can be blind to a defect it
+  covers in every other respect. And **the window is the whole difficulty**:
+  at +/-280 tiles the lever moves nothing at all, so the two new rows sweep
+  +/-3000, where 1,731 of 3,600 pixels move (48.1%, arriving independently at
+  the 47.5% of tiles #320 measured). The near-spawn case is asserted rather
+  than avoided, so a sweep cannot quietly drift back onto a dead window.
 - **#324 - a DUPLICATED FUNCTION rather than a narrowing.**
   `src/noise/cliffs/cliffCatalog.ts` carries its own plain-f64
   `sliderToLinear`, and `cliffFields.ts` is its only consumer. The form in
@@ -927,11 +937,12 @@ running the wasm parity specs**, especially tier 3's byte-identical renders.
   `NauvisCtx.resource_controls` became SIX triples rather than one applied to
   all six: the renderer was already building its own six-entry map from the
   ABI's eighteen levers, so those levers sat outside tier 2 entirely. And
-  `water_level` is a PARAMETER of `nauvis_ctx` rather than a field of it,
-  because the renderer pins it to 0 for #320 while tier 2 must sweep the real
-  value - exactly one field outside the shared wiring, for a reason that is
-  itself a tracked defect. **A request carries an off-grid sweep perfectly
-  well**, so nothing about this form makes the parity coordinates binary.
+  `water_level` was a PARAMETER of `nauvis_ctx` rather than a field of it,
+  because the renderer pinned it to 0 for #320 while tier 2 had to sweep the
+  real value - one field outside the shared wiring, for a reason that was
+  itself a tracked defect. #320 is fixed and the parameter is gone. **A
+  request carries an off-grid sweep perfectly well**, so nothing about this
+  form makes the parity coordinates binary.
 
 - **No memo in the Rust chain, and that is not a shortcut.** The TypeScript
   wraps every field in `memoXY` because it builds a DAG of lazy closures; the

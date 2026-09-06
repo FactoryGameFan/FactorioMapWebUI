@@ -68,10 +68,10 @@ const SECTION = "nauvis:render";
  * a record run DROP the section until this number is updated, rather than
  * quietly writing a shorter table.
  *
- * 15 terrain (4 windows, 9 climate, 2 spawn) + 10 trees + 8 rocks + 8 enemies
- * + 12 cliffs + 9 resources + 11 composite.
+ * 17 terrain (4 windows, 9 climate, 2 spawn, 2 water) + 10 trees + 8 rocks
+ * + 8 enemies + 12 cliffs + 9 resources + 11 composite.
  */
-const ROWS = 73;
+const ROWS = 75;
 
 expectRecordedRows(SECTION, ROWS);
 afterAll(flushRecording);
@@ -350,6 +350,89 @@ describe("the WASM engine renders Nauvis terrain to its frozen bytes", () => {
     const freqOnlyWasm = flat(freqOnly, e);
     expect(freqOnlyWasm, "frequency alone must stay inert at the default size").toEqual(baseWasm);
     freeze("climate startingAreaMoistureFrequency alone", "terrain", freqOnlyWasm);
+  }, 300000);
+
+  it("moving the water level moves the TERRAIN render, but only in the far field", async () => {
+    // Issue #320. The renderer used to hand `nauvis_ctx` a hard-coded 0 to
+    // mirror `renderTerrain.ts`, which resolved every tile at zero however the
+    // slider was set; #380 deleted that TypeScript, leaving the pinned zero
+    // agreeing with nothing, and the pin came out.
+    //
+    // **No existing row here could have caught the fix, and that is the point
+    // of this one.** Every other frozen render row is captured at the default
+    // controls, where `waterLevel` IS 0 - so reading 0 from the request and
+    // pinning 0 produce identical bytes, and all 73 rows stayed put when the
+    // pin came out. Only a row that moves the lever grades it at all.
+    //
+    // The Rust side has its own version of this test, but `cargo test` links
+    // the HOST libm; this one runs the shipped `engine.wasm`, which is the
+    // build the app loads.
+    const e = await engine();
+
+    // The near-spawn CONTROL, asserted rather than merely avoided. The
+    // starting-lake and starting-island terms dominate within the starting
+    // area and mask the water-level term completely: #320's first measurement
+    // used +/-280 tiles and reported 0 of 6400 differing at every water level,
+    // which reads exactly like "the lever does nothing". A sweep that picked
+    // this window would report the bug as fixed either way.
+    const near: ElevationRenderRequest = {
+      ...request(WINDOWS[0]),
+      width: 80,
+      height: 80,
+      originX: -280,
+      originY: -280,
+      tilesPerPixel: 7,
+    };
+    const flat = (r: ElevationRenderRequest, eng: typeof e) =>
+      Array.from(new Uint8ClampedArray(runRenderRequest(r, eng).buffer));
+    expect(
+      flat({ ...near, waterLevel: 10 } as ElevationRenderRequest, e),
+      "near spawn the lever is masked - if this ever moves, the control is stale",
+    ).toEqual(flat(near, e));
+
+    // The far field, +/-3000, where the term is live.
+    const base: ElevationRenderRequest = {
+      ...request(WINDOWS[0]),
+      width: 60,
+      height: 60,
+      originX: -3000,
+      originY: -3000,
+      tilesPerPixel: 100,
+    };
+    const baseWasm = flat(base, e);
+    freeze("water base", "terrain", baseWasm);
+
+    // `waterLevel` is `10 * log2(control:water:size)`, so 10 is water size 2 -
+    // the case #320 measured at 47.5% of tiles.
+    const raised = flat({ ...base, waterLevel: 10 } as ElevationRenderRequest, e);
+    expect(raised, "the terrain view must read the water level").not.toEqual(baseWasm);
+    freeze("water size 2", "terrain", raised);
+
+    // A FRACTION rather than an exact count, because the chain reaches libm and
+    // an exact count with libm inside is not host-portable (#327 was green on
+    // macOS three times and red on every CI run). Both arms measure **1,731 of
+    // 3,600 pixels (48.1%)** on this window - the native `cargo test` build and
+    // the wasm one agree exactly, and that lands independently on the 47.5% of
+    // TILES #320 measured over a different grid. A third is a floor well clear
+    // of that without pinning a number the host can move.
+    // PIXELS, not components over four. A changed tile moves one to three
+    // channels and never the alpha, which is always 255, so dividing the
+    // component count by four undercounts by at least a quarter and could fail
+    // this assertion on a render that did move a third of the window.
+    let movedPixels = 0;
+    for (let i = 0; i < baseWasm.length; i += 4) {
+      const same =
+        baseWasm[i] === raised[i] &&
+        baseWasm[i + 1] === raised[i + 1] &&
+        baseWasm[i + 2] === raised[i + 2] &&
+        baseWasm[i + 3] === raised[i + 3];
+      if (!same) movedPixels += 1;
+    }
+    const total = baseWasm.length / 4;
+    expect(
+      movedPixels * 3,
+      `only ${String(movedPixels)} of ${String(total)} pixels moved`,
+    ).toBeGreaterThan(total);
   }, 300000);
 
   it("a moved spawn renders THROUGH the engine, to its own frozen bytes", async () => {
@@ -1017,10 +1100,11 @@ describe("the WASM engine renders the Nauvis cliff overlay to its frozen bytes",
 
   it("moving each cliff lever moves the render", async () => {
     // Six levers, and `waterLevel` is one of them - which is the interesting
-    // case. The TERRAIN view ignores it (#326, reproduced deliberately), so
-    // this is the first Nauvis pass where the module must actually READ the
-    // water level rather than pin it to zero. Both behaviours live in the same
-    // request.
+    // case. The TERRAIN view ignored it until #320 - reproduced deliberately
+    // while `renderTerrain.ts` still existed to be mirrored - so this row used
+    // to be the only Nauvis pass that read the water level at all. It reaches
+    // both the cliff fields and the terrain base underneath them now, which is
+    // why this row re-froze when the pin came out.
     const e = await engine();
     const base = cliffRequest(CLIFF_WINDOWS[4]);
     const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>

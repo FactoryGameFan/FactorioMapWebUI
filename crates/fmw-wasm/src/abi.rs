@@ -96,8 +96,9 @@
 //! +248 f64 x 4   cell_query_box: x0, y0, x1, y1
 //! +280 f64 x 4   placement_sweep_box: x0, y0, x1, y1
 //!
-//! nauvis block (96 bytes, so a Nauvis request is 152)
-//!  +0  f64  water_level        NOT read by the terrain view - see #326
+//! nauvis block (512 bytes, so a Nauvis request is 568 - the largest, so
+//! `REQUEST_BYTES` is Nauvis's)
+//!  +0  f64  water_level
 //!  +8  f64  segmentation_multiplier
 //! +16  f64  moisture_frequency
 //! +24  f64  moisture_bias
@@ -387,25 +388,24 @@ pub struct VulcanusParams {
 
 /// Nauvis's block.
 ///
-/// # `water_level` is carried and the TERRAIN view does not read it
+/// # `water_level` reaches every view as of #320
 ///
-/// That is issue #326 and it is deliberate here. `renderTerrain.ts` builds its
-/// elevation through `makeTileResolver`, whose `TileResolverParams` has no
-/// `waterLevel` field at all, so the shipped TypeScript resolves every Nauvis
-/// tile at `water_level = 0` however the slider is set. Measured over a
-/// 162 x 162 grid spanning +/-3000 tiles, `control:water:size = 2` moves
-/// **12,471 of 26,244 tiles (47.5%)** - so this is a real defect rather than a
-/// rounding difference.
+/// It did not for a long time. `renderTerrain.ts` built its elevation through
+/// `makeTileResolver`, whose `TileResolverParams` had no `waterLevel` field at
+/// all, so the shipped TypeScript resolved every Nauvis tile at
+/// `water_level = 0` however the slider was set - measured over a 162 x 162
+/// grid spanning +/-3000 tiles, `control:water:size = 2` moved **12,471 of
+/// 26,244 tiles (47.5%)**. The render path here reproduced that on purpose,
+/// because tier 3 asserted the two ports were byte-identical and a unilateral
+/// fix would have read as a port bug.
 ///
-/// The render path here reproduces it, because tier 3 asserts the two ports are
-/// byte-identical and a unilateral fix on the Rust side would read as a port
-/// bug. The field is carried anyway: the `elevation`, `resources` and `cliffs`
-/// views all consume it today, and the fix for #326 needs it here rather than
-/// needing a block growth on top of a bug fix.
+/// #380 deleted that TypeScript. With no reference left for the pinned zero to
+/// agree with, #320 threaded the real value through `render::nauvis_ctx`, which
+/// moved the tier-3 Nauvis rows once, deliberately.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct NauvisParams {
-    /// `10 * log2(control:water:size)`. See the type docs - NOT read by the
-    /// terrain view, on purpose.
+    /// `10 * log2(control:water:size)`. Read by every Nauvis view; see the type
+    /// docs for the years it was not.
     pub water_level: f64,
     /// `control:water:frequency`, RAW.
     pub segmentation_multiplier: f64,

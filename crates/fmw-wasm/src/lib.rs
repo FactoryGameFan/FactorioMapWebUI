@@ -1306,10 +1306,11 @@ use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
 /// - **A request can express an off-grid sweep perfectly well.** The origin and
 ///   `tiles_per_pixel` are plain `f64`; the spec sends non-binary values for the
 ///   reason the header gives, and nothing about a request makes them binary.
-/// - **`water_level` is the one field still passed separately**, because the
-///   renderer pins it to zero for #326 and tier 2 must sweep the real value. It
-///   is a parameter of `nauvis_ctx` rather than a hard-coded constant in either
-///   caller, so the asymmetry is stated rather than duplicated.
+/// - **`water_level` reaches the stack through the same helper now.** It was a
+///   separate parameter until #320, because the renderer pinned it to zero to
+///   mirror `renderTerrain.ts` while tier 2 had to sweep the real value. That
+///   TypeScript is gone, so both callers read the request and no field sits
+///   outside the shared wiring.
 ///
 /// Nauvis crosses no trig at all, so the #270 hazard that forces Fulgora's and
 /// Vulcanus's wide signatures does not apply here.
@@ -1329,10 +1330,9 @@ pub extern "C" fn checksum_nauvis(request_len: u32, field: u32) -> u64 {
     };
 
     // Through the RENDERER's own helper, which is the whole point of this
-    // signature - see `render::nauvis_ctx`. The real water level, not the
-    // renderer's pinned zero: this compares the two ports' expression chains,
-    // and the TypeScript side reads the real one.
-    let ctx = render::nauvis_ctx(req.seed0, &p, p.water_level);
+    // signature - see `render::nauvis_ctx`. Every lever the request carries
+    // reaches the stack the same way the render path reaches it.
+    let ctx = render::nauvis_ctx(req.seed0, &p);
     let stack = NauvisStack::new(&ctx);
 
     // The parity selector rather than the stack's own, so the 21 tile
