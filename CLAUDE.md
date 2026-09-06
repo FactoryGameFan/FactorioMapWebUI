@@ -670,17 +670,55 @@ measured on #380 and #381 rather than read off its docs.
   `build`. But it submits `CHANGES_REQUESTED`, and a standing one of those
   blocks the merge even at `required_approving_review_count: 0` -
   `mergeStateStatus` goes `BLOCKED` with every check green.
-- **Pushing the fix does NOT clear it**, because `EJ` sets
-  `dismiss_stale_reviews_on_push: false`. On #381 the fix push left the first
-  review standing and CodeRabbit added a **second** `CHANGES_REQUESTED` rather
-  than superseding its own. Two blocking reviews, no way out by pushing. Clear
-  one by hand, and put the reasoning in the message - it is the only record:
+- **A push dismisses nothing; the RE-REVIEW's verdict replaces the old one.**
+  `EJ` sets `dismiss_stale_reviews_on_push: false`, so the push itself clears
+  no review - but CodeRabbit reviews again on every push, and an `APPROVED`
+  supersedes its own standing `CHANGES_REQUESTED`, leaving `reviewDecision`
+  empty and `merge=CLEAN` with no hand dismissal.
+
+  **Do NOT read that as "address every finding and it clears."** Two runs the
+  same day, and they disagree: **#383** was approved on a push that took 2 of
+  its 3 findings and left the third (an MD018 nit) explicitly undone, while
+  **#381**'s equivalent push came back with a SECOND `CHANGES_REQUESTED` -
+  raised against the text the fix had just added, not against anything left
+  undone. Which verdict arrives is a property of the new diff, and it is not
+  predictable from how completely you answered the last round.
+
+  A THIRD outcome exists and it is the one that traps you: on #384's `f9d37c8`
+  the `CodeRabbit` check went green with `Review completed` and **no review was
+  submitted at all** - no approval, no new findings, nothing. The
+  `CHANGES_REQUESTED` from the previous commit therefore stood unopposed, and
+  the PR sat `BLOCKED` with every one of its eleven checks passing, fourteen
+  minutes after the check had finished. A push cannot clear that, because
+  nothing arrives to replace the old verdict.
+
+  So a hand dismissal is the tool for a standing review that nothing is going
+  to supersede - whether because you declined its findings or because the
+  re-review said nothing. Put the reasoning in the message - it is the only
+  record of why:
 
   ```bash
   gh api --method PUT \
     repos/FactoryGameFan/FactorioMapWebUI/pulls/<n>/reviews/<id>/dismissals \
     --field message='why' --field event=DISMISS
   ```
+
+- **Count its findings from the REVIEW BODY, not from the inline endpoint.**
+  The body opens with `Actionable comments posted: N` and then lists all N. On
+  #383 that said **3** while `GET /pulls/383/comments` returned **2** - two of
+  the three were reported at the same line and only one thread came back. A
+  session that counts threads therefore misses findings silently, which is how
+  a wrong claim reached `CLAUDE.md` in this very section. Read the body's list,
+  then reconcile it against the threads:
+
+  ```bash
+  gh api --paginate repos/FactoryGameFan/FactorioMapWebUI/pulls/<n>/reviews \
+    --jq '.[] | select(.state=="CHANGES_REQUESTED") | "=== review \(.id)\n\(.body)"'
+  ```
+
+  No `head`, because truncating the list is the failure this bullet exists to
+  prevent; `--paginate` because reviews page at 30; and the `id` because that
+  is what a dismissal needs.
 
 - **It reads the PR description as evidence about the code.** A wrong claim in
   a PR body becomes a finding against correct code, so the body is part of what
