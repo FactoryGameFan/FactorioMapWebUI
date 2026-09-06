@@ -703,9 +703,13 @@ measured on #380 and #381 rather than read off its docs.
   then reconcile it against the threads:
 
   ```bash
-  gh api repos/FactoryGameFan/FactorioMapWebUI/pulls/<n>/reviews \
-    --jq '.[] | select(.state=="CHANGES_REQUESTED") | .body' | head -40
+  gh api --paginate repos/FactoryGameFan/FactorioMapWebUI/pulls/<n>/reviews \
+    --jq '.[] | select(.state=="CHANGES_REQUESTED") | "=== review \(.id)\n\(.body)"'
   ```
+
+  No `head`, because truncating the list is the failure this bullet exists to
+  prevent; `--paginate` because reviews page at 30; and the `id` because that
+  is what a dismissal needs.
 
 - **It reads the PR description as evidence about the code.** A wrong claim in
   a PR body becomes a finding against correct code, so the body is part of what
