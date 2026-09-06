@@ -108,10 +108,14 @@ interface StringsFixture {
  *
  * **This used to be `process.env.EXCHANGE_TAG ?? ""`, and nobody ever set it.**
  * The field defaulted to empty silently, so `map-exchange-2.1.15.strings.json`
- * and `map-exchange-2.1.16.strings.json` both carry `""` where 2.1.14 carries
- * `"2.1.14.1"`. An empty metadata field looks like "not applicable" rather than
- * "the capture forgot", which is why two versions went by without anyone
- * noticing. Deriving it removes the way to get it wrong.
+ * and `map-exchange-2.1.16.strings.json` were both committed carrying `""`
+ * where 2.1.14 carried `"2.1.14.1"`. An empty metadata field looks like "not
+ * applicable" rather than "the capture forgot", which is why two versions went
+ * by without anyone noticing. Deriving it removes the way to get it wrong.
+ *
+ * Both were backfilled in the same commit that added this function, from their
+ * own committed strings, so no fixture carries an empty tag now - and
+ * `test/mapExchangeVersions.spec.ts` fails if one ever does again.
  *
  * The tag is the first four `u16` LE of the inflated payload - the same bytes
  * `decodeExchangeString` reads. This does it with `node:zlib` rather than by
