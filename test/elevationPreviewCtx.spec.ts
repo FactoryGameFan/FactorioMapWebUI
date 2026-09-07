@@ -117,6 +117,15 @@ describe("elevationCtxFromPreset", () => {
     expect(elevationCtxFromPreset(p).treeControls).toEqual({ frequency: 3, size: 2 });
   });
 
+  it("reads vulcanus_volcanism frequency/size, defaulting to 1/1 when absent", () => {
+    const p = lakesPreset();
+    delete p.autoplaceControls.vulcanus_volcanism;
+    expect(elevationCtxFromPreset(p).vulcanusVolcanismControls).toEqual({ frequency: 1, size: 1 });
+
+    p.autoplaceControls.vulcanus_volcanism = { frequency: 2, size: 3, richness: 1 };
+    expect(elevationCtxFromPreset(p).vulcanusVolcanismControls).toEqual({ frequency: 2, size: 3 });
+  });
+
   it("exposes cliffSettings from preset.cliffSettings", () => {
     const p = lakesPreset();
     // A COMPLETE CliffSettings - name/control/cliffSmoothing carry the Default

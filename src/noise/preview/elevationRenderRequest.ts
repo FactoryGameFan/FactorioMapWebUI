@@ -138,6 +138,19 @@ export interface ElevationRenderRequest {
    */
   fulgoraScrapControls?: FulgoraScrapControls;
   /**
+   * The `vulcanus_volcanism` autoplace control's frequency/size
+   * (`control:vulcanus_volcanism:*`) - consumed only when `planet: "vulcanus"`.
+   * Defaults to `{ frequency: 1, size: 1 }`, the game's own neutral position.
+   *
+   * The engine has read both since phase 5; what was missing was this field.
+   * `renderVulcanusThroughWasm` wrote a literal 1 for each, so the Terrain
+   * tab's slider was inert on the preview while every render spec stayed
+   * green - the Fulgora islands story over again, and for the same reason:
+   * `slider_rescale(1, 3)` is exactly 1, so at the default both terms vanish.
+   * `test/vulcanusVolcanismDispatch.spec.ts` plants a moved slider.
+   */
+  vulcanusVolcanismControls?: { readonly frequency?: number; readonly size?: number };
+  /**
    * The enemy-base autoplace control's frequency/size (control:enemy-base:*) -
    * consumed only when `view: "enemies"`. Defaults to `{ frequency: 1, size: 1 }`
    * when omitted.
@@ -348,8 +361,11 @@ function renderVulcanusThroughWasm(
     originX: req.originX,
     originY: req.originY,
     tilesPerPixel: req.tilesPerPixel,
-    volcanismFrequency: 1,
-    volcanismSize: 1,
+    // Defaulted to the game's neutral 1 here, the same way the Fulgora islands
+    // pair is below. These were literal 1s until the slider was wired - see
+    // the field's doc on the request type.
+    volcanismFrequency: req.vulcanusVolcanismControls?.frequency ?? 1,
+    volcanismSize: req.vulcanusVolcanismControls?.size ?? 1,
     temperatureBias: 0,
     tungstenOre: levers(controls?.tungstenOre),
     vulcanusCoal: levers(controls?.vulcanusCoal),
