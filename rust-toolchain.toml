@@ -22,7 +22,7 @@
 # even at the same version, so the first cargo command after a fresh clone
 # downloads a toolchain even though `stable` is already 1.98.0.
 [toolchain]
-channel = "1.98.0"
+channel = "1.98.1"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]
 profile = "minimal"
