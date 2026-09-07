@@ -4538,12 +4538,16 @@ fn vulcanus_cliffs_track_the_volcanism_sliders() {
     //
     // R1 is 277 / 4 / 2 / 2 in every arm, by the control above.
     //
-    // What it says, and what it cannot: the residual MOVES with the elevation
-    // input - the non-R1 error rate spans 1.5% to 3.3% across arms - so it is
-    // not a fixed placement-side defect that the elevation leaves alone. But
-    // it is not monotonic in frequency either (default is the worst arm, not
-    // frequency 2), and with 14 to 41 residual events per arm the resolution
-    // is about two sigma. It localises the residual to "depends on the field",
+    // What it looked like, and what it turned out to be: on these three
+    // regions the non-R1 error rate spans 1.5% to 3.3% across arms, with
+    // frequency 0.5 and size 3 each about 2.9 sigma below the default - which
+    // read as "the residual moves with the field". It does NOT replicate.
+    // `the_volcanism_contrast_out_of_sample` below re-measures the same
+    // contrast on eight fresh regions and gets z = -1.80, the other direction.
+    // With 14 to 41 residual events per arm these rows cannot carry a claim
+    // about the lever at all; they stand as frozen counts, not as a finding.
+    // What IS real is the per-region spread - see the out-of-sample test.
+    // It does not localise the residual to a term or to "depends on the field";
     // not to a term. `unscored` is game cliffs on the region boundary, every
     // one of them - see the volcanism sweep section (2026-09-07) of
     // `docs/noise/vulcanus-cliffs-NOTES.md`.
@@ -4586,6 +4590,180 @@ fn vulcanus_cliffs_track_the_volcanism_sliders() {
         assert_eq!(*per_region, want, "{label}: per-region rows");
         assert_eq!(*total, want[0].add(want[1]).add(want[2]), "{label}: totals");
     }
+}
+
+/// Two-proportion z: `a` errors of `n_a` against `b` errors of `n_b`, pooled.
+fn two_proportion_z(a: usize, n_a: usize, b: usize, n_b: usize) -> f64 {
+    #[allow(clippy::cast_precision_loss)]
+    let (a, n_a, b, n_b) = (a as f64, n_a as f64, b as f64, n_b as f64);
+    let p = (a + b) / (n_a + n_b);
+    (a / n_a - b / n_b) / (p * (1.0 - p) * (1.0 / n_a + 1.0 / n_b)).sqrt()
+}
+
+/// The sweep's headline contrast, OUT OF SAMPLE (#84).
+///
+/// [`vulcanus_cliffs_track_the_volcanism_sliders`] found the frequency 0.5 arm
+/// halving the residual rate against the default - 41 of 1248 against 21 of
+/// 1359, about 2.9 sigma - on the three regions every earlier #84 number was
+/// measured on. Eight fresh regions, disjoint from all 23 captured before and
+/// all outside the starting area, at the same two arms. The regions and the
+/// engine-side pre-check that each contains cliffs in BOTH arms are in
+/// `scripts/probes/vulcanus-cliff-volcanism/capture.ts`.
+///
+/// Asserted before any count is read: the read-back agrees with the arm, and
+/// every region's game cliffs MOVED between the arms - the override reached
+/// the generator in every one of the eight.
+#[test]
+fn the_volcanism_contrast_out_of_sample() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-volcanism-oos.seed123456.json",
+        "2.1.17",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = fixture.get("seed").as_f64() as u32;
+    let arms = fixture.get("arms").as_array();
+    assert_eq!(arms.len(), 2, "default and frequency 0.5");
+    assert_eq!(arms[0].get("label").as_str(), "default");
+    assert_eq!(arms[1].get("label").as_str(), "frequency 0.5");
+
+    let cell = |c: &Json| -> (u64, u64, String) {
+        (
+            c.get("x").as_f64().to_bits(),
+            c.get("y").as_f64().to_bits(),
+            c.get("orientation").as_str().to_owned(),
+        )
+    };
+    let game_cells = |case: &Json| -> Vec<(u64, u64, String)> {
+        case.get("cliffs")
+            .as_array()
+            .iter()
+            .filter(|c| c.get("name").as_str() == "cliff-vulcanus")
+            .map(cell)
+            .collect()
+    };
+
+    let mut per_arm: Vec<(String, Vec<SweepRow>, SweepRow)> = Vec::new();
+    for arm in arms {
+        let label = arm.get("label").as_str().to_owned();
+        let frequency = arm.get("frequency").as_f64();
+        let size = arm.get("size").as_f64();
+        let reported = arm.get("reported");
+        assert_eq!(reported.get("frequency").as_f64(), frequency, "{label}");
+        assert_eq!(reported.get("size").as_f64(), size, "{label}");
+
+        let mut ctx = crate::eval::ctx::EvalCtx::new(seed0);
+        ctx.vulcanus_volcanism_frequency = frequency;
+        ctx.vulcanus_volcanism_size = size;
+        let cases = arm.get("cases").as_array();
+        assert_eq!(cases.len(), 8, "{label}: eight regions");
+        let rows: Vec<SweepRow> = cases
+            .iter()
+            .map(|case| sweep_score(case.get("region"), case.get("cliffs").as_array(), &ctx))
+            .collect();
+        let total = rows.iter().fold(SweepRow::ZERO, |acc, r| acc.add(*r));
+        for (i, r) in rows.iter().enumerate() {
+            eprintln!("{label:>14} region {i}: {r:?}");
+        }
+        eprintln!("{label:>14} total: {total:?}");
+        per_arm.push((label, rows, total));
+    }
+
+    // Every region moved on the game side, or the lever never reached it.
+    let default_cases = arms[0].get("cases").as_array();
+    let moved_cases = arms[1].get("cases").as_array();
+    for (i, (a, b)) in default_cases.iter().zip(moved_cases).enumerate() {
+        assert_eq!(
+            a.get("region").get("x0").as_f64(),
+            b.get("region").get("x0").as_f64()
+        );
+        assert_ne!(
+            game_cells(a),
+            game_cells(b),
+            "region {i}: must move under frequency 0.5"
+        );
+    }
+
+    // The frozen rows, measured 2026-09-07. Read a moved number, do not adjust
+    // it. Regions in the order `OUT_OF_SAMPLE` lists them.
+    let row = |matched, wrong, surplus, missing, unscored| SweepRow {
+        matched,
+        wrong,
+        surplus,
+        missing,
+        unscored,
+    };
+    let expected: [(&str, [SweepRow; 8]); 2] = [
+        (
+            "default",
+            [
+                row(309, 6, 5, 0, 12),
+                row(208, 4, 6, 3, 11),
+                row(763, 1, 4, 0, 13),
+                row(462, 5, 6, 0, 24),
+                row(703, 1, 1, 0, 8),
+                row(518, 7, 13, 0, 15),
+                row(834, 11, 16, 0, 12),
+                row(697, 13, 22, 0, 11),
+            ],
+        ),
+        (
+            "frequency 0.5",
+            [
+                row(612, 3, 8, 5, 13),
+                row(768, 24, 47, 3, 27),
+                row(199, 1, 0, 0, 6),
+                row(774, 2, 4, 1, 24),
+                row(439, 2, 3, 0, 11),
+                row(255, 1, 0, 1, 18),
+                row(641, 8, 11, 0, 0),
+                row(319, 6, 8, 0, 2),
+            ],
+        ),
+    ];
+    for ((label, rows, total), (want_label, want)) in per_arm.iter().zip(expected) {
+        assert_eq!(label, want_label);
+        assert_eq!(rows.as_slice(), want.as_slice(), "{label}: per-region rows");
+        assert_eq!(
+            *total,
+            want.iter().fold(SweepRow::ZERO, |acc, r| acc.add(*r)),
+            "{label}: totals"
+        );
+    }
+
+    // THE CONTRAST DOES NOT REPLICATE. In sample it was 41 of 1248 against 21
+    // of 1359, z = +2.9 in favour of frequency 0.5. Out of sample, on eight
+    // regions and 3.5x the cells, the default arm is the BETTER one and the
+    // gap is inside noise. So the sweep's "the residual moves with the field"
+    // was a small-n reading - `docs/noise/vulcanus-cliffs-NOTES.md` records
+    // both the claim and its refutation - and volcanism is not a lever the
+    // residual responds to.
+    let errors = |r: &SweepRow| r.wrong + r.surplus + r.missing;
+    let comparable = |r: &SweepRow| r.matched + r.wrong + r.missing;
+    let (d, m) = (&per_arm[0].2, &per_arm[1].2);
+    assert_eq!((errors(d), comparable(d)), (124, 4545), "default: 2.73%");
+    assert_eq!(
+        (errors(m), comparable(m)),
+        (138, 4064),
+        "frequency 0.5: 3.40%"
+    );
+    let z = two_proportion_z(errors(d), comparable(d), errors(m), comparable(m));
+    assert!(
+        (-1.85..-1.75).contains(&z),
+        "z = {z:.3}: measured -1.80, and the SIGN is the finding"
+    );
+
+    // What is real is the spread BETWEEN regions, at one slider setting: the
+    // frequency 0.5 arm's `[-2200,-1500]` carries 74 of that arm's 138 errors
+    // on its own - 24 wrong and 47 surplus of 795 comparable cells, 9.3% - while
+    // `[1800,3400]` in the same arm has 1 of 200. A residual that concentrated
+    // is a lead the diffuse in-sample numbers never offered.
+    let worst = &per_arm[1].1[1];
+    assert_eq!(
+        (worst.wrong, worst.surplus),
+        (24, 47),
+        "the concentrated region"
+    );
+    assert_eq!(errors(worst), 74);
 }
 
 /// The Vulcanus cliff fields against the game's own samples at the game's own

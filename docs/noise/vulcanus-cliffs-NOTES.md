@@ -4714,3 +4714,56 @@ measurement is more regions per arm, not more arms - the capture is 2 seconds
 per region now, so eight fresh regions at two arms (default, frequency 0.5) is
 under a minute and would put the 2.9 sigma either side of 4. Raise n before
 slicing again, per the section above this one.
+
+## RAISING N on the volcanism contrast: it does NOT replicate (2026-09-07, #84)
+
+The section above ended with "raise n before slicing again", so this is that,
+done the same day and before the finding could be cited anywhere else. The
+sweep's headline was frequency 0.5 halving the residual rate on the three known
+regions: 41 of 1248 against 21 of 1359, z = +2.9. **Out of sample, on eight
+fresh regions and 3.5x the cells, the default arm is the better one and the gap
+is inside noise:**
+
+| arm           | R2 + R3 (in sample) | rate      | eight fresh regions | rate      |
+| ------------- | ------------------- | --------: | ------------------- | --------: |
+| default       | 41 of 1248          | 3.29%     | 124 of 4545         | **2.73%** |
+| frequency 0.5 | 21 of 1359          | **1.55%** | 138 of 4064         | 3.40%     |
+| z             |                     | **+2.9**  |                     | **-1.80** |
+
+Fixture: `oracle-vulcanus-cliff-volcanism-oos.seed123456.json`, eight 256x256
+regions disjoint from all 23 captured before, all more than 1000 tiles from the
+origin, each checked on the engine for cliffs in BOTH arms before capture (the
+table is in `capture.ts`). Test: `the_volcanism_contrast_out_of_sample`. The
+read-back guard held on all sixteen runs and every region moved between arms.
+
+**So the sweep's "the residual moves with the field" was a small-n reading and
+is withdrawn.** Volcanism is not a lever the residual responds to. That also
+means the "scales or flat" framing the sweep was built to decide has no answer
+from this lever: neither elevation-side nor placement-side is favoured by it.
+
+**What IS real is the spread between REGIONS at one slider setting**, which
+the three in-sample regions were too few to show. Per region, frequency 0.5 arm,
+errors of comparable cells:
+
+| region          | wrong | surplus | missing | comparable |  rate |
+| --------------- | ----: | ------: | ------: | ---------: | ----: |
+| `[-2200,-1500]` |    24 |      47 |       3 |        795 |  9.3% |
+| `[2600,800]`    |     6 |       8 |       0 |        325 |  4.3% |
+| `[1400,-3200]`  |     8 |      11 |       0 |        649 |  2.9% |
+| `[2000,-1200]`  |     3 |       8 |       5 |        620 |  2.6% |
+| `[4000,-600]`   |     2 |       3 |       0 |        441 |  1.1% |
+| `[600,2200]`    |     2 |       4 |       1 |        777 |  0.9% |
+| `[-2800,400]`   |     1 |       0 |       1 |        257 |  0.8% |
+| `[1800,3400]`   |     1 |       0 |       0 |        200 |  0.5% |
+
+One region carries 74 of the arm's 138 errors, and 47 of them are SURPLUS -
+cells the port places and the game does not - which is the ore rule's
+signature from the earlier sections (`cliff_removal_probability`, the destroy
+stage) far more than the connection pass's. At the default the same region is
+13 errors of 215. A residual this concentrated is a lead the diffuse in-sample
+numbers never offered: one region, one arm, 795 cells, and the port over-places
+by 6%.
+
+Cost of the whole exercise: 28 seconds of capture. The cost of NOT doing it
+would have been a #84 comment, a memory and a CLAUDE.md line all citing a 2.9
+sigma that does not exist.
