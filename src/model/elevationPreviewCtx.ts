@@ -79,6 +79,19 @@ export interface ElevationPreviewCtx {
    */
   fulgoraIslandControls: { readonly frequency: number; readonly size: number };
   /**
+   * The `vulcanus_volcanism` autoplace control's frequency/size - consumed only
+   * when the selected planet is Vulcanus. Defaults to `{ frequency: 1, size: 1 }`.
+   *
+   * Neither slider touches the cliff rule or the tile catalog directly:
+   * frequency is the input scale of the mountain and crack noise, and size sets
+   * the volcano spot radius, spacing and density - so both move the elevation
+   * contours every other Vulcanus field sits on. Like the Fulgora pair, each
+   * defaults to the one value that hides itself: `slider_rescale(1, 3)` is
+   * exactly 1, so at the default both terms vanish and a render that ignored
+   * the control would look right until the slider moved.
+   */
+  vulcanusVolcanismControls: { readonly frequency: number; readonly size: number };
+  /**
    * Non-seed free variables for renderElevation/renderTerrain
    * (Omit<..., "seed0">-compatible). The climate fields (aux/moisture
    * frequency+bias, starting-area moisture) are consumed only by
@@ -132,6 +145,7 @@ export function elevationCtxFromPreset(preset: Preset): ElevationPreviewCtx {
   const tc = preset.autoplaceControls.trees;
   const rk = preset.autoplaceControls.rocks;
   const fi = preset.autoplaceControls.fulgora_islands;
+  const vv = preset.autoplaceControls.vulcanus_volcanism;
   return {
     supported,
     mapType,
@@ -151,6 +165,9 @@ export function elevationCtxFromPreset(preset: Preset): ElevationPreviewCtx {
     rockControls: rk ? { frequency: rk.frequency, size: rk.size } : { frequency: 1, size: 1 },
     fulgoraIslandControls: fi
       ? { frequency: fi.frequency, size: fi.size }
+      : { frequency: 1, size: 1 },
+    vulcanusVolcanismControls: vv
+      ? { frequency: vv.frequency, size: vv.size }
       : { frequency: 1, size: 1 },
     ctx: {
       waterLevel: 10 * Math.log2(size),

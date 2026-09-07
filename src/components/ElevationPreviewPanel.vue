@@ -231,6 +231,7 @@ async function generate() {
         treeControls: info.treeControls,
         rockControls: info.rockControls,
         fulgoraIslandControls: info.fulgoraIslandControls,
+        vulcanusVolcanismControls: info.vulcanusVolcanismControls,
       },
       (tile) => {
         g.putImageData(

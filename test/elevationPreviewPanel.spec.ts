@@ -608,6 +608,26 @@ describe("ElevationPreviewPanel", () => {
       });
     });
 
+    it("passes the preset's vulcanus_volcanism levers on Generate for Vulcanus", async () => {
+      // Non-default values on purpose: the request layer used to write a
+      // literal 1 for both, and a default preset cannot tell that from a
+      // wired slider.
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "vulcanus" });
+      usePresetsStore().activePreset!.autoplaceControls.vulcanus_volcanism = {
+        frequency: 2,
+        size: 3,
+        richness: 1,
+      };
+
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg.vulcanusVolcanismControls).toEqual({ frequency: 2, size: 3 });
+    });
+
     it("enables the Terrain toggle for Vulcanus even on a non-Nauvis map type", async () => {
       const w = setup("lakes", okRenderer(), { planet: "vulcanus" });
       expect(w.find('[data-test="view-terrain"]').attributes("disabled")).toBeUndefined();
