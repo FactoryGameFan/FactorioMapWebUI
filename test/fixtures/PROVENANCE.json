@@ -303,7 +303,11 @@
     },
     "oracle-vulcanus-cliff-entities.seed123456.json": {
       "factorioVersion": "2.1.12",
-      "evidence": "re-captured 2026-07-30 by test/oracle/capture.ts vulcanus-cliff-entities against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Supersedes the 2026-07-28 capture, which it reproduced exactly (283/885/409 positions). The re-capture adds each entity's cliff_orientation - see test/cliffOrientationOracle.spec.ts."
+      "evidence": "re-captured 2026-07-30 by test/oracle/capture.ts vulcanus-cliff-entities against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time. Supersedes the 2026-07-28 capture, which it reproduced exactly (283/885/409 positions). The re-capture adds each entity's cliff_orientation - see test/cliffOrientationOracle.spec.ts.\n\nReproduced cell for cell, in the same order, at 2.1.17 (build 87315) on 2026-09-07 by the default arm of scripts/probes/vulcanus-cliff-volcanism/capture.ts (283/885/409) - so the game did not move on these three regions between 2.1.12 and 2.1.17. Kept at 2.1.12 rather than re-stamped, because every frozen count that reads it was measured against this capture and the numbers did not change."
+    },
+    "oracle-vulcanus-cliff-volcanism-sweep.seed123456.json": {
+      "factorioVersion": "2.1.17",
+      "evidence": "captured 2026-09-07 by scripts/probes/vulcanus-cliff-volcanism/capture.ts through factorio-oracle, which read 2.1.17 (build 87315) off the installed binary and passed it as --version. The three regions of oracle-vulcanus-cliff-entities, each captured once per ARM of the vulcanus_volcanism autoplace control (default, frequency 0.5, frequency 2, size 3), 2s per region. Each arm records the control the SURFACE reported back and the capture refuses an arm whose read-back disagrees, so an override that failed to apply cannot pass as a setting that does not matter. The default arm reproduces the 2.1.12 fixture cell for cell; R1 [0,0] is identical in all four arms, which is the control - it sits inside the starting area, where volcanism reaches nothing. Same Lua as every committed cliff fixture (test/oracle/oracle.ts buildCliffControlLua), seed forced to 123456 on a create_surface() Vulcanus surface."
     },
     "oracle-vulcanus-cliff-fine-sweep.seed123456.json": {
       "factorioVersion": "2.1.12",

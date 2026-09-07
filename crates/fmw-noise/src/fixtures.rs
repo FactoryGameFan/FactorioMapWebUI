@@ -4279,6 +4279,315 @@ fn places_every_vulcanus_cliff_where_the_game_places_it() {
     );
 }
 
+/// One region of one volcanism arm, in the four counts #84 and #307 track,
+/// plus the cells those counts leave out.
+///
+/// **Same definitions as
+/// [`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`]**,
+/// so a row here reads against that table directly. `missing` is NOT
+/// `game - matched` from [`CliffScore`]: that counts every `cliff-vulcanus`
+/// the game placed, and 38 of the 1569 at the default sit OUTSIDE the region -
+/// `find_entities_filtered{area}` selects on the entity's bounding box, so a
+/// cliff centred just past the edge is in the dump. Measured 2026-09-07: all
+/// 38 are boundary cells and none carries an orientation the port lacks.
+/// #307's table scores the 1531 whose centres are inside and this does too;
+/// `unscored` keeps the dropped ones visible per arm rather than silently
+/// absorbed, and the filter on orientation stays so a new game orientation
+/// would land there rather than in `missing`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SweepRow {
+    /// Right place, right orientation.
+    matched: usize,
+    /// Right place, wrong orientation.
+    wrong: usize,
+    /// A cell the game does not have.
+    surplus: usize,
+    /// A cell the game has, with a codeable orientation, that the port lacks.
+    missing: usize,
+    /// Game cells outside the comparison: an orientation the port has no code
+    /// for, or a position outside the region bounds.
+    unscored: usize,
+}
+
+impl SweepRow {
+    const ZERO: Self = Self {
+        matched: 0,
+        wrong: 0,
+        surplus: 0,
+        missing: 0,
+        unscored: 0,
+    };
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            matched: self.matched + other.matched,
+            wrong: self.wrong + other.wrong,
+            surplus: self.surplus + other.surplus,
+            missing: self.missing + other.missing,
+            unscored: self.unscored + other.unscored,
+        }
+    }
+}
+
+/// Score one region under the SHIPPING model at the sliders `ctx` carries.
+///
+/// The placement is built exactly as [`score_vulcanus_cliffs`]'s `Shipping`
+/// arm builds it; only the counting differs, per [`SweepRow`].
+fn sweep_score(region: &Json, cliffs: &[Json], ctx: &crate::eval::ctx::EvalCtx) -> SweepRow {
+    let seed0 = ctx.seed0;
+    let base = VulcanusBase::with_host_trig(ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let lava = VulcanusLavaTiles::new(&stack);
+    let ore = VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls);
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        reject_at_crossing_stage: true,
+        ..CliffBands::default()
+    };
+    let (x0, y0) = (region.get("x0").as_f64(), region.get("y0").as_f64());
+    let (x1, y1) = (region.get("x1").as_f64(), region.get("y1").as_f64());
+
+    let mut row = SweepRow::ZERO;
+    let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+    for e in cliffs {
+        if e.get("name").as_str() != "cliff-vulcanus" {
+            continue;
+        }
+        let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+        let want = e.get("orientation").as_str();
+        let id = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want);
+        match id {
+            Some(id) if x >= x0 && x < x1 && y >= y0 && y < y1 => {
+                game.insert((x.to_bits(), y.to_bits()), id as u8);
+            }
+            _ => row.unscored += 1,
+        }
+    }
+
+    let port: BTreeMap<(u64, u64), u8> = CliffPlacement::new(&fields, bands)
+        .with_tile_collision(&lava)
+        .with_cell_rejection(&ore)
+        .placed_cells(x0, y0, x1, y1)
+        .iter()
+        .filter_map(|c| cliff_orientation_for_code(c.code).map(|id| (cell_key(c), id)))
+        .collect();
+
+    for (k, id) in &port {
+        match game.get(k) {
+            None => row.surplus += 1,
+            Some(want) if want == id => row.matched += 1,
+            Some(_) => row.wrong += 1,
+        }
+    }
+    row.missing = game.keys().filter(|k| !port.contains_key(*k)).count();
+    row
+}
+
+/// The Vulcanus cliff placement under the VOLCANISM sweep - the same three
+/// regions as [`places_every_vulcanus_cliff_where_the_game_places_it`], captured
+/// at four settings of the `vulcanus_volcanism` control (#84).
+///
+/// Neither volcanism slider touches the cliff rule. Frequency is the input
+/// scale of the mountain and crack noise; size sets the volcano spot radius,
+/// spacing and density. Both move the ELEVATION the cliff bands sit on and
+/// nothing else, so the sweep changes the input to the cliff rule while the
+/// rule, both collision tests and the ore rule stay fixed. That makes it a
+/// control that can fail: if the residual scales with the arm, it lives on the
+/// elevation or multisample side; if it stays flat, it lives in placement or
+/// connection (#307).
+///
+/// Three things are asserted before any count is read:
+///
+/// - **The default arm IS the 2.1.12 fixture**, cell for cell and in the same
+///   order, at 2.1.17. So the game did not move on these regions between the
+///   two versions, and this capture's protocol is the old one's.
+/// - **R1 `[0,0]` is the control, on BOTH sides.** It sits inside the starting
+///   area, where the volcano spots are excluded and the mountain noise is
+///   flattened, so the game places the same 283 cliffs in every arm and the
+///   port scores the same row in every arm. A sweep that graded R1 would grade
+///   nothing, which is the window rule again.
+/// - **R2 and R3 really moved on the game side** in every non-default arm, or
+///   the override never reached the generator.
+#[test]
+fn vulcanus_cliffs_track_the_volcanism_sliders() {
+    let sweep = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-volcanism-sweep.seed123456.json",
+        "2.1.17",
+    );
+    let reference = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-entities.seed123456.json",
+        "2.1.12",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = sweep.get("seed").as_f64() as u32;
+    assert_eq!(
+        seed0,
+        reference.get("seed").as_f64() as u32,
+        "same forced seed"
+    );
+
+    let arms = sweep.get("arms").as_array();
+    assert_eq!(arms.len(), 4, "default, frequency 0.5, frequency 2, size 3");
+
+    // A game cliff as the port would key it, orientation included.
+    let cell = |c: &Json| -> (u64, u64, String) {
+        (
+            c.get("x").as_f64().to_bits(),
+            c.get("y").as_f64().to_bits(),
+            c.get("orientation").as_str().to_owned(),
+        )
+    };
+    let game_cells = |case: &Json| -> Vec<(u64, u64, String)> {
+        case.get("cliffs")
+            .as_array()
+            .iter()
+            .filter(|c| c.get("name").as_str() == "cliff-vulcanus")
+            .map(cell)
+            .collect()
+    };
+
+    // The default arm is the 2.1.12 capture, cell for cell and in order.
+    let default_arm = &arms[0];
+    assert_eq!(default_arm.get("label").as_str(), "default");
+    let default_cases = default_arm.get("cases").as_array();
+    let reference_cases = reference.get("cases").as_array();
+    assert_eq!(default_cases.len(), 3);
+    assert_eq!(reference_cases.len(), 3);
+    for (i, (a, b)) in default_cases.iter().zip(reference_cases).enumerate() {
+        assert_eq!(
+            game_cells(a),
+            game_cells(b),
+            "region {i}: the 2.1.17 default arm must reproduce the 2.1.12 capture"
+        );
+    }
+    let r1_game = game_cells(&default_cases[0]);
+    let r2_game = game_cells(&default_cases[1]);
+    let r3_game = game_cells(&default_cases[2]);
+
+    let mut rows: Vec<(String, [SweepRow; 3], SweepRow)> = Vec::new();
+    for arm in arms {
+        let label = arm.get("label").as_str().to_owned();
+        let frequency = arm.get("frequency").as_f64();
+        let size = arm.get("size").as_f64();
+        // The surface's own read-back, so an override that did not apply cannot
+        // pass as a setting that does not matter.
+        let reported = arm.get("reported");
+        assert_eq!(
+            reported.get("frequency").as_f64(),
+            frequency,
+            "{label}: read-back"
+        );
+        assert_eq!(reported.get("size").as_f64(), size, "{label}: read-back");
+
+        let cases = arm.get("cases").as_array();
+        assert_eq!(cases.len(), 3, "{label}: three regions");
+        assert_eq!(game_cells(&cases[0]), r1_game, "{label}: R1 is the control");
+        if label != "default" {
+            assert_ne!(game_cells(&cases[1]), r2_game, "{label}: R2 must move");
+            assert_ne!(game_cells(&cases[2]), r3_game, "{label}: R3 must move");
+        }
+
+        let mut ctx = crate::eval::ctx::EvalCtx::new(seed0);
+        ctx.vulcanus_volcanism_frequency = frequency;
+        ctx.vulcanus_volcanism_size = size;
+        let mut per_region = [SweepRow::ZERO; 3];
+        for (i, case) in cases.iter().enumerate() {
+            per_region[i] = sweep_score(case.get("region"), case.get("cliffs").as_array(), &ctx);
+        }
+        let total = per_region[0].add(per_region[1]).add(per_region[2]);
+        eprintln!(
+            "{label:>14}: R1 {:?} R2 {:?} R3 {:?} total {:?}",
+            per_region[0], per_region[1], per_region[2], total
+        );
+        rows.push((label, per_region, total));
+    }
+
+    // The port agrees R1 is blind: the same row in every arm.
+    let r1_default = rows[0].1[0];
+    for (label, per_region, _) in &rows {
+        assert_eq!(
+            per_region[0], r1_default,
+            "{label}: the port's R1 row must not move either"
+        );
+    }
+    // The default arm's totals are #307's shipping row, restated - the same
+    // 1504 / 21 / 22 / 6 over the same 1531 comparable cells, with the 38 the
+    // table leaves out now counted.
+    let row = |matched, wrong, surplus, missing, unscored| SweepRow {
+        matched,
+        wrong,
+        surplus,
+        missing,
+        unscored,
+    };
+    assert_eq!(rows[0].2, row(1504, 21, 22, 6, 38), "default arm totals");
+
+    // The frozen sweep, measured 2026-09-07. Read a moved number, do not
+    // adjust it.
+    //
+    // | arm           | R2 (matched/wrong/surplus/missing) | R3            | total, of comparable cells |
+    // | ------------- | ---------------------------------- | ------------- | -------------------------- |
+    // | default       | 842 / 16 / 19 / 3                  | 385 / 1 / 1 / 1 | 49 of 1531 = 3.2%        |
+    // | frequency 0.5 | 720 / 7 / 10 / 2                   | 628 / 2 / 0 / 0 | 29 of 1642 = 1.8%        |
+    // | frequency 2   | 252 / 4 / 4 / 0                    | 528 / 8 / 6 / 1 | 31 of 1076 = 2.9%        |
+    // | size 3        | 531 / 5 / 4 / 2                    | 419 / 1 / 1 / 1 | 22 of 1242 = 1.8%        |
+    //
+    // R1 is 277 / 4 / 2 / 2 in every arm, by the control above.
+    //
+    // What it says, and what it cannot: the residual MOVES with the elevation
+    // input - the non-R1 error rate spans 1.5% to 3.3% across arms - so it is
+    // not a fixed placement-side defect that the elevation leaves alone. But
+    // it is not monotonic in frequency either (default is the worst arm, not
+    // frequency 2), and with 14 to 41 residual events per arm the resolution
+    // is about two sigma. It localises the residual to "depends on the field",
+    // not to a term. `unscored` is game cliffs on the region boundary, every
+    // one of them - see the volcanism sweep section (2026-09-07) of
+    // `docs/noise/vulcanus-cliffs-NOTES.md`.
+    let expected: [(&str, [SweepRow; 3]); 4] = [
+        (
+            "default",
+            [
+                row(277, 4, 2, 2, 0),
+                row(842, 16, 19, 3, 24),
+                row(385, 1, 1, 1, 14),
+            ],
+        ),
+        (
+            "frequency 0.5",
+            [
+                row(277, 4, 2, 2, 0),
+                row(720, 7, 10, 2, 15),
+                row(628, 2, 0, 0, 12),
+            ],
+        ),
+        (
+            "frequency 2",
+            [
+                row(277, 4, 2, 2, 0),
+                row(252, 4, 4, 0, 10),
+                row(528, 8, 6, 1, 12),
+            ],
+        ),
+        (
+            "size 3",
+            [
+                row(277, 4, 2, 2, 0),
+                row(531, 5, 4, 2, 26),
+                row(419, 1, 1, 1, 14),
+            ],
+        ),
+    ];
+    for ((label, per_region, total), (want_label, want)) in rows.iter().zip(expected) {
+        assert_eq!(label, want_label);
+        assert_eq!(*per_region, want, "{label}: per-region rows");
+        assert_eq!(*total, want[0].add(want[1]).add(want[2]), "{label}: totals");
+    }
+}
+
 /// The Vulcanus cliff fields against the game's own samples at the game's own
 /// lattice - 12,675 corners across three regions.
 ///

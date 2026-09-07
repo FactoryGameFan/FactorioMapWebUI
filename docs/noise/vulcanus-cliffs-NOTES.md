@@ -4626,3 +4626,91 @@ sweep's `L, T, R, B` clear order.
 from one sample, and its Bonferroni note was the right caution about the wrong
 risk - the multiple-comparison correction survived, and it was the SAMPLE that
 did not. Raise n before slicing again.
+
+## The VOLCANISM sweep: the residual moves with the field, and the origin region is blind (2026-09-07, #84)
+
+A lever on the INPUT to the cliff rule, with the rule held fixed. Read off
+`planet-vulcanus-map-gen.lua` at 2.1.17, neither `vulcanus_volcanism` slider
+touches the cliff rule: `frequency` is the input scale of the mountain and crack
+noise (`vulcanus_scale_multiplier`, line 51) and `size` sets the volcano spot
+radius, spacing and density (lines 322-337). Both move the elevation the cliff
+bands sit on and nothing else. So a sweep over them changes the field while the
+rule, both collision tests and the ore rule stay put - if the residual tracks
+the arm, it lives on the elevation side; if it stays flat, it lives in placement
+or connection (#307). Either way the arm can fail.
+
+**Probe:** `scripts/probes/vulcanus-cliff-volcanism/capture.ts`, the first
+cliff capture through `factorio-oracle`. It reuses `buildCliffControlLua` from
+`test/oracle/oracle.ts` verbatim - same forced-seed `create_surface()`, same
+one-drain chunk protocol, same read-back of `autoplace_controls` off the surface
+so an override that did not land cannot pass as a lever that does not matter -
+and runs one `create` per arm and region at 2.1.17. Four arms (default,
+frequency 0.5, frequency 2, size 3) over the three regions of
+`oracle-vulcanus-cliff-entities`, 2 seconds per region. Fixture:
+`oracle-vulcanus-cliff-volcanism-sweep.seed123456.json`. Graded by
+`vulcanus_cliffs_track_the_volcanism_sliders` in `fixtures.rs`, with the same
+four counts #307's table uses.
+
+### Three things settled before any count was read
+
+- **The game did not move 2.1.12 -> 2.1.17 on these regions.** The default
+  arm reproduces the 2.1.12 fixture cell for cell, in the same order,
+  283/885/409. The 2.1.12 fixture keeps its stamp and its provenance line
+  records the reproduction.
+- **R1 `[0,0]` is blind to volcanism on BOTH sides.** Measured on the engine
+  first: rendering the cliffs view over each region at 1 tile/px, R1 moves 0 of
+  65,536 pixels for any of five slider settings, because the whole 256-tile
+  square sits inside the starting area, where the volcano spots are excluded and
+  the mountain noise is flattened. The game agrees: all four arms place the same
+  283 cliffs in R1, and the port scores the same 277 / 4 / 2 / 2 row in every
+  arm. R1 is the control, and a sweep graded on it would grade nothing. (The
+  same window trap cost the first draft of `vulcanusVolcanismDispatch.spec.ts`
+  in #401 - the `square at origin` tier-3 window is inside the same blind zone.)
+- **The 38 cells #307's table leaves out are ALL boundary cells.**
+  `find_entities_filtered{area}` selects on the bounding box, so a cliff centred
+  just outside the region is in the dump; #307 filters those and cells whose
+  orientation the port has no code for. Measured: every one of the 38 is a
+  boundary cell and none has an unknown orientation, so the "6 missing" is
+  honest. They are counted per arm as `unscored` rather than dropped.
+
+### The sweep
+
+Shipping model, per region, `matched / wrong / surplus / missing`. Comparable
+cells are the game's in-bounds `cliff-vulcanus` entities; the error rate is
+`(wrong + surplus + missing) / (matched + wrong + missing)`.
+
+| arm           | R2 `[1500,1500]`   | R3 `[-1200,800]` | R2 + R3 errors | rate      |
+| ------------- | ------------------ | ---------------- | -------------: | --------: |
+| default       | 842 / 16 / 19 / 3  | 385 / 1 / 1 / 1  |  41 of 1248    | **3.29%** |
+| frequency 0.5 | 720 / 7 / 10 / 2   | 628 / 2 / 0 / 0  |  21 of 1359    | **1.55%** |
+| frequency 2   | 252 / 4 / 4 / 0    | 528 / 8 / 6 / 1  |  23 of 793     |     2.90% |
+| size 3        | 531 / 5 / 4 / 2    | 419 / 1 / 1 / 1  |  14 of 959     | **1.46%** |
+
+Per region, as a rate: R2 goes 4.4% / 2.6% / 3.1% / 2.0% and R3 goes 0.8% /
+0.3% / 2.8% / 0.7% across the four arms in that order.
+
+### What it says
+
+- **The residual is not flat.** Two arms halve the rate against the default,
+  and each is about 2.9 sigma from it on a two-proportion test (41/1248 against
+  21/1359, and against 14/959). So the residual depends on the elevation input;
+  it is not a fixed placement-side defect that the field leaves alone.
+- **It is not monotonic in feature scale either.** A scale-proportional field
+  error - the shape #83's grid-units multisample would give, where halving the
+  feature size doubles the gradients the offsets act on - predicts frequency 2
+  as the worst arm in both regions. It is the worst arm in R3 (2.8% against
+  0.8%) and BETTER than default in R2 (3.1% against 4.4%); overall it sits 0.5
+  sigma from default. That prediction fails on this sample. Not a refutation of
+  #83 at n = 23, but not support.
+- **The per-region pattern is mixed**, which is what "depends on where the
+  field's near-ties fall" looks like rather than "depends on one global term".
+  R2 improves under every arm; R3 worsens under frequency 2 only.
+
+### What it cannot say, and what would
+
+The residual events per arm are 14 to 41. That resolves a factor of two at
+about 2.9 sigma and nothing finer, and it is one seed. The cheap next
+measurement is more regions per arm, not more arms - the capture is 2 seconds
+per region now, so eight fresh regions at two arms (default, frequency 0.5) is
+under a minute and would put the 2.9 sigma either side of 4. Raise n before
+slicing again, per the section above this one.
