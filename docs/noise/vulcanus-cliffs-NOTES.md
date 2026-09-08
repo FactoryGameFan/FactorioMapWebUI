@@ -1,5 +1,130 @@
 # Vulcanus cliffs - port notes
 
+> ## UPDATE 19, 2026-09-08: `Surface::wouldCollide` READ OUT OF THE RUNNING GAME - the tile half is an oriented test and it is now EXACT
+>
+> **Every earlier section graded the port against the cliffs that SURVIVED the
+> apply-stage collision test. This one grades it against the test itself.** An
+> lldb breakpoint script (`scripts/probes/vulcanus-cliff-wouldcollide/`) sat on
+> `Surface::wouldCollide(CliffPrototype const&, MapPosition const&, CliffOrientation)`
+> while the 2.0.77 binary re-created the three regions of
+> `oracle-vulcanus-cliff-entities` from the oracle's own work dir, and recorded
+> all 2157 calls: the box tested, what `getAABB` widened it to, the tile half's
+> verdict, the entity half's verdict with the entity's vtable and box, and the
+> result. The replay placed the fixture's own 283/885/409 cliffs, so it is the
+> same world. Fixture: `test/fixtures/oracle-vulcanus-wouldcollide.seed123456.json`;
+> tests: five in `crates/fmw-noise/src/fixtures.rs` starting at
+> `the_games_apply_stage_box_is_the_catalogs_box_with_the_rotbb_tag_kept`.
+>
+> ### What the disassembly said, confirmed and sharpened
+>
+> UPDATE 5 read that `applyCliffs` calls a cliff-specific `wouldCollide`, and a
+> 2026-09-07 static read (#84 comment 143) saw it call `BoundingBox::getAABB`
+> before the tile check. Measured:
+>
+> - **The loader keeps `rotbb`'s `1/8` tag.** Every corner box carries an
+>   orientation word `[sin, -cos]` in 1.15 fixed point - `0x5A82`, `0xA57E` -
+>   and the straight boxes carry the identity `[0, 0x8001]`. #90's "the engine
+>   discards the tag" was true of `tryToAddCliff`, the map PREVIEW path (UPDATE
+>   5), and false of the path that places cliffs.
+> - **`getAABB` widens every rotated box to its axis-aligned square** (1420 of
+>   1420). The transcription - truncated integer centre, the two upper corners
+>   rotated in f64 and converted back with `fcvtzs #8`, reflections for the
+>   lower two, min/max - reproduces the game's AABB on all 2157 calls once the
+>   90-degree branch is included: a box with a `sin` word and no `cos` word
+>   (the crater ring's straight segments) takes a separate branch that swaps
+>   the half-extents in integers.
+> - **`checkTileCollisions` scans the SQUARE's tiles - `edge >> 8`, inclusive -
+>   and then, when the `sin` word is set, calls `BoundingBox::collide` per
+>   blocking tile against that tile's own square.** `collide` is a four-axis
+>   separating-axis test in f64 over doubled extents, trig narrowed through
+>   f32 (`scvtf` from the int16 halfword, `fmul` by `0x38000100`, `fcvt`),
+>   every comparison `<=`. So the real collision shape is the 45-degree
+>   rectangle `rotbb` describes - the shape #88 fitted and #90 rejected as
+>   "empirical fit only", on the strength of the preview path.
+>
+> Transcribed into the test with the port's own lava tiles under both models:
+>
+> | model | agree | says collide, game did not | game collided, model did not |
+> | --- | ---: | ---: | ---: |
+> | shipped: raw rect, inclusive floor (#90) | 2138 | 8 | 11 |
+> | oriented: AABB scan + `BoundingBox::collide` | **2157** | **0** | **0** |
+>
+> All six false rejections UPDATE 6 carried - `86,38.5`, `22,178.5`,
+> `1638,1598.5`, `1638,1602.5`, `1662,1634.5`, `-1054,1018.5` - are among the
+> eight "says collide". The lava resolver was held constant, so this is the
+> geometry and nothing else.
+>
+> ### Two more defects the same capture exposed
+>
+> - **The catalog's corner boxes are one 1/256 unit off on 15 of 16
+>   orientations.** The loader converts `rotbb`'s doubles to `MapPosition` by
+>   TRUNCATION toward zero; `catalog.rs`'s `rotbb_box` rounds half up. Tested
+>   against the engine's boxes (constant per orientation across every call):
+>   `trunc(v * 256)` matches all 16, `js_round` misses 15, floor/ceil/half-even
+>   miss all 16. `none-to-north` happens to round and truncate alike.
+> - **The game tests every cell with its RAW queued orientation, and the port's
+>   raw queue IS the game's queue** - 2088 of 2088 `cliff-vulcanus` calls carry
+>   the orientation `CliffPlacement` computes, no cell queued by one side only.
+>   `apply_cliff_connections` tests a cell after earlier chunks' destructions
+>   have cascaded into it, so `1626,1602.5` and `1630,1602.5` were tested with
+>   a trimmed box that misses the lava the game's queued box hits.
+>
+> ### The entity half is real, and one of the "far ten" is a DEMOLISHER
+>
+> 35 of the 230 kills are the entity half: 23 against another cliff (crater
+> ring segments against the regular cells they cross, and the reverse), 7
+> against a rock (`SimpleEntity`), and **5 against a demolisher body segment**
+> (`vtable for Segment`). `1746,1538.5` - the middle of UPDATE 8's unexplained
+> vertical run - died on a segment whose box spans `1745.2..1753.0 x
+> 1532.1..1538.3`, and the run's other two cells sit inside that same box.
+> `result` is exactly `tile OR entity` on every call; there is no third
+> mechanism inside `wouldCollide`.
+>
+> ### Through the apply stage
+>
+> Scored on the 1531 game cliffs exactly as the apply-stage test scores the
+> shipped model:
+>
+> | arm | matched | wrong | surplus | missing |
+> | --- | ---: | ---: | ---: | ---: |
+> | shipped lava + ore (UPDATE 6's model) | 1508 | 18 | 22 | 5 |
+> | oriented tile test + the same ore rule | **1525** | **6** | **16** | **0** |
+> | + the fixture's entity kills | 1528 | 3 | 13 | 0 |
+> | + the raw queued orientation at test time | 1528 | 3 | **11** | 0 |
+>
+> **Every leftover is in `[1500,1500]` and every one is a cell the game's own
+> collision test KEPT** - the `1542/1546` knot, the `1622/1626` pair, the
+> `1606`/`1630` cells beside them, and the `1742/1746` run under the demolisher
+> - and they are absent from the game's map anyway. They die AFTER the apply
+> stage: the ore rule's geometry and whatever places the demolisher. No
+> collision box can reach a cell the collision test passed, so the box work is
+> finished; what remains is post-apply destruction, which this probe cannot
+> see and UPDATE 8's ore lever can.
+>
+> ### The debugger recipe, because two traps each cost a session
+>
+> - **Bundle:** `~/GitHub/factorio-oracle/installs/factorio-2.0.77-debug.app`
+>   - `Contents/MacOS/factorio` and `Contents/Info.plist` real copies,
+>   everything else symlinked to `factorio-2.0.77.app`; re-signed
+>   `codesign --force --sign - --entitlements <plist>` with
+>   `com.apple.security.get-task-allow` plus the two the original carries. The
+>   entitlements plist must live OUTSIDE the bundle.
+> - **Strip the quarantine before the first launch:** `cp` inherits
+>   `com.apple.quarantine`, and a quarantined ad-hoc binary launched from a
+>   terminal hangs in `_dyld_start` forever - `syspolicyd` logs
+>   `Prompt shown, waiting for response` - and answering that dialog on the
+>   desktop moves the bundle to the Trash. `xattr -d com.apple.quarantine
+>   <binary>`; it launches in 1.6s after that. The signature was never the
+>   cause; the copy hung before re-signing too.
+> - **Resolve breakpoints through the file address.** A bare
+>   `BreakpointCreateByAddress` set before launch stays unresolved and the
+>   capture writes zero events while the game runs to completion. The probe
+>   uses `ResolveFileAddress` + `BreakpointCreateBySBAddress` and asserts every
+>   breakpoint was hit.
+> - The oracle builds the work dir with the ORIGINAL app; the replay runs the
+>   exact `--create` argv off its log line under `lldb -b -s`, with the debug
+>   copy. Each region is about a minute.
+>
 > ## UPDATE 18, 2026-08-04: the border enrichment is NOT a cascade artifact - and there is a shipping gain on the table
 >
 > The ore thread's two wins came from auditing populations rather than hunting

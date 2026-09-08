@@ -516,6 +516,10 @@
     "oracle-slider-to-linear.seed123456.json": {
       "factorioVersion": "2.1.17",
       "evidence": "captured 2026-09-05 by scripts/probes/cliff-slider-to-linear through factorio-oracle, which recorded the binary as \"Version: 2.1.17 (build 87315, mac-arm64, steam)\" in its own run provenance. Not inferred: that string comes from the run that produced these numbers, not from the installed binary read afterwards."
+    },
+    "oracle-vulcanus-wouldcollide.seed123456.json": {
+      "factorioVersion": "2.0.77",
+      "evidence": "captured 2026-09-08 by scripts/probes/vulcanus-cliff-wouldcollide (lldb, not Lua) from a re-signed copy of ~/GitHub/factorio-oracle/installs/factorio-2.0.77.app whose log reads 'Factorio 2.0.77 (build 84539, mac-arm64, full, space-age)'. 2.0.77 rather than the installed 2.1.17 because it is the one local binary with an unstripped symbol table that can be re-signed for a debugger, and because oracle-vulcanus-cliff-volcanism-sweep and the 2026-09-07 re-capture showed 2.0.77 places the same Vulcanus cliffs as 2.1.12 and 2.1.17 in all three regions, cell for cell and orientation for orientation. Every breakpoint address is in the probe beside the disassembly it was read from."
     }
   },
   "notFixtures": {
