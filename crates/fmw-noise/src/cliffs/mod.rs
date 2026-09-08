@@ -13,6 +13,7 @@
 //! side rather than one of them owning the unqualified name.
 
 pub mod catalog;
+pub mod collision;
 pub mod connections;
 pub mod fields;
 pub mod placement;

@@ -806,6 +806,12 @@ measured on #380 and #381 rather than read off its docs.
   minutes after the check had finished. A push cannot clear that, because
   nothing arrives to replace the old verdict.
 
+  A FOURTH, seen on #406 (2026-09-08): the push that took both findings got
+  a green `CodeRabbit` check reading **`Review rate limited`** and no review
+  at all. Same trap as the third, with a different label - nothing arrives to
+  replace the verdict, and the PR sits `BLOCKED` on a review whose findings
+  are already fixed.
+
   So a hand dismissal is the tool for a standing review that nothing is going
   to supersede - whether because you declined its findings or because the
   re-review said nothing. Put the reasoning in the message - it is the only
@@ -1521,8 +1527,10 @@ The port found real defects in shipped TypeScript. **None was fixed inside the
 port** - each got an issue and landed as its own graded change, because a
 unilateral fix on the Rust side reads as a port bug in tier 2, which is the
 whole point of having tier 2. All of them are landed now: the precision
-findings (#269, #270, #273, #279, #290, #293, #309), then #320 and #324. The
-rule stands for the next one.
+findings (#269, #270, #273, #279, #290, #293, #309), then #320 and #324, then
+#407 - the cliff collision test, found by reading `Surface::wouldCollide` out
+of the running game with lldb rather than by disassembling the wrong path
+(#406). The rule stands for the next one.
 
 Two are worth carrying forward, because both were hidden the same way - the
 evidence held one input constant everywhere it looked:

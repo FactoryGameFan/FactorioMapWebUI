@@ -125,6 +125,19 @@
 >   exact `--create` argv off its log line under `lldb -b -s`, with the debug
 >   copy. Each region is about a minute.
 >
+> ### #407 LANDED the fix, and the shipping arm moved 1504/21/22/6 -> 1521/10/16/0
+>
+> Three edits under `crates/fmw-noise/src/cliffs/`: `catalog.rs` truncates
+> `rotbb`'s doubles, the new `collision.rs` holds `getAABB` and the oriented
+> `collide` and `placement.rs`'s rejection calls it, and `connections.rs`
+> tests each cell with its queued orientation. `engine.wasm` rebuilt. Every
+> frozen count that moved, moved toward the game - shipping per region
+> `283/283/283` (exact on position and orientation), `885/876/861/851`,
+> `401/388/387/387`; the apply-stage arm `1525/6/14/0`; the out-of-sample
+> volcanism contrast `z = -2.55` where it was `-1.80`, so the sign that refuted
+> it is stronger. What remains on the 1531 is 6 wrong and 14 surplus, all in
+> `[1500,1500]`, all cells `wouldCollide` kept.
+>
 > ## UPDATE 18, 2026-08-04: the border enrichment is NOT a cascade artifact - and there is a shipping gain on the table
 >
 > The ore thread's two wins came from auditing populations rather than hunting

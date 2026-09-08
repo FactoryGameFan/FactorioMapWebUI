@@ -554,6 +554,34 @@ confirmed.** It expected `moats`, `vaultSpots` and `spotsPrebanding` to reach
 101/101 once the cones moved; measured, they reach 69, 69 and 98. They improved
 and did not close, so each still has to be applied and re-scored one at a time.
 
+- **#407 - the Vulcanus cliff collision test was the PREVIEW path's, not the
+  placement path's. FIXED (2026-09-08).** `#90` disassembled `tryToAddCliff`,
+  which discards `rotbb`'s `1/8` tag and scans the raw rectangle; the path
+  that places cliffs, `EntityMapGenerationTask::applyCliffs`, hands
+  `Surface::wouldCollide` the box WITH its orientation word, widens it with
+  `getAABB`, and runs `BoundingBox::collide` - an oriented separating-axis
+  test - per blocking tile. Found by reading the call out of the running game
+  with lldb (#406): `test/fixtures/oracle-vulcanus-wouldcollide` holds all
+  2157 calls, and `cliffs/collision.rs` reproduces the tile verdict on every
+  one. The same calls showed the loader TRUNCATES `rotbb`'s doubles where the
+  catalog rounded (15 of 16 corner boxes one unit off), and that the game
+  tests the RAW queued orientation where the apply pass read the cascaded one.
+
+  Three lessons. **A disassembly of the wrong path is exact and wrong**: #90's
+  three steps were all correct about `tryToAddCliff`, and the model they
+  produced scored WORSE than the 45-degree fit #88 had reached and #90
+  rejected as "empirical" - the right shape lost to the wrong evidence. **Grade
+  the predicate, not its survivors**: every earlier fixture recorded which
+  cliffs stood after the test, and a two-sided error set against those read as
+  two defects; one boolean per call read as one. And **the first lldb run
+  wrote zero events and looked like a quiet map** - a bare-address breakpoint
+  set before launch never resolves - so the probe now asserts every hit count.
+
+  The shipping crossing-stage arm moved 1504/21/22/6 -> **1521/10/16/0** on
+  the 1531 game cliffs, region `[0,0]` is exact on position AND orientation
+  (283 of 283), and every remaining disagreement is a cell the game's own test
+  passed and something later destroyed.
+
 ### No open findings, and do not "fix" the next one inside the port
 
 `variable_persistence_multioctave_noise` takes its `persistence` operand as

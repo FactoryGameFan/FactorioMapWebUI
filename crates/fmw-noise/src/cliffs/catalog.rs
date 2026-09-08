@@ -30,10 +30,13 @@
 //!   [`super::connections`] are derived from these names, which is what makes a
 //!   transcription slip fail rather than shift the model.
 //! - [`CLIFF_ORIENTATION_COLLISION_BOX`] is the table the engine loads into
-//!   `proto + 0x5c0 + id * 0x48`, and `tryToAddCliff` hands it to `wouldCollide`
-//!   with `Direction = 0` - the identity arm, which copies the rectangle
-//!   verbatim and discards `rotbb`'s `1/8` orientation tag. So the collision
-//!   shape is the RAW stored rectangle, not a rotated one.
+//!   `proto + 0x5c0 + id * 0x48` (`0x590` on 2.0.77). `tryToAddCliff` - the map
+//!   PREVIEW generator - hands it to `wouldCollide` with `Direction = 0` and
+//!   discards `rotbb`'s `1/8` tag. The path that PLACES cliffs,
+//!   `EntityMapGenerationTask::applyCliffs`, does not: the box goes to
+//!   `Surface::wouldCollide` WITH its orientation word, and the collision shape
+//!   is the rotated rectangle. That test lives in [`super::collision`] and is
+//!   graded against the game's own calls; see #407.
 //!
 //! ## The boxes are literals here and computed in the TypeScript
 //!
@@ -48,6 +51,12 @@
 //! full precision. Shipping the quantised values means the render path does no
 //! floating-point rounding for the boxes at all, while the derivation stays
 //! checkable against the Lua it came from.
+//!
+//! **The quantisation is TRUNCATION toward zero, not rounding.** Measured
+//! against the boxes the engine tested on every recorded call (#407): `trunc`
+//! reproduces all 16 corner boxes, `Math.round` misses 15 by one unit on one
+//! to three edges, and floor, ceil and round-half-even miss all 16. The table
+//! shipped rounded from 2026-08-02 to #407.
 
 /// Default `cliff_elevation_0` map-gen setting.
 pub const CLIFF_ELEVATION_0_DEFAULT: f64 = 10.0;
@@ -308,26 +317,26 @@ pub type CliffCollisionBox = [f64; 4];
 /// multiple of `1/256` - see the module docs for why that is the format rather
 /// than a coincidence.
 pub const CLIFF_ORIENTATION_COLLISION_BOX: [CliffCollisionBox; 20] = [
-    [-2.0, -1.5, 2.0, 1.5],                              //  0 west-to-east
-    [-1.0, -2.0, 1.0, 2.0],                              //  1 north-to-south
-    [-2.0, -0.5, 2.0, 0.5],                              //  2 east-to-west
-    [-1.0, -2.0, 1.0, 2.0],                              //  3 south-to-north
-    [-2.3125, -2.87109375, -0.1875, 1.37109375],         //  4 west-to-north
-    [-0.87109375, -1.8125, 3.37109375, 0.3125],          //  5 north-to-east
-    [0.04296875, -0.51953125, 1.45703125, 3.01953125],   //  6 east-to-south
-    [-2.51953125, 0.54296875, 1.01953125, 1.95703125],   //  7 south-to-west
-    [-3.37109375, -0.3125, 0.87109375, 1.8125],          //  8 west-to-south
-    [-1.45703125, -3.01953125, -0.04296875, 0.51953125], //  9 north-to-west
-    [-1.01953125, -1.95703125, 2.51953125, -0.54296875], // 10 east-to-north
-    [0.1875, -1.37109375, 2.3125, 2.87109375],           // 11 south-to-east
-    [-2.20703125, -1.4140625, -0.79296875, 1.4140625],   // 12 west-to-none
-    [0.0859375, -0.70703125, 2.9140625, 0.70703125],     // 13 none-to-east
-    [0.89453125, -0.6640625, 1.60546875, 2.1640625],     // 14 east-to-none
-    [-2.66796875, 0.40234375, 0.17578125, 1.109375],     // 15 none-to-west
-    [-0.9140625, -1.70703125, 1.9140625, -0.29296875],   // 16 north-to-none
-    [0.14453125, -0.76953125, 0.85546875, 2.76953125],   // 17 none-to-south
-    [-2.26953125, 0.64453125, 1.26953125, 1.35546875],   // 18 south-to-none
-    [-1.20703125, -2.4140625, 0.20703125, 0.4140625],    // 19 none-to-north
+    [-2.0, -1.5, 2.0, 1.5],                             //  0 west-to-east
+    [-1.0, -2.0, 1.0, 2.0],                             //  1 north-to-south
+    [-2.0, -0.5, 2.0, 0.5],                             //  2 east-to-west
+    [-1.0, -2.0, 1.0, 2.0],                             //  3 south-to-north
+    [-2.30859375, -2.87109375, -0.1875, 1.37109375],    //  4 west-to-north
+    [-0.87109375, -1.80859375, 3.37109375, 0.30859375], //  5 north-to-east
+    [0.0390625, -0.515625, 1.45703125, 3.015625],       //  6 east-to-south
+    [-2.515625, 0.5390625, 1.015625, 1.95703125],       //  7 south-to-west
+    [-3.37109375, -0.30859375, 0.87109375, 1.80859375], //  8 west-to-south
+    [-1.45703125, -3.015625, -0.0390625, 0.515625],     //  9 north-to-west
+    [-1.015625, -1.95703125, 2.515625, -0.5390625],     // 10 east-to-north
+    [0.1875, -1.37109375, 2.30859375, 2.87109375],      // 11 south-to-east
+    [-2.20703125, -1.4140625, -0.7890625, 1.4140625],   // 12 west-to-none
+    [0.08203125, -0.70703125, 2.9140625, 0.70703125],   // 13 none-to-east
+    [0.89453125, -0.6640625, 1.6015625, 2.1640625],     // 14 east-to-none
+    [-2.6640625, 0.3984375, 0.17578125, 1.10546875],    // 15 none-to-west
+    [-0.9140625, -1.70703125, 1.9140625, -0.2890625],   // 16 north-to-none
+    [0.14453125, -0.765625, 0.8515625, 2.765625],       // 17 none-to-south
+    [-2.265625, 0.64453125, 1.265625, 1.3515625],       // 18 south-to-none
+    [-1.20703125, -2.4140625, 0.20703125, 0.4140625],   // 19 none-to-north
 ];
 
 /// The four straight orientations, written as plain boxes in the Lua rather
@@ -379,35 +388,18 @@ pub const CLIFF_ORIENTATION_ROTBB: [Option<[f64; 4]>; 20] = [
 /// `tests::the_square_root_constant_is_the_one_the_typescript_writes` pins it.
 const SQRT2: f64 = std::f64::consts::SQRT_2;
 
-/// `Math.round`, which is NOT `f64::round`.
-///
-/// JavaScript rounds a half UP (toward `+inf`), so `Math.round(-0.5)` is `-0`;
-/// Rust rounds a half AWAY FROM ZERO, so `(-0.5f64).round()` is `-1`.
-///
-/// Every edge below is far from a half in practice - `rotbb`'s `sqrt(2)` sees
-/// to that - but "in practice" is not a reason to write the other function, and
-/// `tests::the_rounding_is_javascripts_and_not_rusts` plants the case that
-/// separates them.
-#[inline]
-fn js_round(v: f64) -> f64 {
-    (v + 0.5).floor()
-}
-
 /// `rotbb(x, y, size, intersect)` as the ENGINE reads it back
 /// (`entity-util.lua:9`), returning the RAW rectangle.
 ///
 /// `rotbb` builds a rectangle centred at `(x + size/2, y + size/2)` with
 /// half-extents `((1 - intersect/size) * d, (intersect/size) * d)` where
-/// `d = size/2 * sqrt(2)`, and tags it with an orientation of `1/8`. **The tag
-/// is discarded for collision** - three steps of disassembly establish it, and
-/// the module docs name them - so this returns the rectangle unrotated.
+/// `d = size/2 * sqrt(2)`, and tags it with an orientation of `1/8`. This
+/// returns the rectangle unrotated; the tag is [`super::collision::ROTBB_TAG`],
+/// and the placement path applies it (#407).
 ///
-/// Two wrong shapes shipped in the TypeScript before this one, and the more
-/// accurate-looking of them was the wrong one: a 45-degree separating-axis test
-/// scored better on every metric because it also absorbed an unrelated
-/// orientation defect. See `test/cliffCollisionBox.spec.ts`.
-///
-/// Edges are quantised to `1/256` because `MapPosition` is 8-bit fixed point.
+/// Edges are quantised to `1/256` by truncation toward zero, because
+/// `MapPosition` is 8-bit fixed point and that is what the loader does - see
+/// the module docs.
 #[must_use]
 pub fn rotbb_box(x: f64, y: f64, size: f64, intersect: f64) -> CliffCollisionBox {
     let dist = (size / 2.0) * SQRT2;
@@ -416,7 +408,7 @@ pub fn rotbb_box(x: f64, y: f64, size: f64, intersect: f64) -> CliffCollisionBox
     let y_dist = y_ratio * dist;
     let cx = x + size / 2.0;
     let cy = y + size / 2.0;
-    let q = |v: f64| js_round(v * 256.0) / 256.0;
+    let q = |v: f64| (v * 256.0).trunc() / 256.0;
     [
         q(cx - x_dist),
         q(cy - y_dist),
@@ -434,8 +426,12 @@ pub struct CliffTileBox {
     pub bottom: i64,
 }
 
-/// The tile rectangle `EntityMapGenerationTask::wouldCollide` scans for a cliff
-/// of cell `code` centred at `(center_x, center_y)`.
+/// The tile rectangle `EntityMapGenerationTask::wouldCollide` - the map PREVIEW
+/// path's test - scans for a cliff of cell `code` centred at
+/// `(center_x, center_y)`. The placement path scans `getAABB`'s square instead
+/// and then tests each tile against the oriented box; see
+/// [`super::collision`]. Kept as the "before" model the game's recorded calls
+/// are graded against.
 ///
 /// Both ends are **inclusive** and both come from a **floor**, because the
 /// engine works in `MapPosition`'s 8-bit fixed point and takes
@@ -525,8 +521,6 @@ mod tests {
         }
     }
 
-    /// `Math.round` and `f64::round` disagree on a negative half, and this port
-    /// needs JavaScript's. Planted, because no real box edge lands on one.
     /// The TypeScript writes `1.4142135623730951`; Rust's constant must be the
     /// same bits, or `rotbb_box` evaluates different arithmetic.
     ///
@@ -539,13 +533,19 @@ mod tests {
         assert_eq!(SQRT2.to_bits(), 1.414_213_562_373_095_1_f64.to_bits());
     }
 
+    /// Truncation, not rounding: planted on the one edge where the two differ
+    /// by a whole unit, and on a negative edge, where truncation and floor
+    /// differ. `south-to-east`'s right edge is `2.30859375` truncated and
+    /// `2.3125` rounded; the engine holds the former on every recorded call.
     #[test]
-    fn the_rounding_is_javascripts_and_not_rusts() {
-        assert_eq!(js_round(-0.5), 0.0);
-        assert_eq!((-0.5f64).round(), -1.0);
-        assert_eq!(js_round(0.5), 1.0);
-        assert_eq!(js_round(1.5), 2.0);
-        assert_eq!(js_round(-1.5), -1.0);
+    fn the_quantisation_truncates_toward_zero() {
+        let b = rotbb_box(-1.0, -1.5, 4.5, 3.0);
+        assert_eq!(b[2], 2.308_593_75);
+        assert_eq!(b[0], 0.1875);
+        assert_eq!(
+            b[1], -1.371_093_75,
+            "a negative edge truncates toward zero, not down"
+        );
     }
 
     /// The floor is inclusive at both ends, so a straight orientation's 4-tile

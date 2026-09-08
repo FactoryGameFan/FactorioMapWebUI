@@ -330,6 +330,13 @@ pub fn apply_cliff_connections(
     // `applyCliffs`' own two-phase shape, per chunk: every cliff is tested with
     // the orientation it was queued with, and only then are the hits destroyed -
     // so a destroy in this chunk cannot change what its neighbour was tested as.
+    //
+    // And the QUEUED orientation is what the test reads, not the live one: the
+    // game's `wouldCollide` calls carry the raw queue's orientation on 2088 of
+    // 2088 cells, including cells an earlier chunk's cascade had already
+    // trimmed by then (#407). Reading `live` here tested those with a smaller
+    // box, which kept `(1626, 1602.5)` and `(1630, 1602.5)` the game kills.
+    let queued: Live = live.clone();
     if let Some(collides) = opts.collides {
         let mut chunk: Option<(i64, i64)> = None;
         let mut doomed: Vec<(i64, i64)> = Vec::new();
@@ -341,7 +348,10 @@ pub fn apply_cliff_connections(
                 }
                 chunk = Some(id);
             }
-            let Some(&orientation) = live.get(&k) else {
+            if !live.contains_key(&k) {
+                continue;
+            }
+            let Some(&orientation) = queued.get(&k) else {
                 continue;
             };
             let (x, y) = cell_centre(k.0, k.1);
