@@ -127,8 +127,10 @@ const SWEEP: Capture = {
 
 /**
  * The out-of-sample replication of the sweep's headline contrast - default
- * against frequency 0.5, which halved the residual rate (41 of 1248 against 21
- * of 1359, about 2.9 sigma) on the three known regions.
+ * against frequency 0.5, which READ as halving the residual rate (41 of 1248
+ * against 21 of 1359, about 2.9 sigma) on the three known regions. It did not
+ * replicate: out of sample the default arm is the better one, z = -1.80. See
+ * `the_volcanism_contrast_out_of_sample` in `fixtures.rs`.
  *
  * Eight FRESH 256x256 regions, disjoint from every one of the 23 Vulcanus
  * cliff regions already captured (listed by walking every
@@ -285,7 +287,7 @@ async function captureRegion(arm: Arm, region: Region, version: string) {
 
 async function main(): Promise<void> {
   const which = process.argv[2] ?? "sweep";
-  const capture = CAPTURES[which];
+  const capture = Object.hasOwn(CAPTURES, which) ? CAPTURES[which] : undefined;
   if (capture === undefined) {
     throw new Error(`unknown capture "${which}"; one of ${Object.keys(CAPTURES).join(", ")}`);
   }

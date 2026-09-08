@@ -4735,8 +4735,8 @@ fn the_volcanism_contrast_out_of_sample() {
     // regions and 3.5x the cells, the default arm is the BETTER one and the
     // gap is inside noise. So the sweep's "the residual moves with the field"
     // was a small-n reading - `docs/noise/vulcanus-cliffs-NOTES.md` records
-    // both the claim and its refutation - and volcanism is not a lever the
-    // residual responds to.
+    // both the claim and its refutation - and the comparison does not support
+    // volcanism as a lever the residual responds to.
     let errors = |r: &SweepRow| r.wrong + r.surplus + r.missing;
     let comparable = |r: &SweepRow| r.matched + r.wrong + r.missing;
     let (d, m) = (&per_arm[0].2, &per_arm[1].2);

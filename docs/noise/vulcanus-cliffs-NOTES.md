@@ -4737,7 +4737,7 @@ table is in `capture.ts`). Test: `the_volcanism_contrast_out_of_sample`. The
 read-back guard held on all sixteen runs and every region moved between arms.
 
 **So the sweep's "the residual moves with the field" was a small-n reading and
-is withdrawn.** Volcanism is not a lever the residual responds to. That also
+is withdrawn.** The out-of-sample comparison does not support volcanism as a lever the residual responds to; it cannot rule one out either, only bound it below what three regions could show. That also
 means the "scales or flat" framing the sweep was built to decide has no answer
 from this lever: neither elevation-side nor placement-side is favoured by it.
 
