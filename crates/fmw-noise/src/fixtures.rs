@@ -4766,6 +4766,9 @@ fn the_volcanism_contrast_out_of_sample() {
     assert_eq!(errors(worst), 74);
 }
 
+/// Cliff cells keyed by the raw bits of their centre, to the port's orientation code.
+type CellMap = BTreeMap<(u64, u64), u8>;
+
 /// The game's in-bounds `cliff-vulcanus` cells of one region, keyed like the
 /// port's, and the port's own cells under the shipping model with the ore
 /// rejection ON or OFF. The three-way split [`sweep_score`] counts is
@@ -4776,7 +4779,7 @@ fn sweep_cells(
     cliffs: &[Json],
     ctx: &crate::eval::ctx::EvalCtx,
     with_ore: bool,
-) -> (BTreeMap<(u64, u64), u8>, BTreeMap<(u64, u64), u8>) {
+) -> (CellMap, CellMap) {
     let seed0 = ctx.seed0;
     let base = VulcanusBase::with_host_trig(ctx);
     let biomes = base.biomes_with_host_trig();
