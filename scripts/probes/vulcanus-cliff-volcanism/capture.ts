@@ -5,10 +5,12 @@
  *
  *   node --experimental-strip-types scripts/probes/vulcanus-cliff-volcanism/capture.ts sweep
  *   node --experimental-strip-types scripts/probes/vulcanus-cliff-volcanism/capture.ts oos
+ *   node --experimental-strip-types scripts/probes/vulcanus-cliff-volcanism/capture.ts ore
  *
  * `sweep` is the four-arm capture over the three known regions; `oos` is the
  * out-of-sample replication - eight FRESH regions at two arms, described at
- * `OUT_OF_SAMPLE` below.
+ * `OUT_OF_SAMPLE` below; `ore` is the resource lever on the one region that
+ * replication found concentrated, at `ORE_LEVER`.
  *
  * ## Why this lever
  *
@@ -87,7 +89,16 @@ interface Arm {
   readonly label: string;
   readonly frequency: number;
   readonly size: number;
+  /**
+   * Switch ALL four Vulcanus resource controls off (`size = 0`), the lever
+   * `oracle-vulcanus-cliff-ore-direction` pulls. The ore rule removes cliffs
+   * where ore lands, so a surplus cell that FOLLOWS this lever is the ore
+   * rule's, and one that does not is something else's.
+   */
+  readonly resourcesOff?: boolean;
 }
+
+const RESOURCE_CONTROLS = ["tungsten_ore", "vulcanus_coal", "calcite", "sulfuric_acid_geyser"];
 
 /**
  * Slider values are GUI notches (the app's own `PERCENT_STEPS` carry 0.5, 2 and
@@ -181,7 +192,38 @@ const OUT_OF_SAMPLE: Capture = {
     "proved blind to the slider.",
 };
 
-const CAPTURES: Record<string, Capture> = { sweep: SWEEP, oos: OUT_OF_SAMPLE };
+/**
+ * The ore lever on the ONE region the replication found concentrated.
+ *
+ * Out of sample, the frequency 0.5 arm's `[-2200,-1500]` carried 74 of that
+ * arm's 138 errors - 24 wrong and 47 SURPLUS of 795 comparable cells - while
+ * the next worst region had 14. Surplus is a cell the port places and the game
+ * does not, and the game's cliff-removing mechanism in this port's model is the
+ * ore rule (`cliff_removal_probability`). So: the same region, the same slider,
+ * with every Vulcanus resource control OFF. If the 47 follow the lever the
+ * concentration is the ore rule at a non-default field; if they stay, it is
+ * something the ore rule does not touch.
+ *
+ * The ON arm re-captures what the oos fixture already holds, on purpose: it is
+ * the determinism check for the pair, and it keeps the fixture self-contained.
+ */
+const ORE_LEVER: Capture = {
+  out: "oracle-vulcanus-cliff-volcanism-ore.seed123456.json",
+  regions: [{ x0: -2200, y0: -1500, x1: -1944, y1: -1244 }],
+  arms: [
+    { label: "frequency 0.5, resources ON", frequency: 0.5, size: 1 },
+    { label: "frequency 0.5, ALL resources OFF", frequency: 0.5, size: 1, resourcesOff: true },
+  ],
+  comment:
+    "Every cliff entity (find_entities_filtered{type='cliff'}) the game placed in [-2200,-1500], " +
+    "the region oracle-vulcanus-cliff-volcanism-oos found carrying 74 of the frequency 0.5 " +
+    "arm's 138 errors, at frequency 0.5 with the four Vulcanus resource controls ON and OFF " +
+    "(size 0, the lever oracle-vulcanus-cliff-ore-direction pulls) - does the surplus follow " +
+    "the ore rule? (#84). Each arm also records the four resource controls the SURFACE " +
+    "reported back.",
+};
+
+const CAPTURES: Record<string, Capture> = { sweep: SWEEP, oos: OUT_OF_SAMPLE, ore: ORE_LEVER };
 
 interface Case {
   readonly region: Region;
@@ -191,6 +233,8 @@ interface Case {
 interface CapturedArm extends Arm {
   /** `map_gen_settings.autoplace_controls.vulcanus_volcanism` read back off the surface. */
   readonly reported: { frequency: number; size: number; richness: number };
+  /** The four Vulcanus resource controls read back off the surface. */
+  readonly reportedResources: Controls;
   readonly cases: Case[];
 }
 
@@ -203,6 +247,24 @@ async function installedVersion(): Promise<string> {
     throw new Error(`expected exactly one install, found ${[...versions].join(", ")}`);
   }
   return parsed.installs[0].version;
+}
+
+type Controls = Record<string, { frequency: number; size: number; richness: number }>;
+
+/**
+ * The `autoplace_controls` overrides one arm writes, or none for the default
+ * arm - so its read-back reports what the planet ships with rather than an
+ * echo of what was written.
+ */
+function overridesFor(arm: Arm): Controls | undefined {
+  const out: Controls = {};
+  if (arm.frequency !== 1 || arm.size !== 1) {
+    out.vulcanus_volcanism = { frequency: arm.frequency, size: arm.size, richness: 1 };
+  }
+  if (arm.resourcesOff === true) {
+    for (const name of RESOURCE_CONTROLS) out[name] = { frequency: 1, size: 0, richness: 1 };
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 /**
@@ -224,10 +286,7 @@ async function captureRegion(arm: Arm, region: Region, version: string) {
         planet: "vulcanus",
         seed: SEED,
         alsoResources: true,
-        autoplaceControls:
-          arm.label === "default"
-            ? undefined
-            : { vulcanus_volcanism: { frequency: arm.frequency, size: arm.size, richness: 1 } },
+        autoplaceControls: overridesFor(arm),
       }),
     );
     const probePath = join(probeDir, "probe.json");
@@ -278,7 +337,15 @@ async function captureRegion(arm: Arm, region: Region, version: string) {
     if (reported === undefined) {
       throw new Error(`${arm.label}: the surface reported no vulcanus_volcanism control`);
     }
-    return { cliffs: dump.cliffs, reported };
+    // The four resource controls, read back the same way, so a resources-off
+    // arm proves the lever landed rather than assuming it.
+    const resources: Controls = {};
+    for (const name of RESOURCE_CONTROLS) {
+      const c = dump.autoplaceControls?.[name];
+      if (c === undefined) throw new Error(`${arm.label}: the surface reported no ${name}`);
+      resources[name] = c;
+    }
+    return { cliffs: dump.cliffs, reported, resources };
   } finally {
     await rm(probeDir, { recursive: true, force: true });
     await rm(workDir, { recursive: true, force: true });
@@ -297,6 +364,7 @@ async function main(): Promise<void> {
   for (const arm of capture.arms) {
     const cases: Case[] = [];
     let reported: CapturedArm["reported"] | undefined;
+    let reportedResources: Controls | undefined;
     for (const region of capture.regions) {
       const started = Date.now();
       const got = await captureRegion(arm, region, version);
@@ -309,7 +377,19 @@ async function main(): Promise<void> {
             `size ${String(arm.size)}`,
         );
       }
+      // Same for the resource lever: every one of the four must report the
+      // size the arm asked for, ON or OFF.
+      const wantSize = arm.resourcesOff === true ? 0 : 1;
+      for (const name of RESOURCE_CONTROLS) {
+        if (got.resources[name]?.size !== wantSize) {
+          throw new Error(
+            `${arm.label} [${String(region.x0)},${String(region.y0)}]: ${name} reported ` +
+              `${JSON.stringify(got.resources[name])}, wanted size ${String(wantSize)}`,
+          );
+        }
+      }
       reported ??= got.reported;
+      reportedResources ??= got.resources;
       cases.push({ region, cliffs: got.cliffs });
       console.log(
         `  ${arm.label} [${String(region.x0)},${String(region.y0)}]: ` +
@@ -317,7 +397,8 @@ async function main(): Promise<void> {
       );
     }
     if (reported === undefined) throw new Error(`${arm.label}: no region captured`);
-    arms.push({ ...arm, reported, cases });
+    if (reportedResources === undefined) throw new Error(`${arm.label}: no resources read back`);
+    arms.push({ ...arm, reported, reportedResources, cases });
   }
 
   const fixture = {
