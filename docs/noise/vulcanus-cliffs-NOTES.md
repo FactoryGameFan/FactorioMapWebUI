@@ -4767,3 +4767,50 @@ by 6%.
 Cost of the whole exercise: 28 seconds of capture. The cost of NOT doing it
 would have been a #84 comment, a memory and a CLAUDE.md line all citing a 2.9
 sigma that does not exist.
+
+## The concentrated region IS the ore rule, under-removing at a non-default field (2026-09-07, #84)
+
+The replication above left one lead: `[-2200,-1500]` at frequency 0.5, 24 wrong
+and 47 surplus of 795 comparable cells. Surplus is a cell the port places and
+the game does not, and the only cliff-REMOVING mechanism in this port's model is
+the ore rule (`cliff_removal_probability`, the destroy stage). So the same
+region, the same slider, with all four Vulcanus resource controls switched OFF -
+the lever `oracle-vulcanus-cliff-ore-direction` pulls - on both sides. Fixture
+`oracle-vulcanus-cliff-volcanism-ore.seed123456.json` (two runs, 2 seconds
+each; the ON arm reproduces the oos capture cell for cell), test
+`the_concentrated_residual_against_the_ore_lever`.
+
+| arm                              | matched | wrong | surplus | missing | errors |
+| -------------------------------- | ------: | ----: | ------: | ------: | -----: |
+| resources ON, port with ore      |     768 |    24 |      47 |       3 | **74** |
+| resources ON, port WITHOUT ore   |     767 |    27 |      84 |       1 |    112 |
+| resources OFF, port with ore     |     848 |    11 |      19 |       1 | **31** |
+
+Sets, not counts, are what attribute it. Between the game's two arms, **the
+game's ore rule removed 65 cliffs** in this region (present with resources OFF,
+absent with them ON; it added none). **The port's ore rule removed 39.** And of
+the port's 47 surplus cells at resources ON, **28 are cells the game's ore rule
+removed** and the port's did not. Switching the ore off on both sides takes the
+region from 74 errors to 31, and takes `wrong` from 24 to 11 - the cascade
+re-orienting the neighbours of a destroyed cliff, which the port also models and
+also misses when it misses the destroy.
+
+**So the concentration is the ore rule, at a non-default field.** At the default
+the ore lever was already scored on `[1500,1500]` and the port tracked the game
+to within a few cells (the 2026-08-03 sections above). At frequency 0.5, in this
+region, the port removes 39 where the game removes 65. The ore regions are
+expected to move with volcanism - `vulcanus_calcite_region` and
+`vulcanus_coal_region` read `vulcanus_mountains_resource_favorability` and
+`vulcanus_ashlands_resource_favorability` (lines 797-814 and 768-785 of
+`planet-vulcanus-map-gen.lua` at 2.1.17), which sit on the biome and elevation
+chain - so this is the port's ore field, or its placement roll, diverging from
+the game's where the field is not the one every ore fixture was captured at.
+
+**What this does NOT say.** It does not say which of the two diverges, the ore
+FIELD (where the game thinks ore is) or the ROLL (`cliff_removal_probability`
+against a per-cell draw). The next capture that separates them is the one
+`oracle-vulcanus-resource-entities` already has the shape of: the game's ore
+ENTITIES in this region at frequency 0.5, compared against the port's ore field
+directly, before anything is concluded about the roll. The 31 errors that stay
+with resources OFF (19 surplus, 11 wrong, 1 missing; 3.6% of 860) are this
+region's share of the diffuse residual the rest of #84 is about.

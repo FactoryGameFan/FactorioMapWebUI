@@ -4766,6 +4766,265 @@ fn the_volcanism_contrast_out_of_sample() {
     assert_eq!(errors(worst), 74);
 }
 
+/// The game's in-bounds `cliff-vulcanus` cells of one region, keyed like the
+/// port's, and the port's own cells under the shipping model with the ore
+/// rejection ON or OFF. The three-way split [`sweep_score`] counts is
+/// recoverable from the two maps; this returns them so the test below can
+/// INTERSECT sets, which a count cannot do.
+fn sweep_cells(
+    region: &Json,
+    cliffs: &[Json],
+    ctx: &crate::eval::ctx::EvalCtx,
+    with_ore: bool,
+) -> (BTreeMap<(u64, u64), u8>, BTreeMap<(u64, u64), u8>) {
+    let seed0 = ctx.seed0;
+    let base = VulcanusBase::with_host_trig(ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let lava = VulcanusLavaTiles::new(&stack);
+    let ore = VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls);
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        reject_at_crossing_stage: true,
+        ..CliffBands::default()
+    };
+    let (x0, y0) = (region.get("x0").as_f64(), region.get("y0").as_f64());
+    let (x1, y1) = (region.get("x1").as_f64(), region.get("y1").as_f64());
+
+    let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+    for e in cliffs {
+        if e.get("name").as_str() != "cliff-vulcanus" {
+            continue;
+        }
+        let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+        let want = e.get("orientation").as_str();
+        if let Some(id) = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want) {
+            if x >= x0 && x < x1 && y >= y0 && y < y1 {
+                game.insert((x.to_bits(), y.to_bits()), id as u8);
+            }
+        }
+    }
+    let placement = CliffPlacement::new(&fields, bands).with_tile_collision(&lava);
+    let placement = if with_ore {
+        placement.with_cell_rejection(&ore)
+    } else {
+        placement
+    };
+    let port: BTreeMap<(u64, u64), u8> = placement
+        .placed_cells(x0, y0, x1, y1)
+        .iter()
+        .filter_map(|c| cliff_orientation_for_code(c.code).map(|id| (cell_key(c), id)))
+        .collect();
+    (game, port)
+}
+
+/// The ORE lever on the one region the replication found concentrated (#84).
+///
+/// `[-2200,-1500]` at frequency 0.5 carries 24 wrong and 47 surplus of 795
+/// comparable cells. Surplus is a cell the port places and the game does not,
+/// and the game's cliff-REMOVING mechanism in this port's model is the ore rule
+/// (`cliff_removal_probability`, the destroy stage). So the same region and the
+/// same slider, with every Vulcanus resource control switched OFF on both sides.
+/// If the 47 follow the lever, the concentration is the ore rule at a
+/// non-default field; if they stay, it is something the ore rule does not touch.
+///
+/// The sets are intersected rather than counted: which of the port's surplus
+/// cells are among the cells the game's ore rule removed (present with resources
+/// OFF, absent with them ON) is the attribution, and a count could not give it.
+#[test]
+fn the_concentrated_residual_against_the_ore_lever() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-volcanism-ore.seed123456.json",
+        "2.1.17",
+    );
+    let oos = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-volcanism-oos.seed123456.json",
+        "2.1.17",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = fixture.get("seed").as_f64() as u32;
+    let arms = fixture.get("arms").as_array();
+    assert_eq!(arms.len(), 2);
+    let (on, off) = (&arms[0], &arms[1]);
+    assert_eq!(on.get("label").as_str(), "frequency 0.5, resources ON");
+    assert_eq!(
+        off.get("label").as_str(),
+        "frequency 0.5, ALL resources OFF"
+    );
+    for arm in [on, off] {
+        assert_eq!(arm.get("reported").get("frequency").as_f64(), 0.5);
+        assert_eq!(arm.get("reported").get("size").as_f64(), 1.0);
+        let want = if arm.get("label").as_str().ends_with("OFF") {
+            0.0
+        } else {
+            1.0
+        };
+        for name in [
+            "tungsten_ore",
+            "vulcanus_coal",
+            "calcite",
+            "sulfuric_acid_geyser",
+        ] {
+            assert_eq!(
+                arm.get("reportedResources").get(name).get("size").as_f64(),
+                want,
+                "{name} read-back"
+            );
+        }
+    }
+    let on_case = &on.get("cases").as_array()[0];
+    let off_case = &off.get("cases").as_array()[0];
+    let region = on_case.get("region");
+    assert_eq!(region.get("x0").as_f64(), -2200.0);
+    assert_eq!(region.get("y0").as_f64(), -1500.0);
+
+    // Determinism: the ON arm is the oos fixture's frequency 0.5 capture of the
+    // same region, cell for cell.
+    let oos_case = &oos.get("arms").as_array()[1].get("cases").as_array()[1];
+    assert_eq!(oos_case.get("region").get("x0").as_f64(), -2200.0);
+    let cells_of = |case: &Json| -> Vec<(u64, u64, String)> {
+        case.get("cliffs")
+            .as_array()
+            .iter()
+            .map(|c| {
+                (
+                    c.get("x").as_f64().to_bits(),
+                    c.get("y").as_f64().to_bits(),
+                    c.get("orientation").as_str().to_owned(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        cells_of(on_case),
+        cells_of(oos_case),
+        "ON arm reproduces oos"
+    );
+
+    let mut ctx_on = crate::eval::ctx::EvalCtx::new(seed0);
+    ctx_on.vulcanus_volcanism_frequency = 0.5;
+    let mut ctx_off = ctx_on.clone();
+    for levers in [
+        &mut ctx_off.vulcanus_resource_controls.tungsten_ore,
+        &mut ctx_off.vulcanus_resource_controls.vulcanus_coal,
+        &mut ctx_off.vulcanus_resource_controls.calcite,
+        &mut ctx_off.vulcanus_resource_controls.sulfuric_acid_geyser,
+    ] {
+        levers.size = 0.0;
+    }
+
+    let (game_on, port_on) = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx_on, true);
+    let (game_off, port_off) =
+        sweep_cells(region, off_case.get("cliffs").as_array(), &ctx_off, true);
+    // The port with the ore rejection simply not run, at resources ON: what the
+    // port thinks the ore rule removes.
+    let (_, port_no_ore) = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx_on, false);
+
+    let tally = |game: &BTreeMap<(u64, u64), u8>, port: &BTreeMap<(u64, u64), u8>| {
+        let mut row = SweepRow::ZERO;
+        for (k, id) in port {
+            match game.get(k) {
+                None => row.surplus += 1,
+                Some(want) if want == id => row.matched += 1,
+                Some(_) => row.wrong += 1,
+            }
+        }
+        row.missing = game.keys().filter(|k| !port.contains_key(*k)).count();
+        row
+    };
+    let row_on = tally(&game_on, &port_on);
+    let row_off = tally(&game_off, &port_off);
+    let row_no_ore = tally(&game_on, &port_no_ore);
+    eprintln!("resources ON,  port with ore rejection : {row_on:?}");
+    eprintln!("resources ON,  port WITHOUT ore rejection: {row_no_ore:?}");
+    eprintln!("resources OFF, port with ore rejection : {row_off:?}");
+
+    // What the GAME's ore rule removed: present with resources OFF, absent ON.
+    let game_removed: BTreeSet<(u64, u64)> = game_off
+        .keys()
+        .filter(|k| !game_on.contains_key(*k))
+        .copied()
+        .collect();
+    let game_added: BTreeSet<(u64, u64)> = game_on
+        .keys()
+        .filter(|k| !game_off.contains_key(*k))
+        .copied()
+        .collect();
+    // What the PORT's ore rule removed.
+    let port_removed: BTreeSet<(u64, u64)> = port_no_ore
+        .keys()
+        .filter(|k| !port_on.contains_key(*k))
+        .copied()
+        .collect();
+    // The surplus at ON, and how many of those the game's ore rule removed.
+    let surplus_on: BTreeSet<(u64, u64)> = port_on
+        .keys()
+        .filter(|k| !game_on.contains_key(*k))
+        .copied()
+        .collect();
+    let surplus_is_ore = surplus_on.intersection(&game_removed).count();
+    let surplus_off: BTreeSet<(u64, u64)> = port_off
+        .keys()
+        .filter(|k| !game_off.contains_key(*k))
+        .copied()
+        .collect();
+    eprintln!(
+        "game ore removed {} (and added {}); port ore removed {}; of {} surplus at ON, {} are cells \
+         the game's ore rule removed; surplus at OFF {}",
+        game_removed.len(),
+        game_added.len(),
+        port_removed.len(),
+        surplus_on.len(),
+        surplus_is_ore,
+        surplus_off.len(),
+    );
+    assert_eq!(surplus_on.len(), 47, "the oos row, restated");
+
+    // The frozen finding, measured 2026-09-07. Read a moved number, do not
+    // adjust it.
+    //
+    // THE CONCENTRATION IS THE ORE RULE, UNDER-REMOVING. The game's ore rule
+    // removes 65 cliffs in this region at frequency 0.5; the port's removes 39;
+    // 28 of the port's 47 surplus cells are cells the game's ore rule removed
+    // and the port's did not. Switching the ore off on BOTH sides takes the
+    // region from 74 errors to 31, and `wrong` from 24 to 11 - the destroy
+    // cascade re-orienting neighbours, missed wherever the destroy is missed.
+    // The ore regions read the biome/elevation chain (`*_resource_favorability`
+    // in planet-vulcanus-map-gen.lua), so the game's ore IS expected to move
+    // with volcanism; what this shows is the port's ore field, or its roll,
+    // diverging from the game's at a field no ore fixture was captured at. See
+    // `docs/noise/vulcanus-cliffs-NOTES.md`, the ore-rule section of 2026-09-07.
+    let row = |matched, wrong, surplus, missing| SweepRow {
+        matched,
+        wrong,
+        surplus,
+        missing,
+        unscored: 0,
+    };
+    assert_eq!(row_on, row(768, 24, 47, 3), "resources ON, port with ore");
+    assert_eq!(
+        row_no_ore,
+        row(767, 27, 84, 1),
+        "resources ON, port without ore"
+    );
+    assert_eq!(row_off, row(848, 11, 19, 1), "resources OFF, port with ore");
+    assert_eq!(game_removed.len(), 65, "cliffs the game's ore rule removed");
+    assert_eq!(game_added.len(), 0, "the lever only removes");
+    assert_eq!(port_removed.len(), 39, "cliffs the port's ore rule removed");
+    assert_eq!(
+        surplus_is_ore, 28,
+        "surplus cells that are the game's ore removals"
+    );
+    assert_eq!(surplus_off.len(), 19);
+    // Stated as a relation too, so the claim survives a re-measure that moves
+    // every row: the port under-removes, and most of the surplus is that.
+    assert!(port_removed.len() < game_removed.len());
+    assert!(surplus_is_ore * 2 > surplus_on.len());
+}
+
 /// The Vulcanus cliff fields against the game's own samples at the game's own
 /// lattice - 12,675 corners across three regions.
 ///
