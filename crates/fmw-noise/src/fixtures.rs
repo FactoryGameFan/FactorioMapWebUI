@@ -6298,13 +6298,6 @@ fn the_oriented_tile_test_through_the_apply_stage() {
     assert!(totals[1].wrong < totals[0].wrong);
     assert!(totals[1].surplus < totals[0].surplus);
     assert!(totals[1].missing < totals[0].missing);
-    // Every leftover is a cell the game's own collision test KEPT.
-    let kept: BTreeSet<(u64, u64)> = would_collide_calls(&calls)
-        .iter()
-        .flat_map(|(_, _, region)| region.iter())
-        .filter(|c| !c.result)
-        .map(|c| (c.x.to_bits(), c.y.to_bits()))
-        .collect();
     assert_eq!(leftovers.len(), 16);
     let tested: BTreeMap<(u64, u64), (u8, bool)> = would_collide_calls(&calls)
         .iter()
@@ -6339,7 +6332,6 @@ fn the_oriented_tile_test_through_the_apply_stage() {
             (1630.0, 1602.5, "north-to-west")
         ]
     );
-    let _ = kept;
 }
 
 /// **The game tests every cell with its RAW queued orientation, and the port's

@@ -203,6 +203,12 @@ async function captureRegion(region: Region): Promise<{ calls: Call[]; cliffs: n
         child.kill("SIGKILL");
         reject(new Error("lldb replay timed out after 900s"));
       }, 900_000);
+      // A missing lldb emits `error` and never `exit`; without this the
+      // promise would sit until the timer fired and blame a timeout.
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        reject(new Error(`failed to start lldb: ${err.message}`));
+      });
       child.on("exit", (code) => {
         clearTimeout(timer);
         if (!out.includes("probe: wrote")) {
