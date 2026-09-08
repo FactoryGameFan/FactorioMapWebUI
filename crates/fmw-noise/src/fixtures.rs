@@ -4047,6 +4047,9 @@ use crate::cliffs::catalog::{
     cliff_code_for_orientation, cliff_collision_tile_box, cliff_orientation_for_code,
     CLIFF_ORIENTATION_NAMES,
 };
+use crate::cliffs::collision::{
+    box_tile_collides, get_aabb, placed_box, rotation_word, tile_collides,
+};
 use crate::cliffs::connections::{
     apply_cliff_connections, connected_sides, on_chunk_border, opposite_side, ApplyCollision,
     CliffConnectionOptions, CLIFF_ORIENTATION_ENDS,
@@ -4242,25 +4245,25 @@ fn places_every_vulcanus_cliff_where_the_game_places_it() {
     assert_eq!(
         lava_rows,
         vec![
-            row(283, 283, 281, 276),
-            row(885, 900, 858, 833),
-            row(401, 387, 386, 383)
+            row(283, 283, 283, 276),
+            row(885, 899, 861, 835),
+            row(401, 388, 387, 383)
         ],
         "lava-only, per region"
     );
-    assert_eq!(lava, row(1569, 1570, 1525, 1492), "lava-only totals");
+    assert_eq!(lava, row(1569, 1570, 1531, 1494), "lava-only totals");
 
     let (ship_rows, ship) = score(CliffArm::Shipping);
     assert_eq!(
         ship_rows,
         vec![
-            row(283, 283, 281, 277),
-            row(885, 877, 858, 842),
-            row(401, 387, 386, 385)
+            row(283, 283, 283, 283),
+            row(885, 876, 861, 851),
+            row(401, 388, 387, 387)
         ],
         "shipping, per region"
     );
-    assert_eq!(ship, row(1569, 1547, 1525, 1504), "shipping totals");
+    assert_eq!(ship, row(1569, 1547, 1531, 1521), "shipping totals");
 
     // The ore rule's own claim, stated as assertions rather than left to be read
     // off the two rows.
@@ -4274,8 +4277,8 @@ fn places_every_vulcanus_cliff_where_the_game_places_it() {
             lava.matched - lava.orientation_agrees,
             ship.matched - ship.orientation_agrees
         ),
-        (33, 21),
-        "wrong orientations, which renderVulcanusCliffs.ts records as 33 -> 21"
+        (37, 10),
+        "wrong orientations - 33 -> 21 before #407, when the raw rectangle was the test"
     );
 }
 
@@ -4524,7 +4527,7 @@ fn vulcanus_cliffs_track_the_volcanism_sliders() {
         missing,
         unscored,
     };
-    assert_eq!(rows[0].2, row(1504, 21, 22, 6, 38), "default arm totals");
+    assert_eq!(rows[0].2, row(1521, 10, 16, 0, 38), "default arm totals");
 
     // The frozen sweep, measured 2026-09-07. Read a moved number, do not
     // adjust it.
@@ -4555,33 +4558,33 @@ fn vulcanus_cliffs_track_the_volcanism_sliders() {
         (
             "default",
             [
-                row(277, 4, 2, 2, 0),
-                row(842, 16, 19, 3, 24),
-                row(385, 1, 1, 1, 14),
+                row(283, 0, 0, 0, 0),
+                row(851, 10, 15, 0, 24),
+                row(387, 0, 1, 0, 14),
             ],
         ),
         (
             "frequency 0.5",
             [
-                row(277, 4, 2, 2, 0),
-                row(720, 7, 10, 2, 15),
+                row(283, 0, 0, 0, 0),
+                row(724, 5, 9, 0, 15),
                 row(628, 2, 0, 0, 12),
             ],
         ),
         (
             "frequency 2",
             [
-                row(277, 4, 2, 2, 0),
-                row(252, 4, 4, 0, 10),
-                row(528, 8, 6, 1, 12),
+                row(283, 0, 0, 0, 0),
+                row(254, 2, 2, 0, 10),
+                row(531, 5, 3, 1, 12),
             ],
         ),
         (
             "size 3",
             [
-                row(277, 4, 2, 2, 0),
-                row(531, 5, 4, 2, 26),
-                row(419, 1, 1, 1, 14),
+                row(283, 0, 0, 0, 0),
+                row(535, 3, 4, 0, 26),
+                row(421, 0, 1, 0, 14),
             ],
         ),
     ];
@@ -4696,27 +4699,27 @@ fn the_volcanism_contrast_out_of_sample() {
         (
             "default",
             [
-                row(309, 6, 5, 0, 12),
-                row(208, 4, 6, 3, 11),
+                row(312, 3, 3, 0, 12),
+                row(212, 2, 4, 1, 11),
                 row(763, 1, 4, 0, 13),
                 row(462, 5, 6, 0, 24),
-                row(703, 1, 1, 0, 8),
-                row(518, 7, 13, 0, 15),
-                row(834, 11, 16, 0, 12),
-                row(697, 13, 22, 0, 11),
+                row(704, 0, 0, 0, 8),
+                row(520, 5, 10, 0, 15),
+                row(836, 9, 15, 0, 12),
+                row(699, 11, 20, 0, 11),
             ],
         ),
         (
             "frequency 0.5",
             [
-                row(612, 3, 8, 5, 13),
-                row(768, 24, 47, 3, 27),
+                row(617, 3, 6, 0, 13),
+                row(769, 24, 44, 2, 27),
                 row(199, 1, 0, 0, 6),
                 row(774, 2, 4, 1, 24),
                 row(439, 2, 3, 0, 11),
-                row(255, 1, 0, 1, 18),
+                row(257, 0, 0, 0, 18),
                 row(641, 8, 11, 0, 0),
-                row(319, 6, 8, 0, 2),
+                row(319, 6, 7, 0, 2),
             ],
         ),
     ];
@@ -4740,30 +4743,30 @@ fn the_volcanism_contrast_out_of_sample() {
     let errors = |r: &SweepRow| r.wrong + r.surplus + r.missing;
     let comparable = |r: &SweepRow| r.matched + r.wrong + r.missing;
     let (d, m) = (&per_arm[0].2, &per_arm[1].2);
-    assert_eq!((errors(d), comparable(d)), (124, 4545), "default: 2.73%");
+    assert_eq!((errors(d), comparable(d)), (99, 4545), "default: 2.18%");
     assert_eq!(
         (errors(m), comparable(m)),
-        (138, 4064),
-        "frequency 0.5: 3.40%"
+        (124, 4064),
+        "frequency 0.5: 3.05%"
     );
     let z = two_proportion_z(errors(d), comparable(d), errors(m), comparable(m));
     assert!(
-        (-1.85..-1.75).contains(&z),
-        "z = {z:.3}: measured -1.80, and the SIGN is the finding"
+        (-2.60..-2.50).contains(&z),
+        "z = {z:.3}: measured -2.55 (-1.80 before #407), and the SIGN is the finding"
     );
 
-    // What is real is the spread BETWEEN regions, at one slider setting: the
-    // frequency 0.5 arm's `[-2200,-1500]` carries 74 of that arm's 138 errors
-    // on its own - 24 wrong and 47 surplus of 795 comparable cells, 9.3% - while
+    // What is real is the spread BETWEEN regions, at one slider setting: the    // frequency 0.5 arm's `[-2200,-1500]` carries 70 of that arm's 124 errors
+    // on its own - 24 wrong and 44 surplus of 795 comparable cells, 8.8% (74 of
+    // 138 before #407) - while
     // `[1800,3400]` in the same arm has 1 of 200. A residual that concentrated
     // is a lead the diffuse in-sample numbers never offered.
     let worst = &per_arm[1].1[1];
     assert_eq!(
         (worst.wrong, worst.surplus),
-        (24, 47),
+        (24, 44),
         "the concentrated region"
     );
-    assert_eq!(errors(worst), 74);
+    assert_eq!(errors(worst), 70);
 }
 
 /// Cliff cells keyed by the raw bits of their centre, to the port's orientation code.
@@ -4984,7 +4987,7 @@ fn the_concentrated_residual_against_the_ore_lever() {
         surplus_is_ore,
         surplus_off.len(),
     );
-    assert_eq!(surplus_on.len(), 47, "the oos row, restated");
+    assert_eq!(surplus_on.len(), 44, "the oos row, restated");
 
     // The frozen finding, measured 2026-09-07. Read a moved number, do not
     // adjust it.
@@ -5007,13 +5010,13 @@ fn the_concentrated_residual_against_the_ore_lever() {
         missing,
         unscored: 0,
     };
-    assert_eq!(row_on, row(768, 24, 47, 3), "resources ON, port with ore");
+    assert_eq!(row_on, row(769, 24, 44, 2), "resources ON, port with ore");
     assert_eq!(
         row_no_ore,
-        row(767, 27, 84, 1),
+        row(768, 27, 81, 0),
         "resources ON, port without ore"
     );
-    assert_eq!(row_off, row(848, 11, 19, 1), "resources OFF, port with ore");
+    assert_eq!(row_off, row(850, 10, 16, 0), "resources OFF, port with ore");
     assert_eq!(game_removed.len(), 65, "cliffs the game's ore rule removed");
     assert_eq!(game_added.len(), 0, "the lever only removes");
     assert_eq!(port_removed.len(), 39, "cliffs the port's ore rule removed");
@@ -5021,7 +5024,7 @@ fn the_concentrated_residual_against_the_ore_lever() {
         surplus_is_ore, 28,
         "surplus cells that are the game's ore removals"
     );
-    assert_eq!(surplus_off.len(), 19);
+    assert_eq!(surplus_off.len(), 16);
     // Stated as a relation too, so the claim survives a re-measure that moves
     // every row: the port under-removes, and most of the surplus is that.
     assert!(port_removed.len() < game_removed.len());
@@ -5171,10 +5174,11 @@ fn reproduces_the_vulcanus_cliff_fields_at_every_captured_corner() {
 }
 
 /// `Surface::wouldCollide` for a Vulcanus cliff at the APPLY stage: the
-/// orientation's box against the lava tiles, plus the ore removal.
+/// oriented tile test ([`crate::cliffs::collision::tile_collides`], the one
+/// the placement pass runs too since #407) plus the ore removal.
 ///
-/// The same geometry `tile_collides` drives through the placement pass - only
-/// the STAGE it runs at is different, which is the whole subject of
+/// The same geometry drives both stages - only the STAGE it runs at is
+/// different, which is the whole subject of
 /// [`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`].
 struct LavaAndOre<'a, 'b> {
     lava: VulcanusLavaTiles<'a, 'b>,
@@ -5186,14 +5190,8 @@ impl ApplyCollision for LavaAndOre<'_, '_> {
         let Some(code) = cliff_code_for_orientation(orientation) else {
             return false;
         };
-        if let Some(b) = cliff_collision_tile_box(code, x, y) {
-            for tx in b.left..=b.right {
-                for ty in b.top..=b.bottom {
-                    if self.lava.collides(tx, ty) {
-                        return true;
-                    }
-                }
-            }
+        if tile_collides(orientation, x, y, &self.lava) {
+            return true;
         }
         self.ore.rejects(code, x, y)
     }
@@ -5356,22 +5354,22 @@ fn the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none() 
     };
     assert_eq!(
         totals[0],
-        row(1504, 21, 22, 6),
+        row(1521, 10, 16, 0),
         "rejectAtCrossingStage (ships)"
     );
-    assert_eq!(totals[1], row(1508, 18, 22, 5), "applyCliffs, lava + ore");
-    assert_eq!(totals[2], row(1500, 25, 22, 6), "applyCliffs, no cascade");
+    assert_eq!(totals[1], row(1525, 6, 14, 0), "applyCliffs, lava + ore");
+    assert_eq!(totals[2], row(1513, 18, 16, 0), "applyCliffs, no cascade");
 
     // Stated as relations too, so the claim survives a re-measure that moves
     // every row: better on three counts, worse on none.
     assert!(totals[1].matched > totals[0].matched);
     assert!(totals[1].wrong < totals[0].wrong);
-    assert!(totals[1].missing < totals[0].missing);
-    assert_eq!(totals[1].surplus, totals[0].surplus);
-    // And on POSITION alone it is one cell, which is why the renderer is left
-    // alone. The whole gain is in orientation.
-    assert_eq!(totals[1].matched + totals[1].wrong, 1526);
-    assert_eq!(totals[0].matched + totals[0].wrong, 1525);
+    assert!(totals[1].surplus < totals[0].surplus);
+    assert_eq!(totals[1].missing, totals[0].missing, "both zero since #407");
+    // And on POSITION alone it is the same 1531 cells, which is why the
+    // renderer is left alone. The whole gain is in orientation.
+    assert_eq!(totals[1].matched + totals[1].wrong, 1531);
+    assert_eq!(totals[0].matched + totals[0].wrong, 1531);
 }
 
 /// The game's own destruction set as an [`ApplyCollision`]: inside the region,
@@ -5621,134 +5619,6 @@ fn would_collide_calls(fixture: &Json) -> Vec<(i64, i64, Vec<WouldCollideCall>)>
         .collect()
 }
 
-/// `BoundingBox::collide` (BoundingBox.cpp:539-671, 2.0.77 arm64) transcribed
-/// from its disassembly: a closed-interval overlap when neither box carries a
-/// `sin` word, else a four-axis separating-axis test in f64 over DOUBLED
-/// extents, with each `sin`/`cos` narrowed through f32 exactly as the binary
-/// does (`scvtf` from the int16 halfword, `fmul` by `0x38000100`, `fcvt`).
-/// Every comparison is `<=`, so an edge exactly on a tile edge collides.
-fn game_box_collide(a: &[i32; 4], a_rot: [i32; 2], b: &[i32; 4], b_rot: [i32; 2]) -> bool {
-    let a_sin_word = a_rot[0] & 0xffff;
-    let b_sin_word = b_rot[0] & 0xffff;
-    if a_sin_word | b_sin_word == 0 {
-        return a[0] <= b[2] && a[1] <= b[3] && a[2] >= b[0] && a[3] >= b[1];
-    }
-    const SCALE: f32 = f32::from_bits(0x3800_0100);
-    #[allow(clippy::cast_possible_truncation)]
-    let trig = |rot: [i32; 2]| -> (f64, f64) {
-        let sin = f64::from(f32::from(rot[0] as i16) * SCALE);
-        let cos = f64::from((-i32::from(rot[1] as i16)) as f32 * SCALE);
-        (sin, cos)
-    };
-    let (sa, ca) = trig(a_rot);
-    let (sb, cb) = trig(b_rot);
-    let cx2 = |r: &[i32; 4]| f64::from(r[0] + r[2]);
-    let cy2 = |r: &[i32; 4]| f64::from(r[1] + r[3]);
-    let (wa, ha) = (f64::from(a[2] - a[0]), f64::from(a[3] - a[1]));
-    let (wb, hb) = (f64::from(b[2] - b[0]), f64::from(b[3] - b[1]));
-    let dx2 = cx2(b) - cx2(a);
-    let dy2 = cy2(b) - cy2(a);
-    let cos_rel = (sa * sb + ca * cb).abs();
-    let sin_rel = (ca * sb - sa * cb).abs();
-    // a's x axis
-    if (dx2 * ca + dy2 * sa).abs() - wa > wb * cos_rel + hb * sin_rel {
-        return false;
-    }
-    // a's y axis
-    if (dx2 * sa - dy2 * ca).abs() - ha > wb * sin_rel + hb * cos_rel {
-        return false;
-    }
-    // b's x axis
-    if (dx2 * cb + dy2 * sb).abs() - wb > wa * cos_rel + ha * sin_rel {
-        return false;
-    }
-    // b's y axis
-    (dx2 * sb - dy2 * cb).abs() - hb <= wa * sin_rel + ha * cos_rel
-}
-
-/// `Surface::checkTileCollisions` (Surface.cpp:2187) for one cliff box, as the
-/// disassembly reads: scan the AABB's tiles - `edge >> 8` both ends, inclusive -
-/// and a blocking tile counts outright when the box has no `sin` word, else only
-/// when [`game_box_collide`] says the ORIENTED box reaches that tile's square
-/// (`BoundingBox::tileBox` with a zero margin, identity orientation).
-fn game_tile_collides(
-    boxed: &[i32; 4],
-    rotation: [i32; 2],
-    aabb: &[i32; 4],
-    lava: &dyn TileCollision,
-) -> bool {
-    const IDENTITY: [i32; 2] = [0, 0x8001];
-    let rotated = rotation[0] & 0xffff != 0;
-    for ty in (aabb[1] >> 8)..=(aabb[3] >> 8) {
-        for tx in (aabb[0] >> 8)..=(aabb[2] >> 8) {
-            if !lava.collides(i64::from(tx), i64::from(ty)) {
-                continue;
-            }
-            if !rotated {
-                return true;
-            }
-            let tile = [tx * 256, ty * 256, (tx + 1) * 256, (ty + 1) * 256];
-            if game_box_collide(boxed, rotation, &tile, IDENTITY) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// `BoundingBox::getAABB` (BoundingBox.cpp:366) transcribed from the 2.0.77
-/// disassembly, three branches. A box with no `sin` word is its own AABB. One
-/// with no `cos` word is a quarter turn, and the half-extents swap about the
-/// TRUNCATED integer centre with no trigonometry at all - the 90-degree crater
-/// boxes take this branch, and the general branch is one unit off on them.
-/// Otherwise `getRotatedVertices` (BoundingBox.cpp:331): each of the two upper
-/// corners is rotated about that centre in f64 tile units and converted back
-/// with `fcvtzs #8` - truncation toward zero at 1/256 - the two lower corners
-/// are their reflections through the centre, and the AABB is the min/max over
-/// the four.
-fn game_get_aabb(b: &[i32; 4], rot: [i32; 2]) -> [i32; 4] {
-    if rot[0] & 0xffff == 0 {
-        return *b;
-    }
-    #[allow(clippy::cast_possible_truncation)]
-    let cx = (f64::from(b[0] + b[2]) * 0.5) as i32;
-    #[allow(clippy::cast_possible_truncation)]
-    let cy = (f64::from(b[1] + b[3]) * 0.5) as i32;
-    if rot[1] & 0xffff == 0 {
-        // A pure quarter turn: swap the half-extents about the centre, in
-        // integers, no trigonometry (BoundingBox.cpp, the second branch).
-        return [
-            cx - (b[3] - cy),
-            cy - (cx - b[0]),
-            cx + (cy - b[1]),
-            cy + (b[2] - cx),
-        ];
-    }
-    const SCALE: f32 = f32::from_bits(0x3800_0100);
-    #[allow(clippy::cast_possible_truncation)]
-    let sin = f64::from(f32::from(rot[0] as i16) * SCALE);
-    #[allow(clippy::cast_possible_truncation)]
-    let cos = f64::from((-i32::from(rot[1] as i16)) as f32 * SCALE);
-    let rotate = |px: i32, py: i32| -> (i32, i32) {
-        let dx = f64::from(px - cx) * (1.0 / 256.0);
-        let dy = f64::from(py - cy) * (1.0 / 256.0);
-        let rx = dx * cos - dy * sin;
-        let ry = dx * sin + dy * cos;
-        #[allow(clippy::cast_possible_truncation)]
-        ((rx * 256.0) as i32, (ry * 256.0) as i32)
-    };
-    let (r1x, r1y) = rotate(b[0], b[1]);
-    let (r2x, r2y) = rotate(b[2], b[1]);
-    let xs = [cx + r1x, cx + r2x, cx - r2x, cx - r1x];
-    let ys = [cy + r1y, cy + r2y, cy - r2y, cy - r1y];
-    [
-        *xs.iter().min().expect("four"),
-        *ys.iter().min().expect("four"),
-        *xs.iter().max().expect("four"),
-        *ys.iter().max().expect("four"),
-    ]
-}
-
 /// The AABB derivation reproduces the game's own `getAABB` output on every
 /// recorded call, rotated and not.
 #[test]
@@ -5762,7 +5632,7 @@ fn the_aabb_derivation_reproduces_get_aabb_on_every_recorded_call() {
         for c in &region {
             calls += 1;
             assert_eq!(
-                game_get_aabb(&c.boxed, c.rotation),
+                get_aabb(&c.boxed, c.rotation),
                 c.aabb,
                 "at ({}, {}) orientation {} rotation {:?}",
                 c.x,
@@ -5809,52 +5679,16 @@ impl BooleanScore {
     }
 }
 
-/// The orientation's `collision_bounding_box` as the LOADER holds it, in 1/256
-/// units relative to the cell centre: `rotbb`'s doubles converted to
-/// `MapPosition` by TRUNCATION toward zero. Measured against every call in the
-/// fixture, this reproduces all sixteen corner boxes exactly; the catalog's
-/// round-half-up (`js_round`) misses fifteen of them by one unit on one to
-/// three edges, and floor, ceil and round-half-even miss all sixteen.
-fn engine_box_from_rotbb(orientation: u8) -> [i32; 4] {
-    let o = usize::from(orientation);
-    match crate::cliffs::catalog::CLIFF_ORIENTATION_ROTBB[o] {
-        None => {
-            let [l, t, r, b] = crate::cliffs::catalog::CLIFF_ORIENTATION_COLLISION_BOX[o];
-            #[allow(clippy::cast_possible_truncation)]
-            [
-                (l * 256.0) as i32,
-                (t * 256.0) as i32,
-                (r * 256.0) as i32,
-                (b * 256.0) as i32,
-            ]
-        }
-        Some([x, y, size, intersect]) => {
-            let dist = (size / 2.0) * std::f64::consts::SQRT_2;
-            let y_ratio = intersect / size;
-            let x_dist = (1.0 - y_ratio) * dist;
-            let y_dist = y_ratio * dist;
-            let cx = x + size / 2.0;
-            let cy = y + size / 2.0;
-            #[allow(clippy::cast_possible_truncation)]
-            let q = |v: f64| (v * 256.0) as i32;
-            [
-                q(cx - x_dist),
-                q(cy - y_dist),
-                q(cx + x_dist),
-                q(cy + y_dist),
-            ]
-        }
-    }
-}
-
-/// **Every box the game tested is `rotbb`'s rectangle TRUNCATED to 1/256, one
-/// unit inside the catalog's rounded one on fifteen of sixteen corner
-/// orientations, and every corner box carries the 1/8 tag into the engine.** `#90` read `tryToAddCliff` discarding
-/// the tag and shipped the raw rectangle; that was the map PREVIEW path. The
-/// apply-stage call copies the orientation word with the box, and
-/// `BoundingBox::getAABB` widens it to the axis-aligned square on every
-/// rotated call - so the shipped catalog is right about the RECTANGLE and wrong
-/// about what the engine does with it.
+/// **Every box the game tested is the shipped catalog's box - `rotbb`'s
+/// rectangle TRUNCATED to 1/256 - and every corner box carries the 1/8 tag
+/// into the engine.** `#90` read `tryToAddCliff` discarding the tag and
+/// shipped the raw rectangle; that was the map PREVIEW path. The apply-stage
+/// call copies the orientation word with the box, and `BoundingBox::getAABB`
+/// widens it to the axis-aligned square on every rotated call.
+///
+/// Before #407 the catalog ROUNDED, and fifteen of the sixteen corner boxes
+/// sat one unit off the loader's on one to three edges; the `off_by_one`
+/// census stood at `4..=18` and is now empty.
 #[test]
 fn the_games_apply_stage_box_is_the_catalogs_box_with_the_rotbb_tag_kept() {
     let fixture = load_captured_at(
@@ -5865,52 +5699,23 @@ fn the_games_apply_stage_box_is_the_catalogs_box_with_the_rotbb_tag_kept() {
     let mut rotated = 0;
     let mut aabb_widened = 0;
     let mut off_grid = 0;
-    let mut mismatches: BTreeMap<(u8, [i32; 4]), usize> = BTreeMap::new();
+    let mut off_by_one: BTreeSet<u8> = BTreeSet::new();
     for (_, _, region) in would_collide_calls(&fixture) {
         for c in &region {
             calls += 1;
-            let [l, t, r, b] =
-                crate::cliffs::catalog::CLIFF_ORIENTATION_COLLISION_BOX[usize::from(c.orientation)];
-            #[allow(clippy::cast_possible_truncation)]
-            let want = [
-                ((c.x + l) * 256.0) as i32,
-                ((c.y + t) * 256.0) as i32,
-                ((c.x + r) * 256.0) as i32,
-                ((c.y + b) * 256.0) as i32,
-            ];
-            let on_grid = c.prototype == "cliff-vulcanus";
-            if on_grid {
-                let engine = engine_box_from_rotbb(c.orientation);
-                #[allow(clippy::cast_possible_truncation)]
-                let want_engine = [
-                    (c.x * 256.0) as i32 + engine[0],
-                    (c.y * 256.0) as i32 + engine[1],
-                    (c.x * 256.0) as i32 + engine[2],
-                    (c.y * 256.0) as i32 + engine[3],
-                ];
+            if c.prototype == "cliff-vulcanus" {
+                if c.boxed != placed_box(c.orientation, c.x, c.y) {
+                    off_by_one.insert(c.orientation);
+                }
                 assert_eq!(
-                    c.boxed,
-                    want_engine,
-                    "the loader's box for {} at ({}, {})",
+                    c.rotation,
+                    rotation_word(c.orientation),
+                    "rotation word for {} at ({}, {})",
                     CLIFF_ORIENTATION_NAMES[usize::from(c.orientation)],
                     c.x,
                     c.y
                 );
-            }
-            if on_grid && c.boxed != want {
-                *mismatches
-                    .entry((
-                        c.orientation,
-                        [
-                            want[0] - c.boxed[0],
-                            want[1] - c.boxed[1],
-                            want[2] - c.boxed[2],
-                            want[3] - c.boxed[3],
-                        ],
-                    ))
-                    .or_default() += 1;
-            }
-            if !on_grid {
+            } else {
                 off_grid += 1;
             }
             let is_rotated = c.rotation[0] & 0xffff != 0;
@@ -5929,15 +5734,10 @@ fn the_games_apply_stage_box_is_the_catalogs_box_with_the_rotbb_tag_kept() {
         (calls, rotated, aabb_widened, off_grid),
         (2157, 1420, 1420, 69)
     );
-    // The shipped catalog against the loader's box: one unit on one to three
-    // edges, on fifteen of the sixteen corner orientations (`none-to-north`
-    // happens to round and truncate alike). Per orientation the delta is the
-    // same on every call, so it is the constant and not the position.
-    let off_by_one: BTreeSet<u8> = mismatches.keys().map(|(o, _)| *o).collect();
-    assert_eq!(off_by_one, (4..=18).collect::<BTreeSet<u8>>());
-    for (o, d) in mismatches.keys() {
-        assert!(d.iter().all(|e| e.abs() <= 1), "{o}: {d:?}");
-    }
+    assert!(
+        off_by_one.is_empty(),
+        "catalog boxes off the loader's: {off_by_one:?}"
+    );
 }
 
 /// **The tile half of `Surface::wouldCollide` is reproduced EXACTLY - 2157 of
@@ -5986,7 +5786,7 @@ fn the_tile_half_of_would_collide_graded_against_the_games_own_calls() {
     for (_, _, region) in would_collide_calls(&fixture) {
         for c in &region {
             let s = port_tile_collides(c.orientation, c.x, c.y, &lava);
-            let o = game_tile_collides(&c.boxed, c.rotation, &c.aabb, &lava);
+            let o = box_tile_collides(&c.boxed, c.rotation, &c.aabb, &lava);
             shipped.add(s, c.tile_hit);
             oriented.add(o, c.tile_hit);
             if c.rotation[0] & 0xffff != 0 {
@@ -6056,25 +5856,30 @@ fn the_tile_half_of_would_collide_graded_against_the_games_own_calls() {
     );
 }
 
-/// `Surface::wouldCollide`'s tile half as the debugger showed it: the loader's
-/// truncated box carrying its 1/8 tag, `getAABB` for the tile range, and the
-/// oriented `BoundingBox::collide` per blocking tile - plus the shipped ore
-/// rule, unchanged.
+/// The tile half `#90` shipped and `#407` replaced - the raw stored rectangle
+/// over an inclusive floor - plus the shipped ore rule. Kept as the "before"
+/// arm the oriented test is read against.
+struct RawRectLavaAndOre<'a, 'b> {
+    lava: VulcanusLavaTiles<'a, 'b>,
+    ore: VulcanusOreRejection<'a, 'b>,
+}
+
+impl ApplyCollision for RawRectLavaAndOre<'_, '_> {
+    fn collides(&self, orientation: u8, x: f64, y: f64) -> bool {
+        let Some(code) = cliff_code_for_orientation(orientation) else {
+            return false;
+        };
+        port_tile_collides(orientation, x, y, &self.lava) || self.ore.rejects(code, x, y)
+    }
+}
+
+/// [`LavaAndOre`] plus the entity half read off the fixture: destroy these
+/// cells outright.
 struct OrientedLavaAndOre<'a, 'b> {
     lava: VulcanusLavaTiles<'a, 'b>,
     ore: VulcanusOreRejection<'a, 'b>,
-    /// Destroy these cells outright - the entity half, read off the fixture.
     entity_kills: Option<&'a BTreeSet<(u64, u64)>>,
-    /// Test each cell with THIS orientation - its raw queued one, by position -
-    /// instead of the orientation the pass hands over.
-    raw_orientation: Option<&'a BTreeMap<(u64, u64), u8>>,
 }
-
-/// The orientation word every `cliff-vulcanus` corner box carries: `sin` and
-/// `-cos` of 45 degrees in 1.15 fixed point. The straight boxes carry the
-/// identity, `[0, 0x8001]`.
-const ROTBB_TAG: [i32; 2] = [0x5a82, 0xa57e];
-const NO_ROTATION: [i32; 2] = [0, 0x8001];
 
 impl ApplyCollision for OrientedLavaAndOre<'_, '_> {
     fn collides(&self, orientation: u8, x: f64, y: f64) -> bool {
@@ -6084,24 +5889,10 @@ impl ApplyCollision for OrientedLavaAndOre<'_, '_> {
         {
             return true;
         }
-        let orientation = self
-            .raw_orientation
-            .and_then(|m| m.get(&(x.to_bits(), y.to_bits())).copied())
-            .unwrap_or(orientation);
         let Some(code) = cliff_code_for_orientation(orientation) else {
             return false;
         };
-        let rel = engine_box_from_rotbb(orientation);
-        #[allow(clippy::cast_possible_truncation)]
-        let (px, py) = ((x * 256.0) as i32, (y * 256.0) as i32);
-        let boxed = [px + rel[0], py + rel[1], px + rel[2], py + rel[3]];
-        let rot = if orientation >= 4 {
-            ROTBB_TAG
-        } else {
-            NO_ROTATION
-        };
-        let aabb = game_get_aabb(&boxed, rot);
-        if game_tile_collides(&boxed, rot, &aabb, &self.lava) {
+        if tile_collides(orientation, x, y, &self.lava) {
             return true;
         }
         self.ore.rejects(code, x, y)
@@ -6155,12 +5946,13 @@ fn the_oriented_tile_test_through_the_apply_stage() {
                 entity_kills.insert((c.x.to_bits(), c.y.to_bits()));
             }
             if c.prototype == "cliff-vulcanus" {
-                let want = if c.orientation >= 4 {
-                    ROTBB_TAG
-                } else {
-                    NO_ROTATION
-                };
-                assert_eq!(c.rotation, want, "rotation word at ({}, {})", c.x, c.y);
+                assert_eq!(
+                    c.rotation,
+                    rotation_word(c.orientation),
+                    "rotation word at ({}, {})",
+                    c.x,
+                    c.y
+                );
             }
         }
     }
@@ -6171,7 +5963,7 @@ fn the_oriented_tile_test_through_the_apply_stage() {
     let biomes = base.biomes_with_host_trig();
     let stack = VulcanusStack::with_host_trig(&base, &biomes);
     let fields = VulcanusCliffFields::new(&stack, seed0);
-    let shipped = LavaAndOre {
+    let raw_rect = RawRectLavaAndOre {
         lava: VulcanusLavaTiles::new(&stack),
         ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
     };
@@ -6179,27 +5971,11 @@ fn the_oriented_tile_test_through_the_apply_stage() {
         lava: VulcanusLavaTiles::new(&stack),
         ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
         entity_kills: None,
-        raw_orientation: None,
     };
     let oriented_entities = OrientedLavaAndOre {
         lava: VulcanusLavaTiles::new(&stack),
         ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
         entity_kills: Some(&entity_kills),
-        raw_orientation: None,
-    };
-    // The fourth arm: the game's own tested orientation by position, which
-    // `the_game_tests_the_raw_queued_orientation...` shows IS the raw queue.
-    let tested_orientation: BTreeMap<(u64, u64), u8> = would_collide_calls(&calls)
-        .iter()
-        .flat_map(|(_, _, region)| region.iter())
-        .filter(|c| c.prototype == "cliff-vulcanus")
-        .map(|c| ((c.x.to_bits(), c.y.to_bits()), c.orientation))
-        .collect();
-    let oriented_entities_raw = OrientedLavaAndOre {
-        lava: VulcanusLavaTiles::new(&stack),
-        ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
-        entity_kills: Some(&entity_kills),
-        raw_orientation: Some(&tested_orientation),
     };
     let bands = CliffBands {
         elevation0: VULCANUS_CLIFF_ELEVATION_0,
@@ -6207,13 +5983,8 @@ fn the_oriented_tile_test_through_the_apply_stage() {
         smoothing: VULCANUS_CLIFF_SMOOTHING,
         ..CliffBands::default()
     };
-    let arms: [&dyn ApplyCollision; 4] = [
-        &shipped,
-        &oriented,
-        &oriented_entities,
-        &oriented_entities_raw,
-    ];
-    let mut totals = [OrientationScore::default(); 4];
+    let arms: [&dyn ApplyCollision; 3] = [&raw_rect, &oriented, &oriented_entities];
+    let mut totals = [OrientationScore::default(); 3];
     let mut leftovers: Vec<(f64, f64)> = Vec::new();
     for case in fixture.get("cases").as_array() {
         let r = case.get("region");
@@ -6282,32 +6053,30 @@ fn the_oriented_tile_test_through_the_apply_stage() {
         surplus,
         missing,
     };
-    assert_eq!(totals[0], row(1508, 18, 22, 5), "shipped LavaAndOre");
-    assert_eq!(totals[1], row(1525, 6, 16, 0), "oriented tile test + ore");
+    assert_eq!(
+        totals[0],
+        row(1507, 18, 20, 6),
+        "the raw rectangle #90 shipped"
+    );
+    assert_eq!(totals[1], row(1525, 6, 14, 0), "oriented tile test + ore");
     assert_eq!(
         totals[2],
-        row(1528, 3, 13, 0),
-        "oriented + ore + entity kills"
-    );
-    assert_eq!(
-        totals[3],
         row(1528, 3, 11, 0),
-        "oriented + ore + entity kills, raw orientation at test time"
+        "oriented + ore + entity kills"
     );
     assert!(totals[1].matched > totals[0].matched);
     assert!(totals[1].wrong < totals[0].wrong);
     assert!(totals[1].surplus < totals[0].surplus);
     assert!(totals[1].missing < totals[0].missing);
-    assert_eq!(leftovers.len(), 16);
+    assert_eq!(leftovers.len(), 14);
     let tested: BTreeMap<(u64, u64), (u8, bool)> = would_collide_calls(&calls)
         .iter()
         .flat_map(|(_, _, region)| region.iter())
         .map(|c| ((c.x.to_bits(), c.y.to_bits()), (c.orientation, c.result)))
-        .collect();
-    // Every leftover is a cell the game's own collision test KEPT, except
-    // two the game killed on lava with the RAW queued orientation - which the
-    // port's apply pass no longer had by the time it tested them, because a
-    // neighbour's destruction had already cascaded into the cell.
+        .collect(); // Every leftover is a cell the game's own collision test KEPT. Before
+                    // #407's third edit two more sat here that the game killed on lava with
+                    // the RAW queued orientation, which the port's apply pass no longer had by
+                    // the time it tested them; the pass reads the queued orientation now.
     let mut kept_by_game = 0;
     let mut killed_by_game = Vec::new();
     for (x, y) in &leftovers {
@@ -6327,10 +6096,8 @@ fn the_oriented_tile_test_through_the_apply_stage() {
     assert_eq!(kept_by_game, 14);
     assert_eq!(
         killed_by_game,
-        vec![
-            (1626.0, 1602.5, "east-to-north"),
-            (1630.0, 1602.5, "north-to-west")
-        ]
+        Vec::<(f64, f64, &str)>::new(),
+        "every leftover passed the game's own test"
     );
 }
 

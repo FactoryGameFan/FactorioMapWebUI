@@ -620,9 +620,10 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
    * land, which is a few hundred out of 16,384 here - invisible to a
    * whole-image bound, and exactly what this counts.
    *
-   * The numbers are frozen: 208 ore pixels are covered in this window, 2 by a
-   * rock and 206 by a cliff. Painting rocks or cliffs FIRST would take all
-   * three to zero.
+   * The numbers are frozen: 201 ore pixels are covered in this window, 2 by a
+   * rock and 199 by a cliff (208 and 206 before #407, when the raw rectangle
+   * was the cliff collision test). Painting rocks or cliffs FIRST would take
+   * all three to zero.
    */
   it("paints resources first and the obstruction overlays over the top", async () => {
     const e = await engine();
@@ -659,7 +660,7 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
       if (isColor(all, i, ROCK_MAP_COLOR)) byRock++;
       if (isColor(all, i, CLIFF_MAP_COLOR)) byCliff++;
     }
-    expect({ covered, byRock, byCliff }).toEqual({ covered: 208, byRock: 2, byCliff: 206 });
+    expect({ covered, byRock, byCliff }).toEqual({ covered: 201, byRock: 2, byCliff: 199 });
   }, 300000);
 });
 

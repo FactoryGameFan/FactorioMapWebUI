@@ -19,8 +19,7 @@
 //! cascade, and the rejections acting on the crossing.
 
 use crate::cliffs::catalog::{
-    cliff_collision_tile_box, is_cliff_placed, CHUNK_CELLS, CLIFF_CELL_CENTER_X,
-    CLIFF_CELL_CENTER_Y, CLIFF_GRID_SIZE,
+    is_cliff_placed, CHUNK_CELLS, CLIFF_CELL_CENTER_X, CLIFF_CELL_CENTER_Y, CLIFF_GRID_SIZE,
 };
 use crate::poison;
 
@@ -365,30 +364,18 @@ impl<'a, F: CliffFields> CliffPlacement<'a, F> {
         self
     }
 
-    /// `tryToAddCliff`'s rejection as a predicate on an already-placed cell:
-    /// scan the orientation's collision box and drop the cell if any tile in it
-    /// collides. With no [`TileCollision`] supplied this is a constant `false`
-    /// and costs nothing - the box is never even resolved.
+    /// `Surface::wouldCollide`'s tile half as a predicate on an already-placed
+    /// cell - [`super::collision::code_tile_collides`]: the orientation's box
+    /// with its `1/8` tag, `getAABB`'s square scanned, and the oriented
+    /// `BoundingBox::collide` per blocking tile (#407). With no
+    /// [`TileCollision`] supplied this is a constant `false` and costs nothing.
     ///
-    /// Nothing narrows the box: `wouldCollide` floors the stored rectangle with
-    /// `(box + position) >> 8` and scans the inclusive tile rect, with the box's
-    /// own `1/8` orientation tag discarded.
+    /// The raw-rectangle scan `#90` shipped here was `tryToAddCliff`'s, the map
+    /// PREVIEW path, which does discard the tag; the path that places cliffs
+    /// keeps it, and the difference is 19 of the game's 2157 recorded calls.
     fn rejected(&self, code: u8, x: f64, y: f64) -> bool {
-        let Some(t) = self.tile_collides else {
-            return false;
-        };
-        // `None` only for a code that places nothing, which cannot reach here.
-        let Some(b) = cliff_collision_tile_box(code, x, y) else {
-            return false;
-        };
-        for tx in b.left..=b.right {
-            for ty in b.top..=b.bottom {
-                if t.collides(tx, ty) {
-                    return true;
-                }
-            }
-        }
-        false
+        self.tile_collides
+            .is_some_and(|t| super::collision::code_tile_collides(code, x, y, t))
     }
 
     fn cell_rejected(&self, code: u8, x: f64, y: f64) -> bool {
