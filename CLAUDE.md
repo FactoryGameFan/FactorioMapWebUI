@@ -186,9 +186,14 @@ the scripts and CI use and so the one that stays verified; just don't expect a
 bare `vp` to fail, and don't "fix" a working command on the strength of this
 note.
 
-Node **26.7.0** (`.node-version`) is what the repo is developed and verified on.
-`engines.node` stays a permissive floor (`>=24.18.0`) rather than matching the
-pin - older versions are simply untested, not known-broken.
+`.node-version` is the Node version the repo is developed and verified on.
+**Do not quote that pin here** - read it with `cat .node-version`. Renovate
+bumps that file on its own and has moved it four times since 2026-07-01
+(26.5.1, 26.7.0, 26.8.1, with 26.8.2 queued as of 2026-09-11), so a number
+written here can only ever lag it - the same trap `rust-toolchain.toml` and the
+`engine.wasm` byte count already carry warnings about. `engines.node` stays a
+permissive floor (`>=24.18.0`) rather than matching the pin - older versions
+are simply untested, not known-broken.
 
 **`.node-version` is machinery now, not documentation.** That changed when
 `.github/workflows/verify.yml` landed: `actions/setup-node` reads the file via
