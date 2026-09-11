@@ -75,11 +75,12 @@ docs).
 
 ## Development
 
-Built and verified on Node **26.7.0** (`.node-version`, which is also what CI
-installs); `engines.node` is a permissive floor of `>=24.18.0` because older
-versions are untested rather than known-broken. The project pins pnpm via
-`devEngines`, so run `vp` through pnpm (a bare `vp` or `npx vp` from the project
-root fails with `EBADDEVENGINES`).
+Built and verified on the Node version in `.node-version`, which is also what
+CI installs - read it with `cat .node-version` rather than trusting a number
+written here. `engines.node` is a permissive floor of `>=24.18.0` because
+older versions are untested rather than known-broken. The project pins pnpm via
+`devEngines`, so run `vp` through pnpm - that is the form `package.json` and CI
+use. `npx vp` fails with `EBADDEVENGINES`; a bare `vp` does not, it runs fine.
 
 - `pnpm install` - install dependencies
 - `pnpm vp dev` - dev server
