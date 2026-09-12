@@ -1,5 +1,5 @@
 {
-  "_comment": "Ground truth from Factorio 2.1.17 via factorio-oracle. Every cliff entity (find_entities_filtered{type='cliff'}) the game placed in [-2200,-1500], the region oracle-vulcanus-cliff-volcanism-oos found carrying 74 of the frequency 0.5 arm's 138 errors, at frequency 0.5 with the four Vulcanus resource controls ON and OFF (size 0, the lever oracle-vulcanus-cliff-ore-direction pulls) - does the surplus follow the ore rule? (#84). Each arm also records the four resource controls the SURFACE reported back. Each arm records the control the SURFACE reported back, so an override that failed to apply cannot pass as a setting that does not matter. Positions are cliff cell centres on the 4-tile grid; each entry carries LuaEntity.cliff_orientation. Sampled on a create_surface() surface whose seed is FORCED to `seed`, like every other Vulcanus cliff fixture. Graded by crates/fmw-noise/src/fixtures.rs. Regenerate: node --experimental-strip-types scripts/probes/vulcanus-cliff-volcanism/capture.ts ore",
+  "_comment": "Ground truth from Factorio 2.1.17 via factorio-oracle. Every cliff entity (find_entities_filtered{type='cliff'}) the game placed in [-2200,-1500], the region oracle-vulcanus-cliff-volcanism-oos found carrying 74 of the frequency 0.5 arm's 138 errors, at frequency 0.5 with the four Vulcanus resource controls ON and OFF (size 0, the lever oracle-vulcanus-cliff-ore-direction pulls) - does the surplus follow the ore rule? (#84). Each arm also records the four resource controls the SURFACE reported back, and each case carries every resource entity (find_entities_filtered{type='resource'}) in the region as {x, y, name} at the entity's own position (tile centres for the solid ores), so the port's ore FIELD can be graded where the cliff rule reads it. The OFF arm's list is empty by construction. Each arm records the control the SURFACE reported back, so an override that failed to apply cannot pass as a setting that does not matter. Positions are cliff cell centres on the 4-tile grid; each entry carries LuaEntity.cliff_orientation. Sampled on a create_surface() surface whose seed is FORCED to `seed`, like every other Vulcanus cliff fixture. Graded by crates/fmw-noise/src/fixtures.rs. Regenerate: node --experimental-strip-types scripts/probes/vulcanus-cliff-volcanism/capture.ts ore",
   "_factorioVersion": "2.1.17",
   "seed": 123456,
   "arms": [
@@ -5046,6 +5046,6083 @@
               "y": -1245.5,
               "name": "cliff-vulcanus",
               "orientation": "south-to-north"
+            }
+          ],
+          "resources": [
+            {
+              "x": -2090.5,
+              "y": -1468.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2075.5,
+              "y": -1460.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2082.5,
+              "y": -1454.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2077.5,
+              "y": -1448.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2086.5,
+              "y": -1444.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2096.5,
+              "y": -1443.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2075.5,
+              "y": -1443.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2085.5,
+              "y": -1440.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2093.5,
+              "y": -1437.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2089.5,
+              "y": -1437.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2079.5,
+              "y": -1433.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2080.5,
+              "y": -1428.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2008.5,
+              "y": -1328.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1328.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1328.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1327.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1327.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1327.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1327.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2005.5,
+              "y": -1327.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2005.5,
+              "y": -1326.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1324.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2005.5,
+              "y": -1325.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1323.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1322.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1321.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2005.5,
+              "y": -1320.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2005.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2004.5,
+              "y": -1319.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2005.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2004.5,
+              "y": -1318.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2167.5,
+              "y": -1316.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2045.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2005.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2004.5,
+              "y": -1317.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2005.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2004.5,
+              "y": -1316.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2176.5,
+              "y": -1315.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2068.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2013.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2006.5,
+              "y": -1314.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2005.5,
+              "y": -1315.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2179.5,
+              "y": -1312.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2161.5,
+              "y": -1313.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2069.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2068.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2067.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2020.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2019.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2018.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2017.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2014.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2015.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2012.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2011.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1313.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2007.5,
+              "y": -1312.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1310.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2016.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2010.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2009.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2008.5,
+              "y": -1311.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2179.5,
+              "y": -1309.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2156.5,
+              "y": -1308.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2064.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1308.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2021.5,
+              "y": -1309.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2169.5,
+              "y": -1307.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2166.5,
+              "y": -1306.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2150.5,
+              "y": -1307.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2066.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2057.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2057.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1306.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1307.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2163.5,
+              "y": -1305.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2154.5,
+              "y": -1304.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2069.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2068.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2069.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2068.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2067.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2067.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2057.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2057.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1305.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1304.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2069.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2068.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2069.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2068.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2067.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2067.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2057.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2057.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2022.5,
+              "y": -1303.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1302.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2152.5,
+              "y": -1301.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2069.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2068.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2068.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2067.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2067.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2057.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2057.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1301.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2023.5,
+              "y": -1300.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2146.5,
+              "y": -1298.5,
+              "name": "sulfuric-acid-geyser"
+            },
+            {
+              "x": -2068.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2067.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2067.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2058.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2057.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2056.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2055.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2024.5,
+              "y": -1299.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2025.5,
+              "y": -1298.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2066.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2065.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2064.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2063.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2062.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2061.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2060.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2059.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2054.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2053.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2051.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2050.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2026.5,
+              "y": -1297.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1296.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2052.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2049.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2048.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2047.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2046.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2045.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2044.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1295.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2027.5,
+              "y": -1294.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2043.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1292.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2029.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2028.5,
+              "y": -1293.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2042.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2041.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1291.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2031.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2030.5,
+              "y": -1290.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2040.5,
+              "y": -1289.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1289.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1288.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1288.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1289.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1289.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1288.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1288.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1289.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1289.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2035.5,
+              "y": -1288.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1288.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1289.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2032.5,
+              "y": -1289.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2033.5,
+              "y": -1288.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1287.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2039.5,
+              "y": -1286.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1286.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1287.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1287.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1286.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1286.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2034.5,
+              "y": -1287.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2038.5,
+              "y": -1285.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1285.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2036.5,
+              "y": -1285.5,
+              "name": "calcite"
+            },
+            {
+              "x": -2037.5,
+              "y": -1284.5,
+              "name": "calcite"
             }
           ]
         }
@@ -10486,7 +16563,8 @@
               "name": "cliff-vulcanus",
               "orientation": "south-to-north"
             }
-          ]
+          ],
+          "resources": []
         }
       ]
     }

@@ -4952,3 +4952,97 @@ ENTITIES in this region at frequency 0.5, compared against the port's ore field
 directly, before anything is concluded about the roll. The 31 errors that stay
 with resources OFF (19 surplus, 11 wrong, 1 missing; 3.6% of 860) are this
 region's share of the diffuse residual the rest of #84 is about.
+
+## The ore FIELD is exact at frequency 0.5; the concentration is the GEYSER (2026-09-11, #84)
+
+The section above ends on a question it could not answer: is it the port's ore
+FIELD that disagrees with the game at this volcanism setting, or the removal
+GEOMETRY? It could not answer because the capture had dropped the game's
+resource entities at the writer - `captureRegion` returned only `dump.cliffs`
+while the Lua had dumped every `type = "resource"` entity in the region. The
+`ore` capture now keeps them (`keepResources` in
+`scripts/probes/vulcanus-cliff-volcanism/capture.ts`), and the re-capture
+reproduced both arms' cliff lists byte for byte and added 1,215 entities to the
+ON arm: **1,190 calcite and 25 sulfuric-acid geysers**, no tungsten and no coal
+in this region at this field. The OFF arm dumps none, which the capture asserts
+as the lever landing. Test
+`the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half` in
+`fixtures.rs`.
+
+### Where the rule looks, not the whole region
+
+The port's footprint (`VulcanusOreFootprint::occupies`, the same predicate the
+shipping rejection calls) is asked at the tiles in the ore rejection window of
+every cell the port queues in the region - the same window `rejects` derives
+from the base box, about two tiles per cell - plus every tile a game ore entity
+stands on. That is 2,886 tiles. The other 62,650 are never read by the cliff
+rule, so a field defect there could not reach a cliff.
+
+| comparison                                        | count |
+| ------------------------------------------------- | ----: |
+| game calcite tiles                                | 1,190 |
+| of those, the port's field occupies               | 1,190 |
+| game ore tiles the port's field LACKS             | **0** |
+| tiles the port occupies with no game entity       |    12 |
+| of those, touching a game ore tile                |    11 |
+
+**The field is exact.** Not one of the game's 1,190 calcite tiles is a tile the
+port's `ore_regions` misses, and the 12 the port adds are patch-boundary tiles,
+all but one adjacent to a game ore tile. Whatever the section above suspected
+about `vulcanus_calcite_region` at a non-default `vulcanus_scale_multiplier`,
+the port computes the same patch the game does.
+
+### The 28, binned by what stands in the window
+
+The 28 surplus cells the game's ore rule removed and the port's did not, each
+placed by what stands in its rejection window, and failing that by the nearest
+entity within five tiles:
+
+| bin                                                           | cells |
+| ------------------------------------------------------------- | ----: |
+| FIELD - game ore in the window, port field without            | **0** |
+| a GEYSER inside the geyser window the port would use          |     6 |
+| a geyser 2 to 5 tiles away, no ore within 80 tiles            |    15 |
+| on those same geyser runs, 9 and 17 tiles from the nearest    |     2 |
+| calcite 2 to 3 tiles away, just outside the two-tile window   |     5 |
+| BOTH - port field has ore there too (cannot be surplus)       |     0 |
+
+**Twenty-three of the 28 are the geyser.** The shipping footprint leaves the
+geyser out by a recorded decision in `cliffs/vulcanus_ore_rejection.rs`: it
+rolls, its box is fourteen times an ore's, and a geyser the port puts in the
+wrong place removes a cliff the game kept. That decision was measured on
+`[1500,1500]` at the default, where geysers are few. Here 25 of them sit on two
+cliff runs - one at `x = -2078` from `y = -1441.5` to `-1485.5`, one around
+`(-2170, -1310)` - and the game wipes both runs.
+
+The other thing the distances say: **the geyser's reach is not its collision
+box.** `sulfuric-acid-geyser` carries `collision_box = {{-1.4, -1.4}, {1.4,
+1.4}}` and no `map_generator_bounding_box` (grepped at 2.1.17; the only
+prototypes that set one are enemy spawners, turrets, a tree and a demolisher).
+Box overlap with the cliff base box reaches about 2.4 tiles in `x` and 1.9 in
+`y`, and 15 of the 23 stand 2 to 5 tiles from the nearest geyser centre. So
+even with the geyser wired in, the shipping geometry would take 6 of the 23,
+and the rest need a wider reach than any box in the data - or the destroy
+cascade running further along a run than the port's model of it does. The two
+at 9 and 17 tiles, both on the `x = -2078` run and one of them `south-to-none`,
+read as cascade.
+
+The last 5 are calcite at 2 to 3 tiles, beyond the two-tile window the base
+box and the ore's `25/256` half-extent derive. Same shape as the geyser
+residual at a smaller scale: the field is right and the reach is short.
+
+### What this settles, and what it does not
+
+- The ore field at a non-default frequency is NOT a port defect. The lever
+  test's "field or roll" question is closed on the field side.
+- The concentration in this region is the geyser, which the port omits on
+  purpose. Whether to wire the overlay's geyser placement into the cliff
+  rejection is a separate decision with a measured cost - false rejections
+  where the roll lands wrong - and this section does not make it.
+- The geyser's removal reach is wider than its collision box, by 2 to 3 tiles
+  at least. What geometry the game uses is open. The `wouldCollide` probe
+  (comment 143 onward) reads the placement path, and this removal happens
+  after it; the lldb route would need a breakpoint on the resource side.
+
+Cost: one 4-second re-capture. The 2026-09-07 fixture was 294 KB and is 437 KB
+with the entities.
