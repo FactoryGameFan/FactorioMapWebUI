@@ -5031,6 +5031,363 @@ fn the_concentrated_residual_against_the_ore_lever() {
     assert!(surplus_is_ore * 2 > surplus_on.len());
 }
 
+use crate::resources::vulcanus_catalog::VulcanusOreFootprint;
+
+/// The port's ore FIELD against the game's ore ENTITIES, at the non-default
+/// field, where the cliff rule reads it (#84).
+///
+/// [`the_concentrated_residual_against_the_ore_lever`] attributes the
+/// concentrated region to the ore rule under-removing: the game's rule removes
+/// 65 cliffs at volcanism frequency 0.5 in `[-2200,-1500]`, the port's 39, and
+/// 28 of the port's surplus cells are cells the game's rule removed. It cannot
+/// say WHY, because the 2026-09-07 capture dropped the game's resource
+/// entities - the port's ore field and its removal geometry were
+/// indistinguishable. The re-capture keeps them, and this test splits the 28.
+///
+/// Sets, not counts, and only where the rule LOOKS. The port's footprint is
+/// asked at the tiles in the ore rejection window of every cell the port queues
+/// in the region (about two per cell, the same window `rejects` uses) and at
+/// every tile a game ore entity stands on - not over the 65,536-tile region,
+/// because the cliff rule never reads the rest and a field defect there could
+/// not reach a cliff.
+///
+/// Each of the 28 falls into one of three bins:
+///
+/// - **FIELD**: a game ore entity stands in the cell's window and the port's
+///   field has none there. The port's `ore_regions` disagrees with the game at
+///   this field, at that tile.
+/// - **NOT THE BOX**: no game ore entity stands in the window at all, yet the
+///   game's ore rule removed the cell. Removal geometry, or a mechanism the box
+///   overlap does not model.
+/// - **BOTH**: the port's field has ore in the window too. Under the shipping
+///   rejection such a cell IS rejected and so cannot be surplus; a nonzero
+///   count here is a defect in this test, not a finding.
+///
+/// The three solid ores only. The geyser is excluded because the port's
+/// footprint excludes it, by the recorded decision in
+/// `cliffs/vulcanus_ore_rejection.rs`: it rolls, and a wrongly placed geyser
+/// with a box fourteen times an ore's costs recall.
+#[test]
+fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-volcanism-ore.seed123456.json",
+        "2.1.17",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = fixture.get("seed").as_f64() as u32;
+    let arms = fixture.get("arms").as_array();
+    let (on, off) = (&arms[0], &arms[1]);
+    assert_eq!(on.get("label").as_str(), "frequency 0.5, resources ON");
+    assert_eq!(
+        off.get("label").as_str(),
+        "frequency 0.5, ALL resources OFF"
+    );
+    let on_case = &on.get("cases").as_array()[0];
+    let off_case = &off.get("cases").as_array()[0];
+    let region = on_case.get("region");
+    let (x0, y0) = (region.get("x0").as_f64(), region.get("y0").as_f64());
+    let (x1, y1) = (region.get("x1").as_f64(), region.get("y1").as_f64());
+    assert_eq!((x0, y0), (-2200.0, -1500.0));
+
+    // The lever's other witness: the OFF arm dumped no entities at all.
+    assert!(
+        off_case.get("resources").as_array().is_empty(),
+        "resources OFF, yet the game dumped entities"
+    );
+
+    // The game's solid-ore tiles, by ore. Entities stand at tile centres, so
+    // the floor is the tile.
+    const SOLID_ORES: [&str; 3] = ["tungsten-ore", "coal", "calcite"];
+    let mut game_ore: BTreeMap<(i64, i64), &str> = BTreeMap::new();
+    let mut per_ore: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut other_names: BTreeMap<String, usize> = BTreeMap::new();
+    for e in on_case.get("resources").as_array() {
+        let name = e.get("name").as_str();
+        let Some(ore) = SOLID_ORES.iter().copied().find(|o| *o == name) else {
+            *other_names.entry(name.to_owned()).or_insert(0) += 1;
+            continue;
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        let tile = (
+            e.get("x").as_f64().floor() as i64,
+            e.get("y").as_f64().floor() as i64,
+        );
+        game_ore.insert(tile, ore);
+        *per_ore.entry(ore).or_insert(0) += 1;
+    }
+    eprintln!("game solid-ore tiles by ore: {per_ore:?}; other entities: {other_names:?}");
+
+    let mut ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    ctx.vulcanus_volcanism_frequency = 0.5;
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let lava = VulcanusLavaTiles::new(&stack);
+    let ore = VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls);
+    let footprint = VulcanusOreFootprint::new(&ctx.vulcanus_resource_controls);
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        reject_at_crossing_stage: true,
+        ..CliffBands::default()
+    };
+    // The queue the ore rule acts on: everything the port places WITHOUT the
+    // ore rejection, with its code, so each cell's window can be asked for.
+    let queued = CliffPlacement::new(&fields, bands)
+        .with_tile_collision(&lava)
+        .placed_cells(x0, y0, x1, y1);
+    let code_of: BTreeMap<(u64, u64), u8> = queued.iter().map(|c| (cell_key(c), c.code)).collect();
+
+    // Every tile the rule reads, plus every tile the game put an ore on.
+    let mut looked: BTreeSet<(i64, i64)> = game_ore.keys().copied().collect();
+    for c in &queued {
+        looked.extend(ore.ore_tiles(c.code, c.x, c.y));
+    }
+    let port_ore: BTreeSet<(i64, i64)> = looked
+        .iter()
+        .copied()
+        .filter(|&(tx, ty)| footprint.occupies(&stack, tx, ty))
+        .collect();
+    let game_only: Vec<(i64, i64)> = game_ore
+        .keys()
+        .filter(|k| !port_ore.contains(*k))
+        .copied()
+        .collect();
+    let port_only: Vec<(i64, i64)> = port_ore
+        .iter()
+        .filter(|k| !game_ore.contains_key(*k))
+        .copied()
+        .collect();
+    let agreed = game_ore.len() - game_only.len();
+    let mut game_only_by_ore: BTreeMap<&str, usize> = BTreeMap::new();
+    for k in &game_only {
+        *game_only_by_ore.entry(game_ore[k]).or_insert(0) += 1;
+    }
+    eprintln!(
+        "tiles looked at {}; game ore tiles {}; port says ore on {} of the looked tiles; agreed {}; \
+         game only {} {:?}; port only {}",
+        looked.len(),
+        game_ore.len(),
+        port_ore.len(),
+        agreed,
+        game_only.len(),
+        game_only_by_ore,
+        port_only.len(),
+    );
+
+    // The 28: surplus at ON that the game's ore rule removed.
+    let (game_on, port_on) = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx, true);
+    let mut ctx_off = ctx.clone();
+    for levers in [
+        &mut ctx_off.vulcanus_resource_controls.tungsten_ore,
+        &mut ctx_off.vulcanus_resource_controls.vulcanus_coal,
+        &mut ctx_off.vulcanus_resource_controls.calcite,
+        &mut ctx_off.vulcanus_resource_controls.sulfuric_acid_geyser,
+    ] {
+        levers.size = 0.0;
+    }
+    let (game_off, _) = sweep_cells(region, off_case.get("cliffs").as_array(), &ctx_off, true);
+    let game_removed: BTreeSet<(u64, u64)> = game_off
+        .keys()
+        .filter(|k| !game_on.contains_key(*k))
+        .copied()
+        .collect();
+    let disputed: Vec<(u64, u64)> = port_on
+        .keys()
+        .filter(|k| !game_on.contains_key(*k) && game_removed.contains(*k))
+        .copied()
+        .collect();
+
+    // The geysers the game placed, for the arm the port deliberately leaves
+    // out. A disputed cell whose GEYSER window holds one is the geyser's.
+    let geysers: BTreeSet<(i64, i64)> = on_case
+        .get("resources")
+        .as_array()
+        .iter()
+        .filter(|e| e.get("name").as_str() == "sulfuric-acid-geyser")
+        .map(|e| {
+            #[allow(clippy::cast_possible_truncation)]
+            let t = (
+                e.get("x").as_f64().floor() as i64,
+                e.get("y").as_f64().floor() as i64,
+            );
+            t
+        })
+        .collect();
+    // Chebyshev distance, in tiles, from a cell centre to the nearest game ore
+    // tile's centre - how far outside the base box the nearest ore stands.
+    let nearest_ore = |x: f64, y: f64| -> f64 {
+        game_ore
+            .keys()
+            .map(|&(tx, ty)| {
+                #[allow(clippy::cast_precision_loss)]
+                let d = (tx as f64 + 0.5 - x).abs().max((ty as f64 + 0.5 - y).abs());
+                d
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+
+    let nearest_geyser = |x: f64, y: f64| -> f64 {
+        geysers
+            .iter()
+            .map(|&(tx, ty)| {
+                #[allow(clippy::cast_precision_loss)]
+                let d = (tx as f64 + 0.5 - x).abs().max((ty as f64 + 0.5 - y).abs());
+                d
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+
+    // The bins. A cell outside both windows is placed by the NEAREST entity,
+    // and "near" is within five tiles - wider than any box here, since the
+    // point of the bin is which entity the removal follows, not whether the
+    // shipped geometry reaches it.
+    const NEAR: f64 = 5.0;
+    let (mut field, mut both) = (0usize, 0usize);
+    let (mut geyser_in_window, mut geyser_near, mut ore_near, mut neither) =
+        (0usize, 0usize, 0usize, 0usize);
+    let mut field_by_ore: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut outside: Vec<(f64, f64, &str, f64, f64)> = Vec::new();
+    for k in &disputed {
+        let (x, y) = (f64::from_bits(k.0), f64::from_bits(k.1));
+        let code = code_of
+            .get(k)
+            .copied()
+            .unwrap_or_else(|| panic!("surplus cell {x},{y} is not in the queue"));
+        let window = ore.ore_tiles(code, x, y);
+        let game_in: Vec<&str> = window
+            .iter()
+            .filter_map(|t| game_ore.get(t).copied())
+            .collect();
+        let port_in = window.iter().any(|t| port_ore.contains(t));
+        match (game_in.is_empty(), port_in) {
+            (false, false) => {
+                field += 1;
+                *field_by_ore.entry(game_in[0]).or_insert(0) += 1;
+            }
+            (true, _) => {
+                let (d_ore, d_geyser) = (nearest_ore(x, y), nearest_geyser(x, y));
+                let name = cliff_orientation_for_code(code)
+                    .map_or("?", |id| CLIFF_ORIENTATION_NAMES[id as usize]);
+                outside.push((x, y, name, d_ore, d_geyser));
+                if ore
+                    .geyser_tiles(code, x, y)
+                    .iter()
+                    .any(|t| geysers.contains(t))
+                {
+                    geyser_in_window += 1;
+                } else if d_geyser <= NEAR && d_geyser < d_ore {
+                    geyser_near += 1;
+                } else if d_ore <= NEAR {
+                    ore_near += 1;
+                } else {
+                    neither += 1;
+                }
+            }
+            (false, true) => both += 1,
+        }
+    }
+    outside.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    for (x, y, name, d_ore, d_geyser) in &outside {
+        eprintln!(
+            "  outside the ore box: ({x}, {y}) {name}: nearest ore {d_ore}, geyser {d_geyser}"
+        );
+    }
+    eprintln!(
+        "disputed {} (surplus at ON the game's ore rule removed): FIELD {} {:?}; outside the ore \
+         box {}: geyser in the geyser window {}, geyser within {NEAR} {}, ore within {NEAR} {}, \
+         neither {}; BOTH {}",
+        disputed.len(),
+        field,
+        field_by_ore,
+        outside.len(),
+        geyser_in_window,
+        geyser_near,
+        ore_near,
+        neither,
+        both,
+    );
+    // The port-only tiles' distance to the nearest game ore tile, so a boundary
+    // error reads as one rather than as scattered noise.
+    let port_only_at_one = port_only
+        .iter()
+        .filter(|&&(tx, ty)| {
+            #[allow(clippy::cast_precision_loss)]
+            let d = nearest_ore(tx as f64 + 0.5, ty as f64 + 0.5);
+            d <= 1.0
+        })
+        .count();
+    eprintln!(
+        "port-only tiles {}, of which {} touch a game ore tile",
+        port_only.len(),
+        port_only_at_one
+    );
+
+    // The frozen finding, measured 2026-09-11. Read a moved number, do not
+    // adjust it.
+    //
+    // THE FIELD IS EXACT AND THE CONCENTRATION IS THE GEYSER. Every one of the
+    // game's 1,190 calcite tiles is a tile the port's footprint occupies, and
+    // the 12 tiles the port occupies without a game entity all but one touch a
+    // game ore tile - a patch-boundary residual, not a field defect. So the ore
+    // FIELD bin is empty: not one of the 28 is a tile the game has ore on and
+    // the port does not. The port under-removes for a reason its own module
+    // records as a decision: 23 of the 28 are GEYSER removals - 6 with a geyser
+    // inside the geometric window the port would use, 15 more with a geyser 2
+    // to 5 tiles away and no ore within 80, and 2 on those same cliff runs -
+    // and the shipping footprint leaves the geyser out because it rolls. The
+    // last 5 stand 2 to 3 tiles from calcite, just outside the two-tile window
+    // of the base box. Nothing here is an `ore_regions` defect at a non-default
+    // frequency, which is what the lever test could not rule out.
+    assert_eq!(
+        looked.len(),
+        2886,
+        "tiles the rule reads, plus the ore tiles"
+    );
+    assert_eq!(game_ore.len(), 1190, "game calcite tiles");
+    assert_eq!(per_ore.get("calcite").copied(), Some(1190));
+    assert_eq!(other_names.get("sulfuric-acid-geyser").copied(), Some(25));
+    assert_eq!(game_only.len(), 0, "game ore tiles the port's field lacks");
+    assert_eq!(port_only.len(), 12, "port field tiles with no game entity");
+    assert_eq!(port_only_at_one, 11, "of those, touching a game ore tile");
+    assert_eq!(
+        disputed.len(),
+        28,
+        "the lever test's surplus_is_ore, restated"
+    );
+    assert_eq!(
+        both, 0,
+        "a cell the port's own field rejects cannot be surplus"
+    );
+    assert_eq!(
+        field, 0,
+        "FIELD: game ore in the window, port field without"
+    );
+    assert_eq!(geyser_in_window, 6, "a geyser inside the geyser window");
+    assert_eq!(
+        geyser_near, 15,
+        "a geyser within {NEAR} tiles, beyond the window"
+    );
+    assert_eq!(
+        ore_near, 5,
+        "calcite within {NEAR} tiles, beyond the window"
+    );
+    assert_eq!(
+        neither, 2,
+        "on a geyser run, 9 and 17 tiles from the nearest"
+    );
+    assert_eq!(
+        field + geyser_in_window + geyser_near + ore_near + neither + both,
+        28
+    );
+    // Stated as relations too, so the claims survive a re-measure that moves
+    // every row: the field is exact, and the geyser is most of the residual.
+    assert_eq!(game_only.len(), 0);
+    assert!((geyser_in_window + geyser_near) * 2 > disputed.len());
+}
+
 /// The Vulcanus cliff fields against the game's own samples at the game's own
 /// lattice - 12,675 corners across three regions.
 ///

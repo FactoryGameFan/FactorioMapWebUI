@@ -199,6 +199,39 @@ impl CellRejection for VulcanusOreRejection<'_, '_> {
     }
 }
 
+/// Test-only: sits AFTER every reachable item so a line added here shifts no
+/// `core::panic::Location` in the module above it and `engine.wasm` stays
+/// byte-identical. `#[cfg(test)]` code never reaches the wasm build at all.
+#[cfg(test)]
+impl VulcanusOreRejection<'_, '_> {
+    /// The tiles the ORE arm of [`CellRejection::rejects`] asks the footprint
+    /// about for a cell at `(x, y)` with orientation `code` - the same window,
+    /// from the same box, so a grading that uses it looks exactly where the
+    /// rule looks and nowhere else.
+    pub(crate) fn ore_tiles(&self, code: u8, x: f64, y: f64) -> Vec<(i64, i64)> {
+        self.tiles_for(code, x, y, VULCANUS_ORE_COLLISION_HALF)
+    }
+
+    /// The GEYSER arm's window for the same cell - fourteen times wider per
+    /// axis, 4x3 tiles against the ores' 2.
+    pub(crate) fn geyser_tiles(&self, code: u8, x: f64, y: f64) -> Vec<(i64, i64)> {
+        self.tiles_for(code, x, y, VULCANUS_GEYSER_COLLISION_HALF)
+    }
+
+    fn tiles_for(&self, code: u8, x: f64, y: f64, half: f64) -> Vec<(i64, i64)> {
+        let [l, t, r, b] = self.cliff_box(code);
+        let (tx0, tx1) = tile_window(x + l, x + r, half);
+        let (ty0, ty1) = tile_window(y + t, y + b, half);
+        let mut out = Vec::new();
+        for tx in tx0..=tx1 {
+            for ty in ty0..=ty1 {
+                out.push((tx, ty));
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

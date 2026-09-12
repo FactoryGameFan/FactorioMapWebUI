@@ -58,9 +58,15 @@
  * setting that does not matter. Only the runner is new: each arm and region is
  * one `factorio-oracle run`, which records provenance and enforces a timeout.
  *
- * `alsoResources` is on ONLY because the read-back of `autoplace_controls`
- * rides that block in the builder; the resources and prototype geometry it
- * also dumps are dropped before the fixture is written.
+ * `alsoResources` is on for every capture because the read-back of
+ * `autoplace_controls` rides that block in the builder. The `sweep` and `oos`
+ * fixtures drop the resource entities it also dumps, and their shape must not
+ * change - their frozen rows and provenance describe the files as written. The
+ * `ore` capture KEEPS them (`keepResources`): the first `ore` fixture
+ * (2026-09-07) threw them away, so it could say the game's ore rule removed 65
+ * cliffs where the port's removed 39 and could not say whether the port's ore
+ * FIELD or its removal GEOMETRY was the part that disagreed. Prototype geometry
+ * is still dropped everywhere.
  */
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -117,6 +123,13 @@ interface Capture {
   readonly regions: readonly Region[];
   readonly arms: readonly Arm[];
   readonly comment: string;
+  /**
+   * Write each case's `type = "resource"` entities into the fixture. Off by
+   * default so the sweep and oos fixtures keep the shape their frozen rows and
+   * provenance describe; on for the ore lever, where the entities ARE the
+   * question.
+   */
+  readonly keepResources?: boolean;
 }
 
 /** The four-arm sweep over the three regions of `oracle-vulcanus-cliff-entities`, verbatim. */
@@ -206,6 +219,15 @@ const OUT_OF_SAMPLE: Capture = {
  *
  * The ON arm re-captures what the oos fixture already holds, on purpose: it is
  * the determinism check for the pair, and it keeps the fixture self-contained.
+ *
+ * It keeps the game's resource ENTITIES too. The first capture of this fixture
+ * (2026-09-07) dropped them, and the answer it could give - the game's ore
+ * rule removed 65 cliffs here, the port's removed 39 - stopped short of the
+ * question that matters: whether the port's ore FIELD disagrees with the game
+ * at this volcanism setting, or the field agrees and the removal geometry is
+ * what differs. `fixtures.rs` intersects the entities with the port's footprint
+ * where the cliff rule reads it. The OFF arm's list must come back empty, which
+ * is the lever landing, checked rather than assumed.
  */
 const ORE_LEVER: Capture = {
   out: "oracle-vulcanus-cliff-volcanism-ore.seed123456.json",
@@ -214,20 +236,31 @@ const ORE_LEVER: Capture = {
     { label: "frequency 0.5, resources ON", frequency: 0.5, size: 1 },
     { label: "frequency 0.5, ALL resources OFF", frequency: 0.5, size: 1, resourcesOff: true },
   ],
+  keepResources: true,
   comment:
     "Every cliff entity (find_entities_filtered{type='cliff'}) the game placed in [-2200,-1500], " +
     "the region oracle-vulcanus-cliff-volcanism-oos found carrying 74 of the frequency 0.5 " +
     "arm's 138 errors, at frequency 0.5 with the four Vulcanus resource controls ON and OFF " +
     "(size 0, the lever oracle-vulcanus-cliff-ore-direction pulls) - does the surplus follow " +
     "the ore rule? (#84). Each arm also records the four resource controls the SURFACE " +
-    "reported back.",
+    "reported back, and each case carries every resource entity " +
+    "(find_entities_filtered{type='resource'}) in the region as {x, y, name} at the entity's " +
+    "own position (tile centres for the solid ores), so the port's ore FIELD can be graded " +
+    "where the cliff rule reads it. The OFF arm's list is empty by construction.",
 };
 
 const CAPTURES: Record<string, Capture> = { sweep: SWEEP, oos: OUT_OF_SAMPLE, ore: ORE_LEVER };
 
+/** One `type = "resource"` entity as the game reports it, at its own position. */
+interface ResourceEntity extends Position {
+  readonly name: string;
+}
+
 interface Case {
   readonly region: Region;
   readonly cliffs: Position[];
+  /** Present only when the capture sets `keepResources`. */
+  readonly resources?: ResourceEntity[];
 }
 
 interface CapturedArm extends Arm {
@@ -339,13 +372,29 @@ async function captureRegion(arm: Arm, region: Region, version: string) {
     }
     // The four resource controls, read back the same way, so a resources-off
     // arm proves the lever landed rather than assuming it.
-    const resources: Controls = {};
+    const resourceControls: Controls = {};
     for (const name of RESOURCE_CONTROLS) {
       const c = dump.autoplaceControls?.[name];
       if (c === undefined) throw new Error(`${arm.label}: the surface reported no ${name}`);
-      resources[name] = c;
+      resourceControls[name] = c;
     }
-    return { cliffs: dump.cliffs, reported, resources };
+    // The entities themselves. `alsoResources` is on, so the list is always
+    // present (empty for a resources-off arm); the Lua writes `name` on every
+    // entry, and that is checked here rather than cast, because the grading
+    // splits the list by name.
+    if (dump.resources === undefined) {
+      throw new Error(`${arm.label}: the dump carries no resources list`);
+    }
+    const resources: ResourceEntity[] = dump.resources.map((e) => {
+      const name = (e as Partial<ResourceEntity>).name;
+      if (typeof name !== "string") {
+        throw new Error(
+          `${arm.label}: a resource entity at ${String(e.x)},${String(e.y)} has no name`,
+        );
+      }
+      return { x: e.x, y: e.y, name };
+    });
+    return { cliffs: dump.cliffs, reported, resourceControls, resources };
   } finally {
     await rm(probeDir, { recursive: true, force: true });
     await rm(workDir, { recursive: true, force: true });
@@ -381,19 +430,32 @@ async function main(): Promise<void> {
       // size the arm asked for, ON or OFF.
       const wantSize = arm.resourcesOff === true ? 0 : 1;
       for (const name of RESOURCE_CONTROLS) {
-        if (got.resources[name]?.size !== wantSize) {
+        if (got.resourceControls[name]?.size !== wantSize) {
           throw new Error(
             `${arm.label} [${String(region.x0)},${String(region.y0)}]: ${name} reported ` +
-              `${JSON.stringify(got.resources[name])}, wanted size ${String(wantSize)}`,
+              `${JSON.stringify(got.resourceControls[name])}, wanted size ${String(wantSize)}`,
           );
         }
       }
+      // The entity list is the lever's OTHER witness: a resources-off arm that
+      // still dumps entities did not land, whatever the controls read back.
+      if (arm.resourcesOff === true && got.resources.length !== 0) {
+        throw new Error(
+          `${arm.label} [${String(region.x0)},${String(region.y0)}]: resources OFF but the ` +
+            `game dumped ${String(got.resources.length)} resource entities`,
+        );
+      }
       reported ??= got.reported;
-      reportedResources ??= got.resources;
-      cases.push({ region, cliffs: got.cliffs });
+      reportedResources ??= got.resourceControls;
+      cases.push(
+        capture.keepResources === true
+          ? { region, cliffs: got.cliffs, resources: got.resources }
+          : { region, cliffs: got.cliffs },
+      );
       console.log(
         `  ${arm.label} [${String(region.x0)},${String(region.y0)}]: ` +
-          `${String(got.cliffs.length)} cliffs in ${String(Math.round((Date.now() - started) / 1000))}s`,
+          `${String(got.cliffs.length)} cliffs, ${String(got.resources.length)} resource ` +
+          `entities in ${String(Math.round((Date.now() - started) / 1000))}s`,
       );
     }
     if (reported === undefined) throw new Error(`${arm.label}: no region captured`);
