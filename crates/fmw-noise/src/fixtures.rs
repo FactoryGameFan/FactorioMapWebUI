@@ -9099,3 +9099,637 @@ fn the_ore_destroys_a_queued_cliff_rather_than_never_queueing_it() {
     }
     assert_eq!(changed, 0, "the other 30 must each cost nothing");
 }
+
+// ---------------------------------------------------------------------------
+// The ore -> cliff removal GEOMETRY, read off `ResourceEntity::postSetup` (#84).
+// ---------------------------------------------------------------------------
+
+/// Which box a game resource entity removes cliffs with, for
+/// [`GameEntityRemoval`]. Only [`Self::Engine`] is a reading of the binary;
+/// the rest are controls that each drop one part of it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RemovalGeometry {
+    /// `ResourceEntity::postSetup` (ResourceEntity.cpp:131-137, 2.0.77): the
+    /// entity's own AABB widened outward to whole tiles - `edge & ~0xff` on
+    /// the low edges, that plus one tile on the high edges - handed to
+    /// `EntitySearch<Cliff>`, which keeps a cliff when `BoundingBox::collide`
+    /// says the cliff's positioned ORIENTED box reaches the search box. Every
+    /// cliff found is `forceDestroy`ed, since `cliff_removal_probability` is
+    /// 1.0 on every shipped resource.
+    Engine,
+    /// The shipped rule's shape: the cliff's BASE `collision_box` instead of
+    /// its per-orientation box, against the same tile-widened search box.
+    BaseBox,
+    /// The oriented box against the entity's RAW AABB, no tile widening.
+    RawAabb,
+    /// The cliff box's own AABB against the search box - an axis-aligned
+    /// overlap where the engine runs the separating-axis test.
+    AabbOnly,
+}
+
+/// A resource entity as the game placed it, as the search box it removes
+/// cliffs with, in 1/256 units.
+struct PlacedResource {
+    /// The entity's positioned collision box, `getAABB` of the identity.
+    raw: crate::cliffs::collision::FixedBox,
+    /// `raw` widened to whole tiles the way `postSetup` widens it.
+    search: crate::cliffs::collision::FixedBox,
+}
+
+impl PlacedResource {
+    fn from_entity(e: &Json) -> Self {
+        let name = e.get("name").as_str();
+        let half = match name {
+            "tungsten-ore" | "coal" | "calcite" => {
+                crate::cliffs::vulcanus_ore_rejection::VULCANUS_ORE_COLLISION_HALF
+            }
+            "sulfuric-acid-geyser" => {
+                crate::cliffs::vulcanus_ore_rejection::VULCANUS_GEYSER_COLLISION_HALF
+            }
+            other => panic!("no collision half-extent recorded for {other}"),
+        };
+        let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+        // Entities stand at tile centres and both half-extents are 1/256
+        // multiples, so every product is an exact integer.
+        #[allow(clippy::cast_possible_truncation)]
+        let raw = [
+            ((x - half) * 256.0) as i32,
+            ((y - half) * 256.0) as i32,
+            ((x + half) * 256.0) as i32,
+            ((y + half) * 256.0) as i32,
+        ];
+        // `and w, w, #0xffffff00` floors a two's-complement edge to its tile;
+        // `add w, w, #0x100` then takes the high edges one whole tile past.
+        let search = [
+            raw[0] & !0xff,
+            raw[1] & !0xff,
+            (raw[2] & !0xff) + 0x100,
+            (raw[3] & !0xff) + 0x100,
+        ];
+        Self { raw, search }
+    }
+}
+
+/// The apply-stage collision with the ore half replaced by the GAME's own
+/// resource entities under one [`RemovalGeometry`]. Holding the entities
+/// constant grades the geometry alone: nothing here depends on the port's ore
+/// field or on where its geyser roll lands.
+struct GameEntityRemoval<'a, 'b> {
+    lava: VulcanusLavaTiles<'a, 'b>,
+    resources: &'a [PlacedResource],
+    geometry: RemovalGeometry,
+}
+
+impl GameEntityRemoval<'_, '_> {
+    fn removed_by_resource(&self, orientation: u8, x: f64, y: f64) -> bool {
+        use crate::cliffs::collision::{box_collide, get_aabb, NO_ROTATION};
+        use crate::cliffs::vulcanus_ore_rejection::VULCANUS_CLIFF_BASE_COLLISION_BOX;
+        let cliff = placed_box(orientation, x, y);
+        let rot = rotation_word(orientation);
+        let cliff_aabb = get_aabb(&cliff, rot);
+        #[allow(clippy::cast_possible_truncation)]
+        let base: crate::cliffs::collision::FixedBox = {
+            let [l, t, r, b] = VULCANUS_CLIFF_BASE_COLLISION_BOX;
+            [
+                ((x + l) * 256.0) as i32,
+                ((y + t) * 256.0) as i32,
+                ((x + r) * 256.0) as i32,
+                ((y + b) * 256.0) as i32,
+            ]
+        };
+        self.resources.iter().any(|res| {
+            // A cheap axis-aligned gate first: no oriented box reaches past its
+            // own AABB, so an entity box clear of the widened AABB by a tile is
+            // clear of every geometry here.
+            let s = &res.search;
+            if s[0] > cliff_aabb[2] + 256
+                || s[2] < cliff_aabb[0] - 256
+                || s[1] > cliff_aabb[3] + 256
+                || s[3] < cliff_aabb[1] - 256
+            {
+                return false;
+            }
+            match self.geometry {
+                RemovalGeometry::Engine => box_collide(&cliff, rot, &res.search, NO_ROTATION),
+                RemovalGeometry::BaseBox => {
+                    box_collide(&base, NO_ROTATION, &res.search, NO_ROTATION)
+                }
+                RemovalGeometry::RawAabb => box_collide(&cliff, rot, &res.raw, NO_ROTATION),
+                RemovalGeometry::AabbOnly => {
+                    box_collide(&cliff_aabb, NO_ROTATION, &res.search, NO_ROTATION)
+                }
+            }
+        })
+    }
+}
+
+impl CellRejection for GameEntityRemoval<'_, '_> {
+    /// The same removal at the CROSSING stage - the plug-in point the shipping
+    /// renderer's `VulcanusOreRejection` uses, so this row is what a port of
+    /// the engine geometry into that module would score.
+    fn rejects(&self, code: u8, x: f64, y: f64) -> bool {
+        cliff_orientation_for_code(code)
+            .is_some_and(|orientation| self.removed_by_resource(orientation, x, y))
+    }
+}
+
+impl ApplyCollision for GameEntityRemoval<'_, '_> {
+    fn collides(&self, orientation: u8, x: f64, y: f64) -> bool {
+        tile_collides(orientation, x, y, &self.lava) || self.removed_by_resource(orientation, x, y)
+    }
+}
+
+/// One region's arms through the apply stage, scored on the game's cliffs the
+/// way [`the_oriented_tile_test_through_the_apply_stage`] scores them.
+fn score_removal_geometries(
+    case: &Json,
+    ctx: &crate::eval::ctx::EvalCtx,
+    geometries: &[RemovalGeometry],
+) -> RemovalRows {
+    let seed0 = ctx.seed0;
+    let base = VulcanusBase::with_host_trig(ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        ..CliffBands::default()
+    };
+    let r = case.get("region");
+    let (x0, y0) = (r.get("x0").as_f64(), r.get("y0").as_f64());
+    let (x1, y1) = (r.get("x1").as_f64(), r.get("y1").as_f64());
+    let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+    for e in case.get("cliffs").as_array() {
+        if e.get("name").as_str() != "cliff-vulcanus" {
+            continue;
+        }
+        let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
+        if x < x0 || x >= x1 || y < y0 || y >= y1 {
+            continue;
+        }
+        let want = e.get("orientation").as_str();
+        if let Some(id) = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want) {
+            game.insert((x.to_bits(), y.to_bits()), id as u8);
+        }
+    }
+    let resources: Vec<PlacedResource> = case
+        .get("resources")
+        .as_array()
+        .iter()
+        .map(PlacedResource::from_entity)
+        .collect();
+    let raw = CliffPlacement::new(&fields, bands).placed_cells(
+        x0 - 64.0,
+        y0 - 64.0,
+        x1 + 64.0,
+        y1 + 64.0,
+    );
+    let score_arm = |apply: &dyn ApplyCollision| -> (OrientationScore, CellMap) {
+        let port: BTreeMap<(u64, u64), u8> = apply_cliff_connections(
+            &raw,
+            &CliffConnectionOptions {
+                collides: Some(apply),
+                ..Default::default()
+            },
+        )
+        .iter()
+        .filter(|c| c.x >= x0 && c.x < x1 && c.y >= y0 && c.y < y1)
+        .map(|c| ((c.x.to_bits(), c.y.to_bits()), c.orientation))
+        .collect();
+        let mut s = OrientationScore::default();
+        for (k, id) in &port {
+            match game.get(k) {
+                None => s.surplus += 1,
+                Some(want) if want == id => s.matched += 1,
+                Some(_) => s.wrong += 1,
+            }
+        }
+        s.missing = game.keys().filter(|k| !port.contains_key(*k)).count();
+        (s, port)
+    };
+    // The reference: the oriented tile test plus the PORT's own ore rule, the
+    // arm #408 shipped.
+    let shipped = OrientedLavaAndOre {
+        lava: VulcanusLavaTiles::new(&stack),
+        ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
+        entity_kills: None,
+    };
+    let mut rows = vec![score_arm(&shipped)];
+    for &geometry in geometries {
+        let arm = GameEntityRemoval {
+            lava: VulcanusLavaTiles::new(&stack),
+            resources: &resources,
+            geometry,
+        };
+        rows.push(score_arm(&arm));
+    }
+    // The crossing-stage rows: what `sweep_score` grades, i.e. the shipping
+    // renderer's own path, first with its own ore rule and then with the game's
+    // entities under the engine geometry.
+    let crossing_bands = CliffBands {
+        reject_at_crossing_stage: true,
+        ..bands
+    };
+    let lava = VulcanusLavaTiles::new(&stack);
+    let crossing_arm = |rejection: &dyn CellRejection| -> (OrientationScore, CellMap) {
+        let port: CellMap = CliffPlacement::new(&fields, crossing_bands)
+            .with_tile_collision(&lava)
+            .with_cell_rejection(rejection)
+            .placed_cells(x0, y0, x1, y1)
+            .iter()
+            .filter_map(|c| cliff_orientation_for_code(c.code).map(|id| (cell_key(c), id)))
+            .collect();
+        let mut s = OrientationScore::default();
+        for (k, id) in &port {
+            match game.get(k) {
+                None => s.surplus += 1,
+                Some(want) if want == id => s.matched += 1,
+                Some(_) => s.wrong += 1,
+            }
+        }
+        s.missing = game.keys().filter(|k| !port.contains_key(*k)).count();
+        (s, port)
+    };
+    let shipped_ore = VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls);
+    rows.push(crossing_arm(&shipped_ore));
+    let engine = GameEntityRemoval {
+        lava: VulcanusLavaTiles::new(&stack),
+        resources: &resources,
+        geometry: RemovalGeometry::Engine,
+    };
+    rows.push(crossing_arm(&engine));
+    // The raw queue's orientation by cell, for attributing a residual cell to
+    // the entity whose search box its queued box reaches.
+    let queued: BTreeMap<(u64, u64), u8> = raw
+        .iter()
+        .filter_map(|c| cliff_orientation_for_code(c.code).map(|id| (cell_key(c), id)))
+        .collect();
+    RemovalRows {
+        rows,
+        game,
+        queued,
+        resources,
+        entities: case
+            .get("resources")
+            .as_array()
+            .iter()
+            .map(|e| {
+                (
+                    e.get("name").as_str().to_owned(),
+                    e.get("x").as_f64(),
+                    e.get("y").as_f64(),
+                )
+            })
+            .collect(),
+    }
+}
+
+/// What [`score_removal_geometries`] measured on one region: the shipped
+/// arm's row first, then one per geometry, each with the cells it placed.
+struct RemovalRows {
+    rows: Vec<(OrientationScore, CellMap)>,
+    game: CellMap,
+    queued: CellMap,
+    resources: Vec<PlacedResource>,
+    entities: Vec<(String, f64, f64)>,
+}
+
+impl RemovalRows {
+    /// The residual of arm `i`, each cell with the game entity that removes it
+    /// under the ENGINE geometry (or the nearest one when none does), the
+    /// entity's distance in tiles, and both chunks.
+    fn describe(&self, i: usize, label: &str) -> Vec<FalseRemoval> {
+        use crate::cliffs::collision::{box_collide, NO_ROTATION};
+        let (_, port) = &self.rows[i];
+        let mut lines: Vec<String> = Vec::new();
+        let mut false_removals: Vec<FalseRemoval> = Vec::new();
+        let mut cells: Vec<(&str, (u64, u64))> = self
+            .game
+            .keys()
+            .filter(|k| !port.contains_key(*k))
+            .map(|k| ("missing", *k))
+            .collect();
+        cells.extend(
+            port.iter()
+                .filter(|(k, id)| self.game.get(*k).is_none_or(|want| want != *id))
+                .map(|(k, _)| {
+                    (
+                        if self.game.contains_key(k) {
+                            "wrong"
+                        } else {
+                            "surplus"
+                        },
+                        *k,
+                    )
+                }),
+        );
+        for (kind, k) in cells {
+            let (x, y) = (f64::from_bits(k.0), f64::from_bits(k.1));
+            let Some(&orientation) = self.queued.get(&k) else {
+                lines.push(format!("  {kind:<7} ({x}, {y}): not in the raw queue"));
+                continue;
+            };
+            let cliff = placed_box(orientation, x, y);
+            let rot = rotation_word(orientation);
+            let hit = self
+                .resources
+                .iter()
+                .zip(&self.entities)
+                .find(|(r, _)| box_collide(&cliff, rot, &r.search, NO_ROTATION))
+                .map(|(_, e)| e);
+            let nearest = self
+                .entities
+                .iter()
+                .map(|e| (((e.1 - x).abs()).max((e.2 - y).abs()), e))
+                .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            #[allow(clippy::cast_possible_truncation)]
+            let chunk = |px: f64, py: f64| ((px / 32.0).floor() as i64, (py / 32.0).floor() as i64);
+            let name = CLIFF_ORIENTATION_NAMES[usize::from(orientation)];
+            // For a cell the game KEPT, whether the box of the orientation the
+            // game left it with still reaches the same entity - the removal
+            // runs after `applyCliffs`, against the cliff's box as it stands.
+            let final_reaches = self.game.get(&k).map(|&g| {
+                let gb = placed_box(g, x, y);
+                let gr = rotation_word(g);
+                (
+                    CLIFF_ORIENTATION_NAMES[usize::from(g)],
+                    self.resources
+                        .iter()
+                        .any(|r| box_collide(&gb, gr, &r.search, NO_ROTATION)),
+                )
+            });
+            if let (Some(e), Some((queued_name, reaches))) = (hit, final_reaches) {
+                if kind == "missing" {
+                    false_removals.push(FalseRemoval {
+                        x,
+                        y,
+                        queued: name,
+                        by: e.0.clone(),
+                        tiles: ((e.1 - x).abs()).max((e.2 - y).abs()),
+                        game_final: queued_name,
+                        final_reaches: reaches,
+                    });
+                }
+            }
+            match (hit, nearest) {
+                (Some(e), _) => lines.push(format!(
+                    "  {kind:<7} ({x}, {y}) {name} chunk {:?}: REMOVED by {} at ({}, {}) chunk {:?}, {} tiles; game's final orientation {:?}",
+                    chunk(x, y),
+                    e.0,
+                    e.1,
+                    e.2,
+                    chunk(e.1, e.2),
+                    ((e.1 - x).abs()).max((e.2 - y).abs()),
+                    final_reaches
+                )),
+                (None, Some((d, e))) => lines.push(format!(
+                    "  {kind:<7} ({x}, {y}) {name} chunk {:?}: kept; nearest {} at ({}, {}) chunk {:?}, {d} tiles",
+                    chunk(x, y),
+                    e.0,
+                    e.1,
+                    e.2,
+                    chunk(e.1, e.2)
+                )),
+                (None, None) => lines.push(format!("  {kind:<7} ({x}, {y}) {name}: no entities")),
+            }
+        }
+        if !lines.is_empty() {
+            eprintln!("{label}:");
+            for l in lines {
+                eprintln!("{l}");
+            }
+        }
+        false_removals
+    }
+}
+
+/// A cell the game kept that the engine geometry, fed the RAW queued
+/// orientation, removes.
+#[derive(Debug, PartialEq)]
+struct FalseRemoval {
+    x: f64,
+    y: f64,
+    /// The orientation the port queued it with, whose box reaches the entity.
+    queued: &'static str,
+    /// The entity whose widened box that orientation reaches.
+    by: String,
+    /// Chebyshev distance from the cell centre to the entity, in tiles.
+    tiles: f64,
+    /// The orientation the game LEFT the cell with.
+    game_final: &'static str,
+    /// Whether the box of that final orientation reaches any entity.
+    final_reaches: bool,
+}
+
+/// **The ore -> cliff removal geometry, read off the binary and graded on the
+/// game's own entities.** `ResourceEntity::postSetup` (2.0.77, which places
+/// the same Vulcanus cliffs as 2.1.17) widens the placed resource's AABB
+/// outward to whole tiles and asks `EntitySearch<Cliff>` for every cliff whose
+/// positioned ORIENTED box `BoundingBox::collide`s with it, then
+/// `forceDestroy`s each - the same separating-axis test #407 transcribed for
+/// the tile half of `wouldCollide`, on the other side of the comparison. So
+/// the reach is the CLIFF's box, up to 4.5 tiles, not the resource's.
+///
+/// Holding the entities at what the game placed grades the geometry alone.
+/// Four regions: the three default ones and the frequency-0.5 region whose
+/// residual was 23 geyser removals out of 28 (the section above).
+#[test]
+fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriented_box() {
+    let direction = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-ore-direction.seed123456.json",
+        "2.1.12",
+    );
+    let regions = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-ore-direction-regions.seed123456.json",
+        "2.1.12",
+    );
+    let ore = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-volcanism-ore.seed123456.json",
+        "2.1.17",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = direction.get("seed").as_f64() as u32;
+    let default_ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let mut half_ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    half_ctx.vulcanus_volcanism_frequency = 0.5;
+
+    let d_cases = direction.get("cases").as_array();
+    let r_cases = regions.get("cases").as_array();
+    let o_case = &ore.get("arms").as_array()[0].get("cases").as_array()[0];
+    assert_eq!(
+        d_cases[0].get("label").as_str(),
+        "entity region, resources ON"
+    );
+    assert_eq!(r_cases[0].get("label").as_str(), "[0,0], resources ON");
+    assert_eq!(
+        r_cases[2].get("label").as_str(),
+        "[-1200,800], resources ON"
+    );
+    let cases: [(&str, &Json, &crate::eval::ctx::EvalCtx); 4] = [
+        ("[0,0]", &r_cases[0], &default_ctx),
+        ("[1500,1500]", &d_cases[0], &default_ctx),
+        ("[-1200,800]", &r_cases[2], &default_ctx),
+        ("[-2200,-1500] f0.5", o_case, &half_ctx),
+    ];
+    const GEOMETRIES: [RemovalGeometry; 4] = [
+        RemovalGeometry::Engine,
+        RemovalGeometry::BaseBox,
+        RemovalGeometry::RawAabb,
+        RemovalGeometry::AabbOnly,
+    ];
+    const LABELS: [&str; 7] = [
+        "apply: shipped (port ore, base box)",
+        "apply: game entities, ENGINE",
+        "apply: game entities, base box",
+        "apply: game entities, raw AABB",
+        "apply: game entities, AABB only",
+        "crossing: shipped (port ore, base box)",
+        "crossing: game entities, ENGINE",
+    ];
+    let mut totals = [OrientationScore::default(); 7];
+    let mut per_region: Vec<(&str, Vec<OrientationScore>)> = Vec::new();
+    let mut false_removals: Vec<FalseRemoval> = Vec::new();
+    for (label, case, ctx) in cases {
+        let measured = score_removal_geometries(case, ctx, &GEOMETRIES);
+        false_removals
+            .extend(measured.describe(1, &format!("{label} residual under the ENGINE geometry")));
+        let rows: Vec<OrientationScore> = measured.rows.iter().map(|(s, _)| *s).collect();
+        for (t, r) in totals.iter_mut().zip(&rows) {
+            t.matched += r.matched;
+            t.wrong += r.wrong;
+            t.surplus += r.surplus;
+            t.missing += r.missing;
+        }
+        per_region.push((label, rows));
+    }
+    for (label, rows) in &per_region {
+        eprintln!("{label}:");
+        for (arm, r) in LABELS.iter().zip(rows) {
+            eprintln!(
+                "  {arm:<38} matched {:>4} wrong {:>3} surplus {:>3} missing {:>3}",
+                r.matched, r.wrong, r.surplus, r.missing
+            );
+        }
+    }
+    eprintln!("all four regions:");
+    for (arm, r) in LABELS.iter().zip(&totals) {
+        eprintln!(
+            "  {arm:<38} matched {:>4} wrong {:>3} surplus {:>3} missing {:>3}",
+            r.matched, r.wrong, r.surplus, r.missing
+        );
+    }
+
+    // The frozen finding, measured 2026-09-12. Read a moved number, do not
+    // adjust it.
+    //
+    // THE GEOMETRY IS THE CLIFF'S ORIENTED BOX AGAINST THE RESOURCE'S
+    // TILE-WIDENED AABB, and holding the entities at the game's own placements
+    // it is better than the shipped rule on every count but one, on both paths:
+    // through the apply stage 85 errors become 44 (surplus 56 -> 22), at the
+    // crossing stage 96 become 54 (surplus 60 -> 26). Each control loses in
+    // the direction its omission predicts. The shipped rule's BASE box keeps
+    // 50 of the 56 surplus, because it cannot reach past a tile; the RAW AABB
+    // keeps 34, the tile widening being a real part of the rule; and the
+    // cliff's own AABB in place of the separating-axis test over-removes, 13
+    // missing against 5, because a corner box's square reaches tiles its
+    // 45-degree rectangle does not.
+    //
+    // The one count that moves the wrong way is `missing`, 3 -> 5 through the
+    // apply stage, and every one of those is a TIMING difference, not a box:
+    // four cells the raw queued orientation's box reaches a calcite from, 1 to
+    // 3 tiles out, which the game left standing as a trimmed `*-to-none`
+    // whose box reaches nothing. `postSetup` runs in `applyEntities`, after
+    // `applyCliffs` and its cascades, against the cliff's box AS IT THEN
+    // STANDS - so the removal reads the LIVE orientation where `wouldCollide`
+    // reads the queued one (#407). The port's hook has only the queued one.
+    //
+    // What the engine geometry does not reach is the two geyser RUNS in the
+    // frequency-0.5 region, 5 to 29 tiles from the nearest geyser, and the
+    // `[1500,1500]` cells no resource is near (the `1506` and `1742/1746`
+    // runs, which #406 tied to rock and demolisher kills). No per-entity box
+    // reaches those; they are the destroy cascade running further along a run
+    // than the port's model of it does, and the entity half.
+    let row = |matched, wrong, surplus, missing| OrientationScore {
+        matched,
+        wrong,
+        surplus,
+        missing,
+    };
+    let f05 = &per_region[3].1;
+    assert_eq!(per_region[3].0, "[-2200,-1500] f0.5");
+    assert_eq!(f05[0], row(772, 20, 42, 3), "f0.5, apply: shipped");
+    assert_eq!(f05[1], row(779, 12, 16, 4), "f0.5, apply: engine geometry");
+    assert_eq!(f05[5], row(769, 24, 44, 2), "f0.5, crossing: shipped");
+    assert_eq!(
+        f05[6],
+        row(776, 16, 19, 3),
+        "f0.5, crossing: engine geometry"
+    );
+    let r1500 = &per_region[1].1;
+    assert_eq!(r1500[0], row(855, 6, 14, 0), "[1500,1500], apply: shipped");
+    assert_eq!(
+        r1500[1],
+        row(855, 5, 6, 1),
+        "[1500,1500], apply: engine geometry"
+    );
+    assert_eq!(totals[0], row(2297, 26, 56, 3), "apply: shipped");
+    assert_eq!(totals[1], row(2304, 17, 22, 5), "apply: engine geometry");
+    assert_eq!(totals[2], row(2302, 23, 50, 1), "apply: base box control");
+    assert_eq!(totals[3], row(2304, 20, 34, 2), "apply: raw AABB control");
+    assert_eq!(totals[4], row(2293, 20, 21, 13), "apply: AABB-only control");
+    assert_eq!(totals[5], row(2290, 34, 60, 2), "crossing: shipped");
+    assert_eq!(totals[6], row(2298, 24, 26, 4), "crossing: engine geometry");
+    // Stated as relations too, so the claims survive a re-measure that moves
+    // every row.
+    let errors = |r: &OrientationScore| r.wrong + r.surplus + r.missing;
+    assert!(
+        errors(&totals[1]) < errors(&totals[0]),
+        "engine beats shipped, apply"
+    );
+    assert!(
+        errors(&totals[6]) < errors(&totals[5]),
+        "engine beats shipped, crossing"
+    );
+    assert!(
+        totals[1].surplus * 2 < totals[0].surplus,
+        "surplus more than halves"
+    );
+    assert!(
+        totals[2].surplus > totals[1].surplus,
+        "the base box under-removes"
+    );
+    assert!(
+        totals[3].surplus > totals[1].surplus,
+        "the raw AABB under-removes"
+    );
+    assert!(
+        totals[4].missing > totals[1].missing,
+        "the AABB alone over-removes"
+    );
+    // The false removals, each a cell the game left trimmed to a box that
+    // reaches nothing.
+    let fr = |x, y, queued, tiles, game_final| FalseRemoval {
+        x,
+        y,
+        queued,
+        by: "calcite".to_owned(),
+        tiles,
+        game_final,
+        final_reaches: false,
+    };
+    assert_eq!(
+        false_removals,
+        vec![
+            fr(1670.0, 1662.5, "south-to-west", 3.0, "none-to-west"),
+            fr(-2014.0, -1309.5, "west-to-east", 2.5, "west-to-none"),
+            fr(-2042.0, -1289.5, "south-to-east", 1.0, "south-to-none"),
+            fr(-2066.0, -1309.5, "west-to-east", 2.5, "west-to-none"),
+        ]
+    );
+    assert!(
+        false_removals.iter().all(|f| !f.final_reaches),
+        "every false removal is a cell the game had already trimmed"
+    );
+}
