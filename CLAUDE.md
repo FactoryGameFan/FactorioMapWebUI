@@ -559,8 +559,9 @@ Add future phases the same way.
 
 **That `rust` job's cost is a RANGE, not a number, and the detail lives with the
 port** - see the Rust/WASM section. Short version: roughly 6.5 to 8.5 minutes
-as of 2026-09-13 (it was 1m45s to 2m50s when #219 landed), and it runs `bash scripts/verify-rust.sh` directly rather than through pnpm, which
-is the one place the YAML names a command instead of a script.
+as of 2026-09-13 (it was 1m45s to 2m50s when #219 landed), and it runs
+`bash scripts/verify-rust.sh` directly rather than through pnpm, which is the
+one place the YAML names a command instead of a script.
 
 Sharding measured **9m03s -> 4m36s** when it landed (2026-08-03, N=3, 171 spec
 files). The count is **4** now, because the suite grew to 201 files and put N=3
