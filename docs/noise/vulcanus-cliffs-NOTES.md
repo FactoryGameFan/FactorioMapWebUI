@@ -5167,8 +5167,18 @@ tile-centre overlap to the per-orientation box under `box_collide` against
 each ore tile's own square (and the geyser's 3x3, if the roll is wired in),
 and the crate's tests re-score every frozen table that reads the ore rule.
 
-Cost: the seven-arm table above took 100 s clean and 369 s under `poison` on
-this machine, which would have taken the Rust gate from about 2 minutes to
-8m35s. The gate keeps the four graded arms (shipped and engine, on both paths)
-at 56 s clean; the three control arms stay in the code behind `dead_code`
-allows with their rows recorded on the test, one line to re-run.
+Cost, and what the gate keeps (2026-09-13): the seven-arm table above took
+100 s clean and 369 s under `poison` on this machine, and took the Rust gate
+from about 2 minutes to 8m35s. Keeping the four graded arms (shipped and
+engine, on both paths) over all four regions was 56 s clean but still 265.6 s
+under `poison`, and its CI `rust` job took 10m31s against the 1m45s to 2m50s
+range `CLAUDE.md` records. So the test in the gate grades the two regions that
+carry the errors, `[1500,1500]` and the frequency-0.5 region: 40 s clean and
+89.3 s under `poison`, alone. Dropping `[0,0]` and `[-1200,800]` moved
+`matched` by 670 and the crossing-stage `surplus` by 1 on each rule, and
+nothing else - those two regions held no apply-stage error under either rule.
+The frozen totals on the test are the two-region ones, 1627/26/56/3 ->
+1634/17/22/5 through the apply stage and 1620/34/59/2 -> 1628/24/25/4 at the
+crossing stage; every per-region row and all four false removals above are
+unchanged. The three control arms stay in the code behind `dead_code` allows
+with their four-region rows recorded on the test, one line to re-run.

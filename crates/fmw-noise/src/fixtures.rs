@@ -9540,16 +9540,15 @@ struct FalseRemoval {
 /// the reach is the CLIFF's box, up to 4.5 tiles, not the resource's.
 ///
 /// Holding the entities at what the game placed grades the geometry alone.
-/// Four regions: the three default ones and the frequency-0.5 region whose
-/// residual was 23 geyser removals out of 28 (the section above).
+/// Two regions: `[1500,1500]` and the frequency-0.5 region whose residual was
+/// 23 geyser removals out of 28 (the section above). The 2026-09-12 run also
+/// graded `[0,0]` and `[-1200,800]`, which fed the totals and nothing else;
+/// those four-region rows are in `docs/noise/vulcanus-cliffs-NOTES.md`. They
+/// left the gate for cost - see the comment on the frozen rows.
 #[test]
 fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriented_box() {
     let direction = load_captured_at(
         "test/fixtures/oracle-vulcanus-cliff-ore-direction.seed123456.json",
-        "2.1.12",
-    );
-    let regions = load_captured_at(
-        "test/fixtures/oracle-vulcanus-cliff-ore-direction-regions.seed123456.json",
         "2.1.12",
     );
     let ore = load_captured_at(
@@ -9563,21 +9562,13 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     half_ctx.vulcanus_volcanism_frequency = 0.5;
 
     let d_cases = direction.get("cases").as_array();
-    let r_cases = regions.get("cases").as_array();
     let o_case = &ore.get("arms").as_array()[0].get("cases").as_array()[0];
     assert_eq!(
         d_cases[0].get("label").as_str(),
         "entity region, resources ON"
     );
-    assert_eq!(r_cases[0].get("label").as_str(), "[0,0], resources ON");
-    assert_eq!(
-        r_cases[2].get("label").as_str(),
-        "[-1200,800], resources ON"
-    );
-    let cases: [(&str, &Json, &crate::eval::ctx::EvalCtx); 4] = [
-        ("[0,0]", &r_cases[0], &default_ctx),
+    let cases: [(&str, &Json, &crate::eval::ctx::EvalCtx); 2] = [
         ("[1500,1500]", &d_cases[0], &default_ctx),
-        ("[-1200,800]", &r_cases[2], &default_ctx),
         ("[-2200,-1500] f0.5", o_case, &half_ctx),
     ];
     const GEOMETRIES: [RemovalGeometry; 1] = [RemovalGeometry::Engine];
@@ -9587,7 +9578,11 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
         "crossing: shipped (port ore, base box)",
         "crossing: game entities, ENGINE",
     ];
-    let mut totals = [OrientationScore::default(); 4];
+    // One row per arm: shipped and each geometry through the apply stage,
+    // then shipped and the engine geometry at the crossing stage. A geometry
+    // added to `GEOMETRIES` needs its label here too, or the rows land under
+    // the wrong names; the length check below refuses to print that.
+    let mut totals = [OrientationScore::default(); LABELS.len()];
     let mut per_region: Vec<(&str, Vec<OrientationScore>)> = Vec::new();
     let mut false_removals: Vec<FalseRemoval> = Vec::new();
     for (label, case, ctx) in cases {
@@ -9595,6 +9590,13 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
         false_removals
             .extend(measured.describe(1, &format!("{label} residual under the ENGINE geometry")));
         let rows: Vec<OrientationScore> = measured.rows.iter().map(|(s, _)| *s).collect();
+        assert_eq!(
+            rows.len(),
+            LABELS.len(),
+            "one label per row: GEOMETRIES has {} entries, LABELS names {} rows",
+            GEOMETRIES.len(),
+            LABELS.len()
+        );
         for (t, r) in totals.iter_mut().zip(&rows) {
             t.matched += r.matched;
             t.wrong += r.wrong;
@@ -9612,7 +9614,7 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
             );
         }
     }
-    eprintln!("all four regions:");
+    eprintln!("both regions:");
     for (arm, r) in LABELS.iter().zip(&totals) {
         eprintln!(
             "  {arm:<38} matched {:>4} wrong {:>3} surplus {:>3} missing {:>3}",
@@ -9620,18 +9622,29 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
         );
     }
 
-    // The frozen finding, measured 2026-09-12. Read a moved number, do not
-    // adjust it.
+    // The frozen finding, measured 2026-09-12 over four regions and re-frozen
+    // 2026-09-13 over the two that carry its errors. Read a moved number, do
+    // not adjust it.
     //
     // THE GEOMETRY IS THE CLIFF'S ORIENTED BOX AGAINST THE RESOURCE'S
     // TILE-WIDENED AABB, and holding the entities at the game's own placements
     // it is better than the shipped rule on every count but one, on both paths:
     // through the apply stage 85 errors become 44 (surplus 56 -> 22), at the
-    // crossing stage 96 become 54 (surplus 60 -> 26).
+    // crossing stage 95 become 53 (surplus 59 -> 25).
     //
-    // Three controls were run through the apply stage the same day and each
-    // loses in the direction its omission predicts (all four regions,
-    // matched/wrong/surplus/missing): `BaseBox` 2302/23/50/1 - the shipped
+    // The 2026-09-12 run graded `[0,0]` and `[-1200,800]` as well, and the
+    // totals were 2297/26/56/3 -> 2304/17/22/5 through the apply stage and
+    // 2290/34/60/2 -> 2298/24/26/4 at the crossing stage. Cutting those two
+    // regions moved `matched` by 670 and the crossing `surplus` by 1 on each
+    // rule, and nothing else: they held no apply-stage error at all under
+    // either rule. They left the gate for cost - the four-region test was 56 s
+    // clean and 265.6 s under `poison` on this machine, and its CI `rust` job
+    // took 10m31s against a 1m45s to 2m50s range - and the finding lost no
+    // error by it.
+    //
+    // Three controls were run through the apply stage on 2026-09-12 and each
+    // loses in the direction its omission predicts (the four regions of that
+    // run, matched/wrong/surplus/missing): `BaseBox` 2302/23/50/1 - the shipped
     // rule's box cannot reach past a tile and keeps 50 of the 56 surplus;
     // `RawAabb` 2304/20/34/2 - the tile widening is a real part of the rule;
     // `AabbOnly` 2293/20/21/13 - the cliff's own AABB in place of the
@@ -9660,8 +9673,8 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
         surplus,
         missing,
     };
-    let f05 = &per_region[3].1;
-    assert_eq!(per_region[3].0, "[-2200,-1500] f0.5");
+    let f05 = &per_region[1].1;
+    assert_eq!(per_region[1].0, "[-2200,-1500] f0.5");
     assert_eq!(f05[0], row(772, 20, 42, 3), "f0.5, apply: shipped");
     assert_eq!(f05[1], row(779, 12, 16, 4), "f0.5, apply: engine geometry");
     assert_eq!(f05[2], row(769, 24, 44, 2), "f0.5, crossing: shipped");
@@ -9670,17 +9683,18 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
         row(776, 16, 19, 3),
         "f0.5, crossing: engine geometry"
     );
-    let r1500 = &per_region[1].1;
+    let r1500 = &per_region[0].1;
+    assert_eq!(per_region[0].0, "[1500,1500]");
     assert_eq!(r1500[0], row(855, 6, 14, 0), "[1500,1500], apply: shipped");
     assert_eq!(
         r1500[1],
         row(855, 5, 6, 1),
         "[1500,1500], apply: engine geometry"
     );
-    assert_eq!(totals[0], row(2297, 26, 56, 3), "apply: shipped");
-    assert_eq!(totals[1], row(2304, 17, 22, 5), "apply: engine geometry");
-    assert_eq!(totals[2], row(2290, 34, 60, 2), "crossing: shipped");
-    assert_eq!(totals[3], row(2298, 24, 26, 4), "crossing: engine geometry");
+    assert_eq!(totals[0], row(1627, 26, 56, 3), "apply: shipped");
+    assert_eq!(totals[1], row(1634, 17, 22, 5), "apply: engine geometry");
+    assert_eq!(totals[2], row(1620, 34, 59, 2), "crossing: shipped");
+    assert_eq!(totals[3], row(1628, 24, 25, 4), "crossing: engine geometry");
     // Stated as relations too, so the claims survive a re-measure that moves
     // every row.
     let errors = |r: &OrientationScore| r.wrong + r.surplus + r.missing;
