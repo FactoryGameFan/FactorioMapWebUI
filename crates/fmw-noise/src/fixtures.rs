@@ -4334,52 +4334,24 @@ impl SweepRow {
 
 /// Score one region under the SHIPPING model at the sliders `ctx` carries.
 ///
-/// The placement is built exactly as [`score_vulcanus_cliffs`]'s `Shipping`
-/// arm builds it; only the counting differs, per [`SweepRow`].
+/// [`sweep_cells`] builds the placement exactly as [`score_vulcanus_cliffs`]'s
+/// `Shipping` arm builds it, and [`sweep_tally`] counts the split per
+/// [`SweepRow`]. Both are shared with the set-intersecting tests below, so an
+/// edit to one band or one filter moves EVERY frozen table at once rather than
+/// one of them - which is what keeps those tables comparable.
 fn sweep_score(region: &Json, cliffs: &[Json], ctx: &crate::eval::ctx::EvalCtx) -> SweepRow {
-    let seed0 = ctx.seed0;
-    let base = VulcanusBase::with_host_trig(ctx);
-    let biomes = base.biomes_with_host_trig();
-    let stack = VulcanusStack::with_host_trig(&base, &biomes);
-    let fields = VulcanusCliffFields::new(&stack, seed0);
-    let lava = VulcanusLavaTiles::new(&stack);
-    let ore = VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls);
-    let bands = CliffBands {
-        elevation0: VULCANUS_CLIFF_ELEVATION_0,
-        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
-        smoothing: VULCANUS_CLIFF_SMOOTHING,
-        reject_at_crossing_stage: true,
-        ..CliffBands::default()
-    };
-    let (x0, y0) = (region.get("x0").as_f64(), region.get("y0").as_f64());
-    let (x1, y1) = (region.get("x1").as_f64(), region.get("y1").as_f64());
+    let cells = sweep_cells(region, cliffs, ctx, true);
+    let mut row = sweep_tally(&cells.game, &cells.port);
+    row.unscored = cells.unscored;
+    row
+}
 
+/// The four-way split of [`SweepRow`] between the game's cells and the port's,
+/// keyed alike. `unscored` is the caller's, since it is a property of the
+/// fixture rather than of the two maps.
+fn sweep_tally(game: &CellMap, port: &CellMap) -> SweepRow {
     let mut row = SweepRow::ZERO;
-    let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
-    for e in cliffs {
-        if e.get("name").as_str() != "cliff-vulcanus" {
-            continue;
-        }
-        let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
-        let want = e.get("orientation").as_str();
-        let id = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want);
-        match id {
-            Some(id) if x >= x0 && x < x1 && y >= y0 && y < y1 => {
-                game.insert((x.to_bits(), y.to_bits()), id as u8);
-            }
-            _ => row.unscored += 1,
-        }
-    }
-
-    let port: BTreeMap<(u64, u64), u8> = CliffPlacement::new(&fields, bands)
-        .with_tile_collision(&lava)
-        .with_cell_rejection(&ore)
-        .placed_cells(x0, y0, x1, y1)
-        .iter()
-        .filter_map(|c| cliff_orientation_for_code(c.code).map(|id| (cell_key(c), id)))
-        .collect();
-
-    for (k, id) in &port {
+    for (k, id) in port {
         match game.get(k) {
             None => row.surplus += 1,
             Some(want) if want == id => row.matched += 1,
@@ -4772,17 +4744,31 @@ fn the_volcanism_contrast_out_of_sample() {
 /// Cliff cells keyed by the raw bits of their centre, to the port's orientation code.
 type CellMap = BTreeMap<(u64, u64), u8>;
 
+/// One region's cells under the shipping model, from [`sweep_cells`].
+struct SweepCells {
+    /// The game's in-bounds `cliff-vulcanus` cells, to the game's orientation id.
+    game: CellMap,
+    /// The port's cells, to the port's orientation id.
+    port: CellMap,
+    /// Game entries that did not score: an orientation name the port lacks, or
+    /// a boundary entity outside the region.
+    unscored: usize,
+    /// The port's placed cells as placed, with their orientation CODE - what
+    /// `port` is projected from, kept for a test that needs the code.
+    queued: Vec<PlacedCliffCell>,
+}
+
 /// The game's in-bounds `cliff-vulcanus` cells of one region, keyed like the
 /// port's, and the port's own cells under the shipping model with the ore
-/// rejection ON or OFF. The three-way split [`sweep_score`] counts is
-/// recoverable from the two maps; this returns them so the test below can
-/// INTERSECT sets, which a count cannot do.
+/// rejection ON or OFF. [`sweep_score`] counts the split; the tests below
+/// INTERSECT the sets, which a count cannot do. Every frozen sweep table in
+/// this file is built here, so there is one definition of the shipping model.
 fn sweep_cells(
     region: &Json,
     cliffs: &[Json],
     ctx: &crate::eval::ctx::EvalCtx,
     with_ore: bool,
-) -> (CellMap, CellMap) {
+) -> SweepCells {
     let seed0 = ctx.seed0;
     let base = VulcanusBase::with_host_trig(ctx);
     let biomes = base.biomes_with_host_trig();
@@ -4800,17 +4786,20 @@ fn sweep_cells(
     let (x0, y0) = (region.get("x0").as_f64(), region.get("y0").as_f64());
     let (x1, y1) = (region.get("x1").as_f64(), region.get("y1").as_f64());
 
-    let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
+    let mut unscored = 0;
+    let mut game: CellMap = BTreeMap::new();
     for e in cliffs {
         if e.get("name").as_str() != "cliff-vulcanus" {
             continue;
         }
         let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
         let want = e.get("orientation").as_str();
-        if let Some(id) = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want) {
-            if x >= x0 && x < x1 && y >= y0 && y < y1 {
+        let id = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want);
+        match id {
+            Some(id) if x >= x0 && x < x1 && y >= y0 && y < y1 => {
                 game.insert((x.to_bits(), y.to_bits()), id as u8);
             }
+            _ => unscored += 1,
         }
     }
     let placement = CliffPlacement::new(&fields, bands).with_tile_collision(&lava);
@@ -4819,12 +4808,17 @@ fn sweep_cells(
     } else {
         placement
     };
-    let port: BTreeMap<(u64, u64), u8> = placement
-        .placed_cells(x0, y0, x1, y1)
+    let queued = placement.placed_cells(x0, y0, x1, y1);
+    let port: CellMap = queued
         .iter()
         .filter_map(|c| cliff_orientation_for_code(c.code).map(|id| (cell_key(c), id)))
         .collect();
-    (game, port)
+    SweepCells {
+        game,
+        port,
+        unscored,
+        queued,
+    }
 }
 
 /// The ORE lever on the one region the replication found concentrated (#84).
@@ -4922,28 +4916,23 @@ fn the_concentrated_residual_against_the_ore_lever() {
         levers.size = 0.0;
     }
 
-    let (game_on, port_on) = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx_on, true);
-    let (game_off, port_off) =
-        sweep_cells(region, off_case.get("cliffs").as_array(), &ctx_off, true);
+    let SweepCells {
+        game: game_on,
+        port: port_on,
+        ..
+    } = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx_on, true);
+    let SweepCells {
+        game: game_off,
+        port: port_off,
+        ..
+    } = sweep_cells(region, off_case.get("cliffs").as_array(), &ctx_off, true);
     // The port with the ore rejection simply not run, at resources ON: what the
     // port thinks the ore rule removes.
-    let (_, port_no_ore) = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx_on, false);
+    let port_no_ore = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx_on, false).port;
 
-    let tally = |game: &BTreeMap<(u64, u64), u8>, port: &BTreeMap<(u64, u64), u8>| {
-        let mut row = SweepRow::ZERO;
-        for (k, id) in port {
-            match game.get(k) {
-                None => row.surplus += 1,
-                Some(want) if want == id => row.matched += 1,
-                Some(_) => row.wrong += 1,
-            }
-        }
-        row.missing = game.keys().filter(|k| !port.contains_key(*k)).count();
-        row
-    };
-    let row_on = tally(&game_on, &port_on);
-    let row_off = tally(&game_off, &port_off);
-    let row_no_ore = tally(&game_on, &port_no_ore);
+    let row_on = sweep_tally(&game_on, &port_on);
+    let row_off = sweep_tally(&game_off, &port_off);
+    let row_no_ore = sweep_tally(&game_on, &port_no_ore);
     eprintln!("resources ON,  port with ore rejection : {row_on:?}");
     eprintln!("resources ON,  port WITHOUT ore rejection: {row_no_ore:?}");
     eprintln!("resources OFF, port with ore rejection : {row_off:?}");
@@ -5086,7 +5075,6 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
     let off_case = &off.get("cases").as_array()[0];
     let region = on_case.get("region");
     let (x0, y0) = (region.get("x0").as_f64(), region.get("y0").as_f64());
-    let (x1, y1) = (region.get("x1").as_f64(), region.get("y1").as_f64());
     assert_eq!((x0, y0), (-2200.0, -1500.0));
 
     // The lever's other witness: the OFF arm dumped no entities at all.
@@ -5119,25 +5107,17 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
 
     let mut ctx = crate::eval::ctx::EvalCtx::new(seed0);
     ctx.vulcanus_volcanism_frequency = 0.5;
+    // The stack here serves the FIELD only - `occupies` reads it, and the
+    // window helper reads the rejection's box choice. The placement itself
+    // comes from `sweep_cells`, the one definition of the shipping model.
     let base = VulcanusBase::with_host_trig(&ctx);
     let biomes = base.biomes_with_host_trig();
     let stack = VulcanusStack::with_host_trig(&base, &biomes);
-    let fields = VulcanusCliffFields::new(&stack, seed0);
-    let lava = VulcanusLavaTiles::new(&stack);
     let ore = VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls);
     let footprint = VulcanusOreFootprint::new(&ctx.vulcanus_resource_controls);
-    let bands = CliffBands {
-        elevation0: VULCANUS_CLIFF_ELEVATION_0,
-        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
-        smoothing: VULCANUS_CLIFF_SMOOTHING,
-        reject_at_crossing_stage: true,
-        ..CliffBands::default()
-    };
     // The queue the ore rule acts on: everything the port places WITHOUT the
     // ore rejection, with its code, so each cell's window can be asked for.
-    let queued = CliffPlacement::new(&fields, bands)
-        .with_tile_collision(&lava)
-        .placed_cells(x0, y0, x1, y1);
+    let queued = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx, false).queued;
     let code_of: BTreeMap<(u64, u64), u8> = queued.iter().map(|c| (cell_key(c), c.code)).collect();
 
     // Every tile the rule reads, plus every tile the game put an ore on.
@@ -5178,7 +5158,11 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
     );
 
     // The 28: surplus at ON that the game's ore rule removed.
-    let (game_on, port_on) = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx, true);
+    let SweepCells {
+        game: game_on,
+        port: port_on,
+        ..
+    } = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx, true);
     let mut ctx_off = ctx.clone();
     for levers in [
         &mut ctx_off.vulcanus_resource_controls.tungsten_ore,
@@ -5188,7 +5172,7 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
     ] {
         levers.size = 0.0;
     }
-    let (game_off, _) = sweep_cells(region, off_case.get("cliffs").as_array(), &ctx_off, true);
+    let game_off = sweep_cells(region, off_case.get("cliffs").as_array(), &ctx_off, true).game;
     let game_removed: BTreeSet<(u64, u64)> = game_off
         .keys()
         .filter(|k| !game_on.contains_key(*k))
