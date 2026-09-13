@@ -5171,10 +5171,14 @@ Cost, and what the gate keeps (2026-09-13): the seven-arm table above took
 100 s clean and 369 s under `poison` on this machine, and took the Rust gate
 from about 2 minutes to 8m35s. Keeping the four graded arms (shipped and
 engine, on both paths) over all four regions was 56 s clean but still 265.6 s
-under `poison`, and its CI `rust` job took 10m31s against the 1m45s to 2m50s
-range `CLAUDE.md` records. So the test in the gate grades the two regions that
+under `poison`, and its CI `rust` job took 10m31s. `CLAUDE.md` put that job
+at 1m45s to 2m50s, and the first draft of this paragraph read the whole gap as
+this test's cost. It is not: `main`'s own four runs of 2026-09-11 to 09-13
+took 6m33s, 8m13s, 8m28s and 8m25s, so the four-region test added about two
+minutes on CI, not eight. So the test in the gate grades the two regions that
 carry the errors, `[1500,1500]` and the frequency-0.5 region: 40 s clean and
-89.3 s under `poison`, alone. Dropping `[0,0]` and `[-1200,800]` moved
+89.3 s under `poison`, alone; its CI `rust` job took 9m34s, and the local gate
+3m30s against about 2 minutes on `main`. Dropping `[0,0]` and `[-1200,800]` moved
 `matched` by 670 and the crossing-stage `surplus` by 1 on each rule, and
 nothing else - those two regions held no apply-stage error under either rule.
 The frozen totals on the test are the two-region ones, 1627/26/56/3 ->

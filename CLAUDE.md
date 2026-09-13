@@ -545,7 +545,7 @@ Four jobs now run in parallel:
 | ----------------- | ------------------------------------------------------------------ |
 | `static`          | `pnpm run verify:static` - `vp check`, `check:vue`, `preview:test` |
 | `tests (1..4, 4)` | `pnpm run verify:shard -- --shard=N/4` - the app suite             |
-| `rust`            | `scripts/verify-rust.sh` - ~1m45s-2m50s, added #219                |
+| `rust`            | `scripts/verify-rust.sh` - ~6.5-8.5 min, added #219                |
 | `verify`          | the required check: asserts every job above succeeded              |
 | `build`           | `pnpm vp build`, unchanged (issue #61)                             |
 
@@ -558,8 +558,8 @@ that cannot run, so the aggregator absorbing new phases is the cheaper shape.
 Add future phases the same way.
 
 **That `rust` job's cost is a RANGE, not a number, and the detail lives with the
-port** - see the Rust/WASM section. Short version: roughly 1m45s to 2m50s, and
-it runs `bash scripts/verify-rust.sh` directly rather than through pnpm, which
+port** - see the Rust/WASM section. Short version: roughly 6.5 to 8.5 minutes
+as of 2026-09-13 (it was 1m45s to 2m50s when #219 landed), and it runs `bash scripts/verify-rust.sh` directly rather than through pnpm, which
 is the one place the YAML names a command instead of a script.
 
 Sharding measured **9m03s -> 4m36s** when it landed (2026-08-03, N=3, 171 spec
@@ -1569,11 +1569,26 @@ evidence held one input constant everywhere it looked:
 
 #### `verify:rust`'s cost is a RANGE
 
-Treat it as roughly **1m45s to 2m50s**, not a number. Three CI runs on
-equivalent code came in at 1m44s, 2m48s and 2m49s - the same spread the test
-shards show. A single run measures the runner at least as much as the job. Do
-not "correct" this to whichever number you last saw; if a change really does
-move it, show it with more than one run.
+Treat it as roughly **6.5 to 8.5 minutes**, not a number. `main`'s four runs
+from 2026-09-11 to 2026-09-13 came in at 6m33s, 8m13s, 8m28s and 8m25s. A
+single run measures the runner at least as much as the job. Do not "correct"
+this to whichever number you last saw; if a change really does move it, show
+it with more than one run.
+
+**This line said 1m45s to 2m50s for two months and cost a wrong "+8 minutes"
+verdict on 2026-09-13.** Those three runs (1m44s, 2m48s, 2m49s) were real when
+#219 landed and the crate was nearly empty; the frozen cliff tables and the
+poison phase have grown it since, and nobody re-read the job. #415's four-region
+removal test measured 10m31s and was read as an 8-minute regression against
+this line, when `main` the same day was 8m25s - the cost was about two minutes.
+Before judging a PR's CI cost, read the last few `rust` jobs on `main`:
+
+```bash
+gh run list --branch main --workflow verify.yml --json databaseId --limit 4 \
+  --jq '.[].databaseId'
+gh api repos/FactoryGameFan/FactorioMapWebUI/actions/runs/<id>/jobs \
+  --jq '.jobs[] | select(.name=="rust") | "\(.started_at) \(.completed_at)"'
+```
 
 It runs `bash scripts/verify-rust.sh` directly, the one place the CI YAML names
 a command instead of a package.json script. That does not reopen the drift rule,

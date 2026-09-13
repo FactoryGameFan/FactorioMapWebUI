@@ -9639,8 +9639,8 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     // rule, and nothing else: they held no apply-stage error at all under
     // either rule. They left the gate for cost - the four-region test was 56 s
     // clean and 265.6 s under `poison` on this machine, and its CI `rust` job
-    // took 10m31s against a 1m45s to 2m50s range - and the finding lost no
-    // error by it.
+    // took 10m31s where `main`'s four runs that week took 6m33s to 8m28s -
+    // and the finding lost no error by it. The two-region job took 9m34s.
     //
     // Three controls were run through the apply stage on 2026-09-12 and each
     // loses in the direction its omission predicts (the four regions of that
