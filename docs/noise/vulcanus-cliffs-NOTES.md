@@ -5167,5 +5167,8 @@ tile-centre overlap to the per-orientation box under `box_collide` against
 each ore tile's own square (and the geyser's 3x3, if the roll is wired in),
 and the crate's tests re-score every frozen table that reads the ore rule.
 
-Cost: one 100-second test on this machine, four regions by seven arms through
-the apply and crossing stages.
+Cost: the seven-arm table above took 100 s clean and 369 s under `poison` on
+this machine, which would have taken the Rust gate from about 2 minutes to
+8m35s. The gate keeps the four graded arms (shipped and engine, on both paths)
+at 56 s clean; the three control arms stay in the code behind `dead_code`
+allows with their rows recorded on the test, one line to re-run.

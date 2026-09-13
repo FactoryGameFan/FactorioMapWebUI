@@ -9106,7 +9106,11 @@ fn the_ore_destroys_a_queued_cliff_rather_than_never_queueing_it() {
 
 /// Which box a game resource entity removes cliffs with, for
 /// [`GameEntityRemoval`]. Only [`Self::Engine`] is a reading of the binary;
-/// the rest are controls that each drop one part of it.
+/// the rest are controls that each drop one part of it. The controls are not
+/// in the gate - each costs a full apply pass per region, and under `poison`
+/// the seven-arm table took 369 s against the gate's 112 s - so they carry
+/// `dead_code` allows and their 2026-09-12 rows are recorded on the test.
+/// Add one to `GEOMETRIES` there to re-run it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum RemovalGeometry {
     /// `ResourceEntity::postSetup` (ResourceEntity.cpp:131-137, 2.0.77): the
@@ -9119,11 +9123,14 @@ enum RemovalGeometry {
     Engine,
     /// The shipped rule's shape: the cliff's BASE `collision_box` instead of
     /// its per-orientation box, against the same tile-widened search box.
+    #[allow(dead_code)]
     BaseBox,
     /// The oriented box against the entity's RAW AABB, no tile widening.
+    #[allow(dead_code)]
     RawAabb,
     /// The cliff box's own AABB against the search box - an axis-aligned
     /// overlap where the engine runs the separating-axis test.
+    #[allow(dead_code)]
     AabbOnly,
 }
 
@@ -9573,22 +9580,14 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
         ("[-1200,800]", &r_cases[2], &default_ctx),
         ("[-2200,-1500] f0.5", o_case, &half_ctx),
     ];
-    const GEOMETRIES: [RemovalGeometry; 4] = [
-        RemovalGeometry::Engine,
-        RemovalGeometry::BaseBox,
-        RemovalGeometry::RawAabb,
-        RemovalGeometry::AabbOnly,
-    ];
-    const LABELS: [&str; 7] = [
+    const GEOMETRIES: [RemovalGeometry; 1] = [RemovalGeometry::Engine];
+    const LABELS: [&str; 4] = [
         "apply: shipped (port ore, base box)",
         "apply: game entities, ENGINE",
-        "apply: game entities, base box",
-        "apply: game entities, raw AABB",
-        "apply: game entities, AABB only",
         "crossing: shipped (port ore, base box)",
         "crossing: game entities, ENGINE",
     ];
-    let mut totals = [OrientationScore::default(); 7];
+    let mut totals = [OrientationScore::default(); 4];
     let mut per_region: Vec<(&str, Vec<OrientationScore>)> = Vec::new();
     let mut false_removals: Vec<FalseRemoval> = Vec::new();
     for (label, case, ctx) in cases {
@@ -9628,13 +9627,17 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     // TILE-WIDENED AABB, and holding the entities at the game's own placements
     // it is better than the shipped rule on every count but one, on both paths:
     // through the apply stage 85 errors become 44 (surplus 56 -> 22), at the
-    // crossing stage 96 become 54 (surplus 60 -> 26). Each control loses in
-    // the direction its omission predicts. The shipped rule's BASE box keeps
-    // 50 of the 56 surplus, because it cannot reach past a tile; the RAW AABB
-    // keeps 34, the tile widening being a real part of the rule; and the
-    // cliff's own AABB in place of the separating-axis test over-removes, 13
-    // missing against 5, because a corner box's square reaches tiles its
-    // 45-degree rectangle does not.
+    // crossing stage 96 become 54 (surplus 60 -> 26).
+    //
+    // Three controls were run through the apply stage the same day and each
+    // loses in the direction its omission predicts (all four regions,
+    // matched/wrong/surplus/missing): `BaseBox` 2302/23/50/1 - the shipped
+    // rule's box cannot reach past a tile and keeps 50 of the 56 surplus;
+    // `RawAabb` 2304/20/34/2 - the tile widening is a real part of the rule;
+    // `AabbOnly` 2293/20/21/13 - the cliff's own AABB in place of the
+    // separating-axis test over-removes, because a corner box's square reaches
+    // tiles its 45-degree rectangle does not. They are out of the gate for
+    // cost (see `RemovalGeometry`) and re-runnable from it.
     //
     // The one count that moves the wrong way is `missing`, 3 -> 5 through the
     // apply stage, and every one of those is a TIMING difference, not a box:
@@ -9661,9 +9664,9 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     assert_eq!(per_region[3].0, "[-2200,-1500] f0.5");
     assert_eq!(f05[0], row(772, 20, 42, 3), "f0.5, apply: shipped");
     assert_eq!(f05[1], row(779, 12, 16, 4), "f0.5, apply: engine geometry");
-    assert_eq!(f05[5], row(769, 24, 44, 2), "f0.5, crossing: shipped");
+    assert_eq!(f05[2], row(769, 24, 44, 2), "f0.5, crossing: shipped");
     assert_eq!(
-        f05[6],
+        f05[3],
         row(776, 16, 19, 3),
         "f0.5, crossing: engine geometry"
     );
@@ -9676,11 +9679,8 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     );
     assert_eq!(totals[0], row(2297, 26, 56, 3), "apply: shipped");
     assert_eq!(totals[1], row(2304, 17, 22, 5), "apply: engine geometry");
-    assert_eq!(totals[2], row(2302, 23, 50, 1), "apply: base box control");
-    assert_eq!(totals[3], row(2304, 20, 34, 2), "apply: raw AABB control");
-    assert_eq!(totals[4], row(2293, 20, 21, 13), "apply: AABB-only control");
-    assert_eq!(totals[5], row(2290, 34, 60, 2), "crossing: shipped");
-    assert_eq!(totals[6], row(2298, 24, 26, 4), "crossing: engine geometry");
+    assert_eq!(totals[2], row(2290, 34, 60, 2), "crossing: shipped");
+    assert_eq!(totals[3], row(2298, 24, 26, 4), "crossing: engine geometry");
     // Stated as relations too, so the claims survive a re-measure that moves
     // every row.
     let errors = |r: &OrientationScore| r.wrong + r.surplus + r.missing;
@@ -9689,24 +9689,12 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
         "engine beats shipped, apply"
     );
     assert!(
-        errors(&totals[6]) < errors(&totals[5]),
+        errors(&totals[3]) < errors(&totals[2]),
         "engine beats shipped, crossing"
     );
     assert!(
         totals[1].surplus * 2 < totals[0].surplus,
         "surplus more than halves"
-    );
-    assert!(
-        totals[2].surplus > totals[1].surplus,
-        "the base box under-removes"
-    );
-    assert!(
-        totals[3].surplus > totals[1].surplus,
-        "the raw AABB under-removes"
-    );
-    assert!(
-        totals[4].missing > totals[1].missing,
-        "the AABB alone over-removes"
     );
     // The false removals, each a cell the game left trimmed to a box that
     // reaches nothing.
