@@ -5046,3 +5046,143 @@ residual at a smaller scale: the field is right and the reach is short.
 
 Cost: one 4-second re-capture. The 2026-09-07 fixture was 294 KB and is 437 KB
 with the entities.
+
+## The ore -> cliff removal GEOMETRY, read off `ResourceEntity::postSetup` (2026-09-12, #84)
+
+The section above left the removal geometry open: the geyser wiped cliffs 2 to
+5 tiles from its centre, wider than any box in the data, and the calcite took
+cells 2 to 3 tiles out, past the two-tile window the base box derives. Both
+have one answer, and it was sitting in the unstripped 2.0.77 binary beside the
+`wouldCollide` path #406 read. Test
+`the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriented_box`
+in `fixtures.rs`.
+
+### What the binary does
+
+`ResourceEntity::postSetup(SetupData const&)` (ResourceEntity.cpp:103-137,
+build 84539; `nm -n | c++filt` for the addresses) runs when a resource entity
+is added to the surface, which the map generator does in `applyEntities`,
+after `applyCliffs`. Read off the disassembly, with the `bl` targets named:
+
+1. It reads two booleans off the creation parameters' tag dict, both defaulting
+   to true: `"enable_tree_removal"` and `"enable_cliff_removal"`.
+2. It takes the entity's own positioned collision box (`Entity + 0x5c`) through
+   `BoundingBox::getAABB`, unioned with a second box when the prototype has one
+   (`map_generator_bounding_box`; no Vulcanus resource does).
+3. It widens that AABB outward to whole tiles: `and w, w, #0xffffff00` on the
+   left and top edges, that plus `#0x100` on the right and bottom. In 1/256
+   units that is `floor` to the tile on the low side and one whole tile past
+   the floor on the high side, with the identity orientation word.
+4. It constructs `EntitySearch<Cliff>(surface, box)`. That constructor walks a
+   `HeuristicEntityIterator` over the box, casts each entity to a cliff, and
+   keeps it when `BoundingBox::collide(cliff.box, searchBox)` returns true -
+   the same separating-axis test #407 transcribed for the tile half of
+   `wouldCollide`, called with the cliff's positioned ORIENTED box as the first
+   argument. A point box is compared by position instead.
+5. For each cliff found it reads `cliff_removal_probability` off the
+   prototype: at `>= 1.0` it calls `Entity::forceDestroy` outright, else it
+   rolls the surface's generator against it. Every shipped resource is at the
+   1.0 default, so the roll never runs here.
+
+The tree half of the same function is what the `tree_removal_*` fields drive
+and is irrelevant on Vulcanus.
+
+So the reach that looked wider than any box is the CLIFF's box. A calcite's
+search box is exactly its own tile; a geyser's is the 3x3 it stands on. What
+reaches 2 to 5 tiles is the cliff's per-orientation `collision_bounding_box`,
+whose long side is 4.5 tiles, tested with the rotbb tag kept.
+
+### Graded on the game's own entities
+
+Holding the entities at what the game placed grades the geometry alone: the
+port's ore field and its geyser roll are out of the comparison. Four regions,
+the three default ones and the frequency-0.5 region of the section above, each
+scored on the game's cliffs through the apply stage as the #407 table is, and
+at the crossing stage as the shipping renderer's own path runs:
+
+| arm, all four regions                       | matched | wrong | surplus | missing |
+| ------------------------------------------- | ------: | ----: | ------: | ------: |
+| apply: shipped (port ore field, base box)   |    2297 |    26 |      56 |       3 |
+| apply: game entities, ENGINE geometry       |    2304 |    17 |      22 |       5 |
+| apply: game entities, base box              |    2302 |    23 |      50 |       1 |
+| apply: game entities, raw AABB, no widening |    2304 |    20 |      34 |       2 |
+| apply: game entities, cliff AABB, no SAT    |    2293 |    20 |      21 |      13 |
+| crossing: shipped                           |    2290 |    34 |      60 |       2 |
+| crossing: game entities, ENGINE geometry    |    2298 |    24 |      26 |       4 |
+
+The engine geometry more than halves the surplus on both paths, and each
+control loses in the direction its omission predicts. The base box the shipped
+rule uses keeps 50 of the 56 surplus, because a tile-sized box cannot reach
+past a tile. Dropping the tile widening keeps 34, so the widening is a real
+part of the rule. Replacing the separating-axis test with the cliff box's own
+AABB over-removes, 13 missing against 5, because a corner box's square reaches
+tiles its 45-degree rectangle does not - the same lesson as #407, on the other
+side of the comparison.
+
+On the frequency-0.5 region alone, where the residual lived: apply
+772/20/42/3 becomes 779/12/16/4, crossing 769/24/44/2 becomes 776/16/19/3.
+
+### The two new `missing` are TIMING, not the box
+
+`missing` is the one count that moves the wrong way, 3 to 5 through the apply
+stage. All four cells the engine geometry removes and the game kept are cells
+whose RAW queued orientation's box reaches a calcite 1 to 3 tiles out - and
+the game left every one of them standing as a trimmed `*-to-none`:
+
+| cell               | queued          | calcite at   | game's final    |
+| ------------------ | --------------- | ------------ | --------------- |
+| `(1670, 1662.5)`   | `south-to-west` | 3 tiles      | `none-to-west`  |
+| `(-2014, -1309.5)` | `west-to-east`  | 2.5 tiles    | `west-to-none`  |
+| `(-2042, -1289.5)` | `south-to-east` | 1 tile       | `south-to-none` |
+| `(-2066, -1309.5)` | `west-to-east`  | 2.5 tiles    | `west-to-none`  |
+
+The box of each final orientation reaches nothing. `postSetup` runs after
+`applyCliffs` and its cascades, and `EntitySearch` reads the cliff's box AS IT
+THEN STANDS, so the removal sees the LIVE orientation where `wouldCollide`
+sees the queued one (#407). The port's apply hook is handed the queued one,
+correctly for the tile half and wrongly for this one. A port of the rule
+needs the ore removal as its own phase after the collision destroys, reading
+the live orientation. At the crossing stage, where the shipping renderer
+rejects, the code is the queued code and this distinction has no home yet.
+
+### What it does not reach
+
+Under the engine geometry the frequency-0.5 region keeps 16 surplus and 12
+wrong, and `[1500,1500]` 6 and 5. None is near a resource in the way a box
+could explain: the two geyser runs at `x = -2078` and around `(-2170, -1320)`
+stand 5 to 29 tiles from the nearest geyser, three cells at
+`(-2026..-2034, -1493.5)` and three at `(-2102..-2106, -1245.5)` are 40 to 50
+tiles from anything, and `[1500,1500]`'s `1506` and `1742/1746` runs are the
+rock and demolisher kills #406 named. The runs are the destroy cascade
+carrying further along a run than the port's model of it, after the first
+cell dies to a geyser. That is the next question, and it is a different
+mechanism from the one this section closes.
+
+### What changes in the port, and what does not
+
+Nothing in this change. The finding lands as test code only; `engine.wasm` is
+byte-identical. The fix is a graded change with its own issue, per the rule in
+`CLAUDE.md`: `VulcanusOreRejection` moves from the base box against a strict
+tile-centre overlap to the per-orientation box under `box_collide` against
+each ore tile's own square (and the geyser's 3x3, if the roll is wired in),
+and the crate's tests re-score every frozen table that reads the ore rule.
+
+Cost, and what the gate keeps (2026-09-13): the seven-arm table above took
+100 s clean and 369 s under `poison` on this machine, and took the Rust gate
+from about 2 minutes to 8m35s. Keeping the four graded arms (shipped and
+engine, on both paths) over all four regions was 56 s clean but still 265.6 s
+under `poison`, and its CI `rust` job took 10m31s. `CLAUDE.md` put that job
+at 1m45s to 2m50s, and the first draft of this paragraph read the whole gap as
+this test's cost. It is not: `main`'s own four runs of 2026-09-11 to 09-13
+took 6m33s, 8m13s, 8m28s and 8m25s, so the four-region test added about two
+minutes on CI, not eight. So the test in the gate grades the two regions that
+carry the errors, `[1500,1500]` and the frequency-0.5 region: 40 s clean and
+89.3 s under `poison`, alone; its CI `rust` job took 9m34s, and the local gate
+3m30s against about 2 minutes on `main`. Dropping `[0,0]` and `[-1200,800]` moved
+`matched` by 670 and the crossing-stage `surplus` by 1 on each rule, and
+nothing else - those two regions held no apply-stage error under either rule.
+The frozen totals on the test are the two-region ones, 1627/26/56/3 ->
+1634/17/22/5 through the apply stage and 1620/34/59/2 -> 1628/24/25/4 at the
+crossing stage; every per-region row and all four false removals above are
+unchanged. The three control arms stay in the code behind `dead_code` allows
+with their four-region rows recorded on the test, one line to re-run.
