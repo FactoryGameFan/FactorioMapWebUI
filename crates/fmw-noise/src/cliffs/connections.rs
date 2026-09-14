@@ -270,11 +270,41 @@ pub trait ApplyCollision {
     fn collides(&self, orientation: u8, x: f64, y: f64) -> bool;
 }
 
+/// `ResourceEntity::postSetup`'s cliff removal, from the cliff's side: does a
+/// resource entity's tile-widened box reach the ORIENTED box of a cliff of
+/// `orientation` at `(x, y)`? Return `true` to `forceDestroy` it.
+///
+/// This runs in `applyEntities`, AFTER `applyCliffs` and its cascades, and the
+/// engine's `EntitySearch<Cliff>` reads each cliff's box as it THEN stands. So
+/// the pass hands this the LIVE orientation, where [`ApplyCollision`] gets the
+/// queued one (#407).
+///
+/// **A control, not the graded model.** It was written for the four cells in
+/// `docs/noise/vulcanus-cliffs-NOTES.md` (2026-09-12, #84) - each queued with
+/// a box that reaches a calcite, trimmed by a cascade to an end whose box
+/// reaches nothing, and left standing by the game - and measured on the
+/// game's own entities (#414, 2026-09-13) it keeps none of them and scores
+/// worse than folding the removal into [`ApplyCollision`] with the queued
+/// orientation: 1633/18/27/5 against 1634/17/22/5. The four are trimmed later
+/// than this phase runs, by `updateConnections` or a later chunk's cascade,
+/// and five cells the game removed lose their reach to a same-chunk cascade
+/// before it. Which happens first in the game is its chunk generation order,
+/// which this model cannot know. The fixtures grade the queued reading and
+/// keep this one re-runnable.
+pub trait CliffRemoval {
+    fn removes(&self, orientation: u8, x: f64, y: f64) -> bool;
+}
+
 /// Levers on the connection pass. [`Default`] is the game.
 #[derive(Default)]
 pub struct CliffConnectionOptions<'a> {
     /// See [`ApplyCollision`].
     pub collides: Option<&'a dyn ApplyCollision>,
+    /// See [`CliffRemoval`] - a measured control, off in the graded arms.
+    /// Runs per chunk after that chunk's collision destroys, in cell order,
+    /// destroying each hit as it is found, the way the engine destroys one
+    /// resource's hits before the next resource searches.
+    pub removes: Option<&'a dyn CliffRemoval>,
     /// Run `updateConnections` on every cell rather than only on the chunk's
     /// outer ring. **Not the game's rule** - `applyCliffs` gates it on the fifth
     /// argument of `tryToAddCliff` - and here only so a spec can measure what
@@ -336,31 +366,44 @@ pub fn apply_cliff_connections(
     // 2088 cells, including cells an earlier chunk's cascade had already
     // trimmed by then (#407). Reading `live` here tested those with a smaller
     // box, which kept `(1626, 1602.5)` and `(1630, 1602.5)` the game kills.
+    //
+    // Then, still per chunk, `applyEntities`: the resource removal, which is
+    // the other order - it reads the orientation each cliff has AFTER this
+    // chunk's destroys and their cascades, and destroys as it goes. Measured
+    // worse than the queued reading; see `CliffRemoval`.
     let queued: Live = live.clone();
-    if let Some(collides) = opts.collides {
-        let mut chunk: Option<(i64, i64)> = None;
-        let mut doomed: Vec<(i64, i64)> = Vec::new();
-        for &k in &order {
-            let id = (k.0.div_euclid(n), k.1.div_euclid(n));
-            if chunk != Some(id) {
-                for d in doomed.drain(..) {
+    if opts.collides.is_some() || opts.removes.is_some() {
+        let chunks = order.chunk_by(|a, b| {
+            (a.0.div_euclid(n), a.1.div_euclid(n)) == (b.0.div_euclid(n), b.1.div_euclid(n))
+        });
+        for cells in chunks {
+            if let Some(collides) = opts.collides {
+                let doomed: Vec<(i64, i64)> = cells
+                    .iter()
+                    .copied()
+                    .filter(|k| live.contains_key(k))
+                    .filter(|k| {
+                        queued.get(k).is_some_and(|&orientation| {
+                            let (x, y) = cell_centre(k.0, k.1);
+                            collides.collides(orientation, x, y)
+                        })
+                    })
+                    .collect();
+                for d in doomed {
                     force_destroy(&mut live, d, opts.no_cascade);
                 }
-                chunk = Some(id);
             }
-            if !live.contains_key(&k) {
-                continue;
+            if let Some(removes) = opts.removes {
+                for &k in cells {
+                    let Some(&orientation) = live.get(&k) else {
+                        continue;
+                    };
+                    let (x, y) = cell_centre(k.0, k.1);
+                    if removes.removes(orientation, x, y) {
+                        force_destroy(&mut live, k, opts.no_cascade);
+                    }
+                }
             }
-            let Some(&orientation) = queued.get(&k) else {
-                continue;
-            };
-            let (x, y) = cell_centre(k.0, k.1);
-            if collides.collides(orientation, x, y) {
-                doomed.push(k);
-            }
-        }
-        for d in doomed {
-            force_destroy(&mut live, d, opts.no_cascade);
         }
     }
 

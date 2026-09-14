@@ -125,8 +125,13 @@ const DIFFERING_PX = 12423;
  * bound wide enough to be safe is wide enough to swallow a change worth several
  * cells. Both renderers produce these, because the comparison above is
  * byte-identity.
+ *
+ * `tall, coarse` was 1379 before #414. The one pixel is tile (-2008, 1008), a
+ * cliff over a tungsten patch that the engine's removal geometry takes out.
+ * That window's terrain, resource and rock renders did not move, and the
+ * composite count below held, because the ore now shows where the cliff was.
  */
-const CLIFF_PIXELS_PER_WINDOW = [640, 572, 1379, 48];
+const CLIFF_PIXELS_PER_WINDOW = [640, 572, 1378, 48];
 
 /**
  * Rock pixels the overlay paints over terrain, per window, in `WINDOWS` order.
@@ -620,10 +625,15 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
    * land, which is a few hundred out of 16,384 here - invisible to a
    * whole-image bound, and exactly what this counts.
    *
-   * The numbers are frozen: 201 ore pixels are covered in this window, 2 by a
-   * rock and 199 by a cliff (208 and 206 before #407, when the raw rectangle
-   * was the cliff collision test). Painting rocks or cliffs FIRST would take
-   * all three to zero.
+   * The numbers are frozen: 194 ore pixels are covered in this window, 2 by a
+   * rock and 192 by a cliff. They were 208 and 206 before #407, when the raw
+   * rectangle was the cliff collision test, and 201 and 199 before #414, when
+   * the ore removal was the cliff's base box against the ore field at the
+   * overlay's threshold. #414 moved 17 pixels, all in the cliff pass - the
+   * terrain, resource and rock renders did not move. 7 cliffs over calcite are
+   * gone, which is the 7 here; 5 cliff pixels off the ore are gone too; and 5
+   * pixels of one run, at tiles (800..816, 328..336), gained a cliff. Painting
+   * rocks or cliffs FIRST would take all three to zero.
    */
   it("paints resources first and the obstruction overlays over the top", async () => {
     const e = await engine();
@@ -660,7 +670,7 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
       if (isColor(all, i, ROCK_MAP_COLOR)) byRock++;
       if (isColor(all, i, CLIFF_MAP_COLOR)) byCliff++;
     }
-    expect({ covered, byRock, byCliff }).toEqual({ covered: 201, byRock: 2, byCliff: 199 });
+    expect({ covered, byRock, byCliff }).toEqual({ covered: 194, byRock: 2, byCliff: 192 });
   }, 300000);
 });
 
