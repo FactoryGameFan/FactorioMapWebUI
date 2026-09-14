@@ -1,7 +1,9 @@
 import { defineConfig } from "vitest/config";
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 
-// vitest-pool-workers 0.18+ (vitest v4) exposes a Vite plugin `cloudflareTest`
+// `@cloudflare/vitest-plugin` is `@cloudflare/vitest-pool-workers` renamed at
+// its 1.0 release (workers-sdk #15074), with the API unchanged. Since the
+// pool-workers 0.18 line (vitest v4) it exposes a Vite plugin `cloudflareTest`
 // instead of the old `defineWorkersConfig` from the `/config` subpath.
 //
 // Bindings are declared inline here rather than via `wrangler: { configPath }`
