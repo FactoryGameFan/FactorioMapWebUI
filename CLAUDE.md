@@ -684,7 +684,8 @@ should keep:
   stamp is a synthetic SHA; harmless only because CI never deploys its artifact.
 
 `preview:test` needs **no Docker** on a runner, which was confirmed rather than
-assumed: the worker tests are pool-workers (`workerd` arrives from npm) and the
+assumed: the worker tests run under `@cloudflare/vitest-plugin` (`workerd`
+arrives from npm) and the
 container tests are `node --test` against `render.mjs`.
 
 **Renovate, not Dependabot** - `.github/renovate.json5`. The reason is that this
@@ -692,8 +693,8 @@ project's dependency decisions are _holds_ with reasoning behind them, and
 Dependabot's `ignore` entries cannot express them; Renovate's `packageRules` +
 `prBodyNotes` can, so the reasoning arrives attached to the proposal. `typescript`
 is disabled outright, `pako` carries a 14-day age and a pointer at the
-byte-exactness invariant, `wrangler` + `@cloudflare/vitest-pool-workers` are
-grouped because pool-workers hard-pins wrangler, and the `brace-expansion`
+byte-exactness invariant, `wrangler` + `@cloudflare/vitest-plugin` are
+grouped because the plugin hard-pins wrangler, and the `brace-expansion`
 override and `engines.node` floor are both marked as deliberate rather than stale.
 
 **The worker's `vitest` is coupled to `vite-plus`, and Renovate does NOT know
@@ -705,13 +706,24 @@ its own version (0.2.9 carries 4.1.10, 0.3.0 carries 4.1.11), so the worker's
 see this - `pnpm run verify` passed with the split - so check `pnpm peers check`
 after any bump that touches either.
 
-**`pnpm outdated`'s "latest" is a trap for `wrangler`.** pool-workers pins it
-EXACTLY (`0.21.3` -> `wrangler = 4.123.0`, `0.22.0` -> `4.124.0`), so taking the
-newest wrangler splits the tree into two copies - which matters because
-`wrangler types --check` runs the direct copy while the tests run pool-workers'.
-Move wrangler to whatever version the pool-workers being installed names, not to
-`latest`, and confirm with `grep -oE "^  wrangler@[0-9.]+:" pnpm-lock.yaml`
-returning ONE line.
+**`pnpm outdated`'s "latest" is a trap for `wrangler`.** `@cloudflare/vitest-plugin`
+pins it EXACTLY (`1.1.7` -> `wrangler = 4.131.0`, `1.1.8` -> `4.131.1`), so taking
+the newest wrangler splits the tree into two copies - which matters because
+`wrangler types --check` runs the direct copy while the tests run the plugin's.
+Move wrangler to whatever version the plugin being installed names, not to
+`latest`, and confirm with
+`grep -oE "^  wrangler@[0-9][0-9.]*" pnpm-lock.yaml | sort -u` returning ONE
+line. The `sort -u` is load-bearing: a single wrangler appears under both
+`packages:` and `snapshots:`, so without it one copy can print as two identical
+lines (it did on `main` at 4.124.0) and two copies can print as three.
+
+**The plugin was `@cloudflare/vitest-pool-workers` until its 1.0 rename**
+(workers-sdk #15074; the API is unchanged, see Cloudflare's
+[migration guide](https://developers.cloudflare.com/workers/testing/vitest-integration/migration-guides/migrate-to-vitest-plugin/)).
+The old name stopped releasing at `0.22.0`, pinned to wrangler 4.124.0, so a
+Renovate group still naming it could move only wrangler - which is exactly how
+#399 arrived with two toolchains side by side, and with `sharp@0.35.2` (a high
+advisory) still installed through the old copy.
 
 **`enabled: false` disables SECURITY updates too, and `brace-expansion` proved
 it.** That rule exists to stop Renovate proposing the 5.x spike, but it also
@@ -1863,8 +1875,8 @@ via an unconditional `logger.warnOnce`, so it is not reachable from
 `build.rollupOptions.onLog` - that hook only sees the _build_, and this happens in
 vite-node during tests. Two workarounds were tried and rejected:
 
-- `test.server.deps.external` for the package - **does not help**, pool-workers
-  bundles it regardless (measured; the warnings persist).
+- `test.server.deps.external` for the package - **does not help**, the Vitest plugin
+  bundles it regardless (measured under its old pool-workers name; the warnings persist).
 - A Vite `customLogger` - would mean adding `vite` as a worker devDependency
   (it is not resolvable there under pnpm isolation, and `vitest/config` does not
   re-export `createLogger`) purely to mute a cosmetic upstream warning. Not worth

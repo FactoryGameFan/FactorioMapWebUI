@@ -178,9 +178,17 @@
       ],
     },
     {
-      // @cloudflare/vitest-pool-workers hard-pins an exact wrangler. Split PRs
-      // cannot resolve, so these two only ever move together.
-      matchPackageNames: ["wrangler", "@cloudflare/vitest-pool-workers"],
+      // @cloudflare/vitest-plugin hard-pins an exact wrangler. Split PRs install
+      // a second wrangler/workerd/miniflare tree instead of failing, so these two
+      // only ever move together.
+      //
+      // The package was @cloudflare/vitest-pool-workers until its 1.0 rename
+      // (workers-sdk #15074). The old name is deliberately NOT kept here: no
+      // manifest references it, so it could only ever match nothing. It was
+      // also why #399 happened - pool-workers stopped releasing at 0.22.0
+      // (wrangler 4.124.0), so this group could only move wrangler, and that
+      // PR arrived with two toolchains side by side.
+      matchPackageNames: ["wrangler", "@cloudflare/vitest-plugin"],
       groupName: "cloudflare worker toolchain",
       prBodyNotes: [
         "**Regenerate the worker types on this branch BEFORE merging** - this PR cannot go green without it. A wrangler bump moves `workerd`, and `wrangler types --check` compares that version as well as the config hash, so `types:check` fails inside `preview:test` inside the required `verify` check. Run `pnpm run types:sync` and commit the result. That script is `wrangler types && vp check --fix` together, and the formatter half is not optional - a raw `wrangler types` buries the real one-line change in a whole-file whitespace diff (25,411 lines vs 1, measured on #169).",

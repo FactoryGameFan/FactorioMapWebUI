@@ -51,7 +51,7 @@ export default defineConfig({
     environment: "happy-dom",
     setupFiles: ["./test/setup.ts"],
     // App tests live in `test/`. Exclude `preview-service/**`, which has its own
-    // Worker (pool-workers) and container (node:test) runners.
+    // Worker (@cloudflare/vitest-plugin) and container (node:test) runners.
     include: ["test/**/*.spec.ts"],
     // Vitest's 5s default is too tight for THIS suite, and that is not a new
     // observation - 24 individual tests across 10 files already carry an
