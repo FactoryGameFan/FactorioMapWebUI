@@ -5186,3 +5186,150 @@ The frozen totals on the test are the two-region ones, 1627/26/56/3 ->
 crossing stage; every per-region row and all four false removals above are
 unchanged. The three control arms stay in the code behind `dead_code` allows
 with their four-region rows recorded on the test, one line to re-run.
+
+## The engine geometry in the port, and what the port's own field does to it (2026-09-13, #414)
+
+#415 read the removal geometry off the binary and graded it on the game's own
+entities. #414 puts it in the port: `VulcanusOreRejection` now tests the
+cell's per-orientation box, with its `rotbb` word, against each ore tile's
+own square under `box_collide` - `ResourceEntity::postSetup` from the cliff's
+side. The shape is right. What the measurements below settle is everything
+around it: which orientation the removal should read, whether the port's own
+geyser roll helps, and why the port's ore field cannot match the game's
+entities at the boundary. Every number here is frozen in the crate's tests.
+
+### The live-orientation phase is refuted
+
+#415's four `missing` cells were read as timing: the game reads the cliff's
+LIVE orientation after `applyCliffs`, the port's hook has the queued one, and
+a removal phase after the collision destroys would keep them. The issue said
+so. `apply_cliff_connections` now has that phase (`CliffRemoval`, per chunk,
+after the chunk's destroys, reading each cliff as it then stands), and on the
+game's entities it scores worse: 1633/18/27/5 through the apply stage against
+1634/17/22/5 for the queued reading. It keeps none of the four - each of them
+is trimmed later than the collision destroys, by `updateConnections` or by a
+later chunk's cascade - and it spares five cells the game removed, whose
+queued box reached a resource and whose live box did not:
+`(-2002, -1317.5)` at 2.5 tiles from a calcite, `(-2078, -1457.5)` at 3 from
+a geyser, `(-2150, -1305.5)` at 2 from a geyser, plus two cascade
+side-effects. The game's answer for each depends on which chunk generated
+first, which the port cannot know. The queued reading stays; the phase stays
+in the harness as a control (`at_collision` on `GameEntityRemoval`).
+
+### The port's field is one ring fatter than the game's entities
+
+The game's ore probability is `1000 * ((1 + region) * rp - 1)` with
+`rp = random_penalty_between(0.9, 1, 1)` - a batch op that rolls per tile,
+which the port takes as 1. So the port's footprint at the overlay's threshold
+(`1000 * region >= 0.5`) is where an entity CAN stand, and the game's entity
+set is a random subset of its boundary. The base box's two-tile window hardly
+reached that ring - it read 2,886 tiles and found 12 the game lacks, the
+number the crate froze before #414 - while the oriented box reaches it all the
+time. Over the 11,362 tiles the rule now reads in the frequency-0.5 region,
+against the game's 1,190 calcite tiles:
+
+| `1000 * region >=` | the `rp` it assumes | game-only | port-only |
+| -----------------: | ------------------- | --------: | --------: |
+|              `0.5` | 1, the overlay's    |         0 |        83 |
+|             `53.2` | 0.95, the midpoint  |        43 |        27 |
+|            `111.7` | 0.9, the floor      |       226 |         0 |
+
+The two ends confirm the mechanism: nothing the game placed sits below the
+overlay's threshold, and nothing it left out sits above the floor's. The 309
+tiles between are the roll, and the game placed 226 of them. Sampling the
+field at the tile centre instead of the integer coordinate was tried too and
+is worse on both counts (7 game-only, 98 port-only). No threshold reproduces a
+roll; the removal reads the field at the midpoint,
+`ORE_REMOVAL_REGION_THRESHOLD = 53.2`, derived from the roll's range rather
+than swept for a score, and the overlay keeps painting at 0.5, so painted ore
+is a superset of removing ore.
+
+### What each choice is worth on the shipping path
+
+Both regions of the removal test, the crossing stage (the renderer's own
+path), matched/wrong/surplus/missing, errors in brackets:
+
+| arm                                              |               row |
+| ------------------------------------------------ | ----------------: |
+| base box, port field at 0.5 (what shipped)       | 1620/34/59/2 (95) |
+| engine geometry, port field at 0.5               | 1608/35/49/13 (97) |
+| engine geometry, port field at 53.2 (ships now)  | 1618/33/51/5 (89) |
+| engine geometry, port field at 0.5 + geyser roll | 1591/35/38/30 (103) |
+| engine geometry, the game's entities (#415)      | 1628/24/25/4 (53) |
+
+The geometry alone is the right shape and worse by count, because eleven more
+game cliffs die to the ring. The midpoint takes it below what shipped. The
+port's own geyser roll, wired through `with_geyser`, halves the surplus and
+more than doubles the missing - the roll's positions are not the game's - so
+the geyser stays out, as the module always said. The gap to the game's
+entities, 89 against 53, is the ring and the geyser, and neither is a box.
+
+The same three arms over the other frozen sweeps, errors only: the volcanism
+sliders' default arm 26 -> 27 -> 23; the sixteen out-of-sample regions 223 ->
+231 -> 221 (the frequency-0.5 half 124 -> 134 -> 126, the default half 99 ->
+97 -> 95); through the apply stage 85 -> 89 -> 81.
+
+### Cost
+
+The oriented box asks the ore field about up to thirty tiles per cell where
+the base box asked about two, and the field is the expensive half. A first
+reading called that free. It timed each test once, on the threshold-0.5 build,
+and it was wrong. Re-measured on the shipped build: `main`'s engine and this
+one loaded in one process and timed in turn over five rounds, median ms, with
+every row's spread under 2%:
+
+| view   | window                    |  `main` |   #414 | ratio |
+| ------ | ------------------------- | ------: | -----: | ----: |
+| cliffs | `square at origin`        |    40.4 |   42.0 |  1.04 |
+| cliffs | `wide, offset`            |    36.2 |   38.5 |  1.06 |
+| cliffs | `tall, coarse`            |   162.2 |  194.0 |  1.20 |
+| cliffs | `fine, far field`         |    21.8 |   22.4 |  1.03 |
+| cliffs | 256 px at 4 tiles a pixel |  1737.7 | 1991.0 |  1.15 |
+| all    | `tall, coarse`            |  1249.1 | 1283.3 |  1.03 |
+| all    | 256 px at 4 tiles a pixel |  9757.5 | 10032.8 |  1.03 |
+
+The other three `all` windows are 1.02 each. So the cliff pass is up to a
+fifth slower, most on the coarse windows, and the composite hides most of
+that under its other layers. The crate's own tests pay the same way. Over two
+rounds each on this Mac, taking turns with a `main` worktree,
+`cargo test --workspace` went from 52 to 60 s, and the poisoned run in
+`verify:rust` went from 153 to 185 s. The same 146 tests go red under poison
+on both sides.
+
+### What moved in the frozen tables
+
+Eight of the crate's fixture tests read the ore rule, and every one moved; so
+did the tier-3 cliff render. The shape of each claim held; the numbers are
+re-frozen with the reading beside them. The one cell that turns up as a new
+`missing` on every default-region table is the same cell: a true cliff in
+`[1500,1500]` whose oriented box reaches a ring tile. The out-of-sample and
+concentrated tests take two rows each below, which covers seven; the eighth,
+the ore-field test, now freezes the ring table above in place of its old
+2,886-tile count.
+
+| test                                                | before         | after          |
+| --------------------------------------------------- | -------------- | -------------- |
+| shipping placement, `[1500,1500]` ours/matched      | 876 / 861      | 871 / 860      |
+| volcanism sliders, default arm                      | 1521/10/16/0   | 1520/10/12/1   |
+| out of sample, default arm (8 regions)              | 4508/36/62/1   | 4505/37/55/3   |
+| out of sample, frequency 0.5 arm                    | 4015/46/75/3   | 4006/48/68/10  |
+| concentrated region, resources ON                   | 769/24/44/2    | 768/23/40/4    |
+| the port's rule removes, of the game's 65           | 39             | 45             |
+| apply stage, `applyCliffs` lava + ore               | 1525/6/14/0    | 1523/7/11/1    |
+| oriented tile test + ore, and with the entity kills | 1525/6/14/0, 1528/3/11/0 | 1523/7/11/1, 1526/4/8/1 |
+| removal test, shipped apply / crossing              | 1627/26/56/3, 1620/34/59/2 | 1624/27/49/5, 1618/33/51/5 |
+
+The out-of-sample contrast's z moved from -2.55 to -2.96 and keeps its sign.
+The game-entity rows of the removal test are unchanged from #415, which is
+the check that the harness change moved nothing on its own.
+
+Tier 3 moved two render rows, both in the `tall, coarse` window (`all` and
+`cliffs`), and two counts in `test/wasmVulcanusRenderParity.spec.ts`. Each
+window was rendered with `main`'s engine and with this one and diffed pixel
+by pixel. Every moved pixel is in the cliff pass; the terrain, resource and
+rock renders are identical. In `tall, coarse` one pixel moved: tile
+(-2008, 1008) went from cliff to tungsten ore, so the cliff count went
+1379 -> 1378 and the composite count held at 1440. In the paint-order window
+17 moved: 7 cliffs over calcite are gone (ore covered 201 -> 194, by a cliff
+199 -> 192), 5 cliff pixels off the ore are gone, and 5 pixels of one run, at
+tiles (800..816, 328..336), gained a cliff.

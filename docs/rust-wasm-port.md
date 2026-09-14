@@ -582,6 +582,40 @@ and did not close, so each still has to be applied and re-scored one at a time.
   (283 of 283), and every remaining disagreement is a cell the game's own test
   passed and something later destroyed.
 
+- **#414 - the ore -> cliff removal geometry is the CLIFF's oriented box
+  against the resource's tile-widened box. LANDED (2026-09-13).** Read off
+  `ResourceEntity::postSetup` in #415 and graded on the game's own entities
+  (apply stage 85 -> 44 errors), then put into `VulcanusOreRejection`. Three
+  things the port change measured that the reading could not, all in
+  `docs/noise/vulcanus-cliffs-NOTES.md` (2026-09-13):
+
+  - **The port's ore field is one ring fatter than the game's entities**, and
+    it is a roll: `random_penalty_between(0.9, 1, 1)` per tile, taken as 1 by
+    the port. At the overlay's threshold the field misses none of the game's
+    1,190 calcite tiles and adds 83; at the roll's floor it adds none and
+    misses 226. The removal reads the field at the roll's midpoint
+    (`ORE_REMOVAL_REGION_THRESHOLD`), the overlay keeps painting at the top,
+    and the two consumers of one field now differ on purpose - the catalog's
+    comment says why. On the port's own path the geometry alone was worse by
+    count (95 -> 97 errors on the two graded regions); with the midpoint it is
+    95 -> 89.
+  - **The live-orientation removal phase is refuted.** The engine runs the
+    removal after `applyCliffs`, on the cliff's live box; a harness phase that
+    does the same scores worse than reading the queued orientation
+    (1633/18/27/5 against 1634/17/22/5), because the four cells it was meant
+    to keep are trimmed later still, and it spares five the game removed. The
+    game's answer depends on chunk generation order. The phase stays as a
+    control.
+  - **The port's own geyser roll is refuted as a removal source**:
+    1591/35/38/30 at the crossing stage - half the surplus, more than twice
+    the missing - because the roll's positions are not the game's.
+
+  Eight fixture tests, two tier-3 render rows and two tier-3 counts moved,
+  and each was re-frozen with the reading beside it; the shape of every claim
+  held. It is not free: the cliff view renders 3-20% slower and the `all`
+  composite 2-3%, and the crate's tests take 15% longer clean and 21% longer
+  under poison, all timed against `main` in turn.
+
 ### No open findings, and do not "fix" the next one inside the port
 
 `variable_persistence_multioctave_noise` takes its `persistence` operand as
@@ -1123,19 +1157,29 @@ type you meant: `trees/field.rs` linked `[Self::eval_at]` from a doc on
 
 ### `verify:rust`'s cost is a RANGE
 
-Treat it as roughly **1m45s to 2m50s**, not a number. Three CI runs on code
-whose Rust half was equivalent came in at 1m44s, 2m48s and 2m49s, and that is
+Treat it as roughly **6.5 to 8.5 minutes** on CI, not a number - `main`'s four
+runs from 2026-09-11 to 2026-09-13 came in at 6m33s, 8m13s, 8m28s and 8m25s,
 the same spread the test shards show. A single run measures the runner at least
 as much as the job. Do not "correct" this to whichever number you last saw; if a
 change really does move it, show it with more than one run.
 
-The expensive half is the cliff connection fixture test - 33s in the normal arm
-and 93s under poison, because `crossing_result` turns every lattice edge into a
+**This paragraph said 1m45s to 2m50s until 2026-09-13**, which was true when
+#219 landed on a nearly empty crate and stayed written down while the frozen
+cliff tables and the poison phase grew the job fourfold. It cost a wrong "+8
+minutes" verdict on #415's test, whose real CI cost was about two minutes.
+`CLAUDE.md`'s Rust section carries the `gh` commands that read the real range
+off `main`'s recent runs; use those before judging any PR's cost.
+
+The expensive half is the cliff fixture tests, and each is expensive for the
+same reason: under `poison`, `crossing_result` turns every lattice edge into a
 crossing, so far more cells place and the `onDestroy` cascade recurses over a
-dense set. It is kept because it is the ONLY grading of `cliffs::connections`, a
-445-line module on no render path; without it that port would have unit tests
-and no measurement against anything. Anyone adding a second fixture test of that
-shape should re-measure this job first.
+dense set. The connection test measured 33s in the normal arm and 93s poisoned
+when this was first written; the removal-geometry test (#415) is 40s and 89s.
+They are kept because they are the ONLY grading of `cliffs::connections`, a
+module on no render path; without them that port would have unit tests and no
+measurement against anything. Anyone adding a fixture test of that shape should
+re-measure this job first, and trim it to the regions that carry its errors -
+#415 dropped two of four regions that held none, for a third of the cost.
 
 **It runs `bash scripts/verify-rust.sh` directly**, the one place the CI YAML
 names a command instead of a package.json script. That does not reopen the drift

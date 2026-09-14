@@ -46,6 +46,19 @@ use crate::expressions::vulcanus_stack::VulcanusStack;
 /// cliff. Two copies of the number could drift apart, and the cliff overlay
 /// would then reject against a footprint the ore overlay does not draw - a
 /// disagreement invisible in both renders.
+///
+/// **Since #414 the two consumers deliberately read the field at DIFFERENT
+/// thresholds, and the difference is a measurement.** The game's probability
+/// is `1000 * ((1 + region) * rp - 1)` with `rp = random_penalty_between(0.9,
+/// 1, 1)`, a batch-op roll the port takes as 1. So this constant is the
+/// footprint where an entity CAN stand (`rp = 1`), which is the right thing
+/// for the overlay to paint: at frequency 0.5 in `[-2200,-1500]` it covers
+/// every one of the game's 1,190 calcite tiles and 83 more. The cliff removal
+/// wants where an entity is EXPECTED to stand, and reads the field through
+/// [`VulcanusOreFootprint::with_threshold`] at the roll's midpoint instead -
+/// `cliffs/vulcanus_ore_rejection.rs` carries the three-arm table. Painted ore
+/// is a superset of removing ore, so a cliff is never removed by an ore the
+/// overlay does not draw.
 pub const RESOURCE_PROBABILITY_THRESHOLD: f64 = 0.5;
 
 /// Does the game hold a solid-ore entity on the tile whose centre is
@@ -69,6 +82,9 @@ pub struct VulcanusOreFootprint {
     tungsten: bool,
     coal: bool,
     calcite: bool,
+    /// What `1000 * region` must clear for a tile to count. [`Self::new`]
+    /// sets [`RESOURCE_PROBABILITY_THRESHOLD`]; see [`Self::with_threshold`].
+    threshold: f64,
 }
 
 impl VulcanusOreFootprint {
@@ -78,7 +94,17 @@ impl VulcanusOreFootprint {
             tungsten: controls.tungsten_ore.size > 0.0,
             coal: controls.vulcanus_coal.size > 0.0,
             calcite: controls.calcite.size > 0.0,
+            threshold: RESOURCE_PROBABILITY_THRESHOLD,
         }
+    }
+
+    /// Read the field at a different `1000 * region` threshold. The one
+    /// caller is the ore -> cliff removal, and the reason is on
+    /// [`RESOURCE_PROBABILITY_THRESHOLD`].
+    #[must_use]
+    pub fn with_threshold(mut self, threshold: f64) -> Self {
+        self.threshold = threshold;
+        self
     }
 
     /// True when no ore is enabled, so the whole rejection can be skipped.
@@ -87,17 +113,35 @@ impl VulcanusOreFootprint {
         !self.tungsten && !self.coal && !self.calcite
     }
 
-    /// Whether a solid ore stands on tile `(tx, ty)`.
+    /// Whether a solid ore stands on tile `(tx, ty)`: [`Self::score`] clears
+    /// the threshold.
     #[must_use]
     pub fn occupies(&self, stack: &VulcanusStack<'_>, tx: i64, ty: i64) -> bool {
+        self.score(stack, tx, ty) >= self.threshold
+    }
+
+    /// The largest `1000 * region` among the enabled ores at tile `(tx, ty)`,
+    /// or `-inf` with none enabled - the number [`Self::occupies`] thresholds.
+    /// Exposed so a test can read the field once and threshold it several
+    /// ways; `cliffs/vulcanus_ore_rejection.rs` has the table that needs it.
+    #[must_use]
+    pub fn score(&self, stack: &VulcanusStack<'_>, tx: i64, ty: i64) -> f64 {
         if self.is_empty() {
-            return false;
+            return f64::NEG_INFINITY;
         }
         #[allow(clippy::cast_precision_loss)]
         let r = stack.ore_regions(tx as f64, ty as f64);
-        (self.tungsten && 1000.0 * r.tungsten >= RESOURCE_PROBABILITY_THRESHOLD)
-            || (self.calcite && 1000.0 * r.calcite >= RESOURCE_PROBABILITY_THRESHOLD)
-            || (self.coal && 1000.0 * r.coal >= RESOURCE_PROBABILITY_THRESHOLD)
+        let mut best = f64::NEG_INFINITY;
+        for (enabled, region) in [
+            (self.tungsten, r.tungsten),
+            (self.calcite, r.calcite),
+            (self.coal, r.coal),
+        ] {
+            if enabled && 1000.0 * region > best {
+                best = 1000.0 * region;
+            }
+        }
+        best
     }
 }
 

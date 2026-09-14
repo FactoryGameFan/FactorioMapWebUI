@@ -1536,7 +1536,11 @@ whole point of having tier 2. All of them are landed now: the precision
 findings (#269, #270, #273, #279, #290, #293, #309), then #320 and #324, then
 #407 - the cliff collision test, found by reading `Surface::wouldCollide` out
 of the running game with lldb rather than by disassembling the wrong path
-(#406). The rule stands for the next one.
+(#406) - and then #414, the ore -> cliff removal geometry read off
+`ResourceEntity::postSetup` (#415), which also measured a limit rather than a
+defect: the port's ore field is one ring fatter than the game's entities,
+because the game rolls `random_penalty_between(0.9, 1, 1)` per tile and no
+threshold reproduces a roll. The rule stands for the next one.
 
 Two are worth carrying forward, because both were hidden the same way - the
 evidence held one input constant everywhere it looked:
