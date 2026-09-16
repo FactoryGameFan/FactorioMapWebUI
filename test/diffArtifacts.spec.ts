@@ -260,4 +260,127 @@ describe("image diff artifacts", () => {
       ),
     ).toBe(true);
   });
+
+  /**
+   * #303 finding 1: `() => void` accepts `() => Promise<void>` without
+   * complaint, so a future comparison written `async () => { expect(await
+   * x()).toBe(y); }` would compile, return a pending promise the `try/catch`
+   * never sees throw, pass green, and write no artifacts - the rejection
+   * would surface later as an unhandled rejection blamed on a different test.
+   * The cast below exists to defeat the type-level guard on purpose, standing
+   * in for the `any`-typed or dynamically constructed callback the runtime
+   * check is there to catch.
+   */
+  it("throws synchronously when the assertions callback is async, instead of passing green", () => {
+    let settled = false;
+    const asyncAssertions = (async () => {
+      await Promise.resolve();
+      settled = true;
+    }) as unknown as () => void;
+
+    expect(() =>
+      withDiffArtifacts(
+        {
+          spec: SPEC,
+          case: "async-guard",
+          game: twoPixels([1, 2, 3]),
+          ours: twoPixels([1, 2, 3]),
+        },
+        asyncAssertions,
+      ),
+    ).toThrow(/synchronous/i);
+
+    // A caller bug, not a render diff - nothing belongs on disk for it.
+    expect(existsSync(artifactPaths(SPEC, "async-guard").absoluteDir)).toBe(false);
+    // The guard fires before the callback's promise has had a chance to
+    // settle, proving it does not wait around for it.
+    expect(settled).toBe(false);
+  });
+
+  /**
+   * CodeRabbit review on #426: `isThenable` only checked `typeof value ===
+   * "object"`. A function is `typeof "function"`, not `"object"`, so a
+   * callback that bypasses `NotThenable` through a cast and returns a
+   * function carrying a callable `then` property sailed through undetected,
+   * silently defeating the guard the previous test exercises.
+   */
+  it("throws when the assertions callback returns a function-valued thenable", () => {
+    // `no-thenable` exists to catch an ACCIDENTAL thenable; this one is
+    // deliberate, standing in for a value an any-typed or cast callback could
+    // genuinely return.
+    const fakeThenable: { (): void; then?: () => void } = () => {};
+    // eslint-disable-next-line unicorn/no-thenable
+    fakeThenable.then = () => {};
+    const assertions = (() => fakeThenable) as unknown as () => void;
+
+    expect(() =>
+      withDiffArtifacts(
+        {
+          spec: SPEC,
+          case: "function-thenable-guard",
+          game: twoPixels([1, 2, 3]),
+          ours: twoPixels([1, 2, 3]),
+        },
+        assertions,
+      ),
+    ).toThrow(/synchronous/i);
+  });
+
+  /**
+   * #303 finding 2: `artifactPaths` used to join `spec`/`case` straight into a
+   * path. `join()` normalises ".." away, so a traversal segment resolved
+   * outside `test-output/` and was then deleted recursively with `force:
+   * true` - no error, no trace.
+   */
+  it("rejects a traversal segment in spec or case before building a path", () => {
+    expect(() => artifactPaths("..", "case")).toThrow(/unsafe spec/);
+    expect(() => artifactPaths(SPEC, "..")).toThrow(/unsafe case/);
+    expect(() => artifactPaths(SPEC, "../../etc")).toThrow(/unsafe case/);
+    expect(() => artifactPaths(SPEC, "nested/traversal")).toThrow(/unsafe case/);
+  });
+
+  /**
+   * CodeRabbit review on #426: "." passes SAFE_PATH_SEGMENT and isn't caught
+   * by `.includes("..")`, and `caseName` is allowed to be empty, so
+   * `artifactPaths(".", "")` used to collapse to `join(ROOT_RELATIVE, ".",
+   * "")` = ROOT_RELATIVE itself - the whole preview-diffs root, not one
+   * case's subdirectory.
+   */
+  it("rejects a bare '.' spec or case, which would otherwise collapse to the artifacts root", () => {
+    expect(() => artifactPaths(".", "")).toThrow(/unsafe spec/);
+    expect(() => artifactPaths(SPEC, ".")).toThrow(/unsafe case/);
+  });
+
+  /**
+   * `writeDiffArtifacts` calls `artifactPaths` before it calls `rmSync` (see
+   * the two calls in that order in the source), so a thrown "unsafe case"
+   * error is itself the entire proof `rmSync` was never reached -
+   * `rmSync(..., { force: true })` never throws, on a missing path or any
+   * other, so this specific message can only come from the guard running
+   * first. A direct `vi.spyOn(fs, "rmSync")` was tried and rejected: Vitest
+   * refuses it with "Module namespace is not configurable in ESM" for a Node
+   * builtin, which is a fact about the module system rather than about this
+   * guard.
+   *
+   * An earlier version of this test also asserted `existsSync` on a
+   * hand-built path, meant to show nothing landed on disk. Found vacuous by
+   * review (claude[bot] on #426): it checked
+   * `artifactPaths(SPEC, "escaped-via-writeDiffArtifacts").absoluteDir` -
+   * dropping the leading `"../"` the test actually passes as `case` - so it
+   * named a directory neither the guarded code nor the OLD unguarded code
+   * ever wrote to, and `existsSync` on it returned `false` unconditionally.
+   * Removed rather than fixed, per the file's own warning just above
+   * `artifactPaths` about hand-built paths drifting from what is actually
+   * written: the throw above is the real assertion.
+   */
+  it("never calls rmSync when a traversal case name reaches writeDiffArtifacts", () => {
+    expect(() =>
+      writeDiffArtifacts({
+        spec: SPEC,
+        case: "../escaped-via-writeDiffArtifacts",
+        game: twoPixels([1, 2, 3]),
+        ours: twoPixels([1, 2, 3]),
+      }),
+    ).toThrow(/unsafe case/);
+  });
 });
