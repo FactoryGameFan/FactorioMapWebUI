@@ -352,13 +352,26 @@ describe("image diff artifacts", () => {
   });
 
   /**
-   * `writeDiffArtifacts` calls `artifactPaths` before it calls `rmSync`, so a
-   * thrown "unsafe case" error is itself proof `rmSync` was never reached -
+   * `writeDiffArtifacts` calls `artifactPaths` before it calls `rmSync` (see
+   * the two calls in that order in the source), so a thrown "unsafe case"
+   * error is itself the entire proof `rmSync` was never reached -
    * `rmSync(..., { force: true })` never throws, on a missing path or any
-   * other, so this specific message can only come from the guard. A direct
-   * `vi.spyOn(fs, "rmSync")` was tried and rejected: Vitest refuses it with
-   * "Module namespace is not configurable in ESM" for a Node builtin, which
-   * is a fact about the module system rather than about this guard.
+   * other, so this specific message can only come from the guard running
+   * first. A direct `vi.spyOn(fs, "rmSync")` was tried and rejected: Vitest
+   * refuses it with "Module namespace is not configurable in ESM" for a Node
+   * builtin, which is a fact about the module system rather than about this
+   * guard.
+   *
+   * An earlier version of this test also asserted `existsSync` on a
+   * hand-built path, meant to show nothing landed on disk. Found vacuous by
+   * review (claude[bot] on #426): it checked
+   * `artifactPaths(SPEC, "escaped-via-writeDiffArtifacts").absoluteDir` -
+   * dropping the leading `"../"` the test actually passes as `case` - so it
+   * named a directory neither the guarded code nor the OLD unguarded code
+   * ever wrote to, and `existsSync` on it returned `false` unconditionally.
+   * Removed rather than fixed, per the file's own warning just above
+   * `artifactPaths` about hand-built paths drifting from what is actually
+   * written: the throw above is the real assertion.
    */
   it("never calls rmSync when a traversal case name reaches writeDiffArtifacts", () => {
     expect(() =>
@@ -369,12 +382,5 @@ describe("image diff artifacts", () => {
         ours: twoPixels([1, 2, 3]),
       }),
     ).toThrow(/unsafe case/);
-
-    // If rmSync HAD run against the escaped path, this directory - the one
-    // writeDiffArtifacts would otherwise have created next - would not exist,
-    // since the function throws before ever reaching mkdirSync either.
-    expect(existsSync(artifactPaths(SPEC, "escaped-via-writeDiffArtifacts").absoluteDir)).toBe(
-      false,
-    );
   });
 });
