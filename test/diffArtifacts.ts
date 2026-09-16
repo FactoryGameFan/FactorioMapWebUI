@@ -147,17 +147,50 @@ export interface DiffTarget {
 const ROOT_RELATIVE = join("test-output", "preview-diffs");
 const REPO_ROOT = join(import.meta.dirname, "..");
 
+const SAFE_PATH_SEGMENT = /^[\w.-]*$/;
+
+/**
+ * Guards `join()`'s own trap: it normalises ".." away, so a `spec` or `case`
+ * built from a traversal segment resolves OUTSIDE `test-output/` and is then
+ * deleted recursively with `force: true` by `writeDiffArtifacts` below - no
+ * error, no trace (#303). Every real caller today passes a literal like
+ * `"wasmNauvisRenderParity"` or `"nauvis-terrain"`, so the allowed character
+ * set is narrow on purpose. The `.includes("..")` check is broader than the
+ * character class alone needs - `"a..b"` cannot actually escape anything -
+ * but nothing real needs a value shaped like that either, and rejecting the
+ * whole class is cheaper to reason about than proving each shape is safe.
+ */
+function assertSafePathSegment(value: string, label: "spec" | "case", allowEmpty: boolean): void {
+  if (
+    (!allowEmpty && value.length === 0) ||
+    !SAFE_PATH_SEGMENT.test(value) ||
+    value.includes("..")
+  ) {
+    throw new Error(
+      `artifactPaths: unsafe ${label} ${JSON.stringify(value)} - only letters, digits, "_", ` +
+        `"-" and "." are allowed${allowEmpty ? " (or empty)" : ""}, and it must not contain ` +
+        `"..". This value reaches an rmSync(..., { recursive: true, force: true }) call.`,
+    );
+  }
+}
+
 /**
  * Where a given case's artifacts live. Exported so the smoke test can ask
  * rather than rebuild the path by hand: a hand-built copy keeps agreeing with
  * `ROOT_RELATIVE` right up until somebody changes it, at which point the test
  * whose entire subject is "nothing was written" starts checking a directory
  * nothing writes to and passes no matter what the writer did.
+ *
+ * `caseName` alone may be empty - the smoke test's own cleanup passes "" to
+ * name a whole spec's directory rather than one case within it. `spec` never
+ * legitimately is.
  */
 export function artifactPaths(
   spec: string,
   caseName: string,
 ): { readonly dir: string; readonly absoluteDir: string } {
+  assertSafePathSegment(spec, "spec", false);
+  assertSafePathSegment(caseName, "case", true);
   const dir = join(ROOT_RELATIVE, spec, caseName);
   return { dir, absoluteDir: join(REPO_ROOT, dir) };
 }
@@ -341,6 +374,27 @@ export function writeDiffArtifacts(target: DiffTarget): {
 }
 
 /**
+ * `() => void` accepts `() => Promise<void>` without complaint - a `void`
+ * return type absorbs any returned value, `async`ness included. This
+ * conditional type collapses to an unhelpful literal when the inferred return
+ * type is a promise, which makes an `async` callback (or any function that
+ * returns a thenable) fail to type-check at the call site instead of merely
+ * failing to be documented as wrong (#303).
+ */
+type NotThenable<T> =
+  T extends PromiseLike<unknown>
+    ? "withDiffArtifacts: assertions must be synchronous, not async - see the runtime check below"
+    : T;
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
+/**
  * Run `assertions`. On failure, write the artifacts and re-throw the same error
  * with the directory named in its message.
  *
@@ -349,10 +403,22 @@ export function writeDiffArtifacts(target: DiffTarget): {
  * the artifacts are the footnote. If the writer itself throws, the original
  * failure still propagates and the message says the writer failed, because
  * losing a real finding to a broken diagnostic would be the worst outcome here.
+ *
+ * `assertions` must run synchronously. The type parameter above rejects an
+ * `async` callback at compile time, but that is only checked for a callback
+ * whose type is known - an `any`-typed or dynamically constructed one sails
+ * through it, which is why the check below runs again at runtime (#303). A
+ * caller that slips past both would otherwise get a silently swallowed
+ * rejection: `assertions()` returns a pending promise before throwing
+ * anything, the `try/catch` here sees no synchronous throw, the test passes
+ * green, and the eventual rejection surfaces later as an unhandled rejection
+ * blamed on a different test - with no diff artifacts written either, since
+ * the one thing this wrapper exists for never runs.
  */
-export function withDiffArtifacts(target: DiffTarget, assertions: () => void): void {
+export function withDiffArtifacts<R>(target: DiffTarget, assertions: () => NotThenable<R>): void {
+  let result: unknown;
   try {
-    assertions();
+    result = assertions();
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     let note: string;
@@ -384,5 +450,22 @@ export function withDiffArtifacts(target: DiffTarget, assertions: () => void): v
       /* keep the original error intact; the note is not worth losing it over */
     }
     throw error;
+  }
+  if (isThenable(result)) {
+    // Detach from whatever the promise eventually does - the error thrown
+    // below is the loud, immediate failure the caller needs, and letting the
+    // original settle unobserved would only add a stray "unhandled rejection"
+    // on top of it.
+    Promise.resolve(result).catch(() => {
+      /* observed only to suppress the unhandled-rejection warning; see above */
+    });
+    throw new Error(
+      "withDiffArtifacts: the assertions callback returned a thenable, so it ran " +
+        "asynchronously. This wrapper only catches a SYNCHRONOUS throw - an async " +
+        "callback's eventual rejection would otherwise pass this test green, write no " +
+        "diff artifacts, and surface later as an unhandled rejection blamed on a " +
+        "different test. Make the callback synchronous (await before calling " +
+        "withDiffArtifacts, not inside it).",
+    );
   }
 }

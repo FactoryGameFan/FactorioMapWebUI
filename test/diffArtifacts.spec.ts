@@ -260,4 +260,80 @@ describe("image diff artifacts", () => {
       ),
     ).toBe(true);
   });
+
+  /**
+   * #303 finding 1: `() => void` accepts `() => Promise<void>` without
+   * complaint, so a future comparison written `async () => { expect(await
+   * x()).toBe(y); }` would compile, return a pending promise the `try/catch`
+   * never sees throw, pass green, and write no artifacts - the rejection
+   * would surface later as an unhandled rejection blamed on a different test.
+   * The cast below exists to defeat the type-level guard on purpose, standing
+   * in for the `any`-typed or dynamically constructed callback the runtime
+   * check is there to catch.
+   */
+  it("throws synchronously when the assertions callback is async, instead of passing green", () => {
+    let settled = false;
+    const asyncAssertions = (async () => {
+      await Promise.resolve();
+      settled = true;
+    }) as unknown as () => void;
+
+    expect(() =>
+      withDiffArtifacts(
+        {
+          spec: SPEC,
+          case: "async-guard",
+          game: twoPixels([1, 2, 3]),
+          ours: twoPixels([1, 2, 3]),
+        },
+        asyncAssertions,
+      ),
+    ).toThrow(/synchronous/i);
+
+    // A caller bug, not a render diff - nothing belongs on disk for it.
+    expect(existsSync(artifactPaths(SPEC, "async-guard").absoluteDir)).toBe(false);
+    // The guard fires before the callback's promise has had a chance to
+    // settle, proving it does not wait around for it.
+    expect(settled).toBe(false);
+  });
+
+  /**
+   * #303 finding 2: `artifactPaths` used to join `spec`/`case` straight into a
+   * path. `join()` normalises ".." away, so a traversal segment resolved
+   * outside `test-output/` and was then deleted recursively with `force:
+   * true` - no error, no trace.
+   */
+  it("rejects a traversal segment in spec or case before building a path", () => {
+    expect(() => artifactPaths("..", "case")).toThrow(/unsafe spec/);
+    expect(() => artifactPaths(SPEC, "..")).toThrow(/unsafe case/);
+    expect(() => artifactPaths(SPEC, "../../etc")).toThrow(/unsafe case/);
+    expect(() => artifactPaths(SPEC, "nested/traversal")).toThrow(/unsafe case/);
+  });
+
+  /**
+   * `writeDiffArtifacts` calls `artifactPaths` before it calls `rmSync`, so a
+   * thrown "unsafe case" error is itself proof `rmSync` was never reached -
+   * `rmSync(..., { force: true })` never throws, on a missing path or any
+   * other, so this specific message can only come from the guard. A direct
+   * `vi.spyOn(fs, "rmSync")` was tried and rejected: Vitest refuses it with
+   * "Module namespace is not configurable in ESM" for a Node builtin, which
+   * is a fact about the module system rather than about this guard.
+   */
+  it("never calls rmSync when a traversal case name reaches writeDiffArtifacts", () => {
+    expect(() =>
+      writeDiffArtifacts({
+        spec: SPEC,
+        case: "../escaped-via-writeDiffArtifacts",
+        game: twoPixels([1, 2, 3]),
+        ours: twoPixels([1, 2, 3]),
+      }),
+    ).toThrow(/unsafe case/);
+
+    // If rmSync HAD run against the escaped path, this directory - the one
+    // writeDiffArtifacts would otherwise have created next - would not exist,
+    // since the function throws before ever reaching mkdirSync either.
+    expect(existsSync(artifactPaths(SPEC, "escaped-via-writeDiffArtifacts").absoluteDir)).toBe(
+      false,
+    );
+  });
 });
