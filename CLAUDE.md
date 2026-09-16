@@ -794,7 +794,7 @@ measured on #380 and #381 rather than read off its docs.
   So it grades this repo against general conventions, not against the
   invariants in this file - frozen exact counts instead of tolerance bounds,
   "never edit a fixture to make a test pass", byte-exact deflate, and
-  `crates/fmw-noise/src/cliffs/connections.rs`, 578 lines that `fmw-wasm` never
+  `crates/fmw-noise/src/cliffs/connections.rs`, 631 lines that `fmw-wasm` never
   references and whose only consumer is the `#[cfg(test)]` fixtures harness.
   Each of those reads as a defect to a general reviewer and is deliberate here.
 - **Its status check cannot block, but its REVIEW can.** The `CodeRabbit`
