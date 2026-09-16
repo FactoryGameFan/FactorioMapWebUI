@@ -104,7 +104,7 @@ export interface DiffStats {
   readonly width: number;
   readonly height: number;
   readonly totalPixels: number;
-  /** Pixels the caller's `ignore` predicate excluded, e.g. the game's enemy bases. */
+  /** Pixels the caller's `ignore` predicate excluded. No spec passes one today. */
   readonly ignoredPixels: number;
   readonly comparedPixels: number;
   readonly changedPixels: number;
@@ -125,9 +125,12 @@ export interface DiffTarget {
   readonly ours: ComparableImage;
   /**
    * Pixels the comparison deliberately does not ask about, by linear index.
-   * The Nauvis case excludes the game's enemy bases; the Vulcanus terrain case
-   * excludes rocks and cliffs; the Vulcanus coverage case excludes the ore its
-   * `view: "all"` render draws and the reference cannot contain.
+   * No spec passes one today, only the smoke test in `diffArtifacts.spec.ts`.
+   * Until the 2026-09-14 terrain-only re-capture, the Nauvis case excluded the
+   * game's enemy bases and the Vulcanus terrain case its rocks and cliffs; the
+   * capture now removes those with a data-stage mod instead, so the masks are
+   * gone. The field stays for the next comparison whose reference contains
+   * something the render never draws.
    *
    * Excluded pixels are drawn navy in BOTH images, so a reader can tell "we
    * agree here" from "we never looked here" in either one. Black means agrees,
@@ -280,7 +283,8 @@ export function writeDiffArtifacts(target: DiffTarget): {
       // Navy in BOTH images, not just the mask. Left black in the magnitude
       // view, an excluded pixel is drawn exactly like one that agrees, so the
       // image asserts agreement over a region the test never looked at - the
-      // Nauvis case would claim it about all 1,189 enemy-base pixels. That is
+      // Nauvis comparison, which masked 1,189 enemy-base pixels until the
+      // 2026-09-14 re-capture, would have claimed it about all of them. That is
       // the confusion `diff-mask.png` exists to remove, reintroduced one file
       // over.
       mask.set(MASK_IGNORED, i * 3);

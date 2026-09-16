@@ -1321,7 +1321,11 @@ artifacts describe a different comparison than the bound that failed - the same
 objection that made wrapping the assertions the right shape in the first place.
 Excluded pixels are navy in **both** images: left black in `diff-magnitude.png`
 they are drawn exactly like pixels that agree, so the picture claims agreement
-over a region nothing looked at.
+over a region nothing looked at. **No spec passes `ignore` today**: since
+2026-09-14 the preview PNGs are captured terrain-only, with a data-stage mod in
+`test/oracle/previewCompare.ts` removing the enemy bases, Vulcanus cliffs and
+rocks, and Fulgora entities that no control can disable, so the masks that used
+to exclude them are gone. The rule stands for the next caller that needs one.
 
 `test/diffArtifacts.spec.ts` is the guard on the writer itself - the machinery
 runs only when something else is broken, which is the worst time to find out it

@@ -168,7 +168,7 @@ const SHALLOW: [u8; 3] = [74, 42, 43];
 /// The Lua defines it as `{49*1.15, 31*1.15, 35*1.15}` = (56.35, 35.65, 40.25),
 /// and the game **TRUNCATES**: green is the only discriminating channel, and
 /// the game's own `--generate-map-preview` PNG shows 35 at every one of the
-/// 370,891 deep-ocean pixels sampled, where every rounding rule gives 36.
+/// 371,721 deep-ocean pixels sampled, where every rounding rule gives 36.
 /// Written as the truncation rather than as `[56, 35, 40]` so the reading stays
 /// visible - using `round` here painted 91% of a whole-image Fulgora comparison
 /// as different.

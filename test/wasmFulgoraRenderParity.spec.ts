@@ -425,10 +425,24 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
       islandsSize: 1,
     });
 
+    // The rock colour. 1,980 pixels of the reference captured before the
+    // terrain-only mod were this colour and the mod removed every one; no
+    // terrain tile in this window has it. So a reference re-captured without
+    // the mod is recognisable before the differing count reports it as a
+    // render regression.
+    const ENTITY_RGB = [129, 105, 78] as const;
+    let entityPx = 0;
     let differing = 0;
     for (let i = 0; i < SIZE * SIZE; i++) {
       const g = i * 3;
       const o = i * 4;
+      if (
+        game.rgb[g] === ENTITY_RGB[0] &&
+        game.rgb[g + 1] === ENTITY_RGB[1] &&
+        game.rgb[g + 2] === ENTITY_RGB[2]
+      ) {
+        entityPx++;
+      }
       if (
         game.rgb[g] !== wasm[o] ||
         game.rgb[g + 1] !== wasm[o + 1] ||
@@ -438,12 +452,8 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
       }
     }
 
-    // An EXACT count, not a bound. `test/previewAgreement.spec.ts` bounded the
-    // TypeScript's same comparison at < 4% and recorded the same 34,788 before
-    // #360 deleted it; the two
-    // renders are byte-identical, so this must be that number and not merely
-    // under a bound. If it moves, one of those two facts changed and the test
-    // names which.
+    // An EXACT count, not a bound. If it moves, the render or the reference
+    // changed.
     //
     // The history of this number is the point, so it is kept:
     //
@@ -457,18 +467,21 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     //           picture**, because both starting cones feed that same `mix_*`
     //           chain. The comment above this line predicted 34,788 before the
     //           work was done, and the measurement landed on it exactly.
+    //       22  after the 2026-09-14 re-capture - NOT a port change. The
+    //           reference was re-captured with the terrain-only mod in
+    //           `test/oracle/previewCompare.ts`, which removed Fulgora's ruins,
+    //           fulgurite and big rocks. That changed 34,766 pixels, and every
+    //           one went from disagreeing to agreeing: 34,766 of the 34,788 were
+    //           entities drawn over terrain the port already had right.
     //
     // So the lesson #273 recorded still stands - bit-exactness on named fields
     // is not the same thing as a better image - but it is not a rule that this
     // class of fix never helps. It depends on whether the field is upstream of
-    // what the image is made of.
-    // Wrapped for the same reason previewAgreement's comparisons were, and with
-    // MORE reason: this is the tighter of the two. An exact `toBe` trips on a
-    // one-pixel move, where its twin one file over needs 0.04 of the image to
-    // shift - and per CLAUDE.md the frozen-exact assertions are the only ones
-    // that can see this class of change at all. Unwrapped, the entire report
-    // for the most sensitive image assertion in the suite is
-    // `expected 34789 to be 34788`.
+    // what the image is made of. The last entry adds a second lesson: -189 was
+    // measured on a count that was 99.9% entity pixels, not terrain.
+    //
+    // Wrapped so a failure writes diff artifacts. Unwrapped, the entire report
+    // for an exact image assertion is `expected 23 to be 22`.
     withDiffArtifacts(
       {
         spec: "wasmFulgoraRenderParity",
@@ -477,8 +490,8 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
         ours: { width: SIZE, height: SIZE, rgba: wasm },
       },
       () => {
-        expect(differing).toBe(34788);
-        expect(differing / (SIZE * SIZE)).toBeLessThan(0.04);
+        expect(entityPx, "entities in the reference - was it captured without the mod?").toBe(0);
+        expect(differing).toBe(22);
       },
     );
   }, 300000);
@@ -519,7 +532,7 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
         }
       }
     }
-    // Nowhere near the ~3% the surface seed reaches.
+    // Nowhere near the 0.002% the surface seed reaches.
     expect(differing / (SIZE * SIZE)).toBeGreaterThan(0.4);
   }, 300000);
 });
@@ -583,12 +596,14 @@ describe("the WASM engine's scrap footprint contains the game's scrap", () => {
       if (footprint[i * 4] === 0) outside++;
     }
 
-    // The same numbers `previewAgreement.spec.ts` measured for the TypeScript
-    // before #360 deleted it.
-    //
     // `gameScrap` is a property of the PNG pair alone - it counts pixels the
     // game's own two renders differ on - so no change to this port can move it.
-    // It is 1825 and must stay 1825; if it ever moves, a fixture changed.
+    // It is 1855 and must stay 1855; if it ever moves, a fixture changed.
+    //
+    // **It was 1825 until the 2026-09-14 re-capture** removed Fulgora's entities
+    // from both PNGs. The pair now differs on 30 more pixels, and every one of
+    // the 1855 is exactly `SCRAP_MAP_COLOR` - where before only 1098 of 1825
+    // were. The footprint still contains all of them.
     //
     // **`outside` went 1 -> 0 with #279.** Narrowing `starting_spot_at_angle`
     // moved the starting cones onto the game's own values, and the single game
@@ -596,7 +611,7 @@ describe("the WASM engine's scrap footprint contains the game's scrap", () => {
     // it. The footprint is a superset of the game's scrap with nothing left
     // over - which is the strongest form this assertion can take, so it is
     // pinned at 0 rather than at "at most 1".
-    expect(gameScrap).toBe(1825);
+    expect(gameScrap).toBe(1855);
     expect(outside).toBe(0);
   }, 300000);
 
