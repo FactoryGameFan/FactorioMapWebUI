@@ -302,7 +302,7 @@ POISONED_TESTS=(
   resources::fulgora_catalog::tests::places_a_strict_nonempty_subset_of_the_footprint
 
   # The only grading of `cliffs::connections` against anything - that module is
-  # on no render path, so without this it would be a 445-line port with unit
+  # on no render path, so without this it would be a 631-line port with unit
   # tests and no measurement.
   #
   # It is also the most expensive test in the crate by a wide margin, and that

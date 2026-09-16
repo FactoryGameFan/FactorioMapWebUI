@@ -18,6 +18,13 @@ in anywhere from 294s to 469s. Do not tune on one run.
 Nothing below has been edited. It is a snapshot, so it goes stale as the suite
 grows; `CLAUDE.md` is the current state and this is the paper trail.
 
+**One number below was already wrong when it was lifted, not just stale
+since.** The `cliffs::connections` line count reads 445; the module was
+already 578 lines at `57d3fb3` itself, and is 631 now (#390). So the snapshot
+preserved an error rather than a fact, and is left as it was lifted rather than
+corrected in place - noted here the same way the port history doc flags its
+own already-overtaken numbers.
+
 ---
 
 Two more things about that job, both measured on its first run (#230):
