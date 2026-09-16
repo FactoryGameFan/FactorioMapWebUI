@@ -227,6 +227,18 @@ passing against a module that ignored the field outright.
   asserting the removed colour is absent, which names a capture made without the
   mod before the differing count reports it as a render regression.
 
+  **The render's levers must match the capture's, and Vulcanus is the proof.**
+  The captures force the disableable resource controls to size 0; a request
+  that names no `vulcanusResourceControls` renders at size 1. The Vulcanus tile
+  stack paints ore-halo tiles from the ore fields, so the mismatch put 10,603
+  halo pixels into a "terrain" count of 10,610 - 88% sitting exactly on the
+  render's own ore footprint - until 2026-09-16, when Eric read it off the diff
+  image. With the levers matched the count is 7. The spec now asserts both
+  numbers: 7 with the levers, 10,610 without, so the levers stay load-bearing.
+  Nauvis does not have the effect (8 either way), because its tiles do not read
+  the ore fields. What the matched pairing cannot grade is the halo tiles
+  themselves: the only game image that has them has ore drawn on top.
+
 Each tier is blind to something the others catch, and every gap below was
 measured rather than assumed:
 

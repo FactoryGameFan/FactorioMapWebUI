@@ -20,6 +20,7 @@ import { compileEngine, instantiateEngine } from "../src/noise/wasm/engine";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
 import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
 import { VULCANUS_RESOURCE_CATALOG } from "../src/noise/resources/vulcanusResourceCatalog";
+import type { VulcanusResourceControls } from "../src/noise/eval/ctx";
 import {
   ENGINE_REQUIRED,
   runRenderRequest,
@@ -97,27 +98,49 @@ const VULCANUS_SURFACE_SEED = 1249936247;
 
 /**
  * Pixels that differ from the game's terrain-only capture, out of all
- * 1,048,576, with nothing masked: 1.0118%, so 98.988% agreement.
+ * 1,048,576, with nothing masked and the render's ore levers matching the
+ * capture's: 99.9993% agreement.
  *
- * **Until 2026-09-14 this was 12,423 of 929,686 compared** (98.664%), with
- * 118,890 rock and cliff pixels masked out of an image that still drew every
- * Vulcanus entity. Re-captured with the terrain-only mod (see
- * `test/oracle/previewCompare.ts`), that old number splits cleanly:
+ * **Until 2026-09-16 this was 10,610, and 10,603 of those were the render's
+ * ore levers, not its terrain.** The capture forces the four Vulcanus resource
+ * controls to size 0, and a request that names no `vulcanusResourceControls`
+ * defaults every one to size 1. The game gates each ore's probability on
+ * `control:<ore>:size > 0`, and the tile stack paints jagged ground, soil-light
+ * and cracks-warm from those same ore fields - so the render drew every ore
+ * patch's halo tiles and the game, with ore off, drew none. Measured before
+ * the request was changed: 88% of the 10,610 sat exactly on the render's own
+ * ore footprint (1.6% of the image), 99% within 16 tiles of it, and every
+ * cluster over 100 pixels was one patch. Eric saw it in the diff image.
  *
- * | part                                                       | pixels |
- * | ---------------------------------------------------------- | -----: |
- * | lichen-tree tints outside the old mask - now agree         |  3,593 |
- * | real terrain disagreement outside the old mask             |  8,830 |
- * | terrain under the old mask, revealed and disagreeing       |  1,780 |
+ * Before that, until 2026-09-14, it was 12,423 of 929,686 compared with
+ * 118,890 rock and cliff pixels masked; the terrain-only re-capture showed
+ * 3,593 of those were lichen-tree tints. The "1.50% under the old mask against
+ * 0.95% elsewhere" that re-capture left unexplained was this: ore patches are
+ * where rocks are removed, so the masked region held more halo than the rest.
  *
- * So 3,593 of the old 12,423 were never terrain errors. The 118,890 pixels the
- * mask hid disagree at 1.50%, against 0.95% everywhere else. Why that region
- * is worse has not been looked at.
- *
- * The remaining gap is not diagnosed and this does not bless it. Freezing the
- * count is what makes a change to it a finding.
+ * What remains is seven single pixels, each a swap between two dark volcanic
+ * tiles. Not diagnosed, and this does not bless them; freezing the count is
+ * what makes a change to it a finding. Note what this pairing cannot see: with
+ * ore off on both sides, the ore-halo tiles themselves are graded against
+ * nothing, because the only game image that has them has ore drawn on top.
  */
-const DIFFERING_PX = 10610;
+const DIFFERING_PX = 7;
+
+/**
+ * The count the same comparison reports with the ore levers left at their
+ * defaults - i.e. mismatched against the capture. Asserted as a control so the
+ * levers stay load-bearing: if this ever equals `DIFFERING_PX`, the request has
+ * stopped carrying them and the comparison has gone vacuous on that axis.
+ */
+const DIFFERING_PX_AT_DEFAULT_LEVERS = 10610;
+
+/** The capture's own setting: `--map-gen-settings` with each of these at size 0. */
+const ORE_LEVERS_OFF: VulcanusResourceControls = {
+  tungstenOre: { frequency: 1, size: 0 },
+  vulcanusCoal: { frequency: 1, size: 0 },
+  calcite: { frequency: 1, size: 0 },
+  sulfuricAcidGeyser: { frequency: 1, size: 0 },
+};
 
 /**
  * Cliff pixels the overlay paints over terrain, per window, in `WINDOWS` order.
@@ -807,20 +830,27 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
    * pixels. The capture now removes them with a data-stage mod
    * (`TERRAIN_ONLY_DATA_FINAL_FIXES` in `test/oracle/previewCompare.ts`), so the
    * reference is terrain alone and the comparison covers the whole image.
+   *
+   * **The render's levers must match the capture's.** The capture has the four
+   * resource controls at size 0, and the request says so explicitly; left to
+   * default they are size 1, and the count is 10,610 instead of 7 - see
+   * `DIFFERING_PX`. The control test below keeps that difference visible.
    */
+  const full: ElevationRenderRequest = {
+    ...request(WINDOWS[0] as Window),
+    width: SIZE,
+    height: SIZE,
+    originX: -SIZE / 2,
+    originY: -SIZE / 2,
+    tilesPerPixel: 1,
+    vulcanusResourceControls: ORE_LEVERS_OFF,
+  };
+
   it("differs from the game's terrain-only capture on exactly the frozen pixel count", async () => {
     const e = await engine();
     const game = reference("oracle-preview-vulcanus-terrain.seed123456.png");
     expect([game.width, game.height]).toEqual([SIZE, SIZE]);
 
-    const full: ElevationRenderRequest = {
-      ...request(WINDOWS[0] as Window),
-      width: SIZE,
-      height: SIZE,
-      originX: -SIZE / 2,
-      originY: -SIZE / 2,
-      tilesPerPixel: 1,
-    };
     const ours = new Uint8ClampedArray(runRenderRequest(full, e).buffer);
 
     const rgbAt = (rgb: Uint8Array, i: number): [number, number, number] => [
@@ -864,6 +894,31 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
         expect(differing).toBe(DIFFERING_PX);
       },
     );
+  }, 300000);
+
+  it("reports the old count with the ore levers left at their defaults, so the levers are load-bearing", async () => {
+    // The control for the pairing above. A request carrying no
+    // `vulcanusResourceControls` renders at size 1 against a capture made at
+    // size 0, and the tile stack paints every ore patch's halo the game does
+    // not have. If this number ever collapses to `DIFFERING_PX`, the levers
+    // have stopped reaching the render and the comparison above can no longer
+    // tell a matched pairing from a mismatched one.
+    const e = await engine();
+    const game = reference("oracle-preview-vulcanus-terrain.seed123456.png");
+    const { vulcanusResourceControls: _off, ...atDefaults } = full;
+    const ours = new Uint8ClampedArray(runRenderRequest(atDefaults, e).buffer);
+    let differing = 0;
+    for (let i = 0; i < SIZE * SIZE; i++) {
+      if (
+        game.rgb[i * 3] !== ours[i * 4] ||
+        game.rgb[i * 3 + 1] !== ours[i * 4 + 1] ||
+        game.rgb[i * 3 + 2] !== ours[i * 4 + 2]
+      ) {
+        differing++;
+      }
+    }
+    expect(differing).toBe(DIFFERING_PX_AT_DEFAULT_LEVERS);
+    expect(differing).not.toBe(DIFFERING_PX);
   }, 300000);
 
   /**
