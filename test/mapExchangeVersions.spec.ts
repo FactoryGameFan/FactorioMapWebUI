@@ -5,10 +5,12 @@ import fixture214 from "./fixtures/map-exchange-2.1.14.strings.json";
 import fixture215 from "./fixtures/map-exchange-2.1.15.strings.json";
 import fixture216 from "./fixtures/map-exchange-2.1.16.strings.json";
 import fixture217 from "./fixtures/map-exchange-2.1.17.strings.json";
+import fixture219 from "./fixtures/map-exchange-2.1.19.strings.json";
 import parsed214 from "./fixtures/map-exchange-parsed.2.1.14-default.dump.json";
 import parsed215 from "./fixtures/map-exchange-parsed.2.1.15-default.dump.json";
 import parsed216 from "./fixtures/map-exchange-parsed.2.1.16-default.dump.json";
 import parsed217 from "./fixtures/map-exchange-parsed.2.1.17-default.dump.json";
+import parsed219 from "./fixtures/map-exchange-parsed.2.1.19-default.dump.json";
 import builtins from "./fixtures/builtin-presets.json";
 import {
   SUPPORTED_VERSIONS,
@@ -78,6 +80,7 @@ describe("exchange format versions", () => {
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.15.2");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.16.0");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.17.0");
+    expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.19.0");
   });
 });
 
@@ -110,6 +113,7 @@ describe("every fixture records the tag it was captured at", () => {
     { version: "2.1.15", fixture: fixture215 },
     { version: "2.1.16", fixture: fixture216 },
     { version: "2.1.17", fixture: fixture217 },
+    { version: "2.1.19", fixture: fixture219 },
   ] as const;
 
   it.each(FIXTURES)("$version", ({ version, fixture: f }) => {
@@ -411,12 +415,166 @@ describe.each(LAYOUT_HEIRS)("exchange format $version", (heir) => {
   });
 });
 
+/**
+ * Factorio 2.1.18 REMOVED a tail field, and 2.1.19 is the first build captured
+ * with it gone. The 2.1.18 changelog says `Removed
+ * PollutionSettings::max_pollution_to_restore_trees`, and the data diff agrees:
+ * one line gone from `base/prototypes/map-settings.lua` between 2.1.17 and
+ * 2.1.18, nothing in that file between 2.1.18 and 2.1.19. It is the first field
+ * ever to LEAVE the tail - 2.1.14's dispatch cooldown joined it - and it sat in
+ * the middle of the pollution section, so its absence pulls every later field
+ * back by 9 bytes: one presence byte plus one f64.
+ *
+ * Three readings, none "it looked the same":
+ *
+ * 1. Every 2.1.19 capture is exactly 9 bytes shorter than its 2.1.17 twin
+ *    (711 -> 702, and `controls-off` 750 -> 741). Pinned below.
+ * 2. The game's own parse of the new default string lists 11 pollution fields
+ *    where 2.1.17's lists 12, and the missing one is that field.
+ * 3. With the field dropped from the schema, the whole tail agrees with the
+ *    game's parse field-for-field and `opaqueTail` closes to zero bytes.
+ *
+ * The sixth time import broke under a Steam auto-update. Steam went straight
+ * from 2.1.17 to 2.1.19 on this machine, so no 2.1.18 build was ever captured;
+ * if 2.1.18 shipped with a tag of its own, strings from it stay refused until
+ * someone captures on that build. There is no 2.1.18 install to ask.
+ */
+describe("exchange format 2.1.19", () => {
+  const REMOVED = "pollution.maxPollutionToRestoreTrees";
+
+  it("round-trips every 2.1.19 capture byte-for-byte", () => {
+    const entries = Object.entries(fixture219.strings);
+    expect(entries.length).toBeGreaterThanOrEqual(5);
+    for (const [label, s] of entries) {
+      const decoded = decodeExchangeString(s);
+      expect(decoded.version.join("."), `${label} format tag`).toBe("2.1.19.0");
+      expect(encodeExchangeString(decoded), `${label} re-encode`).toBe(s);
+    }
+  });
+
+  it("types the whole 2.1.19 tail - opaqueTail stays empty", () => {
+    // A schema that still carried the removed field would over-read by 9 bytes
+    // and throw; one that dropped the WRONG field would round-trip and leave
+    // the layout misaligned. This and the game-parse agreement below are what
+    // tell those apart.
+    for (const [label, s] of Object.entries(fixture219.strings)) {
+      const tail = decodeExchangeString(s).tail;
+      expect((tail.opaqueTail as Uint8Array).length, `${label} opaqueTail`).toBe(0);
+    }
+  });
+
+  it("does NOT read max_pollution_to_restore_trees, which the game removed at 2.1.18", () => {
+    for (const [label, s] of Object.entries(fixture219.strings)) {
+      expect(REMOVED in decodeExchangeString(s).tail, `2.1.19 ${label}`).toBe(false);
+    }
+    // The game's own parse lacks it too - so the removal is the game's, not a
+    // convenience of ours - and the two neighbours read the game's values,
+    // which they could not if the schema had merely shifted around a hole.
+    const tail = decodeExchangeString(fixture219.strings["default-seed123456"]).tail;
+    const game = parsed219.map_settings.pollution;
+    expect("max_pollution_to_restore_trees" in game).toBe(false);
+    expect(tail["pollution.pollutionRestoredPerTreeDamage"]).toBe(
+      game.pollution_restored_per_tree_damage,
+    );
+    expect(tail["pollution.enemyAttackPollutionConsumptionModifier"]).toBe(
+      game.enemy_attack_pollution_consumption_modifier,
+    );
+  });
+
+  it("still reads that field for 2.1.17, which carries it", () => {
+    // The version-conditional half, in the other direction from 2.1.14's test:
+    // dropping the field unconditionally would misread every older string.
+    for (const [label, s] of Object.entries(fixture217.strings)) {
+      const tail = decodeExchangeString(s).tail;
+      expect(REMOVED in tail, `2.1.17 ${label}`).toBe(true);
+      expect(typeof tail[REMOVED], `2.1.17 ${label}`).toBe("number");
+    }
+    expect(decodeExchangeString(fixture217.strings["default-seed123456"]).tail[REMOVED]).toBe(
+      parsed217.map_settings.pollution.max_pollution_to_restore_trees,
+    );
+  });
+
+  it("still carries build_base_unit_dispatch_cooldown where the game puts it", () => {
+    // 2.1.19 inherits the 2.1.14 addition AND takes the 2.1.18 removal, so the
+    // layout is composed of two independent toggles rather than being a third
+    // copy. Both are asserted against the game's parse.
+    const decoded = decodeExchangeString(fixture219.strings["default-seed123456"]);
+    const game = parsed219.map_settings.enemy_expansion;
+    expect(decoded.tail["enemyExpansion.buildBaseUnitDispatchCooldown"]).toBe(
+      game.build_base_unit_dispatch_cooldown,
+    );
+    expect(decoded.tail["enemyExpansion.maxExpansionCooldown"]).toBe(game.max_expansion_cooldown);
+    expect(decoded.tail["enemyExpansion.settlerGroupMaxSize"]).toBe(game.settler_group_max_size);
+  });
+
+  it("has a payload exactly 9 bytes shorter than 2.1.17's, case for case", () => {
+    // One presence byte plus one f64. Exact, not bounded, for the same reason
+    // the heirs pin theirs: a capture that flattened the five cases to one
+    // length would have stopped varying anything.
+    const sizes = Object.keys(fixture217.strings).map((label) => ({
+      label,
+      before: decodeExchangeString(fixture217.strings[label as keyof typeof fixture217.strings])
+        .payload.length,
+      after: decodeExchangeString(fixture219.strings[label as keyof typeof fixture219.strings])
+        .payload.length,
+    }));
+    for (const { label, before, after } of sizes) {
+      expect(after, `${label} payload size vs 2.1.17`).toBe(before - 9);
+    }
+    expect(new Set(sizes.map((s) => s.after)).size).toBeGreaterThan(1);
+  });
+
+  it("mirrors 2.1.17's cases setting-for-setting, minus the removed field", () => {
+    let compared = 0;
+    for (const label of Object.keys(fixture217.strings)) {
+      const a = decodeExchangeString(fixture217.strings[label as keyof typeof fixture217.strings]);
+      const b = decodeExchangeString(fixture219.strings[label as keyof typeof fixture219.strings]);
+      expect(b.autoplaceControls, `${label} autoplace controls`).toEqual(a.autoplaceControls);
+      expect(b.mid, `${label} mid-block`).toEqual(a.mid);
+      expect(b.propertyExpressionNames, `${label} property expressions`).toEqual(
+        a.propertyExpressionNames,
+      );
+      const { [REMOVED]: removed, ...rest } = a.tail;
+      expect(typeof removed, `${label} 2.1.17 carries the field`).toBe("number");
+      expect(b.tail, `${label} tail`).toEqual(rest);
+      compared++;
+    }
+    expect(compared).toBe(5);
+  });
+
+  it("agrees with the game's own parse across the whole 2.1.19 tail", () => {
+    const tail = decodeExchangeString(fixture219.strings["default-seed123456"]).tail;
+    const game = parsed219.map_settings;
+    const camel = (s: string) => s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    const sections: Record<string, Record<string, unknown>> = {
+      pollution: game.pollution,
+      enemyEvolution: game.enemy_evolution,
+      enemyExpansion: game.enemy_expansion,
+      unitGroup: game.unit_group,
+      difficulty: game.difficulty_settings,
+    };
+    let compared = 0;
+    for (const [prefix, section] of Object.entries(sections)) {
+      for (const [gameKey, gameValue] of Object.entries(section)) {
+        const key = `${prefix}.${camel(gameKey)}`;
+        if (!(key in tail)) continue;
+        expect(tail[key], key).toBe(gameValue);
+        compared++;
+      }
+    }
+    expect(compared).toBeGreaterThanOrEqual(40);
+  });
+});
+
 describe("older formats keep working", () => {
-  it("still decodes 2.1.14 and 2.1.9, so export was never the broken half", () => {
+  it("still decodes 2.1.17, 2.1.14 and 2.1.9, so export was never the broken half", () => {
     // Each newer game accepts the strings this app emits - verified in the
     // capture runs themselves, where every case's settings were recovered by
     // handing the game its PREVIOUS version's string. This is our own decoder's
     // half of that: widening the accepted set did not disturb the older tags.
+    for (const [label, s] of Object.entries(fixture217.strings)) {
+      expect(decodeExchangeString(s).version.join("."), label).toBe("2.1.17.0");
+    }
     for (const [label, s] of Object.entries(fixture214.strings)) {
       expect(decodeExchangeString(s).version.join("."), label).toBe("2.1.14.1");
     }

@@ -1127,15 +1127,18 @@ Consequences that constrain any change here:
 
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
   known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`, `2.1.16.0`,
-  `2.1.17.0`) and
+  `2.1.17.0`, `2.1.19.0`) and
   never a range, because the schemas here are empirical: accepting an unseen
   format would decode a changed layout into plausible wrong values. A version
   joins the list only with a fixture proving a real string of it round-trips
   byte-exact (`test/mapExchangeVersions.spec.ts`). This has now been a live bug
-  **five times**: the app rejected every string from Factorio 2.1.12 until
+  **six times**: the app rejected every string from Factorio 2.1.12 until
   2026-07-28, from 2.1.14 until 2026-08-13, from 2.1.15 and 2.1.16 until
-  2026-08-24 - **those two on the same day, because Wube shipped both** - and
-  from 2.1.17 until 2026-09-06. Every
+  2026-08-24 - **those two on the same day, because Wube shipped both** - from
+  2.1.17 until 2026-09-06, and from 2.1.19 until 2026-09-16 (2.1.18 and 2.1.19
+  shipped the same day, and Steam went straight to 2.1.19, so **no 2.1.18 build
+  was ever captured** - if it carried a tag of its own, strings from it are
+  still refused). Every
   time the game moved under a Steam auto-update, and every time it was found by a
   version audit rather than by a user. The UI advertises the target so the next
   drift is visible, and `test/factorioTarget.spec.ts` fails the build if
@@ -1147,8 +1150,8 @@ Consequences that constrain any change here:
   four-part exchange tag - confirmed on a binary whose tag we already knew
   (2.1.14 prints `2.1.14-1`, and `[2,1,14,1]` is what the list carries), which is
   a control rather than a pattern match. The fourth part is **not monotonic and
-  does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0`, `.0` across 2.1.9 to
-  2.1.17. It FELL to zero at 2.1.16 and stayed there. It cannot be guessed, and
+  does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0`, `.0`, `.0` across
+  2.1.9 to 2.1.19. It FELL to zero at 2.1.16 and stayed there. It cannot be guessed, and
   one `--version` answers "has import broken?" in a second.
 
   **This machine's Steam tracks the EXPERIMENTAL branch**, which is why two
@@ -1161,14 +1164,15 @@ Consequences that constrain any change here:
   `factorio-oracle`, five cases in about 10 seconds:
 
   ```bash
-  node --experimental-strip-types scripts/probes/exchange-format/capture.ts 2.1.17
+  node --experimental-strip-types scripts/probes/exchange-format/capture.ts 2.1.19
   ```
 
   It reads each case's settings back out of the PREVIOUS version's fixture with
   the game's own `helpers.parse_map_exchange_string`, so "the five cases mirror
   the last version's setting-for-setting" is a mechanism instead of a claim. The
   previous version is DERIVED - the newest committed strings fixture older than
-  the target - so chaining 2.1.14 -> 2.1.15 -> 2.1.16 -> 2.1.17 needed no edit.
+  the target - so chaining 2.1.14 -> 2.1.15 -> 2.1.16 -> 2.1.17 -> 2.1.19 needed
+  no edit.
 
   **The one trap, measured rather than reasoned:** feed a whole parse back as
   `--map-gen-settings` and every case inflates from 711 bytes to 1387, because
@@ -1181,14 +1185,26 @@ Consequences that constrain any change here:
   `{}` for it where the live surface has it fully populated, so it is lossy in
   the parse direction and carries no case information.
 
-- **The tail schema is VERSION-DEPENDENT as of 2.1.14.** It was
-  one constant for the format's whole history until `map-settings.lua` gained
-  `enemy_expansion.build_base_unit_dispatch_cooldown` (`30 * 60` ticks) between
-  2.1.12 and 2.1.14. It serializes in section order, so it lands after
-  `max_expansion_cooldown` and **before `unit_group`** - it shifts every section
-  after it rather than appending harmlessly at the end. `tailSchemaFor(version)`
-  in `src/codec/mapExchangeString.ts` picks the layout, matched on the **exact**
-  tag for the same reason `SUPPORTED_VERSIONS` is a list rather than a floor.
+- **The tail schema is VERSION-DEPENDENT as of 2.1.14, and it has moved in
+  BOTH directions.** It was one constant for the format's whole history until
+  `map-settings.lua` gained `enemy_expansion.build_base_unit_dispatch_cooldown`
+  (`30 * 60` ticks) between 2.1.12 and 2.1.14. It serializes in section order,
+  so it lands after `max_expansion_cooldown` and **before `unit_group`** - it
+  shifts every section after it rather than appending harmlessly at the end.
+  Then 2.1.18 REMOVED `pollution.max_pollution_to_restore_trees` (its changelog
+  says so; the file loses exactly that line), the first field ever to leave the
+  tail, and every 2.1.19 capture is exactly 9 bytes shorter than its 2.1.17 twin
+  - one presence byte plus one f64 (702/702/741/702/702 against
+    711/711/750/711/711). `tailSchemaFor(version)` in
+    `src/codec/mapExchangeString.ts` picks the layout, matched on the **exact**
+    tag for the same reason `SUPPORTED_VERSIONS` is a list rather than a floor -
+    and it composes it from two independent per-field toggles
+    (`TAIL_DISPATCH_COOLDOWN_VERSIONS`,
+    `TAIL_MAX_POLLUTION_TO_RESTORE_TREES_REMOVED_VERSIONS`) rather than holding
+    one constant per version, because 2.1.19 takes both changes and a later
+    version may take either alone. The model's `maxPollutionToRestoreTrees` is
+    `number | undefined` for the same reason, and the JSON export leaves the key
+    out when it is absent.
 
   **2.1.15, 2.1.16 and 2.1.17 all share that layout rather than getting their
   own**, which is why the constants are named for the FIELD
@@ -1210,11 +1226,17 @@ Consequences that constrain any change here:
   construction, and the tag is one of the things being asserted.
 
   Two consequences worth knowing before touching this:
-  - **A wrong schema choice is loud, not subtle** - decoding a 2.1.14 string
-    with the older layout over-reads the payload end and throws
-    `payload truncated: read of 8 bytes at offset 706 ...`. That is luck, not
-    design; a future added field could land somewhere that decodes silently
-    wrong instead, so do not treat a clean throw as the expected symptom.
+  - **A wrong schema choice was loud ONCE and silent the next time.** Decoding
+    a 2.1.14 string with the older layout over-reads the payload end and throws
+    `payload truncated: read of 8 bytes at offset 706 ...`. This bullet used to
+    call that luck rather than design and predict a silent case; 2.1.19 is it.
+    Planted on 2026-09-16 by leaving the removed field in the schema: a 2.1.19
+    string decodes without error, `opaqueTail` STILL closes to zero bytes, and
+    `pollution.enemyAttackPollutionConsumptionModifier` reads as -7.67e33 where
+    the game says 1 - the optional presence bytes re-synchronise the walk by
+    accident. So neither a clean throw nor an empty `opaqueTail` is evidence of
+    a correct layout. The re-encode, the game-parse agreement and the "does NOT
+    read" assertions in `test/mapExchangeVersions.spec.ts` are what catch it.
   - **`Preset` must carry `formatVersion` through the bridge.** `convert.ts`
     stores the tail as opaque base64, so `tailToBytes`/`bytesToTail` both take a
     version. Dropping it silently corrupts a 2.1.14 import on export;

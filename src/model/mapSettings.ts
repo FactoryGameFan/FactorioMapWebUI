@@ -34,7 +34,13 @@ export interface PollutionSettings {
   pollutionWithMaxForestDamage: number;
   pollutionPerTreeDamage: number;
   pollutionRestoredPerTreeDamage: number;
-  maxPollutionToRestoreTrees: number;
+  /**
+   * `undefined` for a 2.1.19 (or later) import. Factorio 2.1.18 removed
+   * `PollutionSettings::max_pollution_to_restore_trees` from the game and from
+   * the exchange string's tail; older strings still carry it, and it round-trips
+   * through them untouched. Nothing in the UI edits it.
+   */
+  maxPollutionToRestoreTrees: number | undefined;
   enemyAttackPollutionConsumptionModifier: number;
 }
 
@@ -165,7 +171,9 @@ export function tailToNested(tail: TailBlock): { cliff: CliffSettings; mapSettin
       pollutionWithMaxForestDamage: tail["pollution.pollutionWithMaxForestDamage"] as number,
       pollutionPerTreeDamage: tail["pollution.pollutionPerTreeDamage"] as number,
       pollutionRestoredPerTreeDamage: tail["pollution.pollutionRestoredPerTreeDamage"] as number,
-      maxPollutionToRestoreTrees: tail["pollution.maxPollutionToRestoreTrees"] as number,
+      maxPollutionToRestoreTrees: tail["pollution.maxPollutionToRestoreTrees"] as
+        | number
+        | undefined,
       enemyAttackPollutionConsumptionModifier: tail[
         "pollution.enemyAttackPollutionConsumptionModifier"
       ] as number,

@@ -264,13 +264,26 @@ function writeStartingPoints(writer: BinaryWriter, points: MapPosition[]): void 
  *   new default string is identical to the 2.1.16 one on every leaf field. So it
  *   joins the 2.1.14 tail layout rather than getting one of its own.
  *
+ * - `2.1.19.0` - what Factorio 2.1.19 (experimental) emits. Added 2026-09-16, a
+ *   FIFTH incident, and the second time **the payload moved** - in the other
+ *   direction. 2.1.18 REMOVED `pollution.max_pollution_to_restore_trees` (its
+ *   changelog says so, and `base/prototypes/map-settings.lua` loses exactly that
+ *   line 2.1.17 -> 2.1.18, nothing 2.1.18 -> 2.1.19). Every re-captured case is
+ *   exactly 9 bytes shorter than its 2.1.17 twin (711 -> 702, 750 -> 741), one
+ *   presence byte plus one f64, and the game's own parse lists 11 pollution
+ *   fields where 2.1.17's lists 12. See
+ *   `TAIL_MAX_POLLUTION_TO_RESTORE_TREES_FIELD` below. Steam went straight from
+ *   2.1.17 to 2.1.19 on the capture machine, so 2.1.18 - if it ever carried a
+ *   tag of its own - is not in this list and cannot be until someone captures
+ *   on that build.
+ *
  * Note the two directions are not symmetric, and only one has ever been broken:
- * 2.1.12 accepts a `2.1.9.3` string fine, 2.1.14 accepts one too, and 2.1.15
- * parses all five `2.1.14.1` captures (all verified through the game's own
- * `helpers.parse_map_exchange_string`), so EXPORT was never affected - the app's
- * output stayed loadable throughout. Import was the broken half every time:
- * five versions across four incidents, since 2.1.15 and 2.1.16 landed the same
- * day.
+ * 2.1.12 accepts a `2.1.9.3` string fine, 2.1.14 accepts one too, 2.1.15
+ * parses all five `2.1.14.1` captures, and 2.1.19 parses all five `2.1.17.0`
+ * ones (all verified through the game's own `helpers.parse_map_exchange_string`),
+ * so EXPORT was never affected - the app's output stayed loadable throughout.
+ * Import was the broken half every time: six versions across five incidents,
+ * since 2.1.15 and 2.1.16 landed the same day.
  */
 export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 9, 3],
@@ -279,6 +292,7 @@ export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 15, 2],
   [2, 1, 16, 0],
   [2, 1, 17, 0],
+  [2, 1, 19, 0],
 ];
 
 /** Human-readable list for UI and error messages, e.g. "2.1.9.3, 2.1.12.2". */
@@ -456,6 +470,10 @@ const TAIL_FIXED_SCHEMA: Schema = TAIL_SCHEMA.filter((f) => f.name !== "opaqueTa
  * all five 2.1.15 captures inflate to the exact byte counts their 2.1.14
  * counterparts do. Hence the name is the FIELD rather than the version: a third
  * version sharing this layout should join the list below, not get a copy.
+ *
+ * 2.1.19 carries it too, and ALSO lacks a field 2.1.18 removed, which is why
+ * `tailSchemaFor` composes the layout from independent per-field toggles rather
+ * than holding one constant per version.
  */
 const TAIL_DISPATCH_COOLDOWN_FIELD = "enemyExpansion.buildBaseUnitDispatchCooldown";
 const TAIL_DISPATCH_COOLDOWN_ANCHOR = "enemyExpansion.maxExpansionCooldown";
@@ -477,13 +495,47 @@ const TAIL_DISPATCH_COOLDOWN_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 15, 2],
   [2, 1, 16, 0],
   [2, 1, 17, 0],
+  [2, 1, 19, 0],
+];
+
+/**
+ * `pollution.max_pollution_to_restore_trees`, REMOVED from
+ * `base/prototypes/map-settings.lua` at 2.1.18 (changelog: "Removed
+ * PollutionSettings::max_pollution_to_restore_trees"). The first field ever to
+ * LEAVE the tail. It sat between `pollution_restored_per_tree_damage` and
+ * `enemy_attack_pollution_consumption_modifier`, so its absence pulls every
+ * later field back by 9 bytes - one presence byte plus one f64 - which is
+ * exactly what every 2.1.19 capture measures against its 2.1.17 twin.
+ *
+ * **Decoding a 2.1.19 string WITH the field still in the schema is SILENT**,
+ * unlike 2.1.14's addition, which over-read the payload end and threw. Planted
+ * by emptying the list below and running the 2.1.19 tests: the decode
+ * completes, `opaqueTail` still closes to zero bytes, and
+ * `pollution.enemyAttackPollutionConsumptionModifier` reads as -7.67e33 where
+ * the game says 1. The optional-field presence bytes re-synchronise the walk by
+ * accident, so the length check that made 2.1.14 loud sees nothing. What does
+ * catch it is the re-encode (no longer byte-exact), the game-parse agreement
+ * and the "does NOT read" assertion in `test/mapExchangeVersions.spec.ts` -
+ * which is why those exist rather than a length check alone.
+ */
+const TAIL_MAX_POLLUTION_TO_RESTORE_TREES_FIELD = "pollution.maxPollutionToRestoreTrees";
+
+const TAIL_MAX_POLLUTION_TO_RESTORE_TREES_REMOVED_VERSIONS: readonly FormatVersion[] = [
+  [2, 1, 19, 0],
 ];
 
 function tailSchemaFor(version: FormatVersion): Schema {
-  const carriesDispatchCooldown = TAIL_DISPATCH_COOLDOWN_VERSIONS.some((v) =>
-    v.every((part, i) => part === version[i]),
-  );
-  return carriesDispatchCooldown ? TAIL_FIXED_SCHEMA_WITH_DISPATCH_COOLDOWN : TAIL_FIXED_SCHEMA;
+  const lists = (versions: readonly FormatVersion[]): boolean =>
+    versions.some((v) => v.every((part, i) => part === version[i]));
+  // Two independent toggles, not one constant per version: 2.1.19 takes BOTH
+  // the 2.1.14 addition and the 2.1.18 removal, and a later version may take
+  // either one alone.
+  const schema = lists(TAIL_DISPATCH_COOLDOWN_VERSIONS)
+    ? TAIL_FIXED_SCHEMA_WITH_DISPATCH_COOLDOWN
+    : TAIL_FIXED_SCHEMA;
+  return lists(TAIL_MAX_POLLUTION_TO_RESTORE_TREES_REMOVED_VERSIONS)
+    ? schema.filter((f) => f.name !== TAIL_MAX_POLLUTION_TO_RESTORE_TREES_FIELD)
+    : schema;
 }
 
 function readTail(reader: BinaryReader, version: FormatVersion): TailBlock {
