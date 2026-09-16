@@ -125,9 +125,12 @@ export interface DiffTarget {
   readonly ours: ComparableImage;
   /**
    * Pixels the comparison deliberately does not ask about, by linear index.
-   * The Nauvis case excludes the game's enemy bases; the Vulcanus terrain case
-   * excludes rocks and cliffs; the Vulcanus coverage case excludes the ore its
-   * `view: "all"` render draws and the reference cannot contain.
+   * No spec passes one today, only the smoke test in `diffArtifacts.spec.ts`.
+   * Until the 2026-09-14 terrain-only re-capture, the Nauvis case excluded the
+   * game's enemy bases and the Vulcanus terrain case its rocks and cliffs; the
+   * capture now removes those with a data-stage mod instead, so the masks are
+   * gone. The field stays for the next comparison whose reference contains
+   * something the render never draws.
    *
    * Excluded pixels are drawn navy in BOTH images, so a reader can tell "we
    * agree here" from "we never looked here" in either one. Black means agrees,
