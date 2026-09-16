@@ -218,7 +218,14 @@ passing against a module that ignored the field outright.
 - **Tier 2 grades Rust against TypeScript**, folding many fields at several
   slider settings into one order-sensitive checksum.
 - **Tier 3 is byte-identical RGBA** through the real ABI boundary, plus a count
-  against the game's own preview PNGs.
+  against the game's own preview PNGs. Since 2026-09-14 those PNGs are
+  terrain-only: `test/oracle/previewCompare.ts` captures them with a data-stage
+  mod (`TERRAIN_ONLY_DATA_FINAL_FIXES`) that removes what no control can switch
+  off - Nauvis enemy bases, every Vulcanus cliff, rock, chimney and lichen tree,
+  and Fulgora's ruins, fulgurite and big rocks - so nothing is masked and every
+  one of the 1,048,576 pixels is compared. Each spec guards its reference by
+  asserting the removed colour is absent, which names a capture made without the
+  mod before the differing count reports it as a render regression.
 
 Each tier is blind to something the others catch, and every gap below was
 measured rather than assumed:
@@ -1104,8 +1111,9 @@ Diffing rolled pixels measures the salt rather than the model.
 **The seed trap has its own test.** The preview PNGs come from
 `--generate-map-preview --map-gen-seed`, a MAP seed, while every `oracle-*.json`
 comes from `sampleExpression`, which forces the SURFACE seed. Rendering with the
-map seed makes the Fulgora terrain comparison collapse from 3% differing to over
-40%, and that is asserted rather than described.
+map seed makes the Fulgora terrain comparison collapse from 22 differing pixels
+(0.002%; it was 3% before the terrain-only re-capture, when the count was mostly
+entities) to over 40%, and that is asserted rather than described.
 
 **The composite's paint ORDER is asserted, not described.** On Vulcanus:
 resources, then rocks, then cliffs - so a cliff or a rock crossing an ore patch

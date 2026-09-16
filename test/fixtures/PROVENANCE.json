@@ -206,20 +206,20 @@
       "evidence": "stated in the fixture's own _comment; re-sampled 2026-07-29 as a CONTROL for the noise-primitive re-capture (15 offsets x 2 axes x 5 points = 150 values, all bit-for-bit identical), which is what proves that run's harness invocation was sampling the right thing"
     },
     "oracle-preview-fulgora-scrap.seed123456.png": {
-      "factorioVersion": "2.1.14",
-      "evidence": "captured 2026-08-14 by a throwaway driver calling test/oracle/previewCompare.ts's generatePreview against the installed 2.1.14 (build 87180) binary, which pnpm refs:sync --check reported in sync at capture time; disabled = [...DISABLEABLE, \"fulgora_cliff\"] (scrap left ON, the only difference from the terrain arm). 350352 bytes; byte-identical to a control PNG captured in an earlier session with the same parameters."
+      "factorioVersion": "2.1.17",
+      "evidence": "captured 2026-09-14 by `node --experimental-strip-types test/oracle/previewCompare.ts fulgora scrap` against the installed 2.1.17 (build 87315) binary, which pnpm refs:sync --check reported readable at 2.1.17 at capture time; disabled = [...DISABLEABLE, \"fulgora_cliff\"] (scrap left ON, the only difference from the terrain arm), plus TERRAIN_ONLY_DATA_FINAL_FIXES as a data-stage mod whose data-final-fixes.lua the game's log showed loading (it removes Fulgora's ruins, fulgurite and big rocks; 34,766 pixels changed against the previous capture). 277018 bytes; byte-identical to an independent scratch capture with the same parameters. The previous 2.1.14 capture was reproduced byte-identically by 2.1.17 without the mod before being replaced, so it was not stale."
     },
     "oracle-preview-fulgora-terrain.seed123456.png": {
-      "factorioVersion": "2.1.14",
-      "evidence": "captured 2026-08-14 by a throwaway driver calling test/oracle/previewCompare.ts's generatePreview against the installed 2.1.14 (build 87180) binary, which pnpm refs:sync --check reported in sync at capture time; disabled = [...DISABLEABLE, \"scrap\", \"fulgora_cliff\"] (scrap forced off, the terrain baseline). 341483 bytes; byte-identical to a control PNG captured in an earlier session with the same parameters."
+      "factorioVersion": "2.1.17",
+      "evidence": "captured 2026-09-14 by `node --experimental-strip-types test/oracle/previewCompare.ts fulgora` against the installed 2.1.17 (build 87315) binary, which pnpm refs:sync --check reported readable at 2.1.17 at capture time; disabled = [...DISABLEABLE, \"scrap\", \"fulgora_cliff\"] (scrap forced off, the terrain baseline), plus TERRAIN_ONLY_DATA_FINAL_FIXES as a data-stage mod whose data-final-fixes.lua the game's log showed loading (it removes Fulgora's ruins, fulgurite and big rocks; 34,766 pixels changed against the previous capture, every one from disagreeing with our render to agreeing). 270744 bytes; byte-identical to an independent scratch capture with the same parameters. The previous 2.1.14 capture was reproduced byte-identically by 2.1.17 without the mod before being replaced, so it was not stale."
     },
     "oracle-preview-nauvis-terrain.seed123456.png": {
-      "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-07-28 by test/oracle/previewCompare.ts against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time; every disableable autoplace control forced to size 0"
+      "factorioVersion": "2.1.17",
+      "evidence": "captured 2026-09-14 by `node --experimental-strip-types test/oracle/previewCompare.ts nauvis` against the installed 2.1.17 (build 87315) binary, which pnpm refs:sync --check reported readable at 2.1.17 at capture time; every disableable autoplace control forced to size 0 (DISABLEABLE), plus TERRAIN_ONLY_DATA_FINAL_FIXES as a data-stage mod whose data-final-fixes.lua the game's log showed loading (it removes the enemy bases no control can disable; exactly the 1,189 enemy-base pixels changed against the previous capture and nothing else). 138984 bytes; byte-identical to an independent scratch capture with the same parameters. The previous 2.1.12 capture was reproduced byte-identically by 2.1.17 without the mod before being replaced, so it was not stale."
     },
     "oracle-preview-vulcanus-terrain.seed123456.png": {
-      "factorioVersion": "2.1.12",
-      "evidence": "captured 2026-07-28 by test/oracle/previewCompare.ts against the installed binary, which pnpm refs:sync --check reported in sync at 2.1.12 at capture time; every disableable autoplace control forced to size 0"
+      "factorioVersion": "2.1.17",
+      "evidence": "captured 2026-09-14 by `node --experimental-strip-types test/oracle/previewCompare.ts vulcanus` against the installed 2.1.17 (build 87315) binary, which pnpm refs:sync --check reported readable at 2.1.17 at capture time; disabled = [...DISABLEABLE, \"calcite\", \"tungsten_ore\", \"vulcanus_coal\", \"sulfuric_acid_geyser\"], plus TERRAIN_ONLY_DATA_FINAL_FIXES as a data-stage mod whose data-final-fixes.lua the game's log showed loading (it removes the cliffs, rocks, crater cliffs, chimneys and lichen trees no control reaches; 122,483 pixels changed against the previous capture: 64,729 cliff, 54,161 rock, 3,593 tree tint). 500467 bytes; byte-identical to an independent scratch capture with the same parameters. The previous 2.1.12 capture was reproduced byte-identically by 2.1.17 without the mod before being replaced, so it was not stale."
     },
     "oracle-quick-multioctave.seed123456.json": {
       "factorioVersion": "2.1.12",

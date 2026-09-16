@@ -39,7 +39,7 @@ use core::cell::RefCell;
 /// `map_color = {0.9, 0.9, 0.9}` from the prototype, times 255.
 ///
 /// Confirmed against the game's own preview pixels rather than from the Lua
-/// alone: 1098 of 1825 changed pixels are exactly this triple.
+/// alone: all 1855 changed pixels are exactly this triple.
 pub const SCRAP_MAP_COLOR: [u8; 3] = [229, 229, 229];
 
 /// Scrap's `collision_box`, read off the RUNNING GAME rather than from the Lua.

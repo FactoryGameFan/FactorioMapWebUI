@@ -96,27 +96,28 @@ function freeze(
 const VULCANUS_SURFACE_SEED = 1249936247;
 
 /**
- * Rock and cliff pixels in the game's capture, which Vulcanus has no control to
- * disable. Measured 2026-08-24 - 11.34% of the image.
- */
-const MASKED_PX = 118890;
-
-/**
- * Of the 929,686 pixels actually compared, the ones that differ: 1.3363%, so
- * 98.664% agreement.
+ * Pixels that differ from the game's terrain-only capture, out of all
+ * 1,048,576, with nothing masked: 1.0118%, so 98.988% agreement.
  *
- * **This is the TypeScript renderer's own number**, and it has to be, because
- * the first describe block asserts the two renders are byte-identical.
- * `previewAgreement.spec.ts` recorded the same 98.664% over the same 929,686
- * compared pixels, from a completely separate run through the TypeScript path.
- * **#360 deleted that spec with the rest of the ported TypeScript**, so the
- * corroborating run is gone and this frozen number now stands on its own.
+ * **Until 2026-09-14 this was 12,423 of 929,686 compared** (98.664%), with
+ * 118,890 rock and cliff pixels masked out of an image that still drew every
+ * Vulcanus entity. Re-captured with the terrain-only mod (see
+ * `test/oracle/previewCompare.ts`), that old number splits cleanly:
  *
- * The gap is not diagnosed and this does not bless it - #225's remaining work
- * (the cliff, rock and resource stacks) sits behind part of it. Freezing the
+ * | part                                                       | pixels |
+ * | ---------------------------------------------------------- | -----: |
+ * | lichen-tree tints outside the old mask - now agree         |  3,593 |
+ * | real terrain disagreement outside the old mask             |  8,830 |
+ * | terrain under the old mask, revealed and disagreeing       |  1,780 |
+ *
+ * So 3,593 of the old 12,423 were never terrain errors. The 118,890 pixels the
+ * mask hid disagree at 1.50%, against 0.95% everywhere else. Why that region
+ * is worse has not been looked at.
+ *
+ * The remaining gap is not diagnosed and this does not bless it. Freezing the
  * count is what makes a change to it a finding.
  */
-const DIFFERING_PX = 12423;
+const DIFFERING_PX = 10610;
 
 /**
  * Cliff pixels the overlay paints over terrain, per window, in `WINDOWS` order.
@@ -797,18 +798,17 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
    * The same 1024x1024 comparison `previewAgreement.spec.ts` made of the
    * TypeScript renderer (deleted in #360), run through the real boundary.
    *
-   * **The count is EXACT, not a bound**, and that is available only because the
-   * first describe block holds: the two renders are byte-identical, so this must
-   * be the TypeScript's own number rather than merely under 2%. A bound here
-   * would pass for any change worth thousands of pixels.
+   * **The count is EXACT, not a bound.** A bound here would pass for any change
+   * worth thousands of pixels.
    *
-   * Rocks and cliffs are masked because Vulcanus has no control that can disable
-   * them, so they are in the reference capture whatever the request says. Their
-   * coverage was a separate finding with its own assertions in
-   * `previewAgreement.spec.ts`, which #360 deleted; this is the terrain layer
-   * alone, and nothing asserts that other finding today.
+   * **Nothing is masked.** Vulcanus has no control that disables its cliffs,
+   * rocks, crater cliffs, chimneys or lichen trees, so until 2026-09-14 the
+   * capture drew all of them and this test masked the rock- and cliff-coloured
+   * pixels. The capture now removes them with a data-stage mod
+   * (`TERRAIN_ONLY_DATA_FINAL_FIXES` in `test/oracle/previewCompare.ts`), so the
+   * reference is terrain alone and the comparison covers the whole image.
    */
-  it("differs on exactly the same pixels the TypeScript renderer does", async () => {
+  it("differs from the game's terrain-only capture on exactly the frozen pixel count", async () => {
     const e = await engine();
     const game = reference("oracle-preview-vulcanus-terrain.seed123456.png");
     expect([game.width, game.height]).toEqual([SIZE, SIZE]);
@@ -836,22 +836,14 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
     const same = (a: readonly number[], b: readonly number[]): boolean =>
       a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 
-    // ONE definition, handed to both the counting loop and the artifact writer -
-    // written out twice the copies drift, and then the artifacts describe a
-    // different comparison than the assertion that failed.
-    const ignore = (i: number): boolean => {
-      const g = rgbAt(game.rgb, i);
-      return same(g, ROCK_MAP_COLOR) || same(g, CLIFF_MAP_COLOR);
-    };
-
-    let masked = 0;
+    let rockPx = 0;
+    let cliffPx = 0;
     let differing = 0;
     for (let i = 0; i < SIZE * SIZE; i++) {
-      if (ignore(i)) {
-        masked++;
-        continue;
-      }
-      if (!same(rgbAt(game.rgb, i), oursAt(ours, i))) differing++;
+      const g = rgbAt(game.rgb, i);
+      if (same(g, ROCK_MAP_COLOR)) rockPx++;
+      if (same(g, CLIFF_MAP_COLOR)) cliffPx++;
+      if (!same(g, oursAt(ours, i))) differing++;
     }
 
     withDiffArtifacts(
@@ -860,15 +852,15 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
         case: "terrain-1024",
         game,
         ours: { width: SIZE, height: SIZE, rgba: ours },
-        ignore,
       },
       () => {
-        // Frozen exact counts, measured 2026-08-24. `previewAgreement.spec.ts`
-        // asserted a 2% BOUND on the same comparison before #360 deleted it;
-        // this side freezes the
-        // number, because the byte-identity above means it CAN be exact and
-        // #162 is the standing record of a tolerance hiding a real defect.
-        expect(masked).toBe(MASKED_PX);
+        // The capture's own guard. A reference re-captured without the mod
+        // carries 54,161 rock and 64,729 cliff pixels again; these name that
+        // cause before the differing count reports it as a render regression.
+        expect(rockPx, "rocks in the reference - was it captured without the mod?").toBe(0);
+        expect(cliffPx, "cliffs in the reference - was it captured without the mod?").toBe(0);
+        // Frozen exact, because #162 is the standing record of a tolerance
+        // hiding a real defect.
         expect(differing).toBe(DIFFERING_PX);
       },
     );
@@ -907,7 +899,7 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
         differing++;
       }
     }
-    // An order of magnitude worse than the masked count above, so the surface
+    // An order of magnitude worse than the frozen count above, so the surface
     // seed derivation is load-bearing rather than incidental.
     expect(differing).toBeGreaterThan(DIFFERING_PX * 10);
   }, 300000);

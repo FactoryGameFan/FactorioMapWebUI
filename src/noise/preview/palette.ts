@@ -31,7 +31,7 @@ export const FULGORA_SHALLOW_RGB: readonly [number, number, number] = [74, 42, 4
  * can tell the two rules apart: 35.65 rounds to 36 under every rounding rule,
  * and the game's own `--generate-map-preview` PNG
  * (`test/fixtures/oracle-preview-fulgora-terrain.seed123456.png`) shows 35 at
- * every one of the 370,891 deep-ocean pixels sampled. `SCRAP_MAP_COLOR`'s
+ * every one of the 371,721 deep-ocean pixels sampled. `SCRAP_MAP_COLOR`'s
  * 0.9*255 = 229.5 landing on 229 in the same PNG is the second, independent
  * case. Written as the truncation so the reading stays visible.
  */

@@ -97,32 +97,34 @@ function freeze(
 }
 
 /**
- * The game draws enemy bases in its capture and our terrain view does not.
+ * The colour the game draws enemy bases in its preview. Our terrain view draws
+ * none, so the reference must contain none either.
  *
  * `enemy-base` is the ONE control the game reports as `can_be_disabled: false`
- * (`autoplace-can-be-disabled.dump.json`), so those pixels are in the reference
- * whatever we ask for. They are excluded rather than tolerated, and counted, so
- * the exclusion cannot quietly grow.
+ * (`autoplace-can-be-disabled.dump.json`), so no map-gen setting can remove
+ * them. The capture removes them with a data-stage mod instead -
+ * `TERRAIN_ONLY_DATA_FINAL_FIXES` in `test/oracle/previewCompare.ts` - and this
+ * colour is how the spec checks that it did.
  */
 const ENEMY_RGB = [255, 25, 25] as const;
 
 /**
- * Measured on the TypeScript path: 1,189 enemy pixels, and 8 of the remaining
- * 1,047,387 differ - 99.9992%.
+ * Pixels that differ from the game's terrain-only capture, out of all
+ * 1,048,576, with nothing masked.
+ *
+ * **Until 2026-09-14 this was 8 of 1,047,387**, because the capture still drew
+ * 1,189 enemy-base pixels and the spec masked them out by colour. The mod
+ * changed exactly those 1,189 pixels and nothing else, and every one of them
+ * agrees with our render - so the count stayed 8 while the comparison grew to
+ * cover the whole image.
  *
  * **`previewAgreement.spec.ts` said 10 in a comment, and that had drifted.** It
  * asserted `toBeLessThan(200)`, so the number in its prose was never checked by
  * anything and the port has moved since it was written - the same way four rows
  * of `test/captureGrid.ts`'s table had. This spec freezes it exactly instead.
- *
- * **These are the TypeScript renderer's own numbers and they have to be**,
- * because the first describe block asserts the two renders are byte-identical.
- * `previewAgreement.spec.ts` reached the same figures through a separate run,
- * until #360 deleted it; these frozen figures now stand alone.
- * Asserted EXACTLY here for the reason #162 records: a bound reported a real
+ * Asserted EXACTLY for the reason #162 records: a bound reported a real
  * improvement as a regression once, and an exact count cannot.
  */
-const ENEMY_PX = 1189;
 const DIFFERING_PX = 8;
 
 interface Window {
@@ -1577,7 +1579,7 @@ describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes
 });
 
 describe("the WASM engine's Nauvis terrain against the game's own preview", () => {
-  it("differs from the game at exactly the pixels the TypeScript does", async () => {
+  it("differs from the game's terrain-only capture on exactly the frozen pixel count", async () => {
     const e = await engine();
     const png = decodePng(
       new Uint8Array(readFileSync(join(FIXTURES, "oracle-preview-nauvis-terrain.seed123456.png"))),
@@ -1604,28 +1606,18 @@ describe("the WASM engine's Nauvis terrain against the game's own preview", () =
       ).buffer,
     );
 
-    // ONE definition of the mask, handed to both the counting loop and the
-    // artifact writer - written twice the copies drift, and then the artifacts
-    // describe a different comparison than the assertion that failed.
     // `decodePng` returns RGB at stride 3, NOT RGBA. Reading it at stride 4
-    // silently compares the wrong pixels - it reported 283 enemy pixels against
-    // the real 1,189, which looks like a render difference rather than an
-    // indexing one.
+    // silently compares the wrong pixels - it once reported 283 enemy pixels
+    // against the real 1,189, which looks like a render difference rather than
+    // an indexing one.
     const gameAt = (i: number) => [png.rgb[i * 3], png.rgb[i * 3 + 1], png.rgb[i * 3 + 2]];
     const oursAt = (i: number) => [ours[i * 4], ours[i * 4 + 1], ours[i * 4 + 2]];
-    const ignore = (i: number): boolean => {
-      const g = gameAt(i);
-      return g[0] === ENEMY_RGB[0] && g[1] === ENEMY_RGB[1] && g[2] === ENEMY_RGB[2];
-    };
 
     let enemyPx = 0;
     let differing = 0;
     for (let i = 0; i < SIZE * SIZE; i++) {
-      if (ignore(i)) {
-        enemyPx++;
-        continue;
-      }
       const g = gameAt(i);
+      if (g[0] === ENEMY_RGB[0] && g[1] === ENEMY_RGB[1] && g[2] === ENEMY_RGB[2]) enemyPx++;
       const o = oursAt(i);
       if (g[0] !== o[0] || g[1] !== o[1] || g[2] !== o[2]) differing++;
     }
@@ -1636,12 +1628,13 @@ describe("the WASM engine's Nauvis terrain against the game's own preview", () =
         case: "nauvis-terrain",
         game: png,
         ours: { width: SIZE, height: SIZE, rgba: ours },
-        ignore,
       },
       () => {
-        expect(enemyPx).toBe(ENEMY_PX);
+        // The capture's own guard: a PNG re-captured without the terrain-only
+        // mod carries the 1,189 enemy pixels again, and this names that cause
+        // before the differing count reports it as a render regression.
+        expect(enemyPx, "enemy bases in the reference - was it captured without the mod?").toBe(0);
         expect(differing).toBe(DIFFERING_PX);
-        expect(SIZE * SIZE - enemyPx).toBe(1047387);
       },
     );
   }, 300000);

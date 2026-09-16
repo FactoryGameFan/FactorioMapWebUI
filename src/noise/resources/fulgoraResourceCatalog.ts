@@ -15,6 +15,8 @@
 /**
  * `map_color = {0.9, 0.9, 0.9}` from the prototype, times 255 - and TRUNCATED,
  * since 229.5 lands on 229 in the game's own preview PNG. Confirmed against
- * those pixels: 1098 of 1825 changed pixels are exactly this triple.
+ * those pixels: all 1855 changed pixels are exactly this triple. Before the
+ * 2026-09-14 re-capture removed Fulgora's ruins, fulgurite and rocks from the
+ * preview, it was 1098 of 1825.
  */
 export const SCRAP_MAP_COLOR: readonly [number, number, number] = [229, 229, 229];

@@ -162,8 +162,10 @@ describe("image diff artifacts", () => {
 
     // Navy in the MAGNITUDE image too, not black. Black there means "agrees",
     // so an excluded pixel left black makes the image assert agreement over a
-    // region the test never looked at - 1,189 enemy-base pixels in the real
-    // Nauvis case. That is the confusion `diff-mask.png` exists to remove.
+    // region the test never looked at - it would have claimed agreement over
+    // the 1,189 enemy-base pixels the Nauvis comparison masked until the
+    // 2026-09-14 re-capture. That is the confusion `diff-mask.png` exists to
+    // remove.
     const magnitude = readPng(absoluteDir, "diff-magnitude.png");
     expect([...magnitude.subarray(3, 6)]).toEqual([0, 0, 80]);
     // The compared-and-agreeing pixel stays black, so the two states remain

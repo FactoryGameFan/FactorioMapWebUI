@@ -104,7 +104,7 @@ export interface DiffStats {
   readonly width: number;
   readonly height: number;
   readonly totalPixels: number;
-  /** Pixels the caller's `ignore` predicate excluded, e.g. the game's enemy bases. */
+  /** Pixels the caller's `ignore` predicate excluded. No spec passes one today. */
   readonly ignoredPixels: number;
   readonly comparedPixels: number;
   readonly changedPixels: number;
@@ -280,7 +280,8 @@ export function writeDiffArtifacts(target: DiffTarget): {
       // Navy in BOTH images, not just the mask. Left black in the magnitude
       // view, an excluded pixel is drawn exactly like one that agrees, so the
       // image asserts agreement over a region the test never looked at - the
-      // Nauvis case would claim it about all 1,189 enemy-base pixels. That is
+      // Nauvis comparison, which masked 1,189 enemy-base pixels until the
+      // 2026-09-14 re-capture, would have claimed it about all of them. That is
       // the confusion `diff-mask.png` exists to remove, reintroduced one file
       // over.
       mask.set(MASK_IGNORED, i * 3);
