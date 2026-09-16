@@ -62,7 +62,11 @@ export function toMapSettingsJson(preset: Preset): object {
       pollution_with_max_forest_damage: m.pollution.pollutionWithMaxForestDamage,
       pollution_per_tree_damage: m.pollution.pollutionPerTreeDamage,
       pollution_restored_per_tree_damage: m.pollution.pollutionRestoredPerTreeDamage,
-      max_pollution_to_restore_trees: m.pollution.maxPollutionToRestoreTrees,
+      // Gone from the game at 2.1.18, so a 2.1.19 import has no value to emit
+      // and the key is left out rather than written as null.
+      ...(m.pollution.maxPollutionToRestoreTrees === undefined
+        ? {}
+        : { max_pollution_to_restore_trees: m.pollution.maxPollutionToRestoreTrees }),
       enemy_attack_pollution_consumption_modifier:
         m.pollution.enemyAttackPollutionConsumptionModifier,
     },
