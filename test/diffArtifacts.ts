@@ -150,26 +150,31 @@ const REPO_ROOT = join(import.meta.dirname, "..");
 const SAFE_PATH_SEGMENT = /^[\w.-]*$/;
 
 /**
- * Guards `join()`'s own trap: it normalises ".." away, so a `spec` or `case`
- * built from a traversal segment resolves OUTSIDE `test-output/` and is then
- * deleted recursively with `force: true` by `writeDiffArtifacts` below - no
- * error, no trace (#303). Every real caller today passes a literal like
- * `"wasmNauvisRenderParity"` or `"nauvis-terrain"`, so the allowed character
- * set is narrow on purpose. The `.includes("..")` check is broader than the
- * character class alone needs - `"a..b"` cannot actually escape anything -
- * but nothing real needs a value shaped like that either, and rejecting the
- * whole class is cheaper to reason about than proving each shape is safe.
+ * Guards `join()`'s own trap: it normalises ".." and "." away, so a `spec` or
+ * `case` built from a traversal segment - or a bare "." resolving to the
+ * directory above it - resolves OUTSIDE the intended case directory and is
+ * then deleted recursively with `force: true` by `writeDiffArtifacts` below -
+ * no error, no trace (#303, #426). Every real caller today passes a literal
+ * like `"wasmNauvisRenderParity"` or `"nauvis-terrain"`, so the allowed
+ * character set is narrow on purpose. The `.includes("..")` check is broader
+ * than the character class alone needs - `"a..b"` cannot actually escape
+ * anything - but nothing real needs a value shaped like that either, and
+ * rejecting the whole class is cheaper to reason about than proving each
+ * shape is safe. `"."` needs its own check: it passes the character class and
+ * isn't caught by `.includes("..")`, but `artifactPaths(".", "")` still
+ * collapses to `ROOT_RELATIVE` itself, reaching the same `rmSync`.
  */
 function assertSafePathSegment(value: string, label: "spec" | "case", allowEmpty: boolean): void {
   if (
     (!allowEmpty && value.length === 0) ||
+    value === "." ||
     !SAFE_PATH_SEGMENT.test(value) ||
     value.includes("..")
   ) {
     throw new Error(
       `artifactPaths: unsafe ${label} ${JSON.stringify(value)} - only letters, digits, "_", ` +
-        `"-" and "." are allowed${allowEmpty ? " (or empty)" : ""}, and it must not contain ` +
-        `"..". This value reaches an rmSync(..., { recursive: true, force: true }) call.`,
+        `"-" and "." are allowed${allowEmpty ? " (or empty)" : ""}, it must not contain ".." ` +
+        `or equal ".". This value reaches an rmSync(..., { recursive: true, force: true }) call.`,
     );
   }
 }
@@ -388,7 +393,7 @@ type NotThenable<T> =
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
-    typeof value === "object" &&
+    (typeof value === "object" || typeof value === "function") &&
     value !== null &&
     typeof (value as { then?: unknown }).then === "function"
   );

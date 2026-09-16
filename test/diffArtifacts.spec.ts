@@ -298,6 +298,35 @@ describe("image diff artifacts", () => {
   });
 
   /**
+   * CodeRabbit review on #426: `isThenable` only checked `typeof value ===
+   * "object"`. A function is `typeof "function"`, not `"object"`, so a
+   * callback that bypasses `NotThenable` through a cast and returns a
+   * function carrying a callable `then` property sailed through undetected,
+   * silently defeating the guard the previous test exercises.
+   */
+  it("throws when the assertions callback returns a function-valued thenable", () => {
+    // `no-thenable` exists to catch an ACCIDENTAL thenable; this one is
+    // deliberate, standing in for a value an any-typed or cast callback could
+    // genuinely return.
+    const fakeThenable: { (): void; then?: () => void } = () => {};
+    // eslint-disable-next-line unicorn/no-thenable
+    fakeThenable.then = () => {};
+    const assertions = (() => fakeThenable) as unknown as () => void;
+
+    expect(() =>
+      withDiffArtifacts(
+        {
+          spec: SPEC,
+          case: "function-thenable-guard",
+          game: twoPixels([1, 2, 3]),
+          ours: twoPixels([1, 2, 3]),
+        },
+        assertions,
+      ),
+    ).toThrow(/synchronous/i);
+  });
+
+  /**
    * #303 finding 2: `artifactPaths` used to join `spec`/`case` straight into a
    * path. `join()` normalises ".." away, so a traversal segment resolved
    * outside `test-output/` and was then deleted recursively with `force:
@@ -308,6 +337,18 @@ describe("image diff artifacts", () => {
     expect(() => artifactPaths(SPEC, "..")).toThrow(/unsafe case/);
     expect(() => artifactPaths(SPEC, "../../etc")).toThrow(/unsafe case/);
     expect(() => artifactPaths(SPEC, "nested/traversal")).toThrow(/unsafe case/);
+  });
+
+  /**
+   * CodeRabbit review on #426: "." passes SAFE_PATH_SEGMENT and isn't caught
+   * by `.includes("..")`, and `caseName` is allowed to be empty, so
+   * `artifactPaths(".", "")` used to collapse to `join(ROOT_RELATIVE, ".",
+   * "")` = ROOT_RELATIVE itself - the whole preview-diffs root, not one
+   * case's subdirectory.
+   */
+  it("rejects a bare '.' spec or case, which would otherwise collapse to the artifacts root", () => {
+    expect(() => artifactPaths(".", "")).toThrow(/unsafe spec/);
+    expect(() => artifactPaths(SPEC, ".")).toThrow(/unsafe case/);
   });
 
   /**
