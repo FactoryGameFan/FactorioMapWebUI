@@ -186,26 +186,29 @@ WC_AT_GETAABB = 0x1014B4E20     # x2 -> position, w3 = orientation
 WC_AFTER_CHECKTILE = 0x1014B4E4C  # w0 = tile verdict
 WC_AFTER_ENTITY = 0x1014B4E98   # x0 = colliding entity or null
 WC_AT_RETURN = 0x1014B4EC8      # x19 = result
+# One call's partial record per thread. Every call in both regions ran on one thread
+# (measured), but a build that generates on several would interleave them silently.
 wc = {}
 
 
 def on_wc_start(frame, bp_loc, internal_dict):
-    global wc
     process = frame.GetThread().GetProcess()
     err = lldb.SBError()
     pos = process.ReadMemory(_reg(frame, "x2"), 8, err)
-    wc = {"pos": list(struct.unpack("<ii", pos)) if err.Success() else None,
-          "orientation": _reg(frame, "w3") & 0xFF, "proto": _reg(frame, "x1")}
+    wc[frame.GetThread().GetThreadID()] = {
+        "pos": list(struct.unpack("<ii", pos)) if err.Success() else None,
+        "orientation": _reg(frame, "w3") & 0xFF, "proto": _reg(frame, "x1")}
     return False
 
 
 def on_wc_tile(frame, bp_loc, internal_dict):
-    wc["tile"] = _reg(frame, "w0") & 0xFFFFFFFF
+    wc[frame.GetThread().GetThreadID()]["tile"] = _reg(frame, "w0") & 0xFFFFFFFF
     return False
 
 
 def on_wc_entity(frame, bp_loc, internal_dict):
     ent = _reg(frame, "x0")
+    call = wc[frame.GetThread().GetThreadID()]
     if ent:
         process = frame.GetThread().GetProcess()
         err = lldb.SBError()
@@ -213,20 +216,19 @@ def on_wc_entity(frame, bp_loc, internal_dict):
         if err.Success():
             vptr = struct.unpack("<Q", vp)[0]
             sym = process.GetTarget().ResolveLoadAddress(vptr).GetSymbol()
-            wc["entity"] = sym.GetName() if sym.IsValid() else hex(vptr)
+            call["entity"] = sym.GetName() if sym.IsValid() else hex(vptr)
         v = frame.EvaluateExpression(
             "struct __BB{int l,t,r,b;unsigned o;}; ((struct __BB(*)(void*))%d)((void*)%d)" % (ENTITY_GETAABB, ent))
         if v.IsValid() and v.GetError().Success():
-            wc["entity_aabb"] = [v.GetChildMemberWithName(k).GetValueAsSigned() for k in "ltrb"]
+            call["entity_aabb"] = [v.GetChildMemberWithName(k).GetValueAsSigned() for k in "ltrb"]
     return False
 
 
 def on_wc_return(frame, bp_loc, internal_dict):
-    global wc
-    wc["result"] = _reg(frame, "x19") & 0xFFFFFFFF
-    events.append({"kind": "wouldCollide", "tid": frame.GetThread().GetThreadID(), "this": 0,
-                   "stack": [], **wc})
-    wc = {}
+    tid = frame.GetThread().GetThreadID()
+    call = wc.pop(tid)
+    call["result"] = _reg(frame, "x19") & 0xFFFFFFFF
+    events.append({"kind": "wouldCollide", "tid": tid, "this": 0, "stack": [], **call})
     return False
 
 

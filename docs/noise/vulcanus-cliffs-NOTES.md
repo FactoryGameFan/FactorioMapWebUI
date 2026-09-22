@@ -5379,7 +5379,10 @@ Each count includes the cascade a root starts. The third root is a
 destroy-cliffs trigger effect, called from `Surface::onChunkGenerated`. At
 f0.5 it destroys `(-2030, -1493.5)` outright; the cascade trims
 `(-2026, -1493.5)` to nothing and `(-2034, -1493.5)` to `north-to-none`. Those
-are the "three cells 40 to 50 tiles from anything".
+are three of the "six cells 40 to 50 tiles from anything". The other three,
+`(-2102..-2106, -1245.5)`, are two `wouldCollide` entity kills against the
+same rock and the trim they leave on `(-2106, -1249.5)`; they sit in the rock
+row of the table below.
 
 `applyCliffs` also turns out to test every queued cell BEFORE creating any:
 all 180 `cliff-vulcanus` cells `wouldCollide` killed in `[1500,1500]` are
@@ -5446,7 +5449,7 @@ demolisher kill, not a rock. #406's own fixture already said `Segment` for
 
 ### What it means for the port
 
-With the game's ore fed in, 29 of the 44 errors in these two regions are
+With the game's ore fed in, 31 of the 44 errors in these two regions are
 entities the port does not place where the game does. Demolishers appear
 three ways - the entity half, the self-destroy, and the trigger - and the
 port has no demolisher at all. Crater-cliff rings are not in the port's cliff
