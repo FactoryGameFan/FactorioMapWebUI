@@ -988,8 +988,14 @@ what anyone should try next:
 - **`Cliff::destroyEnd` refuses to `forceDestroy`** when entity flag bit 4 of
   `+0x6e` is set (`0x1007a8e40`); it returns with the orientation UNCHANGED, not
   merely undestroyed. And after a successful shrink it re-searches its new
-  bounding box and destroys colliding non-cliff entities (`0x1007a8e9c`
-  onwards) - a side effect nothing in this repo models.
+  bounding box (`0x1007a8e9c` onwards), and when a non-cliff entity there
+  collides with it, **the CLIFF destroys ITSELF** - `forceDestroy` on `this`,
+  whose own `onDestroy` then cascades on. This bullet used to say it destroys
+  the colliding entities, which is the reading backwards; the 2.0.77 listing
+  (`bl forceDestroy` at `0x100713344` with `x0 = x19 = this`) and a runtime
+  capture of it firing 17 times (`oracle-vulcanus-cliff-destroy-trace`,
+  2026-09-22) settle it. Entities with no common collision layer are instead
+  queued for deconstruction by force. Nothing in this repo models either.
 - **`Cliff::getNeighbor`** (`0x1007a8c58`) accepts an entity only on an exact
   prototype-id match AND an exact position match, so a different cliff
   prototype on an adjacent cell is not a neighbour.

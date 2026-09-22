@@ -5333,3 +5333,128 @@ rock renders are identical. In `tall, coarse` one pixel moved: tile
 17 moved: 7 cliffs over calcite are gone (ore covered 201 -> 194, by a cliff
 199 -> 192), 5 cliff pixels off the ore are gone, and 5 pixels of one run, at
 tiles (800..816, 328..336), gained a cliff.
+
+## What destroys a cliff AFTER `wouldCollide` passed it (2026-09-22, #84)
+
+#406 recorded every `wouldCollide` decision and found that, with the game's
+own entity kills fed in, the cells the port still got wrong in `[1500,1500]`
+had all passed that test. Something destroyed them later. The removal
+geometry section above left the same kind of cell open in the frequency-0.5
+region: two runs 5 to 29 tiles from a geyser, and six cells 40 to 50 tiles
+from anything. `scripts/probes/vulcanus-cliff-destroy-trace/` names the
+killer of every one, by breaking on the cliff's own life in the running game
+rather than inferring it from where a cell sits.
+
+### The probe
+
+lldb on the unstripped 2.0.77 binary, replaying the oracle's `--create` for
+both regions (the `wouldcollide` probe's machinery and its two traps). It
+breaks by name on `Cliff::setup`, `Cliff::onDestroy` and
+`Entity::forceDestroy` (cliffs only, by vtable), and by file address on three
+sites: `Cliff::destroyEnd`'s shrink (`strb w8, [x19, #0x88]`, since
+`Cliff::setCliffOrientation` is inlined and its own breakpoint never fires),
+`destroyEnd`'s self-destroy `bl` (below), and `Surface::wouldCollide`'s tile
+and entity verdicts. Each destroy keeps its caller chain, up to 40 frames.
+
+**The control:** the replay places the same cliffs as the 2.1.x fixtures,
+cell for cell and orientation for orientation - 885 against
+`oracle-vulcanus-cliff-entities` and 834 against
+`oracle-vulcanus-cliff-volcanism-ore`'s 2.1.17 resources-ON arm, with the same
+1215 resource entities. The earlier version check covered only the default
+regions, so this one was run rather than assumed.
+
+### Three things end a cliff, and the third one is not map generation's
+
+`cliff-vulcanus` destroys by the frame that started each chain:
+
+| root frame | `[1500,1500]` | f0.5 |
+| --- | ---: | ---: |
+| `EntityMapGenerationTask::applyCliffs` (the `wouldCollide` kill) | 195 | 165 |
+| `ResourceEntity::postSetup` (the ore rule) | 31 | 67 |
+| `DestroyCliffsTriggerEffectItem::applyInternal` | 3 | 2 |
+| `Cliff::updateConnections` | 0 | 1 |
+
+Each count includes the cascade a root starts. The third root is a
+**demolisher**: `SegmentedUnit::update` -> `Segment::update` runs a
+destroy-cliffs trigger effect, called from `Surface::onChunkGenerated`. At
+f0.5 it destroys `(-2030, -1493.5)` outright; the cascade trims
+`(-2026, -1493.5)` to nothing and `(-2034, -1493.5)` to `north-to-none`. Those
+are the "three cells 40 to 50 tiles from anything".
+
+`applyCliffs` also turns out to test every queued cell BEFORE creating any:
+all 180 `cliff-vulcanus` cells `wouldCollide` killed in `[1500,1500]` are
+created and then destroyed, 164 directly and 16 by a killed neighbour's
+cascade that reached them first.
+
+### `destroyEnd` destroys the cliff ITSELF when its trimmed box hits an entity
+
+`Cliff::destroyEnd` (2.0.77, `0x1007130d8`) writes the trimmed orientation,
+calls `updateBoundingBox`, and walks a `HeuristicEntityIterator` over the new
+box. For an entity that is not a cliff, that collides with the box, and whose
+collision mask shares a layer with the cliff's, it calls `forceDestroy` on
+`this` (`0x100713344`) - the cliff, not the entity. That destroy runs the
+cliff's own `onDestroy`, so the cascade walks on. `docs/noise/cliffs-NOTES.md`
+recorded this branch backwards, as destroying the colliding entities; it is
+corrected there.
+
+The breakpoint on that one `bl` fired 14 times in `[1500,1500]` and 3 at
+f0.5, which is exactly the number of cascade destroys whose stack still holds
+a `destroyEnd` frame (the other exit, a trim to nothing, is a tail call and
+leaves none) - two independent counts of the same thing. What each trimmed
+box hit:
+
+- 13 against a demolisher (`Segment` 11, `SegmentedUnit` 2), including the
+  whole `1742/1746` run: `(1746, 1538.5)` dies to the entity half, and each
+  cell north of it is trimmed to `none-to-*` and still touches the segment,
+  until `(1742, 1534.5)`, whose `none-to-south` box clears it and survives.
+- 4 against a rock (`SimpleEntity`). Three of the four were trimmed by the
+  ore rule first. One of those, `(-2078, -1465.5)` on the `x = -2078` "geyser
+  run" the removal geometry could not reach, is a port error: the ore trims it
+  and its smaller box lands on a rock.
+
+The port's `destroy_end` models the trim and the trim to nothing (validated
+by #139) and has no entity to re-test against.
+
+### Every apply-stage error, binned by the game's own reason
+
+Graded inside
+`the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriented_box`,
+on the arms that test already computes. A cascade is charged to what started
+its chain:
+
+| reason | `[1500,1500]` shipped | game ore | f0.5 shipped | game ore |
+| --- | ---: | ---: | ---: | ---: |
+| `wouldCollide` entity: demolisher `Segment` | 10 | 10 | 0 | 0 |
+| `wouldCollide` entity: rock | 0 | 0 | 10 | 10 |
+| `wouldCollide` entity: crater-cliff ring | 0 | 0 | 8 | 8 |
+| ore rule (`postSetup`) | 7 | 0 | 35 | 5 |
+| demolisher destroy-cliffs trigger | 0 | 0 | 3 | 3 |
+| the port removes or trims a cell the game kept | 2 | 2 | 6 | 6 |
+| **total** | **19** | **12** | **62** | **32** |
+
+No error is unexplained, and none is the TILE half of `wouldCollide`, whose
+transcription (#407) holds here too. The last row is the timing class above:
+the game trimmed those cells before its ore check ran, and the port reads the
+queued box. Five ore errors survive with the game's entities fed in: the
+rock cell above and the cell its cascade takes, and three around
+`(-2046, -1317.5)` and `(-2170, -1317.5)` that this section did not diagnose
+further.
+
+**One correction to #406's write-up:** the `1506` run in `[1500,1500]` is a
+demolisher kill, not a rock. #406's own fixture already said `Segment` for
+`(1506, 1582.5)` and `(1506, 1586.5)`; the prose that summarised it did not.
+
+### What it means for the port
+
+With the game's ore fed in, 29 of the 44 errors in these two regions are
+entities the port does not place where the game does. Demolishers appear
+three ways - the entity half, the self-destroy, and the trigger - and the
+port has no demolisher at all. Crater-cliff rings are not in the port's cliff
+pass either. The port does paint a rock overlay; whether its rocks stand
+where the game's do was not measured here, and a rock rule is only worth as
+much as that placement. So the next step is a costed choice, not a fix: what
+would placing each of these entity classes buy, against what it would cost.
+
+Planted to prove the bins can fail: relabelling the `(1506, 1582.5)` kill as
+a rock moves TWO cells out of the demolisher bin (the kill and its cascade),
+and deleting a destroy entry fails with the cell named.
