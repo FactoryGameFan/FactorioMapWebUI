@@ -114,8 +114,8 @@ of `verify`, which must pass on machines with no Factorio installed.
 
 ### Probes: the rule is new probes only
 
-**`test/oracle/` stays.** It is 9,593 lines, it works, and nothing in it gets
-rewritten to use the CLI. `sampleExpression()` remains the right tool for
+**`test/oracle/` stays.** It works, and nothing in it gets rewritten to use the
+CLI. `sampleExpression()` remains the right tool for
 sampling a noise expression, and the local harness is what most of `docs/noise/`
 was built with. Adoption happens when someone writes a probe they did not have
 before - and especially when it needs something the local harness does not do: a
@@ -176,27 +176,23 @@ question.
 Run `vp` (Vite+) **through pnpm** - `pnpm vp <cmd>` - which is what every script
 in `package.json` does.
 
-**`npx vp` fails; a bare `vp` does NOT.** This line used to say both forms fail
-with `EBADDEVENGINES`, and half of that was wrong (re-measured 2026-08-04). The
-project pins pnpm via `devEngines`, so `npx vp check` dies with
-`EBADDEVENGINES ... Invalid name "pnpm" does not match "npm"` - but the global
-`vp` binary (v0.2.7) is not npm and runs fine: bare `vp check` exits 0 and
-reports all 367 files formatted. Prefer `pnpm vp` anyway, because it is the form
-the scripts and CI use and so the one that stays verified; just don't expect a
-bare `vp` to fail, and don't "fix" a working command on the strength of this
-note.
+**Numbers in this file are dated measurements, not specs.** Timings, counts,
+sizes and versions drift as the code changes. Re-measure before you quote one or
+act on it, and prefer the command that produces a number over the number itself.
 
-`.node-version` is the Node version the repo is developed and verified on.
-**Do not quote that pin here** - read it with `cat .node-version`. Renovate
-bumps that file on its own and has moved it four times since 2026-07-01
-(26.5.1, 26.7.0, 26.8.1, with 26.8.2 queued as of 2026-09-11), so a number
-written here can only ever lag it - the same trap `rust-toolchain.toml` and the
-`engine.wasm` byte count already carry warnings about. `engines.node` stays a
-permissive floor (`>=24.18.0`) rather than matching the pin - older versions
-are simply untested, not known-broken.
+**`npx vp` fails; a bare `vp` works.** The project pins pnpm via `devEngines`,
+so `npx vp check` dies with
+`EBADDEVENGINES ... Invalid name "pnpm" does not match "npm"`. The global `vp`
+binary is not npm and runs fine. Prefer `pnpm vp` anyway: it is the form the
+scripts and CI use, so it is the one that stays verified.
 
-**`.node-version` is machinery now, not documentation.** That changed when
-`.github/workflows/verify.yml` landed: `actions/setup-node` reads the file via
+`.node-version` is the Node version the repo is developed and verified on. Read
+it with `cat .node-version` rather than quoting it here: Renovate bumps that
+file on its own, so a number written here only lags it. `engines.node` stays a
+permissive floor (`>=24.18.0`) - older versions are untested, not known-broken.
+
+**`.node-version` is machinery, not documentation.** In
+`.github/workflows/verify.yml`, `actions/setup-node` reads the file via
 `node-version-file`, so it is what CI actually installs. It is read locally too:
 the Vite+ shims on `PATH` resolve it per directory, so a bare `node` here runs
 the managed build under `~/.vite-plus/js_runtime/node/`, not Homebrew's. That
@@ -215,16 +211,11 @@ Always follow any `add` with a bare `pnpm install`: `add` relinks only its own
 workspace and leaves sibling workspaces' symlinks dangling. Only the full
 install prints `Scope: all 3 workspace projects`.
 
-**The 24-hour release-age guard is now DECLARED, and setting it explicitly buys
-a second guard that the identical default value does not.** `pnpm-workspace.yaml`
-carries `minimumReleaseAge: 1440` as of 2026-08-11 (#184), so
-`pnpm config get minimumReleaseAge` answers `1440` rather than the `undefined`
-it used to - which used to read like "no policy here" while pnpm's own defaults
-table (`"minimum-release-age": 24 * 60, // 1 day`) was quietly enforcing one.
-
-1440 minutes _is_ that default, so the number changed nothing. What changed is
-that an **explicit** value turns on a whole-lockfile verification pass on every
-install. Measured on one tree, pnpm 11.18.0:
+**The 24-hour release-age guard is declared explicitly, and that buys a second
+guard the identical default does not.** `pnpm-workspace.yaml` sets
+`minimumReleaseAge: 1440`, which equals pnpm's own default. The number changes
+nothing; an explicit value turns on a whole-lockfile check on every install.
+Measured on one tree, pnpm 11.18.0:
 
 | `minimumReleaseAge`    | `pnpm install --frozen-lockfile` prints                 |
 | ---------------------- | ------------------------------------------------------- |
@@ -236,15 +227,11 @@ Unset, the age is checked only at **resolution**; a lockfile resolved elsewhere
 with the guard bypassed installs here without a murmur. Set, all 399 entries are
 re-checked every install.
 
-**Do not raise it above 1440.** That verification is retroactive, and #184
-proposed 4320, which failed all seven CI jobs on a single entry:
-`@speed-highlight/core@1.2.24`, pulled in transitively by
-`wrangler > miniflare > youch` when #169 landed on 2026-08-10 and it was ~1.2
-days old - legal under the floor it was resolved under, illegal under 3 days,
-for the two days until it aged out. At 1440 that window cannot open, because
-pnpm's resolver already refuses anything under 24h, so no lockfile it produces
-can fail its own verification. Anything higher re-opens a gap between what the
-resolver accepts and what the verifier demands. Two further traps are recorded
+**Do not raise it above 1440.** The check is retroactive: a higher value (4320,
+in #184) failed all seven CI jobs on one transitive package that was legal when
+resolved and too young under the new value. At 1440 that cannot happen, because
+pnpm's resolver already refuses anything under 24h. Anything higher re-opens a
+gap between what the resolver accepts and what the check demands. Two further traps are recorded
 in the comment on the setting itself: pnpm's suggested remedy
 (`pnpm clean --lockfile && pnpm install`) is a 357-line full re-resolution, i.e.
 the `lockFileMaintenance` operation Renovate pins off here; and
@@ -271,7 +258,7 @@ fixed upstream.
   inside `.vue` bodies - that is `check:vue`'s job, and the two together are the
   full net.
 - `pnpm run check:vue` - `vue-tsc --noEmit`, the type-check of `<script setup>`
-  bodies in the 22 `.vue` files (~2.1s). Nothing else checks them.
+  bodies in the `.vue` files. Nothing else checks them.
 - `pnpm vp build` - production build
 
 **`vp dev` is exercised by NOTHING - not `verify`, not CI.** The `build` job
@@ -304,9 +291,8 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   `rust` CI job, and it is the **largest phase of `verify`**: 112.0s warm on a
   dev machine, 54% of the gate (measured 2026-09-05).
 
-  **This line said "Cheap ... 1.62s cold, 0.84s warm" and was wrong by more
-  than a hundredfold.** Those figures cannot have described this script, which
-  runs the crate's tests twice - once clean and once under `--features poison`.
+  It runs the crate's tests twice - once clean and once under
+  `--features poison`.
   Where the time goes, each phase timed on its own, warm:
 
   | phase                                                   |      time |
@@ -352,8 +338,8 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
     **`--document-private-items` is load-bearing, not thorough.** The default
     view only checks links on PUBLIC items, and 2 of the 11 broken links on
     `main` were invisible to it. Proven by planting rather than by reading the
-    flag's docs: re-break the link on `cliffs/catalog.rs:379`, a doc on a
-    private item, and the public view exits **0** having missed it while the
+    flag's docs: re-break a link in a doc comment on a private item in
+    `cliffs/catalog.rs`, and the public view exits **0** having missed it while the
     gate exits **101**.
 
     Scoped to that one lint rather than `-D warnings`. Four
@@ -373,14 +359,11 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   not before #219 - `rust-toolchain.toml` pins the version and rustup installs
   it on the first cargo command, so a machine with no Rust pays that download
   once before the gate can run at all. **Do not quote that pin here**, read it
-  with `grep channel rust-toolchain.toml`. This line named 1.97.1 from #219
-  until #316 moved the pin, and then stayed wrong - the same trap the
-  `engine.wasm` byte count already carries a warning about, and it cost a
-  second machine's setup notes the same error on 2026-08-29.
+  with `grep channel rust-toolchain.toml`.
 
-  **~3m26s on a dev machine** (measured 2026-09-05: 125 test files, 1,168
-  tests, all green), and **the COMPOSITION has inverted since it was last
-  written down**, which matters more than the total:
+  **About 3.5 minutes on a dev machine** (measured 2026-09-05: 125 test files,
+  1,168 tests, all green). The split between phases matters more than the
+  total:
 
   | phase                             |       time |   share |
   | --------------------------------- | ---------: | ------: |
@@ -395,25 +378,13 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   above are meaningless. `verify:rust` is not cached at all, so it pays 112.0s
   every single time - which is the practical reason it now dominates.
 
-  The old note said the Rust phase "adds ~1.6s" and that `vp test` was 88% of
-  the gate. Both are dead. #227 and #371 deleted the TypeScript noise math, so
-  the test phase fell by more than half while the Rust phase grew - and the one
-  phase `verify` caches is now the SECOND largest. On a runner it is no longer one job -
-  see the CI section, which shards it. This line has now been wrong THREE times
-  and always in the same direction, so treat the number as perishable. It claimed `~9.5s` for a
-  long time - wrong by a factor of six even before `check:vue` existed, because
-  the suite grew through the Vulcanus and cliff work. It was then corrected to
-  `~65-90s`, which the island finder (#207) invalidated within two weeks by
-  adding one 134.6s spec file. The gap matters both times: a gate people believe
-  is instant and is not is a gate they stop running, which is half the argument
-  for the CI workflow below. Don't budget seconds for this; budget minutes.
+  `verify:rust` is now the largest phase, and it is not cached. On a runner the
+  gate is split across jobs - see the CI section. A gate people believe is
+  instant and is not is a gate they stop running, so budget minutes, not
+  seconds.
 
   The test phase runs through **`vp run --cache test`**, not a bare `vp test`.
-  Measured 2026-08-02: the four phases are `vp check` 2.0s, `check:vue` 3.0s,
-  `vp test` **61.2s**, `preview:test` 3.1s - so one phase is **88%** of the gate
-  and it is the only one worth caching. That phase alone goes 62.0s cold to
-  **0.6s** warm; the whole gate goes **64.9s to 7.0s**, the remainder being the
-  three phases that are not cached.
+  It is the only cached phase: about 0.6s on a hit against about 80s on a miss.
 
   The cache is content-keyed, and that was established by trying to break it
   rather than by reading the flag's docs: an edit to a source file misses and
@@ -456,21 +427,13 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
     correctly, but `vp test --merge-reports` does not merge, it **re-runs**: a
     57-file shard's blob came back reporting 114 files. Vite+ is not bare vitest
     on this path. That is why the sharded CI job uploads no artifacts.
-  - **The wall clock is set by the slowest FILE, not by total CPU** - true on
-    2026-08-03, then false on 2026-08-10, and **true again now**. This has
-    flipped twice, so measure it rather than quoting any of the three states.
-    Re-measured 2026-09-05 at 125 files: 208.3s of per-file wall in **80.3s of
-    wall clock on 12 cores, with `test/wasmVulcanusRenderParity.spec.ts` alone
-    79.8s of that 80.3s**. Two files are 66% of all test time and four are 84%.
-    The 2026-08-10 reading (503s spread over ten files above 20s) was correct
-    for the tree it measured; #227 and #371 then deleted the TypeScript noise
-    math and left the wasm parity specs standing alone. See #119 for the CI
-    consequence: the single-file floor is what made N=4 look pointless, and
-    once it stopped dominating, N=4 became a 32% cut of the gate.
+  - **The wall clock is set by the slowest file, not by total CPU** (2026-09-05,
+    125 files: 208.3s of per-file time in 80.3s of wall clock on 12 cores,
+    `test/wasmVulcanusRenderParity.spec.ts` alone 79.8s). This depends on the
+    suite's shape, so measure it before relying on it. See #119 for the CI
+    consequence.
   - **Switching to `environment: "node"` was measured and REFUTED - the cost
-    RELOCATES.** This note used to claim `node` was already the default and
-    worth ~3s; `vite.config.ts` sets `happy-dom`, so the claim was wrong twice
-    over. On `test/base64.spec.ts`, which touches no DOM at all, the two arms
+    RELOCATES.** On `test/base64.spec.ts`, which touches no DOM at all, the two arms
     are indistinguishable end to end (159/156ms against 154/165ms) because the
     time only moves between two line items:
 
@@ -485,38 +448,9 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
     shows a fake 20.9s win.** 105 of the 125 spec files need no DOM, so the
     migration is available; it is the payoff that is zero.
 
-  **A fourth, measured 2026-08-18: bun and deno are refuted, and the premise
-  under the question was refuted with them.** The suite is transform **0.7%**,
-  so a faster transpiler aims at almost nothing; on identical work plain bun is
-  **10% slower** than the node already installed (5.97s against 5.40s) and
-  deno's 5.17s is inside noise. Both also enforce their release-age floor at
-  resolution only, never on a frozen install from a lockfile - which is exactly
-  pnpm's _unset_ default, i.e. the hole `minimumReleaseAge: 1440` exists to
-  close - and both exit 0 having installed no `node_modules` for either
-  preview-service workspace. Full arm-by-arm numbers, the deno flag-spelling
-  trap that produces a false negative, and the one result that would reopen it
-  are in `docs/bun-deno-evaluation.md`. That work also opened issue #267 -
-  vitest's per-module transform costing 3.7x on the noise graph - and **#267 is
-  now CLOSED as refuted, by re-running its own A/B** (2026-09-05). Three
-  interleaved rounds per arm, 11/11 passing every run: as it ships 20.61 /
-  21.27 / 20.82s, pre-bundled 20.83 / 21.06 / 20.95s. **Ratio 0.99x.** The
-  162.11s baseline is gone with the code that caused it - #227 and #371 took
-  `src/noise/` from 99 modules to 25, and #267 itself predicted this, naming
-  the deletion as the thing that removes the tax "from the other side."
-
-  The suite-wide line items moved the same way. Do not budget against the old
-  ones:
-
-  | line item   | 2026-08-18 |         2026-09-05 |
-  | ----------- | ---------: | -----------------: |
-  | tests       |      67.3% | **85.3%** (208.3s) |
-  | import      |  **29.8%** |    **3.8%** (9.4s) |
-  | environment |       2.1% |       8.5% (20.9s) |
-  | transform   |       0.7% |        1.9% (4.6s) |
-
-  `import` is the line the tax landed in, and it has collapsed. On the heaviest
-  file, the entire non-test overhead is now **193ms** (import 58ms, transform
-  55ms, environment 80ms) out of 77.2s.
+  bun and deno were measured as faster test runners and refuted;
+  `docs/bun-deno-evaluation.md` has the numbers, the current suite-wide line
+  items, and the one result that would reopen it.
 
 - `pnpm refs:sync` - report which reference material is readable at the
   installed binary's version (`--check` exits 1 when it is not; `--fixtures`
@@ -531,14 +465,10 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
 ### CI (`.github/`) runs `verify`'s phases SHARDED, plus the build
 
 `.github/workflows/verify.yml` runs on every pull request and every push to
-`main`. Until 2026-08-03 it ran `pnpm run verify` verbatim as one job. It no
-longer does, and the note that used to sit here said so emphatically ("do not
-mirror the change into the YAML") - if you are here because the YAML does not
-match that instruction, the instruction is what changed.
+`main`.
 
-**Why it changed:** the single job measured **9m03s** (PR #116), of which the
-test phase is ~95%. A runner is ~3x slower than a dev machine, and only 4 cores,
-so the phase that is 88% of the local gate dominates a CI run completely.
+**Why it is split:** as one job the gate measured **9m03s**. A runner is about
+3x slower than a dev machine and has only 4 cores, so the test phase dominated.
 Four jobs now run in parallel:
 
 | job               | what                                                               |
@@ -559,7 +489,7 @@ Add future phases the same way.
 
 **That `rust` job's cost is a RANGE, not a number, and the detail lives with the
 port** - see the Rust/WASM section. Short version: roughly 6.5 to 8.5 minutes
-as of 2026-09-13 (it was 1m45s to 2m50s when #219 landed), and it runs
+as of 2026-09-13, and it runs
 `bash scripts/verify-rust.sh` directly rather than through pnpm, which is the
 one place the YAML names a command instead of a script.
 
@@ -587,28 +517,15 @@ re-deriving:
   Vitest shards by sha1 of each spec's path, sorted, then sliced into N
   contiguous chunks. Adding any spec file changes the count and re-slices every
   shard, so names picked to spread today do not stay spread.
-- **Splitting the heaviest spec file was REJECTED in #203, and that
-  rejection's COST ARGUMENT has since expired.** #203 rested on import being a
-  first-order cost - one shard spent 332s importing against 260s running tests
-  - with `isolate: true` making each added file re-import the whole 99-module
-    noise graph. Re-measured 2026-09-05: import is **9.4s against 208.3s of test
-    execution** on a 26-module graph, and the heaviest file's own import line is
-    **58ms**. Splitting it costs about 193ms per file added, not a re-import.
-
-  **#203's DURABLE point still stands and is the one to reason from:** adding
+- **Splitting the heaviest spec file is a reliable win on a dev machine and a
+  lottery on CI.** On a dev machine the wall clock is one file. On CI, adding
   any spec file re-slices every shard, so names picked to spread today do not
-  stay spread. A split is therefore a reliable win on a dev machine, where the
-  wall is one file, and a lottery on CI. Nothing here says to do it - it says
-  the old arithmetic no longer decides it.
+  stay spread. Import cost is no longer a reason against a split: about 193ms
+  per added file (2026-09-05).
 
-**`test/findIslands.spec.ts` WAS the heaviest file, and is not any more.** It
-measured 134.6s on the Mac, where the spread is small, and 240.4s before four
-of its tests were cut to a small `refineCount` for identical coverage. Then
-#371's engine-mandatory change put every render and survey in it through the
-engine, and on Menehune, run alone, it went from **386.2s to 48.4s** (measured
-2026-09-04, `pnpm vp test test/findIslands.spec.ts` on each side of the
-change). One test in that file **cannot** be cheapened by lowering its refine
-count and its own comment explains why, so do not "finish the job" that way.
+One test in `test/findIslands.spec.ts` cannot be made cheaper by lowering its
+refine count; its own comment explains why, so do not "finish the job" that
+way.
 
 **Re-derived 2026-09-05, and the concentration is the point.** Per-file wall on
 this Mac, 125 files, 208.3s of test execution in an 80.3s wall:
@@ -621,7 +538,7 @@ this Mac, 125 files, 208.3s of test execution in an 80.3s wall:
 | `test/wasmVulcanusParity.spec.ts`       | 12.7s |  6.1% |      83.8% |
 
 Only 12 files exceed 1s at all. Read it off a verbose run rather than off this
-table when it matters - the ranking has changed twice in a month.
+table when it matters.
 
 **What breaks under load is a per-test TIMEOUT, not the gate wall.** On a
 docs-only change an unchanged test hit its 120s budget at 150.5s; the same code
@@ -725,45 +642,33 @@ Renovate group still naming it could move only wrangler - which is exactly how
 #399 arrived with two toolchains side by side, and with `sharp@0.35.2` (a high
 advisory) still installed through the old copy.
 
-**`enabled: false` disables SECURITY updates too, and `brace-expansion` proved
-it.** That rule exists to stop Renovate proposing the 5.x spike, but it also
-means no bot PR can ever arrive for the 2.x branch - including a CVE fix. On
-2026-08-10 the pin was sitting at 2.1.3 against **GHSA-rgw5-rvv9-x895**
-(published 2026-08-03), whose whole subject is _bypassing_ the CVE-2026-14257
-mitigation 2.1.3 was pinned for; 2.1.4 had been available since 2026-07-30.
-Nothing was going to surface that, because the note in `pnpm-workspace.yaml`
-said a red `pnpm audit` line was the expected state - which had been true of the
-_previous_ advisory and had since stopped being true. Any package held with
-`enabled: false` needs re-checking against the advisory database by hand; read
-the comment on the override before concluding a red audit is the known one.
+**`enabled: false` also blocks SECURITY updates.** A Renovate rule with
+`enabled: false` stops every bot PR for that package, a CVE fix included.
+`brace-expansion` is held this way. Re-check any package held with
+`enabled: false` against the advisory database by hand, and read the comment on
+its override before concluding a red `pnpm audit` line is the known one.
 
 **That group's `prBodyNotes` says to regenerate the worker types BEFORE merging,
-and that ordering is the whole point.** It used to say _after_, which this file
-flagged as a bug to fix; the config was corrected and the note now reads
-correctly - confirmed on 2026-08-10 when #169 hit exactly this. The regen is a
-precondition, not a follow-up: `types:check` runs inside `preview:test`, which
-runs inside the required `verify` check, so a stale `workerd` stamp means the PR
-cannot merge at all. This is not hypothetical - it is why #97 sat red, and why
-#169 arrived red a year later with the fix named in its own PR body. The fix is
-one script, which exists precisely so the formatter pass cannot be forgotten
-(#177):
+and the order matters.** `types:check` runs inside `preview:test`, which runs
+inside the required `verify` check, so a stale `workerd` stamp means the PR
+cannot merge. One script does it, so the formatter pass cannot be forgotten:
 
 ```bash
 pnpm run types:sync
 ```
 
-One interaction is worth knowing before touching that file. The workspace's
-release-age guard is a **pnpm default**, not a line in `pnpm-workspace.yaml`, and
-pnpm's response to being asked for something too fresh is to write a
-`minimumReleaseAgeExclude:` bypass - which is how `vue-tsc@3.3.8` once waived it
-silently. `minimumReleaseAge: "3 days"` is therefore declared in the Renovate
-config, above pnpm's default, so Renovate can never propose a release pnpm would
-want a bypass for. If `minimumReleaseAgeExclude:` appears in a bot PR's diff,
-that PR is wrong; fix the age rule, don't commit the bypass.
+One interaction is worth knowing before touching that file. When asked for a
+release younger than the age guard, pnpm has written a
+`minimumReleaseAgeExclude:` bypass into `pnpm-workspace.yaml` - which is how
+`vue-tsc@3.3.8` once waived it silently. So `.github/renovate.json5` declares
+`minimumReleaseAge: "3 days"`, above pnpm's 24-hour guard, and Renovate never
+proposes a release pnpm would want a bypass for. If `minimumReleaseAgeExclude:`
+appears in a bot PR's diff, that PR is wrong; fix the age rule, don't commit the
+bypass.
 
-**The app is live as of 2026-07-30** - enabled with "Automated PRs", "Require
-config file" and "Create onboarding PRs". So Renovate opens real PRs on its own
-now; `automerge: false` is what keeps anything from _landing_ unread, and
+**The Renovate app is enabled** with "Automated PRs", "Require config file" and
+"Create onboarding PRs", so it opens real PRs on its own; `automerge: false` is
+what keeps anything from _landing_ unread, and
 `dependencyDashboardApproval` is deliberately unset because it would re-impose
 scan-only behaviour at the config layer and defeat the app setting.
 
@@ -808,32 +713,14 @@ measured on #380 and #381 rather than read off its docs.
   supersedes its own standing `CHANGES_REQUESTED`, leaving `reviewDecision`
   empty and `merge=CLEAN` with no hand dismissal.
 
-  **Do NOT read that as "address every finding and it clears."** Two runs the
-  same day, and they disagree: **#383** was approved on a push that took 2 of
-  its 3 findings and left the third (an MD018 nit) explicitly undone, while
-  **#381**'s equivalent push came back with a SECOND `CHANGES_REQUESTED` -
-  raised against the text the fix had just added, not against anything left
-  undone. Which verdict arrives is a property of the new diff, and it is not
-  predictable from how completely you answered the last round.
-
-  A THIRD outcome exists and it is the one that traps you: on #384's `f9d37c8`
-  the `CodeRabbit` check went green with `Review completed` and **no review was
-  submitted at all** - no approval, no new findings, nothing. The
-  `CHANGES_REQUESTED` from the previous commit therefore stood unopposed, and
-  the PR sat `BLOCKED` with every one of its eleven checks passing, fourteen
-  minutes after the check had finished. A push cannot clear that, because
-  nothing arrives to replace the old verdict.
-
-  A FOURTH, seen on #406 (2026-09-08): the push that took both findings got
-  a green `CodeRabbit` check reading **`Review rate limited`** and no review
-  at all. Same trap as the third, with a different label - nothing arrives to
-  replace the verdict, and the PR sits `BLOCKED` on a review whose findings
-  are already fixed.
-
-  So a hand dismissal is the tool for a standing review that nothing is going
-  to supersede - whether because you declined its findings or because the
-  re-review said nothing. Put the reasoning in the message - it is the only
-  record of why:
+  **Do not assume that answering every finding clears it.** After a push,
+  CodeRabbit may approve (which replaces its own standing `CHANGES_REQUESTED`),
+  request changes again - even against the text the fix just added - or finish
+  with a green check and no review at all (`Review completed` or
+  `Review rate limited`). In that last case nothing replaces the old verdict,
+  and the PR stays `BLOCKED` with every check green. You cannot predict which
+  one arrives. Dismiss a standing review by hand when nothing will supersede
+  it, and put the reasoning in the message - it is the only record of why:
 
   ```bash
   gh api --method PUT \
@@ -845,8 +732,7 @@ measured on #380 and #381 rather than read off its docs.
   The body opens with `Actionable comments posted: N` and then lists all N. On
   #383 that said **3** while `GET /pulls/383/comments` returned **2** - two of
   the three were reported at the same line and only one thread came back. A
-  session that counts threads therefore misses findings silently, which is how
-  a wrong claim reached `CLAUDE.md` in this very section. Read the body's list,
+  session that counts threads therefore misses findings silently. Read the body's list,
   then reconcile it against the threads:
 
   ```bash
@@ -868,14 +754,9 @@ measured on #380 and #381 rather than read off its docs.
   across `CLAUDE.md` and the two port docs, and only the ones inside a diff get
   flagged - so taking the fix makes those lines inconsistent with the rest.
 
-**Read its findings; do not assume they are noise.** On #381 its first two were
-both real and both mine: an ABI table recording Nauvis as a 376-byte block with
-a 432-byte request (it is 512 and 568 - `engine.wasm` answers
-`request_bytes() = 568` when asked directly), and a paragraph still claiming
-tier 2 and tier 3 "assert BOTH arms" after #227 and #371 deleted every
-TypeScript arm. `vp check` passes on both, because neither is a lint error.
-The rule from #380 still holds in the other direction: a finding can rest on a
-false premise, and showing that it does is a valid answer.
+**Read its findings; do not assume they are noise.** It has caught real errors
+that `vp check` cannot see, such as a wrong number in a doc table. A finding can
+also rest on a false premise, and showing that it does is a valid answer.
 
 ### Branch protection is a **ruleset**, and one Renovate rule depends on it
 
@@ -921,41 +802,23 @@ Note the second-order effect of `strict: true`: once a PR merges, every other
 open PR is behind and needs **Update branch** before it can merge.
 
 Everything else stays `automerge: false`, because `verify` proves the repo is
-consistent, not that a bump is correct - see the pako table above for the year-long
-wrong belief that a green suite endorsed.
+consistent, not that a bump is correct - the pako entry in the codec section is
+a wrong belief a green suite endorsed.
 
 #### `testTimeout` is 30s, deliberately, and retries are not used
 
-Vitest's 5s default was too tight for this suite long before CI existed. Counted
-on `test/*.spec.ts` at #207 (2026-08-15): **94 tests across 31 files** carry an
-explicit `}, 120000)`, and **74 tests across 17 files** carry `}, 300000)`. That
-is the same complaint made 168 times by hand. The first CI run proved the
-default was the real problem rather than any one test: on a 4-core runner (~3x
-slower, 230s vs 71s for the same suite) `elevationRenderRequest.spec.ts`'s
-`view 'all'` case needs **9.8s**, and that file has 27 tests and zero
-annotations. `vite.config.ts` now sets `testTimeout: 30_000`; the existing
-annotations still win over it, so raising the global does nothing for any of
-those 168 tests.
-
-**Do not trust a hand-maintained count here - this one has now gone stale
-twice.** It read "24 across 10" for a year, was corrected to "86 across 29" on
-2026-08-15, and was still wrong the same day: the real figures were 89/30 and
-66/16 before #207 even landed. Re-count before quoting:
+Vitest's 5s default is too tight for this suite. Many heavy tests carry their
+own `}, 120000)` or `}, 300000)` budget, and those per-test values win over the
+global one. `vite.config.ts` sets `testTimeout: 30_000` for the rest, because on
+a 4-core runner (about 3x slower than a dev machine) even a test with no
+annotation can need close to 10s. Count the annotations before quoting a number:
 
 ```bash
-git grep -c '}, 120000)' -- 'test/*.spec.ts' | awk -F: '{s+=$3} END {print s}'
+git grep -c '}, 120000)' -- 'test/*.spec.ts' | awk -F: '{s+=$2} END {print s}'
 ```
 
-**120000 is not a safe ceiling, and 300s is not one file's exception.** This
-paragraph used to say `previewAgreement.spec.ts` took 300s "as of #203" and that
-it was the only file moved off 120s. Both halves are wrong. 17 files use 300s,
-and the practice long predates #203 - the earliest arrived with the cliff work
-in #122. It also named an 85.2s case in `vulcanusCliffRejectionStage.spec.ts` as
-the nearest to the edge at 120s; that file carries **zero** 120s annotations and
-three 300s ones, so the claim's premise is void. Which test now sits nearest its
-own budget has not been re-derived - it needs a fresh per-test read off a CI run,
-not a grep. Treat that as an open question, not a settled one, if a shard goes
-red on a timeout.
+Neither 120s nor 300s is a safe ceiling. Which test sits nearest its budget
+needs a fresh per-test read off a CI run, not a grep.
 
 Do **not** reach for `retry` when a heavy render test fails in CI. Nothing here is
 nondeterministic - these tests compare pixels against captured game output - so a
@@ -1086,16 +949,9 @@ Consequences that constrain any change here:
   option fixes it. Inflate is not a constraint at all: pako's `inflate`,
   `node:zlib`, and `DecompressionStream('deflate')` all agree on all 9.
 
-  **Why the old belief ("pako diverges, so a WASM build of zlib is the live
-  replacement path") was held, and why it was wrong.** It was a true
-  measurement of a false generalisation. pako **2.2.0** (2026-06-22) added an
-  alternate, faster deflate hash behind a new `legacyHash` option defaulting to
-  `true`; pako **3.0.0** (2026-06-26) flipped that default to `false`. This repo
-  adopted `^3.0.0` on 2026-07-01, five days later, and measured pako at its
-  defaults - the one configuration that cannot match canonical zlib. The
-  divergence was real; "no configuration of pako can match" was never tested.
-  Issue #40's premise (zlib-asm is load-bearing) is refuted, and no WASM build
-  is needed.
+  pako 3.0.0 changed its `legacyHash` default to `false`, the one setting that
+  cannot match canonical zlib. With `legacyHash: true` it matches 9/9, so no
+  WASM build of zlib is needed (this refutes issue #40).
 
   The new risk is different and worth naming: **`legacyHash` is a pako
   extension, not part of the zlib API**, from a library that has already flipped
@@ -1104,23 +960,17 @@ Consequences that constrain any change here:
   renamed, or re-defaulted. Do not silence it by editing a fixture.
 
 - **The CSP does NOT need `unsafe-eval`, and must not regain it.** Nothing the
-  app bundles uses `eval` at all - `pako` is plain ESM. This used to need a
-  caveat: the codec was backed by `zlib-asm`, an abandoned (2016) asm.js port
-  that shipped three `eval` sites and needed a local `patches/zlib-asm.patch`
-  to strip them. That dependency, its patch, and both of its `vite.config.ts`
-  build-warning suppressions are gone.
+  app bundles uses `eval` at all - `pako` is plain ESM.
 
-  **It DOES carry `'wasm-unsafe-eval'` as of #222, and that is a different
-  token.** It permits WebAssembly compilation and instantiation and nothing
-  else - no `eval`, no `new Function`, no inline script - and the Rust noise
-  engine cannot start without it: `WebAssembly.compile` throws a CSP error.
+  **It DOES carry `'wasm-unsafe-eval'`, and that is a different token.** It
+  permits WebAssembly compilation and instantiation and nothing else - no
+  `eval`, no `new Function`, no inline script - and the Rust noise engine cannot
+  start without it: `WebAssembly.compile` throws a CSP error.
 
-  The two names are the trap. The guard in `test/buildStamp.spec.ts` used to
-  assert the policy did not CONTAIN the substring `unsafe-eval`, and
-  `'wasm-unsafe-eval'` contains it, so that guard would have gone red on the
-  correct policy. It now splits `script-src` on whitespace and compares whole
-  tokens, asserting both directions: no `'unsafe-eval'`, and `'wasm-unsafe-eval'`
-  present. **The second half is not symmetry** - dropping the narrow token does
+  The two names are the trap. The guard in `test/buildStamp.spec.ts` splits
+  `script-src` on whitespace and compares whole tokens, because
+  `'wasm-unsafe-eval'` contains the substring `unsafe-eval`. It asserts both
+  directions: no `'unsafe-eval'`, and `'wasm-unsafe-eval'` present. **The second half is not symmetry** - dropping the narrow token does
   not loosen the policy, it breaks the app in production, and that failure
   arrives looking like "the preview stopped working" rather than like a CSP
   change. Both halves were proven by planting them and watching each go red.
@@ -1131,16 +981,11 @@ Consequences that constrain any change here:
   never a range, because the schemas here are empirical: accepting an unseen
   format would decode a changed layout into plausible wrong values. A version
   joins the list only with a fixture proving a real string of it round-trips
-  byte-exact (`test/mapExchangeVersions.spec.ts`). This has now been a live bug
-  **six times**: the app rejected every string from Factorio 2.1.12 until
-  2026-07-28, from 2.1.14 until 2026-08-13, from 2.1.15 and 2.1.16 until
-  2026-08-24 - **those two on the same day, because Wube shipped both** - from
-  2.1.17 until 2026-09-06, and from 2.1.19 until 2026-09-16 (2.1.18 and 2.1.19
-  shipped the same day, and Steam went straight to 2.1.19, so **no 2.1.18 build
-  was ever captured** - if it carried a tag of its own, strings from it are
-  still refused). Every
-  time the game moved under a Steam auto-update, and every time it was found by a
-  version audit rather than by a user. The UI advertises the target so the next
+  byte-exact (`test/mapExchangeVersions.spec.ts`). This has been a live bug
+  every time the format moved: a Steam auto-update moved the game, and a
+  version audit - not a user - found it. No 2.1.18 build was ever captured
+  (Steam went straight to 2.1.19), so if 2.1.18 carried a tag of its own,
+  strings from it are still refused. The UI advertises the target so the next
   drift is visible, and `test/factorioTarget.spec.ts` fails the build if
   `FACTORIO_TARGET_VERSION` disagrees with the newest fixture provenance - so do
   not hand-maintain that constant.
@@ -1245,7 +1090,7 @@ Consequences that constrain any change here:
   The layout was confirmed against the game's own
   `helpers.parse_map_exchange_string`, not just against our own re-encode: all
   81 tail fields agree, and `opaqueTail` decodes to length 0. **Export was never
-  broken** in any of the three incidents - each newer game still accepts the
+  broken** in any of these incidents - each newer game still accepts the
   `2.1.9.3` strings this app emits, and 2.1.15 parsed all five `2.1.14.1`
   captures during its own capture run, so only import was ever affected.
 
@@ -1288,22 +1133,9 @@ clean data diff can never promote an `unknown` entry. Because the count must
 EQUAL the ratchet, a new fixture with no provenance now fails immediately
 instead of taking up slack.
 
-Turning "38 fixtures are old" into "these N need re-capturing" is a separate
-audit, **run 2026-07-28 and completed 2026-07-29**:
-`docs/fixture-version-audit.md` holds the procedure, the fixture-to-Lua-file
-map, the rule for what counts as invalidating, and now its Conclusions. Unlike
-`docs/superpowers/specs/`, that one is a live document - update it when it is
-re-run.
-
-The answer to "how many need re-capturing" was **zero**, twice over. All the
-data-governed fixtures sit on map-gen Lua that is byte-identical 2.1.11 ->
-2.1.12, and the ten noise-primitive fixtures - which no data diff can ever
-clear, because they are native C++ ops that `factorio-data` only calls - were
-re-sampled against the 2.1.12 binary and came back bit-identical on all 2648
-values. Two things came out of it that staleness never would have: the live
-`2.1.12.2` format-tag bug (the app rejected every string from the current
-game), and the fact that only `oracle-basis` had a standing re-sample guard
-while the other primitives had none.
+`docs/fixture-version-audit.md` holds the procedure for deciding which old
+fixtures need re-capturing, and its conclusions. It is a live document - update
+it when it is re-run.
 
 This exists because version skew is invisible from inside: the Vulcanus
 surface-seed bug passed every internal check for weeks because the fixture and
@@ -1356,15 +1188,10 @@ clearly visible, not near-black, which is why the amplification is a lifted log
 ramp and not the `delta * 5` the prior art uses. (35% is the ramp's FLOOR; delta
 1 lands at 43.1%.)
 
-**`decodePng` verifies every chunk CRC, and that is load-bearing rather than
-tidy.** `encodePng`'s header claims the round-trip through it turns a wrong CRC
-into a test failure. That claim shipped false: the decoder advanced by
-`12 + len` and never read the CRC bytes, so breaking the chunk writer left all
-seven smoke tests green while every artifact the feature writes would have been
-rejected by Preview, Chrome and ImageMagick - discovered at the one moment
-somebody is already looking at one because something else broke. The spec now
-plants a flipped CRC byte and a corrupted payload so the guard cannot lapse back
-into a claim.
+**`decodePng` verifies every chunk CRC, and that is load-bearing.** Without it,
+a broken chunk writer leaves every smoke test green while every artifact it
+writes is rejected by real image viewers. The spec plants a flipped CRC byte and
+a corrupted payload so the guard cannot lapse.
 
 ### Two representations, bridged by `convert.ts`
 
@@ -1435,7 +1262,7 @@ Field labels carry in-game tooltip text via `FInfo` (an `info` prop on
 `EnemyValueRow`, an `info:` entry in `controlCatalog.ts` for the enemy-base
 autoplace rows).
 
-### The Rust/WASM noise engine (`crates/`) - COMPLETE, phases 1-8
+### The Rust/WASM noise engine (`crates/`)
 
 A Cargo workspace at the repository root, landed empty on purpose (#219) so the
 gate was proven green on `main` before any port code depended on it. Two crates:
@@ -1447,7 +1274,7 @@ boundary. The design record is
 there is no TypeScript fallback left.** #227 deleted the Nauvis and Vulcanus
 arms and #371 the Fulgora one.
 
-#### READ `docs/rust-wasm-port.md` BEFORE TOUCHING THE PORT
+#### Read `docs/rust-wasm-port.md` before editing the port
 
 That file is the long form of this section, in the same relation to it as
 `docs/factorio-reference-and-oracle.md` is to the reference section above. It is
@@ -1479,19 +1306,6 @@ shifts `core::panic::Location` records and so changes `engine.wasm`, which would
 mean a rebuild and a fresh committed binary for pure prose. Re-point them the
 next time one of those files changes for a real reason.
 
-#### Where the port stands
-
-| phase    | scope                                                                                                                                                                                                                  | state |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| 1 (#220) | primitives: `taus88`, `fast_approx`, `basis_noise`, the four multioctave ops, `random_penalty`, the spot ops, `distance_from_nearest_point`, `starting_lakes`, `voronoi_noise`                                         | done  |
-| 2 (#221) | the `eval` layer - `multisample`, `memo_xy`, `memo_region`, `math`, `ctx`, `primitives` - plus `expressions/vulcanus_seed`                                                                                             | done  |
-| 3 (#223) | Fulgora elevation and cells, `starting_spot_at_angle`, `tiles/`, the ABI boundary, and the render cutover                                                                                                              | done  |
-| 4 (#224) | the rest of Fulgora: masks, roads, ruins, scrap, the tile catalog and `fulgora_stack`                                                                                                                                  | done  |
-| 5 (#225) | Vulcanus end to end - terrain, cliffs, rocks, resources. **Every Vulcanus view the panel offers renders through the engine** (not `elevation` - see below).                                                            | done  |
-| 6 (#226) | Nauvis - every expression, the TERRAIN render, all FIVE overlays and the `all` composite. The `elevation` view is ported too, as of #227                                                                               | done  |
-| 7 (#227) | delete the ported TypeScript under `src/noise/` - Nauvis and the render fallbacks in #227, then Fulgora and the Vulcanus expressions in #371, which left `src/noise/` holding orchestration, catalogs and the ABI only | done  |
-| 8 (#363) | Fulgora's `resources` and `all` composites, so **every planet's DEFAULT view renders through the engine**                                                                                                              | done  |
-
 **Two cases are REFUSED rather than routed anywhere**, and neither is reachable
 from the app. A caller-supplied `startingLakePositions` throws
 `STARTING_LAKE_POSITIONS_UNSUPPORTED` (#365), because the module derives the
@@ -1521,7 +1335,7 @@ Rust source means rerunning that script and committing the result**, or the gate
 fails as "stale".
 
 **Do not quote a byte count for `engine.wasm` from this file.** Every ported op
-changes it and it has gone stale twice. Get it with
+changes it. Get it with
 `shasum -a 256 src/noise/wasm/engine.wasm`.
 
 Three diffs that are NOT behaviour changes, all seen for real: a `cmp -l` count
@@ -1565,50 +1379,14 @@ companion doc.
   `log2`, `exp`, `cbrt`, `sin` or `cos` sits inside the predicate being counted,
   freeze a FRACTION and say why.
 
-#### NO open findings, and do not "fix" the next one inside the port
+#### Do not fix a shipped-code defect inside the port
 
-The port found real defects in shipped TypeScript. **None was fixed inside the
-port** - each got an issue and landed as its own graded change, because a
-unilateral fix on the Rust side reads as a port bug in tier 2, which is the
-whole point of having tier 2. All of them are landed now: the precision
-findings (#269, #270, #273, #279, #290, #293, #309), then #320 and #324, then
-#407 - the cliff collision test, found by reading `Surface::wouldCollide` out
-of the running game with lldb rather than by disassembling the wrong path
-(#406) - and then #414, the ore -> cliff removal geometry read off
-`ResourceEntity::postSetup` (#415), which also measured a limit rather than a
-defect: the port's ore field is one ring fatter than the game's entities,
-because the game rolls `random_penalty_between(0.9, 1, 1)` per tile and no
-threshold reproduces a roll. The rule stands for the next one.
-
-Two are worth carrying forward, because both were hidden the same way - the
-evidence held one input constant everywhere it looked:
-
-- **#320 - `waterLevel` never reached the Nauvis tile argmax. FIXED.** The
-  Rust reproduced it on purpose while `renderTerrain.ts` existed to be
-  mirrored; #380 deleted that file, so the pinned zero agreed with nothing.
-  Two lessons worth keeping, both in `docs/rust-wasm-port.md`: the fix moved
-  exactly ONE frozen row of 73, because every other row is captured at the
-  default controls where `waterLevel` IS 0 - a table can be blind to a defect
-  it otherwise covers thoroughly. And a near-spawn window reports 0 of 6400
-  differing at every water level, which is how it stayed hidden; the new rows
-  sweep +/-3000, where 48.1% of pixels move.
-- **#324 - BOTH `slider_to_linear` forms were wrong. FIXED.** The issue framed
-  it as "one of two forms is right"; a probe against the game refuted both.
-  The plain-f64 copy scored **5 of 39** and fails a control - at `s = 6` the
-  ratio is exactly 1, so every implementation must return `hi`, and it returns
-  `1.7` where the game returns `f32(1.7)`. The shipped per-operation f32 form
-  scored **31 of 39**: it narrowed every operation but not the **bounds**.
-  Narrowing those first scores **39 of 39**, and both duplicate copies are
-  deleted rather than fixed.
-
-  **Only `(-1.7, 1.7)` can see it** - the one range in all of `factorio-data`
-  whose bounds f32 cannot hold exactly. Every other use is `(-1, 1)`,
-  `(-0.5, 0.5)` or `(-50, 50)`, where narrowing the bounds is a no-op, and
-  `fulgora_grid`'s `(-50, 50)` is what the original 5/5 validation used. So a
-  year of evidence confirmed the form on exactly the input class that cannot
-  discriminate it. Same shape as #320's table: ask which INPUT the evidence
-  holds constant. It moved one frozen row of the tier-2 table, which is the
-  correct signature.
+When the port finds a defect in shipped code, file an issue and land the fix as
+its own graded change: a one-sided fix on the Rust side reads as a port bug in
+tier 2, which is the point of tier 2. When a table seems to cover a case, ask
+which input its evidence holds constant - two past defects (#320, #324) hid
+because every row held that input fixed. `docs/rust-wasm-port.md` has both
+stories.
 
 #### `verify:rust`'s cost is a RANGE
 
@@ -1618,12 +1396,6 @@ single run measures the runner at least as much as the job. Do not "correct"
 this to whichever number you last saw; if a change really does move it, show
 it with more than one run.
 
-**This line said 1m45s to 2m50s for two months and cost a wrong "+8 minutes"
-verdict on 2026-09-13.** Those three runs (1m44s, 2m48s, 2m49s) were real when
-#219 landed and the crate was nearly empty; the frozen cliff tables and the
-poison phase have grown it since, and nobody re-read the job. #415's four-region
-removal test measured 10m31s and was read as an 8-minute regression against
-this line, when `main` the same day was 8m25s - the cost was about two minutes.
 Before judging a PR's CI cost, read the last few `rust` jobs on `main`:
 
 ```bash
@@ -1645,16 +1417,12 @@ digest-pinned Factorio headless image). Opt-in and the app's only outbound call;
 the editor is fully functional offline without it.
 
 **The base image `FROM` carries a TAG as well as a digest, and dropping the tag
-is a real bug** (#182, fixed 2026-08-13). With a bare digest, Renovate's docker
-manager defaults to `latest` - so it stops tracking the pinned version entirely
-and starts offering "digest updates" that are version jumps. That happened: a
-proposal reading `update factoriotools/factorio docker digest to fb7a13c` was
-Factorio **2.1.14** against a pin that meant 2.1.12, and the only thing between
-it and production was the `RUN factorio --version | grep -q` line inside the
-image - which runs at **build** time, and nothing in CI builds the image (#183).
+is a real bug.** With a bare digest, Renovate's docker manager assumes `latest`,
+stops tracking the pinned version, and offers "digest updates" that are really
+version jumps. The only other guard is the `RUN factorio --version | grep -q`
+line in the image, which runs at build time, and nothing in CI builds the image.
+Read the current pin in `preview-service/container/Dockerfile`, not here.
 
-The pin is now `factoriotools/factorio:2.1.14@sha256:fb7a13c...`, so Renovate
-tracks that tag and a version change can only arrive looking like one.
 `preview-service/container/test/dockerfile.test.mjs` runs in `preview:test`
 (needs no Docker) and asserts three things: the `FROM` has **both** a tag and a
 digest, the tag agrees with the version assertion below it, and - when the
@@ -1684,16 +1452,9 @@ before changing it:
     response **must drain it first**; the guard is in
     `preview-service/worker/test/worker.spec.ts`.
 
-  **That drain fix did not, on its own, stop the container being awake 24/7, and
-  a note here used to imply it had.** Billing says the instance ran at 100% every
-  full day from 2026-07-20 through 2026-08-03 - 95.6, 96.2, 98.2, 96.3, 96.0,
-  96.8, 95.6, 97.0, 95.3, 96.1, 95.7, 96.3, 99.0 GiB-hours/day against the 96.0
-  a 4 GiB instance bills for a whole day - including the five days _after_ the
-  drain fix deployed on 2026-07-29. So the ~$28/month was still being paid; the
-  2026-08-03 downsize to `basic` cut it ~4x rather than ending it. The sufficient
-  explanation is the SIGTERM bug in the bullet below, which was present
-  throughout. Keep the drain guard - the hazard is real - but do not credit it
-  with the bill.
+  The drain guard alone did not stop the instance being billed around the
+  clock - the SIGTERM bug below did. Keep the drain guard anyway; the hazard is
+  real.
 
 - **The container ignored SIGTERM, so it never stopped at all** (#120). Node runs
   as **PID 1** under the Dockerfile's exec-form `ENTRYPOINT`, and Linux gives PID
@@ -1710,8 +1471,8 @@ before changing it:
   `containersUsageAdaptiveGroups` GraphQL dataset is the truth, and the
   disk-to-memory ratio identifies the live instance type. Read it in **bytes**
   and the ratio is `1.86` = `standard-1` (4 GiB / 8 GB) and `3.73` = `basic`
-  (1 GiB / 4 GB); the **2.0** and **4.0** this note used to quote are those same
-  two numbers expressed in the mixed GiB/GB units the dashboard shows.
+  (1 GiB / 4 GB) (the dashboard's mixed GiB/GB units show the same two as 2.0
+  and 4.0).
 
 - **That dataset BACKFILLS, and a bucket that has not landed yet is
   indistinguishable from sleep.** This is not hypothetical: #120 read the
@@ -1753,9 +1514,7 @@ so `pnpm preview:test` fails loudly on drift.
     #97's 4.115.0 -> 4.118.0 drags `workerd` 1.20260722.1 -> 1.20260730.1, every
     type body is byte-identical, and `verify` went red on that one line.
 
-  So a wrangler bump that touches no binding still requires a regen. Reading
-  this note in its old form ("compares the config against the hash") would rule
-  that out, which is exactly the wrong call.
+  So a wrangler bump that touches no binding still requires a regen.
 
   It still does **not** notice hand-edits to the generated file itself. Don't
   hand-edit it.
@@ -1776,15 +1535,10 @@ so `pnpm preview:test` fails loudly on drift.
 behind `lint.options.typeAware` + `lint.options.typeCheck` in `vite.config.ts` -
 both are on. Do not add a `tsc`-based `typecheck` script:
 
-- **`tsc` is not the type-check path**, but not because it crashes any more.
-  It used to: bare `./node_modules/.bin/tsc --noEmit` threw `Debug Failure.
-False expression: parameter should have errors when reporting errors` - a
-  TypeScript 6.0.3 compiler bug, not a type error, triggered by
-  `vite.config.ts` alone. **The `vue() as Plugin` cast below fixed that too**,
-  and both now exit 0. Still don't add a `tsc`-based `typecheck` script: it
-  duplicates what `vp check` already does through tsgolint, and it is one
-  transitive-graph shift away from crashing again. Beware also that passing
-  globs (`tsc --noEmit 'src/**/*.ts'`) silently ignores `tsconfig.json` and
+- **Do not add a `tsc`-based `typecheck` script.** It duplicates what
+  `vp check` already does through tsgolint, and `tsc` has crashed on
+  `vite.config.ts` before (the `Debug Failure` pathology below). Passing globs
+  (`tsc --noEmit 'src/**/*.ts'`) also silently ignores `tsconfig.json` and
   reports a misleading "ok".
 - **`vp check` does not see inside `.vue` bodies** - it reports no type errors
   inside `<script setup lang="ts">` (measured, not assumed: a planted `TS2322`
@@ -1848,7 +1602,7 @@ before someone bumps it. Re-derived 2026-07-29:
 Revisit when 7.1 ships a programmatic API. Until then this is a "don't", not a
 "blocked on someone else".
 
-### The `.vue` gap is CLOSED - `vue-tsc` adopted 2026-07-29
+### `vue-tsc` covers the `.vue` gap
 
 `pnpm run check:vue` (`vue-tsc --noEmit`) runs in `verify`, between `vp check`
 and `vp test`. It is the only thing that type-checks `<script setup lang="ts">`
@@ -1861,30 +1615,15 @@ bodies.
   printed "Found no warnings, lint errors, or type errors in 301 files". If a
   future change makes `check:vue` pass on a planted error, it has been
   neutered.
-- Against the real codebase: **22 `.vue` files, 0 errors, ~2.1s**. There was no
-  latent breakage behind the gap; this is a guard against regressions, not a
-  bug hunt. It ran on the existing `typescript` 6.0.3 - `vue-tsc`'s peer range
-  is `>=5.0.0`, so no TS7 work was needed.
-- **It needs no separate tsconfig**, and a note here previously said it did.
-  That was measured 2026-07-22, one day _before_ the `vue() as Plugin` cast
-  landed; the cast fixed `vue-tsc`'s crash along with `vp check`'s `TS2321`.
-  Bare `vue-tsc --noEmit` on the root `tsconfig.json` is now clean.
+- Against the real codebase it reports **0 errors**; this is a guard against
+  regressions, not a bug hunt. It runs on the existing `typescript` 6.0.3 -
+  `vue-tsc`'s peer range is `>=5.0.0`, so no TS7 work was needed.
+- It needs no separate tsconfig: bare `vue-tsc --noEmit` on the root
+  `tsconfig.json` is clean.
 
-**Why it was not adopted on 2026-07-22, and why that reason expired.** The only
-blocker was supply-chain freshness: `vue-tsc@3.3.8` was under an hour old, and
-installing it made pnpm silently write a bypass into `pnpm-workspace.yaml`:
-
-```yaml
-minimumReleaseAgeExclude:
-  - "@vue/language-core@3.3.8"
-  - vue-tsc@3.3.8
-```
-
-**Watch for that block appearing in any diff - it means a freshness guard was
-waived.** Don't commit one without a deliberate decision. It did not appear
-this time: 3.3.8 was 7.3 days old when adopted, so the gate passed on its own
-and `pnpm-workspace.yaml` was untouched. The old advice to "pick 3.3.7 instead"
-is obsolete - just take the latest once it has aged past the policy.
+**Watch for a `minimumReleaseAgeExclude:` block in any diff** - it means pnpm
+waived the freshness guard to install something too new. Don't commit one
+without a deliberate decision; wait until the release has aged past the policy.
 
 ### Remaining build/test log noise (investigated, left alone)
 
@@ -1911,19 +1650,6 @@ vite-node during tests. Two workarounds were tried and rejected:
 Exactly **one** deliberate suppression now lives in `vite.config.ts`:
 `typescript/unbound-method` is off for `test/**/*.spec.ts`, because
 `expect(mock.fn).toHaveBeenCalled()` passes an unbound reference by design.
-
-There is **no** `build.rollupOptions.onLog` hook at all any more. It once held
-two filters, both existing solely for `zlib-asm`:
-
-- an `[EVAL]` filter, dropped when `patches/zlib-asm.patch` removed the three
-  Emscripten `eval` sites; and
-- an `fs`/`path` browser-externalization filter for zlib-asm's Node fallback
-  imports, matched on the `rolldown:vite-resolve` plugin plus `/zlib-asm/` in
-  the importer path.
-
-Replacing `zlib-asm` with `pako` (plain ESM, no `eval`, no Node builtins) made
-the second one dead too. Verified by removing it rather than assuming: the
-build still prints nothing.
 
 `pnpm vp build` prints no warnings at all, so anything that does appear is new
 and worth reading. Do not add a suppression back - a direct `eval` or an
