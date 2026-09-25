@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import worker from "../src/index";
 
 const body = {
