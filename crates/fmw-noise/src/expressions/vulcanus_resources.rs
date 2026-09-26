@@ -10,11 +10,15 @@
 //!
 //! ## Two approximations carried over verbatim from the TypeScript
 //!
-//! 1. `random_penalty_between(0.9, 1, 1)` is taken as `1`. It appears in every
-//!    `*_probability` expression. `random_penalty` is a batch op whose value
-//!    depends on the whole batch and its order, so a per-pixel renderer cannot
-//!    reproduce it; at `rp = 1` the probability collapses to `1000 * region`,
-//!    and the penalty only perturbs the razor edge of a patch.
+//! 1. `random_penalty_between(0.9, 1, 1)` is taken as `1` HERE. It appears in
+//!    every `*_probability` expression, and at `rp = 1` the probability
+//!    collapses to `1000 * region`, which is what this layer hands up. The roll
+//!    itself is applied above it, by
+//!    [`VulcanusOreRoll`](crate::resources::vulcanus_ore_roll::VulcanusOreRoll):
+//!    its batch turned out to be the tile's chunk, so a per-pixel renderer CAN
+//!    reproduce it, and the solid-ore footprint and overlay both read it (#84).
+//!    Keeping the fields at `rp = 1` keeps tier 2's folds a statement about the
+//!    region chain alone.
 //! 2. Richness is not ported at all - the preview renders placement, not yield.
 //!
 //! Both are reproduced rather than fixed, so tier 2 stays a statement about the
