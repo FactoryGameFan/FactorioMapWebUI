@@ -1,4 +1,6 @@
-# Content-Security-Policy for the static deploy (Cloudflare Pages _headers).
+# Content-Security-Policy for the static deploy. Cloudflare reads this file from
+# dist/: the app is a Worker with static assets (root wrangler.jsonc), and it
+# was a Pages project until #433. Both read `_headers` the same way.
 #
 # - script-src does NOT need 'unsafe-eval', and must not regain it. Nothing the
 #   app bundles uses eval at all: the codec's deflate/inflate is `pako`, plain
@@ -27,10 +29,11 @@
 #
 #   VERIFIED LIVE 2026-08-19 against deploy e723b30, and how that check was
 #   built matters more than the fact it came back clean. THIS FILE ONLY TAKES
-#   EFFECT ON CLOUDFLARE PAGES, so the policy had never run in production until
-#   that deploy - which is also the first one carrying the WASM engine, i.e. the
-#   first thing here that needs 'wasm-unsafe-eval' at all. Four parts, in this
-#   order, because a run with no violations proves nothing on its own:
+#   EFFECT ON CLOUDFLARE (Pages at the time), so the policy had never run in
+#   production until that deploy - which is also the first one carrying the
+#   WASM engine, i.e. the first thing here that needs 'wasm-unsafe-eval' at
+#   all. Four parts, in this order, because a run with no violations proves
+#   nothing on its own:
 #
 #   1. CALIBRATION. `eval("1+1")` and `new Function(...)` were tried in the
 #      measuring context FIRST. Both threw EvalError naming the CSP. A debugger
@@ -61,7 +64,7 @@
 #   call). Replace the placeholder with the deployed Worker origin.
 # - style-src 'unsafe-inline' covers runtime-injected component styles.
 # - script-src allows static.cloudflareinsights.com: Cloudflare AUTO-INJECTS its
-#   Web Analytics beacon into proxied Pages responses, and the old policy blocked
+#   Web Analytics beacon into proxied responses, and the old policy blocked
 #   it, so analytics silently recorded nothing and every page load logged two CSP
 #   console errors (Lighthouse Best Practices 92 in production, 100 locally,
 #   because nothing is injected on localhost).
