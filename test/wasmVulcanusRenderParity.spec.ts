@@ -508,6 +508,12 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
    * rose, because `rp <= 1` makes the rolled footprint a subset of the old
    * one. The geyser's 37 did not move; its placement is a different roll.
    *
+   * `fine, fractional origin`'s calcite went 6 -> 4 when the overlay started
+   * reading the ore field at each pixel's tile rather than at the raw pixel
+   * point, as the graded footprint does. The two lost pixels are tile
+   * (160, -95), which had been sampled at y = -94.75; the four left are
+   * exactly two whole tiles' worth in that row.
+   *
    * Frozen exact counts rather than "more than zero", for the reason every
    * count in this port is frozen: a bound wide enough to be safe is wide enough
    * to swallow a whole patch. The zeros are real and are what makes the table
@@ -519,7 +525,7 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
     [0, 0, 2586, 0],
     [0, 0, 1210, 0],
     [47, 0, 0, 0],
-    [0, 6, 0, 0],
+    [0, 4, 0, 0],
     [41, 144, 71, 37],
   ];
 

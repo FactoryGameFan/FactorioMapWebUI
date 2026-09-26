@@ -1526,8 +1526,15 @@ fn paint_vulcanus_resources(
             // TypeScript asks each entry's own memoised region closure and
             // stops at the first winner; this reads the same values off one
             // pass of the layer, which is the same numbers in fewer calls.
-            let regions = stack.resources(wx, wy);
-            let penalty = roll.penalty_at(wx, wy);
+            //
+            // Both the field and the roll are read at the pixel's TILE, as
+            // `VulcanusOreFootprint::occupies` reads them. At a fractional
+            // origin or below one tile a pixel, a raw-coordinate region would
+            // pair one tile's `rp` with a point elsewhere in it, which is not
+            // the graded footprint.
+            let (tx, ty) = (wx.floor(), wy.floor());
+            let regions = stack.resources(tx, ty);
+            let penalty = roll.penalty_at(tx, ty);
             for entry in &thresholded {
                 if ore_probability(entry.region(&regions), penalty) < RESOURCE_PROBABILITY_THRESHOLD
                 {

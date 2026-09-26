@@ -5515,7 +5515,10 @@ exactly.
 The ore overlay stops painting the 810 ring tiles above, and every solid-ore
 pixel count in tier 3 fell (2,755 -> 2,586 on the coal-patch window). The
 cliff rule and the overlay read one footprint again, so
-`ORE_REMOVAL_REGION_THRESHOLD` is gone.
+`ORE_REMOVAL_REGION_THRESHOLD` is gone. The overlay reads the field at each
+pixel's tile, as the footprint does; at a fractional origin a raw pixel point
+would pair one tile's roll with a point elsewhere in it, which moved one
+calcite tile in the `fine, fractional origin` window.
 
 The cliffs gained less. Crossing stage, both graded regions: 1618/33/51/5 ->
 1620/32/50/4, 89 -> 86 errors. Over the sixteen out-of-sample regions, 221 ->
