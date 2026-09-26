@@ -79,7 +79,7 @@
 #   - `pnpm refs:sync`. It needs a Factorio binary and ~/GitHub/factorio-data,
 #     neither of which exists on a runner. `verify` is designed to pass with no
 #     Factorio installed and that property is what makes this workflow possible.
-#   - Any deploy step or credential. Cloudflare Pages does not build this repo
+#   - Any deploy step or credential. Cloudflare does not build this repo
 #     (`deploy:app` uploads an already-built `dist`), so CI here is a check
 #     only and the job needs no secrets at all.
 name: verify

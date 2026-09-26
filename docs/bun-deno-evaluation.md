@@ -58,7 +58,7 @@ per arm, 11/11 passing each time. The 4x was real and it was a property of a
 99-module `src/noise/`; #227 and #371 cut that graph to 25 modules and the tax
 went with it. Suite-wide, `import` fell from 29.8% to 3.8%. Do not cite the
 21.86s / 5.46s rows above as a live cost - they describe a tree that no longer
-exists. See `CLAUDE.md` for the current line items.
+exists. The current line items are in the last section of this page.
 
 ## The supply-chain guard is strictly weaker in both, and that was measured
 
@@ -115,3 +115,20 @@ than a neutral choice: `sin`, `cos`, `log2`, `exp` and `cbrt` already differ by
 1 ULP between node, deno and bun, and node differs from deno despite both being
 V8. Those agree exactly after `Math.fround`, so an op-boundary comparison
 survives, but a composed f64 chain does not have that protection.
+
+## Current suite-wide line items
+
+Re-measured 2026-09-05, after #227 and #371 deleted the TypeScript noise math.
+The 2026-08-18 column is the tree this page was written against; do not budget
+against it.
+
+| line item   | 2026-08-18 |         2026-09-05 |
+| ----------- | ---------: | -----------------: |
+| tests       |      67.3% | **85.3%** (208.3s) |
+| import      |  **29.8%** |    **3.8%** (9.4s) |
+| environment |       2.1% |       8.5% (20.9s) |
+| transform   |       0.7% |        1.9% (4.6s) |
+
+`import` is the line the #267 tax landed in, and it has collapsed. On the
+heaviest file, the entire non-test overhead is **193ms** (import 58ms,
+transform 55ms, environment 80ms) out of 77.2s.
