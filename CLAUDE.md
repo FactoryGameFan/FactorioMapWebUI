@@ -198,7 +198,7 @@ the Vite+ shims on `PATH` resolve it per directory, so a bare `node` here runs
 the managed build under `~/.vite-plus/js_runtime/node/`, not Homebrew's. That
 only holds while `~/.vite-plus/bin` comes first on `PATH`; when something else
 wins, the shims are skipped silently and `vp env doctor` marks each tool
-`(not vp shim)` while still printing `All checks passed`. Cloudflare Pages never
+`(not vp shim)` while still printing `All checks passed`. Cloudflare never
 builds this repo - `deploy:app` uploads an already-built `dist` - so an edit to
 it changes the version the gate runs on and nothing else.
 Bump it only alongside a local `pnpm run verify` on the new version.
@@ -458,7 +458,8 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   `factorio-oracle` that **pins nothing** - see the reference section at the top
   of this file. Deliberately **not** part of `verify`, which must pass on
   machines with no Factorio installed, and it now also needs the oracle.
-- `pnpm run deploy` - **verify** + build + `wrangler pages deploy` to Cloudflare Pages
+- `pnpm run deploy` - **verify** + build + `wrangler deploy` of the app Worker
+  (root `wrangler.jsonc`, see "The app Worker" below)
 - `pnpm run verify:deploy` - after deploying, confirm the live site is running
   local `HEAD` (see below). Takes an optional origin argument.
 
@@ -590,7 +591,7 @@ should keep:
   `devEngines.packageManager` from `package.json`, so the pnpm pin lives in one
   place. It must run _before_ `setup-node`, because `cache: pnpm` resolves the
   store path by invoking pnpm.
-- **No secrets, no deploy job.** Cloudflare Pages does not build this repo, so CI
+- **No secrets, no deploy job.** Cloudflare does not build this repo, so CI
   is a check only. `pnpm refs:sync` is absent for the same reason it is absent
   from `verify`: no runner has a Factorio binary.
 - **The `build` job's default shallow checkout is correct, and that was
@@ -865,13 +866,48 @@ means "the repo is inconsistent, don't ship." To deploy anyway in an emergency,
 run the two steps by hand rather than adding a bypass script:
 
 ```bash
-pnpm build && pnpm --filter @fmw/preview-worker exec wrangler pages deploy dist \
-  --cwd ../.. --project-name factoriomapwebui --branch main --commit-dirty=true
+pnpm build && pnpm --filter @fmw/preview-worker exec wrangler deploy --cwd ../..
 ```
 
 The app is live at **`map.factorygamefan.com`**. The apex `factorygamefan.com`
 is a separate landing page, not this app; the worker's `ALLOWED_ORIGIN` is the
 `map.` subdomain.
+
+### The app Worker (root `wrangler.jsonc`)
+
+The app is a **Worker with static assets and no script**, named
+`map-factorygamefan-com` (a Worker name cannot hold dots). It serves `dist/`
+on the Custom Domain `map.factorygamefan.com`. It was a Cloudflare Pages
+project (`factoriomapwebui`) until #433. Things worth knowing:
+
+- **Two wrangler configs, and they do not collide.** The root `wrangler.jsonc`
+  is the app. `preview-service/worker/wrangler.jsonc` is the preview Worker.
+  wrangler reads the config nearest to where it runs, so `deploy:app` passes
+  `--cwd ../..` to run at the root, and every `preview:*` script runs in the
+  worker's own directory and never sees the root file.
+- **wrangler is not a root dependency.** It lives in the preview worker's
+  workspace, which is why the root config's `$schema` points into
+  `preview-service/worker/node_modules`.
+- **`compatibility_date` is capped by the pinned wrangler.** Its workerd refuses
+  a date newer than the one it ships with, and `wrangler dev` then fails to
+  start. `deploy --dry-run` does not catch this. Move the date only as far as
+  the installed wrangler allows.
+- **Missing paths are plain 404s** (`not_found_handling: "none"`). Pages
+  answered every unknown path with `index.html` and a 200. The app has one page
+  and no router, and a 200 HTML answer for a stale hashed chunk hides the real
+  error. The config comment has the full reasoning.
+- **`workers_dev` and `preview_urls` are off.** The preview Worker only answers
+  `https://map.factorygamefan.com`, so any other host could not render map
+  previews anyway.
+- **`public/_headers` works the same as it did on Pages.** Vite copies it into
+  `dist/`, Cloudflare applies it, and it is not served as a file. Check the CSP
+  on a live response after any change to how the app is deployed, because a
+  missing CSP fails silently.
+
+To try it locally: `pnpm build`, then
+`pnpm --filter @fmw/preview-worker exec wrangler dev --cwd ../..`. It serves
+`dist/` with the `_headers` rules applied. Map previews will not work from
+localhost, because of `ALLOWED_ORIGIN`; use `pnpm localpreview` for those.
 
 ### Confirming a deploy landed - `pnpm run verify:deploy`, not grep
 
@@ -1485,7 +1521,9 @@ before changing it:
   `placementId` continuity rather than bucket presence alone.
 
 `wrangler` is not global - drive it through the workspace:
-`pnpm --filter @fmw/preview-worker exec wrangler <cmd>`.
+`pnpm --filter @fmw/preview-worker exec wrangler <cmd>`. That runs in the
+worker's directory, so it reads the preview Worker's config. Add `--cwd ../..`
+to act on the app Worker instead.
 
 **`worker-configuration.d.ts` is generated and must stay in sync with
 `wrangler.jsonc`.** It once drifted silently (the types declared the apex origin

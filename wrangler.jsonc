@@ -1,0 +1,39 @@
+// The app itself: a Worker with static assets and no script, serving the built
+// `dist/` at map.factorygamefan.com (issue #433 moved it off Cloudflare Pages).
+//
+// This is NOT the preview service. That Worker has its own config at
+// preview-service/worker/wrangler.jsonc, and wrangler uses the config nearest
+// to where it runs, so commands run in that directory never read this file.
+//
+// wrangler is not a root dependency. It is installed in the preview worker's
+// workspace, so the schema path points there and `deploy:app` drives it with
+// `pnpm --filter @fmw/preview-worker exec wrangler deploy --cwd ../..`.
+{
+  "$schema": "./preview-service/worker/node_modules/wrangler/config-schema.json",
+  // Named after its hostname. Dots are not allowed in a Worker name.
+  "name": "map-factorygamefan-com",
+  // Not today's date on purpose. The pinned wrangler (4.131.1, held to the
+  // version @cloudflare/vitest-plugin names) ships a workerd that refuses any
+  // date after 2026-09-18, so a newer date breaks `wrangler dev`. A Worker
+  // with no script barely depends on this value. Move it forward when wrangler
+  // moves.
+  "compatibility_date": "2026-09-18",
+  "assets": {
+    "directory": "./dist",
+    // A missing path gets a plain 404. The app has one page and no client-side
+    // router; its only URL state is a `?dev` query on `/`, which never needs a
+    // fallback. The build emits no 404.html, so "404-page" would have nothing to
+    // serve. "single-page-application" was ruled out because it would answer a
+    // stale hashed chunk (an old /assets/index-<hash>.js after a deploy) with
+    // index.html and a 200, which a browser reports as a confusing MIME error
+    // instead of a clear 404. Pages used to do exactly that for every unknown
+    // path, so this is a deliberate change from the old behavior.
+    "not_found_handling": "none",
+  },
+  "routes": [{ "pattern": "map.factorygamefan.com", "custom_domain": true }],
+  // Served only on the custom domain. The preview Worker's ALLOWED_ORIGIN is
+  // exactly https://map.factorygamefan.com, so a workers.dev or preview URL
+  // could not render map previews anyway.
+  "workers_dev": false,
+  "preview_urls": false,
+}

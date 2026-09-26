@@ -36,7 +36,7 @@ evolution and expansion - with the game's own display scaling (evolution factors
 shown scaled up from the tiny wire floats, cooldowns in minutes), linked min/max
 expansion distance, and in-game tooltip text on every field.
 
-The app is **deployed and live** on Cloudflare Pages at
+The app is **deployed and live** as a Cloudflare Worker (static assets) at
 [`map.factorygamefan.com`](https://map.factorygamefan.com), with the map preview
 service deployed alongside it. The apex
 [`factorygamefan.com`](https://factorygamefan.com) is a separate landing page,
@@ -136,8 +136,8 @@ test: `pnpm --filter @fmw/preview-container test:integration`.
 
 ### Deploy
 
-The app and preview service are already deployed (Cloudflare Pages +
-Workers/Containers on the `wormeyman` **Cloudflare** account - unrelated to the
+The app and preview service are already deployed (a Worker with static assets +
+a Worker with Containers on the `wormeyman` **Cloudflare** account - unrelated to the
 GitHub org, which moved to `FactoryGameFan` on 2026-08-17 and did not take the
 Cloudflare account with it; `pnpm run deploy` verifies,
 builds, and publishes the app). Both deploy paths are gated: `pnpm run deploy`
