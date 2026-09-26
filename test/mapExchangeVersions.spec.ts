@@ -6,11 +6,13 @@ import fixture215 from "./fixtures/map-exchange-2.1.15.strings.json";
 import fixture216 from "./fixtures/map-exchange-2.1.16.strings.json";
 import fixture217 from "./fixtures/map-exchange-2.1.17.strings.json";
 import fixture219 from "./fixtures/map-exchange-2.1.19.strings.json";
+import fixture220 from "./fixtures/map-exchange-2.1.20.strings.json";
 import parsed214 from "./fixtures/map-exchange-parsed.2.1.14-default.dump.json";
 import parsed215 from "./fixtures/map-exchange-parsed.2.1.15-default.dump.json";
 import parsed216 from "./fixtures/map-exchange-parsed.2.1.16-default.dump.json";
 import parsed217 from "./fixtures/map-exchange-parsed.2.1.17-default.dump.json";
 import parsed219 from "./fixtures/map-exchange-parsed.2.1.19-default.dump.json";
+import parsed220 from "./fixtures/map-exchange-parsed.2.1.20-default.dump.json";
 import builtins from "./fixtures/builtin-presets.json";
 import {
   SUPPORTED_VERSIONS,
@@ -81,6 +83,7 @@ describe("exchange format versions", () => {
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.16.0");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.17.0");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.19.0");
+    expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.20.4");
   });
 });
 
@@ -114,6 +117,7 @@ describe("every fixture records the tag it was captured at", () => {
     { version: "2.1.16", fixture: fixture216 },
     { version: "2.1.17", fixture: fixture217 },
     { version: "2.1.19", fixture: fixture219 },
+    { version: "2.1.20", fixture: fixture220 },
   ] as const;
 
   it.each(FIXTURES)("$version", ({ version, fixture: f }) => {
@@ -545,6 +549,112 @@ describe("exchange format 2.1.19", () => {
   it("agrees with the game's own parse across the whole 2.1.19 tail", () => {
     const tail = decodeExchangeString(fixture219.strings["default-seed123456"]).tail;
     const game = parsed219.map_settings;
+    const camel = (s: string) => s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    const sections: Record<string, Record<string, unknown>> = {
+      pollution: game.pollution,
+      enemyEvolution: game.enemy_evolution,
+      enemyExpansion: game.enemy_expansion,
+      unitGroup: game.unit_group,
+      difficulty: game.difficulty_settings,
+    };
+    let compared = 0;
+    for (const [prefix, section] of Object.entries(sections)) {
+      for (const [gameKey, gameValue] of Object.entries(section)) {
+        const key = `${prefix}.${camel(gameKey)}`;
+        if (!(key in tail)) continue;
+        expect(tail[key], key).toBe(gameValue);
+        compared++;
+      }
+    }
+    expect(compared).toBeGreaterThanOrEqual(40);
+  });
+});
+
+/**
+ * Factorio 2.1.20 moved the tag to `2.1.20.4` and left the payload alone - a
+ * tag-only move again, and the seventh version to break import. It inherits the
+ * 2.1.19 layout, removed field and all, so it is mirrored against 2.1.19 here
+ * rather than joining `LAYOUT_HEIRS`, whose contract is the 2.1.14 layout WITH
+ * that field.
+ *
+ * Three readings, none "it looked the same":
+ *
+ * 1. `base/prototypes/map-settings.lua` is absent from the 2.1.19 -> 2.1.20 data
+ *    diff.
+ * 2. Every capture inflates to exactly its 2.1.19 twin's byte count
+ *    (702/702/741/702/702). Pinned below.
+ * 3. The game's own parse of the new default string equals the 2.1.19 one on
+ *    all 185 leaf fields. Asserted below, not described.
+ *
+ * The fourth part jumped from `0` to `4`, so reading it off
+ * `factorio --version` (`Map output version: 2.1.20-4`) stays the only way.
+ */
+describe("exchange format 2.1.20", () => {
+  const REMOVED = "pollution.maxPollutionToRestoreTrees";
+  const label219 = (label: string) => label as keyof typeof fixture219.strings;
+  const label220 = (label: string) => label as keyof typeof fixture220.strings;
+
+  it("round-trips every 2.1.20 capture byte-for-byte", () => {
+    const entries = Object.entries(fixture220.strings);
+    expect(entries.length).toBeGreaterThanOrEqual(5);
+    for (const [label, s] of entries) {
+      const decoded = decodeExchangeString(s);
+      expect(decoded.version.join("."), `${label} format tag`).toBe("2.1.20.4");
+      expect(encodeExchangeString(decoded), `${label} re-encode`).toBe(s);
+    }
+  });
+
+  it("types the whole tail - opaqueTail stays empty", () => {
+    for (const [label, s] of Object.entries(fixture220.strings)) {
+      const tail = decodeExchangeString(s).tail;
+      expect((tail.opaqueTail as Uint8Array).length, `${label} opaqueTail`).toBe(0);
+    }
+  });
+
+  it("does NOT read max_pollution_to_restore_trees, which the game still lacks", () => {
+    // The removal is the one change that decodes SILENTLY when missed, so this
+    // is asserted per version rather than inherited on trust.
+    for (const [label, s] of Object.entries(fixture220.strings)) {
+      expect(REMOVED in decodeExchangeString(s).tail, `2.1.20 ${label}`).toBe(false);
+    }
+    expect("max_pollution_to_restore_trees" in parsed220.map_settings.pollution).toBe(false);
+  });
+
+  it("has a payload the same size as 2.1.19's, case for case", () => {
+    const sizes = Object.keys(fixture219.strings).map((label) => ({
+      label,
+      before: decodeExchangeString(fixture219.strings[label219(label)]).payload.length,
+      after: decodeExchangeString(fixture220.strings[label220(label)]).payload.length,
+    }));
+    for (const { label, before, after } of sizes) {
+      expect(after, `${label} payload size vs 2.1.19`).toBe(before);
+    }
+    expect(new Set(sizes.map((s) => s.after)).size).toBeGreaterThan(1);
+  });
+
+  it("mirrors 2.1.19's cases setting-for-setting", () => {
+    let compared = 0;
+    for (const label of Object.keys(fixture219.strings)) {
+      const a = decodeExchangeString(fixture219.strings[label219(label)]);
+      const b = decodeExchangeString(fixture220.strings[label220(label)]);
+      expect(b.autoplaceControls, `${label} autoplace controls`).toEqual(a.autoplaceControls);
+      expect(b.mid, `${label} mid-block`).toEqual(a.mid);
+      expect(b.propertyExpressionNames, `${label} property expressions`).toEqual(
+        a.propertyExpressionNames,
+      );
+      expect(b.tail, `${label} tail`).toEqual(a.tail);
+      compared++;
+    }
+    expect(compared).toBe(5);
+  });
+
+  it("parses to exactly what 2.1.19 parses to, in the game's own words", () => {
+    expect(parsed220).toEqual(parsed219);
+  });
+
+  it("agrees with the game's own parse across the whole tail", () => {
+    const tail = decodeExchangeString(fixture220.strings["default-seed123456"]).tail;
+    const game = parsed220.map_settings;
     const camel = (s: string) => s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
     const sections: Record<string, Record<string, unknown>> = {
       pollution: game.pollution,

@@ -1013,7 +1013,7 @@ Consequences that constrain any change here:
 
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
   known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`, `2.1.16.0`,
-  `2.1.17.0`, `2.1.19.0`) and
+  `2.1.17.0`, `2.1.19.0`, `2.1.20.4`) and
   never a range, because the schemas here are empirical: accepting an unseen
   format would decode a changed layout into plausible wrong values. A version
   joins the list only with a fixture proving a real string of it round-trips
@@ -1031,8 +1031,9 @@ Consequences that constrain any change here:
   four-part exchange tag - confirmed on a binary whose tag we already knew
   (2.1.14 prints `2.1.14-1`, and `[2,1,14,1]` is what the list carries), which is
   a control rather than a pattern match. The fourth part is **not monotonic and
-  does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0`, `.0`, `.0` across
-  2.1.9 to 2.1.19. It FELL to zero at 2.1.16 and stayed there. It cannot be guessed, and
+  does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0`, `.0`, `.0`, `.4`
+  across 2.1.9 to 2.1.20. It fell to zero at 2.1.16, sat there for three
+  versions, then jumped to 4. It cannot be guessed, and
   one `--version` answers "has import broken?" in a second.
 
   **This machine's Steam tracks the EXPERIMENTAL branch**, which is why two
