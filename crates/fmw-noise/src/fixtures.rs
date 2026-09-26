@@ -9656,6 +9656,118 @@ struct FalseRemoval {
     final_reaches: bool,
 }
 
+/// One destroy in the trace: its root frame, `via`, and the chain's origin.
+type TraceDestroy = (String, String, Option<(u64, u64)>);
+
+/// What the game did to one cell, read off `oracle-vulcanus-cliff-destroy-trace`.
+///
+/// That fixture is `Cliff`'s own life story out of the running game: every
+/// `wouldCollide` kill with the entity that caused it, every destroy with the
+/// frame that started its chain, every `destroyEnd` trim. So a port error can
+/// be binned by the game's REASON for the cell, not by a guess from where it
+/// sits.
+struct DestroyTrace {
+    /// `wouldCollide` kills of `cliff-vulcanus`: `tile` or the entity's class.
+    killed_by: BTreeMap<(u64, u64), String>,
+    /// Each destroyed cell's root, `via` and chain origin.
+    destroys: BTreeMap<(u64, u64), TraceDestroy>,
+    /// Each trimmed cell's chain origin (the last trim, where there are two).
+    trims: BTreeMap<(u64, u64), (u64, u64)>,
+}
+
+impl DestroyTrace {
+    fn new(case: &Json) -> Self {
+        let key = |j: &Json| (j.get("x").as_f64().to_bits(), j.get("y").as_f64().to_bits());
+        let origin = |j: &Json| {
+            j.get_opt("origin").map(|o| {
+                let o = o.as_array();
+                (o[0].as_f64().to_bits(), o[1].as_f64().to_bits())
+            })
+        };
+        let mut t = Self {
+            killed_by: BTreeMap::new(),
+            destroys: BTreeMap::new(),
+            trims: BTreeMap::new(),
+        };
+        for k in case.get("kills").as_array() {
+            if k.get("prototype").as_str() == "cliff-vulcanus" {
+                t.killed_by.insert(key(k), k.get("by").as_str().to_owned());
+            }
+        }
+        for d in case.get("destroys").as_array() {
+            if d.get("prototype").as_str() == "cliff-vulcanus" {
+                let entry = (
+                    d.get("root").as_str().to_owned(),
+                    d.get("via").as_str().to_owned(),
+                    origin(d),
+                );
+                assert!(
+                    t.destroys.insert(key(d), entry).is_none(),
+                    "a cell is destroyed once"
+                );
+            }
+        }
+        for tr in case.get("trims").as_array() {
+            t.trims
+                .insert(key(tr), origin(tr).expect("a trim has an origin"));
+        }
+        t
+    }
+
+    /// Why the game destroyed `cell`: the cause of its chain's FIRST cliff,
+    /// so a cascade is charged to what started it.
+    fn cause(&self, cell: (u64, u64)) -> String {
+        let (root, via, origin) = self.destroys.get(&cell).unwrap_or_else(|| {
+            panic!(
+                "({}, {}) is absent from the game's map but not in its destroy list",
+                f64::from_bits(cell.0),
+                f64::from_bits(cell.1)
+            )
+        });
+        if via != "direct" {
+            let o = origin.expect("a cascade has an origin");
+            assert_eq!(
+                self.destroys[&o].1, "direct",
+                "an origin is destroyed directly"
+            );
+            return self.cause(o);
+        }
+        if root == "applyCliffs" {
+            format!("wouldCollide {}", self.killed_by[&cell])
+        } else {
+            root.clone()
+        }
+    }
+
+    /// Bin every error of `port` against `game` by the game's reason.
+    fn bin(&self, game: &CellMap, port: &CellMap) -> BTreeMap<String, usize> {
+        const KEPT: &str = "the port removes or trims a cell the game kept";
+        let mut bins: BTreeMap<String, usize> = BTreeMap::new();
+        for (k, id) in port {
+            let why = match game.get(k) {
+                Some(want) if want == id => continue,
+                // Absent from the game's map: it destroyed the cell.
+                None => self.cause(*k),
+                // Standing with another orientation: the game trimmed it, or
+                // the port trimmed a cell the game left alone.
+                Some(_) => match self.trims.get(k) {
+                    Some(o) => self.cause(*o),
+                    None => KEPT.to_owned(),
+                },
+            };
+            *bins.entry(why).or_default() += 1;
+        }
+        for k in game.keys().filter(|k| !port.contains_key(*k)) {
+            assert!(
+                !self.destroys.contains_key(k),
+                "a cell the game kept is not in its destroy list"
+            );
+            *bins.entry(KEPT.to_owned()).or_default() += 1;
+        }
+        bins
+    }
+}
+
 /// **The ore -> cliff removal geometry, read off the binary and graded on the
 /// game's own entities.** `ResourceEntity::postSetup` (2.0.77, which places
 /// the same Vulcanus cliffs as 2.1.17) widens the placed resource's AABB
@@ -9711,8 +9823,20 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     let mut totals = [OrientationScore::default(); LABELS.len()];
     let mut per_region: Vec<(&str, Vec<OrientationScore>)> = Vec::new();
     let mut false_removals: Vec<FalseRemoval> = Vec::new();
-    for (label, case, ctx) in cases {
+    let trace = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-destroy-trace.seed123456.json",
+        "2.0.77",
+    );
+    let mut bins: Vec<[BTreeMap<String, usize>; 2]> = Vec::new();
+    for ((label, case, ctx), trace_case) in cases.into_iter().zip(trace.get("cases").as_array()) {
         let measured = score_removal_geometries(case, ctx, &GEOMETRIES);
+        assert_eq!(
+            trace_case.get("region").get("x0").as_f64(),
+            case.get("region").get("x0").as_f64(),
+            "{label}: the trace case is this region"
+        );
+        let why = DestroyTrace::new(trace_case);
+        bins.push([0, 1].map(|arm| why.bin(&measured.game, &measured.rows[arm].1)));
         false_removals
             .extend(measured.describe(1, &format!("{label} residual under the ENGINE geometry")));
         let rows: Vec<OrientationScore> = measured.rows.iter().map(|(s, _)| *s).collect();
@@ -9803,9 +9927,10 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     // What the engine geometry does not reach is the two geyser RUNS in the
     // frequency-0.5 region, 5 to 29 tiles from the nearest geyser, and the
     // `[1500,1500]` cells no resource is near (the `1506` and `1742/1746`
-    // runs, which #406 tied to rock and demolisher kills). No per-entity box
-    // reaches those; they are the destroy cascade running further along a run
-    // than the port's model of it does, and the entity half.
+    // runs). No per-entity box reaches those. The destroy trace at the end of
+    // this test names what does: `wouldCollide`'s entity half (rocks, crater
+    // rings, a demolisher's body), the cascades those start, and a
+    // demolisher's destroy-cliffs trigger.
     let row = |matched, wrong, surplus, missing| OrientationScore {
         matched,
         wrong,
@@ -9873,4 +9998,75 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
         false_removals.iter().all(|f| !f.final_reaches),
         "every false removal is a cell the game had already trimmed"
     );
+
+    // WHY each apply-stage error is one, by the game's own reason for the
+    // cell (`oracle-vulcanus-cliff-destroy-trace`, 2026-09-22). Every error
+    // has a reason in the trace, and no reason is the TILE half of
+    // `wouldCollide` - #407's transcription is exact. With the game's own ore
+    // entities fed in (the second table of each pair), what is left is:
+    //
+    // - `wouldCollide` ENTITY kills and the cascades they start: a
+    //   demolisher's body (`Segment`) in `[1500,1500]` - its `1506` and
+    //   `1742/1746` runs, both of them, not rock and demolisher as #406's
+    //   write-up said - and rocks and crater-cliff rings at frequency 0.5.
+    //   Four of those cascade cells die by a rule the port lacks:
+    //   `Cliff::destroyEnd` trims a neighbour, re-searches the SMALLER box,
+    //   and a non-cliff entity in it makes the cliff destroy ITSELF.
+    // - `DestroyCliffsTriggerEffectItem`, run by a demolisher's
+    //   `Segment::update` from `Surface::onChunkGenerated`: the three cells
+    //   at `(-2026..-2034, -1493.5)` that stand 40 to 50 tiles from any
+    //   resource.
+    // - the timing class above, and five cells whose ore removal the port's
+    //   queued box misses (two of them the ore trimming a cliff into a rock).
+    //
+    // With the port's OWN ore field (the first table), the ore bin is the
+    // field's boundary ring, as `cliffs/vulcanus_ore_rejection.rs` measures.
+    let table = |rows: &[(&str, usize)]| -> BTreeMap<String, usize> {
+        rows.iter().map(|(k, n)| ((*k).to_owned(), *n)).collect()
+    };
+    const KEPT: &str = "the port removes or trims a cell the game kept";
+    assert_eq!(
+        bins[0][0],
+        table(&[("wouldCollide Segment", 10), ("postSetup", 7), (KEPT, 2)]),
+        "[1500,1500], shipped"
+    );
+    assert_eq!(
+        bins[0][1],
+        table(&[("wouldCollide Segment", 10), (KEPT, 2)]),
+        "[1500,1500], game ore entities"
+    );
+    assert_eq!(
+        bins[1][0],
+        table(&[
+            ("postSetup", 35),
+            ("wouldCollide SimpleEntity", 10),
+            ("wouldCollide Cliff", 8),
+            (KEPT, 6),
+            ("destroyCliffsTrigger", 3),
+        ]),
+        "f0.5, shipped"
+    );
+    assert_eq!(
+        bins[1][1],
+        table(&[
+            ("wouldCollide SimpleEntity", 10),
+            ("wouldCollide Cliff", 8),
+            (KEPT, 6),
+            ("postSetup", 5),
+            ("destroyCliffsTrigger", 3),
+        ]),
+        "f0.5, game ore entities"
+    );
+    // The bins partition the errors - nothing dropped, nothing counted twice.
+    for (region, pair) in per_region.iter().zip(&bins) {
+        for (arm, b) in pair.iter().enumerate() {
+            let r = &region.1[arm];
+            assert_eq!(
+                b.values().sum::<usize>(),
+                r.wrong + r.surplus + r.missing,
+                "{}, arm {arm}",
+                region.0
+            );
+        }
+    }
 }
