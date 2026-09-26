@@ -173,7 +173,7 @@ const ROCK_PIXELS_PER_WINDOW = [510, 54, 106, 96];
  * overlay covers another's pixels - which is the point of asserting it
  * separately rather than deriving it.
  */
-const ALL_PIXELS_PER_WINDOW = [1041, 620, 1440, 124];
+const ALL_PIXELS_PER_WINDOW = [1041, 620, 1435, 124];
 
 let compiled: WebAssembly.Module | undefined;
 async function engine() {
@@ -503,6 +503,17 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
    * Pixels of each catalog entry's `map_color`, per window, in `ORE_WINDOWS`
    * order and then catalog order (tungsten, calcite, coal, geyser).
    *
+   * Every solid-ore count fell when the overlay started reading the game's own
+   * `random_penalty` roll (#84) - 2755 -> 2586 on the coal patch - and none
+   * rose, because `rp <= 1` makes the rolled footprint a subset of the old
+   * one. The geyser's 37 did not move; its placement is a different roll.
+   *
+   * `fine, fractional origin`'s calcite went 6 -> 4 when the overlay started
+   * reading the ore field at each pixel's tile rather than at the raw pixel
+   * point, as the graded footprint does. The two lost pixels are tile
+   * (160, -95), which had been sampled at y = -94.75; the four left are
+   * exactly two whole tiles' worth in that row.
+   *
    * Frozen exact counts rather than "more than zero", for the reason every
    * count in this port is frozen: a bound wide enough to be safe is wide enough
    * to swallow a whole patch. The zeros are real and are what makes the table
@@ -511,11 +522,11 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
    * everywhere.
    */
   const ORE_PIXELS = [
-    [0, 0, 2755, 0],
-    [0, 0, 1291, 0],
-    [53, 0, 0, 0],
-    [0, 23, 0, 0],
-    [47, 172, 80, 37],
+    [0, 0, 2586, 0],
+    [0, 0, 1210, 0],
+    [47, 0, 0, 0],
+    [0, 4, 0, 0],
+    [41, 144, 71, 37],
   ];
 
   const oreRequest = (w: Window): ElevationRenderRequest => ({
@@ -658,6 +669,10 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
    * gone, which is the 7 here; 5 cliff pixels off the ore are gone too; and 5
    * pixels of one run, at tiles (800..816, 328..336), gained a cliff. Painting
    * rocks or cliffs FIRST would take all three to zero.
+   *
+   * 165 now, 1 by a rock and 164 by a cliff, since the ore overlay reads the
+   * game's own `random_penalty` roll (#84): it no longer paints the ring of
+   * tiles the game leaves bare, so there is less ore for anything to cover.
    */
   it("paints resources first and the obstruction overlays over the top", async () => {
     const e = await engine();
@@ -694,7 +709,7 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
       if (isColor(all, i, ROCK_MAP_COLOR)) byRock++;
       if (isColor(all, i, CLIFF_MAP_COLOR)) byCliff++;
     }
-    expect({ covered, byRock, byCliff }).toEqual({ covered: 194, byRock: 2, byCliff: 192 });
+    expect({ covered, byRock, byCliff }).toEqual({ covered: 165, byRock: 1, byCliff: 164 });
   }, 300000);
 });
 

@@ -301,3 +301,13 @@ they should start, because it is the one extent that would also invalidate the d
 argument. `n = 8` in the only region with any oil is far too weak a denominator to
 detect the difference from the outside - Poisson sigma on 8 is 2.83, so the measured
 7-vs-8 would look identical under a mildly wrong model.
+
+**Settled for one expression on 2026-09-26 (#84): the batch is the chunk.** Vulcanus's
+solid ores carry `random_penalty_between(0.9, 1, 1)`, and taking the batch as the tile's
+32 x 32 chunk - seeded from the chunk corner at integer coordinates, read at row-major
+index `dy * 32 + dx` - places every one of the game's 7,096 solid-ore tiles in four
+regions, with 2 extra (`crates/fmw-noise/src/resources/vulcanus_ore_roll.rs`,
+`the_vulcanus_ore_roll_is_the_chunk_batch`). Crude oil's penalty runs on the same
+entity-probability path, so the chunk is the natural first guess for it too, but that
+was not measured: oil also rolls a placement after the penalty, and the placement stream
+is exactly what failed for the Vulcanus geyser (0 to 1 of 44 at salt 0).
