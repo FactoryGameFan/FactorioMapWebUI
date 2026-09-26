@@ -5363,7 +5363,7 @@ cell for cell and orientation for orientation - 885 against
 1215 resource entities. The earlier version check covered only the default
 regions, so this one was run rather than assumed.
 
-### Three things end a cliff, and the third one is not map generation's
+### Four roots end a cliff, and the third one is not map generation's
 
 `cliff-vulcanus` destroys by the frame that started each chain:
 
@@ -5383,6 +5383,11 @@ are three of the "six cells 40 to 50 tiles from anything". The other three,
 `(-2102..-2106, -1245.5)`, are two `wouldCollide` entity kills against the
 same rock and the trim they leave on `(-2106, -1249.5)`; they sit in the rock
 row of the table below.
+
+The fourth root, `Cliff::updateConnections`, starts one destroy, at f0.5:
+`(-2046, -1493.5)`, standing `west-to-none`. It also starts eight trims, five
+in `[1500,1500]` and three at f0.5. None of the port errors binned below has
+it as its root, so this section did not trace it further.
 
 `applyCliffs` also turns out to test every queued cell BEFORE creating any:
 all 180 `cliff-vulcanus` cells `wouldCollide` killed in `[1500,1500]` are
