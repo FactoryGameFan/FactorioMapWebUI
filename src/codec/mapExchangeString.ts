@@ -277,12 +277,21 @@ function writeStartingPoints(writer: BinaryWriter, points: MapPosition[]): void 
  *   tag of its own - is not in this list and cannot be until someone captures
  *   on that build.
  *
+ * - `2.1.20.4` - what Factorio 2.1.20 (experimental) emits. Added 2026-09-26, a
+ *   SIXTH incident, and a tag-only move again, read the same three ways:
+ *   `base/prototypes/map-settings.lua` is absent from the 2.1.19 -> 2.1.20 data
+ *   diff; all five re-captured cases inflate to exactly their 2.1.19 counts
+ *   (702/702/741/702/702); and the game's own parse of the new default string
+ *   agrees with the 2.1.19 one on every leaf field. So it joins the 2.1.19 tail
+ *   layout. The fourth part jumped from `0` to `4`, which is why it cannot be
+ *   guessed from the patch number.
+ *
  * Note the two directions are not symmetric, and only one has ever been broken:
  * 2.1.12 accepts a `2.1.9.3` string fine, 2.1.14 accepts one too, 2.1.15
  * parses all five `2.1.14.1` captures, and 2.1.19 parses all five `2.1.17.0`
  * ones (all verified through the game's own `helpers.parse_map_exchange_string`),
  * so EXPORT was never affected - the app's output stayed loadable throughout.
- * Import was the broken half every time: six versions across five incidents,
+ * Import was the broken half every time: seven versions across six incidents,
  * since 2.1.15 and 2.1.16 landed the same day.
  */
 export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
@@ -293,6 +302,7 @@ export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 16, 0],
   [2, 1, 17, 0],
   [2, 1, 19, 0],
+  [2, 1, 20, 4],
 ];
 
 /** Human-readable list for UI and error messages, e.g. "2.1.9.3, 2.1.12.2". */
@@ -496,6 +506,7 @@ const TAIL_DISPATCH_COOLDOWN_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 16, 0],
   [2, 1, 17, 0],
   [2, 1, 19, 0],
+  [2, 1, 20, 4],
 ];
 
 /**
@@ -522,6 +533,7 @@ const TAIL_MAX_POLLUTION_TO_RESTORE_TREES_FIELD = "pollution.maxPollutionToResto
 
 const TAIL_MAX_POLLUTION_TO_RESTORE_TREES_REMOVED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 19, 0],
+  [2, 1, 20, 4],
 ];
 
 function tailSchemaFor(version: FormatVersion): Schema {
