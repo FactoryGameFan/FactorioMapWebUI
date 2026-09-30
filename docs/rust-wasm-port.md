@@ -617,7 +617,8 @@ and did not close, so each still has to be applied and re-scored one at a time.
     and the two consumers of one field now differ on purpose - the catalog's
     comment says why. On the port's own path the geometry alone was worse by
     count (95 -> 97 errors on the two graded regions); with the midpoint it is
-    95 -> 89.
+    95 -> 89. (Superseded 2026-09-26: the next entry reproduces the roll, and
+    the midpoint is gone.)
   - **The live-orientation removal phase is refuted.** The engine runs the
     removal after `applyCliffs`, on the cliff's live box; a harness phase that
     does the same scores worse than reading the queued orientation
@@ -634,6 +635,37 @@ and did not close, so each still has to be applied and re-scored one at a time.
   held. It is not free: the cliff view renders 3-20% slower and the `all`
   composite 2-3%, and the crate's tests take 15% longer clean and 21% longer
   under poison, all timed against `main` in turn.
+
+- **#84 - the solid-ore roll is REPRODUCED, and the ring is gone
+  (2026-09-26).** `random_penalty_between(0.9, 1, 1)`'s batch is the tile's
+  chunk, row-major, seeded from the chunk corner at integer coordinates.
+  `VulcanusOreRoll` reads it, and both the ore overlay and the cliff removal
+  read the one rolled footprint, so `ORE_REMOVAL_REGION_THRESHOLD` is deleted
+  and the two consumers agree again. Graded in
+  `the_vulcanus_ore_roll_is_the_chunk_batch` against every solid-ore entity in
+  four regions (three default at 2.1.12, one at volcanism frequency 0.5 at
+  2.1.17): 7,096 of 7,096 placed, 2 extra, both in the band where the
+  probability is between 0 and 1. Two traps it measured:
+
+  - **Only the batch's FIRST position matters.** The source is constant, so
+    it seeds the stream and nothing else does; a planted x/y swap of the
+    batch positions leaves every test green. Row-major lives in the index the
+    roll is read at, and swapping that turns the test red with exactly its
+    column-major control's numbers.
+  - **A half-tile control cannot fail at `x, y >= 0`.** The seed truncates
+    toward zero, so the tile-centre batch equals the integer one in both
+    non-negative regions and loses only where a coordinate is negative.
+
+  What it is worth: the overlay stops painting 810 tiles the game leaves
+  bare. The cliff removal gains little - 89 -> 86 errors on the two graded
+  regions at the crossing stage, 221 -> 206 over the sixteen out-of-sample
+  ones - because the rest of its ore error is the sulfuric-acid geyser.
+  Seeding the geyser's roll as the game seeds `generateEntities` (salt 0),
+  with or without the solid ores competing for the tile, places 0 to 1 of
+  the game's 44 geysers, so that stream is still unknown.
+
+  It is close to free. Timed against `main` in turn, all 27 view and window
+  pairs came in between 0.99x and 1.02x, each within a 3% spread.
 
 ### No open findings, and do not "fix" the next one inside the port
 

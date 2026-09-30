@@ -44,6 +44,7 @@ use fmw_noise::resources::vulcanus_catalog::{
     VULCANUS_RESOURCE_CATALOG,
 };
 use fmw_noise::resources::vulcanus_geyser::VulcanusGeyserPlacement;
+use fmw_noise::resources::vulcanus_ore_roll::{ore_probability, VulcanusOreRoll};
 use fmw_noise::rocks::catalog::{RockControls, NAUVIS_ROCK_MARK_RADIUS_PX};
 use fmw_noise::rocks::catalog::{ROCK_MAP_COLOR, VULCANUS_ROCK_MARK_RADIUS_PX};
 use fmw_noise::rocks::field::{NauvisRockFields, RockFieldParams};
@@ -1512,6 +1513,11 @@ fn paint_vulcanus_resources(
     if thresholded.is_empty() {
         return;
     }
+    // The solid ores' `random_penalty_between(0.9, 1, 1)`, one draw per tile
+    // from the tile's chunk batch and shared by all three, so the overlay
+    // paints the tiles the game put an entity on rather than every tile one
+    // could stand on.
+    let roll = VulcanusOreRoll::new();
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
@@ -1520,9 +1526,18 @@ fn paint_vulcanus_resources(
             // TypeScript asks each entry's own memoised region closure and
             // stops at the first winner; this reads the same values off one
             // pass of the layer, which is the same numbers in fewer calls.
-            let regions = stack.resources(wx, wy);
+            //
+            // Both the field and the roll are read at the pixel's TILE, as
+            // `VulcanusOreFootprint::occupies` reads them. At a fractional
+            // origin or below one tile a pixel, a raw-coordinate region would
+            // pair one tile's `rp` with a point elsewhere in it, which is not
+            // the graded footprint.
+            let (tx, ty) = (wx.floor(), wy.floor());
+            let regions = stack.resources(tx, ty);
+            let penalty = roll.penalty_at(tx, ty);
             for entry in &thresholded {
-                if 1000.0 * entry.region(&regions) < RESOURCE_PROBABILITY_THRESHOLD {
+                if ore_probability(entry.region(&regions), penalty) < RESOURCE_PROBABILITY_THRESHOLD
+                {
                     continue;
                 }
                 let color = entry.map_color();

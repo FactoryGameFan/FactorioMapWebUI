@@ -5466,3 +5466,102 @@ would placing each of these entity classes buy, against what it would cost.
 Planted to prove the bins can fail: relabelling the `(1506, 1582.5)` kill as
 a rock moves TWO cells out of the demolisher bin (the kill and its cascade),
 and deleting a destroy entry fails with the cell named.
+
+## The solid-ore roll is the chunk batch, and the geyser is what is left (2026-09-26, #84)
+
+This follows the costed choice the section above ended on. Two findings came
+first, and they set the order of work.
+
+**The port's rocks cannot stand in for the game's.** The rock overlay is a
+density model: its own salt, no competition between entity types for a tile,
+no offset draws, and 0% huge rocks where the game places about 28%
+(`rocks/vulcanus_placement.rs`). It paints the right amount of rock in the
+wrong places, so a rock or crater-cliff kill rule would need the game's whole
+Vulcanus entity pass first.
+
+**Most entity kills cross a chunk border.** Of the 14 `wouldCollide` entity
+kills of `cliff-vulcanus` in the destroy-trace fixture, 12 have the killer in
+a different chunk from the cliff, so they depend on which chunk generated
+first. UPDATE 12's three generation orders agreed cell for cell, but all three
+requested the whole region before draining it.
+
+So the cheapest lever was the ore, and it had one known gap: the roll.
+
+### The batch
+
+`random_penalty_between(0.9, 1, 1)` is `random_penalty{source = 1,
+amplitude = 0.1}`, so every tile draws once. Taking the batch as the tile's
+chunk, seeded from the chunk corner and read at row-major index, reproduces
+the game's solid ore over every tile of four regions:
+
+| region | game ore tiles | the roll: missed / extra | midpoint 0.95 | `rp` = 1 extra |
+| --- | ---: | ---: | ---: | ---: |
+| `[0,0]` default, 2.1.12 | 945 | 0 / 0 | 17 / 24 | 81 |
+| `[1500,1500]` default, 2.1.12 | 3,914 | 0 / 1 | 99 / 100 | 398 |
+| `[-1200,800]` default, 2.1.12 | 1,047 | 0 / 1 | 33 / 24 | 119 |
+| `[-2200,-1500]` f0.5, 2.1.17 | 1,190 | 0 / 0 | 43 / 58 | 212 |
+
+The two extra tiles sit where the probability is between 0 and 1 (13 such
+tiles in all four regions), where the game rolls a second time. Walking the
+batch column-major loses in every region. Seeding it at tile centres loses
+only where a coordinate is negative, because the seed truncates toward zero.
+And only the first position of the batch matters at all: a planted swap of the
+batch's x and y left every test green, while a swap of the index the roll is
+read at turned the frozen test red with its column-major control's numbers
+exactly.
+
+### What it moved
+
+The ore overlay stops painting the 810 ring tiles above, and every solid-ore
+pixel count in tier 3 fell (2,755 -> 2,586 on the coal-patch window). The
+cliff rule and the overlay read one footprint again, so
+`ORE_REMOVAL_REGION_THRESHOLD` is gone. The overlay reads the field at each
+pixel's tile, as the footprint does; at a fractional origin a raw pixel point
+would pair one tile's roll with a point elsewhere in it, which moved one
+calcite tile in the `fine, fractional origin` window.
+
+The cliffs gained less. Crossing stage, both graded regions: 1618/33/51/5 ->
+1620/32/50/4, 89 -> 86 errors. Over the sixteen out-of-sample regions, 221 ->
+206, with no region worse. `[1500,1500]`'s ore-rule bin in the table above
+goes 7 -> 5 and f0.5's stays at 35.
+
+That last number is the point. With the ore exact, f0.5's ore bin is still 35
+against 5 with the game's own entities, and 30 of the difference is the
+sulfuric-acid geyser, which the port leaves out of the rule on purpose. One
+of the other five, `(-2046, -1317.5)`, stands half a tile from a calcite the
+port now places correctly and is still not removed, so it is geometry rather
+than field.
+
+### Cost
+
+The roll draws one value per tile from a chunk batch, where the field it
+replaces was read at a fixed threshold. Timed the way #414 was: `main`'s
+engine and this one loaded in one process, taking turns over five rounds after
+one untimed warm-up each, median ms. Every window from the terrain and ore
+tables in `test/wasmVulcanusRenderParity.spec.ts` was timed, plus a 256 px
+window at 4 tiles a pixel; the largest rows are:
+
+| view      | window                     | `main` | this   | ratio |
+| --------- | -------------------------- | -----: | -----: | ----: |
+| resources | `coarse, all four entries` | 6539.6 | 6577.2 |  1.01 |
+| resources | 256 px at 4 tiles a pixel  | 7396.0 | 7419.4 |  1.00 |
+| cliffs    | `tall, coarse`             |  193.1 |  196.3 |  1.02 |
+| cliffs    | `coarse, all four entries` | 2289.5 | 2307.3 |  1.01 |
+| cliffs    | 256 px at 4 tiles a pixel  | 1992.8 | 1996.1 |  1.00 |
+| all       | `tall, coarse`             | 1282.3 | 1294.1 |  1.01 |
+| all       | `coarse, all four entries` | 9915.0 | 9976.3 |  1.01 |
+| all       | 256 px at 4 tiles a pixel  | 9994.1 | 10033.2 |  1.00 |
+
+All 27 rows fall between 0.99 and 1.02, and no row's spread across its five
+rounds is over 3%. So the roll costs at most about 2%, which is the size of
+the noise.
+
+### The geyser roll is a different stream
+
+The geyser's probability is 0.025 to 0.086, so where it lands is set entirely
+by the placement roll. Re-seeding the port's roll the way the game seeds
+`generateEntities` (salt 0), with or without the solid ores competing for the
+tile, places 0 to 1 of the game's 44 geysers in the two regions - chance. The
+counts stay right (14 to 29 against 19 and 25), so the density model holds
+and the positions do not. The game's geysers all sit exactly on tile centres.
+Finding that stream is an lldb job, not another guess.

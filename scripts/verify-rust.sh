@@ -358,6 +358,15 @@ POISONED_TESTS=(
   fixtures::reproduces_the_games_aux_at_every_captured_position
   fixtures::reproduces_the_games_moisture_at_every_captured_position
   fixtures::reproduces_the_games_temperature_bit_for_bit_at_every_captured_position
+
+  # The Vulcanus solid-ore roll (#84). Its hook is `poison::index_result` on the
+  # tile index, because a one-ULP nudge to `rp` almost never moves a
+  # thresholded tile. The fixture test would go red through `basis_noise`
+  # alone, so the unit test beside the op is the control that only the index
+  # hook can redden: it compares the roll against the raw batch, and the value
+  # hook bends both sides alike.
+  fixtures::the_vulcanus_ore_roll_is_the_chunk_batch
+  resources::vulcanus_ore_roll::tests::every_tile_of_a_chunk_reads_its_own_draw_of_the_chunk_batch
 )
 for t in "${POISONED_TESTS[@]}"; do
   if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then
