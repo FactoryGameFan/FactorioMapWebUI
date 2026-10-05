@@ -31,6 +31,12 @@ async function objectKeyFor(req: typeof body): Promise<string> {
   return `previews/${await cacheKey({ ...req, factorioVersion: env.FACTORIO_VERSION })}.png`;
 }
 
+// A Durable Object infrastructure error: an Error with the flags
+// durable-objects/best-practices/error-handling describes.
+function doError(message: string, flags: { retryable?: boolean; overloaded?: boolean }): Error {
+  return Object.assign(new Error(message), flags);
+}
+
 // The real env with PREVIEW_CONTAINER swapped for a fake namespace of the same
 // shape the drain test uses, idFromName then get. Counts container calls and
 // stubs handed out, so tests can see retries and that each attempt asked for a
@@ -178,6 +184,91 @@ describe("worker /preview", () => {
       message: "render not cached: R2 put failed",
       error: "429 rate limited",
     });
+  });
+
+  it("retries a container call that failed with a retryable error", async () => {
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let n = 0;
+    const { fakeEnv, calls, stubs } = withContainer(async () => {
+      if (n++ === 0) throw doError("transient", { retryable: true });
+      return pngResponse(env.FACTORIO_VERSION);
+    });
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(post({ ...body, seed: 44444 }), fakeEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual(PNG);
+    expect(calls()).toBe(2);
+    // A stub can be left broken by the error it threw, so each try gets a new one.
+    expect(stubs()).toBe(2);
+    expect(warns).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warns.mock.calls[0]?.[0]))).toMatchObject({
+      message: "container call failed, retrying",
+      attempt: 1,
+      error: "transient",
+      retryable: true,
+    });
+  });
+
+  it("gives up after two retries", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { fakeEnv, calls } = withContainer(async () => {
+      throw doError("still down", { retryable: true });
+    });
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(post({ ...body, seed: 55555 }), fakeEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(500);
+    expect(calls()).toBe(3);
+    expect(JSON.parse(String(errors.mock.calls[0]?.[0]))).toEqual({
+      message: "preview request failed",
+      error: "still down",
+      retryable: true,
+    });
+  });
+
+  it("never retries an overloaded Durable Object, even one marked retryable", async () => {
+    // error-handling.mdx: retrying an overloaded object "will worsen the
+    // overload". Both flags are set here so the test fails if the overloaded
+    // check is dropped or ordered after the retryable one.
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { fakeEnv, calls } = withContainer(async () => {
+      throw doError("overloaded", { retryable: true, overloaded: true });
+    });
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(post({ ...body, seed: 66666 }), fakeEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(500);
+    expect(res.headers.get("access-control-allow-origin")).toBe(env.ALLOWED_ORIGIN);
+    expect(calls()).toBe(1);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(errors.mock.calls[0]?.[0]))).toEqual({
+      message: "preview request failed",
+      error: "overloaded",
+      retryable: true,
+      overloaded: true,
+    });
+  });
+
+  it("does not retry an error that is not marked retryable", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { fakeEnv, calls } = withContainer(async () => {
+      throw new Error("bad request object");
+    });
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(post({ ...body, seed: 77777 }), fakeEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(500);
+    expect(calls()).toBe(1);
   });
 
   it("rejects a body whose declared length is over the cap with 413", async () => {

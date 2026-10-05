@@ -1,3 +1,4 @@
+import { getContainer } from "@cloudflare/containers";
 import { parsePreviewRequest, type PreviewRequest } from "./schema";
 import { cacheKey } from "./cacheKey";
 export { PreviewContainer } from "./container";
@@ -20,6 +21,23 @@ function logError(message: string, detail: Record<string, unknown>): void {
 // something less than it should have (a render that was not cached).
 function logWarn(message: string, detail: Record<string, unknown>): void {
   console.warn(JSON.stringify({ message, ...detail }));
+}
+
+// The fields of a thrown value worth a log line. Durable Object errors carry
+// `retryable` and `overloaded` flags (durable-objects/best-practices/
+// error-handling), which say whether the platform judged a failure transient
+// or the object overloaded, so they go in when present. Only when present: an
+// ordinary Error logs as exactly `{ error }`, which the 500-path test pins.
+function errorFields(error: unknown): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    error: error instanceof Error ? error.message : String(error),
+  };
+  if (error !== null && typeof error === "object") {
+    const flags = error as { retryable?: unknown; overloaded?: unknown };
+    if (typeof flags.retryable === "boolean") fields.retryable = flags.retryable;
+    if (typeof flags.overloaded === "boolean") fields.overloaded = flags.overloaded;
+  }
+  return fields;
 }
 
 type BodyResult = { ok: true; value: unknown } | { ok: false; status: number; error: string };
@@ -98,9 +116,7 @@ export default {
       }
       return await renderPreview(parsed.value, env);
     } catch (error) {
-      logError("preview request failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logError("preview request failed", errorFields(error));
       return new Response("internal error", { status: 500, headers: corsHeaders(env) });
     }
   },
@@ -121,29 +137,16 @@ async function renderPreview(req: PreviewRequest, env: Env): Promise<Response> {
     });
   }
 
-  // Cache miss: enforce budget.
-  const budgetId = env.RENDER_BUDGET.idFromName("global");
-  const budget = env.RENDER_BUDGET.get(budgetId) as unknown as {
-    consume(cap: number): Promise<{ allowed: boolean }>;
-  };
+  // Cache miss: enforce budget. Called exactly once and never retried: consume()
+  // increments the month's count before it answers, so a retry after a lost
+  // reply would charge one render twice.
+  const budget = env.RENDER_BUDGET.getByName("global");
   const decision = await budget.consume(Number(env.MONTHLY_RENDER_BUDGET));
   if (!decision.allowed) {
     return new Response("render budget exhausted", { status: 503, headers: corsHeaders(env) });
   }
 
-  // Render via the container.
-  const container = env.PREVIEW_CONTAINER.get(
-    env.PREVIEW_CONTAINER.idFromName("pool-0"),
-  ) as unknown as {
-    fetch(req: Request): Promise<Response>;
-  };
-  const renderRes = await container.fetch(
-    new Request("https://container/render", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(req),
-    }),
-  );
+  const renderRes = await fetchRender(req, env);
   if (!renderRes.ok) {
     // Drain the body before dropping this response. @cloudflare/containers
     // proxies the container through a TransformStream and decrements its
@@ -195,10 +198,7 @@ async function renderPreview(req: PreviewRequest, env: Env): Promise<Response> {
       httpMetadata: { contentType: "image/png" },
     });
   } catch (error) {
-    logWarn("render not cached: R2 put failed", {
-      objectKey,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logWarn("render not cached: R2 put failed", { objectKey, ...errorFields(error) });
   }
   return new Response(png, {
     headers: {
@@ -207,4 +207,56 @@ async function renderPreview(req: PreviewRequest, env: Env): Promise<Response> {
       ...corsHeaders(env),
     },
   });
+}
+
+// At most 2 retries, so at most 3 container calls for one consumed budget slot.
+const RENDER_RETRIES = 2;
+const RENDER_BACKOFF_BASE_MS = 100;
+
+// The render call, retried only when the platform says it may be. Following
+// durable-objects/best-practices/error-handling:
+//
+// - An error with `.retryable` is a transient infrastructure failure, and a
+//   render is safe to repeat - same request, same game, same PNG - so it is
+//   retried with exponential backoff and full jitter.
+// - An error with `.overloaded` is never retried, even if it is also marked
+//   retryable: retrying "will worsen the overload and increase the overall
+//   error rate". With max_instances at 1 there is only this one container to
+//   overload.
+// - Anything else is not ours to second-guess and is thrown on the first try.
+//
+// A fresh stub per attempt, because the same page warns that many exceptions
+// leave a stub "broken", failing every later call with the original error.
+//
+// This retries a THROWN error only. A container that answers 500 has rendered
+// and failed, deterministically, so that response goes back to the caller as
+// before and is not repeated.
+async function fetchRender(req: PreviewRequest, env: Env): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    // "pool-0" is the instance every deploy so far has used. getContainer's own
+    // default name is "cf-singleton-container", which would address a new
+    // Durable Object and orphan the existing one, so the name stays explicit.
+    const container = getContainer(env.PREVIEW_CONTAINER, "pool-0");
+    try {
+      return await container.fetch(
+        new Request("https://container/render", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(req),
+        }),
+      );
+    } catch (error) {
+      const flags = (error ?? {}) as { retryable?: unknown; overloaded?: unknown };
+      if (flags.retryable !== true || flags.overloaded === true || attempt >= RENDER_RETRIES) {
+        throw error;
+      }
+      const delayMs = Math.round(RENDER_BACKOFF_BASE_MS * 2 ** attempt * Math.random());
+      logWarn("container call failed, retrying", {
+        attempt: attempt + 1,
+        delayMs,
+        ...errorFields(error),
+      });
+      await scheduler.wait(delayMs);
+    }
+  }
 }
