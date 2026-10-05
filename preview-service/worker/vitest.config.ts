@@ -11,10 +11,11 @@ import { cloudflareTest } from "@cloudflare/vitest-plugin";
 // try to build the Factorio Docker image). The container path is not exercised
 // in unit tests; PREVIEW_CONTAINER is bound as a plain DO and never invoked.
 export default defineConfig({
-  // The same two leak guards the app config carries (#144). This suite has one
-  // `vi.` call, the `console.error` spy in the 500-path test in worker.spec.ts,
-  // and `restoreMocks` is what puts console back after it. Without it the spy
-  // would silence and record every later test's error log in the same file.
+  // The same two leak guards the app config carries (#144). This suite's `vi.`
+  // calls are the `console.error` and `console.warn` spies in worker.spec.ts,
+  // and `restoreMocks` is what puts console back after each. Without it a spy
+  // would silence and record every later test's log lines in the same file,
+  // and the tests that count those lines would count the wrong test's.
   //
   // `unstubGlobals` is still inert here: nothing stubs a global. It is set
   // anyway because the cost is one line and the failure it prevents is silent,

@@ -18,6 +18,44 @@ function post(b: unknown, origin = "https://app.example") {
   });
 }
 
+const PNG = [0x89, 0x50, 0x4e, 0x47];
+
+function pngResponse(version: string | null): Response {
+  const headers: Record<string, string> = { "content-type": "image/png" };
+  if (version !== null) headers["x-factorio-version"] = version;
+  return new Response(new Uint8Array(PNG), { headers });
+}
+
+async function objectKeyFor(req: typeof body): Promise<string> {
+  const { cacheKey } = await import("../src/cacheKey");
+  return `previews/${await cacheKey({ ...req, factorioVersion: env.FACTORIO_VERSION })}.png`;
+}
+
+// The real env with PREVIEW_CONTAINER swapped for a fake namespace of the same
+// shape the drain test uses, idFromName then get. Counts container calls and
+// stubs handed out, so tests can see retries and that each attempt asked for a
+// fresh stub.
+function withContainer(fetch: () => Promise<Response>) {
+  let calls = 0;
+  let stubs = 0;
+  const fakeEnv = {
+    ...env,
+    PREVIEW_CONTAINER: {
+      idFromName: () => "pool-0",
+      get: () => {
+        stubs++;
+        return {
+          fetch: () => {
+            calls++;
+            return fetch();
+          },
+        };
+      },
+    },
+  } as unknown as typeof env;
+  return { fakeEnv, calls: () => calls, stubs: () => stubs };
+}
+
 describe("worker /preview", () => {
   it("rejects invalid bodies with 400", async () => {
     const ctx = createExecutionContext();
@@ -63,6 +101,53 @@ describe("worker /preview", () => {
 
     expect(res.status).toBe(502);
     expect(failing.bodyUsed).toBe(true);
+  });
+
+  it("caches a render whose Factorio version matches", async () => {
+    const { fakeEnv, calls } = withContainer(async () => pngResponse(env.FACTORIO_VERSION));
+    const req = { ...body, seed: 24680 };
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(post(req), fakeEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("public, max-age=31536000");
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual(PNG);
+    expect(calls()).toBe(1);
+    const stored = await env.PREVIEW_CACHE.get(await objectKeyFor(req));
+    expect(stored).not.toBeNull();
+  });
+
+  it.each([
+    ["a different version", "0.0.1"],
+    ["no version header", null],
+  ])("returns but does not cache a render with %s", async (_label, version) => {
+    // During a container rollout the new Worker can reach an old-image
+    // instance. Its render is a real preview, so the user gets it, but filing
+    // it under this Worker's FACTORIO_VERSION would keep the old game's
+    // picture in the cache for a year. A missing header is treated the same:
+    // nothing vouches for which game drew it.
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { fakeEnv } = withContainer(async () => pngResponse(version));
+    const req = { ...body, seed: version === null ? 11111 : 22222 };
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(post(req), fakeEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("access-control-allow-origin")).toBe(env.ALLOWED_ORIGIN);
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual(PNG);
+    expect(await env.PREVIEW_CACHE.head(await objectKeyFor(req))).toBeNull();
+    expect(warns).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warns.mock.calls[0]?.[0]))).toEqual({
+      message: "render not cached: factorio version mismatch",
+      expected: env.FACTORIO_VERSION,
+      actual: version,
+    });
   });
 
   it("rejects a body whose declared length is over the cap with 413", async () => {

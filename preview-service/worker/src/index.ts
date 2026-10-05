@@ -16,6 +16,12 @@ function logError(message: string, detail: Record<string, unknown>): void {
   console.error(JSON.stringify({ message, ...detail }));
 }
 
+// The same shape at warn level, for a request that still succeeded but did
+// something less than it should have (a render that was not cached).
+function logWarn(message: string, detail: Record<string, unknown>): void {
+  console.warn(JSON.stringify({ message, ...detail }));
+}
+
 type BodyResult = { ok: true; value: unknown } | { ok: false; status: number; error: string };
 
 // Content-Length is checked first where the client sends one, but it is
@@ -154,6 +160,32 @@ async function renderPreview(req: PreviewRequest, env: Env): Promise<Response> {
     return new Response("render failed", { status: 502, headers: corsHeaders(env) });
   }
   const png = await renderRes.arrayBuffer();
+
+  // Only cache a render the container says came from the Factorio this Worker
+  // keys on. A deploy that moves the image activates the new Worker FIRST and
+  // rolls the container out after, and until the rollout finishes "new Worker
+  // code can still reach container instances on the previous image"
+  // (containers/configuration/rollouts). Without this check an old-image render
+  // in that window would be stored under the NEW version's key with a one-year
+  // max-age, and nothing ever evicts it - the same mixed-games cache that
+  // dockerfile.test.mjs guards against from the config side.
+  //
+  // A missing header counts as a mismatch: it means a container from before the
+  // header existed, or one that could not read its own binary, and either way
+  // nothing vouches for which game drew the picture. The PNG still goes back to
+  // the user, uncached and marked no-store, because it is a real preview - just
+  // not one to file under this key.
+  const renderedWith = renderRes.headers.get("x-factorio-version");
+  if (renderedWith !== env.FACTORIO_VERSION) {
+    logWarn("render not cached: factorio version mismatch", {
+      expected: env.FACTORIO_VERSION,
+      actual: renderedWith,
+    });
+    return new Response(png, {
+      headers: { "content-type": "image/png", "cache-control": "no-store", ...corsHeaders(env) },
+    });
+  }
+
   await env.PREVIEW_CACHE.put(objectKey, png);
   return new Response(png, {
     headers: {
