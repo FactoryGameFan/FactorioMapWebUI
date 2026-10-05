@@ -17,6 +17,8 @@
     "enabled": true,
     "head_sampling_rate": 1,
   },
+  // Stack traces in Workers Logs then name src/*.ts lines, not the bundle's.
+  "upload_source_maps": true,
   "vars": {
     "FACTORIO_VERSION": "2.1.17",
     "MONTHLY_RENDER_BUDGET": "5000",
