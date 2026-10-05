@@ -81,6 +81,22 @@
 #   cloudflareinsights.com endpoint applies only to manual embedding.
 /*
   Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://fmw-preview.wormeyman.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# Two more lines in the /* block above put back headers Cloudflare Pages added to
+# every response on its own and a Worker with static assets does not (#433):
+# nosniff stops a browser guessing a file's type from its contents, and the
+# Referrer-Policy is the one Pages used, which sends other sites only the origin.
+# Cloudflare's static assets docs recommend both.
+#
+# Everything Vite writes to /assets/ carries a content hash in its name
+# (index-<hash>.js, engine-<hash>.wasm, the planet and resource icons), so a
+# changed file always gets a new URL and a cached copy can never go stale. The
+# default would make every repeat visit revalidate each one. index.html,
+# /version.json and the root files stay on the default.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
 
 # /version.json carries the git build stamp and exists to answer "did my deploy
 # land?" (`pnpm run verify:deploy`). A cached copy would answer that question
