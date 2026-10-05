@@ -76,17 +76,20 @@ export default {
       return new Response("not found", { status: 404 });
     }
 
-    const body = await readJsonBody(request);
-    if (!body.ok) {
-      return new Response(body.error, { status: body.status, headers: corsHeaders(env) });
-    }
-    const parsed = parsePreviewRequest(body.value);
-    if (!parsed.ok) return new Response(parsed.error, { status: 400, headers: corsHeaders(env) });
-
     // An exception thrown past here would become Cloudflare's own error page,
     // which carries no CORS headers, so the app would see a CORS failure
     // instead of a status it can report. Answer 500 with the headers instead.
+    // Reading the body is inside on purpose: a client that disconnects mid-
+    // upload makes the stream read reject, and that must land here too.
     try {
+      const body = await readJsonBody(request);
+      if (!body.ok) {
+        return new Response(body.error, { status: body.status, headers: corsHeaders(env) });
+      }
+      const parsed = parsePreviewRequest(body.value);
+      if (!parsed.ok) {
+        return new Response(parsed.error, { status: 400, headers: corsHeaders(env) });
+      }
       return await renderPreview(parsed.value, env);
     } catch (error) {
       logError("preview request failed", {

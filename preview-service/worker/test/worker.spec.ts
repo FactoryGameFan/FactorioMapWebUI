@@ -104,6 +104,31 @@ describe("worker /preview", () => {
     expect(res.status).toBe(413);
   });
 
+  it("answers a body stream that errors mid-read with 500 and CORS headers", async () => {
+    // A client that disconnects mid-upload makes the read reject. That has to
+    // reach the same boundary as a render failure, not escape without CORS.
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    let pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulls++ === 0) controller.enqueue(new TextEncoder().encode('{"planet":'));
+        else controller.error(new Error("client went away"));
+      },
+    });
+    const req = new Request("https://svc.example/preview", { method: "POST", body: stream });
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req, env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(500);
+    expect(res.headers.get("access-control-allow-origin")).toBe(env.ALLOWED_ORIGIN);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(errors.mock.calls[0]?.[0]))).toMatchObject({
+      message: "preview request failed",
+    });
+  });
+
   it("answers an unexpected failure with 500 and CORS headers, and logs it", async () => {
     // Without the catch this throw becomes Cloudflare's error page, which has
     // no CORS headers, so the app reports a CORS failure instead of a status.
