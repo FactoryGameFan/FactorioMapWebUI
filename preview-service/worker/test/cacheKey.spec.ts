@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canonicalJson, cacheKey } from "../src/cacheKey";
+import { canonicalJson, cacheKey, previewObjectKey } from "../src/cacheKey";
 
 describe("canonicalJson", () => {
   it("sorts object keys recursively so order does not affect output", () => {
@@ -22,5 +22,15 @@ describe("cacheKey", () => {
     expect(k1).toBe(k2);
     expect(k1).not.toBe(k3);
     expect(k1).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("previewObjectKey", () => {
+  it("changes with the Factorio version and is an R2 path", async () => {
+    const req = { planet: "nauvis", seed: 1 };
+    const a = await previewObjectKey(req, "2.1.17");
+    const b = await previewObjectKey(req, "2.1.18");
+    expect(a).toMatch(/^previews\/[0-9a-f]{64}\.png$/);
+    expect(a).not.toBe(b);
   });
 });

@@ -1,6 +1,6 @@
 import { getContainer } from "@cloudflare/containers";
 import { parsePreviewRequest, type PreviewRequest } from "./schema";
-import { cacheKey } from "./cacheKey";
+import { previewObjectKey } from "./cacheKey";
 export { PreviewContainer } from "./container";
 export { RenderBudget } from "./budget";
 
@@ -123,8 +123,7 @@ export default {
 };
 
 async function renderPreview(req: PreviewRequest, env: Env): Promise<Response> {
-  const key = await cacheKey({ ...req, factorioVersion: env.FACTORIO_VERSION });
-  const objectKey = `previews/${key}.png`;
+  const objectKey = await previewObjectKey(req, env.FACTORIO_VERSION);
 
   const cached = await env.PREVIEW_CACHE.get(objectKey);
   if (cached) {

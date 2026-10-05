@@ -27,8 +27,8 @@ function pngResponse(version: string | null): Response {
 }
 
 async function objectKeyFor(req: typeof body): Promise<string> {
-  const { cacheKey } = await import("../src/cacheKey");
-  return `previews/${await cacheKey({ ...req, factorioVersion: env.FACTORIO_VERSION })}.png`;
+  const { previewObjectKey } = await import("../src/cacheKey");
+  return previewObjectKey(req, env.FACTORIO_VERSION);
 }
 
 // A Durable Object infrastructure error: an Error with the flags
@@ -72,9 +72,7 @@ describe("worker /preview", () => {
 
   it("returns a cached PNG without invoking the container", async () => {
     // Seed the cache directly so no container is needed in the test env.
-    const { cacheKey } = await import("../src/cacheKey");
-    const key = await cacheKey({ ...body, factorioVersion: env.FACTORIO_VERSION });
-    await env.PREVIEW_CACHE.put(`previews/${key}.png`, new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+    await env.PREVIEW_CACHE.put(await objectKeyFor(body), new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
 
     const ctx = createExecutionContext();
     const res = await worker.fetch(post(body), env, ctx);
@@ -107,6 +105,27 @@ describe("worker /preview", () => {
 
     expect(res.status).toBe(502);
     expect(failing.bodyUsed).toBe(true);
+  });
+
+  it("never serves a render cached under the key from before the version guard", async () => {
+    // That key had no cache generation in it, and a render stored under it may
+    // have come from the previous image during a rollout. Seed one, holding
+    // bytes the container would never send, and check a request renders afresh.
+    const { cacheKey } = await import("../src/cacheKey");
+    const req = { ...body, seed: 31337 };
+    const preGuardKey = `previews/${await cacheKey({ ...req, factorioVersion: env.FACTORIO_VERSION })}.png`;
+    expect(preGuardKey).not.toBe(await objectKeyFor(req));
+    await env.PREVIEW_CACHE.put(preGuardKey, new Uint8Array([0x00, 0x0d, 0x0e, 0x0a]));
+    const { fakeEnv, calls } = withContainer(async () => pngResponse(env.FACTORIO_VERSION));
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(post(req), fakeEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(calls()).toBe(1);
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual(PNG);
+    expect(await env.PREVIEW_CACHE.head(await objectKeyFor(req))).not.toBeNull();
   });
 
   it("caches a render whose Factorio version matches, typed as a PNG", async () => {
