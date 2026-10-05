@@ -186,7 +186,20 @@ async function renderPreview(req: PreviewRequest, env: Env): Promise<Response> {
     });
   }
 
-  await env.PREVIEW_CACHE.put(objectKey, png);
+  // A failed cache write must not cost the user the render they already paid
+  // a budget slot for. R2 allows one write per second to the same key and
+  // answers 429 above that (r2/platform/limits), which two identical requests
+  // racing past the cache miss can reach. The next miss simply renders again.
+  try {
+    await env.PREVIEW_CACHE.put(objectKey, png, {
+      httpMetadata: { contentType: "image/png" },
+    });
+  } catch (error) {
+    logWarn("render not cached: R2 put failed", {
+      objectKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   return new Response(png, {
     headers: {
       "content-type": "image/png",

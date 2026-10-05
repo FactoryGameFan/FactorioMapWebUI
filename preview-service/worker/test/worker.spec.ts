@@ -103,7 +103,7 @@ describe("worker /preview", () => {
     expect(failing.bodyUsed).toBe(true);
   });
 
-  it("caches a render whose Factorio version matches", async () => {
+  it("caches a render whose Factorio version matches, typed as a PNG", async () => {
     const { fakeEnv, calls } = withContainer(async () => pngResponse(env.FACTORIO_VERSION));
     const req = { ...body, seed: 24680 };
 
@@ -117,6 +117,7 @@ describe("worker /preview", () => {
     expect(calls()).toBe(1);
     const stored = await env.PREVIEW_CACHE.get(await objectKeyFor(req));
     expect(stored).not.toBeNull();
+    expect(stored?.httpMetadata?.contentType).toBe("image/png");
   });
 
   it.each([
@@ -147,6 +148,35 @@ describe("worker /preview", () => {
       message: "render not cached: factorio version mismatch",
       expected: env.FACTORIO_VERSION,
       actual: version,
+    });
+  });
+
+  it("still returns the render when the cache write fails", async () => {
+    // R2 allows one write per second to a key and answers 429 above it. The
+    // render already happened and already cost a budget slot, so a failed
+    // write must cost the user nothing but the cache entry.
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { fakeEnv } = withContainer(async () => pngResponse(env.FACTORIO_VERSION));
+    const failingEnv = {
+      ...fakeEnv,
+      PREVIEW_CACHE: {
+        get: async () => null,
+        put: async () => {
+          throw new Error("429 rate limited");
+        },
+      },
+    } as unknown as typeof env;
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(post({ ...body, seed: 33333 }), failingEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual(PNG);
+    expect(warns).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warns.mock.calls[0]?.[0]))).toMatchObject({
+      message: "render not cached: R2 put failed",
+      error: "429 rate limited",
     });
   });
 
