@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildPreviewArgs, renderPreview, RenderError } from "../render.mjs";
+import {
+  buildPreviewArgs,
+  parseFactorioVersion,
+  readFactorioVersion,
+  renderPreview,
+  RenderError,
+} from "../render.mjs";
 
 test("buildPreviewArgs assembles the factorio CLI", () => {
   const args = buildPreviewArgs({
@@ -63,4 +69,38 @@ test("renderPreview throws RenderError with stderr tail on nonzero exit", async 
       ),
     (err) => err instanceof RenderError && /bad settings/.test(err.stderrTail),
   );
+});
+
+test("parseFactorioVersion reads the release, not the binary or map versions", () => {
+  // The shape `factorio --version` prints. The other "version" lines are the
+  // trap: a case-insensitive or unanchored match would return "64" or a map
+  // format version instead of the game release.
+  const out = [
+    "Version: 2.1.17 (build 84123, linux64, headless, expansion)",
+    "Binary version: 64",
+    "Map input version: 1.0.0-0",
+    "Map output version: 2.1.17-0",
+  ].join("\n");
+  assert.equal(parseFactorioVersion(out), "2.1.17");
+  assert.equal(parseFactorioVersion("Binary version: 64\n"), null);
+  assert.equal(parseFactorioVersion(""), null);
+});
+
+test("readFactorioVersion resolves null with the reason instead of rejecting", async () => {
+  const failing = (_bin, _args, _opts, cb) => cb(new Error("spawn ENOENT"), "", "");
+  assert.deepEqual(await readFactorioVersion("/nope", { execFileFn: failing }), {
+    version: null,
+    error: "spawn ENOENT",
+  });
+
+  const garbled = (_bin, _args, _opts, cb) => cb(null, "something else\n", "");
+  const r = await readFactorioVersion("/x", { execFileFn: garbled });
+  assert.equal(r.version, null);
+  assert.match(r.error, /unrecognised --version output/);
+
+  const ok = (_bin, args, _opts, cb) => {
+    assert.deepEqual(args, ["--version"]);
+    cb(null, "Version: 2.1.17 (build 1, linux64, headless, expansion)\n", "");
+  };
+  assert.deepEqual(await readFactorioVersion("/x", { execFileFn: ok }), { version: "2.1.17" });
 });

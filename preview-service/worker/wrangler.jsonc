@@ -3,6 +3,22 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
+  // The app calls this Worker at its workers.dev hostname (.env.production), so
+  // that stays on. Written out because preview_urls takes the value of
+  // workers_dev when it is unset, which left every deployed version live on its
+  // own hostname, each running its own copy of the code against the same R2
+  // cache, render budget and container. Nothing here uses previews.
+  "workers_dev": true,
+  "preview_urls": false,
+  // Workers Logs. Without this block a deploy leaves them off, and the
+  // console.error lines in src/index.ts went nowhere. Unsampled because the
+  // volume is tiny: about 7 requests a day (#116).
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  // Stack traces in Workers Logs then name src/*.ts lines, not the bundle's.
+  "upload_source_maps": true,
   "vars": {
     "FACTORIO_VERSION": "2.1.17",
     "MONTHLY_RENDER_BUDGET": "5000",
