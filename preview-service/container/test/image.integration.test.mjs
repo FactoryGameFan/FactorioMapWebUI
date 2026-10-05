@@ -5,6 +5,7 @@ import { mkdtempSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { parseFactorioVersion } from "../render.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const svcDir = join(here, "..");
@@ -59,5 +60,28 @@ test(
       const png = readFileSync(join(outDir, `${planet}.png`));
       assert.ok(isPng(png), `expected a PNG for ${planet}`);
     }
+
+    // server.mjs sends `x-factorio-version` from this same parse of the real
+    // binary's output, and the Worker refuses to cache a render without it. A
+    // Factorio release that changed the line's shape would leave every render
+    // uncached with nothing failing, so check the parse against the binary the
+    // image actually ships, and that it agrees with the FROM tag.
+    const out = execFileSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--platform",
+        "linux/amd64",
+        "--entrypoint",
+        "/opt/factorio/bin/x64/factorio",
+        IMAGE,
+        "--version",
+      ],
+      { encoding: "utf8" },
+    );
+    const dockerfile = readFileSync(join(svcDir, "Dockerfile"), "utf8");
+    const [, tag] = /^FROM\s+\S+?:(\S+?)@sha256:/m.exec(dockerfile);
+    assert.equal(parseFactorioVersion(out), tag, `unexpected --version output: ${out}`);
   },
 );

@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { renderPreview, RenderError } from "./render.mjs";
+import { readFactorioVersion, renderPreview, RenderError } from "./render.mjs";
 
 /**
  * 8080 is what the Worker's container binding expects (`defaultPort` in
@@ -20,6 +20,24 @@ import { renderPreview, RenderError } from "./render.mjs";
 const PORT = Number(process.env.FMW_CONTAINER_PORT ?? 8080);
 const FACTORIO_BIN = process.env.FACTORIO_BIN ?? "/opt/factorio/bin/x64/factorio";
 const PLANETS = new Set(["nauvis", "vulcanus", "gleba", "fulgora", "aquilo"]);
+
+/**
+ * The Factorio this container renders with, read from the binary once at
+ * startup and sent back on every successful `/render` as `x-factorio-version`.
+ * The Worker compares it with its own `FACTORIO_VERSION` before caching, so an
+ * old-image instance answering during a rollout cannot put its render under the
+ * new version's cache key. Started before `listen` and awaited BEFORE each
+ * render starts, not after: on a cold start the first request then waits for
+ * the version read instead of running a second factorio process alongside it,
+ * which could contend for the write directory's lock file. On a warm instance
+ * the promise is already settled and the wait is free.
+ * `null` (binary missing or output unrecognised) omits the header, which the
+ * Worker treats as "do not cache".
+ */
+const factorioVersion = readFactorioVersion(FACTORIO_BIN).then(({ version, error }) => {
+  if (!version) console.error("could not read the Factorio version:", error);
+  return version;
+});
 
 function readJson(req) {
   return new Promise((resolve, reject) => {
@@ -50,6 +68,7 @@ const server = createServer(async (req, res) => {
         res.writeHead(400).end("bad request");
         return;
       }
+      const version = await factorioVersion;
       const png = await renderPreview(
         {
           mapGenSettings: body.mapGenSettings,
@@ -59,7 +78,12 @@ const server = createServer(async (req, res) => {
         },
         { tmpDir: tmpdir(), factorioBin: FACTORIO_BIN },
       );
-      res.writeHead(200, { "content-type": "image/png" }).end(png);
+      res
+        .writeHead(200, {
+          "content-type": "image/png",
+          ...(version ? { "x-factorio-version": version } : {}),
+        })
+        .end(png);
     } catch (err) {
       const tail = err instanceof RenderError ? err.stderrTail : String(err);
       console.error("render failed:", tail);
