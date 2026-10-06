@@ -4258,32 +4258,33 @@ fn places_every_vulcanus_cliff_where_the_game_places_it() {
         ship_rows,
         vec![
             row(283, 283, 283, 283),
-            row(885, 871, 860, 850),
+            row(885, 870, 860, 851),
             row(401, 388, 387, 387)
         ],
         "shipping, per region"
     );
-    assert_eq!(ship, row(1569, 1542, 1530, 1520), "shipping totals");
+    assert_eq!(ship, row(1569, 1541, 1530, 1521), "shipping totals");
 
     // The ore rule's own claim, stated as assertions rather than left to be read
     // off the two rows. Re-frozen 2026-09-13 (#414): the engine geometry at
     // the removal threshold takes five more surplus cells out of `[1500,1500]`
-    // (876 -> 871) and ONE true cliff with them - a cell whose oriented box
-    // reaches a tile the port's field scores as ore and the game's roll left
-    // empty (the ring; see `cliffs/vulcanus_ore_rejection.rs`). Before #414
-    // the rule cost no true positive at all, and removed 23.
+    // (876 -> 871) and ONE true cliff with them. Re-frozen again when the rule
+    // started reading the game's own roll (#84): one more surplus cell goes
+    // (871 -> 870) and one wrong orientation is fixed, and that one true cliff
+    // is still lost. Before #414 the rule cost no true positive at all, and
+    // removed 23.
     assert_eq!(
         lava.matched - ship.matched,
         1,
-        "true positives the ore rejection costs - the ring's one"
+        "true positives the ore rejection costs"
     );
-    assert_eq!(lava.ours - ship.ours, 28, "cells the ore rejection removed");
+    assert_eq!(lava.ours - ship.ours, 29, "cells the ore rejection removed");
     assert_eq!(
         (
             lava.matched - lava.orientation_agrees,
             ship.matched - ship.orientation_agrees
         ),
-        (37, 10),
+        (37, 9),
         "wrong orientations - 33 -> 21 before #407, when the raw rectangle was the test"
     );
 }
@@ -4499,7 +4500,8 @@ fn vulcanus_cliffs_track_the_volcanism_sliders() {
     // comparable cells the #307 table scored, with the 38 the table leaves out
     // now counted: 1504/21/22/6 then, 1521/10/16/0 after #407, and
     // 1520/10/12/1 after #414 - four surplus fewer and the ring's one false
-    // removal (`cliffs/vulcanus_ore_rejection.rs`).
+    // removal (`cliffs/vulcanus_ore_rejection.rs`) - and 1521/9/11/1 once the
+    // rule read the game's own roll (#84).
     let row = |matched, wrong, surplus, missing, unscored| SweepRow {
         matched,
         wrong,
@@ -4507,7 +4509,7 @@ fn vulcanus_cliffs_track_the_volcanism_sliders() {
         missing,
         unscored,
     };
-    assert_eq!(rows[0].2, row(1520, 10, 12, 1, 38), "default arm totals");
+    assert_eq!(rows[0].2, row(1521, 9, 11, 1, 38), "default arm totals");
 
     // The frozen sweep, measured 2026-09-07. Read a moved number, do not
     // adjust it.
@@ -4527,6 +4529,11 @@ fn vulcanus_cliffs_track_the_volcanism_sliders() {
     // and the frequency 2 arm unchanged. Errors 26 -> 23, 14 -> 12, 13 -> 13,
     // 7 -> 9 by arm.
     //
+    // Re-frozen when the rule started reading the game's own roll (#84):
+    // default R2 850/10/11/1 -> 851/9/10/1, size 3 R2 534/4/5/0 -> 533/3/4/2,
+    // the rest unchanged. Errors 23 -> 21 at the default and 9 -> 9 at size
+    // 3, where the roll trades a wrong and a surplus for two missing.
+    //
     // What it looked like, and what it turned out to be: on these three
     // regions the non-R1 error rate spans 1.5% to 3.3% across arms, with
     // frequency 0.5 and size 3 each about 2.9 sigma below the default - which
@@ -4545,7 +4552,7 @@ fn vulcanus_cliffs_track_the_volcanism_sliders() {
             "default",
             [
                 row(283, 0, 0, 0, 0),
-                row(850, 10, 11, 1, 24),
+                row(851, 9, 10, 1, 24),
                 row(387, 0, 1, 0, 14),
             ],
         ),
@@ -4569,7 +4576,7 @@ fn vulcanus_cliffs_track_the_volcanism_sliders() {
             "size 3",
             [
                 row(283, 0, 0, 0, 0),
-                row(534, 4, 5, 0, 26),
+                row(533, 3, 4, 2, 26),
                 row(421, 0, 1, 0, 14),
             ],
         ),
@@ -4681,6 +4688,11 @@ fn the_volcanism_contrast_out_of_sample() {
     // gives some of it back as `missing` where the port's ore field is one
     // ring fatter than the game's entities - see
     // `cliffs/vulcanus_ore_rejection.rs`.
+    //
+    // Re-frozen when the rule started reading the game's own roll (#84): the
+    // default arm 4505/37/55/3 -> 4508/33/50/4 (95 -> 87 errors) and the
+    // frequency-0.5 arm 4006/48/68/10 -> 4007/47/62/10 (126 -> 119). No region
+    // got worse; the largest single move is default region 3, 14 -> 9.
     let row = |matched, wrong, surplus, missing, unscored| SweepRow {
         matched,
         wrong,
@@ -4693,9 +4705,9 @@ fn the_volcanism_contrast_out_of_sample() {
             "default",
             [
                 row(310, 3, 2, 2, 12),
-                row(214, 1, 2, 0, 11),
+                row(214, 1, 1, 0, 11),
                 row(763, 1, 4, 0, 13),
-                row(457, 9, 4, 1, 24),
+                row(460, 5, 0, 2, 24),
                 row(704, 0, 0, 0, 8),
                 row(520, 5, 10, 0, 15),
                 row(836, 9, 15, 0, 12),
@@ -4705,10 +4717,10 @@ fn the_volcanism_contrast_out_of_sample() {
         (
             "frequency 0.5",
             [
-                row(618, 2, 5, 0, 13),
-                row(768, 23, 40, 4, 27),
+                row(618, 1, 1, 1, 13),
+                row(769, 23, 40, 3, 27),
                 row(199, 1, 0, 0, 6),
-                row(765, 6, 2, 6, 24),
+                row(765, 6, 0, 6, 24),
                 row(439, 2, 3, 0, 11),
                 row(257, 0, 0, 0, 18),
                 row(641, 8, 11, 0, 0),
@@ -4736,22 +4748,23 @@ fn the_volcanism_contrast_out_of_sample() {
     let errors = |r: &SweepRow| r.wrong + r.surplus + r.missing;
     let comparable = |r: &SweepRow| r.matched + r.wrong + r.missing;
     let (d, m) = (&per_arm[0].2, &per_arm[1].2);
-    assert_eq!((errors(d), comparable(d)), (95, 4545), "default: 2.09%");
+    assert_eq!((errors(d), comparable(d)), (87, 4545), "default: 1.91%");
     assert_eq!(
         (errors(m), comparable(m)),
-        (126, 4064),
-        "frequency 0.5: 3.10%"
+        (119, 4064),
+        "frequency 0.5: 2.93%"
     );
     let z = two_proportion_z(errors(d), comparable(d), errors(m), comparable(m));
     assert!(
-        (-3.00..-2.90).contains(&z),
-        "z = {z:.3}: measured -2.96 (-2.55 before #414, -1.80 before #407), and the SIGN is the finding"
+        (-3.10..-3.00).contains(&z),
+        "z = {z:.3}: measured -3.07 (-2.96 before the roll, -2.55 before #414, -1.80 before #407), and the SIGN is the finding"
     );
 
     // What is real is the spread BETWEEN regions, at one slider setting: the
-    // frequency 0.5 arm's `[-2200,-1500]` carries 67 of that arm's 126 errors
-    // on its own - 23 wrong, 40 surplus and 4 missing of 795 comparable cells,
-    // 8.4% (70 of 124 before #414, 74 of 138 before #407) - while
+    // frequency 0.5 arm's `[-2200,-1500]` carries 66 of that arm's 119 errors
+    // on its own - 23 wrong, 40 surplus and 3 missing of 795 comparable cells,
+    // 8.3% (67 of 126 before the roll, 70 of 124 before #414, 74 of 138
+    // before #407) - while
     // `[1800,3400]` in the same arm has 1 of 200. A residual that concentrated
     // is a lead the diffuse in-sample numbers never offered.
     let worst = &per_arm[1].1[1];
@@ -4760,7 +4773,7 @@ fn the_volcanism_contrast_out_of_sample() {
         (23, 40),
         "the concentrated region"
     );
-    assert_eq!(errors(worst), 67);
+    assert_eq!(errors(worst), 66);
 }
 
 /// Cliff cells keyed by the raw bits of their centre, to the port's orientation code.
@@ -5021,6 +5034,13 @@ fn the_concentrated_residual_against_the_ore_lever() {
     // 44 before), and the ON row is 768/23/40/4 (769/24/44/2). The two new
     // `missing` are the ring - see `cliffs/vulcanus_ore_rejection.rs`. The
     // other rows do not read the ore rule and did not move.
+    //
+    // Re-frozen when the rule started reading the game's own roll (#84): the
+    // port's rule removes 44, one fewer, and that cell is one of the two
+    // ring `missing` back again, so the ON row is 769/23/40/3. The 24 surplus
+    // cells that are the game's removals do not move: 21 are geyser removals
+    // (`the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half` bins
+    // them).
     let row = |matched, wrong, surplus, missing| SweepRow {
         matched,
         wrong,
@@ -5028,7 +5048,7 @@ fn the_concentrated_residual_against_the_ore_lever() {
         missing,
         unscored: 0,
     };
-    assert_eq!(row_on, row(768, 23, 40, 4), "resources ON, port with ore");
+    assert_eq!(row_on, row(769, 23, 40, 3), "resources ON, port with ore");
     assert_eq!(
         row_no_ore,
         row(768, 27, 81, 0),
@@ -5037,7 +5057,7 @@ fn the_concentrated_residual_against_the_ore_lever() {
     assert_eq!(row_off, row(850, 10, 16, 0), "resources OFF, port with ore");
     assert_eq!(game_removed.len(), 65, "cliffs the game's ore rule removed");
     assert_eq!(game_added.len(), 0, "the lever only removes");
-    assert_eq!(port_removed.len(), 45, "cliffs the port's ore rule removed");
+    assert_eq!(port_removed.len(), 44, "cliffs the port's ore rule removed");
     assert_eq!(
         surplus_is_ore, 24,
         "surplus cells that are the game's ore removals"
@@ -5049,7 +5069,6 @@ fn the_concentrated_residual_against_the_ore_lever() {
     assert!(surplus_is_ore * 2 > surplus_on.len());
 }
 
-use crate::cliffs::vulcanus_ore_rejection::ORE_REMOVAL_REGION_THRESHOLD;
 use crate::resources::vulcanus_catalog::{VulcanusOreFootprint, RESOURCE_PROBABILITY_THRESHOLD};
 
 /// The port's ore FIELD against the game's ore ENTITIES, at the non-default
@@ -5156,8 +5175,7 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
     // The field as the RULE reads it - at the removal's threshold, not the
     // overlay's. `score` is read once per tile below and thresholded three
     // ways; this footprint is asserted to agree with the middle one.
-    let footprint = VulcanusOreFootprint::new(&ctx.vulcanus_resource_controls)
-        .with_threshold(ORE_REMOVAL_REGION_THRESHOLD);
+    let footprint = VulcanusOreFootprint::new(&ctx.vulcanus_resource_controls);
     // The queue the ore rule acts on: everything the port places WITHOUT the
     // ore rejection, with its code, so each cell's window can be asked for.
     let queued = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx, false).queued;
@@ -5177,20 +5195,11 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
         .copied()
         .filter(|&(tx, ty)| footprint.occupies(&stack, tx, ty))
         .collect();
-    assert_eq!(
-        port_ore,
-        score_at
-            .iter()
-            .filter(|(_, &s)| s >= ORE_REMOVAL_REGION_THRESHOLD)
-            .map(|(&t, _)| t)
-            .collect::<BTreeSet<_>>(),
-        "the rule's footprint is the score at the removal threshold"
-    );
     // The boundary RING: the same field thresholded at the three `rp` values
     // of `random_penalty_between(0.9, 1, 1)`, against the game's entities.
     let ring: Vec<(&str, f64, usize, usize)> = [
         ("rp = 1, the overlay's", RESOURCE_PROBABILITY_THRESHOLD),
-        ("rp = 0.95, the removal's", ORE_REMOVAL_REGION_THRESHOLD),
+        ("rp = 0.95, the midpoint the rule read before the roll", 53.2),
         ("rp = 0.9, the floor", 1000.0 * (1.0005 / 0.9 - 1.0)),
     ]
     .into_iter()
@@ -5405,6 +5414,13 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
     // a calcite the ring left out. On 2026-09-11, with the two-tile window,
     // the same split read 2,886 looked, 12 port-only (11 touching), 28
     // disputed as 6 / 15 / 5 / 2.
+    //
+    // Re-frozen when the rule started reading the game's own roll (#84): the
+    // rule's footprint is now exactly the game's, 1,190 tiles and no other,
+    // and the ring table above stays as the record of why. The 24 disputed
+    // cells do not move at all. So the remaining ore-rule surplus here is the
+    // geyser, plus one cell half a tile from a calcite the port now places
+    // correctly - that one is geometry, not the field.
     assert_eq!(
         looked.len(),
         11362,
@@ -5423,9 +5439,9 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
         ],
         "the ring: (threshold, game-only, port-only) at rp = 1, 0.95, 0.9"
     );
-    assert_eq!(game_only.len(), 43, "game ore tiles the rule's field lacks");
-    assert_eq!(port_only.len(), 27, "rule field tiles with no game entity");
-    assert_eq!(port_only_at_one, 27, "of those, touching a game ore tile");
+    assert_eq!(game_only.len(), 0, "game ore tiles the rule's field lacks");
+    assert_eq!(port_only.len(), 0, "rule field tiles with no game entity");
+    assert_eq!(port_only_at_one, 0, "of those, touching a game ore tile");
     assert_eq!(
         disputed.len(),
         24,
@@ -5795,13 +5811,17 @@ fn the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none() 
     // 1525/6/14/0 -> 1523/7/11/1, 1513/18/16/0 -> 1511/19/12/1. The one
     // `missing` on every arm is the same cell, a true cliff whose oriented box
     // reaches a ring tile - see `cliffs/vulcanus_ore_rejection.rs`.
+    //
+    // Re-frozen when the rule started reading the game's own roll (#84):
+    // 1520/10/12/1 -> 1521/9/11/1, 1523/7/11/1 -> 1524/6/10/1,
+    // 1511/19/12/1 -> 1512/18/11/1. The one `missing` stays.
     assert_eq!(
         totals[0],
-        row(1520, 10, 12, 1),
+        row(1521, 9, 11, 1),
         "rejectAtCrossingStage (ships)"
     );
-    assert_eq!(totals[1], row(1523, 7, 11, 1), "applyCliffs, lava + ore");
-    assert_eq!(totals[2], row(1511, 19, 12, 1), "applyCliffs, no cascade");
+    assert_eq!(totals[1], row(1524, 6, 10, 1), "applyCliffs, lava + ore");
+    assert_eq!(totals[2], row(1512, 18, 11, 1), "applyCliffs, no cascade");
 
     // Stated as relations too, so the claim survives a re-measure that moves
     // every row: better on three counts, worse on none.
@@ -5810,7 +5830,7 @@ fn the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none() 
     assert!(totals[1].surplus < totals[0].surplus);
     assert_eq!(
         totals[1].missing, totals[0].missing,
-        "both zero since #407, both the ring's one since #414"
+        "both zero since #407, both one since #414"
     );
     // And on POSITION alone it is the same 1530 cells (1531 before #414),
     // which is why the renderer is left alone. The whole gain is in
@@ -6372,6 +6392,10 @@ impl ApplyCollision for OrientedLavaAndOre<'_, '_> {
 /// rule: 1507/18/20/6 -> 1505/19/17/7, 1525/6/14/0 -> 1523/7/11/1,
 /// 1528/3/11/0 -> 1526/4/8/1. Every arm gains the same one `missing`, the
 /// ring's (`cliffs/vulcanus_ore_rejection.rs`); the relations hold.
+///
+/// Re-frozen when the ore rule started reading the game's own roll (#84):
+/// 1505/19/17/7 -> 1506/18/16/7, 1523/7/11/1 -> 1524/6/10/1,
+/// 1526/4/8/1 -> 1527/3/7/1, leftovers 13 -> 11. The one `missing` stays.
 #[test]
 fn the_oriented_tile_test_through_the_apply_stage() {
     let fixture = load_captured_at(
@@ -6502,20 +6526,20 @@ fn the_oriented_tile_test_through_the_apply_stage() {
     );
     assert_eq!(
         totals[0],
-        row(1505, 19, 17, 7),
+        row(1506, 18, 16, 7),
         "the raw rectangle #90 shipped"
     );
-    assert_eq!(totals[1], row(1523, 7, 11, 1), "oriented tile test + ore");
+    assert_eq!(totals[1], row(1524, 6, 10, 1), "oriented tile test + ore");
     assert_eq!(
         totals[2],
-        row(1526, 4, 8, 1),
+        row(1527, 3, 7, 1),
         "oriented + ore + entity kills"
     );
     assert!(totals[1].matched > totals[0].matched);
     assert!(totals[1].wrong < totals[0].wrong);
     assert!(totals[1].surplus < totals[0].surplus);
     assert!(totals[1].missing < totals[0].missing);
-    assert_eq!(leftovers.len(), 13);
+    assert_eq!(leftovers.len(), 11);
     let tested: BTreeMap<(u64, u64), (u8, bool)> = would_collide_calls(&calls)
         .iter()
         .flat_map(|(_, _, region)| region.iter())
@@ -6540,7 +6564,7 @@ fn the_oriented_tile_test_through_the_apply_stage() {
             kept_by_game += 1;
         }
     }
-    assert_eq!(kept_by_game, 13);
+    assert_eq!(kept_by_game, 11);
     assert_eq!(
         killed_by_game,
         Vec::<(f64, f64, &str)>::new(),
@@ -9882,10 +9906,11 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     // it is better than the base-box rule on every count but one, on both
     // paths: through the apply stage 85 errors became 44 (surplus 56 -> 22),
     // at the crossing stage 95 became 53 (surplus 59 -> 25). The `shipped`
-    // rows now carry that geometry over the PORT's ore field at the removal
-    // threshold - 81 and 89 errors - and the gap that remains to the
-    // game-entity rows is the field's boundary ring and the absent geyser,
-    // both measured in `cliffs/vulcanus_ore_rejection.rs`. The base box's
+    // rows now carry that geometry over the PORT's ore field, read through
+    // the game's own roll (#84) - 79 and 86 errors, 81 and 89 at the removal
+    // threshold the rule read before - and the gap that remains to the
+    // game-entity rows is the absent geyser, measured in
+    // `cliffs/vulcanus_ore_rejection.rs`. The base box's
     // shipped rows were 1627/26/56/3 and 1620/34/59/2 (per region: f0.5
     // 772/20/42/3 and 769/24/44/2, `[1500,1500]` 855/6/14/0).
     //
@@ -9941,7 +9966,7 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     assert_eq!(per_region[1].0, "[-2200,-1500] f0.5");
     assert_eq!(f05[0], row(771, 20, 38, 4), "f0.5, apply: shipped");
     assert_eq!(f05[1], row(779, 12, 16, 4), "f0.5, apply: engine geometry");
-    assert_eq!(f05[2], row(768, 23, 40, 4), "f0.5, crossing: shipped");
+    assert_eq!(f05[2], row(769, 23, 40, 3), "f0.5, crossing: shipped");
     assert_eq!(
         f05[3],
         row(776, 16, 19, 3),
@@ -9949,15 +9974,15 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     );
     let r1500 = &per_region[0].1;
     assert_eq!(per_region[0].0, "[1500,1500]");
-    assert_eq!(r1500[0], row(853, 7, 11, 1), "[1500,1500], apply: shipped");
+    assert_eq!(r1500[0], row(854, 6, 10, 1), "[1500,1500], apply: shipped");
     assert_eq!(
         r1500[1],
         row(855, 5, 6, 1),
         "[1500,1500], apply: engine geometry"
     );
-    assert_eq!(totals[0], row(1624, 27, 49, 5), "apply: shipped");
+    assert_eq!(totals[0], row(1625, 26, 48, 5), "apply: shipped");
     assert_eq!(totals[1], row(1634, 17, 22, 5), "apply: engine geometry");
-    assert_eq!(totals[2], row(1618, 33, 51, 5), "crossing: shipped");
+    assert_eq!(totals[2], row(1620, 32, 50, 4), "crossing: shipped");
     assert_eq!(totals[3], row(1628, 24, 25, 4), "crossing: engine geometry");
     // Stated as relations too, so the claims survive a re-measure that moves
     // every row.
@@ -10019,15 +10044,17 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
     // - the timing class above, and five cells whose ore removal the port's
     //   queued box misses (two of them the ore trimming a cliff into a rock).
     //
-    // With the port's OWN ore field (the first table), the ore bin is the
-    // field's boundary ring, as `cliffs/vulcanus_ore_rejection.rs` measures.
+    // With the port's OWN ore field (the first table), the extra ore-bin
+    // errors are the sulfuric-acid geyser the port leaves out. They were the
+    // field's boundary ring as well until the rule read the game's own roll
+    // (#84), which took `[1500,1500]`'s bin from 7 to 5 and left f0.5's 35.
     let table = |rows: &[(&str, usize)]| -> BTreeMap<String, usize> {
         rows.iter().map(|(k, n)| ((*k).to_owned(), *n)).collect()
     };
     const KEPT: &str = "the port removes or trims a cell the game kept";
     assert_eq!(
         bins[0][0],
-        table(&[("wouldCollide Segment", 10), ("postSetup", 7), (KEPT, 2)]),
+        table(&[("wouldCollide Segment", 10), ("postSetup", 5), (KEPT, 2)]),
         "[1500,1500], shipped"
     );
     assert_eq!(
@@ -10067,6 +10094,204 @@ fn the_removal_box_is_the_resources_tile_widened_aabb_against_the_cliffs_oriente
                 "{}, arm {arm}",
                 region.0
             );
+        }
+    }
+}
+
+/// The Vulcanus solid-ore roll against the game's own ore entities (#84).
+///
+/// Every solid-ore probability carries `random_penalty_between(0.9, 1, 1)`,
+/// and [`VulcanusOreRoll`](crate::resources::vulcanus_ore_roll::VulcanusOreRoll)
+/// takes its batch to be the tile's chunk, row-major, at integer tile
+/// coordinates. This grades [`VulcanusOreFootprint::occupies`] - the shipped
+/// code path - against every `tungsten-ore`, `coal` and `calcite` entity in four
+/// regions: the three default-preset regions of
+/// `oracle-vulcanus-resource-entities` (2.1.12) and the volcanism frequency-0.5
+/// region of `oracle-vulcanus-cliff-volcanism-ore` (2.1.17). Different field
+/// settings and different game builds, so this is not one region fitted twice.
+///
+/// **The window is every tile within four of a game ore tile**, not the whole
+/// region, for cost: the whole-region run was 49 s in a debug build and the
+/// poison run pays about four times that. It contains what it grades. Graded
+/// over all 262,144 tiles on 2026-09-26, the `rp = 1` footprint painted 81,
+/// 398, 119 and 212 tiles the game left bare, and the roll 0, 1, 1 and 0 - the
+/// same numbers this window freezes below. So nothing either arm places lies
+/// outside it.
+///
+/// Four controls, each computed here rather than through the shipped code:
+/// the two thresholds the port used before the roll (`rp = 1` for the overlay,
+/// the 0.95 midpoint for the cliff rule), and the same chunk batch walked
+/// COLUMN-major or seeded at tile CENTRES. Column-major loses in every region.
+/// The centre control can only lose where a coordinate is negative - see the
+/// relations at the end - and there it loses by 90 and 133 tiles.
+#[test]
+fn the_vulcanus_ore_roll_is_the_chunk_batch() {
+    use crate::random_penalty::{random_penalty_batch, RandomPenaltyParams, RandomPenaltyPosition};
+    use crate::resources::vulcanus_ore_roll::ore_probability;
+    const SOLID_ORES: [&str; 3] = ["tungsten-ore", "coal", "calcite"];
+    const REACH: i64 = 4;
+
+    let entities = load_captured_at(
+        "test/fixtures/oracle-vulcanus-resource-entities.seed123456.json",
+        "2.1.12",
+    );
+    let volcanism = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-volcanism-ore.seed123456.json",
+        "2.1.17",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = entities.get("seed").as_f64() as u32;
+    let mut f05 = crate::eval::ctx::EvalCtx::new(seed0);
+    f05.vulcanus_volcanism_frequency = 0.5;
+    let mut runs: Vec<(Json, crate::eval::ctx::EvalCtx)> = entities
+        .get("cases")
+        .as_array()
+        .iter()
+        .map(|c| (c.clone(), crate::eval::ctx::EvalCtx::new(seed0)))
+        .collect();
+    runs.push((
+        volcanism.get("arms").as_array()[0].get("cases").as_array()[0].clone(),
+        f05,
+    ));
+
+    // The same chunk batch under a different layout, for the two controls.
+    let control_penalty = |tx: i64, ty: i64, centre: bool, row_major: bool| -> f64 {
+        let (cx, cy) = (tx.div_euclid(32), ty.div_euclid(32));
+        let offset = if centre { 0.5 } else { 0.0 };
+        #[allow(clippy::cast_precision_loss)]
+        let positions: Vec<RandomPenaltyPosition> = (0..1024_i64)
+            .map(|i| {
+                let (dx, dy) = if row_major {
+                    (i % 32, i / 32)
+                } else {
+                    (i / 32, i % 32)
+                };
+                RandomPenaltyPosition {
+                    x: (cx * 32 + dx) as f64 + offset,
+                    y: (cy * 32 + dy) as f64 + offset,
+                }
+            })
+            .collect();
+        let batch = random_penalty_batch(
+            &positions,
+            &[1.0; 1024],
+            &RandomPenaltyParams {
+                seed: 1.0,
+                amplitude: 1.0 - 0.9,
+            },
+        );
+        let (dx, dy) = (tx - cx * 32, ty - cy * 32);
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        let i = if row_major {
+            dy * 32 + dx
+        } else {
+            dx * 32 + dy
+        } as usize;
+        batch[i]
+    };
+
+    // Per region: game ore tiles, then (game only, port only) for the roll,
+    // `rp = 1`, the midpoint, centre coordinates and column-major.
+    let mut measured: Vec<(usize, [(usize, usize); 5])> = Vec::new();
+    for (case, ctx) in &runs {
+        let r = case.get("region");
+        #[allow(clippy::cast_possible_truncation)]
+        let (x0, y0, x1, y1) = (
+            r.get("x0").as_f64() as i64,
+            r.get("y0").as_f64() as i64,
+            r.get("x1").as_f64() as i64,
+            r.get("y1").as_f64() as i64,
+        );
+        let inside = |(tx, ty): (i64, i64)| tx >= x0 && tx < x1 && ty >= y0 && ty < y1;
+        let game: BTreeSet<(i64, i64)> = case
+            .get("resources")
+            .as_array()
+            .iter()
+            .filter(|e| SOLID_ORES.contains(&e.get("name").as_str()))
+            .map(|e| {
+                #[allow(clippy::cast_possible_truncation)]
+                let t = (
+                    e.get("x").as_f64().floor() as i64,
+                    e.get("y").as_f64().floor() as i64,
+                );
+                t
+            })
+            .filter(|&t| inside(t))
+            .collect();
+        let mut window: BTreeSet<(i64, i64)> = BTreeSet::new();
+        for &(gx, gy) in &game {
+            for ty in gy - REACH..=gy + REACH {
+                for tx in gx - REACH..=gx + REACH {
+                    if inside((tx, ty)) {
+                        window.insert((tx, ty));
+                    }
+                }
+            }
+        }
+        let base = VulcanusBase::with_host_trig(ctx);
+        let biomes = base.biomes_with_host_trig();
+        let stack = VulcanusStack::with_host_trig(&base, &biomes);
+        let footprint = VulcanusOreFootprint::new(&ctx.vulcanus_resource_controls);
+        let mut arms = [(0usize, 0usize); 5];
+        for &(tx, ty) in &window {
+            let score = footprint.score(&stack, tx, ty);
+            let rolled = |rp: f64| ore_probability(score / 1000.0, rp) >= 0.5;
+            let placed = [
+                footprint.occupies(&stack, tx, ty),
+                score >= 0.5,
+                score >= 53.2,
+                rolled(control_penalty(tx, ty, true, true)),
+                rolled(control_penalty(tx, ty, false, false)),
+            ];
+            let is_game = game.contains(&(tx, ty));
+            for (arm, port) in arms.iter_mut().zip(placed) {
+                match (port, is_game) {
+                    (false, true) => arm.0 += 1,
+                    (true, false) => arm.1 += 1,
+                    _ => {}
+                }
+            }
+        }
+        eprintln!(
+            "[{x0},{y0}]: game {}, window {}; roll / rp=1 / midpoint / centre / column-major \
+             (game only, port only): {arms:?}",
+            game.len(),
+            window.len()
+        );
+        measured.push((game.len(), arms));
+    }
+
+    // The frozen finding, measured 2026-09-26. Read a moved number, do not
+    // adjust it. The roll misses none of the 7,096 game tiles and adds two,
+    // both in the band where the probability is between 0 and 1, where the
+    // game rolls a second time and a threshold is the best a pure function
+    // can do.
+    assert_eq!(
+        measured,
+        vec![
+            (945, [(0, 0), (0, 81), (17, 24), (0, 0), (25, 28)]),
+            (3914, [(0, 1), (0, 398), (99, 100), (0, 1), (131, 137)]),
+            (1047, [(0, 1), (0, 119), (33, 24), (57, 33), (40, 41)]),
+            (1190, [(0, 0), (0, 212), (43, 58), (62, 71), (69, 75)]),
+        ]
+    );
+    // Stated as relations too: the roll misses nothing and beats every
+    // control, with one exception that is arithmetic rather than luck. The
+    // batch is seeded from its first position TRUNCATED toward zero, so
+    // moving it half a tile changes nothing where both coordinates are
+    // non-negative: the centre control IS the roll in `[0,0]` and
+    // `[1500,1500]`, and only the two regions with a negative coordinate can
+    // tell the two apart.
+    let errors = |a: (usize, usize)| a.0 + a.1;
+    for (i, (_, arms)) in measured.iter().enumerate() {
+        assert_eq!(arms[0].0, 0, "the roll misses no game ore tile");
+        for control in [arms[1], arms[2], arms[4]] {
+            assert!(errors(arms[0]) < errors(control));
+        }
+        if i < 2 {
+            assert_eq!(arms[3], arms[0], "centre = integer where x, y >= 0");
+        } else {
+            assert!(errors(arms[0]) < errors(arms[3]));
         }
     }
 }

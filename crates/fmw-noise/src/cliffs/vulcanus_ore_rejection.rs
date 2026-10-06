@@ -78,16 +78,15 @@
 //! order, which the port cannot know; the queued reading is the better model
 //! of it, and the phase stays as a control the removal test can re-run.
 //!
-//! ## The field's boundary is a roll the port cannot make
+//! ## The field's boundary is the game's own roll
 //!
 //! The game's ore probability is `1000 * ((1 + region) * rp - 1)` with
-//! `rp = random_penalty_between(0.9, 1, 1)`, a batch-op roll per tile that
-//! the port takes as `1`. So the port's footprint at the overlay's threshold
-//! (`1000 * region >= 0.5`) is where an entity CAN stand, and it is one ring
-//! fatter than where the game put one. That ring barely reached the old
-//! two-tile window; the oriented box reaches it constantly. Measured against
-//! the game's 1,190 calcite tiles at frequency 0.5, over the 11,362 tiles the
-//! rule reads there (`the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half`):
+//! `rp = random_penalty_between(0.9, 1, 1)`, a batch-op roll per tile. The
+//! port used to take `rp` as 1, which made its footprint one ring fatter than
+//! the game's entities, and the oriented box reaches that ring constantly.
+//! Before the roll landed, against the game's 1,190 calcite tiles at frequency
+//! 0.5, over the 11,362 tiles the rule reads there
+//! (`the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half`):
 //!
 //! | `1000 * region >=` | the `rp` it assumes | game-only | port-only |
 //! | -----------------: | ------------------- | --------: | --------: |
@@ -95,22 +94,25 @@
 //! |             `53.2` | 0.95, the midpoint  |        43 |        27 |
 //! |            `111.7` | 0.9, the floor      |       226 |         0 |
 //!
-//! The two ends confirm the mechanism - no game entity below the overlay's
-//! threshold, no missing entity above the floor's - and the 309 tiles between
-//! them are the roll, 226 of which the game placed. No threshold reproduces
-//! it; the removal reads the field at the midpoint,
-//! [`ORE_REMOVAL_REGION_THRESHOLD`], derived from the roll's range rather than
-//! swept for a score. Sampling the field at the tile centre instead of the
-//! integer coordinate was also tried and is worse on both counts (7 / 98).
+//! No threshold reproduces a roll, so the rule shipped at the midpoint. The
+//! roll itself is now reproduced -
+//! [`VulcanusOreRoll`](crate::resources::vulcanus_ore_roll::VulcanusOreRoll),
+//! one chunk batch per tile, which places every one of those 1,190 tiles and
+//! no other - and [`VulcanusOreFootprint`] reads it, so this rule and the ore
+//! overlay now ask the same question.
 //!
 //! What that is worth on the shipping path, both regions of the removal test
 //! at the crossing stage, matched/wrong/surplus/missing: the base box scored
 //! 1620/34/59/2; the engine geometry at the overlay's threshold
-//! 1608/35/49/13 - the right shape, and worse, because eleven more game
-//! cliffs die to the ring; at the midpoint 1618/33/51/5. The port's own geyser
-//! roll wired in through [`GeyserPlacement`] was measured too: 1591/35/38/30.
-//! It halves the surplus and more than doubles the missing, since the roll's
-//! positions are not the game's, so the geyser stays out.
+//! 1608/35/49/13; at the midpoint 1618/33/51/5; with the roll
+//! 1620/32/50/4. The rest of the gap to the game's entities, 1628/24/25/4,
+//! is the sulfuric-acid geyser. The port's own geyser roll wired in through
+//! [`GeyserPlacement`] was measured too, at the midpoint: 1591/35/38/30. It
+//! halves the surplus and more than doubles the missing, since the roll's
+//! positions are not the game's, so the geyser stays out. Seeding that roll
+//! the way the game seeds `generateEntities` does not fix it: 0 to 1 of the
+//! game's 44 geysers in the two regions, with or without the solid ores
+//! competing for the tile.
 //!
 //! The rival candidate stays refuted: cliffs are both computed and placed
 //! BEFORE any resource entity exists, and the masks are disjoint anyway, so no
@@ -152,14 +154,6 @@ pub const VULCANUS_ORE_COLLISION_HALF: f64 = 0.097_656_25;
 /// own tile, the geyser's is the 3x3 around it.
 pub const VULCANUS_GEYSER_COLLISION_HALF: f64 = 1.398_437_5;
 
-/// What `1000 * region` a tile must clear for the REMOVAL to treat it as ore:
-/// the game's `1000 * ((1 + region) * rp - 1) >= 0.5` at the midpoint of
-/// `random_penalty_between(0.9, 1, 1)`, `rp = 0.95`, so
-/// `region >= 1.0005 / 0.95 - 1`. The overlay paints at `rp = 1`, the
-/// catalog's [`RESOURCE_PROBABILITY_THRESHOLD`](crate::resources::vulcanus_catalog::RESOURCE_PROBABILITY_THRESHOLD);
-/// the module docs carry the table that puts the two apart.
-pub const ORE_REMOVAL_REGION_THRESHOLD: f64 = 53.2;
-
 /// A geyser placement predicate, for the arm that includes the geyser.
 ///
 /// Injected rather than built here because the geyser ROLLS: reproducing it
@@ -196,8 +190,7 @@ impl<'a, 'b> VulcanusOreRejection<'a, 'b> {
     pub fn new(stack: &'a VulcanusStack<'b>, controls: &VulcanusResourceControls) -> Self {
         Self {
             stack,
-            footprint: VulcanusOreFootprint::new(controls)
-                .with_threshold(ORE_REMOVAL_REGION_THRESHOLD),
+            footprint: VulcanusOreFootprint::new(controls),
             geyser: None,
         }
     }
@@ -375,7 +368,6 @@ fn tiles_for(code: u8, x: f64, y: f64, half: f64) -> Vec<(i64, i64)> {
 mod tests {
     use super::*;
     use crate::cliffs::catalog::{cliff_code_for_orientation, CLIFF_ORIENTATION_NAMES};
-    use crate::resources::vulcanus_catalog::RESOURCE_PROBABILITY_THRESHOLD;
 
     /// A solid ore's search box is exactly its own tile, and the geyser's is
     /// the 3x3 around its tile - the widening is what `postSetup` does to the
@@ -485,21 +477,5 @@ mod tests {
         }
         assert_eq!(VULCANUS_ORE_COLLISION_HALF * 256.0, 25.0);
         assert_eq!(VULCANUS_GEYSER_COLLISION_HALF * 256.0, 358.0);
-    }
-
-    /// The removal threshold is the midpoint of the roll's range, stated as
-    /// the arithmetic it comes from, and it sits strictly between the
-    /// overlay's threshold and the floor - so painted ore is a superset of
-    /// removing ore, which the catalog's comment promises.
-    #[test]
-    fn the_removal_threshold_is_the_rolls_midpoint_and_sits_inside_its_range() {
-        // The game places where `1000 * ((1 + region) * rp - 1)` clears the
-        // overlay threshold, so the region an `rp` needs is this.
-        let at = |rp: f64| 1000.0 * ((1.0 + RESOURCE_PROBABILITY_THRESHOLD / 1000.0) / rp - 1.0);
-        assert!((ORE_REMOVAL_REGION_THRESHOLD - at(0.95)).abs() < 0.1);
-        let (overlay, removal) =
-            std::hint::black_box((RESOURCE_PROBABILITY_THRESHOLD, ORE_REMOVAL_REGION_THRESHOLD));
-        assert!(overlay < removal);
-        assert!(removal < at(0.9));
     }
 }
