@@ -272,9 +272,10 @@ measured limit, not an open question.
 **Revised 2026-10-18 (#451): two of them CAN be pinned.** "Not in the output at
 any geometry" was wrong. At a point where a corner's other offset is exactly
 zero, the value is the near-zero component times a falloff, and the game's f32
-answer resolves it. The chunk-grid fixture holds two such points and misses
-both by a few ulp; see "The chunk-grid kernel" above. The cost on the 512-point
-fixture is still 0.
+answer resolves it. The chunk-grid fixture holds two such points, and the port
+misses them by 125 and 232 ulp in the output - from slot values 154 and 285 ulp
+off; see "The chunk-grid kernel" above. The cost on the 512-point fixture is
+still 0.
 
 ### Re-running it
 

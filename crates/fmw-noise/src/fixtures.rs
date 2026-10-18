@@ -393,6 +393,32 @@ fn the_chunk_function_reproduces_the_fixture_through_the_games_own_call_shape() 
     }
     // The same two gradient-table misses as the test above.
     assert_eq!(exact, 36_862);
+
+    // `+=`, not `=`. Every buffer above starts at zero, where the two are the
+    // same function, so this test could not see the kernel's add on its own.
+    // Run one chunk again into a buffer that already holds 1.0: each slot must
+    // come out as exactly `1.0 + value`.
+    let case = &fixture.get("cases").as_array()[0];
+    let chunk = &case.get("chunks").as_array()[0];
+    let tables = tables_from_seed(seed0, case.get("seed1").as_f64() as u32);
+    let input_scale = case.get("inputScale").as_f64() as f32;
+    let output_scale = case.get("outputScale").as_f64() as f32;
+    let origin = (
+        chunk.get("x").as_f64() as f32,
+        chunk.get("y").as_f64() as f32,
+    );
+    let mut fresh = vec![0.0f32; 32 * 32];
+    let mut primed = vec![1.0f32; 32 * 32];
+    for buf in [&mut fresh, &mut primed] {
+        basis_noise_grid_chunk(origin, 32, 32, 1.0, input_scale, output_scale, &tables, buf);
+    }
+    for (p, f) in primed.iter().zip(&fresh) {
+        assert_eq!(p.to_bits(), (1.0f32 + *f).to_bits());
+    }
+    assert!(
+        fresh.iter().any(|v| *v != 0.0),
+        "the primed check needs non-zero values"
+    );
 }
 
 #[test]
