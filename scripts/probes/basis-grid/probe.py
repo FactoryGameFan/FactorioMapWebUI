@@ -13,19 +13,43 @@ AFTER it returns.
 
 Environment:
     PROBE_OUT     path of the JSONL file to write
-    PROBE_MATCH   "scales" (the default) or "octaves"
+    PROBE_MATCH   "scales" (the default), "octaves" or "op-output"
     PROBE_CASES   "scales": JSON list of [input_scale, output_scale], one per
                   case, and a call is matched to a case by its two scales.
                   "octaves": JSON list of input scales. A multioctave op calls
                   the kernel once per octave with the SAME input scale and a
                   different output scale (the octave's amplitude), step and
-                  origin, so only the input scale identifies the case.
+                  origin, so only the input scale identifies the case. An
+                  EMPTY list keeps every call on the kept rows, for an op like
+                  quick_multioctave_noise whose octaves each have their own
+                  input scale; capture.ts then sorts the calls out by chain.
     PROBE_CHUNKS  "scales": JSON list of [x0, y0] chunk origins to keep.
                   "octaves": JSON list of world chunk ROWS (y) to keep. An
                   octave's y origin is f32(y * step), so a call is kept when
                   y0 / step is within 1/64 of a listed row. Its x origin also
                   carries the octave's 17.17 shift, so x is not filtered here;
                   capture.ts sorts the calls out.
+                  "op-output": JSON list of [x0, y0] cache origins to keep.
+    PROBE_OP_SYMBOL   "op-output" only: the `NoiseOperations::...::run(NoiseCache&)
+                      const` to break on.
+    PROBE_OP_FIELDS   "op-output" only: JSON object, name -> [byte offset, "f32"
+                      or "u32"], of the op's own constants to record, so
+                      capture.ts can tell its cases apart.
+
+## "op-output" mode
+
+Some ops change the buffer between kernel calls - variable persistence
+multiplies it by the tile's persistence after every octave and by its gain at
+the end - so the kernel calls alone do not give the op's value. This mode
+breaks on the op's `run` instead and reads its OUTPUT REGISTER when `run`
+returns. Read off 2.1.20's `NoiseCache::getFloatRegister` (0x1970e50) and the
+ops' own `run`s:
+
+    register(i) = *(u64*)(cache + 0x48) + i * *(u64*)(cache + 0x0) * 4
+    op + 0x8     the op's output register index (u32)
+    cache + 0x28 non-zero for a chunk-grid cache
+    cache + 0x2c, + 0x30   the grid origin (f32)
+    cache + 0x34, + 0x38   w, h (u32)        cache + 0x3c   step (f32)
 
 ## What the registers hold - read off the disassembly, NOT the demangled signature
 
@@ -70,8 +94,12 @@ if MATCH == "scales":
 elif MATCH == "octaves":
     INPUT_SCALES = {struct.unpack("<f", struct.pack("<f", c))[0] for c in json.loads(os.environ["PROBE_CASES"])}
     ROWS = [float(r) for r in json.loads(os.environ["PROBE_CHUNKS"])]
+elif MATCH == "op-output":
+    CHUNKS = {tuple(c) for c in json.loads(os.environ["PROBE_CHUNKS"])}
+    OP_SYMBOL = os.environ["PROBE_OP_SYMBOL"]
+    OP_FIELDS = json.loads(os.environ["PROBE_OP_FIELDS"])
 else:
-    raise ValueError(f"PROBE_MATCH must be scales or octaves, not {MATCH!r}")
+    raise ValueError(f"PROBE_MATCH must be scales, octaves or op-output, not {MATCH!r}")
 GRID = "Noise::noise(float, float, unsigned int, unsigned int, float, float, float, NoiseScratch&, float*) const"
 
 hits = {"calls": 0, "kept": 0, "returned": 0}
@@ -88,6 +116,11 @@ def reg(name):
 def read_bits(addr, n):
     mem = bytes(gdb.selected_inferior().read_memory(addr, 4 * n))
     return list(struct.unpack(f"<{n}I", mem))
+
+
+def read(addr, fmt):
+    size = struct.calcsize(fmt)
+    return struct.unpack(fmt, bytes(gdb.selected_inferior().read_memory(addr, size)))[0]
 
 
 class Returned(gdb.FinishBreakpoint):
@@ -125,11 +158,17 @@ class Kernel(gdb.Breakpoint):
             if scales not in CASES or (x0, y0) not in CHUNKS:
                 return False
         else:
-            if scales[0] not in INPUT_SCALES or step <= 0.0:
+            if (INPUT_SCALES and scales[0] not in INPUT_SCALES) or step <= 0.0:
                 return False
             if not any(abs(y0 / step - row) < 1 / 64 for row in ROWS):
                 return False
         w, h = reg("rsi") & 0xFFFFFFFF, reg("rdx") & 0xFFFFFFFF
+        # Only tile generation's 32x32 chunk calls. The entity pass evaluates
+        # the same expressions on 9x9 grids at step 4 (seen in a traced
+        # preview), which grade nothing here and once reached the fixture
+        # filter in "octaves" mode.
+        if (w, h) != (32, 32):
+            return False
         out = reg("r9")
         rec = {
             "inputScale": scales[0],
@@ -149,9 +188,39 @@ class Kernel(gdb.Breakpoint):
         return False
 
 
+class OpRun(gdb.Breakpoint):
+    def stop(self):
+        hits["calls"] += 1
+        op, cache = reg("rdi"), reg("rsi")
+        if read(cache + 0x28, "<B") == 0:
+            return False
+        x0, y0 = read(cache + 0x2C, "<f"), read(cache + 0x30, "<f")
+        if (x0, y0) not in CHUNKS:
+            return False
+        w, h = read(cache + 0x34, "<I"), read(cache + 0x38, "<I")
+        if (w, h) != (32, 32):
+            return False
+        index = read(op + 0x8, "<I")
+        out = read(cache + 0x48, "<Q") + index * read(cache + 0x0, "<Q") * 4
+        fmt = {"f32": "<f", "u32": "<I"}
+        rec = {
+            "x0": x0,
+            "y0": y0,
+            "step": read(cache + 0x3C, "<f"),
+            "w": w,
+            "h": h,
+            "out": out,
+            "fields": {name: read(op + off, fmt[kind]) for name, (off, kind) in OP_FIELDS.items()},
+            "before": read_bits(out, w * h),
+        }
+        hits["kept"] += 1
+        Returned(rec, out, w * h)
+        return False
+
+
 gdb.execute("set pagination off")
 gdb.execute("set confirm off")
-bp = Kernel(f"'{GRID}'")
+bp = OpRun(f"'{OP_SYMBOL}'") if MATCH == "op-output" else Kernel(f"'{GRID}'")
 bp.silent = True
 # No gdb-side `condition` on the output scale: one was tried and the run took
 # 3m55s against 3m36s without it, with 58,632 of about 69,000 calls still

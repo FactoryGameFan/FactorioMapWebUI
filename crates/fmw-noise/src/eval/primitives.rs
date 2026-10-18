@@ -8,7 +8,9 @@
 //! multiplies the result by `output_scale`. This adapter is that mapping and
 //! nothing else.
 
-use crate::basis_noise::{basis_noise, BasisNoiseTables};
+use crate::at::At;
+use crate::basis_noise::{basis_noise, basis_noise_grid, grid_coordinate, BasisNoiseTables};
+use crate::multioctave_noise::CHUNK;
 
 /// The DSL's `basis_noise{...}` parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -103,6 +105,43 @@ pub fn basis_noise_expr(
     // two f32s fits in an f64 mantissa, so there is no double rounding to dodge
     // and this matches `Math.fround(Math.fround(os) * basis)` bit for bit.
     f64::from((params.output_scale as f32) * v)
+}
+
+/// [`basis_noise_expr`] at an [`At`]. For a tile, the game's grid path: the
+/// kernel's origin is the chunk origin plus `offset_x` in f32, its step is 1,
+/// and the value is what it adds into a zeroed buffer, `0 + basis *
+/// f32(output_scale)` - the `0 +` turns a `-0` into `+0`, as the game does.
+#[must_use]
+pub fn basis_noise_expr_at(at: At, params: &BasisExprParams, tables: &BasisNoiseTables) -> f64 {
+    match at {
+        At::Point { x, y } => basis_noise_expr(x, y, params, tables),
+        At::Tile { x, y } => f64::from(basis_noise_grid_at(
+            x,
+            y,
+            (params.offset_x as f32, 0.0),
+            params.input_scale as f32,
+            params.output_scale as f32,
+            tables,
+        )),
+    }
+}
+
+/// One `basis_noise` op on the chunk grid at world tile `(x, y)`: origin =
+/// chunk origin + `offset` in f32, step 1, `0 + basis * output_scale`.
+#[must_use]
+pub fn basis_noise_grid_at(
+    x: i32,
+    y: i32,
+    offset: (f32, f32),
+    input_scale: f32,
+    output_scale: f32,
+    tables: &BasisNoiseTables,
+) -> f32 {
+    let cx = x.div_euclid(CHUNK) * CHUNK;
+    let cy = y.div_euclid(CHUNK) * CHUNK;
+    let nx = grid_coordinate((x - cx) as u32, 1.0, cx as f32 + offset.0, input_scale);
+    let ny = grid_coordinate((y - cy) as u32, 1.0, cy as f32 + offset.1, input_scale);
+    0.0 + basis_noise_grid(nx, ny, tables) * output_scale
 }
 
 #[cfg(test)]

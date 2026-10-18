@@ -124,8 +124,14 @@ const ENEMY_RGB = [255, 25, 25] as const;
  * of `test/captureGrid.ts`'s table had. This spec freezes it exactly instead.
  * Asserted EXACTLY for the reason #162 records: a bound reported a real
  * improvement as a regression once, and an exact count cannot.
+ *
+ * **8 -> 1 on 2026-10-18 (#451)**, when the terrain sweep started evaluating
+ * each tile through the game's CHUNK-GRID noise path - the one its own preview
+ * uses - instead of the point path every fixture had been captured through.
+ * frankh/factorio-mapgen's engine predicted exactly this: its grid path fixed
+ * 7 of the same 8 pixels and left one.
  */
-const DIFFERING_PX = 8;
+const DIFFERING_PX = 1;
 
 interface Window {
   readonly label: string;

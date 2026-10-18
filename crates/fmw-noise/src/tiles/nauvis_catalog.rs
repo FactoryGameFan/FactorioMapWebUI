@@ -28,6 +28,7 @@
 //! therefore returns the whole vector rather than only the winner, and the
 //! formulas live here once and are never copied into a test.
 
+use crate::at::At;
 use crate::eval::math::max2;
 use crate::multioctave_noise::Prepared;
 use crate::tiles::expression_in_range::expression_in_range;
@@ -159,6 +160,25 @@ pub struct NauvisTileFields {
     pub elevation: f64,
     pub aux: f64,
     pub moisture: f64,
+    /// Whether `(x, y)` is a world TILE evaluated by chunk-grid map
+    /// generation, so the noise layers take the grid path (#451). `x` and `y`
+    /// must then be whole numbers.
+    pub grid: bool,
+}
+
+impl NauvisTileFields {
+    /// The position as an [`At`].
+    #[must_use]
+    pub fn at(&self) -> At {
+        if self.grid {
+            At::Tile {
+                x: self.x as i32,
+                y: self.y as i32,
+            }
+        } else {
+            At::point(self.x, self.y)
+        }
+    }
 }
 
 /// The nineteen `noise_layer_noise` generators the land tiles read, built once
@@ -225,7 +245,7 @@ impl NauvisTileCatalog {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn probabilities(&self, f: &NauvisTileFields) -> [f64; 21] {
-        let (x, y) = (f.x, f.y);
+        let at = f.at();
         let (a, m) = (f.aux, f.moisture);
 
         // water_base(-2, 200)
@@ -235,48 +255,48 @@ impl NauvisTileCatalog {
 
         // expression_in_range_base(-10,0.7,11,11) + noise_layer_noise(19)
         let grass_1 = expression_in_range_base(a, m, -10.0, 0.7, 11.0, 11.0)
-            + f64::from(self.layer19.eval(x, y));
+            + f64::from(self.layer19.eval_at(at));
         // expression_in_range_base(0.45,0.45,11,0.8) + noise_layer_noise(20)
         let grass_2 = expression_in_range_base(a, m, 0.45, 0.45, 11.0, 0.8)
-            + f64::from(self.layer20.eval(x, y));
+            + f64::from(self.layer20.eval_at(at));
         // expression_in_range_base(-10,0.6,0.65,0.9) + noise_layer_noise(21)
         let grass_3 = expression_in_range_base(a, m, -10.0, 0.6, 0.65, 0.9)
-            + f64::from(self.layer21.eval(x, y));
+            + f64::from(self.layer21.eval_at(at));
         // expression_in_range_base(-10,0.5,0.55,0.7) + noise_layer_noise(22)
         let grass_4 = expression_in_range_base(a, m, -10.0, 0.5, 0.55, 0.7)
-            + f64::from(self.layer22.eval(x, y));
+            + f64::from(self.layer22.eval_at(at));
 
         // expression_in_range_base(0.45,-10,0.55,0.35) + noise_layer_noise(13)
         let dry_dirt = expression_in_range_base(a, m, 0.45, -10.0, 0.55, 0.35)
-            + f64::from(self.layer13.eval(x, y));
+            + f64::from(self.layer13.eval_at(at));
 
         // max(expression_in_range_base(-10,0.25,0.45,0.3),
         //     expression_in_range_base(0.4,-10,0.45,0.25)) + noise_layer_noise(6)
         let dirt_1 = max2(
             expression_in_range_base(a, m, -10.0, 0.25, 0.45, 0.3),
             expression_in_range_base(a, m, 0.4, -10.0, 0.45, 0.25),
-        ) + f64::from(self.layer6.eval(x, y));
+        ) + f64::from(self.layer6.eval_at(at));
         // expression_in_range_base(-10,0.3,0.45,0.35) + noise_layer_noise(7)
         let dirt_2 = expression_in_range_base(a, m, -10.0, 0.3, 0.45, 0.35)
-            + f64::from(self.layer7.eval(x, y));
+            + f64::from(self.layer7.eval_at(at));
         // expression_in_range_base(-10,0.35,0.55,0.4) + noise_layer_noise(8)
         let dirt_3 = expression_in_range_base(a, m, -10.0, 0.35, 0.55, 0.4)
-            + f64::from(self.layer8.eval(x, y));
+            + f64::from(self.layer8.eval_at(at));
         // max(expression_in_range_base(0.55,-10,0.6,0.35),
         //     expression_in_range_base(0.6,0.3,11,0.35)) + noise_layer_noise(9)
         let dirt_4 = max2(
             expression_in_range_base(a, m, 0.55, -10.0, 0.6, 0.35),
             expression_in_range_base(a, m, 0.6, 0.3, 11.0, 0.35),
-        ) + f64::from(self.layer9.eval(x, y));
+        ) + f64::from(self.layer9.eval_at(at));
         // expression_in_range_base(-10,0.4,0.55,0.45) + noise_layer_noise(10)
         let dirt_5 = expression_in_range_base(a, m, -10.0, 0.4, 0.55, 0.45)
-            + f64::from(self.layer10.eval(x, y));
+            + f64::from(self.layer10.eval_at(at));
         // expression_in_range_base(-10,0.45,0.55,0.5) + noise_layer_noise(11)
         let dirt_6 = expression_in_range_base(a, m, -10.0, 0.45, 0.55, 0.5)
-            + f64::from(self.layer11.eval(x, y));
+            + f64::from(self.layer11.eval_at(at));
         // expression_in_range_base(-10,0.5,0.55,0.55) + noise_layer_noise(12)
         let dirt_7 = expression_in_range_base(a, m, -10.0, 0.5, 0.55, 0.55)
-            + f64::from(self.layer12.eval(x, y));
+            + f64::from(self.layer12.eval_at(at));
 
         // max(expression_in_range_base(-10,-10,0.25,0.15),
         //     expression_in_range(5, inf, elevation, aux, -1.5, 0.5, 1.5, 1)) + noise_layer_noise(36)
@@ -293,38 +313,38 @@ impl NauvisTileCatalog {
                 &[-1.5, 0.5],
                 &[1.5, 1.0],
             ),
-        ) + f64::from(self.layer36.eval(x, y));
+        ) + f64::from(self.layer36.eval_at(at));
         // max(expression_in_range_base(-10,0.15,0.3,0.2),
         //     expression_in_range_base(0.25,-10,0.3,0.15)) + noise_layer_noise(37)
         let sand_2 = max2(
             expression_in_range_base(a, m, -10.0, 0.15, 0.3, 0.2),
             expression_in_range_base(a, m, 0.25, -10.0, 0.3, 0.15),
-        ) + f64::from(self.layer37.eval(x, y));
+        ) + f64::from(self.layer37.eval_at(at));
         // max(expression_in_range_base(-10,0.2,0.4,0.25),
         //     expression_in_range_base(0.3,-10,0.4,0.2)) + noise_layer_noise(38)
         let sand_3 = max2(
             expression_in_range_base(a, m, -10.0, 0.2, 0.4, 0.25),
             expression_in_range_base(a, m, 0.3, -10.0, 0.4, 0.2),
-        ) + f64::from(self.layer38.eval(x, y));
+        ) + f64::from(self.layer38.eval_at(at));
 
         // expression_in_range_base(0.55,0.35,11,0.5) + noise_layer_noise(30)
         let red_desert_0 = expression_in_range_base(a, m, 0.55, 0.35, 11.0, 0.5)
-            + f64::from(self.layer30.eval(x, y));
+            + f64::from(self.layer30.eval_at(at));
         // max(expression_in_range_base(0.6,-10,0.7,0.3),
         //     expression_in_range_base(0.7,0.25,11,0.3)) + noise_layer_noise(31)
         let red_desert_1 = max2(
             expression_in_range_base(a, m, 0.6, -10.0, 0.7, 0.3),
             expression_in_range_base(a, m, 0.7, 0.25, 11.0, 0.3),
-        ) + f64::from(self.layer31.eval(x, y));
+        ) + f64::from(self.layer31.eval_at(at));
         // max(expression_in_range_base(0.7,-10,0.8,0.25),
         //     expression_in_range_base(0.8,0.2,11,0.25)) + noise_layer_noise(32)
         let red_desert_2 = max2(
             expression_in_range_base(a, m, 0.7, -10.0, 0.8, 0.25),
             expression_in_range_base(a, m, 0.8, 0.2, 11.0, 0.25),
-        ) + f64::from(self.layer32.eval(x, y));
+        ) + f64::from(self.layer32.eval_at(at));
         // expression_in_range_base(0.8,-10,11,0.2) + noise_layer_noise(33)
         let red_desert_3 = expression_in_range_base(a, m, 0.8, -10.0, 11.0, 0.2)
-            + f64::from(self.layer33.eval(x, y));
+            + f64::from(self.layer33.eval_at(at));
 
         [
             deepwater,
@@ -425,6 +445,7 @@ mod tests {
             elevation: -50.0,
             aux: 0.5,
             moisture: 0.5,
+            grid: false,
         };
         assert_eq!(catalog.resolve(&f), NauvisTile::Deepwater);
 
@@ -449,6 +470,7 @@ mod tests {
                     elevation: 10.0,
                     aux,
                     moisture,
+                    grid: false,
                 };
                 let tile = catalog.resolve(&f);
                 assert!(
@@ -511,6 +533,7 @@ mod tests {
             elevation: -3.0,
             aux: 0.5,
             moisture: 0.5,
+            grid: false,
         };
         let p = catalog.probabilities(&f);
         assert_eq!(p.len(), TILE_ORDER.len());
@@ -542,6 +565,7 @@ mod tests {
             elevation: -2.5,
             aux: 0.5,
             moisture: 0.5,
+            grid: false,
         };
         let p = catalog.probabilities(&f);
         assert_eq!(p[0], p[1], "the tie this test rests on has moved");

@@ -674,6 +674,172 @@ fn the_multioctave_grid_fixture_is_out_of_reach_of_the_scattered_path() {
 }
 
 // ---------------------------------------------------------------------------
+// The chunk-grid quick_multioctave_noise and variable persistence (#451).
+//
+// scripts/probes/quick-vp-grid/ recorded, on the chunk grid, every kernel call
+// two quick_multioctave_noise expressions made (chained by buffer content),
+// and the output register of two variable_persistence_multioctave_noise ops
+// when their `run` returned, nine chunks each.
+// ---------------------------------------------------------------------------
+
+const QUICK_VP_GRID_FIXTURE: &str = "test/fixtures/oracle-quick-vp-grid.seed123456.json";
+
+fn quick_grid_params(
+    case: &Json,
+    seed0: u32,
+) -> crate::quick_multioctave_noise::QuickMultioctaveParams {
+    crate::quick_multioctave_noise::QuickMultioctaveParams {
+        seed0,
+        seed1: case.get("seed1").as_f64() as u32,
+        octaves: case.get("octaves").as_f64() as u32,
+        input_scale: case.get("inputScale").as_f64(),
+        output_scale: case.get("outputScale").as_f64(),
+        octave_output_scale_multiplier: case.get("octaveOutputScaleMultiplier").as_f64(),
+        octave_input_scale_multiplier: case.get("octaveInputScaleMultiplier").as_f64(),
+        offset_x: case.get("offsetX").as_f64(),
+    }
+}
+
+fn vp_grid_params(
+    case: &Json,
+    seed0: u32,
+) -> crate::variable_persistence_multioctave_noise::VariablePersistenceParams {
+    crate::variable_persistence_multioctave_noise::VariablePersistenceParams {
+        seed0,
+        seed1: case.get("seed1").as_f64() as u32,
+        octaves: case.get("octaves").as_f64() as u32,
+        input_scale: case.get("inputScale").as_f64(),
+        output_scale: case.get("outputScale").as_f64(),
+        offset_x: case.get("offsetX").as_f64(),
+    }
+}
+
+/// The two persistence expressions the fixture uses, evaluated the way the
+/// noise machine does: f32 registers.
+fn vp_grid_persistence(expression: &str, x: i32) -> f32 {
+    match expression {
+        "0.7" => 0.7f32,
+        "0.4 + x / 4096" => 0.4f32 + (x as f32) / 4096.0,
+        other => panic!("no evaluator for persistence {other:?}"),
+    }
+}
+
+#[test]
+fn reproduces_every_value_of_the_quick_vp_grid_fixture() {
+    use crate::quick_multioctave_noise::{octave_terms, sum_octaves_grid};
+    use crate::variable_persistence_multioctave_noise::{eval_grid, terms};
+    let fixture = load_captured_at(QUICK_VP_GRID_FIXTURE, "2.1.20");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let mut per_case = Vec::new();
+    for case in fixture.get("cases").as_array() {
+        let offset_y = case.get("offsetY").as_f64() as f32;
+        let is_quick = case.get("op").as_str() == "quick_multioctave_noise";
+        let quick = is_quick.then(|| octave_terms(&quick_grid_params(case, seed0)));
+        let vp = (!is_quick).then(|| terms(&vp_grid_params(case, seed0)));
+        let tables = tables_from_seed(seed0, case.get("seed1").as_f64() as u32);
+        let mut exact = 0;
+        for chunk in case.get("chunks").as_array() {
+            let (x0, y0) = (
+                chunk.get("x").as_f64() as i32,
+                chunk.get("y").as_f64() as i32,
+            );
+            for (k, want) in chunk.get("values").as_f64_array().iter().enumerate() {
+                let (x, y) = (x0 + (k % 32) as i32, y0 + (k / 32) as i32);
+                let got = match (&quick, &vp) {
+                    (Some(q), _) => sum_octaves_grid(x, y, offset_y, q),
+                    (_, Some(v)) => {
+                        let p = vp_grid_persistence(case.get("persistence").as_str(), x);
+                        eval_grid(x, y, p, offset_y, v, &tables)
+                    }
+                    _ => unreachable!(),
+                };
+                if got.to_bits() == (*want as f32).to_bits() {
+                    exact += 1;
+                }
+            }
+        }
+        per_case.push((case.get("property").as_str().to_string(), exact));
+    }
+    let want: Vec<(String, usize)> = ["elevation", "moisture", "aux", "temperature"]
+        .iter()
+        .map(|p| ((*p).to_string(), 9_216))
+        .collect();
+    assert_eq!(per_case, want);
+}
+
+#[test]
+fn the_quick_vp_grid_fixture_tells_the_grid_from_the_point_path_and_the_persistence_width() {
+    // Two controls, each frozen as an exact count, each able to fail.
+    //
+    // 1. Quick, through the shipped POINT path at the same tiles.
+    // 2. Variable persistence on the grid, but with the persistence multiply
+    //    done the point path's way - an f32 accumulator times an f64
+    //    persistence, narrowed once - instead of the grid's f32 `mulss`. Only
+    //    the constant 0.7 case can tell the two apart: the per-tile case's
+    //    persistence is f32-exact by construction.
+    use crate::basis_noise::basis_noise_grid;
+    use crate::quick_multioctave_noise::{octave_terms, sum_octaves};
+    let fixture = load_captured_at(QUICK_VP_GRID_FIXTURE, "2.1.20");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let (mut quick_point, mut vp_f64) = (0, 0);
+    for case in fixture.get("cases").as_array() {
+        let property = case.get("property").as_str();
+        for chunk in case.get("chunks").as_array() {
+            let (x0, y0) = (
+                chunk.get("x").as_f64() as i32,
+                chunk.get("y").as_f64() as i32,
+            );
+            for (k, want) in chunk.get("values").as_f64_array().iter().enumerate() {
+                let (x, y) = (x0 + (k % 32) as i32, y0 + (k / 32) as i32);
+                let want = (*want as f32).to_bits();
+                if case.get("op").as_str() == "quick_multioctave_noise" {
+                    if case.get("offsetY").as_f64() != 0.0 {
+                        continue; // the point path takes no offset_y
+                    }
+                    let terms = octave_terms(&quick_grid_params(case, seed0));
+                    if sum_octaves(f64::from(x), f64::from(y), &terms).to_bits() == want {
+                        quick_point += 1;
+                    }
+                } else if property == "elevation" {
+                    // eval_grid with the multiply widened, inline.
+                    let vp = vp_grid_params(case, seed0);
+                    let tables = tables_from_seed(seed0, vp.seed1);
+                    let octaves = vp.octaves as usize;
+                    let gain = (vp.output_scale * f64::from(2u32.pow(vp.octaves))) as f32;
+                    let mut scale = (vp.input_scale as f32) * 0.5;
+                    let (cx, cy) = (x.div_euclid(32) * 32, y.div_euclid(32) * 32);
+                    let origin = (
+                        cx as f32 + vp.offset_x as f32,
+                        cy as f32 + case.get("offsetY").as_f64() as f32,
+                    );
+                    let mut acc = 0.0f32;
+                    for o in 0..octaves {
+                        let nx = grid_coordinate((x - cx) as u32, 1.0, origin.0, scale);
+                        let ny = grid_coordinate((y - cy) as u32, 1.0, origin.1, scale);
+                        acc += basis_noise_grid(nx, ny, &tables) * 1.0;
+                        if o + 1 < octaves {
+                            acc = (f64::from(acc) * 0.7) as f32;
+                        }
+                        scale *= 0.5;
+                    }
+                    if (acc * gain).to_bits() == want {
+                        vp_f64 += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        quick_point, 4_220,
+        "quick through the point path (temperature case)"
+    );
+    assert_eq!(
+        vp_f64, 6_752,
+        "variable persistence with an f64 persistence multiply (0.7 case)"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // The multioctave family.
 //
 // Each test reads the same file its TypeScript counterpart reads and asserts
@@ -7610,6 +7776,7 @@ fn score_nauvis_tiles(fixture: &Json) -> (usize, usize, Vec<String>) {
             elevation: stack.elevation_nauvis.eval(x, y),
             aux: stack.aux.eval(x, y),
             moisture: stack.moisture.eval(x, y),
+            grid: false,
         };
         let got = catalog.resolve(&f);
         let want = names[i].as_str();
@@ -7951,6 +8118,7 @@ fn the_nauvis_tile_fixtures_exercise_twenty_of_the_twenty_one_tiles() {
                 elevation: stack.elevation_nauvis.eval(x, y),
                 aux: stack.aux.eval(x, y),
                 moisture: stack.moisture.eval(x, y),
+                grid: false,
             };
             placed.push(catalog.resolve(&f).name().to_owned());
             recorded.push(fixture.get("tileNames").as_array()[i].as_str().to_owned());
@@ -8019,6 +8187,7 @@ fn the_fixtures_grade_both_water_tiles() {
             elevation,
             aux: 0.5,
             moisture: 0.5,
+            grid: false,
         })
     };
     assert_eq!(at(-40.0), NauvisTile::Deepwater);

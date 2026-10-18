@@ -550,6 +550,11 @@
       "factorioVersion": "2.1.20",
       "evidence": "captured 2026-10-18 by scripts/probes/multioctave-grid (gdb, not Lua) from the Linux headless build whose --version reads 'Version: 2.1.20 (build 87512, linux64, headless)': every call MultioctaveNoise::run's chunk-grid branch made to the grid basis_noise kernel, chained per chunk by buffer content. Cross-checked the same run: 'Version: 2.0.77 (build 84539, linux64, headless)' returned bit-identical values for every chunk.",
       "versionDifferences": "none: 2.0.77 and 2.1.20 bit-identical on every value"
+    },
+    "oracle-quick-vp-grid.seed123456.json": {
+      "factorioVersion": "2.1.20",
+      "evidence": "captured 2026-10-18 by scripts/probes/quick-vp-grid (gdb, not Lua) from the Linux headless build whose --version reads 'Version: 2.1.20 (build 87512, linux64, headless)': quick_multioctave_noise as every chunk-grid basis_noise kernel call its octaves made, chained by buffer content; variable_persistence_multioctave_noise as its output register read when VariablePersistenceMultioctaveNoise::run returned. Cross-checked the same run: 'Version: 2.0.77 (build 84539, linux64, headless)' returned bit-identical values for every chunk.",
+      "versionDifferences": "none: 2.0.77 and 2.1.20 bit-identical on every value"
     }
   },
   "notFixtures": {

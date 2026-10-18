@@ -50,9 +50,10 @@
 //! `cliff_ringbreak` - and a combined struct would evaluate four octave stacks
 //! per point to hand back one number.
 
+use crate::at::At;
 use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
 use crate::eval::math::clamp;
-use crate::eval::primitives::{basis_noise_expr, BasisExprParams};
+use crate::eval::primitives::{basis_noise_expr_at, basis_noise_grid_at, BasisExprParams};
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::poison;
 
@@ -140,26 +141,50 @@ impl NauvisShared {
     /// `nauvis_hills`: `abs` of the seed1 = 900 four-octave field.
     #[must_use]
     pub fn hills(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.hills.eval(x, y)).abs()
+        self.hills_at(At::point(x, y))
+    }
+
+    /// [`Self::hills`] at an [`At`].
+    #[must_use]
+    pub fn hills_at(&self, at: At) -> f64 {
+        f64::from(self.hills.eval_at(at)).abs()
     }
 
     /// `nauvis_bridge_billows`: `abs` of the seed1 = 700 four-octave field.
     #[must_use]
     pub fn bridge_billows(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.bridge_billows.eval(x, y)).abs()
+        self.bridge_billows_at(At::point(x, y))
+    }
+
+    /// [`Self::bridge_billows`] at an [`At`].
+    #[must_use]
+    pub fn bridge_billows_at(&self, at: At) -> f64 {
+        f64::from(self.bridge_billows.eval_at(at)).abs()
     }
 
     /// `forest_path_billows`: `abs` of the seed1 = 1800 four-octave field.
     #[must_use]
     pub fn forest_path_billows(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.forest_path_billows.eval(x, y)).abs()
+        self.forest_path_billows_at(At::point(x, y))
+    }
+
+    /// [`Self::forest_path_billows`] at an [`At`].
+    #[must_use]
+    pub fn forest_path_billows_at(&self, at: At) -> f64 {
+        f64::from(self.forest_path_billows.eval_at(at)).abs()
     }
 
     /// `nauvis_hills_cliff_level`: a basis term clamped to `[0.15, 1.15]`.
     #[must_use]
     pub fn cliff_level(&self, x: f64, y: f64) -> f64 {
+        self.cliff_level_at(At::point(x, y))
+    }
+
+    /// [`Self::cliff_level`] at an [`At`].
+    #[must_use]
+    pub fn cliff_level_at(&self, at: At) -> f64 {
         clamp(
-            0.65 + basis_noise_expr(x, y, &self.cliff_level, &self.cliff_level_tables),
+            0.65 + basis_noise_expr_at(at, &self.cliff_level, &self.cliff_level_tables),
             0.15,
             1.15,
         )
@@ -168,8 +193,14 @@ impl NauvisShared {
     /// `nauvis_plateaus`: `0.5 + clamp((hills - cliff_level) * 10, -0.5, 0.5)`.
     #[must_use]
     pub fn plateaus(&self, x: f64, y: f64) -> f64 {
+        self.plateaus_at(At::point(x, y))
+    }
+
+    /// [`Self::plateaus`] at an [`At`].
+    #[must_use]
+    pub fn plateaus_at(&self, at: At) -> f64 {
         0.5 + clamp(
-            (self.hills(x, y) - self.cliff_level(x, y)) * 10.0,
+            (self.hills_at(at) - self.cliff_level_at(at)) * 10.0,
             -0.5,
             0.5,
         )
@@ -182,21 +213,44 @@ impl NauvisShared {
     /// no `output_scale` and no narrowing of the products.
     #[must_use]
     pub fn hills_offset_raw_x(&self, x: f64, y: f64) -> f64 {
-        f64::from(basis_noise(
-            x * self.offset_input_scale,
-            y * self.offset_input_scale,
-            &self.offset_x_tables,
-        ))
+        self.hills_offset_raw_x_at(At::point(x, y))
+    }
+
+    /// [`Self::hills_offset_raw_x`] at an [`At`]. On the grid it is the game's
+    /// `basis_noise{x = x, y = y, ...}` with the default output scale of 1.
+    #[must_use]
+    pub fn hills_offset_raw_x_at(&self, at: At) -> f64 {
+        self.offset_raw_at(at, &self.offset_x_tables)
+    }
+
+    fn offset_raw_at(&self, at: At, tables: &BasisNoiseTables) -> f64 {
+        match at {
+            At::Point { x, y } => f64::from(basis_noise(
+                x * self.offset_input_scale,
+                y * self.offset_input_scale,
+                tables,
+            )),
+            At::Tile { x, y } => f64::from(basis_noise_grid_at(
+                x,
+                y,
+                (0.0, 0.0),
+                self.offset_input_scale as f32,
+                1.0,
+                tables,
+            )),
+        }
     }
 
     /// `nauvis_hills_offset_raw_y`.
     #[must_use]
     pub fn hills_offset_raw_y(&self, x: f64, y: f64) -> f64 {
-        f64::from(basis_noise(
-            x * self.offset_input_scale,
-            y * self.offset_input_scale,
-            &self.offset_y_tables,
-        ))
+        self.hills_offset_raw_y_at(At::point(x, y))
+    }
+
+    /// [`Self::hills_offset_raw_y`] at an [`At`].
+    #[must_use]
+    pub fn hills_offset_raw_y_at(&self, at: At) -> f64 {
+        self.offset_raw_at(at, &self.offset_y_tables)
     }
 
     /// `nauvis_hills_offset`: the seed1 = 900 field re-evaluated at a
@@ -208,13 +262,21 @@ impl NauvisShared {
     /// the wrong point's value.
     #[must_use]
     pub fn hills_offset(&self, x: f64, y: f64) -> f64 {
-        let raw_x = self.hills_offset_raw_x(x, y);
-        let raw_y = self.hills_offset_raw_y(x, y);
+        self.hills_offset_at(At::point(x, y))
+    }
+
+    /// [`Self::hills_offset`] at an [`At`]. The two raw offsets follow `at`,
+    /// but the warped octave call is ALWAYS a point: its coordinate is not the
+    /// raw `x`/`y`, so the game sends it to the point kernel (#451).
+    #[must_use]
+    pub fn hills_offset_at(&self, at: At) -> f64 {
+        let raw_x = self.hills_offset_raw_x_at(at);
+        let raw_y = self.hills_offset_raw_y_at(at);
         let nx = normalize(raw_x, raw_y);
         let ny = normalize(raw_y, raw_x);
         f64::from(
             self.hills
-                .eval(x + WARP_DISTANCE * nx, y + WARP_DISTANCE * ny),
+                .eval(at.x() + WARP_DISTANCE * nx, at.y() + WARP_DISTANCE * ny),
         )
         .abs()
     }
@@ -237,7 +299,13 @@ impl NauvisShared {
     /// one: there is no path to `cliff_ringbreak` that avoids `basis_noise`.
     #[must_use]
     pub fn cliff_ringbreak(&self, x: f64, y: f64) -> f64 {
-        poison::f64_result((self.hills(x, y) - self.hills_offset(x, y)).abs())
+        self.cliff_ringbreak_at(At::point(x, y))
+    }
+
+    /// [`Self::cliff_ringbreak`] at an [`At`].
+    #[must_use]
+    pub fn cliff_ringbreak_at(&self, at: At) -> f64 {
+        poison::f64_result((self.hills_at(at) - self.hills_offset_at(at)).abs())
     }
 }
 

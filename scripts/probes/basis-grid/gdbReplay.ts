@@ -50,6 +50,11 @@ export interface ReplayOptions {
   readonly propertyExpressionNames: Readonly<Record<string, string>>;
   /** PROBE_MATCH, PROBE_CASES and PROBE_CHUNKS for `probe.py`. */
   readonly probeEnv: Readonly<Record<string, string>>;
+  /**
+   * The gdb replay's limit. 900 s by default; the quick multioctave replay in
+   * `scripts/probes/quick-vp-grid/` took longer than that on an idle tealc.
+   */
+  readonly timeoutSeconds?: number;
 }
 
 export async function replayUnderGdb(opts: ReplayOptions): Promise<Replay> {
@@ -126,10 +131,11 @@ export async function replayUnderGdb(opts: ReplayOptions): Promise<Replay> {
       let out = "";
       child.stdout.on("data", (d: Buffer) => (out += d.toString()));
       child.stderr.on("data", (d: Buffer) => (out += d.toString()));
+      const limit = opts.timeoutSeconds ?? 900;
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
-        fail(new Error("gdb replay timed out after 900s"));
-      }, 900_000);
+        fail(new Error(`gdb replay timed out after ${String(limit)}s`));
+      }, limit * 1000);
       // A missing gdb emits `error` and never `exit`.
       child.on("error", (err) => {
         clearTimeout(timer);

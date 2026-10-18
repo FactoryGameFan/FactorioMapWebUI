@@ -32,12 +32,13 @@
 //! means the fixture grades none of the blend. Anything changed in there has to
 //! be graded by moving the slider, not by the oracle.
 
+use crate::at::At;
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
 use crate::eval::math::{clamp, lerp, max2, min, min2, slider_to_linear};
 use crate::expressions::nauvis_shared::{NauvisShared, NauvisSharedParams};
 use crate::quick_multioctave_noise::{
-    octave_terms as quick_octave_terms, sum_octaves as quick_sum_octaves, QuickMultioctaveParams,
-    QuickOctaves,
+    octave_terms as quick_octave_terms, sum_octaves_at as quick_sum_octaves_at,
+    QuickMultioctaveParams, QuickOctaves,
 };
 
 /// `sea_level_temperature`.
@@ -108,10 +109,16 @@ impl Aux {
     /// Evaluate at one point.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> f64 {
+        self.eval_at(At::point(x, y))
+    }
+
+    /// Evaluate at an [`At`]; on a tile every noise op takes the grid path.
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> f64 {
         clamp(
             0.5 + self.bias
-                + 0.06 * (self.shared.plateaus(x, y) - 0.4)
-                + f64::from(quick_sum_octaves(x, y, &self.noise)),
+                + 0.06 * (self.shared.plateaus_at(at) - 0.4)
+                + f64::from(quick_sum_octaves_at(at, &self.noise)),
             0.0,
             1.0,
         )
@@ -211,6 +218,13 @@ impl Moisture {
     /// Evaluate at one point.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> f64 {
+        self.eval_at(At::point(x, y))
+    }
+
+    /// Evaluate at an [`At`]; on a tile every noise op takes the grid path.
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
         let distance = f64::from(distance_from_nearest_point(
             x,
             y,
@@ -225,8 +239,8 @@ impl Moisture {
         let moisture_adjusted_bias = lerp(self.base_bias, self.starting_bias, starting_bias_region);
 
         let moisture_main = clamp(
-            0.4 + moisture_adjusted_bias + f64::from(quick_sum_octaves(x, y, &self.noise))
-                - 0.08 * (self.shared.plateaus(x, y) - 0.6),
+            0.4 + moisture_adjusted_bias + f64::from(quick_sum_octaves_at(at, &self.noise))
+                - 0.08 * (self.shared.plateaus_at(at) - 0.6),
             0.0,
             1.0,
         );
@@ -234,9 +248,9 @@ impl Moisture {
         // Three different fields, three different knees and three different
         // gains. The smallest wins, so any one of them can open the cutout.
         let trees_forest_path_cutout = min(&[
-            (self.shared.bridge_billows(x, y) - 0.07) * 5.0,
-            (self.shared.hills(x, y) - 0.1) * 3.0,
-            (self.shared.forest_path_billows(x, y) - 0.07) * 3.0,
+            (self.shared.bridge_billows_at(at) - 0.07) * 5.0,
+            (self.shared.hills_at(at) - 0.1) * 3.0,
+            (self.shared.forest_path_billows_at(at) - 0.07) * 3.0,
         ]);
 
         max2(
@@ -300,8 +314,14 @@ impl Temperature {
     /// Evaluate at one point.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> f64 {
+        self.eval_at(At::point(x, y))
+    }
+
+    /// Evaluate at an [`At`]; on a tile the noise op takes the grid path.
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> f64 {
         clamp(
-            SEA_LEVEL_TEMPERATURE + self.bias + f64::from(quick_sum_octaves(x, y, &self.noise)),
+            SEA_LEVEL_TEMPERATURE + self.bias + f64::from(quick_sum_octaves_at(at, &self.noise)),
             -20.0,
             50.0,
         )
