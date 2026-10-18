@@ -15,7 +15,10 @@
 //! while scoring 132 of 512.
 
 use crate::basis_gradient_table::{GRADIENT_X, GRADIENT_Y};
-use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
+use crate::basis_noise::{
+    basis_noise, basis_noise_grid, basis_noise_grid_chunk, grid_coordinate, tables_from_seed,
+    BasisNoiseTables,
+};
 use crate::eval::math::max2;
 use crate::test_json::{load, Json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -271,6 +274,170 @@ fn the_scorer_resolves_a_single_wrong_point() {
         exact, 511,
         "one ULP on one point must cost exactly one match"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The chunk-grid kernel (#451).
+//
+// Every fixture above samples scattered points through
+// `calculate_tile_properties`, which reaches only the game's POINT kernel.
+// Map generation uses a second one for nearly everything, and this fixture is
+// the only thing here that reaches it: gdb read its output during a `--create`
+// (scripts/probes/basis-grid/). Each case carries its own seed1 and scales;
+// each chunk 1,024 values that are `0 + sum * outputScale`.
+// ---------------------------------------------------------------------------
+
+const BASIS_GRID_FIXTURE: &str = "test/fixtures/oracle-basis-grid.seed123456.json";
+
+/// Exact matches for one grid case against `eval(nx, ny, tables)`, scored the
+/// way the game produced it: `0 + value * outputScale` per grid point.
+fn score_grid_case(
+    case: &Json,
+    seed0: u32,
+    eval: &dyn Fn(f32, f32, &BasisNoiseTables) -> f32,
+) -> (usize, usize) {
+    let tables = tables_from_seed(seed0, case.get("seed1").as_f64() as u32);
+    let input_scale = case.get("inputScale").as_f64() as f32;
+    let output_scale = case.get("outputScale").as_f64() as f32;
+    let (mut exact, mut total) = (0, 0);
+    for chunk in case.get("chunks").as_array() {
+        let x0 = chunk.get("x").as_f64() as f32;
+        let y0 = chunk.get("y").as_f64() as f32;
+        let values = chunk.get("values").as_f64_array();
+        assert_eq!(values.len(), 32 * 32);
+        for (k, &want) in values.iter().enumerate() {
+            let nx = grid_coordinate((k % 32) as u32, 1.0, x0, input_scale);
+            let ny = grid_coordinate((k / 32) as u32, 1.0, y0, input_scale);
+            let got = 0.0 + eval(nx, ny, &tables) * output_scale;
+            total += 1;
+            // Bits, not `==`: `0 + -0` is `+0`, and a sign that differs is a
+            // different answer even where `==` cannot see it.
+            if got.to_bits() == (want as f32).to_bits() {
+                exact += 1;
+            }
+        }
+    }
+    (exact, total)
+}
+
+#[test]
+fn reproduces_every_value_of_the_chunk_grid_fixture_exactly() {
+    let fixture = load_captured_at(BASIS_GRID_FIXTURE, "2.1.20");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let mut per_case = Vec::new();
+    for case in fixture.get("cases").as_array() {
+        let (e, t) = score_grid_case(case, seed0, &basis_noise_grid);
+        per_case.push((case.get("property").as_str().to_string(), e, t));
+    }
+    // 36,862 of 36,864, and the two misses are the GRADIENT TABLE, not this
+    // kernel. Both are in the 1/7 case, at points where one half of a corner's
+    // dot product is exactly zero, so the value is that corner's other
+    // gradient component times a falloff - and both components are near-zero
+    // slots: (49, 0) reads slot 64's x (-1.836e-7) with dy = 0, and (63, 21)
+    // reads slot 128's y (-3.672e-7) with dx = 0. The values are ~7.11e-14.
+    //
+    // docs/noise/basis-noise-NOTES.md says those slots "cannot be pinned by
+    // probing at all". This geometry pins them: exactly one f32 for slot 64
+    // (154 ulp from the committed value) and one for slot 128 (285 ulp)
+    // makes all 36,864 exact. That is a FIT to this fixture, not a test of
+    // it, so the table is not changed here - a correction needs its own
+    // capture to be scored against (#455).
+    let expected = [
+        ("elevation", 9_216),
+        ("moisture", 9_216),
+        ("aux", 9_216),
+        ("temperature", 9_214),
+    ];
+    for ((name, e, t), (want_name, want)) in per_case.iter().zip(expected) {
+        assert_eq!(name, want_name);
+        assert_eq!(*t, 9_216, "case {name}");
+        assert_eq!(*e, want, "case {name}");
+    }
+}
+
+#[test]
+fn the_chunk_function_reproduces_the_fixture_through_the_games_own_call_shape() {
+    // The same values as above, but through `basis_noise_grid_chunk`: origin,
+    // width, height, step and the add into a zeroed buffer, which is the call
+    // the game makes. A per-point loop that formed its coordinates differently
+    // would pass the test above and fail here.
+    let fixture = load_captured_at(BASIS_GRID_FIXTURE, "2.1.20");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let mut exact = 0;
+    for case in fixture.get("cases").as_array() {
+        let tables = tables_from_seed(seed0, case.get("seed1").as_f64() as u32);
+        let input_scale = case.get("inputScale").as_f64() as f32;
+        let output_scale = case.get("outputScale").as_f64() as f32;
+        for chunk in case.get("chunks").as_array() {
+            let origin = (
+                chunk.get("x").as_f64() as f32,
+                chunk.get("y").as_f64() as f32,
+            );
+            let mut out = vec![0.0f32; 32 * 32];
+            basis_noise_grid_chunk(
+                origin,
+                32,
+                32,
+                1.0,
+                input_scale,
+                output_scale,
+                &tables,
+                &mut out,
+            );
+            for (got, want) in out.iter().zip(chunk.get("values").as_f64_array()) {
+                if got.to_bits() == (want as f32).to_bits() {
+                    exact += 1;
+                }
+            }
+        }
+    }
+    // The same two gradient-table misses as the test above.
+    assert_eq!(exact, 36_862);
+}
+
+#[test]
+fn the_chunk_grid_fixture_tells_the_two_kernels_and_both_corner_orders_apart() {
+    // The control that has to be able to fail. If the point kernel scored 100%
+    // here, the fixture could not tell the kernels apart and the test above
+    // would be decoration. Both arms below are measured, and each is frozen as
+    // an exact count so a change in either is a finding.
+    let fixture = load_captured_at(BASIS_GRID_FIXTURE, "2.1.20");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+
+    // The shipped point kernel, fed the grid's own coordinates.
+    let point =
+        |nx: f32, ny: f32, t: &BasisNoiseTables| basis_noise(f64::from(nx), f64::from(ny), t);
+
+    // The grid kernel's arithmetic with the point kernel's corner ORDER: the
+    // rival the probe was designed to refute. frankh/factorio-mapgen's
+    // `noise.js` says the grid sums by column; this is what by row scores.
+    let grid_by_row = |nx: f32, ny: f32, t: &BasisNoiseTables| -> f32 {
+        let (fx, fy) = (nx - nx.floor(), ny - ny.floor());
+        let (ix, iy) = (nx.floor() as i64, ny.floor() as i64);
+        let dx = [fx, fx - 1.0];
+        let dy = [fy, fy - 1.0];
+        let base = [1.0 - dy[0] * dy[0], 1.0 - dy[1] * dy[1]];
+        let c = |cx: usize, cy: usize| -> f32 {
+            let q = base[cy] - dx[cx] * dx[cx];
+            let q = if q > 0.0 { q } else { 0.0 };
+            let h = t.a[((ix + cx as i64) & 255) as usize] ^ t.b[((iy + cy as i64) & 255) as usize];
+            let g = t.sigma[h as usize] as usize;
+            (dx[cx] * GRADIENT_X[g] + dy[cy] * GRADIENT_Y[g]) * ((q * q) * q)
+        };
+        (c(0, 0) + c(1, 0)) + (c(0, 1) + c(1, 1))
+    };
+
+    let (mut point_exact, mut row_exact, mut total) = (0, 0, 0);
+    for case in fixture.get("cases").as_array() {
+        let (p, t) = score_grid_case(case, seed0, &point);
+        let (r, _) = score_grid_case(case, seed0, &grid_by_row);
+        point_exact += p;
+        row_exact += r;
+        total += t;
+    }
+    assert_eq!(total, 36_864);
+    assert_eq!(point_exact, 20_332, "the point kernel on grid coordinates");
+    assert_eq!(row_exact, 29_677, "the grid arithmetic summed by row");
 }
 
 // ---------------------------------------------------------------------------

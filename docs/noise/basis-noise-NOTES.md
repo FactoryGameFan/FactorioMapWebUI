@@ -122,6 +122,89 @@ depends on the engine, and the Rust port would derive a different one with
 libm - putting a last-bit disagreement under every planet on both sides.
 `scripts/gen-gradient-table.ts` regenerates it.
 
+## The chunk-grid kernel - a second function (#451, measured 2026-10-18)
+
+**The game has two `basis_noise` kernels, and everything above describes the
+first.** Map generation uses the second for nearly everything.
+
+| symbol (2.1.20) | takes | used by |
+| --- | --- | --- |
+| `Noise::noise(unsigned long, float const*, float const*, ...)` | a list of points | `calculate_tile_properties`, cliff `crossingsForChunk` |
+| `Noise::noise(float, float, unsigned int, unsigned int, ...)` | a chunk origin, a step, a width and height | tile and entity map generation |
+
+One scouting `--create` made 69,384 calls to the grid kernel
+and 821 to the point kernel, and all 821 came from cliff placement. Every
+fixture in this file before this section was captured through
+`calculate_tile_properties`, so every one of them reaches only the point
+kernel. That is why the residual pixels in the preview specs sat in the
+preview counts and nowhere else.
+
+frankh/factorio-mapgen's `noise.js` (MIT) described the grid path first, and
+its engine was what first measured it (issue #451). It was then confirmed from
+the game itself, two ways:
+
+- **The disassembly.** The grid kernel uses `maxps` and no min; the point
+  kernel uses `minps` and no max. Read off 2.1.20 at `0x251c2b0`, with the
+  constants at `0xfe52e0` (lane offsets `{-0, -1}`) and `0xfe1590` (`{1,1,1,1}`).
+- **A capture of its output.** `scripts/probes/basis-grid/` puts a gdb
+  breakpoint on the grid kernel in a Linux headless build, which ships its
+  symbol table, and records each call's arguments and its output buffer before
+  and after. `test/fixtures/oracle-basis-grid.seed123456.json` holds four
+  expressions over nine chunks each: 36,864 values.
+
+What the grid kernel does differently, all of it f32:
+
+```
+nx = (i * step + x0) * input_scale        -- formed INSIDE the kernel
+ny = (r * step + y0) * input_scale
+q  = max((1 - dy^2) - dx^2, 0)            -- 1 - dy^2 once per row
+v  = (dx*gx + dy*gy) * ((q*q)*q)
+out[r*w + i] += ((v10 + v11) + (v00 + v01)) * output_scale
+```
+
+| arm, scored on the 36,864 values | exact |
+| --- | --- |
+| the point kernel, fed the grid's own coordinates | 20,332 |
+| the grid formula, corners summed by row | 29,677 |
+| **the grid formula, corners summed by column** | **36,862** |
+
+Four things about it that are easy to get wrong:
+
+- **The output is the sixth integer argument (`r9`), and the kernel ADDS into
+  it.** The demangled signature has five integer-class arguments and puts the
+  output in `r8`; reading `r8` gave eight non-zero values in a buffer of
+  1,024. `rcx` and `r8` are a scratch size and pointer. A lone `basis_noise`
+  gets a zeroed buffer; a multioctave caller hands every octave the same one.
+- **Only raw `x` and `y` reach it.** `basis_noise{x = x + 20000, ...}` went to
+  the POINT kernel as a 1,024-point list per chunk (400 calls) and made no grid
+  calls at all, which is the rule frankh's `onGrid` check encodes. The
+  multioctave ops are different: their `offset_x` parameter is applied inside
+  the op, so Nauvis's own multioctave calls do arrive on the grid with an
+  origin like `19680 = -320 + 20000`.
+- **Multioctave calls it once per octave with a scaled origin and step**, for
+  example `x0 = 1557, step = 0.5` for octave 1 of a chunk at `x = -320` with
+  `input_scale = 0.01` - which looks like `-320 * 0.5 + 17.17 / 0.01`. That
+  arithmetic is NOT yet pinned down; it is the next step of #451, and nothing
+  in the port uses the grid path for multioctave yet.
+- **2.0.77, 2.1.11 and 2.1.20 share it.** 2.1.11 and 2.1.20 have the identical
+  instruction sequence; 2.0.77 has the same instructions with different
+  register moves, and a capture from each of 2.0.77 and 2.1.20 returned
+  bit-identical values for all 36,864 points.
+- **The two misses are the gradient table, and they price "The limit" below
+  differently.** Both are in the `input_scale = 1/7` case, at a point where
+  one half of a corner's dot product is exactly zero: `(49, 0)` has `dy = 0`
+  and reads slot 64's x component (-1.836e-7), `(63, 21)` has `dx = 0` and
+  reads slot 128's y component (-3.672e-7). So the value, about 7.11e-14, IS
+  that near-zero component times a falloff, and the game's f32 answer carries
+  it to full precision. Exactly one f32 for each slot (154 and 285 ulp from
+  the committed ones) makes all 36,864 exact. That is a fit to this fixture
+  rather than a test of it, so the table is unchanged; a correction needs a
+  capture of its own to be scored against (#455).
+
+Ported as `basis_noise_grid` and `basis_noise_grid_chunk` in
+`crates/fmw-noise/src/basis_noise.rs`. No renderer calls them yet, so no
+preview count moves in the change that adds them.
+
 ## Recovering the gradient table (#234, measured 2026-08-18)
 
 The table is no longer a formula. `src/noise/basisGradientTable.ts` is generated
@@ -185,6 +268,13 @@ Four slots are near zero and cannot be pinned by probing at all. Their ULP is
 geometry. It costs nothing: perturbing them by 1.0e-9, which is 280x the actual
 residual, changes **0 of the 512** values in `basis-noise.seed123456.json`. A
 measured limit, not an open question.
+
+**Revised 2026-10-18 (#451): two of them CAN be pinned.** "Not in the output at
+any geometry" was wrong. At a point where a corner's other offset is exactly
+zero, the value is the near-zero component times a falloff, and the game's f32
+answer resolves it. The chunk-grid fixture holds two such points and misses
+both by a few ulp; see "The chunk-grid kernel" above. The cost on the 512-point
+fixture is still 0.
 
 ### Re-running it
 

@@ -104,6 +104,9 @@ fi
 # from its op or leaving the argmax with no control of its own.
 POISONED_TESTS=(
   fixtures::reproduces_all_512_points_of_the_basis_noise_fixture_exactly
+  # The chunk-grid kernel (#451) carries the same `poison` hook on its result.
+  fixtures::reproduces_every_value_of_the_chunk_grid_fixture_exactly
+  fixtures::the_chunk_function_reproduces_the_fixture_through_the_games_own_call_shape
   fixtures::reproduces_the_multioctave_fixture_exactly
   fixtures::reproduces_the_variable_persistence_fixture_exactly
   fixtures::reproduces_the_quick_multioctave_fixture_exactly

@@ -173,6 +173,130 @@ pub fn basis_noise(x: f64, y: f64, tables: &BasisNoiseTables) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
+// The chunk-grid kernel (#451). Read off Factorio 2.1.20's
+// `Noise::noise(float, float, unsigned int, unsigned int, float, float, float,
+// NoiseScratch&, float*) const` and graded against
+// `test/fixtures/oracle-basis-grid.seed123456.json`.
+// ---------------------------------------------------------------------------
+
+/// The noise coordinate of one grid column or row, as the grid kernel forms it.
+///
+/// `f32((index * step + origin) * input_scale)`, every step in f32 and in that
+/// order. The point kernel above is handed coordinates its caller already
+/// formed; the grid kernel is handed a chunk's origin and forms its own, so
+/// this rounding is part of the game's answer. A lone `basis_noise` on the raw
+/// `x` and `y` reaches it with `step = 1` and `origin` = the chunk's world
+/// origin. One whose `x` or `y` is anything else - even `x + 20000` - goes to
+/// the point kernel instead, measured as 400 calls of a 1,024-point list and
+/// none here.
+#[must_use]
+pub fn grid_coordinate(index: u32, step: f32, origin: f32, input_scale: f32) -> f32 {
+    // `as f32` is exact for every index a chunk can have; the game converts the
+    // same unsigned value with `cvtsi2ss`.
+    ((index as f32) * step + origin) * input_scale
+}
+
+/// Evaluate `basis_noise` at a noise-space point the way the CHUNK-GRID
+/// kernel does.
+///
+/// **This is a different function from [`basis_noise`], not a faster copy of
+/// it.** Map generation evaluates almost everything through this kernel: one
+/// `--create` made 69,384 calls to it and 821 to the point kernel, all 821
+/// from cliff placement. The two differ in two places, and both were measured
+/// against the game on 36,864 chunk values (`scripts/probes/basis-grid/`):
+///
+/// | kernel | falloff base | corner sum | exact |
+/// | --- | --- | --- | --- |
+/// | [`basis_noise`] | `1 - (dx² + dy²)`, zero past `d = 1` | by row | 20,332/36,864 |
+/// | grid, summed by row | `max((1 - dy²) - dx², 0)` | by row | 29,677/36,864 |
+/// | **this** | `max((1 - dy²) - dx², 0)` | **by column** | **36,862/36,864** |
+///
+/// `1 - dy²` is computed once per row and shared by that row's two corners,
+/// which is why the subtraction is grouped the way it is. The four corners sit
+/// in one SSE register in the order (0,0), (1,0), (0,1), (1,1), and the
+/// horizontal add folds lanes 0+2 and 1+3 first - so the pairs share a
+/// `corner_x`, the opposite of the point kernel's pairing.
+///
+/// The two misses are not this kernel: each sits where one half of a corner's
+/// dot product is exactly zero and the other half is a near-zero gradient slot
+/// (64's x, 128's y), which the committed table carries a few hundred ulp off.
+/// `fixtures.rs` has the detail, and #455 the follow-up.
+///
+/// The arithmetic is f32 throughout, like [`basis_noise`]'s, and the same
+/// no-FMA rule applies.
+#[must_use]
+pub fn basis_noise_grid(nx: f32, ny: f32, tables: &BasisNoiseTables) -> f32 {
+    let floor_x = nx.floor();
+    let floor_y = ny.floor();
+    let fx = nx - floor_x;
+    let fy = ny - floor_y;
+    // In range for the same reason as in `basis_noise`: Factorio's map limit
+    // keeps |floor| far below 2^31, where the game's own index arithmetic
+    // (an int subtraction, then the low byte) and `& 255` here agree.
+    let ix = floor_x as i64;
+    let iy = floor_y as i64;
+
+    let dx = [fx, fx - 1.0];
+    let dy = [fy, fy - 1.0];
+    let row_base = [1.0 - dy[0] * dy[0], 1.0 - dy[1] * dy[1]];
+
+    let corner = |cx: usize, cy: usize| -> f32 {
+        let q = row_base[cy] - dx[cx] * dx[cx];
+        // `maxps q, 0`: the second operand wins unless the first is GREATER,
+        // so a NaN and a negative zero both come out as +0, and this
+        // comparison reproduces both.
+        let q = if q > 0.0 { q } else { 0.0 };
+        // `(q * q) * q`; the same two products as the point kernel's
+        // `t * (t * t)`, since f32 multiplication commutes.
+        let falloff = (q * q) * q;
+        let hash = tables.a[((ix + cx as i64) & MASK) as usize]
+            ^ tables.b[((iy + cy as i64) & MASK) as usize];
+        let g = tables.sigma[hash as usize] as usize;
+        let dot = dx[cx] * GRADIENT_X[g] + dy[cy] * GRADIENT_Y[g];
+        dot * falloff
+    };
+
+    let column_x1 = corner(1, 0) + corner(1, 1);
+    let column_x0 = corner(0, 0) + corner(0, 1);
+    poison(column_x1 + column_x0)
+}
+
+/// One call of the game's grid kernel: a `w` by `h` block of grid points,
+/// each ADDED into `out`.
+///
+/// `out[r * w + i] += basis_noise_grid(nx(i), ny(r)) * output_scale`, with
+/// both coordinates from [`grid_coordinate`]. The `+=` is the game's: the
+/// kernel adds into the buffer it is handed rather than storing, which is how
+/// a multioctave caller sums its octaves in place. A lone `basis_noise` is
+/// handed a zeroed buffer - and that still matters, because `0 + -0` is `+0`.
+///
+/// # Panics
+///
+/// If `out` holds fewer than `w * h` values.
+#[allow(clippy::too_many_arguments)]
+pub fn basis_noise_grid_chunk(
+    origin: (f32, f32),
+    w: u32,
+    h: u32,
+    step: f32,
+    input_scale: f32,
+    output_scale: f32,
+    tables: &BasisNoiseTables,
+    out: &mut [f32],
+) {
+    let width = w as usize;
+    assert!(out.len() >= width * h as usize, "output buffer too small");
+    for r in 0..h {
+        let ny = grid_coordinate(r, step, origin.1, input_scale);
+        let row = &mut out[r as usize * width..(r as usize + 1) * width];
+        for (i, slot) in (0..w).zip(row.iter_mut()) {
+            let nx = grid_coordinate(i, step, origin.0, input_scale);
+            *slot += basis_noise_grid(nx, ny, tables) * output_scale;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Seed -> tables. Straight from the disassembly of Factorio 2.1.11's
 // `Noise::setSeed(uint, uchar)`.
 // ---------------------------------------------------------------------------
