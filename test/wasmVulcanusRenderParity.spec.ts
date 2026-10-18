@@ -123,16 +123,25 @@ const VULCANUS_SURFACE_SEED = 1249936247;
  * what makes a change to it a finding. Note what this pairing cannot see: with
  * ore off on both sides, the ore-halo tiles themselves are graded against
  * nothing, because the only game image that has them has ore drawn on top.
+ *
+ * **7 -> 1 on 2026-10-18 (#451)**, when the terrain sweep started evaluating
+ * each tile through the game's CHUNK-GRID noise path, the one its own preview
+ * uses, including the basalt-lakes multisample's same-chunk 33rd column. Six
+ * of the seven were the point path's rounding.
  */
-const DIFFERING_PX = 7;
+const DIFFERING_PX = 1;
 
 /**
  * The count the same comparison reports with the ore levers left at their
  * defaults - i.e. mismatched against the capture. Asserted as a control so the
  * levers stay load-bearing: if this ever equals `DIFFERING_PX`, the request has
  * stopped carrying them and the comparison has gone vacuous on that axis.
+ *
+ * 10,610 -> 10,605 on 2026-10-18 with the grid path (#451), five fewer in
+ * the same change that took `DIFFERING_PX` from 7 to 1. Which five was not
+ * checked pixel by pixel.
  */
-const DIFFERING_PX_AT_DEFAULT_LEVERS = 10610;
+const DIFFERING_PX_AT_DEFAULT_LEVERS = 10605;
 
 /** The capture's own setting: `--map-gen-settings` with each of these at size 0. */
 const ORE_LEVERS_OFF: VulcanusResourceControls = {

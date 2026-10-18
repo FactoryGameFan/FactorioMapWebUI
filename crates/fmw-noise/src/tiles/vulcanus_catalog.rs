@@ -28,6 +28,7 @@
 //! stores the byte `28 + N`, and literal `{r, g, b}` colours are used verbatim.
 //! The bytes below are the resolved values, as the TypeScript stores them.
 
+use crate::at::At;
 use crate::eval::math::{clamp, max, max2, min2, range_select_base};
 use crate::expressions::vulcanus_biomes::BiomeFields;
 use crate::expressions::vulcanus_helpers::{threshold, Plasma, VulcanusHelpers};
@@ -283,11 +284,17 @@ impl MountainLavaSpots {
 
     #[must_use]
     pub fn eval(&self, x: f64, y: f64, biomes: &BiomeFields) -> f64 {
+        self.eval_at(At::point(x, y), biomes)
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At, biomes: &BiomeFields) -> f64 {
         let inner = threshold(
             biomes.mountain_volcano_spots * 1.95 - 0.95,
             0.4 * clamp(threshold(biomes.mountains_biome, 0.5), 0.0, 1.0),
         );
-        let plasma_term = threshold(clamp(self.plasma.eval(x, y) / 20.0, 0.0, 1.0), 1.8);
+        let plasma_term = threshold(clamp(self.plasma.eval_at(at) / 20.0, 0.0, 1.0), 1.8);
         clamp(inner * plasma_term, 0.0, 1.0)
     }
 }

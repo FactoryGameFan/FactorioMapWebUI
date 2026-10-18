@@ -32,10 +32,11 @@
 //! evaluate it once per point into a local, which is what the memo achieves,
 //! bit-identically and with no cache. Every read is at the SAME `(x, y)`.
 
+use crate::at::At;
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::eval::ctx::EvalCtx;
 use crate::eval::math::{clamp, slider_rescale};
-use crate::eval::primitives::{basis_noise_expr, BasisExprParams};
+use crate::eval::primitives::{basis_noise_expr_at, BasisExprParams};
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::poison;
 
@@ -88,8 +89,14 @@ pub struct Plasma {
 impl Plasma {
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> f64 {
-        let a = basis_noise_expr(x, y, &self.a, &self.tables_a);
-        let b = basis_noise_expr(x, y, &self.b, &self.tables_b);
+        self.eval_at(At::point(x, y))
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> f64 {
+        let a = basis_noise_expr_at(at, &self.a, &self.tables_a);
+        let b = basis_noise_expr_at(at, &self.b, &self.tables_b);
         poison::f64_result((a - b).abs())
     }
 }
@@ -213,32 +220,68 @@ impl VulcanusHelpers {
     /// `vulcanus_wobble_x`.
     #[must_use]
     pub fn wobble_x(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.wobble_x.eval(x, y))
+        self.wobble_x_at(At::point(x, y))
+    }
+
+    /// [`Self::wobble_x`] at an [`At`] (#451).
+    #[must_use]
+    pub fn wobble_x_at(&self, at: At) -> f64 {
+        f64::from(self.wobble_x.eval_at(at))
     }
     /// `vulcanus_wobble_y`.
     #[must_use]
     pub fn wobble_y(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.wobble_y.eval(x, y))
+        self.wobble_y_at(At::point(x, y))
+    }
+
+    /// [`Self::wobble_y`] at an [`At`] (#451).
+    #[must_use]
+    pub fn wobble_y_at(&self, at: At) -> f64 {
+        f64::from(self.wobble_y.eval_at(at))
     }
     /// `vulcanus_wobble_large_x`.
     #[must_use]
     pub fn wobble_large_x(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.wobble_large_x.eval(x, y))
+        self.wobble_large_x_at(At::point(x, y))
+    }
+
+    /// [`Self::wobble_large_x`] at an [`At`] (#451).
+    #[must_use]
+    pub fn wobble_large_x_at(&self, at: At) -> f64 {
+        f64::from(self.wobble_large_x.eval_at(at))
     }
     /// `vulcanus_wobble_large_y`.
     #[must_use]
     pub fn wobble_large_y(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.wobble_large_y.eval(x, y))
+        self.wobble_large_y_at(At::point(x, y))
+    }
+
+    /// [`Self::wobble_large_y`] at an [`At`] (#451).
+    #[must_use]
+    pub fn wobble_large_y_at(&self, at: At) -> f64 {
+        f64::from(self.wobble_large_y.eval_at(at))
     }
     /// `vulcanus_wobble_huge_x`.
     #[must_use]
     pub fn wobble_huge_x(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.wobble_huge_x.eval(x, y))
+        self.wobble_huge_x_at(At::point(x, y))
+    }
+
+    /// [`Self::wobble_huge_x`] at an [`At`] (#451).
+    #[must_use]
+    pub fn wobble_huge_x_at(&self, at: At) -> f64 {
+        f64::from(self.wobble_huge_x.eval_at(at))
     }
     /// `vulcanus_wobble_huge_y`.
     #[must_use]
     pub fn wobble_huge_y(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.wobble_huge_y.eval(x, y))
+        self.wobble_huge_y_at(At::point(x, y))
+    }
+
+    /// [`Self::wobble_huge_y`] at an [`At`] (#451).
+    #[must_use]
+    pub fn wobble_huge_y_at(&self, at: At) -> f64 {
+        f64::from(self.wobble_huge_y.eval_at(at))
     }
 }
 

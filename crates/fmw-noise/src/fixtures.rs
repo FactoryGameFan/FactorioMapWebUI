@@ -599,7 +599,7 @@ fn reproduces_every_value_of_the_multioctave_grid_fixture() {
 fn the_per_tile_multioctave_grid_entry_point_agrees_with_the_chunk_call() {
     // `sum_octaves_grid` is what a renderer calls per pixel. It must give the
     // chunk call's answer at every tile, including the negative-coordinate
-    // chunks, where the chunk is floor(x / 32) and not truncation toward zero.
+    // chunks.
     use crate::multioctave_noise::{grid_octave_terms, multioctave_grid_chunk, sum_octaves_grid};
     let fixture = load_captured_at(MULTIOCTAVE_GRID_FIXTURE, "2.1.20");
     let seed0 = fixture.get("seed0").as_f64() as u32;
@@ -623,8 +623,8 @@ fn the_per_tile_multioctave_grid_entry_point_agrees_with_the_chunk_call() {
             multioctave_grid_chunk(grid_origin(case, chunk), 32, 32, &terms, &tables, &mut out);
             for (k, want) in out.iter().enumerate() {
                 let got = sum_octaves_grid(
-                    x + (k % 32) as i32,
-                    y + (k / 32) as i32,
+                    (x, y),
+                    ((k % 32) as u32, (k / 32) as u32),
                     offset,
                     &terms,
                     &tables,
@@ -744,12 +744,13 @@ fn reproduces_every_value_of_the_quick_vp_grid_fixture() {
                 chunk.get("y").as_f64() as i32,
             );
             for (k, want) in chunk.get("values").as_f64_array().iter().enumerate() {
-                let (x, y) = (x0 + (k % 32) as i32, y0 + (k / 32) as i32);
+                let index = ((k % 32) as u32, (k / 32) as u32);
                 let got = match (&quick, &vp) {
-                    (Some(q), _) => sum_octaves_grid(x, y, offset_y, q),
+                    (Some(q), _) => sum_octaves_grid((x0, y0), index, offset_y, q),
                     (_, Some(v)) => {
+                        let x = x0 + (k % 32) as i32;
                         let p = vp_grid_persistence(case.get("persistence").as_str(), x);
-                        eval_grid(x, y, p, offset_y, v, &tables)
+                        eval_grid((x0, y0), index, p, offset_y, v, &tables)
                     }
                     _ => unreachable!(),
                 };

@@ -23,7 +23,6 @@ use crate::basis_noise::{
     basis_noise, basis_noise_grid, grid_coordinate, tables_from_seed, BasisNoiseTables,
 };
 use crate::fast_approx::noise_machine_pow;
-use crate::multioctave_noise::CHUNK;
 
 /// Parameters for [`quick_multioctave_noise`]. `f64` for the same reason as
 /// [`crate::multioctave_noise::MultioctaveParams`].
@@ -158,10 +157,13 @@ pub fn sum_octaves(x: f64, y: f64, terms: &QuickOctaves) -> f32 {
 /// `offset_y` is an argument because [`QuickMultioctaveParams`] has no field
 /// for it: no shipped expression sets it, and the fixture does.
 #[must_use]
-pub fn sum_octaves_grid(x: i32, y: i32, offset_y: f32, terms: &QuickOctaves) -> f32 {
-    let cx = x.div_euclid(CHUNK) * CHUNK;
-    let cy = y.div_euclid(CHUNK) * CHUNK;
-    let (i, r) = ((x - cx) as u32, (y - cy) as u32);
+pub fn sum_octaves_grid(
+    chunk: (i32, i32),
+    index: (u32, u32),
+    offset_y: f32,
+    terms: &QuickOctaves,
+) -> f32 {
+    let ((cx, cy), (i, r)) = (chunk, index);
     let origin = (cx as f32 + terms.offset_x, cy as f32 + offset_y);
     let mut sum = 0.0f32;
     for ((&scale, &amp), tables) in terms
@@ -183,7 +185,7 @@ pub fn sum_octaves_grid(x: i32, y: i32, offset_y: f32, terms: &QuickOctaves) -> 
 pub fn sum_octaves_at(at: At, terms: &QuickOctaves) -> f32 {
     match at {
         At::Point { x, y } => sum_octaves(x, y, terms),
-        At::Tile { x, y } => sum_octaves_grid(x, y, 0.0, terms),
+        At::Grid { cx, cy, i, r } => sum_octaves_grid((cx, cy), (i, r), 0.0, terms),
     }
 }
 

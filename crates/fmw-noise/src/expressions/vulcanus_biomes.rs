@@ -53,6 +53,7 @@
 //! `multioctave_noise`'s own docs record what happened last time a per-call
 //! rebuild went unmeasured: 20x.
 
+use crate::at::At;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
@@ -229,6 +230,12 @@ impl<'a> VulcanusBiomes<'a> {
 
     /// `distance_from_nearest_point{points = starting_positions}`, uncapped.
     fn distance(&self, x: f64, y: f64) -> f64 {
+        self.distance_at(At::point(x, y))
+    }
+
+    /// [`Self::distance`] at an [`At`] (#451).
+    fn distance_at(&self, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
         f64::from(distance_from_nearest_point(
             x,
             y,
@@ -239,10 +246,11 @@ impl<'a> VulcanusBiomes<'a> {
 
     /// `biome_multiscale(seed1, scale, bias)` with `bias = 0` at all three call
     /// sites: the near and far noise blended by `clamp(distance / 10000, 0, 1)`.
-    fn multiscale(&self, near: &Prepared, far: &Prepared, x: f64, y: f64, bias: f64) -> f64 {
+    fn multiscale_at(&self, near: &Prepared, far: &Prepared, at: At, bias: f64) -> f64 {
+        let (x, y) = (at.x(), at.y());
         bias + lerp(
-            f64::from(near.eval(x, y)),
-            f64::from(far.eval(x, y)),
+            f64::from(near.eval_at(at)),
+            f64::from(far.eval_at(at)),
             clamp(self.distance(x, y) / 10_000.0, 0.0, 1.0),
         )
     }
@@ -250,12 +258,20 @@ impl<'a> VulcanusBiomes<'a> {
     /// The pre-volcano stage of the biome chain.
     #[must_use]
     pub fn pre_volcano(&self, x: f64, y: f64) -> PreVolcano {
-        let wobble = WobbleSums::at(self.helpers, x, y);
-        let spawn = self.spawn.eval(x, y, wobble);
+        self.pre_volcano_at(At::point(x, y))
+    }
 
-        let mountains_noise = self.multiscale(&self.mountains_near, &self.mountains_far, x, y, 0.0);
-        let ashlands_noise = self.multiscale(&self.ashlands_near, &self.ashlands_far, x, y, 0.0);
-        let basalts_noise = self.multiscale(&self.basalts_near, &self.basalts_far, x, y, 0.0);
+    /// [`Self::pre_volcano`] at an [`At`] (#451).
+    #[must_use]
+    pub fn pre_volcano_at(&self, at: At) -> PreVolcano {
+        let (x, y) = (at.x(), at.y());
+        let wobble = WobbleSums::at(self.helpers, x, y);
+        let spawn = self.spawn.eval_at(at, wobble);
+
+        let mountains_noise =
+            self.multiscale_at(&self.mountains_near, &self.mountains_far, at, 0.0);
+        let ashlands_noise = self.multiscale_at(&self.ashlands_near, &self.ashlands_far, at, 0.0);
+        let basalts_noise = self.multiscale_at(&self.basalts_near, &self.basalts_far, at, 0.0);
 
         let blend = clamp(2.0 * spawn.starting_area, 0.0, 1.0);
 
@@ -295,17 +311,27 @@ impl<'a> VulcanusBiomes<'a> {
     /// out of spawn.
     #[must_use]
     pub fn volcano_area(&self, x: f64, y: f64) -> f64 {
-        let pre = self.pre_volcano(x, y);
+        self.volcano_area_at(At::point(x, y))
+    }
+
+    /// [`Self::volcano_area`] at an [`At`] (#451).
+    #[must_use]
+    pub fn volcano_area_at(&self, at: At) -> f64 {
+        let pre = self.pre_volcano_at(at);
         lerp(pre.mountains_biome_full_pre_volcano, 0.0, pre.starting_area)
     }
 
     /// The spot-noise query offset. The SAME offset is used as the
     /// `x_distortion` of both volcano discs below.
-    fn query_offset(&self, x: f64, y: f64) -> (f64, f64) {
+    fn query_offset_at(&self, at: At) -> (f64, f64) {
         let h = self.helpers;
         (
-            h.wobble_x(x, y) / 2.0 + h.wobble_large_x(x, y) / 12.0 + h.wobble_huge_x(x, y) / 80.0,
-            h.wobble_y(x, y) / 2.0 + h.wobble_large_y(x, y) / 12.0 + h.wobble_huge_y(x, y) / 80.0,
+            h.wobble_x_at(at) / 2.0
+                + h.wobble_large_x_at(at) / 12.0
+                + h.wobble_huge_x_at(at) / 80.0,
+            h.wobble_y_at(at) / 2.0
+                + h.wobble_large_y_at(at) / 12.0
+                + h.wobble_huge_y_at(at) / 80.0,
         )
     }
 
@@ -353,7 +379,14 @@ impl<'a> VulcanusBiomes<'a> {
     /// constant in exact arithmetic.
     #[must_use]
     pub fn raw_spots(&self, x: f64, y: f64) -> f64 {
-        let (off_x, off_y) = self.query_offset(x, y);
+        self.raw_spots_at(At::point(x, y))
+    }
+
+    /// [`Self::raw_spots`] at an [`At`] (#451).
+    #[must_use]
+    pub fn raw_spots_at(&self, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
+        let (off_x, off_y) = self.query_offset_at(at);
         let (qx, qy) = (x + off_x, y + off_y);
 
         let mut best = 0.0; // basement_value = 0
@@ -388,7 +421,14 @@ impl<'a> VulcanusBiomes<'a> {
     /// `mountain_volcano_spots = max(starting_volcano_spot, raw_spots - starting_protector)`.
     #[must_use]
     pub fn mountain_volcano_spots(&self, x: f64, y: f64) -> f64 {
-        let (off_x, off_y) = self.query_offset(x, y);
+        self.mountain_volcano_spots_at(At::point(x, y))
+    }
+
+    /// [`Self::mountain_volcano_spots`] at an [`At`] (#451).
+    #[must_use]
+    pub fn mountain_volcano_spots_at(&self, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
+        let (off_x, off_y) = self.query_offset_at(at);
         let protector = clamp(
             starting_spot_at_angle(&self.protector, x, y, off_x, off_y),
             0.0,
@@ -399,14 +439,20 @@ impl<'a> VulcanusBiomes<'a> {
             0.0,
             1.0,
         );
-        max2(volcano_spot, self.raw_spots(x, y) - protector)
+        max2(volcano_spot, self.raw_spots_at(at) - protector)
     }
 
     /// Evaluate every graded field of this layer at one position.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> BiomeFields {
-        let pre = self.pre_volcano(x, y);
-        let spots = self.mountain_volcano_spots(x, y);
+        self.eval_at(At::point(x, y))
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> BiomeFields {
+        let pre = self.pre_volcano_at(at);
+        let spots = self.mountain_volcano_spots_at(at);
 
         // The volcano field re-enters the mountains raw here, and this is the
         // only place it does. The 0.5 halves the pre-volcano contribution; the

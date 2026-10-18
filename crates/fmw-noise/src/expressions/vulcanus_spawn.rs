@@ -29,6 +29,7 @@
 //! ULP. [`VulcanusSpawn::with_host_trig`] computes them with Rust's own libm,
 //! for tests.
 
+use crate::at::At;
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
 use crate::eval::ctx::EvalCtx;
 use crate::eval::math::{clamp, max};
@@ -160,6 +161,13 @@ impl VulcanusSpawn {
     /// Evaluate every field of this layer at one position.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64, wobble: WobbleSums) -> SpawnFields {
+        self.eval_at(At::point(x, y), wobble)
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At, wobble: WobbleSums) -> SpawnFields {
+        let (x, y) = (at.x(), at.y());
         let r = VULCANUS_STARTING_AREA_RADIUS;
 
         // Ashlands and basalts share 0.1 * r; mountains uses half of it.

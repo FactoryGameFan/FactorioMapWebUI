@@ -479,7 +479,7 @@ fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let color = vulcanus_tile_color(stack.tile(wx, wy));
+            let color = vulcanus_tile_color(stack.tile_at(terrain_at(req, wx, wy)));
             out[offset] = color[0];
             out[offset + 1] = color[1];
             out[offset + 2] = color[2];
@@ -651,10 +651,7 @@ pub fn nauvis_ctx(seed0: u32, p: &NauvisParams) -> NauvisCtx {
 fn terrain_at(req: &Request, wx: f64, wy: f64) -> At {
     let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX);
     if req.tiles_per_pixel == 1.0 && whole(wx) && whole(wy) {
-        At::Tile {
-            x: wx as i32,
-            y: wy as i32,
-        }
+        At::tile(wx as i32, wy as i32)
     } else {
         At::point(wx, wy)
     }

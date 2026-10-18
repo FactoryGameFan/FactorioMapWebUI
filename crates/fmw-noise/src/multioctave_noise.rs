@@ -220,7 +220,9 @@ impl Prepared {
     pub fn eval_at(&self, at: At) -> f32 {
         match at {
             At::Point { x, y } => self.eval(x, y),
-            At::Tile { x, y } => sum_octaves_grid(x, y, (0.0, 0.0), &self.grid, &self.tables),
+            At::Grid { cx, cy, i, r } => {
+                sum_octaves_grid((cx, cy), (i, r), (0.0, 0.0), &self.grid, &self.tables)
+            }
         }
     }
 }
@@ -230,10 +232,6 @@ impl Prepared {
 // `NoiseOperations::MultioctaveNoise::run` (0x2525320) and graded against
 // `test/fixtures/oracle-multioctave-grid.seed123456.json`.
 // ---------------------------------------------------------------------------
-
-/// The map generator's chunk edge, in tiles: one grid-kernel call covers a
-/// `CHUNK` by `CHUNK` block.
-pub const CHUNK: i32 = 32;
 
 /// The per-octave terms of the chunk-grid path.
 ///
@@ -345,24 +343,22 @@ pub(crate) fn grid_kernel_calls(
         .collect()
 }
 
-/// One tile of `multioctave_noise` through the grid path: what map generation
-/// computes at world tile `(x, y)`.
+/// One grid point of `multioctave_noise` through the grid path: what map
+/// generation computes at column/row `index` of `chunk`.
 ///
 /// The same arithmetic as [`multioctave_grid_chunk`] for the one grid point
 /// the tile is, so a renderer can ask for a pixel without building a chunk.
-/// The tile's chunk is `floor(x / CHUNK)`, so the column index is never
-/// negative.
+/// `chunk` is the tile's chunk origin and `index` its column and row in it -
+/// usually below 32, but a `multisample` reads the 33rd (see [`At::Grid`]).
 #[must_use]
 pub fn sum_octaves_grid(
-    x: i32,
-    y: i32,
+    chunk: (i32, i32),
+    index: (u32, u32),
     offset: (f32, f32),
     terms: &GridOctaveTerms,
     tables: &BasisNoiseTables,
 ) -> f32 {
-    let cx = x.div_euclid(CHUNK) * CHUNK;
-    let cy = y.div_euclid(CHUNK) * CHUNK;
-    let (i, r) = ((x - cx) as u32, (y - cy) as u32);
+    let ((cx, cy), (i, r)) = (chunk, index);
     let origin = (cx as f32 + offset.0, cy as f32 + offset.1);
     let mut out = 0.0f32;
     for (k, (&step, &amp)) in terms.steps.iter().zip(terms.amps.iter()).enumerate() {

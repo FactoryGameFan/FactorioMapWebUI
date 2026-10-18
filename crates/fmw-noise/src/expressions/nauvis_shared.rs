@@ -230,9 +230,9 @@ impl NauvisShared {
                 y * self.offset_input_scale,
                 tables,
             )),
-            At::Tile { x, y } => f64::from(basis_noise_grid_at(
-                x,
-                y,
+            At::Grid { cx, cy, i, r } => f64::from(basis_noise_grid_at(
+                (cx, cy),
+                (i, r),
                 (0.0, 0.0),
                 self.offset_input_scale as f32,
                 1.0,

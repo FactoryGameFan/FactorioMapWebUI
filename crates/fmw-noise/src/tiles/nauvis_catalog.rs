@@ -171,10 +171,7 @@ impl NauvisTileFields {
     #[must_use]
     pub fn at(&self) -> At {
         if self.grid {
-            At::Tile {
-                x: self.x as i32,
-                y: self.y as i32,
-            }
+            At::tile(self.x as i32, self.y as i32)
         } else {
             At::point(self.x, self.y)
         }

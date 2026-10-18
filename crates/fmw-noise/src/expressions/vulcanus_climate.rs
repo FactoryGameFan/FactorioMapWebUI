@@ -19,6 +19,7 @@
 //! [`CrackFields`] rather than being recomputed, which is what keeps the whole
 //! Vulcanus chain a single pass per point.
 
+use crate::at::At;
 use crate::eval::math::{clamp, min2};
 use crate::expressions::vulcanus_cracks::CrackFields;
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
@@ -75,11 +76,17 @@ impl VulcanusClimate {
     /// Evaluate both fields at one position, given this point's crack fields.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64, cracks: &CrackFields) -> ClimateFields {
+        self.eval_at(At::point(x, y), cracks)
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At, cracks: &CrackFields) -> ClimateFields {
         // `min` before `clamp`, and in this argument order - see the note in
         // `vulcanus_cracks` on why `min2` rather than `f64::min`.
         let aux = clamp(
             min2(
-                f64::from(self.aux.eval(x, y)).abs(),
+                f64::from(self.aux.eval_at(at)).abs(),
                 0.3 - 0.6 * cracks.flood_paths,
             ),
             0.0,
@@ -89,8 +96,8 @@ impl VulcanusClimate {
         // Three subtractions from 1, left to right, then clamped. Each `abs`
         // applies to its own noise term rather than to the running total.
         let moisture = clamp(
-            1.0 - f64::from(self.moisture_a.eval(x, y)).abs()
-                - f64::from(self.moisture_b.eval(x, y)).abs()
+            1.0 - f64::from(self.moisture_a.eval_at(at)).abs()
+                - f64::from(self.moisture_b.eval_at(at)).abs()
                 - 0.2 * cracks.flood_cracks_a,
             0.0,
             1.0,
