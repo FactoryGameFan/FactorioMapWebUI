@@ -540,6 +540,11 @@
     "oracle-vulcanus-wouldcollide.seed123456.json": {
       "factorioVersion": "2.0.77",
       "evidence": "captured 2026-09-08 by scripts/probes/vulcanus-cliff-wouldcollide (lldb, not Lua) from a re-signed copy of ~/GitHub/factorio-oracle/installs/factorio-2.0.77.app whose log reads 'Factorio 2.0.77 (build 84539, mac-arm64, full, space-age)'. 2.0.77 rather than the installed 2.1.17 because it is the one local binary with an unstripped symbol table that can be re-signed for a debugger, and because oracle-vulcanus-cliff-volcanism-sweep and the 2026-09-07 re-capture showed 2.0.77 places the same Vulcanus cliffs as 2.1.12 and 2.1.17 in all three regions, cell for cell and orientation for orientation. Every breakpoint address is in the probe beside the disassembly it was read from."
+    },
+    "oracle-basis-grid.seed123456.json": {
+      "factorioVersion": "2.1.20",
+      "evidence": "captured 2026-10-18 by scripts/probes/basis-grid (gdb, not Lua) from the Linux headless build whose --version reads 'Version: 2.1.20 (build 87512, linux64, headless)', with a breakpoint on the chunk-grid kernel Noise::noise(float, float, unsigned int, unsigned int, float, float, float, NoiseScratch&, float*) during a --create. Linux headless rather than the installed Steam build because it ships its symbol table and DWARF, so the breakpoint is set by name. Cross-checked the same run: 'Version: 2.0.77 (build 84539, linux64, headless)' returned bit-identical values for all 36,864 points.",
+      "versionDifferences": "none: 2.0.77 and 2.1.20 bit-identical on every value; 2.1.11 has the same kernel instruction sequence as 2.1.20 (not captured)"
     }
   },
   "notFixtures": {
