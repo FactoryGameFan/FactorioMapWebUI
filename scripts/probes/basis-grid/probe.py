@@ -13,9 +13,19 @@ AFTER it returns.
 
 Environment:
     PROBE_OUT     path of the JSONL file to write
-    PROBE_CASES   JSON list of [input_scale, output_scale], one per case; a
-                  call is matched to a case by its two scales
-    PROBE_CHUNKS  JSON list of [x0, y0] chunk origins to keep
+    PROBE_MATCH   "scales" (the default) or "octaves"
+    PROBE_CASES   "scales": JSON list of [input_scale, output_scale], one per
+                  case, and a call is matched to a case by its two scales.
+                  "octaves": JSON list of input scales. A multioctave op calls
+                  the kernel once per octave with the SAME input scale and a
+                  different output scale (the octave's amplitude), step and
+                  origin, so only the input scale identifies the case.
+    PROBE_CHUNKS  "scales": JSON list of [x0, y0] chunk origins to keep.
+                  "octaves": JSON list of world chunk ROWS (y) to keep. An
+                  octave's y origin is f32(y * step), so a call is kept when
+                  y0 / step is within 1/64 of a listed row. Its x origin also
+                  carries the octave's 17.17 shift, so x is not filtered here;
+                  capture.ts sorts the calls out.
 
 ## What the registers hold - read off the disassembly, NOT the demangled signature
 
@@ -53,8 +63,15 @@ import struct
 import gdb
 
 OUT = open(os.environ["PROBE_OUT"], "w")
-CASES = {struct.unpack("<ff", struct.pack("<ff", *c)) for c in json.loads(os.environ["PROBE_CASES"])}
-CHUNKS = {tuple(c) for c in json.loads(os.environ["PROBE_CHUNKS"])}
+MATCH = os.environ.get("PROBE_MATCH", "scales")
+if MATCH == "scales":
+    CASES = {struct.unpack("<ff", struct.pack("<ff", *c)) for c in json.loads(os.environ["PROBE_CASES"])}
+    CHUNKS = {tuple(c) for c in json.loads(os.environ["PROBE_CHUNKS"])}
+elif MATCH == "octaves":
+    INPUT_SCALES = {struct.unpack("<f", struct.pack("<f", c))[0] for c in json.loads(os.environ["PROBE_CASES"])}
+    ROWS = [float(r) for r in json.loads(os.environ["PROBE_CHUNKS"])]
+else:
+    raise ValueError(f"PROBE_MATCH must be scales or octaves, not {MATCH!r}")
 GRID = "Noise::noise(float, float, unsigned int, unsigned int, float, float, float, NoiseScratch&, float*) const"
 
 hits = {"calls": 0, "kept": 0, "returned": 0}
@@ -103,11 +120,15 @@ class Kernel(gdb.Breakpoint):
     def stop(self):
         hits["calls"] += 1
         scales = (xmm(3), xmm(4))
-        if scales not in CASES:
-            return False
-        x0, y0 = xmm(0), xmm(1)
-        if (x0, y0) not in CHUNKS:
-            return False
+        x0, y0, step = xmm(0), xmm(1), xmm(2)
+        if MATCH == "scales":
+            if scales not in CASES or (x0, y0) not in CHUNKS:
+                return False
+        else:
+            if scales[0] not in INPUT_SCALES or step <= 0.0:
+                return False
+            if not any(abs(y0 / step - row) < 1 / 64 for row in ROWS):
+                return False
         w, h = reg("rsi") & 0xFFFFFFFF, reg("rdx") & 0xFFFFFFFF
         out = reg("r9")
         rec = {
@@ -115,9 +136,12 @@ class Kernel(gdb.Breakpoint):
             "outputScale": scales[1],
             "x0": x0,
             "y0": y0,
-            "step": xmm(2),
+            "step": step,
             "w": w,
             "h": h,
+            # The buffer's address, so capture.ts can chain one chunk's
+            # octaves: each adds into the buffer the previous one returned.
+            "out": out,
             "before": read_bits(out, w * h),
         }
         hits["kept"] += 1

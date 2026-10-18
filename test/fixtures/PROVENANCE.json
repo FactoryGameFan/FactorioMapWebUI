@@ -545,6 +545,11 @@
       "factorioVersion": "2.1.20",
       "evidence": "captured 2026-10-18 by scripts/probes/basis-grid (gdb, not Lua) from the Linux headless build whose --version reads 'Version: 2.1.20 (build 87512, linux64, headless)', with a breakpoint on the chunk-grid kernel Noise::noise(float, float, unsigned int, unsigned int, float, float, float, NoiseScratch&, float*) during a --create. Linux headless rather than the installed Steam build because it ships its symbol table and DWARF, so the breakpoint is set by name. Cross-checked the same run: 'Version: 2.0.77 (build 84539, linux64, headless)' returned bit-identical values for all 36,864 points.",
       "versionDifferences": "none: 2.0.77 and 2.1.20 bit-identical on every value; 2.1.11 has the same kernel instruction sequence as 2.1.20 (not captured)"
+    },
+    "oracle-multioctave-grid.seed123456.json": {
+      "factorioVersion": "2.1.20",
+      "evidence": "captured 2026-10-18 by scripts/probes/multioctave-grid (gdb, not Lua) from the Linux headless build whose --version reads 'Version: 2.1.20 (build 87512, linux64, headless)': every call MultioctaveNoise::run's chunk-grid branch made to the grid basis_noise kernel, chained per chunk by buffer content. Cross-checked the same run: 'Version: 2.0.77 (build 84539, linux64, headless)' returned bit-identical values for every chunk.",
+      "versionDifferences": "none: 2.0.77 and 2.1.20 bit-identical on every value"
     }
   },
   "notFixtures": {

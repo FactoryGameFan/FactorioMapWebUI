@@ -467,6 +467,213 @@ fn the_chunk_grid_fixture_tells_the_two_kernels_and_both_corner_orders_apart() {
 }
 
 // ---------------------------------------------------------------------------
+// The chunk-grid multioctave path (#451).
+//
+// scripts/probes/multioctave-grid/ recorded every grid-kernel call the game's
+// `MultioctaveNoise::run` made for three multioctave expressions, plus one
+// `basis_noise` with `offset_x`/`offset_y`, over nine chunks each. Each chunk
+// carries the octave calls' arguments as the game passed them and the finished
+// buffer, so the arguments and the values are graded separately.
+// ---------------------------------------------------------------------------
+
+const MULTIOCTAVE_GRID_FIXTURE: &str = "test/fixtures/oracle-multioctave-grid.seed123456.json";
+
+fn multioctave_grid_params(case: &Json, seed0: u32) -> crate::multioctave_noise::MultioctaveParams {
+    crate::multioctave_noise::MultioctaveParams {
+        seed0,
+        seed1: case.get("seed1").as_f64() as u32,
+        octaves: case.get("octaves").as_f64(),
+        persistence: case.get("persistence").as_f64(),
+        input_scale: case.get("inputScale").as_f64(),
+        output_scale: case.get("outputScale").as_f64(),
+    }
+}
+
+/// The op's origin for one chunk: its world origin plus the offsets, in f32.
+fn grid_origin(case: &Json, chunk: &Json) -> (f32, f32) {
+    (
+        chunk.get("x").as_f64() as f32 + case.get("offsetX").as_f64() as f32,
+        chunk.get("y").as_f64() as f32 + case.get("offsetY").as_f64() as f32,
+    )
+}
+
+#[test]
+fn predicts_every_octave_call_of_the_multioctave_grid_fixture_exactly() {
+    use crate::multioctave_noise::{grid_kernel_calls, grid_octave_terms};
+    let fixture = load_captured_at(MULTIOCTAVE_GRID_FIXTURE, "2.1.20");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let bits = |j: &Json| (j.as_f64() as f32).to_bits();
+    let (mut exact, mut total) = (0, 0);
+    for case in fixture.get("cases").as_array() {
+        let is_multioctave = case.get("op").as_str() == "multioctave_noise";
+        for chunk in case.get("chunks").as_array() {
+            let origin = grid_origin(case, chunk);
+            // A lone basis_noise makes one call: the op's origin, step 1, and
+            // the case's own output scale.
+            let predicted: Vec<(u32, u32, u32, u32)> = if is_multioctave {
+                let terms = grid_octave_terms(&multioctave_grid_params(case, seed0));
+                grid_kernel_calls(origin, &terms)
+                    .iter()
+                    .map(|c| {
+                        (
+                            c.origin.0.to_bits(),
+                            c.origin.1.to_bits(),
+                            c.step.to_bits(),
+                            c.amp.to_bits(),
+                        )
+                    })
+                    .collect()
+            } else {
+                let out = case.get("outputScale").as_f64() as f32;
+                vec![(
+                    origin.0.to_bits(),
+                    origin.1.to_bits(),
+                    1.0f32.to_bits(),
+                    out.to_bits(),
+                )]
+            };
+            let recorded: Vec<(u32, u32, u32, u32)> = chunk
+                .get("octaves")
+                .as_array()
+                .iter()
+                .map(|o| {
+                    (
+                        bits(o.get("x0")),
+                        bits(o.get("y0")),
+                        bits(o.get("step")),
+                        bits(o.get("outputScale")),
+                    )
+                })
+                .collect();
+            assert_eq!(predicted.len(), recorded.len(), "octave count");
+            for (p, r) in predicted.iter().zip(&recorded) {
+                total += 1;
+                if p == r {
+                    exact += 1;
+                }
+            }
+        }
+    }
+    // 4 + 3 + 4 octaves and one basis call, over nine chunks each.
+    assert_eq!((exact, total), (108, 108));
+}
+
+#[test]
+fn reproduces_every_value_of_the_multioctave_grid_fixture() {
+    use crate::multioctave_noise::{grid_octave_terms, multioctave_grid_chunk};
+    let fixture = load_captured_at(MULTIOCTAVE_GRID_FIXTURE, "2.1.20");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let mut per_case = Vec::new();
+    for case in fixture.get("cases").as_array() {
+        let tables = tables_from_seed(seed0, case.get("seed1").as_f64() as u32);
+        let mut exact = 0;
+        for chunk in case.get("chunks").as_array() {
+            let origin = grid_origin(case, chunk);
+            let mut out = vec![0.0f32; 32 * 32];
+            if case.get("op").as_str() == "multioctave_noise" {
+                let terms = grid_octave_terms(&multioctave_grid_params(case, seed0));
+                multioctave_grid_chunk(origin, 32, 32, &terms, &tables, &mut out);
+            } else {
+                let s_in = case.get("inputScale").as_f64() as f32;
+                let s_out = case.get("outputScale").as_f64() as f32;
+                basis_noise_grid_chunk(origin, 32, 32, 1.0, s_in, s_out, &tables, &mut out);
+            }
+            for (got, want) in out.iter().zip(chunk.get("values").as_f64_array()) {
+                if got.to_bits() == (want as f32).to_bits() {
+                    exact += 1;
+                }
+            }
+        }
+        per_case.push((case.get("property").as_str().to_string(), exact));
+    }
+    // Every value, all four cases. No gradient-slot misses here (#455): none
+    // of these points is on an axis through a near-zero slot.
+    let want: Vec<(String, usize)> = ["elevation", "moisture", "aux", "temperature"]
+        .iter()
+        .map(|p| ((*p).to_string(), 9_216))
+        .collect();
+    assert_eq!(per_case, want);
+}
+
+#[test]
+fn the_per_tile_multioctave_grid_entry_point_agrees_with_the_chunk_call() {
+    // `sum_octaves_grid` is what a renderer calls per pixel. It must give the
+    // chunk call's answer at every tile, including the negative-coordinate
+    // chunks, where the chunk is floor(x / 32) and not truncation toward zero.
+    use crate::multioctave_noise::{grid_octave_terms, multioctave_grid_chunk, sum_octaves_grid};
+    let fixture = load_captured_at(MULTIOCTAVE_GRID_FIXTURE, "2.1.20");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let mut compared = 0;
+    for case in fixture.get("cases").as_array() {
+        if case.get("op").as_str() != "multioctave_noise" {
+            continue;
+        }
+        let tables = tables_from_seed(seed0, case.get("seed1").as_f64() as u32);
+        let terms = grid_octave_terms(&multioctave_grid_params(case, seed0));
+        let offset = (
+            case.get("offsetX").as_f64() as f32,
+            case.get("offsetY").as_f64() as f32,
+        );
+        for chunk in case.get("chunks").as_array() {
+            let (x, y) = (
+                chunk.get("x").as_f64() as i32,
+                chunk.get("y").as_f64() as i32,
+            );
+            let mut out = vec![0.0f32; 32 * 32];
+            multioctave_grid_chunk(grid_origin(case, chunk), 32, 32, &terms, &tables, &mut out);
+            for (k, want) in out.iter().enumerate() {
+                let got = sum_octaves_grid(
+                    x + (k % 32) as i32,
+                    y + (k / 32) as i32,
+                    offset,
+                    &terms,
+                    &tables,
+                );
+                assert_eq!(
+                    got.to_bits(),
+                    want.to_bits(),
+                    "tile ({}, {})",
+                    x + (k % 32) as i32,
+                    y + (k / 32) as i32
+                );
+                compared += 1;
+            }
+        }
+    }
+    assert_eq!(compared, 3 * 9 * 1024);
+}
+
+#[test]
+fn the_multioctave_grid_fixture_is_out_of_reach_of_the_scattered_path() {
+    // The control. The shipped scattered multioctave, at the same tiles, must
+    // score below 100% or the fixture cannot tell the two paths apart. Only
+    // the two cases with no offsets, because the scattered path takes none.
+    use crate::multioctave_noise::Prepared;
+    let fixture = load_captured_at(MULTIOCTAVE_GRID_FIXTURE, "2.1.20");
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let (mut exact, mut total) = (0, 0);
+    for case in fixture.get("cases").as_array() {
+        let no_offset = case.get("offsetX").as_f64() == 0.0 && case.get("offsetY").as_f64() == 0.0;
+        if case.get("op").as_str() != "multioctave_noise" || !no_offset {
+            continue;
+        }
+        let prepared = Prepared::new(&multioctave_grid_params(case, seed0));
+        for chunk in case.get("chunks").as_array() {
+            let (x, y) = (chunk.get("x").as_f64(), chunk.get("y").as_f64());
+            for (k, want) in chunk.get("values").as_f64_array().iter().enumerate() {
+                let got = prepared.eval(x + (k % 32) as f64, y + (k / 32) as f64);
+                total += 1;
+                if got.to_bits() == (*want as f32).to_bits() {
+                    exact += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(total, 2 * 9 * 1024);
+    assert_eq!(exact, 2_574, "the scattered path on grid tiles");
+}
+
+// ---------------------------------------------------------------------------
 // The multioctave family.
 //
 // Each test reads the same file its TypeScript counterpart reads and asserts

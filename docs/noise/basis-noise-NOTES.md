@@ -183,9 +183,8 @@ Four things about it that are easy to get wrong:
   origin like `19680 = -320 + 20000`.
 - **Multioctave calls it once per octave with a scaled origin and step**, for
   example `x0 = 1557, step = 0.5` for octave 1 of a chunk at `x = -320` with
-  `input_scale = 0.01` - which looks like `-320 * 0.5 + 17.17 / 0.01`. That
-  arithmetic is NOT yet pinned down; it is the next step of #451, and nothing
-  in the port uses the grid path for multioctave yet.
+  `input_scale = 0.01`, which is `-320 * 0.5 + 17.17 / 0.01`. The exact
+  arithmetic is in `multioctave-noise-NOTES.md`, "The chunk-grid branch".
 - **2.0.77, 2.1.11 and 2.1.20 share it.** 2.1.11 and 2.1.20 have the identical
   instruction sequence; 2.0.77 has the same instructions with different
   register moves, and a capture from each of 2.0.77 and 2.1.20 returned
@@ -203,7 +202,7 @@ Four things about it that are easy to get wrong:
 
 Ported as `basis_noise_grid` and `basis_noise_grid_chunk` in
 `crates/fmw-noise/src/basis_noise.rs`. No renderer calls them yet, so no
-preview count moves in the change that adds them.
+preview count moves in the changes that add them.
 
 ## Recovering the gradient table (#234, measured 2026-08-18)
 
