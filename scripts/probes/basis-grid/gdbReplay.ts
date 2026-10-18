@@ -90,8 +90,15 @@ export async function replayUnderGdb(opts: ReplayOptions): Promise<Replay> {
       );
       report = JSON.parse(stdout) as typeof report;
     } catch (err) {
+      // The oracle exits non-zero on a successful create, so a failure here is
+      // usually still a report. When it is not - the oracle itself failed -
+      // the parse error would hide why, so keep the original as the cause.
       const stdout = (err as { stdout?: string }).stdout ?? "";
-      report = JSON.parse(stdout) as typeof report;
+      try {
+        report = JSON.parse(stdout) as typeof report;
+      } catch {
+        throw new Error(`factorio-oracle printed no report for ${opts.install}`, { cause: err });
+      }
     }
     if (!report.ok) throw new Error(`factorio-oracle run failed for ${opts.install}`);
 
