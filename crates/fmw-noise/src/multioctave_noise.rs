@@ -13,7 +13,10 @@
 //! interchangeable; in f32 the alias caps accuracy at ~1e-4, which the notes
 //! once recorded as an irreducible floor and it never was one.
 
-use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
+use crate::basis_noise::{
+    basis_noise, basis_noise_grid, basis_noise_grid_chunk, grid_coordinate, tables_from_seed,
+    BasisNoiseTables,
+};
 use crate::fast_approx::{fast_log2, fast_pow2};
 
 /// Each octave halves the input scale (doubles the wavelength).
@@ -92,17 +95,7 @@ pub fn octave_terms(params: &MultioctaveParams) -> OctaveTerms {
         params.output_scale as f32
     };
 
-    // A fractional octave count boosts the base frequency; exactly 1 when
-    // integral.
-    //
-    // `clamp` rather than `max().min()`, and that is not merely clippy's
-    // preference: the two differ on NaN and only `clamp` matches the
-    // TypeScript. Rust's `f32::max(NaN, 1.0)` returns 1.0 - it IGNORES a NaN
-    // operand - while JavaScript's `Math.max(NaN, 1)` is NaN. `f32::clamp`
-    // propagates NaN, like JavaScript does. It panics only when the BOUNDS are
-    // unordered, and both of those are constants here.
-    let frac = fast_pow2((n - params.octaves) as f32).clamp(1.0, FRAC_OCTAVE_MAX);
-    let mut scale = (params.input_scale as f32) * frac;
+    let mut scale = (params.input_scale as f32) * frac_boost(params);
 
     let count = n as usize;
     let mut scales = Vec::with_capacity(count);
@@ -114,6 +107,19 @@ pub fn octave_terms(params: &MultioctaveParams) -> OctaveTerms {
         amp *= inv_p;
     }
     OctaveTerms { scales, amps }
+}
+
+/// The fractional-octave frequency boost, `clamp(fastPow2(ceil(N) - N), 1,
+/// 1.99999)`: exactly 1 when `octaves` is integral.
+///
+/// `clamp` rather than `max().min()`, and that is not merely clippy's
+/// preference: the two differ on NaN and only `clamp` matches the
+/// TypeScript. Rust's `f32::max(NaN, 1.0)` returns 1.0 - it IGNORES a NaN
+/// operand - while JavaScript's `Math.max(NaN, 1)` is NaN. `f32::clamp`
+/// propagates NaN, like JavaScript does. It panics only when the BOUNDS are
+/// unordered, and both of those are constants here.
+fn frac_boost(params: &MultioctaveParams) -> f32 {
+    fast_pow2((params.octaves.ceil() - params.octaves) as f32).clamp(1.0, FRAC_OCTAVE_MAX)
 }
 
 /// Sum the octaves in the game's order.
@@ -204,4 +210,153 @@ impl Prepared {
     pub fn eval(&self, x: f64, y: f64) -> f32 {
         sum_octaves(x, y, &self.terms, &self.tables)
     }
+}
+
+// ---------------------------------------------------------------------------
+// The chunk-grid path (#451). Read off Factorio 2.1.20's
+// `NoiseOperations::MultioctaveNoise::run` (0x2525320) and graded against
+// `test/fixtures/oracle-multioctave-grid.seed123456.json`.
+// ---------------------------------------------------------------------------
+
+/// The map generator's chunk edge, in tiles: one grid-kernel call covers a
+/// `CHUNK` by `CHUNK` block.
+pub const CHUNK: i32 = 32;
+
+/// The per-octave terms of the chunk-grid path.
+///
+/// **Not [`OctaveTerms`] with another name.** The scattered path folds the
+/// octave's frequency into one f32 input scale, `input_scale * frac * 0.5^k`,
+/// and multiplies the coordinate by it. The grid path keeps `input_scale` as
+/// the kernel's own scale and carries the octave's factor in the kernel's
+/// STEP and ORIGIN instead, so the coordinate is
+/// `f32(f32(i * step + x0) * input_scale)` - a different rounding of the same
+/// algebra. The amplitudes are the same chain.
+pub struct GridOctaveTerms {
+    input_scale: f32,
+    steps: Vec<f32>,
+    amps: Vec<f32>,
+}
+
+/// Derive the grid path's per-octave steps and amplitudes.
+///
+/// The step starts at the fractional-octave boost and halves each octave, in
+/// f32; the amplitudes are [`octave_terms`]'s, unchanged. Both measured
+/// against every octave call in the fixture, as the game passed them.
+#[must_use]
+pub fn grid_octave_terms(params: &MultioctaveParams) -> GridOctaveTerms {
+    let OctaveTerms { amps, .. } = octave_terms(params);
+    let mut step = frac_boost(params);
+    let steps = amps
+        .iter()
+        .map(|_| {
+            let s = step;
+            step *= LACUNARITY;
+            s
+        })
+        .collect();
+    GridOctaveTerms {
+        input_scale: params.input_scale as f32,
+        steps,
+        amps,
+    }
+}
+
+/// Octave `k`'s kernel origin, from the op's origin (the chunk's world
+/// origin plus `offset_x`/`offset_y`, added in f32).
+///
+/// `x = f32((k * 17.17) / f64(input_scale) + f64(f32(origin_x * step)))`.
+/// The 17.17 shift is in NOISE units, so the grid path divides it by the input
+/// scale to move it into the origin's world units - in f64, like the
+/// scattered path's addition, and narrowed once. `y` carries no shift.
+fn octave_origin(origin: (f32, f32), k: usize, step: f32, input_scale: f32) -> (f32, f32) {
+    let shift = (k as f64) * OCTAVE_OFFSET_X / f64::from(input_scale);
+    ((shift + f64::from(origin.0 * step)) as f32, origin.1 * step)
+}
+
+/// One chunk of `multioctave_noise` through the grid path, ADDED into `out`.
+///
+/// One [`basis_noise_grid_chunk`] call per octave, all into the same buffer,
+/// which is the game's call sequence. `origin` is the chunk's world origin
+/// plus the op's offsets, added in f32.
+///
+/// # Panics
+///
+/// If `out` holds fewer than `w * h` values.
+pub fn multioctave_grid_chunk(
+    origin: (f32, f32),
+    w: u32,
+    h: u32,
+    terms: &GridOctaveTerms,
+    tables: &BasisNoiseTables,
+    out: &mut [f32],
+) {
+    for call in grid_kernel_calls(origin, terms) {
+        basis_noise_grid_chunk(
+            call.origin,
+            w,
+            h,
+            call.step,
+            terms.input_scale,
+            call.amp,
+            tables,
+            out,
+        );
+    }
+}
+
+/// One grid-kernel call the multioctave grid path makes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GridKernelCall {
+    pub origin: (f32, f32),
+    pub step: f32,
+    pub amp: f32,
+}
+
+/// The kernel calls, in order, for one chunk. Its own function so the
+/// fixture can grade the arguments the game passed separately from the values
+/// they produced.
+pub(crate) fn grid_kernel_calls(
+    origin: (f32, f32),
+    terms: &GridOctaveTerms,
+) -> Vec<GridKernelCall> {
+    terms
+        .steps
+        .iter()
+        .zip(terms.amps.iter())
+        .enumerate()
+        .map(|(k, (&step, &amp))| GridKernelCall {
+            origin: octave_origin(origin, k, step, terms.input_scale),
+            step,
+            amp,
+        })
+        .collect()
+}
+
+/// One tile of `multioctave_noise` through the grid path: what map generation
+/// computes at world tile `(x, y)`.
+///
+/// The same arithmetic as [`multioctave_grid_chunk`] for the one grid point
+/// the tile is, so a renderer can ask for a pixel without building a chunk.
+/// The tile's chunk is `floor(x / CHUNK)`, so the column index is never
+/// negative.
+#[must_use]
+pub fn sum_octaves_grid(
+    x: i32,
+    y: i32,
+    offset: (f32, f32),
+    terms: &GridOctaveTerms,
+    tables: &BasisNoiseTables,
+) -> f32 {
+    let cx = x.div_euclid(CHUNK) * CHUNK;
+    let cy = y.div_euclid(CHUNK) * CHUNK;
+    let (i, r) = ((x - cx) as u32, (y - cy) as u32);
+    let origin = (cx as f32 + offset.0, cy as f32 + offset.1);
+    let mut out = 0.0f32;
+    for (k, (&step, &amp)) in terms.steps.iter().zip(terms.amps.iter()).enumerate() {
+        let (x0, y0) = octave_origin(origin, k, step, terms.input_scale);
+        let nx = grid_coordinate(i, step, x0, terms.input_scale);
+        let ny = grid_coordinate(r, step, y0, terms.input_scale);
+        out += basis_noise_grid(nx, ny, tables) * amp;
+    }
+    out
 }

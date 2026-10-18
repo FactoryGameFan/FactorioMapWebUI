@@ -76,6 +76,50 @@ original notes read the scalar overload. This is the same trap recorded in
 oracle uses has none") - two for two, so on any future op in this family, **find
 which entry point `::run` dispatches to before reading a loop.**
 
+## The chunk-grid branch - what map generation actually runs (#451, measured 2026-10-18)
+
+The table above is the arm64 reading of the POINT side. On the x86-64 Linux
+headless build (2.1.20, `MultioctaveNoise::run` at `0x2525320`) `run` first tests
+for a fourth case: the noise cache is a chunk grid, the op's `x` and `y` are the
+raw coordinates, the input scale is positive, and the lattice cells a chunk
+spans fit in the scratch buffer. When all hold, it calls the chunk-grid
+`basis_noise` kernel once per octave instead (see `basis-noise-NOTES.md`, "The
+chunk-grid kernel"). Map generation takes this branch for nearly everything.
+
+Per octave `k`, with the op's origin `o = f32(chunk origin + offset)`:
+
+```
+step_k = f32 chain: frac, then * 0.5 each octave   -- frac = the fractional-octave boost
+amp_k  = the same chain as the point path            -- octave_terms' amplitudes
+x0_k   = f32( (k * 17.17) / f64(input_scale) + f64(f32(o.x * step_k)) )
+y0_k   = f32(o.y * step_k)
+kernel(x0_k, y0_k, 32, 32, step = step_k, input_scale, output_scale = amp_k)  -- adds into one buffer
+```
+
+So the noise coordinate is `f32(f32(i * step_k + x0_k) * input_scale)`. The
+point path computes `f32(x * f32(input_scale * frac * 0.5^k)) + k * 17.17`
+instead: the same algebra, rounded differently, because the grid keeps
+`input_scale` as the kernel's own scale and moves the 17.17 shift into world
+units.
+
+Measured with `scripts/probes/multioctave-grid/` (gdb on the grid kernel,
+octaves chained by buffer content) on three multioctave expressions - integral
+octaves, both offsets with a non-integral `offset_y`, and 3.5 octaves - plus a
+`basis_noise` with offsets, nine chunks each, in
+`test/fixtures/oracle-multioctave-grid.seed123456.json`:
+
+| what | exact |
+| --- | --- |
+| every octave's kernel arguments, predicted from the expression | 108 / 108 |
+| every finished value, `multioctave_grid_chunk` | 36,864 / 36,864 |
+| the shipped scattered path at the same tiles (no-offset cases) | 2,574 / 18,432 |
+
+2.0.77 returned bit-identical values. `offset_x` and `offset_y` keep an
+expression on the grid, because the op applies them to the origin; `x + 20000`
+written into `x` does not. Ported as `grid_octave_terms`,
+`multioctave_grid_chunk` and `sum_octaves_grid` in
+`crates/fmw-noise/src/multioctave_noise.rs`.
+
 ## Why these pieces (the disassembly)
 
 Read off `Noise::fastVectorMultioctaveNoise` (arm64, 2.1.12 build 87038). It is

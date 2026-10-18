@@ -51,18 +51,14 @@
  * list per chunk (400 calls, 0 to the grid kernel). The first version of this
  * probe had two such cases and captured 0 of 9 chunks for each.
  */
-import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-const run = promisify(execFile);
+import { replayUnderGdb } from "./gdbReplay.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..", "..", "..");
-const ORACLE = join(homedir(), ".cargo", "bin", "factorio-oracle");
 const OUT = join(REPO, "test", "fixtures", "oracle-basis-grid.seed123456.json");
 
 const SEED0 = 123456;
@@ -120,19 +116,6 @@ function dataLua(): string {
   return `data:extend({\n${rows.join("\n")}\n})\n`;
 }
 
-/** One kernel call as `probe.py` writes it. */
-interface Call {
-  readonly inputScale: number;
-  readonly outputScale: number;
-  readonly x0: number;
-  readonly y0: number;
-  readonly step: number;
-  readonly w: number;
-  readonly h: number;
-  readonly before: readonly number[];
-  readonly after?: readonly number[];
-}
-
 interface Capture {
   readonly buildLine: string;
   readonly version: string;
@@ -146,154 +129,65 @@ interface Capture {
 const f32 = (v: number): number => Math.fround(v);
 
 async function capture(install: string): Promise<Capture> {
-  const work = await mkdtemp(join(tmpdir(), "basis-grid-work-"));
-  const probeDir = await mkdtemp(join(tmpdir(), "basis-grid-probe-"));
-  try {
-    const probePath = join(probeDir, "probe.json");
-    const mapGen: Record<string, string> = {};
-    for (const c of CASES) mapGen[c.property] = `probe_grid_${c.property}`;
-    await writeFile(
-      probePath,
-      JSON.stringify(
-        {
-          mode: "create",
-          mod: {
-            name: "basis_grid_probe",
-            version: "0.0.1",
-            dependencies: ["base"],
-            control_lua: CONTROL_LUA,
-            data_lua: dataLua(),
-          },
-          seed: SEED0,
-          map_gen_settings: { property_expression_names: mapGen },
-          timeout_seconds: 600,
-        },
-        null,
-        2,
-      ),
-    );
-    // A successful create exits non-zero (DUMPED-OK); the report says whether it worked.
-    let report: {
-      ok: boolean;
-      provenance: { buildLine: string; factorioVersion: string; binaryPath: string };
-    };
-    try {
-      const { stdout } = await run(
-        ORACLE,
-        ["run", "--probe", probePath, "--work-dir", work, "--factorio", install],
-        { maxBuffer: 64 * 1024 * 1024 },
-      );
-      report = JSON.parse(stdout) as typeof report;
-    } catch (err) {
-      const stdout = (err as { stdout?: string }).stdout ?? "";
-      report = JSON.parse(stdout) as typeof report;
-    }
-    if (!report.ok) throw new Error(`factorio-oracle run failed for ${install}`);
-
-    const tracePath = join(probeDir, "trace.jsonl");
-    const env = {
-      ...process.env,
-      PROBE_OUT: tracePath,
+  const mapGen: Record<string, string> = {};
+  for (const c of CASES) mapGen[c.property] = `probe_grid_${c.property}`;
+  const replay = await replayUnderGdb({
+    install,
+    seed: SEED0,
+    modName: "basis_grid_probe",
+    dataLua: dataLua(),
+    controlLua: CONTROL_LUA,
+    propertyExpressionNames: mapGen,
+    probeEnv: {
+      PROBE_MATCH: "scales",
       PROBE_CASES: JSON.stringify(CASES.map((c) => [f32(scaleValue(c.inputScale)), c.outputScale])),
       PROBE_CHUNKS: JSON.stringify(CHUNKS),
-    };
-    const argv = [
-      "-batch",
-      "-x",
-      join(HERE, "probe.py"),
-      "--args",
-      report.provenance.binaryPath,
-      "--create",
-      join(work, "write", "probe.zip"),
-      "--map-gen-settings",
-      join(work, "map-gen-settings.json"),
-      "--map-gen-seed",
-      String(SEED0),
-      "--mod-directory",
-      join(work, "mods"),
-      "--config",
-      join(work, "config.ini"),
-    ];
-    await new Promise<void>((done, fail) => {
-      const child = spawn("gdb", argv, { env, stdio: ["ignore", "pipe", "pipe"] });
-      let out = "";
-      child.stdout.on("data", (d: Buffer) => (out += d.toString()));
-      child.stderr.on("data", (d: Buffer) => (out += d.toString()));
-      const timer = setTimeout(() => {
-        child.kill("SIGKILL");
-        fail(new Error("gdb replay timed out after 900s"));
-      }, 900_000);
-      // A missing gdb emits `error` and never `exit`.
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        fail(new Error(`failed to start gdb: ${err.message}`));
-      });
-      child.on("exit", (code) => {
-        clearTimeout(timer);
-        if (out.includes("probe: wrote")) done();
-        else fail(new Error(`gdb wrote no trace (exit ${String(code)}):\n${out.slice(-2000)}`));
-      });
-    });
-
-    const lines = (await readFile(tracePath, "utf8")).trim().split("\n");
-    const summary = JSON.parse(lines.pop() ?? "{}") as {
-      summary?: { kept: number; returned: number };
-    };
-    if (!summary.summary || summary.summary.kept !== summary.summary.returned) {
-      throw new Error(`trace incomplete: ${JSON.stringify(summary)}`);
-    }
-    const values = new Map<number, Map<string, readonly number[]>>();
-    const repeats = new Map<number, number>();
-    const steps = new Set<number>();
-    for (const line of lines) {
-      const call = JSON.parse(line) as Call;
-      const k = CASES.findIndex(
-        (c) =>
-          f32(scaleValue(c.inputScale)) === call.inputScale && c.outputScale === call.outputScale,
-      );
-      if (k < 0) throw new Error(`call matches no case: ${line.slice(0, 200)}`);
-      if (!call.after) throw new Error("a call never returned normally");
-      if (call.w !== 32 || call.h !== 32)
-        throw new Error(`unexpected grid ${String(call.w)}x${String(call.h)}`);
-      // A lone basis_noise gets a fresh buffer. If this ever fails, the
-      // fixture would be recording a sum, not the kernel.
-      if (call.before.some((b) => b !== 0))
-        throw new Error("output buffer was not zero before the call");
-      steps.add(call.step);
-      const key = `${String(call.x0)},${String(call.y0)}`;
-      const perCase = values.get(k) ?? new Map<string, readonly number[]>();
-      // A property can be computed more than once per chunk - moisture was,
-      // once per map-generation pass that reads it. A repeat is accepted only
-      // when it is bit-identical, and counted so the fixture can say so.
-      const seen = perCase.get(key);
-      if (seen) {
-        if (seen.some((v, i) => v !== call.after?.[i])) {
-          throw new Error(`case ${String(k)} chunk ${key} captured twice with different values`);
-        }
-        repeats.set(k, (repeats.get(k) ?? 0) + 1);
+    },
+  });
+  const values = new Map<number, Map<string, readonly number[]>>();
+  const repeats = new Map<number, number>();
+  const steps = new Set<number>();
+  for (const call of replay.calls) {
+    const k = CASES.findIndex(
+      (c) =>
+        f32(scaleValue(c.inputScale)) === call.inputScale && c.outputScale === call.outputScale,
+    );
+    if (k < 0) throw new Error(`call matches no case: ${String(call.inputScale)}`);
+    // A lone basis_noise gets a fresh buffer. If this ever fails, the
+    // fixture would be recording a sum, not the kernel.
+    if (call.before.some((b) => b !== 0))
+      throw new Error("output buffer was not zero before the call");
+    steps.add(call.step);
+    const key = `${String(call.x0)},${String(call.y0)}`;
+    const perCase = values.get(k) ?? new Map<string, readonly number[]>();
+    // A property can be computed more than once per chunk - moisture was,
+    // once per map-generation pass that reads it. A repeat is accepted only
+    // when it is bit-identical, and counted so the fixture can say so.
+    const seen = perCase.get(key);
+    if (seen) {
+      if (seen.some((v, i) => v !== call.after[i])) {
+        throw new Error(`case ${String(k)} chunk ${key} captured twice with different values`);
       }
-      perCase.set(key, call.after);
-      values.set(k, perCase);
+      repeats.set(k, (repeats.get(k) ?? 0) + 1);
     }
-    for (let k = 0; k < CASES.length; k++) {
-      const got = values.get(k)?.size ?? 0;
-      if (got !== CHUNKS.length) {
-        throw new Error(
-          `case ${CASES[k].property}: ${String(got)} of ${String(CHUNKS.length)} chunks`,
-        );
-      }
-    }
-    return {
-      buildLine: report.provenance.buildLine,
-      version: report.provenance.factorioVersion,
-      values,
-      repeats,
-      steps,
-    };
-  } finally {
-    await rm(work, { recursive: true, force: true });
-    await rm(probeDir, { recursive: true, force: true });
+    perCase.set(key, call.after);
+    values.set(k, perCase);
   }
+  for (let k = 0; k < CASES.length; k++) {
+    const got = values.get(k)?.size ?? 0;
+    if (got !== CHUNKS.length) {
+      throw new Error(
+        `case ${CASES[k].property}: ${String(got)} of ${String(CHUNKS.length)} chunks`,
+      );
+    }
+  }
+  return {
+    buildLine: replay.buildLine,
+    version: replay.version,
+    values,
+    repeats,
+    steps,
+  };
 }
 
 const bitsToNumber = (b: number): number => new Float32Array(new Uint32Array([b]).buffer)[0];
