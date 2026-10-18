@@ -473,6 +473,11 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     //           fulgurite and big rocks. That changed 34,766 pixels, and every
     //           one went from disagreeing to agreeing: 34,766 of the 34,788 were
     //           entities drawn over terrain the port already had right.
+    //       20  on 2026-10-18 (#451): the terrain sweep now evaluates each tile
+    //           through the game's CHUNK-GRID noise path for every octave field
+    //           on the raw coordinates (rock, dunes, scrap, the ruins fields
+    //           and the shared wobble); the warped ones stay points, as in the
+    //           game. frankh/factorio-mapgen's grid path predicted exactly 2.
     //
     // So the lesson #273 recorded still stands - bit-exactness on named fields
     // is not the same thing as a better image - but it is not a rule that this
@@ -481,7 +486,7 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     // measured on a count that was 99.9% entity pixels, not terrain.
     //
     // Wrapped so a failure writes diff artifacts. Unwrapped, the entire report
-    // for an exact image assertion is `expected 23 to be 22`.
+    // for an exact image assertion is `expected 21 to be 20`.
     withDiffArtifacts(
       {
         spec: "wasmFulgoraRenderParity",
@@ -491,7 +496,7 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
       },
       () => {
         expect(entityPx, "entities in the reference - was it captured without the mod?").toBe(0);
-        expect(differing).toBe(22);
+        expect(differing).toBe(20);
       },
     );
   }, 300000);

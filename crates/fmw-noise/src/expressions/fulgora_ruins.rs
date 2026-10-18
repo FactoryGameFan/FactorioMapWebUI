@@ -16,6 +16,7 @@
 //! artificial term, and both subtract `road_paving_2c` a SECOND time outside
 //! the mask product - so they go negative on open ground rather than to zero.
 
+use crate::at::At;
 use crate::eval::math::max2;
 use crate::expressions::fulgora_cells::CellFields;
 use crate::expressions::fulgora_masks::MaskFields;
@@ -79,13 +80,27 @@ impl FulgoraRuins {
         masks: &MaskFields,
         roads: &RoadFields,
     ) -> RuinFields {
+        self.eval_at(At::point(x, y), cells, masks, roads)
+    }
+
+    /// [`Self::eval`] at an [`At`]: on a grid tile the raw-coordinate octave
+    /// fields take the grid path; the warped ones stay points, as in the game
+    /// (#451).
+    #[must_use]
+    pub fn eval_at(
+        &self,
+        at: At,
+        cells: &CellFields,
+        masks: &MaskFields,
+        roads: &RoadFields,
+    ) -> RuinFields {
         // The same `0.66 - abs(v)` shape as `fulgora_dunes`, on a different
         // seed, and it failed the same way: 19/101 with the f64 literal,
         // **101/101** with it typed, residual exactly 0. Two fields with one
         // shape failing identically is what turned #273 from three edits into a
         // sweep of the whole chain.
-        let ruins_walls = f64::from(0.66f32) - f64::from(self.walls.eval(x, y)).abs();
-        let ruins_paving = f64::from(self.paving.eval(x, y)).abs();
+        let ruins_walls = f64::from(0.66f32) - f64::from(self.walls.eval_at(at)).abs();
+        let ruins_paving = f64::from(self.paving.eval_at(at)).abs();
 
         let tile_ruin_paving = max2(
             masks.natural_and_mesa * (3.0 * ruins_paving * roads.road_paving_thin - 0.5),
