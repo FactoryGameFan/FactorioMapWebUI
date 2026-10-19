@@ -204,9 +204,10 @@ async function capture(install?: {
  * The lattice control, and every value an f32 - checked, not assumed.
  *
  * `helpers.table_to_json` prints most values as their exact decimal, but not
- * all: measured on 2.1.20, 2 of 32,800 came back with 16 significant digits,
- * one unit off in the 17th, and both were tiny on-axis values - the very ones
- * this capture exists for. Sixteen digits still name exactly one f32 (an f32
+ * all: in the committed run, 9 of 16,448 came back with 16 significant
+ * digits, one unit off in the 17th, on 2.1.20 and 2.0.77 alike. The first run
+ * to hit it found them among the tiny on-axis values - the very ones this
+ * capture exists for. Sixteen digits still name exactly one f32 (an f32
  * needs nine), so each value is rounded to f32 here and refused unless it was
  * already within print error of it, far below one f32 ulp.
  */
