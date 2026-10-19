@@ -197,9 +197,8 @@ impl<'a> VulcanusElevation<'a> {
     /// [`Self::mountains_func`] at an [`At`] (#451).
     #[must_use]
     pub fn mountains_func_at(&self, at: At, volcano_spots: f64, aux: f64) -> f64 {
-        let (x, y) = (at.x(), at.y());
         lerp(
-            self.mountain_elevation(x, y),
+            self.mountain_elevation_at(at),
             700.0 * volcano_inverted_peak(volcano_spots, 0.65),
             clamp(volcano_spots * 3.0, 0.0, 1.0),
         ) + 200.0 * (aux - 0.5) * (volcano_spots + 0.5)
@@ -290,7 +289,6 @@ impl<'a> VulcanusElevation<'a> {
     /// [`Self::eval_at_grid`] at an [`At`] (#451).
     #[must_use]
     pub fn eval_at_grid_at(&self, at: At, grid: f64) -> ElevationFields {
-        let (x, y) = (at.x(), at.y());
         let biome = self.biomes.eval_at(at);
         let climate = self.climate.eval_at(at, &self.cracks.eval_at(at));
 
@@ -303,7 +301,7 @@ impl<'a> VulcanusElevation<'a> {
         let elev = VULCANUS_ELEVATION_OFFSET
             + lerp(
                 mountains_blend,
-                self.ashlands_func(x, y),
+                self.ashlands_func_at(at),
                 biome.ashlands_biome,
             );
 

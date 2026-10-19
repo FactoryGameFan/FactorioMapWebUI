@@ -55,9 +55,21 @@ impl WobbleSums {
     /// Sum the three x wobbles and the three y wobbles at one position.
     #[must_use]
     pub fn at(helpers: &VulcanusHelpers, x: f64, y: f64) -> Self {
+        Self::at_pos(helpers, At::point(x, y))
+    }
+
+    /// [`Self::at`] at an [`At`]. The six wobble fields read the raw `x`/`y`
+    /// in the Lua, so on a grid tile they take the grid path (#451); only the
+    /// spot inputs they warp stay points.
+    #[must_use]
+    pub fn at_pos(helpers: &VulcanusHelpers, at: At) -> Self {
         Self {
-            x: helpers.wobble_x(x, y) + helpers.wobble_large_x(x, y) + helpers.wobble_huge_x(x, y),
-            y: helpers.wobble_y(x, y) + helpers.wobble_large_y(x, y) + helpers.wobble_huge_y(x, y),
+            x: helpers.wobble_x_at(at)
+                + helpers.wobble_large_x_at(at)
+                + helpers.wobble_huge_x_at(at),
+            y: helpers.wobble_y_at(at)
+                + helpers.wobble_large_y_at(at)
+                + helpers.wobble_huge_y_at(at),
         }
     }
 }

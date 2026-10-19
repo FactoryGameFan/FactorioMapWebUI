@@ -13,9 +13,8 @@
 //! **Which kernel applies cannot be read off the coordinate's value.** A warped
 //! coordinate can land on a whole number. So the caller says, by building an
 //! [`At::Grid`] (with [`At::tile`]) only where the game would be on the grid,
-//! and every noise
-//! wrapper's `eval_at` follows it. An expression that warps a coordinate
-//! builds an [`At::Point`] for that call, whatever it was handed.
+//! and every noise wrapper's `eval_at` follows it. An expression that warps a
+//! coordinate builds an [`At::Point`] for that call, whatever it was handed.
 
 /// A position to evaluate an expression at.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -62,12 +61,18 @@ impl At {
     pub fn shifted(self, di: u32, dj: u32) -> Self {
         match self {
             Self::Point { x, y } => Self::point(x + f64::from(di), y + f64::from(dj)),
-            Self::Grid { cx, cy, i, r } => Self::Grid {
-                cx,
-                cy,
-                i: i + di,
-                r: r + dj,
-            },
+            Self::Grid { cx, cy, i, r } => {
+                // The game's multisample program is 33 wide, so a shift may
+                // reach column 32 and no further. Nothing builds a wider one:
+                // the cliff generator's 4-tile multisample stays a point.
+                debug_assert!(i + di <= 32 && r + dj <= 32, "a shift past the 33x33 grid");
+                Self::Grid {
+                    cx,
+                    cy,
+                    i: i + di,
+                    r: r + dj,
+                }
+            }
         }
     }
 

@@ -236,7 +236,8 @@ passing against a module that ignored the field outright.
   image. With the levers matched the count was 7. The spec asserts both
   numbers, so the levers stay load-bearing: since the grid path (#451) they
   are 1 with the levers and 10,605 without.
-  Nauvis does not have the effect (8 either way), because its tiles do not read
+  Nauvis does not have the effect (8 either way at the time, 1 since #451),
+  because its tiles do not read
   the ore fields. What the matched pairing cannot grade is the halo tiles
   themselves: the only game image that has them has ore drawn on top.
 

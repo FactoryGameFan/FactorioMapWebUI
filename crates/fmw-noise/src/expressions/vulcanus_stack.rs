@@ -284,11 +284,6 @@ impl<'a> VulcanusStack<'a> {
     /// port that dropped the `max` would score identically. The clamp's real
     /// test lives in `vulcanus_elevation`, constructing the case the fixture
     /// does not.
-    fn elevation_fields(&self, x: f64, y: f64) -> ElevationFields {
-        self.elevation_fields_at(At::point(x, y))
-    }
-
-    /// [`Self::elevation_fields`] at an [`At`] (#451).
     fn elevation_fields_at(&self, at: At) -> ElevationFields {
         self.elevation.eval_at(at)
     }
@@ -459,22 +454,24 @@ impl<'a, 'b> VulcanusParity<'a, 'b> {
     pub fn field_at(&self, field: u32, at: At) -> f64 {
         let (x, y) = (at.x(), at.y());
         let base = self.stack.base;
-        let sp = base.spawn.eval_at(at, WobbleSums::at(&base.helpers, x, y));
+        let sp = base
+            .spawn
+            .eval_at(at, WobbleSums::at_pos(&base.helpers, at));
         let cr = base.cracks.eval_at(at);
         let cl = base.climate.eval_at(at, &cr);
         let bi = self.stack.biomes.eval_at(at);
-        let el = self.stack.elevation_fields(x, y);
-        let res = self.stack.resources(x, y);
-        let tf = self.stack.tile_fields(x, y);
+        let el = self.stack.elevation_fields_at(at);
+        let res = self.stack.resources_at(at);
+        let tf = self.stack.tile_fields_at(at);
         let rk = self.rocks.eval(x, y);
 
         match field {
-            0 => base.helpers.wobble_x(x, y),
-            1 => base.helpers.wobble_y(x, y),
-            2 => base.helpers.wobble_large_x(x, y),
-            3 => base.helpers.wobble_large_y(x, y),
-            4 => base.helpers.wobble_huge_x(x, y),
-            5 => base.helpers.wobble_huge_y(x, y),
+            0 => base.helpers.wobble_x_at(at),
+            1 => base.helpers.wobble_y_at(at),
+            2 => base.helpers.wobble_large_x_at(at),
+            3 => base.helpers.wobble_large_y_at(at),
+            4 => base.helpers.wobble_huge_x_at(at),
+            5 => base.helpers.wobble_huge_y_at(at),
             6 => sp.ashlands_start,
             7 => sp.basalts_start,
             8 => sp.mountains_start,

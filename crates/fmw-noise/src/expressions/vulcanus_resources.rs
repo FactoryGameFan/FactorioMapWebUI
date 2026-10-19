@@ -396,11 +396,6 @@ impl<'a> VulcanusResources<'a> {
     ///
     /// A DIFFERENT combination from `vulcanus_spawn`'s three-wobble sum:
     /// resources use two wobbles, the larger one quarter-weighted.
-    fn resource_wobble(&self, x: f64, y: f64) -> (f64, f64) {
-        self.resource_wobble_at(At::point(x, y))
-    }
-
-    /// [`Self::resource_wobble`] at an [`At`] (#451).
     fn resource_wobble_at(&self, at: At) -> (f64, f64) {
         (
             self.helpers.wobble_x_at(at) + 0.25 * self.helpers.wobble_large_x_at(at),
@@ -429,14 +424,13 @@ impl<'a> VulcanusResources<'a> {
 
     /// [`Self::favor`] at an [`At`] (#451).
     fn favor_at(&self, kind: Favor, at: At) -> f64 {
-        let (x, y) = (at.x(), at.y());
         let b = self.biomes.eval_at(at);
         // `starting_area` comes from the spawn layer rather than from
         // `pre_volcano`'s copy of it, so this reads one field from one owner
         // rather than the same number from two.
         let starting_area = self
             .spawn
-            .eval_at(at, WobbleSums::at(self.helpers, x, y))
+            .eval_at(at, WobbleSums::at_pos(self.helpers, at))
             .starting_area;
         match kind {
             Favor::Basalts => Self::favorability(b.basalts_biome_full, starting_area, 0.3),
@@ -547,7 +541,7 @@ impl<'a> VulcanusResources<'a> {
     /// faithful if that ever changes.
     fn spot_noise_at(&self, spec: SpotSpec, at: At) -> f64 {
         let (x, y) = (at.x(), at.y());
-        let (wx, wy) = self.resource_wobble(x, y);
+        let (wx, wy) = self.resource_wobble_at(at);
         let sx = x + wx;
         let sy = y + wy;
 
@@ -658,7 +652,7 @@ impl<'a> VulcanusResources<'a> {
     #[must_use]
     pub fn ore_regions_at(&self, at: At) -> OreRegions {
         let (x, y) = (at.x(), at.y());
-        let wobble = WobbleSums::at(self.helpers, x, y);
+        let wobble = WobbleSums::at_pos(self.helpers, at);
         let starting_circle = self.spawn.eval_at(at, wobble).starting_circle;
         let (wx, wy) = self.resource_wobble_at(at);
         let cone = |spot: &StartingSpot| starting_spot_at_angle(spot, x, y, 0.5 * wx, 0.5 * wy);
@@ -691,7 +685,7 @@ impl<'a> VulcanusResources<'a> {
     #[must_use]
     pub fn eval_at(&self, at: At) -> ResourceFields {
         let (x, y) = (at.x(), at.y());
-        let wobble = WobbleSums::at(self.helpers, x, y);
+        let wobble = WobbleSums::at_pos(self.helpers, at);
         let spawn = self.spawn.eval_at(at, wobble);
         let (wx, wy) = self.resource_wobble_at(at);
 

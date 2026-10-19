@@ -264,8 +264,7 @@ impl<'a> VulcanusBiomes<'a> {
     /// [`Self::pre_volcano`] at an [`At`] (#451).
     #[must_use]
     pub fn pre_volcano_at(&self, at: At) -> PreVolcano {
-        let (x, y) = (at.x(), at.y());
-        let wobble = WobbleSums::at(self.helpers, x, y);
+        let wobble = WobbleSums::at_pos(self.helpers, at);
         let spawn = self.spawn.eval_at(at, wobble);
 
         let mountains_noise =
