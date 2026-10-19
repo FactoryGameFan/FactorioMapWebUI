@@ -388,7 +388,10 @@ onBeforeUnmount(() => {
               Below here: measured at coarse resolution, not re-measured.
             </td>
           </tr>
-          <tr data-test="island-row" @click="emit('jump', { x: r.centroidX, y: r.centroidY })">
+          <tr
+            data-test="island-row"
+            @click="emit('jump', { x: Math.round(r.centroidX), y: Math.round(r.centroidY) })"
+          >
             <td>
               {{ Math.round(r.centroidX) }}, {{ Math.round(r.centroidY) }}
               <!-- `.stop` is load-bearing: the whole ROW carries a click that

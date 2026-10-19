@@ -72,6 +72,18 @@ describe("IslandFinderPanel", () => {
     expect(w.emitted("jump")?.[0]).toEqual([{ x: 1234, y: -567 }]);
   });
 
+  it("jumps to the whole tile the Position column shows, not the raw centroid", async () => {
+    // Centroids are survey sample points at a 21.875-tile step (the default
+    // grid of 175, divided by 8), so most are fractional. The jump note would
+    // otherwise print "Centered on 1234.875, -567.125" beside a row that says
+    // "1235, -567".
+    const w = setup(async () => [row({ centroidX: 1234.875, centroidY: -567.125 })]);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    await w.find('[data-test="island-row"]').trigger("click");
+    expect(w.emitted("jump")?.[0]).toEqual([{ x: 1235, y: -567 }]);
+  });
+
   it("copies a Factorio gps tag whose coordinates match the Position column", async () => {
     // The tag and the printed position must round the same way, or the number
     // you read and the number you paste disagree - which reads as a bug even
