@@ -27,3 +27,4 @@ pub mod resource_patches;
 pub mod starting_patches;
 pub mod vulcanus_catalog;
 pub mod vulcanus_geyser;
+pub mod vulcanus_ore_roll;

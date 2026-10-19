@@ -36,6 +36,7 @@
 use crate::eval::ctx::{ResourceLevers, VulcanusResourceControls};
 use crate::expressions::vulcanus_resources::ResourceFields;
 use crate::expressions::vulcanus_stack::VulcanusStack;
+use crate::resources::vulcanus_ore_roll::{ore_probability, VulcanusOreRoll};
 
 /// The threshold a solid ore's probability must clear for the game to have
 /// placed an entity on that tile: `probability >= 0.5`.
@@ -47,28 +48,23 @@ use crate::expressions::vulcanus_stack::VulcanusStack;
 /// would then reject against a footprint the ore overlay does not draw - a
 /// disagreement invisible in both renders.
 ///
-/// **Since #414 the two consumers deliberately read the field at DIFFERENT
-/// thresholds, and the difference is a measurement.** The game's probability
-/// is `1000 * ((1 + region) * rp - 1)` with `rp = random_penalty_between(0.9,
-/// 1, 1)`, a batch-op roll the port takes as 1. So this constant is the
-/// footprint where an entity CAN stand (`rp = 1`), which is the right thing
-/// for the overlay to paint: at frequency 0.5 in `[-2200,-1500]` it covers
-/// every one of the game's 1,190 calcite tiles and 83 more. The cliff removal
-/// wants where an entity is EXPECTED to stand, and reads the field through
-/// [`VulcanusOreFootprint::with_threshold`] at the roll's midpoint instead -
-/// `cliffs/vulcanus_ore_rejection.rs` carries the three-arm table. Painted ore
-/// is a superset of removing ore, so a cliff is never removed by an ore the
-/// overlay does not draw.
+/// It is compared against the ROLLED probability,
+/// `1000 * ((1 + region) * rp - 1)` with `rp` from
+/// [`VulcanusOreRoll`](crate::resources::vulcanus_ore_roll::VulcanusOreRoll).
+/// Until #84's roll landed, the port took `rp` as 1 for the overlay and as the
+/// roll's midpoint for the cliff rule, so the two read the field at different
+/// thresholds; with the roll they read one footprint.
 pub const RESOURCE_PROBABILITY_THRESHOLD: f64 = 0.5;
 
 /// Does the game hold a solid-ore entity on the tile whose centre is
 /// `(x + 0.5, y + 0.5)`?
 ///
 /// The three solid ores THRESHOLD, so their footprint is exactly
-/// `1000 * region >= RESOURCE_PROBABILITY_THRESHOLD` over the entries whose
-/// `size` lever is positive. A disabled ore occupies nothing, which is not a
-/// special case bolted on: it is the same `size = 0` lever the game itself was
-/// driven with to establish that ore suppresses cliffs (#99).
+/// `ore_probability(region, rp) >= RESOURCE_PROBABILITY_THRESHOLD` over the
+/// entries whose `size` lever is positive, with `rp` the tile's own draw from
+/// the chunk batch. A disabled ore occupies nothing, which is not a special
+/// case bolted on: it is the same `size = 0` lever the game itself was driven
+/// with to establish that ore suppresses cliffs (#99).
 ///
 /// The geyser is deliberately absent - it ROLLS rather than thresholds, so it
 /// has no footprint expressible this way. Callers that want it pass their own
@@ -82,9 +78,7 @@ pub struct VulcanusOreFootprint {
     tungsten: bool,
     coal: bool,
     calcite: bool,
-    /// What `1000 * region` must clear for a tile to count. [`Self::new`]
-    /// sets [`RESOURCE_PROBABILITY_THRESHOLD`]; see [`Self::with_threshold`].
-    threshold: f64,
+    roll: VulcanusOreRoll,
 }
 
 impl VulcanusOreFootprint {
@@ -94,17 +88,8 @@ impl VulcanusOreFootprint {
             tungsten: controls.tungsten_ore.size > 0.0,
             coal: controls.vulcanus_coal.size > 0.0,
             calcite: controls.calcite.size > 0.0,
-            threshold: RESOURCE_PROBABILITY_THRESHOLD,
+            roll: VulcanusOreRoll::new(),
         }
-    }
-
-    /// Read the field at a different `1000 * region` threshold. The one
-    /// caller is the ore -> cliff removal, and the reason is on
-    /// [`RESOURCE_PROBABILITY_THRESHOLD`].
-    #[must_use]
-    pub fn with_threshold(mut self, threshold: f64) -> Self {
-        self.threshold = threshold;
-        self
     }
 
     /// True when no ore is enabled, so the whole rejection can be skipped.
@@ -113,19 +98,29 @@ impl VulcanusOreFootprint {
         !self.tungsten && !self.coal && !self.calcite
     }
 
-    /// Whether a solid ore stands on tile `(tx, ty)`: [`Self::score`] clears
-    /// the threshold.
+    /// Whether a solid ore stands on tile `(tx, ty)`: the rolled probability
+    /// of the strongest enabled ore clears the threshold. All three share the
+    /// tile's `rp`, and the probability rises with the region, so the
+    /// strongest region is the one that decides.
     #[must_use]
     pub fn occupies(&self, stack: &VulcanusStack<'_>, tx: i64, ty: i64) -> bool {
-        self.score(stack, tx, ty) >= self.threshold
+        let region = self.strongest_region(stack, tx, ty);
+        region > f64::NEG_INFINITY
+            && ore_probability(region, self.roll.penalty(tx, ty)) >= RESOURCE_PROBABILITY_THRESHOLD
     }
 
     /// The largest `1000 * region` among the enabled ores at tile `(tx, ty)`,
-    /// or `-inf` with none enabled - the number [`Self::occupies`] thresholds.
-    /// Exposed so a test can read the field once and threshold it several
-    /// ways; `cliffs/vulcanus_ore_rejection.rs` has the table that needs it.
+    /// or `-inf` with none enabled. Exposed so a test can read the field once
+    /// and threshold it several ways; `cliffs/vulcanus_ore_rejection.rs` has
+    /// the table that needs it.
     #[must_use]
     pub fn score(&self, stack: &VulcanusStack<'_>, tx: i64, ty: i64) -> f64 {
+        1000.0 * self.strongest_region(stack, tx, ty)
+    }
+
+    /// The largest `region` among the enabled ores at tile `(tx, ty)`, or
+    /// `-inf` with none enabled.
+    fn strongest_region(&self, stack: &VulcanusStack<'_>, tx: i64, ty: i64) -> f64 {
         if self.is_empty() {
             return f64::NEG_INFINITY;
         }
@@ -137,8 +132,8 @@ impl VulcanusOreFootprint {
             (self.calcite, r.calcite),
             (self.coal, r.coal),
         ] {
-            if enabled && 1000.0 * region > best {
-                best = 1000.0 * region;
+            if enabled && region > best {
+                best = region;
             }
         }
         best
