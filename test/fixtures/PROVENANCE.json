@@ -511,7 +511,7 @@
     },
     "basis-gradient-table.json": {
       "factorioVersion": "2.1.14",
-      "evidence": "DERIVED 2026-08-18 from oracle-basis-gradient.seed123456.json by scripts/recover-gradient-table.ts, which inverts the falloff over the two contributing corners. Not a capture and not a formula: it is what the game's own gradient table has to be for the captured samples to come out as they did. Reproduces 4,086 of 4,096 x samples and 4,092 of 4,096 y; the misses are the four near-zero slots, whose ULP is 3.6e-15 and which no f32 output can resolve - perturbing them by 1.0e-9, 280x the residual, changes 0 of the 512 values in basis-noise.seed123456.json. Scores 512/512 exact against that fixture, worst error 0, where the previous formula-derived table scored 473. See issue #234"
+      "evidence": "DERIVED 2026-08-18 from oracle-basis-gradient.seed123456.json by scripts/recover-gradient-table.ts, which inverts the falloff over the two contributing corners. Not a capture and not a formula: it is what the game's own gradient table has to be for the captured samples to come out as they did. Reproduces 4,086 of 4,096 x samples and 4,092 of 4,096 y; the misses are the four near-zero slots, whose ULP is 3.6e-15 and which no f32 output can resolve - perturbing them by 1.0e-9, 280x the residual, changes 0 of the 512 values in basis-noise.seed123456.json. Scores 512/512 exact against that fixture, worst error 0, where the previous formula-derived table scored 473. See issue #234. UPDATED 2026-10-18 (#455): the four near-zero slots (0 y, 64 x, 128 y, 192 x) are now pinned from oracle-basis-axis.json by the same script (NEAR_ZERO_SLOTS), because this capture cannot resolve them. 64, 128 and 192 are each the only f32 that reproduces every on-axis point in two of that fixture's cases, and each then reproduces every such point in the other two; slot 0's y is bounded below about 5.6e-17 and takes 0. With them, this capture's own samples go from 4,086 and 4,092 of 4,096 to 4,096 and 4,096. The other 508 slot values are unchanged."
     },
     "oracle-basis-output-scale.seed123456.json": {
       "factorioVersion": "2.1.14",
@@ -555,6 +555,11 @@
       "factorioVersion": "2.1.20",
       "evidence": "captured 2026-10-18 by scripts/probes/quick-vp-grid (gdb, not Lua) from the Linux headless build whose --version reads 'Version: 2.1.20 (build 87512, linux64, headless)': quick_multioctave_noise as every chunk-grid basis_noise kernel call its octaves made, chained by buffer content; variable_persistence_multioctave_noise as its output register read when VariablePersistenceMultioctaveNoise::run returned. Cross-checked the same run: 'Version: 2.0.77 (build 84539, linux64, headless)' returned bit-identical values for every chunk.",
       "versionDifferences": "none: 2.0.77 and 2.1.20 bit-identical on every value"
+    },
+    "oracle-basis-axis.json": {
+      "factorioVersion": "2.1.20",
+      "evidence": "captured 2026-10-18 by scripts/probes/basis-axis/capture.ts through factorio-oracle from 'Version: 2.1.20 (build 87512, mac-arm64, steam)': calculate_tile_properties on four basis_noise expressions routed to Nauvis's elevation, moisture, aux and temperature, at world points that put the noise point exactly on a lattice row or column a step of about 2^-16 off a corner (#455). The capture checks itself: 16 lattice points must return exactly 0, and the first run's control failed for a real geometry error before it was fixed. Every value is an f32; 2 of 32,800 were printed by helpers.table_to_json with 16 significant digits and are stored rounded to the f32 they name.",
+      "versionDifferences": "not cross-checked: the 2.0.77 copy on this Mac (installs/factorio-2.0.77-debug.app) has a Contents/data symlink to a factorio-2.0.77.app that no longer exists, so factorio-oracle skips it. #234 found the gradient table byte-identical on 2.0.77 and 2.1.14, and #451's grid capture found 2.0.77 and 2.1.20 bit-identical."
     }
   },
   "notFixtures": {

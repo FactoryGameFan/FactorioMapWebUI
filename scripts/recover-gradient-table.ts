@@ -24,7 +24,7 @@
  * `fy^2 > fx` and `fx^2 > fy`, hence `fy^4 > fy` and `fy > 1`. A scan of the
  * unit cell agrees: every interior point has two or more live corners.
  *
- * ## The three stages
+ * ## The four stages
  *
  * 1. **Label.** Invert with one corner, which is good to about four digits -
  *    ample to read the direction index off `atan2`. This is what ties a slot
@@ -35,6 +35,8 @@
  * 3. **Polish.** Each slot is now within an ULP. Try the neighbours and keep
  *    whichever reproduces the most captured samples. Scored against the probe's
  *    own samples, never against the fixture it will later be tested on.
+ * 4. **Pin.** The four near-zero slots come from a second capture, because
+ *    this one carries none of their bits. See {@link NEAR_ZERO_SLOTS}.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -44,6 +46,39 @@ const TAU = Math.PI * 2;
 
 const bits = new Float32Array(1);
 const asInt = new Int32Array(bits.buffer);
+/** The f32 whose bit pattern is `pattern`. */
+function fromBits(pattern: number): number {
+  asInt[0] = pattern | 0;
+  return bits[0];
+}
+
+/**
+ * The four near-zero slots, pinned from `test/fixtures/oracle-basis-axis.json`
+ * (#455) because the capture this script reads cannot resolve them.
+ *
+ * That capture puts points exactly on a lattice row or column, a step of
+ * 2^-16 or so off a corner, where the corner's value is the near-zero
+ * component times the falloff to full f32 precision. Each value below is the
+ * ONLY f32 that reproduces every such point in two of its four cases, and it
+ * then reproduces every such point in the other two, which it never read.
+ * `the_axis_fixture_pins_the_near_zero_slots_on_points_it_never_fit` in
+ * `crates/fmw-noise/src/fixtures.rs` re-derives them that way on every gate run,
+ * so a wrong constant here fails there.
+ *
+ * Slot 0's y is the exception: the capture bounds it below about 5.6e-17 and
+ * cannot tell any value in that range apart, so it takes 0, which is also what
+ * the formula gives (`sin 0`). The value it replaces, 3.9e-12, is outside the
+ * bound.
+ *
+ * Bits rather than decimals, so no literal can round to a neighbour.
+ */
+const NEAR_ZERO_SLOTS: readonly { slot: number; axis: "x" | "y"; value: number }[] = [
+  { slot: 0, axis: "y", value: 0 },
+  { slot: 64, axis: "x", value: fromBits(0xb445203e) }, // -1.8358784e-7
+  { slot: 128, axis: "y", value: fromBits(0xb4c5203e) }, // -3.671757e-7
+  { slot: 192, axis: "x", value: fromBits(0x33571c7d) }, // 5.00845e-8
+];
+
 /** The f32 `steps` ULPs away from `x`, away from zero for negatives. */
 function ulpAway(x: number, steps: number): number {
   bits[0] = x;
@@ -163,6 +198,22 @@ export function recover(cap: Capture): Recovery {
 
   const rx = solve(xs);
   const ry = solve(ys);
+
+  // Stage 4: the near-zero slots. This capture cannot resolve them - their
+  // terms sit far below one f32 ULP of the far corner's - so whatever the
+  // solve left there is noise. They are pinned from a second capture instead.
+  const recount = (samples: Sample[], est: Float32Array) =>
+    samples.filter((s) => forward(est[s.near], est[s.far]) === s.v).length;
+  // The recount must agree with the polish's own tally before anything moves,
+  // or the counts written below would describe a different scorer.
+  if (recount(xs, rx.est) !== rx.reproduced || recount(ys, ry.est) !== ry.reproduced) {
+    throw new Error("recount disagrees with the polish before pinning");
+  }
+  for (const { slot, axis, value } of NEAR_ZERO_SLOTS) {
+    (axis === "x" ? rx : ry).est[slot] = value;
+  }
+  rx.reproduced = recount(xs, rx.est);
+  ry.reproduced = recount(ys, ry.est);
 
   let worstMagnitudeError = 0;
   for (let g = 0; g < SLOTS; g++) {
