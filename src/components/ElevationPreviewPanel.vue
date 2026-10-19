@@ -209,8 +209,12 @@ async function generate() {
         view: effectiveView.value,
         width: PREVIEW_PX,
         height: PREVIEW_PX,
-        originX: (props.centerX ?? 0) - half,
-        originY: (props.centerY ?? 0) - half,
+        // Whole tiles, because the engine takes the game's chunk-grid noise
+        // path only on whole-tile coordinates (`terrain_at` in
+        // crates/fmw-wasm/src/render.rs); a fractional center sends every
+        // pixel down the point path instead.
+        originX: Math.round(props.centerX ?? 0) - half,
+        originY: Math.round(props.centerY ?? 0) - half,
         tilesPerPixel: TILES_PER_PIXEL,
         waterLevel: info.ctx.waterLevel,
         segmentationMultiplier: info.ctx.segmentationMultiplier,

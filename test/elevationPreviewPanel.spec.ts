@@ -756,6 +756,24 @@ describe("ElevationPreviewPanel", () => {
       });
     });
 
+    it("snaps a fractional center to a whole tile, so the sweep stays on the chunk grid", async () => {
+      // The island finder's centroids are survey sample points, and its step is
+      // `grid / 8` - 21.875 tiles at the default grid of 175 - so most of them
+      // are fractional. An origin off whole tiles sends every pixel down the
+      // point path (`terrain_at` in crates/fmw-wasm/src/render.rs takes the
+      // grid only on whole-tile coordinates) and shifts the view by part of a
+      // tile. Rounded the same way as the finder's Position column.
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "nauvis" });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (w as any).setProps({ centerX: 1234.875, centerY: -567.125 });
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({ originX: 1235 - 512, originY: -567 - 512 });
+    });
+
     it("auto re-renders when the center changes AFTER a render has already happened", async () => {
       stubCanvas();
       const renderer = okRenderer();
