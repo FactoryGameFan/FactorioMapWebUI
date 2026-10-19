@@ -640,7 +640,6 @@ pub fn nauvis_ctx(seed0: u32, p: &NauvisParams) -> NauvisCtx {
     }
 }
 
-/// Sweep the window and paint each pixel's winning tile, then the overlays.
 /// Where a terrain pixel is evaluated.
 ///
 /// At exactly one tile per pixel on a whole-tile origin, the pixel IS a tile
@@ -661,6 +660,7 @@ fn terrain_at(req: &Request, wx: f64, wy: f64) -> At {
     }
 }
 
+/// Sweep the window and paint each pixel's winning tile, then the overlays.
 fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     // The elevation views share the planet code and nothing else: they paint a
     // sign test on one tree, with no tile argmax, no catalog and no overlay. So
