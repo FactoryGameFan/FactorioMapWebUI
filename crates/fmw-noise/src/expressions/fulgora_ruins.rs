@@ -83,8 +83,8 @@ impl FulgoraRuins {
         self.eval_at(At::point(x, y), cells, masks, roads)
     }
 
-    /// [`Self::eval`] at an [`At`]: on a grid tile the raw-coordinate octave
-    /// fields take the grid path; the warped ones stay points, as in the game
+    /// [`Self::eval`] at an [`At`]: on a grid tile both octave fields, walls
+    /// and paving, take the grid path, since both read the raw coordinates
     /// (#451).
     #[must_use]
     pub fn eval_at(
