@@ -27,17 +27,19 @@
 //! `cliff_elevation_nauvis` depends on it, so it is not a debugging switch, and
 //! it is graded against its own two-seed fixture.
 
+use crate::at::At;
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
 use crate::eval::math::{clamp, lerp, max2, min2};
 use crate::expressions::nauvis_shared::{NauvisShared, NauvisSharedParams};
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::quick_multioctave_noise::{
-    quick_persistence_terms, sum_octaves as quick_sum_octaves, QuickOctaves, QuickPersistenceParams,
+    quick_persistence_terms, sum_octaves_at as quick_sum_octaves_at, QuickOctaves,
+    QuickPersistenceParams,
 };
 use crate::starting_lakes::starting_lake_positions;
 use crate::variable_persistence_multioctave_noise::{
-    amplitude_corrected_multioctave_noise, eval as var_pers_eval, terms as var_pers_terms,
+    amplitude_corrected_multioctave_noise_at, eval_at as var_pers_eval_at, terms as var_pers_terms,
     AmplitudeCorrectedParams, VariablePersistenceParams, VariablePersistenceTerms,
 };
 
@@ -179,11 +181,10 @@ impl ElevationNauvis {
     }
 
     /// `nauvis_persistance`: `clamp(amplitude_corrected + 0.55, 0.5, 0.65)`.
-    fn persistence(&self, x: f64, y: f64) -> f64 {
+    fn persistence(&self, at: At) -> f64 {
         clamp(
-            f64::from(amplitude_corrected_multioctave_noise(
-                x,
-                y,
+            f64::from(amplitude_corrected_multioctave_noise_at(
+                at,
                 &self.persistance,
             )) + 0.55,
             0.5,
@@ -194,26 +195,34 @@ impl ElevationNauvis {
     /// Evaluate the tree at one point.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> f64 {
-        let persistence = self.persistence(x, y);
-        let nauvis_detail = f64::from(var_pers_eval(
-            x,
-            y,
+        self.eval_at(At::point(x, y))
+    }
+
+    /// Evaluate the tree at an [`At`]. Every noise op in it reads the raw
+    /// `x`/`y` in `noise-programs.lua`, so on a tile each takes the grid path
+    /// (#451); the distances and the arithmetic around them are unchanged.
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
+        let persistence = self.persistence(at);
+        let nauvis_detail = f64::from(var_pers_eval_at(
+            at,
             persistence,
             &self.detail,
             &self.detail_tables,
         ));
 
         // `nauvis_bridges`: a gentle fall, then a much steeper one past 0.1.
-        let bb = self.shared.bridge_billows(x, y);
+        let bb = self.shared.bridge_billows_at(at);
         let nauvis_bridges = 1.0 - 0.1 * bb - 0.9 * max2(0.0, -0.1 + bb);
 
         // `nauvis_macro`. The second factor is half-wave rectified, so the
         // macro term is zero over roughly half the map rather than symmetric.
         let nauvis_macro =
-            f64::from(self.macro_a.eval(x, y)) * max2(0.0, f64::from(self.macro_b.eval(x, y)));
+            f64::from(self.macro_a.eval_at(at)) * max2(0.0, f64::from(self.macro_b.eval_at(at)));
 
         let added_cliff_elevation = if self.with_cliff_elevation {
-            0.1 * self.shared.hills(x, y) + 0.8 * self.shared.plateaus(x, y)
+            0.1 * self.shared.hills_at(at) + 0.8 * self.shared.plateaus_at(at)
         } else {
             0.0
         };
@@ -246,7 +255,7 @@ impl ElevationNauvis {
             &self.starting_lake_positions,
             STARTING_LAKE_DISTANCE_CAP,
         ));
-        let sln = f64::from(quick_sum_octaves(x, y, &self.starting_lake_noise));
+        let sln = f64::from(quick_sum_octaves_at(at, &self.starting_lake_noise));
         let starting_lake = (ELEVATION_MAGNITUDE * (-3.0 + (sld + sln) / 8.0)) / 8.0;
 
         min2(wlc_elevation, starting_lake)
@@ -301,7 +310,7 @@ mod tests {
         let (mut lo, mut hi) = (0usize, 0usize);
         for i in -30i32..30 {
             for j in -30i32..30 {
-                let p = tree.persistence(f64::from(i) * 23.5, f64::from(j) * 29.25);
+                let p = tree.persistence(At::point(f64::from(i) * 23.5, f64::from(j) * 29.25));
                 assert!((0.5..=0.65).contains(&p), "persistence {p} out of range");
                 if p == 0.5 {
                     lo += 1;

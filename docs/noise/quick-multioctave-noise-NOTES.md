@@ -69,6 +69,19 @@ computing in the wrong precision, not because large coordinates cost accuracy.
 The tell each time was that the "floor" was never derived from anything; it was
 named after the symptom.
 
+## On the chunk grid (#451, measured 2026-10-18)
+
+`quick_multioctave_noise` has no `run` of its own: it compiles to one
+`basis_noise` op per octave, each with that octave's seed, input scale and
+amplitude, all adding into one register. On the chunk grid each is one call
+of the grid kernel - origin = chunk origin + `offset_x`/`offset_y` in f32,
+step 1 - so the octave chain is unchanged and only the coordinate rounding
+differs. `scripts/probes/quick-vp-grid/` captured every such call (chained by
+buffer content) for two cases, nine chunks each; `sum_octaves_grid`
+reproduces all 18,432 values. The point path scores 4,220 of the 9,216 it can
+be compared on. Note the op also takes `offset_y` and `octave_seed0_shift`,
+which no shipped expression sets and `QuickMultioctaveParams` does not carry.
+
 ## The per-octave seed (the whole subtlety)
 
 Octaves pair up: the basis **seed word** steps by +2 every two octaves, so octaves

@@ -18,8 +18,12 @@
 //! `OISM**k` instead of a running chain, 137/190 without the chain rounding.
 //! All four together: 190/190, worst error 0.
 
-use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
+use crate::at::At;
+use crate::basis_noise::{
+    basis_noise, basis_noise_grid, grid_coordinate, tables_from_seed, BasisNoiseTables,
+};
 use crate::fast_approx::noise_machine_pow;
+use crate::multioctave_noise::CHUNK;
 
 /// Parameters for [`quick_multioctave_noise`]. `f64` for the same reason as
 /// [`crate::multioctave_noise::MultioctaveParams`].
@@ -138,6 +142,49 @@ pub fn sum_octaves(x: f64, y: f64, terms: &QuickOctaves) -> f32 {
         sum += amp * basis_noise(f64::from(xo * scale), f64::from(yf * scale), tables);
     }
     sum
+}
+
+/// Sum the octaves at world tile `(x, y)` the way map generation does: through
+/// the CHUNK-GRID path (#451).
+///
+/// `quick_multioctave_noise` has no `run` of its own: it compiles to one
+/// `basis_noise` op per octave, and each reaches the grid kernel with origin
+/// = the tile's chunk origin plus the offsets (added in f32), step 1, the
+/// octave's own input scale and its amplitude as the output scale, all adding
+/// into one register. Graded against
+/// `test/fixtures/oracle-quick-vp-grid.seed123456.json`, which records every
+/// one of those kernel calls as well as the sums.
+///
+/// `offset_y` is an argument because [`QuickMultioctaveParams`] has no field
+/// for it: no shipped expression sets it, and the fixture does.
+#[must_use]
+pub fn sum_octaves_grid(x: i32, y: i32, offset_y: f32, terms: &QuickOctaves) -> f32 {
+    let cx = x.div_euclid(CHUNK) * CHUNK;
+    let cy = y.div_euclid(CHUNK) * CHUNK;
+    let (i, r) = ((x - cx) as u32, (y - cy) as u32);
+    let origin = (cx as f32 + terms.offset_x, cy as f32 + offset_y);
+    let mut sum = 0.0f32;
+    for ((&scale, &amp), tables) in terms
+        .scales
+        .iter()
+        .zip(terms.amps.iter())
+        .zip(terms.tables.iter())
+    {
+        let nx = grid_coordinate(i, 1.0, origin.0, scale);
+        let ny = grid_coordinate(r, 1.0, origin.1, scale);
+        sum += basis_noise_grid(nx, ny, tables) * amp;
+    }
+    sum
+}
+
+/// [`sum_octaves`] at an [`At`]: the chunk-grid path for a tile, the point
+/// path otherwise. `offset_y` is 0, as in every shipped expression.
+#[must_use]
+pub fn sum_octaves_at(at: At, terms: &QuickOctaves) -> f32 {
+    match at {
+        At::Point { x, y } => sum_octaves(x, y, terms),
+        At::Tile { x, y } => sum_octaves_grid(x, y, 0.0, terms),
+    }
 }
 
 /// Evaluate `quick_multioctave_noise` at world coordinates `(x, y)`.

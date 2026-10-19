@@ -348,6 +348,34 @@ and each has its own rule below: a unit-norm check passing a bearing swap, a
 halo one tile wider passing every value check, and a deleted `freeze` call site
 leaving 37 tests green.
 
+### Two noise paths: point and chunk grid (#451)
+
+**The game evaluates noise two ways, and the port now has both.** Every
+point fixture (`calculate_tile_properties`) reaches the game's POINT
+`basis_noise` kernel. Map generation, and so the game's own preview, evaluates
+32x32 chunks through a CHUNK-GRID kernel for every op whose `x` and `y` are
+the raw coordinates. The two are different functions of the same algebra; see
+`docs/noise/basis-noise-NOTES.md`, "The chunk-grid kernel".
+
+- **`crate::at::At` says which.** `At::Point` is the point path, `At::Tile` the
+  grid path. Each noise wrapper has an `eval_at` (`Prepared::eval_at`,
+  `quick_multioctave_noise::sum_octaves_at`,
+  `variable_persistence_multioctave_noise::eval_at`,
+  `eval::primitives::basis_noise_expr_at`), and each existing `eval(x, y)` is
+  `eval_at(At::point(x, y))`, so every point-path caller and fixture is unchanged.
+- **Which kernel applies cannot be read off a coordinate's value**, so an
+  expression that warps a coordinate builds an `At::Point` for that call
+  whatever it was handed. `nauvis_hills_offset` is the one case in the Nauvis
+  tree.
+- **Only the Nauvis terrain sweep passes `At::Tile` so far**, and only at
+  exactly one tile per pixel on whole-tile coordinates (`terrain_at` in
+  `crates/fmw-wasm/src/render.rs`). That is the case a traced preview showed is
+  all grid. Every other zoom, planet and overlay is still the point path; the
+  grid at other zooms is unmeasured.
+- **Tier 1 grades each op's grid path** against gdb captures of the game's own
+  kernel calls: `oracle-basis-grid`, `oracle-multioctave-grid` and
+  `oracle-quick-vp-grid`. Tier 2 is untouched, because it runs the point path.
+
 ### Reading a frozen count
 
 **Score by exact f32 match count and freeze the number.** If one moves later:

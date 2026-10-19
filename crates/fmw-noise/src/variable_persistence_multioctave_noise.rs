@@ -18,7 +18,11 @@
 //! iteration and has no counter-scaled term. In f64 removing it changes
 //! nothing; in f32 it is the difference between 3.6e-1 and bit-exact.
 
-use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
+use crate::at::At;
+use crate::basis_noise::{
+    basis_noise, basis_noise_grid, grid_coordinate, tables_from_seed, BasisNoiseTables,
+};
+use crate::multioctave_noise::CHUNK;
 
 /// Parameters for [`variable_persistence_multioctave_noise`]. `f64` for the
 /// same reason as [`crate::multioctave_noise::MultioctaveParams`].
@@ -236,6 +240,96 @@ pub fn amplitude_corrected_multioctave_noise(
             offset_x: params.offset_x,
         },
     )
+}
+
+/// Evaluate the op at world tile `(x, y)` the way map generation does: through
+/// the CHUNK-GRID path (#451).
+///
+/// Read off 2.1.20's `VariablePersistenceMultioctaveNoise::run` (0x251b390)
+/// and graded against `test/fixtures/oracle-quick-vp-grid.seed123456.json`.
+/// Each octave is one grid `basis_noise` call - origin = the tile's chunk
+/// origin plus the offsets, added in f32; step 1; the octave's own input
+/// scale; output scale 1 - adding into one buffer, which `run` then multiplies
+/// by the tile's persistence, except after the last octave, and finally by the
+/// gain.
+///
+/// **The persistence multiply is f32 here, unlike [`eval`]'s.** On the grid
+/// the buffer and the persistence are both noise registers, which are f32, and
+/// the disassembly is a plain `mulss`. [`eval`] keeps the TypeScript's f64
+/// operand for the reasons in its own note; the two paths are different code
+/// and each follows its own evidence.
+#[must_use]
+pub fn eval_grid(
+    x: i32,
+    y: i32,
+    persistence: f32,
+    offset_y: f32,
+    terms: &VariablePersistenceTerms,
+    tables: &BasisNoiseTables,
+) -> f32 {
+    let cx = x.div_euclid(CHUNK) * CHUNK;
+    let cy = y.div_euclid(CHUNK) * CHUNK;
+    let (i, r) = ((x - cx) as u32, (y - cy) as u32);
+    let origin = (cx as f32 + terms.offset_x as f32, cy as f32 + offset_y);
+    let last = terms.scales.len().saturating_sub(1);
+    let mut acc = 0.0f32;
+    for (k, &scale) in terms.scales.iter().enumerate() {
+        let nx = grid_coordinate(i, 1.0, origin.0, scale);
+        let ny = grid_coordinate(r, 1.0, origin.1, scale);
+        acc += basis_noise_grid(nx, ny, tables) * 1.0;
+        if k < last {
+            acc *= persistence;
+        }
+    }
+    acc * terms.gain
+}
+
+/// [`eval`] at an [`At`]: the chunk-grid path for a tile, the point path
+/// otherwise. On the grid the persistence is a noise register, so it is
+/// narrowed to f32 first; see [`eval_grid`].
+#[must_use]
+pub fn eval_at(
+    at: At,
+    persistence: f64,
+    terms: &VariablePersistenceTerms,
+    tables: &BasisNoiseTables,
+) -> f32 {
+    match at {
+        At::Point { x, y } => eval(x, y, persistence, terms, tables),
+        At::Tile { x, y } => eval_grid(x, y, persistence as f32, 0.0, terms, tables),
+    }
+}
+
+/// [`amplitude_corrected_multioctave_noise`] at an [`At`].
+#[must_use]
+pub fn amplitude_corrected_multioctave_noise_at(at: At, params: &AmplitudeCorrectedParams) -> f32 {
+    match at {
+        At::Point { x, y } => amplitude_corrected_multioctave_noise(x, y, params),
+        At::Tile { .. } => {
+            let p = params.persistence;
+            let octaves = params.octaves;
+            let ratio = if p == 1.0 {
+                1.0 / f64::from(octaves)
+            } else {
+                (1.0 - p) / (1.0 - p.powf(f64::from(octaves)))
+            };
+            let output_scale = (ratio / f64::from(2u32.pow(octaves))) * params.amplitude;
+            let vp = VariablePersistenceParams {
+                seed0: params.seed0,
+                seed1: params.seed1,
+                octaves,
+                input_scale: params.input_scale,
+                output_scale,
+                offset_x: params.offset_x,
+            };
+            eval_at(
+                at,
+                p,
+                &terms(&vp),
+                &tables_from_seed(params.seed0, params.seed1),
+            )
+        }
+    }
 }
 
 #[cfg(test)]

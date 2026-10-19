@@ -8,6 +8,7 @@ use crate::abi::{
     self, FulgoraParams, NauvisParams, Params, Request, Status, VulcanusBearing, VulcanusParams,
 };
 use core::cell::RefCell;
+use fmw_noise::at::At;
 use fmw_noise::cliffs::catalog::{modified_elevation_interval, CliffControls, CliffSettings};
 use fmw_noise::cliffs::catalog::{CLIFF_MAP_COLOR, CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX};
 use fmw_noise::cliffs::fields::{CliffFieldParams, NauvisCliffFields};
@@ -53,7 +54,7 @@ use fmw_noise::rocks::vulcanus_placement::VulcanusRockPlacement;
 use fmw_noise::tiles::fulgora_catalog::FulgoraTile;
 use fmw_noise::tiles::fulgora_ocean::{ocean_tile, Ocean};
 use fmw_noise::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog};
-use fmw_noise::tiles::nauvis_resolve::nauvis_tile_at;
+use fmw_noise::tiles::nauvis_resolve::nauvis_tile;
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
 use fmw_noise::trees::catalog::{TREE_MAP_COLOR, TREE_MAX_ALPHA};
 use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
@@ -639,6 +640,26 @@ pub fn nauvis_ctx(seed0: u32, p: &NauvisParams) -> NauvisCtx {
     }
 }
 
+/// Where a terrain pixel is evaluated.
+///
+/// At exactly one tile per pixel on a whole-tile origin, the pixel IS a tile
+/// of the game's own preview, which runs chunk-grid map generation (traced
+/// 2026-10-18: `MapPreviewGenerator::computeTiles` calls the grid kernel on
+/// 32x32 chunks at step 1, and nothing in the tile stage reaches the point
+/// kernel). So the noise takes the grid path (#451). At any other zoom the
+/// game's preview has not been measured, and the pixel stays a point.
+fn terrain_at(req: &Request, wx: f64, wy: f64) -> At {
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX);
+    if req.tiles_per_pixel == 1.0 && whole(wx) && whole(wy) {
+        At::Tile {
+            x: wx as i32,
+            y: wy as i32,
+        }
+    } else {
+        At::point(wx, wy)
+    }
+}
+
 /// Sweep the window and paint each pixel's winning tile, then the overlays.
 fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     // The elevation views share the planet code and nothing else: they paint a
@@ -660,7 +681,7 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let color = nauvis_tile_color(nauvis_tile_at(&stack, &catalog, wx, wy));
+            let color = nauvis_tile_color(nauvis_tile(&stack, &catalog, terrain_at(req, wx, wy)));
             out[offset] = color[0];
             out[offset + 1] = color[1];
             out[offset + 2] = color[2];
@@ -1644,8 +1665,10 @@ mod tests {
                     elevation,
                     aux: stack.aux.eval(x, y),
                     moisture: stack.moisture.eval(x, y),
+                    grid: false,
                 });
-                let shortcut = nauvis_tile_at(&stack, &catalog, x, y);
+                let shortcut =
+                    fmw_noise::tiles::nauvis_resolve::nauvis_tile_at(&stack, &catalog, x, y);
                 assert_eq!(shortcut, full, "early-out disagrees at ({x}, {y})");
 
                 if water_base(elevation, 0.0, 100.0) >= WATER_EARLY_OUT_THRESHOLD {

@@ -563,6 +563,7 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
             elevation: self.stack.elevation_nauvis.eval(x, y),
             aux: self.stack.aux.eval(x, y),
             moisture: self.stack.moisture.eval(x, y),
+            grid: false,
         };
         if field >= Self::ENEMY_BASE {
             return self.enemy_field(field - Self::ENEMY_BASE, x, y);

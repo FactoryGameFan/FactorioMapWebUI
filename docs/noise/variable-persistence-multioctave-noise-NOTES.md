@@ -71,6 +71,20 @@ Octaves here decorrelate through lacunarity alone - not by re-seeding (the seed 
 shared, confirmed with seed1=999 and 256; the quick op's seed-phase reseed trick
 does not apply) and not by any x shift.
 
+## On the chunk grid (#451, measured 2026-10-18)
+
+2.1.20's `VariablePersistenceMultioctaveNoise::run` (0x251b390) calls the
+register `basis_noise` overload once per octave - which takes the grid kernel
+on a chunk grid - with output scale 1, the op's offsets and the octave's input
+scale, then multiplies the buffer by the tile's persistence register (except
+after the last octave) and finally by the gain. **That multiply is f32 by
+f32** (`mulss`), because both are noise registers: on the constant persistence
+0.7, an f64 multiply scores 6,752 of 9,216 and the f32 one all 9,216.
+`scripts/probes/quick-vp-grid/` read the op's output register when `run`
+returned, for a constant and a per-tile persistence, nine chunks each;
+`eval_grid` reproduces all 18,432 values. The point path's `eval` keeps its f64
+operand, for the reasons in its own note.
+
 ## Why these pieces (the disassembly)
 
 `VariablePersistenceMultioctaveNoise::run` builds a register program: an initial

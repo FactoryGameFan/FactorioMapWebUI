@@ -16,6 +16,7 @@
 //! `the_water_early_out_picks_the_same_tile_as_the_full_argmax` measures rather
 //! than assumes.
 
+use crate::at::At;
 use crate::expressions::nauvis_stack::NauvisStack;
 use crate::tiles::helpers::water_base;
 use crate::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog, NauvisTileFields};
@@ -35,7 +36,16 @@ pub fn nauvis_tile_at(
     x: f64,
     y: f64,
 ) -> NauvisTile {
-    let elevation = stack.elevation_nauvis.eval(x, y);
+    nauvis_tile(stack, catalog, At::point(x, y))
+}
+
+/// [`nauvis_tile_at`] at an [`At`]. An [`At::Tile`] is the terrain render at
+/// one tile per pixel, where the game's preview runs chunk-grid map
+/// generation, so every noise op underneath takes the grid path (#451).
+#[must_use]
+pub fn nauvis_tile(stack: &NauvisStack, catalog: &NauvisTileCatalog, at: At) -> NauvisTile {
+    let (x, y) = (at.x(), at.y());
+    let elevation = stack.elevation_nauvis.eval_at(at);
     let water_influence = water_base(elevation, 0.0, 100.0);
     if water_influence >= WATER_EARLY_OUT_THRESHOLD {
         // Deepwater is first in `TILE_ORDER`, so the full argmax's strict `>`
@@ -52,8 +62,9 @@ pub fn nauvis_tile_at(
         x,
         y,
         elevation,
-        aux: stack.aux.eval(x, y),
-        moisture: stack.moisture.eval(x, y),
+        aux: stack.aux.eval_at(at),
+        moisture: stack.moisture.eval_at(at),
+        grid: matches!(at, At::Tile { .. }),
     })
 }
 

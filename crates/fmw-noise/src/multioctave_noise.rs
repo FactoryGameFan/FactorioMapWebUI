@@ -13,6 +13,7 @@
 //! interchangeable; in f32 the alias caps accuracy at ~1e-4, which the notes
 //! once recorded as an irreducible floor and it never was one.
 
+use crate::at::At;
 use crate::basis_noise::{
     basis_noise, basis_noise_grid, basis_noise_grid_chunk, grid_coordinate, tables_from_seed,
     BasisNoiseTables,
@@ -194,6 +195,7 @@ pub fn multioctave_noise(x: f64, y: f64, params: &MultioctaveParams) -> f32 {
 /// wrong shape. Nothing about it is planet-specific.
 pub struct Prepared {
     terms: OctaveTerms,
+    grid: GridOctaveTerms,
     tables: BasisNoiseTables,
 }
 
@@ -202,6 +204,7 @@ impl Prepared {
     pub fn new(params: &MultioctaveParams) -> Self {
         Self {
             terms: octave_terms(params),
+            grid: grid_octave_terms(params),
             tables: tables_from_seed(params.seed0, params.seed1),
         }
     }
@@ -209,6 +212,16 @@ impl Prepared {
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> f32 {
         sum_octaves(x, y, &self.terms, &self.tables)
+    }
+
+    /// [`Self::eval`] at an [`At`]: the chunk-grid path for a tile, the point
+    /// path otherwise. No offsets, because no caller of `Prepared` passes any.
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> f32 {
+        match at {
+            At::Point { x, y } => self.eval(x, y),
+            At::Tile { x, y } => sum_octaves_grid(x, y, (0.0, 0.0), &self.grid, &self.tables),
+        }
     }
 }
 

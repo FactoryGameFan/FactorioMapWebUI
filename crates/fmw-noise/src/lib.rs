@@ -12,6 +12,7 @@
 // the port toward FMA.
 #![allow(clippy::suboptimal_flops)]
 
+pub mod at;
 pub mod basis_gradient_table;
 pub mod basis_noise;
 pub mod checksum;
