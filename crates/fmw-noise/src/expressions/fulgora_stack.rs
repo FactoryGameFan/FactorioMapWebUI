@@ -16,6 +16,7 @@
 //! and the eight `Prepared` multioctave tables. Those are per-render, and
 //! rebuilding them per pixel is the 20x mistake #275 measured.
 
+use crate::at::At;
 use crate::expressions::fulgora_cells::{CellFields, FulgoraCells};
 use crate::expressions::fulgora_elevation::{ElevationFields, FulgoraElevation};
 use crate::expressions::fulgora_masks::{self, MaskFields};
@@ -106,12 +107,18 @@ impl FulgoraStack {
 
     /// Evaluate every layer at one position, in dependency order.
     pub fn eval(&mut self, x: f64, y: f64) -> StackFields {
-        let shared = self.shared.eval(x, y);
+        self.eval_at(At::point(x, y))
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    pub fn eval_at(&mut self, at: At) -> StackFields {
+        let (x, y) = (at.x(), at.y());
+        let shared = self.shared.eval_at(at);
         let cells = self.cells.eval(&shared);
-        let elevation = self.elevation.eval(x, y, &shared, &cells);
+        let elevation = self.elevation.eval_at(at, &shared, &cells);
         let masks = fulgora_masks::eval(&shared, &cells, &elevation);
         let roads = self.roads.eval(x, y, &shared, &cells);
-        let ruins = self.ruins.eval(x, y, &cells, &masks, &roads);
+        let ruins = self.ruins.eval_at(at, &cells, &masks, &roads);
         let scrap = self.scrap.eval(&shared, &cells, &elevation, &masks, &roads);
         StackFields {
             shared,

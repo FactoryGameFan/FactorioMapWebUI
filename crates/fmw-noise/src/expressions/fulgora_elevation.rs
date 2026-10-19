@@ -22,6 +22,7 @@
 //! them look like part of the chain, but nothing here reads them - they feed
 //! the deferred tile layer.
 
+use crate::at::At;
 use crate::eval::math::slider_rescale;
 use crate::eval::math::{lerp_f32, max2, min2};
 use crate::expressions::fulgora_cells::CellFields;
@@ -155,6 +156,15 @@ impl FulgoraElevation {
         shared: &SharedFields,
         cells: &CellFields,
     ) -> ElevationFields {
+        self.eval_at(At::point(x, y), shared, cells)
+    }
+
+    /// [`Self::eval`] at an [`At`]: on a grid tile the raw-coordinate octave
+    /// fields take the grid path; the warped ones stay points, as in the game
+    /// (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At, shared: &SharedFields, cells: &CellFields) -> ElevationFields {
+        let (x, y) = (at.x(), at.y());
         let basis = f64::from(self.basis.eval(shared.wx, shared.wy));
 
         // The distortion here is 1.5x the wobble and does NOT go through
@@ -180,9 +190,9 @@ impl FulgoraElevation {
         //
         // `scrap_medium` below is the control: same op family, same octaves and
         // persistence, no added constant, 101/101 both before and after.
-        let rock = f64::from(0.33f32) + f64::from(self.rock.eval(x, y)).abs();
-        let dunes = f64::from(0.66f32) - f64::from(self.dunes.eval(x, y)).abs();
-        let scrap_medium = f64::from(self.scrap_medium.eval(x, y));
+        let rock = f64::from(0.33f32) + f64::from(self.rock.eval_at(at)).abs();
+        let dunes = f64::from(0.66f32) - f64::from(self.dunes.eval_at(at)).abs();
+        let scrap_medium = f64::from(self.scrap_medium.eval_at(at));
 
         // 51/101 -> **101/101**, residual exactly 0. #273 predicted this would
         // stall at 99/101; it does not, because that prediction was measured

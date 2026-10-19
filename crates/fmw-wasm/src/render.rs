@@ -334,7 +334,7 @@ fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let fields = stack.borrow_mut().eval(wx, wy);
+            let fields = stack.borrow_mut().eval_at(terrain_at(req, wx, wy));
             let color = match req.view {
                 VIEW_TERRAIN => tile_color(fields.tile()),
                 VIEW_SCRAP_FOOTPRINT => {

@@ -22,6 +22,7 @@
 //! evaluated, checked field by field, which is what makes the substitution
 //! legitimate; a field that read a neighbour would need the cache back.
 
+use crate::at::At;
 use crate::eval::math::{clamp, slider_to_linear};
 use crate::expressions::starting_spot_at_angle::{starting_spot_at_angle, AngleTrig, StartingSpot};
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
@@ -196,9 +197,16 @@ impl FulgoraShared {
     /// Evaluate every field of this layer at one position.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> SharedFields {
-        let wobble_influence = f64::from(self.wobble_influence.eval(x, y));
-        let wobble_x = f64::from(self.wobble_x.eval(x, y));
-        let wobble_y = f64::from(self.wobble_y.eval(x, y));
+        self.eval_at(At::point(x, y))
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> SharedFields {
+        let (x, y) = (at.x(), at.y());
+        let wobble_influence = f64::from(self.wobble_influence.eval_at(at));
+        let wobble_x = f64::from(self.wobble_x.eval_at(at));
+        let wobble_y = f64::from(self.wobble_y.eval_at(at));
 
         // "We usually want a lot of wobble or none at all, so influence has a
         // high output scale and then we clamp it." The +0.6 biases most of the

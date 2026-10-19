@@ -372,15 +372,19 @@ the raw coordinates. The two are different functions of the same algebra; see
   expression that warps a coordinate builds an `At::Point` for that call
   whatever it was handed. `nauvis_hills_offset` is the one case in the Nauvis
   tree.
-- **The Nauvis and Vulcanus terrain sweeps pass `At::Grid`**, and only at
-  exactly one tile per pixel on whole-tile coordinates (`terrain_at` in
-  `crates/fmw-wasm/src/render.rs`). That is the case traced previews showed is
-  all grid in the tile stage. Fulgora, every other zoom and every overlay are
-  still the point path; the grid at other zooms is unmeasured. Vulcanus's
-  `spot_noise` and `voronoi_cell_id` read warped coordinates and are not basis
-  ops, so they are unaffected.
-- **The counts it moved:** Nauvis 8 -> 1 and Vulcanus 7 -> 1 differing pixels
-  against the game's preview.
+- **All three terrain sweeps pass `At::Grid`**, and only at exactly one tile
+  per pixel on whole-tile coordinates (`terrain_at` in
+  `crates/fmw-wasm/src/render.rs`). Traced previews showed that case is grid
+  for every tile-stage op on the raw coordinates. Every other zoom and every
+  overlay is still the point path; the grid at other zooms is unmeasured.
+- **Warped coordinates stay points, on every planet.** Nauvis's
+  `nauvis_hills_offset`; Fulgora's `fulgora_basis` (at `fulgora_wx`),
+  `fulgora_basis_oil` and the road subnoise, which the traced Fulgora preview
+  sends to the point kernel as 1,024-point lists. Vulcanus's warped
+  coordinates feed only `spot_noise` and `voronoi_cell_id`, which are not
+  basis ops.
+- **The counts it moved:** Nauvis 8 -> 1, Vulcanus 7 -> 1 and Fulgora 22 -> 20
+  differing pixels against the game's preview.
 - **Tier 1 grades each op's grid path** against gdb captures of the game's own
   kernel calls: `oracle-basis-grid`, `oracle-multioctave-grid` and
   `oracle-quick-vp-grid`. Tier 2 is untouched, because it runs the point path.
