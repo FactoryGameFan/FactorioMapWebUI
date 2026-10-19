@@ -5739,9 +5739,11 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
     let biomes = base.biomes_with_host_trig();
     let stack = VulcanusStack::with_host_trig(&base, &biomes);
     let ore = VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls);
-    // The field as the RULE reads it - at the removal's threshold, not the
-    // overlay's. `score` is read once per tile below and thresholded three
-    // ways; this footprint is asserted to agree with the middle one.
+    // The one footprint the rule and the overlay both read since the roll
+    // landed: the field at the default threshold, times each tile's own
+    // `random_penalty` roll. `occupies` is asserted below to match the game's
+    // ore tiles exactly - none missing, none extra. `score` is also read once
+    // per tile to print the three fixed-`rp` rings, which are only context.
     let footprint = VulcanusOreFootprint::new(&ctx.vulcanus_resource_controls);
     // The queue the ore rule acts on: everything the port places WITHOUT the
     // ore rejection, with its code, so each cell's window can be asked for.
