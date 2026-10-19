@@ -37,6 +37,7 @@
 //! Three lines rather than one, and they are honest about the ownership rather
 //! than hiding it behind an arena.
 
+use crate::at::At;
 use crate::cliffs::vulcanus_fields::CliffinessBasic;
 use crate::distance_from_nearest_point::distance_from_nearest_point;
 use crate::eval::ctx::EvalCtx;
@@ -205,13 +206,25 @@ impl<'a> VulcanusStack<'a> {
     /// tile ranges read them directly.
     #[must_use]
     pub fn biomes(&self, x: f64, y: f64) -> BiomeFields {
-        self.biomes.eval(x, y)
+        self.biomes_at(At::point(x, y))
+    }
+
+    /// [`Self::biomes`] at an [`At`] (#451).
+    #[must_use]
+    pub fn biomes_at(&self, at: At) -> BiomeFields {
+        self.biomes.eval_at(at)
     }
 
     /// The resource layer's fields at one position.
     #[must_use]
     pub fn resources(&self, x: f64, y: f64) -> ResourceFields {
-        self.resources.eval(x, y)
+        self.resources_at(At::point(x, y))
+    }
+
+    /// [`Self::resources`] at an [`At`] (#451).
+    #[must_use]
+    pub fn resources_at(&self, at: At) -> ResourceFields {
+        self.resources.eval_at(at)
     }
 
     /// `vulcanus_aux` and `vulcanus_moisture` at one position.
@@ -221,8 +234,14 @@ impl<'a> VulcanusStack<'a> {
     /// optional - climate is defined over it.
     #[must_use]
     pub fn climate(&self, x: f64, y: f64) -> crate::expressions::vulcanus_climate::ClimateFields {
-        let cracks = self.base.cracks.eval(x, y);
-        self.base.climate.eval(x, y, &cracks)
+        self.climate_at(At::point(x, y))
+    }
+
+    /// [`Self::climate`] at an [`At`] (#451).
+    #[must_use]
+    pub fn climate_at(&self, at: At) -> crate::expressions::vulcanus_climate::ClimateFields {
+        let cracks = self.base.cracks.eval_at(at);
+        self.base.climate.eval_at(at, &cracks)
     }
 
     /// `vulcanus_rock_noise`, the four-octave field both rock expressions add.
@@ -232,7 +251,13 @@ impl<'a> VulcanusStack<'a> {
     /// `sumOctaves` does too.
     #[must_use]
     pub fn rock_noise(&self, x: f64, y: f64) -> f64 {
-        f64::from(self.rock_noise.eval(x, y))
+        self.rock_noise_at(At::point(x, y))
+    }
+
+    /// [`Self::rock_noise`] at an [`At`] (#451).
+    #[must_use]
+    pub fn rock_noise_at(&self, at: At) -> f64 {
+        f64::from(self.rock_noise.eval_at(at))
     }
 
     /// The three solid ores' region fields, which is all the ore -> cliff
@@ -240,7 +265,13 @@ impl<'a> VulcanusStack<'a> {
     /// second model of it - see [`VulcanusResources::ore_regions`].
     #[must_use]
     pub fn ore_regions(&self, x: f64, y: f64) -> OreRegions {
-        self.resources.ore_regions(x, y)
+        self.ore_regions_at(At::point(x, y))
+    }
+
+    /// [`Self::ore_regions`] at an [`At`] (#451).
+    #[must_use]
+    pub fn ore_regions_at(&self, at: At) -> OreRegions {
+        self.resources.ore_regions_at(at)
     }
 
     /// `vulcanus_elev` and `vulcanus_elevation` together - the raw field and
@@ -253,8 +284,8 @@ impl<'a> VulcanusStack<'a> {
     /// port that dropped the `max` would score identically. The clamp's real
     /// test lives in `vulcanus_elevation`, constructing the case the fixture
     /// does not.
-    fn elevation_fields(&self, x: f64, y: f64) -> ElevationFields {
-        self.elevation.eval(x, y)
+    fn elevation_fields_at(&self, at: At) -> ElevationFields {
+        self.elevation.eval_at(at)
     }
 
     /// `vulcanus_temperature`, at this stack's own `control:temperature:bias`.
@@ -264,9 +295,9 @@ impl<'a> VulcanusStack<'a> {
     /// byte-identical pixels say nothing about it. Tier 1 grades it against the
     /// game (244 of 434) and tier 2 is the only thing that would notice it
     /// diverging from the TypeScript.
-    fn temperature(&self, x: f64, y: f64) -> f64 {
+    fn temperature_at(&self, at: At) -> f64 {
         self.elevation
-            .temperature(x, y, self.base.ctx.temperature_bias)
+            .temperature_at(at, self.base.ctx.temperature_bias)
     }
 
     /// `vulcanus_elevation` in the TILE channel - the 1-tile grid every
@@ -277,7 +308,13 @@ impl<'a> VulcanusStack<'a> {
     /// difference: the two disagree by tens of tiles over most of a region.
     #[must_use]
     pub fn elevation(&self, x: f64, y: f64) -> f64 {
-        self.elevation.eval(x, y).elevation
+        self.elevation_at(At::point(x, y))
+    }
+
+    /// [`Self::elevation`] at an [`At`] (#451).
+    #[must_use]
+    pub fn elevation_at(&self, at: At) -> f64 {
+        self.elevation.eval_at(at).elevation
     }
 
     /// `cliff_elevation`, the elevation field the CLIFF generator samples.
@@ -288,28 +325,41 @@ impl<'a> VulcanusStack<'a> {
     /// stack and share every sub-expression below the multisample.
     #[must_use]
     pub fn cliff_elevation(&self, x: f64, y: f64) -> f64 {
-        self.elevation.cliff_elevation(x, y)
+        self.cliff_elevation_at(At::point(x, y))
+    }
+
+    /// [`Self::cliff_elevation`] at an [`At`] (#451).
+    #[must_use]
+    pub fn cliff_elevation_at(&self, at: At) -> f64 {
+        self.elevation.cliff_elevation_at(at)
     }
 
     /// Every field the 19 tile expressions read, at one position.
     #[must_use]
     pub fn tile_fields(&self, x: f64, y: f64) -> VulcanusTileFields {
-        let biomes = self.biomes.eval(x, y);
-        let cracks = self.base.cracks.eval(x, y);
-        let climate = self.base.climate.eval(x, y, &cracks);
-        let resources = self.resources.eval(x, y);
+        self.tile_fields_at(At::point(x, y))
+    }
+
+    /// [`Self::tile_fields`] at an [`At`] (#451).
+    #[must_use]
+    pub fn tile_fields_at(&self, at: At) -> VulcanusTileFields {
+        let (x, y) = (at.x(), at.y());
+        let biomes = self.biomes.eval_at(at);
+        let cracks = self.base.cracks.eval_at(at);
+        let climate = self.base.climate.eval_at(at, &cracks);
+        let resources = self.resources.eval_at(at);
         VulcanusTileFields {
             // The RAW `elev`, not the clamped `elevation` - see
             // `VulcanusTileFields`'s own doc comment.
-            elev: self.elevation.eval(x, y).elev,
+            elev: self.elevation.eval_at(at).elev,
             aux: climate.aux,
             moisture: climate.moisture,
             mountains_biome: biomes.mountains_biome,
             ashlands_biome: biomes.ashlands_biome,
             basalts_biome: biomes.basalts_biome,
             mountain_volcano_spots: biomes.mountain_volcano_spots,
-            mountain_lava_spots: self.lava_spots.eval(x, y, &biomes),
-            rock_noise: f64::from(self.rock_noise.eval(x, y)),
+            mountain_lava_spots: self.lava_spots.eval_at(at, &biomes),
+            rock_noise: f64::from(self.rock_noise.eval_at(at)),
             distance: f64::from(distance_from_nearest_point(
                 x,
                 y,
@@ -325,13 +375,25 @@ impl<'a> VulcanusStack<'a> {
     /// The 19 tile probabilities at one position, in `TILE_ORDER`.
     #[must_use]
     pub fn tile_probabilities(&self, x: f64, y: f64) -> [f64; 19] {
-        tile_probabilities(&self.tile_fields(x, y))
+        self.tile_probabilities_at(At::point(x, y))
+    }
+
+    /// [`Self::tile_probabilities`] at an [`At`] (#451).
+    #[must_use]
+    pub fn tile_probabilities_at(&self, at: At) -> [f64; 19] {
+        tile_probabilities(&self.tile_fields_at(at))
     }
 
     /// The tile the game would place here.
     #[must_use]
     pub fn tile(&self, x: f64, y: f64) -> VulcanusTile {
-        resolve_tile(&self.tile_fields(x, y))
+        self.tile_at(At::point(x, y))
+    }
+
+    /// [`Self::tile`] at an [`At`] (#451).
+    #[must_use]
+    pub fn tile_at(&self, at: At) -> VulcanusTile {
+        resolve_tile(&self.tile_fields_at(at))
     }
 }
 
@@ -383,23 +445,33 @@ impl<'a, 'b> VulcanusParity<'a, 'b> {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn field(&self, field: u32, x: f64, y: f64) -> f64 {
+        self.field_at(field, At::point(x, y))
+    }
+
+    /// [`Self::field`] at an [`At`] (#451).
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn field_at(&self, field: u32, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
         let base = self.stack.base;
-        let sp = base.spawn.eval(x, y, WobbleSums::at(&base.helpers, x, y));
-        let cr = base.cracks.eval(x, y);
-        let cl = base.climate.eval(x, y, &cr);
-        let bi = self.stack.biomes.eval(x, y);
-        let el = self.stack.elevation_fields(x, y);
-        let res = self.stack.resources(x, y);
-        let tf = self.stack.tile_fields(x, y);
+        let sp = base
+            .spawn
+            .eval_at(at, WobbleSums::at_pos(&base.helpers, at));
+        let cr = base.cracks.eval_at(at);
+        let cl = base.climate.eval_at(at, &cr);
+        let bi = self.stack.biomes.eval_at(at);
+        let el = self.stack.elevation_fields_at(at);
+        let res = self.stack.resources_at(at);
+        let tf = self.stack.tile_fields_at(at);
         let rk = self.rocks.eval(x, y);
 
         match field {
-            0 => base.helpers.wobble_x(x, y),
-            1 => base.helpers.wobble_y(x, y),
-            2 => base.helpers.wobble_large_x(x, y),
-            3 => base.helpers.wobble_large_y(x, y),
-            4 => base.helpers.wobble_huge_x(x, y),
-            5 => base.helpers.wobble_huge_y(x, y),
+            0 => base.helpers.wobble_x_at(at),
+            1 => base.helpers.wobble_y_at(at),
+            2 => base.helpers.wobble_large_x_at(at),
+            3 => base.helpers.wobble_large_y_at(at),
+            4 => base.helpers.wobble_huge_x_at(at),
+            5 => base.helpers.wobble_huge_y_at(at),
             6 => sp.ashlands_start,
             7 => sp.basalts_start,
             8 => sp.mountains_start,
@@ -430,7 +502,7 @@ impl<'a, 'b> VulcanusParity<'a, 'b> {
             28 => self.stack.cliff_elevation(x, y),
             // Read by no renderer at all, which is half the argument for this
             // selector existing.
-            29 => self.stack.temperature(x, y),
+            29 => self.stack.temperature_at(at),
             30 => res.basalts_favorability,
             31 => res.mountains_favorability,
             32 => res.mountains_sulfur_favorability,
@@ -451,7 +523,7 @@ impl<'a, 'b> VulcanusParity<'a, 'b> {
             47 => tf.rock_noise,
             48 => tf.distance,
             49 => self.cliffiness.eval(x, y),
-            50 => f64::from(self.knockout.eval(x, y)),
+            50 => f64::from(self.knockout.eval_at(at)),
             51 => rk.rock_huge,
             52 => rk.rock_big,
             53 => rk.density,

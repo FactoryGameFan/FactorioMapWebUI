@@ -233,9 +233,11 @@ passing against a module that ignored the field outright.
   stack paints ore-halo tiles from the ore fields, so the mismatch put 10,603
   halo pixels into a "terrain" count of 10,610 - 88% sitting exactly on the
   render's own ore footprint - until 2026-09-16, when Eric read it off the diff
-  image. With the levers matched the count is 7. The spec now asserts both
-  numbers: 7 with the levers, 10,610 without, so the levers stay load-bearing.
-  Nauvis does not have the effect (8 either way), because its tiles do not read
+  image. With the levers matched the count was 7. The spec asserts both
+  numbers, so the levers stay load-bearing: since the grid path (#451) they
+  are 1 with the levers and 10,605 without.
+  Nauvis does not have the effect (8 either way at the time, 1 since #451),
+  because its tiles do not read
   the ore fields. What the matched pairing cannot grade is the halo tiles
   themselves: the only game image that has them has ore drawn on top.
 
@@ -357,8 +359,11 @@ point fixture (`calculate_tile_properties`) reaches the game's POINT
 the raw coordinates. The two are different functions of the same algebra; see
 `docs/noise/basis-noise-NOTES.md`, "The chunk-grid kernel".
 
-- **`crate::at::At` says which.** `At::Point` is the point path, `At::Tile` the
-  grid path. Each noise wrapper has an `eval_at` (`Prepared::eval_at`,
+- **`crate::at::At` says which.** `At::Point` is the point path, `At::Grid` the
+  grid path: a chunk origin plus a column and row, built with `At::tile(x, y)`.
+  The chunk is part of the position because a `multisample` reads one column
+  past it from the SAME chunk's 33x33 program (`At::shifted`) - Vulcanus's
+  basalt-lakes min filter. Each noise wrapper has an `eval_at` (`Prepared::eval_at`,
   `quick_multioctave_noise::sum_octaves_at`,
   `variable_persistence_multioctave_noise::eval_at`,
   `eval::primitives::basis_noise_expr_at`), and each existing `eval(x, y)` is
@@ -367,11 +372,15 @@ the raw coordinates. The two are different functions of the same algebra; see
   expression that warps a coordinate builds an `At::Point` for that call
   whatever it was handed. `nauvis_hills_offset` is the one case in the Nauvis
   tree.
-- **Only the Nauvis terrain sweep passes `At::Tile` so far**, and only at
+- **The Nauvis and Vulcanus terrain sweeps pass `At::Grid`**, and only at
   exactly one tile per pixel on whole-tile coordinates (`terrain_at` in
-  `crates/fmw-wasm/src/render.rs`). That is the case a traced preview showed is
-  all grid. Every other zoom, planet and overlay is still the point path; the
-  grid at other zooms is unmeasured.
+  `crates/fmw-wasm/src/render.rs`). That is the case traced previews showed is
+  all grid in the tile stage. Fulgora, every other zoom and every overlay are
+  still the point path; the grid at other zooms is unmeasured. Vulcanus's
+  `spot_noise` and `voronoi_cell_id` read warped coordinates and are not basis
+  ops, so they are unaffected.
+- **The counts it moved:** Nauvis 8 -> 1 and Vulcanus 7 -> 1 differing pixels
+  against the game's preview.
 - **Tier 1 grades each op's grid path** against gdb captures of the game's own
   kernel calls: `oracle-basis-grid`, `oracle-multioctave-grid` and
   `oracle-quick-vp-grid`. Tier 2 is untouched, because it runs the point path.

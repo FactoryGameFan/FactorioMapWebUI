@@ -10,7 +10,6 @@
 
 use crate::at::At;
 use crate::basis_noise::{basis_noise, basis_noise_grid, grid_coordinate, BasisNoiseTables};
-use crate::multioctave_noise::CHUNK;
 
 /// The DSL's `basis_noise{...}` parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -115,9 +114,9 @@ pub fn basis_noise_expr(
 pub fn basis_noise_expr_at(at: At, params: &BasisExprParams, tables: &BasisNoiseTables) -> f64 {
     match at {
         At::Point { x, y } => basis_noise_expr(x, y, params, tables),
-        At::Tile { x, y } => f64::from(basis_noise_grid_at(
-            x,
-            y,
+        At::Grid { cx, cy, i, r } => f64::from(basis_noise_grid_at(
+            (cx, cy),
+            (i, r),
             (params.offset_x as f32, 0.0),
             params.input_scale as f32,
             params.output_scale as f32,
@@ -126,21 +125,20 @@ pub fn basis_noise_expr_at(at: At, params: &BasisExprParams, tables: &BasisNoise
     }
 }
 
-/// One `basis_noise` op on the chunk grid at world tile `(x, y)`: origin =
+/// One `basis_noise` op on the chunk grid at column/row `index` of `chunk`: origin =
 /// chunk origin + `offset` in f32, step 1, `0 + basis * output_scale`.
 #[must_use]
 pub fn basis_noise_grid_at(
-    x: i32,
-    y: i32,
+    chunk: (i32, i32),
+    index: (u32, u32),
     offset: (f32, f32),
     input_scale: f32,
     output_scale: f32,
     tables: &BasisNoiseTables,
 ) -> f32 {
-    let cx = x.div_euclid(CHUNK) * CHUNK;
-    let cy = y.div_euclid(CHUNK) * CHUNK;
-    let nx = grid_coordinate((x - cx) as u32, 1.0, cx as f32 + offset.0, input_scale);
-    let ny = grid_coordinate((y - cy) as u32, 1.0, cy as f32 + offset.1, input_scale);
+    let ((cx, cy), (i, r)) = (chunk, index);
+    let nx = grid_coordinate(i, 1.0, cx as f32 + offset.0, input_scale);
+    let ny = grid_coordinate(r, 1.0, cy as f32 + offset.1, input_scale);
     0.0 + basis_noise_grid(nx, ny, tables) * output_scale
 }
 

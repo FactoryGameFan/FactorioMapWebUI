@@ -22,7 +22,6 @@ use crate::at::At;
 use crate::basis_noise::{
     basis_noise, basis_noise_grid, grid_coordinate, tables_from_seed, BasisNoiseTables,
 };
-use crate::multioctave_noise::CHUNK;
 
 /// Parameters for [`variable_persistence_multioctave_noise`]. `f64` for the
 /// same reason as [`crate::multioctave_noise::MultioctaveParams`].
@@ -260,16 +259,14 @@ pub fn amplitude_corrected_multioctave_noise(
 /// and each follows its own evidence.
 #[must_use]
 pub fn eval_grid(
-    x: i32,
-    y: i32,
+    chunk: (i32, i32),
+    index: (u32, u32),
     persistence: f32,
     offset_y: f32,
     terms: &VariablePersistenceTerms,
     tables: &BasisNoiseTables,
 ) -> f32 {
-    let cx = x.div_euclid(CHUNK) * CHUNK;
-    let cy = y.div_euclid(CHUNK) * CHUNK;
-    let (i, r) = ((x - cx) as u32, (y - cy) as u32);
+    let ((cx, cy), (i, r)) = (chunk, index);
     let origin = (cx as f32 + terms.offset_x as f32, cy as f32 + offset_y);
     let last = terms.scales.len().saturating_sub(1);
     let mut acc = 0.0f32;
@@ -296,7 +293,9 @@ pub fn eval_at(
 ) -> f32 {
     match at {
         At::Point { x, y } => eval(x, y, persistence, terms, tables),
-        At::Tile { x, y } => eval_grid(x, y, persistence as f32, 0.0, terms, tables),
+        At::Grid { cx, cy, i, r } => {
+            eval_grid((cx, cy), (i, r), persistence as f32, 0.0, terms, tables)
+        }
     }
 }
 
@@ -305,7 +304,7 @@ pub fn eval_at(
 pub fn amplitude_corrected_multioctave_noise_at(at: At, params: &AmplitudeCorrectedParams) -> f32 {
     match at {
         At::Point { x, y } => amplitude_corrected_multioctave_noise(x, y, params),
-        At::Tile { .. } => {
+        At::Grid { .. } => {
             let p = params.persistence;
             let octaves = params.octaves;
             let ratio = if p == 1.0 {

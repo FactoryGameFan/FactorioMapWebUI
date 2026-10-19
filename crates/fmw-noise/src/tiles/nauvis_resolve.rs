@@ -39,7 +39,7 @@ pub fn nauvis_tile_at(
     nauvis_tile(stack, catalog, At::point(x, y))
 }
 
-/// [`nauvis_tile_at`] at an [`At`]. An [`At::Tile`] is the terrain render at
+/// [`nauvis_tile_at`] at an [`At`]. An [`At::Grid`] is the terrain render at
 /// one tile per pixel, where the game's preview runs chunk-grid map
 /// generation, so every noise op underneath takes the grid path (#451).
 #[must_use]
@@ -64,7 +64,7 @@ pub fn nauvis_tile(stack: &NauvisStack, catalog: &NauvisTileCatalog, at: At) -> 
         elevation,
         aux: stack.aux.eval_at(at),
         moisture: stack.moisture.eval_at(at),
-        grid: matches!(at, At::Tile { .. }),
+        grid: matches!(at, At::Grid { .. }),
     })
 }
 

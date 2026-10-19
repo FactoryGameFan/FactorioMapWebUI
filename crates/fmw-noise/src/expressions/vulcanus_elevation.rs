@@ -39,11 +39,12 @@
 //! separate entry point taking the wider grid, and both go through the same
 //! code with `g` as a parameter.
 
+use crate::at::At;
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::eval::ctx::EvalCtx;
 use crate::eval::math::{clamp, lerp, max2, min, min2};
 use crate::eval::multisample::multisample;
-use crate::eval::primitives::{basis_noise_expr, BasisExprParams};
+use crate::eval::primitives::{basis_noise_expr_at, BasisExprParams};
 use crate::expressions::vulcanus_biomes::VulcanusBiomes;
 use crate::expressions::vulcanus_climate::VulcanusClimate;
 use crate::expressions::vulcanus_cracks::VulcanusCracks;
@@ -95,8 +96,9 @@ impl BasisLeaf {
         }
     }
 
-    fn eval(&self, x: f64, y: f64) -> f64 {
-        basis_noise_expr(x, y, &self.params, &self.tables)
+    /// `eval`, evaluated at an [`At`] (#451).
+    fn eval_at(&self, at: At) -> f64 {
+        basis_noise_expr_at(at, &self.params, &self.tables)
     }
 }
 
@@ -168,8 +170,14 @@ impl<'a> VulcanusElevation<'a> {
     /// `mountain_elevation`.
     #[must_use]
     pub fn mountain_elevation(&self, x: f64, y: f64) -> f64 {
-        let mp = self.mountain_plasma.eval(x, y);
-        let mbn = self.mountain_basis.eval(x, y);
+        self.mountain_elevation_at(At::point(x, y))
+    }
+
+    /// [`Self::mountain_elevation`] at an [`At`] (#451).
+    #[must_use]
+    pub fn mountain_elevation_at(&self, at: At) -> f64 {
+        let mp = self.mountain_plasma.eval_at(at);
+        let mbn = self.mountain_basis.eval_at(at);
         // The clamp's upper bound of 10000 is far above anything the plasma
         // reaches; it is the Lua's, kept as written.
         let base = lerp(
@@ -177,14 +185,20 @@ impl<'a> VulcanusElevation<'a> {
             mp,
             clamp(0.7 * mbn, 0.0, 1.0),
         );
-        base * (1.0 - clamp(self.mountain_elev_plasma.eval(x, y), 0.0, 1.0))
+        base * (1.0 - clamp(self.mountain_elev_plasma.eval_at(at), 0.0, 1.0))
     }
 
     /// `vulcanus_mountains_func`.
     #[must_use]
     pub fn mountains_func(&self, x: f64, y: f64, volcano_spots: f64, aux: f64) -> f64 {
+        self.mountains_func_at(At::point(x, y), volcano_spots, aux)
+    }
+
+    /// [`Self::mountains_func`] at an [`At`] (#451).
+    #[must_use]
+    pub fn mountains_func_at(&self, at: At, volcano_spots: f64, aux: f64) -> f64 {
         lerp(
-            self.mountain_elevation(x, y),
+            self.mountain_elevation_at(at),
             700.0 * volcano_inverted_peak(volcano_spots, 0.65),
             clamp(volcano_spots * 3.0, 0.0, 1.0),
         ) + 200.0 * (aux - 0.5) * (volcano_spots + 0.5)
@@ -193,11 +207,17 @@ impl<'a> VulcanusElevation<'a> {
     /// `vulcanus_ashlands_func`. See the module docs on `min(a, a)`.
     #[must_use]
     pub fn ashlands_func(&self, x: f64, y: f64) -> f64 {
+        self.ashlands_func_at(At::point(x, y))
+    }
+
+    /// [`Self::ashlands_func`] at an [`At`] (#451).
+    #[must_use]
+    pub fn ashlands_func_at(&self, at: At) -> f64 {
         300.0
             + 0.001
                 * min2(
-                    self.ashlands_basis.eval(x, y),
-                    self.ashlands_basis.eval(x, y),
+                    self.ashlands_basis.eval_at(at),
+                    self.ashlands_basis.eval_at(at),
                 )
     }
 
@@ -208,20 +228,52 @@ impl<'a> VulcanusElevation<'a> {
     /// most of the map, so the whole term only bites where all three line up.
     #[must_use]
     pub fn basalt_lakes(&self, x: f64, y: f64) -> f64 {
-        let carve = contrast(f64::from(self.lakes_837.eval(x, y)), 0.95)
-            * contrast(f64::from(self.lakes_234.eval(x, y)), 0.95)
-            * f64::from(self.lakes_643.eval(x, y));
+        self.basalt_lakes_at(At::point(x, y))
+    }
+
+    /// [`Self::basalt_lakes`] at an [`At`] (#451).
+    #[must_use]
+    pub fn basalt_lakes_at(&self, at: At) -> f64 {
+        let carve = contrast(f64::from(self.lakes_837.eval_at(at)), 0.95)
+            * contrast(f64::from(self.lakes_234.eval_at(at)), 0.95)
+            * f64::from(self.lakes_643.eval_at(at));
         min2(
             1.0,
-            -0.2 + self.cracks.eval(x, y).flood_basalts_func - 0.35 * clamp(carve, 0.0, 3.0),
+            -0.2 + self.cracks.eval_at(at).flood_basalts_func - 0.35 * clamp(carve, 0.0, 3.0),
         )
     }
 
     /// `vulcanus_basalt_lakes_multisample` - a 2x2 min filter one grid step wide.
     #[must_use]
     pub fn basalt_lakes_multisample(&self, x: f64, y: f64, grid: f64) -> f64 {
-        let at = |dx: f64, dy: f64| multisample(|sx, sy| self.basalt_lakes(sx, sy), x, y, dx, dy);
-        min(&[at(0.0, 0.0), at(grid, 0.0), at(0.0, grid), at(grid, grid)])
+        self.basalt_lakes_multisample_at(At::point(x, y), grid)
+    }
+
+    /// [`Self::basalt_lakes_multisample`] at an [`At`] (#451).
+    ///
+    /// On the grid the game evaluates `vulcanus_basalt_lakes` as a program of
+    /// its own on a 33x33 grid from the chunk origin - the 33x33 kernel calls
+    /// in a traced Vulcanus preview - and reads it one column and row over in
+    /// the SAME chunk. So the last tile's neighbour is column 32 of this
+    /// chunk, which [`At::shifted`] keeps, not column 0 of the next. `grid` is
+    /// 1 for every tile consumer, the only ones that build an [`At::Grid`].
+    #[must_use]
+    pub fn basalt_lakes_multisample_at(&self, at: At, grid: f64) -> f64 {
+        match at {
+            At::Point { x, y } => {
+                let s = |dx: f64, dy: f64| {
+                    multisample(|sx, sy| self.basalt_lakes(sx, sy), x, y, dx, dy)
+                };
+                min(&[s(0.0, 0.0), s(grid, 0.0), s(0.0, grid), s(grid, grid)])
+            }
+            At::Grid { .. } => {
+                let g = grid as u32;
+                // The same hook `multisample` applies to each reading.
+                let s =
+                    |di: u32, dj: u32| poison::f64_result(self.basalt_lakes_at(at.shifted(di, dj)));
+                min(&[s(0, 0), s(g, 0), s(0, g), s(g, g)])
+            }
+        }
     }
 
     /// `vulcanus_elev` and `vulcanus_elevation` at one position, on a given grid.
@@ -231,19 +283,25 @@ impl<'a> VulcanusElevation<'a> {
     /// the basalt-lakes min filter; everything else is grid-independent.
     #[must_use]
     pub fn eval_at_grid(&self, x: f64, y: f64, grid: f64) -> ElevationFields {
-        let biome = self.biomes.eval(x, y);
-        let climate = self.climate.eval(x, y, &self.cracks.eval(x, y));
+        self.eval_at_grid_at(At::point(x, y), grid)
+    }
+
+    /// [`Self::eval_at_grid`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at_grid_at(&self, at: At, grid: f64) -> ElevationFields {
+        let biome = self.biomes.eval_at(at);
+        let climate = self.climate.eval_at(at, &self.cracks.eval_at(at));
 
         let mountains_blend = lerp(
-            120.0 * self.basalt_lakes_multisample(x, y, grid),
-            20.0 + self.mountains_func(x, y, biome.mountain_volcano_spots, climate.aux)
+            120.0 * self.basalt_lakes_multisample_at(at, grid),
+            20.0 + self.mountains_func_at(at, biome.mountain_volcano_spots, climate.aux)
                 * VULCANUS_MOUNTAINS_ELEVATION_MULTIPLIER,
             biome.mountains_biome,
         );
         let elev = VULCANUS_ELEVATION_OFFSET
             + lerp(
                 mountains_blend,
-                self.ashlands_func(x, y),
+                self.ashlands_func_at(at),
                 biome.ashlands_biome,
             );
 
@@ -256,13 +314,25 @@ impl<'a> VulcanusElevation<'a> {
     /// The tile and terrain channel.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> ElevationFields {
-        self.eval_at_grid(x, y, TILE_MULTISAMPLE_GRID)
+        self.eval_at(At::point(x, y))
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> ElevationFields {
+        self.eval_at_grid_at(at, TILE_MULTISAMPLE_GRID)
     }
 
     /// The cliff generator's channel, whose multisample grid is 4 tiles.
     #[must_use]
     pub fn cliff_elevation(&self, x: f64, y: f64) -> f64 {
-        self.eval_at_grid(x, y, CLIFF_MULTISAMPLE_GRID).elevation
+        self.cliff_elevation_at(At::point(x, y))
+    }
+
+    /// [`Self::cliff_elevation`] at an [`At`] (#451).
+    #[must_use]
+    pub fn cliff_elevation_at(&self, at: At) -> f64 {
+        self.eval_at_grid_at(at, CLIFF_MULTISAMPLE_GRID).elevation
     }
 
     /// `vulcanus_temperature`, deferred out of the climate layer until
@@ -273,9 +343,15 @@ impl<'a> VulcanusElevation<'a> {
     /// makes high ground cool slowly and deep lakes cool fast.
     #[must_use]
     pub fn temperature(&self, x: f64, y: f64, temperature_bias: f64) -> f64 {
-        let e = self.eval(x, y).elev;
-        let biome = self.biomes.eval(x, y);
-        let climate = self.climate.eval(x, y, &self.cracks.eval(x, y));
+        self.temperature_at(At::point(x, y), temperature_bias)
+    }
+
+    /// [`Self::temperature`] at an [`At`] (#451).
+    #[must_use]
+    pub fn temperature_at(&self, at: At, temperature_bias: f64) -> f64 {
+        let e = self.eval_at(at).elev;
+        let biome = self.biomes.eval_at(at);
+        let climate = self.climate.eval_at(at, &self.cracks.eval_at(at));
         100.0 + 100.0 * temperature_bias
             - min2(e, e / 100.0)
             - 2.0 * climate.moisture
@@ -368,7 +444,7 @@ mod tests {
 
         for k in 0..20 {
             let (x, y) = (f64::from(k) * 51.5, f64::from(k) * -33.25);
-            let single = elevation.ashlands_basis.eval(x, y);
+            let single = elevation.ashlands_basis.eval_at(At::point(x, y));
             assert_eq!(elevation.ashlands_func(x, y), 300.0 + 0.001 * single);
         }
     }

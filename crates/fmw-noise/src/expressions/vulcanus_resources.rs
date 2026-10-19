@@ -77,6 +77,7 @@
 //! rebuild went unmeasured, which was 20x - that is why this was measured, and
 //! the answer this time is that it does not matter.
 
+use crate::at::At;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
@@ -395,10 +396,10 @@ impl<'a> VulcanusResources<'a> {
     ///
     /// A DIFFERENT combination from `vulcanus_spawn`'s three-wobble sum:
     /// resources use two wobbles, the larger one quarter-weighted.
-    fn resource_wobble(&self, x: f64, y: f64) -> (f64, f64) {
+    fn resource_wobble_at(&self, at: At) -> (f64, f64) {
         (
-            self.helpers.wobble_x(x, y) + 0.25 * self.helpers.wobble_large_x(x, y),
-            self.helpers.wobble_y(x, y) + 0.25 * self.helpers.wobble_large_y(x, y),
+            self.helpers.wobble_x_at(at) + 0.25 * self.helpers.wobble_large_x_at(at),
+            self.helpers.wobble_y_at(at) + 0.25 * self.helpers.wobble_large_y_at(at),
         )
     }
 
@@ -418,13 +419,18 @@ impl<'a> VulcanusResources<'a> {
     /// it subtracts the volcano-peak indicator. Do not collapse it with
     /// sulfur's, which reads the same biome at the common buffer.
     fn favor(&self, kind: Favor, x: f64, y: f64) -> f64 {
-        let b = self.biomes.eval(x, y);
+        self.favor_at(kind, At::point(x, y))
+    }
+
+    /// [`Self::favor`] at an [`At`] (#451).
+    fn favor_at(&self, kind: Favor, at: At) -> f64 {
+        let b = self.biomes.eval_at(at);
         // `starting_area` comes from the spawn layer rather than from
         // `pre_volcano`'s copy of it, so this reads one field from one owner
         // rather than the same number from two.
         let starting_area = self
             .spawn
-            .eval(x, y, WobbleSums::at(self.helpers, x, y))
+            .eval_at(at, WobbleSums::at_pos(self.helpers, at))
             .starting_area;
         match kind {
             Favor::Basalts => Self::favorability(b.basalts_biome_full, starting_area, 0.3),
@@ -446,6 +452,12 @@ impl<'a> VulcanusResources<'a> {
 
     /// `vulcanus_ore_dist = max(1, distance / 4000)`.
     fn ore_dist(&self, x: f64, y: f64) -> f64 {
+        self.ore_dist_at(At::point(x, y))
+    }
+
+    /// [`Self::ore_dist`] at an [`At`] (#451).
+    fn ore_dist_at(&self, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
         let d = f64::from(distance_from_nearest_point(
             x,
             y,
@@ -458,6 +470,12 @@ impl<'a> VulcanusResources<'a> {
     /// The shared `size` expression:
     /// `slider_rescale(size, 2) * min(1.2, ore_dist) * 25`.
     fn size_expr(&self, spec: SpotSpec, x: f64, y: f64) -> f64 {
+        self.size_expr_at(spec, At::point(x, y))
+    }
+
+    /// [`Self::size_expr`] at an [`At`] (#451).
+    fn size_expr_at(&self, spec: SpotSpec, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
         spec.size_rescaled * min2(1.2, self.ore_dist(x, y)) * 25.0
     }
 
@@ -521,8 +539,9 @@ impl<'a> VulcanusResources<'a> {
     /// `hard_region_target_quantity = 0` means no last-spot shrink, so
     /// `cone_scale` is always 1. It is still applied, so the cone math stays
     /// faithful if that ever changes.
-    fn spot_noise(&self, spec: SpotSpec, x: f64, y: f64) -> f64 {
-        let (wx, wy) = self.resource_wobble(x, y);
+    fn spot_noise_at(&self, spec: SpotSpec, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
+        let (wx, wy) = self.resource_wobble_at(at);
         let sx = x + wx;
         let sy = y + wy;
 
@@ -584,22 +603,22 @@ impl<'a> VulcanusResources<'a> {
     ///
     /// The only one with the crack term, and the only one whose ceiling is
     /// `clamp(-1 + 4 * favor, -1, 1)` rather than `2 * favor - 1`.
-    fn place_metal_spots(&self, x: f64, y: f64) -> f64 {
+    fn place_metal_spots_at(&self, at: At) -> f64 {
         let spec = self.tungsten_spots;
-        let favor = self.favor(spec.favor, x, y);
+        let favor = self.favor_at(spec.favor, at);
         min2(
             clamp(-1.0 + 4.0 * favor, -1.0, 1.0),
-            self.spot_noise(spec, x, y) - self.cracks.eval(x, y).hairline_cracks / 30_000.0,
+            self.spot_noise_at(spec, at) - self.cracks.eval_at(at).hairline_cracks / 30_000.0,
         )
     }
 
     /// `vulcanus_place_sulfur_spots` and `vulcanus_place_non_metal_spots`.
     ///
     /// The two differ only in their `region_size` base, which lives on the spec.
-    fn place_capped_spots(&self, spec: SpotSpec, x: f64, y: f64) -> f64 {
+    fn place_capped_spots_at(&self, spec: SpotSpec, at: At) -> f64 {
         min2(
-            2.0 * self.favor(spec.favor, x, y) - 1.0,
-            self.spot_noise(spec, x, y),
+            2.0 * self.favor_at(spec.favor, at) - 1.0,
+            self.spot_noise_at(spec, at),
         )
     }
 
@@ -626,25 +645,32 @@ impl<'a> VulcanusResources<'a> {
     /// saved, which is the standing objection to a fast path.
     #[must_use]
     pub fn ore_regions(&self, x: f64, y: f64) -> OreRegions {
-        let wobble = WobbleSums::at(self.helpers, x, y);
-        let starting_circle = self.spawn.eval(x, y, wobble).starting_circle;
-        let (wx, wy) = self.resource_wobble(x, y);
+        self.ore_regions_at(At::point(x, y))
+    }
+
+    /// [`Self::ore_regions`] at an [`At`] (#451).
+    #[must_use]
+    pub fn ore_regions_at(&self, at: At) -> OreRegions {
+        let (x, y) = (at.x(), at.y());
+        let wobble = WobbleSums::at_pos(self.helpers, at);
+        let starting_circle = self.spawn.eval_at(at, wobble).starting_circle;
+        let (wx, wy) = self.resource_wobble_at(at);
         let cone = |spot: &StartingSpot| starting_spot_at_angle(spot, x, y, 0.5 * wx, 0.5 * wy);
         OreRegions {
             tungsten: Self::region(
                 cone(&self.spot_tungsten),
                 starting_circle,
-                self.place_metal_spots(x, y),
+                self.place_metal_spots_at(at),
             ),
             coal: Self::region(
                 cone(&self.spot_coal),
                 starting_circle,
-                self.place_capped_spots(self.coal_spots, x, y),
+                self.place_capped_spots_at(self.coal_spots, at),
             ),
             calcite: Self::region(
                 cone(&self.spot_calcite),
                 starting_circle,
-                self.place_capped_spots(self.calcite_spots, x, y),
+                self.place_capped_spots_at(self.calcite_spots, at),
             ),
         }
     }
@@ -652,9 +678,16 @@ impl<'a> VulcanusResources<'a> {
     /// Evaluate every graded field of this layer at one position.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> ResourceFields {
-        let wobble = WobbleSums::at(self.helpers, x, y);
-        let spawn = self.spawn.eval(x, y, wobble);
-        let (wx, wy) = self.resource_wobble(x, y);
+        self.eval_at(At::point(x, y))
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> ResourceFields {
+        let (x, y) = (at.x(), at.y());
+        let wobble = WobbleSums::at_pos(self.helpers, at);
+        let spawn = self.spawn.eval_at(at, wobble);
+        let (wx, wy) = self.resource_wobble_at(at);
 
         // The four starting spots take HALF the resource wobble, except sulfur's
         // pair which take three quarters. Written out per spot rather than
@@ -673,25 +706,25 @@ impl<'a> VulcanusResources<'a> {
         let tungsten_region = Self::region(
             starting_tungsten,
             spawn.starting_circle,
-            self.place_metal_spots(x, y),
+            self.place_metal_spots_at(at),
         );
         let coal_region = Self::region(
             starting_coal,
             spawn.starting_circle,
-            self.place_capped_spots(self.coal_spots, x, y),
+            self.place_capped_spots_at(self.coal_spots, at),
         );
         let calcite_region = Self::region(
             starting_calcite,
             spawn.starting_circle,
-            self.place_capped_spots(self.calcite_spots, x, y),
+            self.place_capped_spots_at(self.calcite_spots, at),
         );
         let sulfuric_acid_region = Self::region(
             starting_sulfur,
             spawn.starting_circle,
-            self.place_capped_spots(self.sulfur_spots, x, y),
+            self.place_capped_spots_at(self.sulfur_spots, at),
         );
 
-        let sulfuric_acid_patches = 0.8 * f64::from(self.patch_noise.eval(x, y)).abs();
+        let sulfuric_acid_patches = 0.8 * f64::from(self.patch_noise.eval_at(at)).abs();
         let sulfuric_acid_region_patchy =
             (1.0 + sulfuric_acid_region) * (0.5 + 0.5 * sulfuric_acid_patches) - 1.0;
 
@@ -706,10 +739,10 @@ impl<'a> VulcanusResources<'a> {
         };
 
         ResourceFields {
-            basalts_favorability: self.favor(Favor::Basalts, x, y),
-            mountains_favorability: self.favor(Favor::MountainsCalcite, x, y),
-            mountains_sulfur_favorability: self.favor(Favor::MountainsSulfur, x, y),
-            ashlands_favorability: self.favor(Favor::Ashlands, x, y),
+            basalts_favorability: self.favor_at(Favor::Basalts, at),
+            mountains_favorability: self.favor_at(Favor::MountainsCalcite, at),
+            mountains_sulfur_favorability: self.favor_at(Favor::MountainsSulfur, at),
+            ashlands_favorability: self.favor_at(Favor::Ashlands, at),
             starting_tungsten,
             starting_coal,
             starting_calcite,

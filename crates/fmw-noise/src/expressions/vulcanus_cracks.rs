@@ -31,6 +31,7 @@
 //! computes them in dependency order into locals instead, which is what the
 //! memo achieves bit-identically. Every read is at the SAME `(x, y)`.
 
+use crate::at::At;
 use crate::eval::math::{clamp, lerp, max2, min2};
 use crate::expressions::vulcanus_helpers::{Plasma, VulcanusHelpers};
 use crate::multioctave_noise::Prepared;
@@ -93,29 +94,35 @@ impl VulcanusCracks {
     /// Evaluate every field of this layer at one position.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> CrackFields {
-        let hairline_cracks = self.hairline.eval(x, y);
+        self.eval_at(At::point(x, y))
+    }
+
+    /// [`Self::eval`] at an [`At`] (#451).
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> CrackFields {
+        let hairline_cracks = self.hairline.eval_at(at);
 
         // `lerp` toward 1, so a high mix value floods the cracks shut. The
         // un-narrowed `lerp`, matching the TypeScript - this layer is not one
         // of the per-operation narrowed ones.
         let flood_cracks_a = lerp(
-            min2(self.crack_a1.eval(x, y), self.crack_a2.eval(x, y)),
+            min2(self.crack_a1.eval_at(at), self.crack_a2.eval_at(at)),
             1.0,
-            clamp(f64::from(self.crack_a_mix.eval(x, y)), 0.0, 1.0),
+            clamp(f64::from(self.crack_a_mix.eval_at(at)), 0.0, 1.0),
         );
 
         // The other way round: `lerp` FROM 1 toward the crack pattern, and the
         // `- 0.5` applies to the min rather than to the lerp's result.
         let flood_cracks_b = lerp(
             1.0,
-            min2(self.crack_b1.eval(x, y), self.crack_b2.eval(x, y)) - 0.5,
-            clamp(0.2 + f64::from(self.crack_b_mix.eval(x, y)), 0.0, 1.0),
+            min2(self.crack_b1.eval_at(at), self.crack_b2.eval_at(at)) - 0.5,
+            clamp(0.2 + f64::from(self.crack_b_mix.eval_at(at)), 0.0, 1.0),
         );
 
         // `min(0, detail)` only ever subtracts, so the detail term deepens the
         // paths and never fills them.
         let flood_paths =
-            0.4 - self.path_plasma.eval(x, y) + min2(0.0, f64::from(self.path_detail.eval(x, y)));
+            0.4 - self.path_plasma.eval_at(at) + min2(0.0, f64::from(self.path_detail.eval_at(at)));
 
         let flood_basalts_func = min2(max2(flood_cracks_a - 0.125, flood_paths), flood_cracks_b)
             + 0.3 * min2(0.5, hairline_cracks);
