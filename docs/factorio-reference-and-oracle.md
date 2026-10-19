@@ -280,13 +280,18 @@ Three things it establishes:
 - **`error("DUMPED-OK")` makes Factorio exit non-zero, and that is success.**
   The tool keys `create` off the dump appearing, not off the exit code.
 - **Run it against two versions when you can.** A second install is named with
-  `--factorio`, and the 2.0.77 one sits outside every discovery path on purpose,
-  so a bare run finds only the Steam 2.1.14:
+  `--factorio` and `--version` together, and the 2.0.77 one sits outside every
+  discovery path on purpose, so a bare run finds only the Steam build:
 
   ```bash
   ~/.cargo/bin/factorio-oracle run --probe <probe.json> --work-dir /tmp/w \
-    --factorio ~/GitHub/factorio-oracle/installs/factorio-2.0.77.app
+    --factorio ~/GitHub/factorio-oracle/installs/factorio-2.0.77.app --version 2.0.77
   ```
+
+  `--factorio` alone is not enough. It adds one more place to look, and when
+  the path does not resolve, the Steam build runs and the command exits 0
+  (factorio-oracle#19). Read the run's `buildLine` before trusting a
+  cross-check.
 
   The gradient table came back byte-identical from 2.0.77 and 2.1.14, which is
   how we know it is a constant of the engine rather than of a version.

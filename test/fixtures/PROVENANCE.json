@@ -559,7 +559,7 @@
     "oracle-basis-axis.json": {
       "factorioVersion": "2.1.20",
       "evidence": "captured 2026-10-18 by scripts/probes/basis-axis/capture.ts through factorio-oracle from 'Version: 2.1.20 (build 87512, mac-arm64, steam)': calculate_tile_properties on four basis_noise expressions routed to Nauvis's elevation, moisture, aux and temperature, at world points that put the noise point exactly on a lattice row or column a step of about 2^-16 off a corner (#455). The capture checks itself: 16 lattice points must return exactly 0, and the first run's control failed for a real geometry error before it was fixed. Every value is an f32; 2 of 32,800 were printed by helpers.table_to_json with 16 significant digits and are stored rounded to the f32 they name.",
-      "versionDifferences": "not cross-checked: the 2.0.77 copy on this Mac (installs/factorio-2.0.77-debug.app) has a Contents/data symlink to a factorio-2.0.77.app that no longer exists, so factorio-oracle skips it. #234 found the gradient table byte-identical on 2.0.77 and 2.1.14, and #451's grid capture found 2.0.77 and 2.1.20 bit-identical."
+      "versionDifferences": "none: 'Version: 2.0.77 (build 84539, mac-arm64, full)' returned bit-identical values for all 16,448 points, through the same script, on 2026-10-19."
     }
   },
   "notFixtures": {

@@ -10,7 +10,7 @@
  *
  * The first run is the installed Steam build. The optional pair names a second
  * install, for example
- * `~/GitHub/factorio-oracle/installs/factorio-2.0.77-debug.app 2.0.77`, which
+ * `~/GitHub/factorio-oracle/installs/factorio-2.0.77.app 2.0.77`, which
  * is captured the same way and must return bit-identical values or nothing is
  * written. The version is not optional there: factorio-oracle treats
  * `--factorio` as one MORE place to look, and without `--version` the first
@@ -246,7 +246,7 @@ if (crossCheck !== undefined) {
   const other = await capture(crossCheck);
   // factorio-oracle given a `--factorio` path that does not exist runs the
   // DEFAULT install instead and exits 0 (measured 2026-10-18, after the
-  // 2.0.77 copy was renamed). The two builds "agreeing" would then be one
+  // 2.0.77 copy had lost its data folder). The two builds "agreeing" would then be one
   // build agreeing with itself, so a cross-check that names the primary's own
   // build line is refused.
   if (other.build === primary.build) {

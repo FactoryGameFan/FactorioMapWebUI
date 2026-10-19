@@ -323,7 +323,7 @@ constant, not from this capture. To re-take the capture behind them:
 
 ```bash
 node --experimental-strip-types scripts/probes/basis-axis/capture.ts \
-  ~/GitHub/factorio-oracle/installs/factorio-2.0.77-debug.app 2.0.77
+  ~/GitHub/factorio-oracle/installs/factorio-2.0.77.app 2.0.77
 ```
 
 The pair names a cross-check install and its version, and both are needed:
