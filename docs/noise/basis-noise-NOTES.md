@@ -164,9 +164,12 @@ out[r*w + i] += ((v10 + v11) + (v00 + v01)) * output_scale
 
 | arm, scored on the 36,864 values | exact |
 | --- | --- |
-| the point kernel, fed the grid's own coordinates | 20,332 |
-| the grid formula, corners summed by row | 29,677 |
-| **the grid formula, corners summed by column** | **36,862** |
+| the point kernel, fed the grid's own coordinates | 20,334 |
+| the grid formula, corners summed by row | 29,679 |
+| **the grid formula, corners summed by column** | **36,864** |
+
+Each row was 2 lower until #455 corrected the gradient table (see the last
+bullet below).
 
 Four things about it that are easy to get wrong:
 
@@ -189,16 +192,16 @@ Four things about it that are easy to get wrong:
   instruction sequence; 2.0.77 has the same instructions with different
   register moves, and a capture from each of 2.0.77 and 2.1.20 returned
   bit-identical values for all 36,864 points.
-- **The two misses are the gradient table, and they price "The limit" below
-  differently.** Both are in the `input_scale = 1/7` case, at a point where
+- **The last two misses were the gradient table, and they reopened "The
+  limit" below.** Both are in the `input_scale = 1/7` case, at a point where
   one half of a corner's dot product is exactly zero: `(49, 0)` has `dy = 0`
-  and reads slot 64's x component (-1.836e-7), `(63, 21)` has `dx = 0` and
-  reads slot 128's y component (-3.672e-7). So the value, about 7.11e-14, IS
-  that near-zero component times a falloff, and the game's f32 answer carries
-  it to full precision. Exactly one f32 for each slot (154 and 285 ulp from
-  the committed ones) makes all 36,864 exact. That is a fit to this fixture
-  rather than a test of it, so the table is unchanged; a correction needs a
-  capture of its own to be scored against (#455).
+  and reads slot 64's x component, `(63, 21)` has `dx = 0` and reads slot
+  128's y component. So the value, about 7.11e-14, IS that near-zero
+  component times a falloff, and the game's f32 answer carries it to full
+  precision. Exactly one f32 for each slot made all 36,864 exact, but that
+  was a fit to this fixture rather than a test of it. #455 took a capture of
+  its own, found the same two values there, and changed the table; see "The
+  limit, priced".
 
 Ported as `basis_noise_grid` and `basis_noise_grid_chunk` in
 `crates/fmw-noise/src/basis_noise.rs`. No renderer calls them yet, so no
@@ -260,21 +263,51 @@ gauge, its `a` starting `0,1,2,4,8,16,32,15`, while `basisNoiseTablesFromSeed`
 returns the game's own tables. Both produce identical noise, so equality was
 never the right test - equivalence is.
 
-### The limit, priced
+### The limit, priced - and then measured (#455)
 
-Four slots are near zero and cannot be pinned by probing at all. Their ULP is
-3.6e-15 and the game returns f32, so the information is not in the output at any
-geometry. It costs nothing: perturbing them by 1.0e-9, which is 280x the actual
-residual, changes **0 of the 512** values in `basis-noise.seed123456.json`. A
-measured limit, not an open question.
+Four slots have a near-zero component: slot 0's y, 64's x, 128's y and 192's
+x. **This section used to say they "cannot be pinned by probing at all"**,
+because the information is "not in the output at any geometry". That was
+wrong. It is not in the output of THIS capture, where the far corner swamps
+it, but on a lattice row (`dy = 0` exactly) a corner's value is `dx * gx`
+times the falloff, so a near-zero `gx` comes back at full f32 precision.
+Columns do the same for `gy`. #451's chunk-grid fixture hit two such points
+by accident.
 
-**Revised 2026-10-18 (#451): two of them CAN be pinned.** "Not in the output at
-any geometry" was wrong. At a point where a corner's other offset is exactly
-zero, the value is the near-zero component times a falloff, and the game's f32
-answer resolves it. The chunk-grid fixture holds two such points, and the port
-misses them by 125 and 232 ulp in the output - from slot values 154 and 285 ulp
-off; see "The chunk-grid kernel" above. The cost on the 512-point fixture is
-still 0.
+`test/fixtures/oracle-basis-axis.json` aims at them on purpose
+(`scripts/probes/basis-axis/`, measured 2026-10-18 on 2.1.20). It samples
+whole lattice rows and columns, a step of about 2^-16 off each corner, at four
+seeds and three scales, through the point kernel; a row of 256 `i` touches
+every slot once, so no table is needed to aim. The scale does the work: a
+`MapPosition` resolves only 1/256 of a tile, but at `input_scale = 2^-8` the
+world point `(256 i + k/256, 256 j)` is the noise point `(i + k * 2^-16, j)`,
+exact in f32 and f64.
+
+Each slot was fitted on two of its four cases and scored on the other two:
+
+| slot | old value | new value | held-out points, old | new |
+| --- | ---: | ---: | ---: | ---: |
+| 64 x | -1.8359003e-7 | -1.8358784e-7 (154 ulp) | 0 of 8 | 8 of 8 |
+| 128 y | -3.671676e-7 | -3.671757e-7 (285 ulp) | 4 of 16 | 16 of 16 |
+| 192 x | 5.008599e-8 | 5.00845e-8 (420 ulp) | 2 of 16 | 16 of 16 |
+| 0 y | 3.947778e-12 | 0 | 2 of 12 | 12 of 12 |
+
+- **64, 128 and 192 are each the only f32 within 20,000 ulp that fits.** The
+  64 and 128 values are bit-identical to the fit #451's grid fixture gave,
+  which is independent data.
+- **Slot 0's y is bounded, not pinned.** Anything below about 5.6e-17 fits
+  every point, so the table takes 0, which is also the formula's `sin 0`. The
+  old value is outside the bound.
+- **#234's own capture agrees.** With the four slots pinned, its samples go
+  from 4,086 and 4,092 of 4,096 to 4,096 and 4,096. Its 14 misses were these
+  slots all along, not the "f32 cannot resolve them" this section claimed.
+- **No preview pixel moved.** Every frozen render count and checksum is
+  unchanged, and the 512-point fixture stays at 512. The slots matter only at
+  points exactly on a lattice line, which a render almost never lands on.
+
+`the_axis_fixture_pins_the_near_zero_slots_on_points_it_never_fit` in
+`crates/fmw-noise/src/fixtures.rs` re-runs the split on every gate run, so a
+wrong slot fails there.
 
 ### Re-running it
 
@@ -285,9 +318,23 @@ node scripts/recover-gradient-table.ts /tmp/bg/write/script-output/oracle-dump.j
 node scripts/gen-gradient-table.ts
 ```
 
+The recovery pins the four near-zero slots from its `NEAR_ZERO_SLOTS`
+constant, not from this capture. To re-take the capture behind them:
+
+```bash
+node --experimental-strip-types scripts/probes/basis-axis/capture.ts \
+  ~/GitHub/factorio-oracle/installs/factorio-2.0.77.app 2.0.77
+```
+
+The pair names a cross-check install and its version, and both are needed:
+factorio-oracle treats `--factorio` as one more place to look, so without
+`--version` the Steam install still wins. Leave the pair off to capture from
+the installed build alone.
+
 The probe must write `oracle-dump.json`; that name is factorio-oracle's contract.
-`test/basisGradientTable.spec.ts` scores the old formula through the real kernel,
-so the 473-versus-512 comparison stays reproducible rather than a claim here.
+`test/basisGradientTable.spec.ts` scored the old formula through the real
+kernel until #371 deleted the TypeScript kernel, so the 473-versus-512
+comparison is now a record rather than a re-run.
 
 ## The probing technique
 

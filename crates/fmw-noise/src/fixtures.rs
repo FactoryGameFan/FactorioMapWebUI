@@ -329,24 +329,22 @@ fn reproduces_every_value_of_the_chunk_grid_fixture_exactly() {
         let (e, t) = score_grid_case(case, seed0, &basis_noise_grid);
         per_case.push((case.get("property").as_str().to_string(), e, t));
     }
-    // 36,862 of 36,864, and the two misses are the GRADIENT TABLE, not this
-    // kernel. Both are in the 1/7 case, at points where one half of a corner's
-    // dot product is exactly zero, so the value is that corner's other
-    // gradient component times a falloff - and both components are near-zero
-    // slots: (49, 0) reads slot 64's x (-1.836e-7) with dy = 0, and (63, 21)
-    // reads slot 128's y (-3.672e-7) with dx = 0. The values are ~7.11e-14.
+    // Every value. It was 36,862 until #455: the two misses were the GRADIENT
+    // TABLE, not this kernel. Both sit in the 1/7 case at points where one
+    // half of a corner's dot product is exactly zero, so the value is that
+    // corner's other component times a falloff, and both components are
+    // near-zero slots: (49, 0) reads slot 64's x with dy = 0, and (63, 21)
+    // reads slot 128's y with dx = 0. The values are ~7.11e-14.
     //
-    // docs/noise/basis-noise-NOTES.md says those slots "cannot be pinned by
-    // probing at all". This geometry pins them: exactly one f32 for slot 64
-    // (154 ulp from the committed value) and one for slot 128 (285 ulp)
-    // makes all 36,864 exact. That is a FIT to this fixture, not a test of
-    // it, so the table is not changed here - a correction needs its own
-    // capture to be scored against (#455).
+    // This fixture pinned both slots, but only as a fit to itself. The values
+    // now in the table come from `oracle-basis-axis.json`, a separate capture
+    // at other seeds and scales, and they are bit-identical to that fit; see
+    // `the_axis_fixture_pins_the_near_zero_slots_on_points_it_never_fit`.
     let expected = [
         ("elevation", 9_216),
         ("moisture", 9_216),
         ("aux", 9_216),
-        ("temperature", 9_214),
+        ("temperature", 9_216),
     ];
     for ((name, e, t), (want_name, want)) in per_case.iter().zip(expected) {
         assert_eq!(name, want_name);
@@ -391,8 +389,8 @@ fn the_chunk_function_reproduces_the_fixture_through_the_games_own_call_shape() 
             }
         }
     }
-    // The same two gradient-table misses as the test above.
-    assert_eq!(exact, 36_862);
+    // Every value, as above. 36,862 until #455 corrected two gradient slots.
+    assert_eq!(exact, 36_864);
 
     // `+=`, not `=`. Every buffer above starts at zero, where the two are the
     // same function, so this test could not see the kernel's add on its own.
@@ -462,8 +460,210 @@ fn the_chunk_grid_fixture_tells_the_two_kernels_and_both_corner_orders_apart() {
         total += t;
     }
     assert_eq!(total, 36_864);
-    assert_eq!(point_exact, 20_332, "the point kernel on grid coordinates");
-    assert_eq!(row_exact, 29_677, "the grid arithmetic summed by row");
+    // 20,332 and 29,677 until #455: the two on-axis points above miss under
+    // every arm when the gradient slot is wrong.
+    assert_eq!(point_exact, 20_334, "the point kernel on grid coordinates");
+    assert_eq!(row_exact, 29_679, "the grid arithmetic summed by row");
+}
+
+// ---------------------------------------------------------------------------
+// The near-zero gradient slots (#455).
+//
+// Four slots have one component near zero: slot 0's y, 64's x, 128's y and
+// 192's x. #234's capture could not resolve them, because anywhere ordinary
+// such a component is swamped by the rest of the dot product. On a lattice ROW
+// (dy = 0) a corner's value is `dx * gx` times the falloff, so a near-zero `gx`
+// comes back to full f32 precision; columns do the same for `gy`. This fixture
+// samples whole rows and columns of four seeds and three scales a step of
+// about 2^-16 off each corner (scripts/probes/basis-axis/), through the point
+// kernel.
+// ---------------------------------------------------------------------------
+
+const BASIS_AXIS_FIXTURE: &str = "test/fixtures/oracle-basis-axis.json";
+
+/// One case of the axis fixture: its tables, its scale, and the game's values.
+struct AxisCase {
+    tables: BasisNoiseTables,
+    input_scale: f64,
+    values: Vec<f64>,
+}
+
+/// The fixture's world points and its four cases.
+fn load_axis() -> (Vec<f64>, Vec<f64>, Vec<AxisCase>) {
+    let fixture = load_captured_at(BASIS_AXIS_FIXTURE, "2.1.20");
+    let cases = fixture
+        .get("cases")
+        .as_array()
+        .iter()
+        .map(|c| AxisCase {
+            tables: tables_from_seed(
+                c.get("seed0").as_f64() as u32,
+                c.get("seed1").as_f64() as u32,
+            ),
+            input_scale: c.get("inputScale").as_f64(),
+            values: c.get("values").as_f64_array(),
+        })
+        .collect();
+    (
+        fixture.get("x").as_f64_array(),
+        fixture.get("y").as_f64_array(),
+        cases,
+    )
+}
+
+/// `basis_noise` with the gradient table passed in, so a test can score one
+/// candidate slot value. The shipped kernel reads the committed constants and
+/// cannot. `reproduces_every_value_of_the_axis_fixture_exactly` checks the two
+/// agree bit for bit on the committed table, so this copy cannot drift.
+fn basis_noise_with(x: f64, y: f64, t: &BasisNoiseTables, gx: &[f32; 256], gy: &[f32; 256]) -> f32 {
+    let (ix, iy) = (x.floor(), y.floor());
+    let (fx, fy) = ((x - ix) as f32, (y - iy) as f32);
+    let (ix, iy) = (ix as i64, iy as i64);
+    let corner = |cx: i64, cy: i64| -> f32 {
+        let dx = fx - cx as f32;
+        let dy = fy - cy as f32;
+        let d = dx * dx + dy * dy;
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !(d < 1.0) {
+            return 0.0;
+        }
+        let t1 = 1.0 - d;
+        let h = t.a[((ix + cx) & 255) as usize] ^ t.b[((iy + cy) & 255) as usize];
+        let g = t.sigma[h as usize] as usize;
+        (dx * gx[g] + dy * gy[g]) * (t1 * (t1 * t1))
+    };
+    (corner(0, 0) + corner(1, 0)) + (corner(0, 1) + corner(1, 1))
+}
+
+#[test]
+fn reproduces_every_value_of_the_axis_fixture_exactly() {
+    let (xs, ys, cases) = load_axis();
+    let (mut exact, mut mirrored, mut total) = (0, 0, 0);
+    for case in &cases {
+        assert_eq!(case.values.len(), xs.len());
+        for n in 0..xs.len() {
+            let (x, y) = (xs[n] * case.input_scale, ys[n] * case.input_scale);
+            let got = basis_noise(x, y, &case.tables);
+            let copy = basis_noise_with(x, y, &case.tables, &GRADIENT_X, &GRADIENT_Y);
+            total += 1;
+            exact += usize::from(got.to_bits() == (case.values[n] as f32).to_bits());
+            mirrored += usize::from(got.to_bits() == copy.to_bits());
+        }
+    }
+    // 4 cases of 4,112 points. With the table #455 replaced, 16,370: every
+    // miss was an on-axis point whose near corner was one of the four slots.
+    assert_eq!(total, 16_448);
+    assert_eq!(exact, 16_448, "exact f32 matches");
+    assert_eq!(mirrored, 16_448, "basis_noise_with must be basis_noise");
+}
+
+#[test]
+fn the_axis_fixture_pins_the_near_zero_slots_on_points_it_never_fit() {
+    // A fit to a fixture is not a test of it (factorio-oracle's method.md),
+    // so the cases are split. Each slot is FITTED on the first two cases:
+    // every f32 within 20,000 ulp of the committed value is tried, and exactly
+    // one must reproduce every on-axis point whose near corner is that slot.
+    // That one must be the committed value, and it must then reproduce the
+    // same kind of point in the other two cases, at other seeds and scales,
+    // which the fit never read.
+    let (xs, ys, cases) = load_axis();
+    let (fit_cases, held_out) = (&cases[..2], &cases[2..]);
+
+    // On-axis points whose near corner is `slot`, as (case, point) pairs.
+    let on_axis = |slot: u8, along_x: bool, set: &[AxisCase]| -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for (c, case) in set.iter().enumerate() {
+            for n in 0..xs.len() {
+                let (x, y) = (xs[n] * case.input_scale, ys[n] * case.input_scale);
+                let (fx, fy) = (x - x.floor(), y - y.floor());
+                let on = if along_x {
+                    fy == 0.0 && fx != 0.0
+                } else {
+                    fx == 0.0 && fy != 0.0
+                };
+                let t = &case.tables;
+                let h =
+                    t.a[(x.floor() as i64 & 255) as usize] ^ t.b[(y.floor() as i64 & 255) as usize];
+                if on && t.sigma[h as usize] == slot {
+                    out.push((c, n));
+                }
+            }
+        }
+        out
+    };
+    let score = |points: &[(usize, usize)], set: &[AxisCase], slot: u8, along_x: bool, v: f32| {
+        let (mut gx, mut gy) = (GRADIENT_X, GRADIENT_Y);
+        if along_x {
+            gx[slot as usize] = v;
+        } else {
+            gy[slot as usize] = v;
+        }
+        points
+            .iter()
+            .filter(|&&(c, n)| {
+                let case = &set[c];
+                let (x, y) = (xs[n] * case.input_scale, ys[n] * case.input_scale);
+                let got = basis_noise_with(x, y, &case.tables, &gx, &gy);
+                got.to_bits() == (case.values[n] as f32).to_bits()
+            })
+            .count()
+    };
+
+    // (slot, along x, the value before #455, how many of the held-out points
+    // that value got right). The last column is the control: if the old value
+    // scored every held-out point, the split could not tell it from the new
+    // one and the test would be decoration.
+    let slots = [
+        (64u8, true, -1.835_900_3e-7_f32, 0),
+        (128, false, -3.671_676e-7, 4),
+        (192, true, 5.008_599e-8, 2),
+        (0, false, 3.947_778e-12, 2),
+    ];
+    for (slot, along_x, before, before_held) in slots {
+        let fit = on_axis(slot, along_x, fit_cases);
+        let held = on_axis(slot, along_x, held_out);
+        // A window must contain the thing it grades.
+        assert!(
+            fit.len() >= 8 && held.len() >= 8,
+            "slot {slot}: {} fit, {} held",
+            fit.len(),
+            held.len()
+        );
+        let committed = if along_x {
+            GRADIENT_X[slot as usize]
+        } else {
+            GRADIENT_Y[slot as usize]
+        };
+
+        assert_eq!(
+            score(&held, held_out, slot, along_x, committed),
+            held.len(),
+            "slot {slot} held out"
+        );
+        assert_eq!(
+            score(&held, held_out, slot, along_x, before),
+            before_held,
+            "slot {slot} before #455"
+        );
+
+        if slot == 0 {
+            // Slot 0's y is the one the capture BOUNDS instead of pinning: the
+            // far corner swamps anything below about 5.6e-17, so the table
+            // takes 0 (also the formula's `sin 0`). The bound is what is
+            // checked: 2^-54 fits every point, 2^-50 does not.
+            assert_eq!(committed.to_bits(), 0);
+            for v in [2f32.powi(-54), -(2f32.powi(-54))] {
+                assert_eq!(score(&fit, fit_cases, slot, along_x, v), fit.len());
+            }
+            assert!(score(&fit, fit_cases, slot, along_x, 2f32.powi(-50)) < fit.len());
+            continue;
+        }
+        let fitting: Vec<f32> = (-20_000i64..=20_000)
+            .map(|k| f32::from_bits((i64::from(committed.to_bits()) + k) as u32))
+            .filter(|&v| score(&fit, fit_cases, slot, along_x, v) == fit.len())
+            .collect();
+        assert_eq!(fitting, vec![committed], "slot {slot}: the f32s that fit");
+    }
 }
 
 // ---------------------------------------------------------------------------

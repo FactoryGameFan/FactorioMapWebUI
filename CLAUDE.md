@@ -48,7 +48,11 @@ Steam updates it without asking. Reading "latest" instead races that updater and
 describes a different game than your fixtures were captured against. Set
 `FACTORIO_BIN` to point at a different install. A second, non-Steam install sits
 at `~/GitHub/factorio-oracle/installs/factorio-2.0.77.app`, deliberately outside
-every discovery path, so name it explicitly with `--factorio`.
+every discovery path, so name it explicitly with `--factorio` **and**
+`--version 2.0.77`. `--factorio` alone only adds a place to look, and when the
+path does not resolve the Steam build runs instead, with exit 0
+(factorio-oracle#19). Check the run's `buildLine`. `factorio-2.0.77-debug.app`
+beside it links its `Contents/data` into this copy, so deleting it breaks both.
 
 ### What matters in the API docs FOR THIS APP
 
