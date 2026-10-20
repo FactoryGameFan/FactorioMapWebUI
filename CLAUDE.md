@@ -164,7 +164,7 @@ help text does not carry.
 Relevant here:
 
 - **Map-gen testing:** `factorio --create <save> --map-gen-settings <json>
---map-gen-seed <n> --mod-directory <dir>` runs headless and exits cleanly even
+  --map-gen-seed <n> --mod-directory <dir>` runs headless and exits cleanly even
   alongside a running game, if an isolated `--config` INI points `write-data` at
   a temp dir. This is how the codec is cross-validated against the game's own
   parse; the fixture is
@@ -623,7 +623,7 @@ marked as deliberate rather than stale.
 it** (measured 2026-08-25). Renovate lists "Update dependency vitest to v4.1.11"
 as its own item, and taking it alone leaves `pnpm peers check` reporting an
 unmet `@vitest/browser-preview`: vite-plus pins the whole `@vitest/*` family at
-its own version (0.2.9 carries 4.1.10, 0.3.0 carries 4.1.11), so the worker's
+its own version (0.2.9 carries 4.1.10, 0.3.0 carries 4.1.11, 1.3.0 carries 5.0.5), so the worker's
 `vitest` has to move **with** vite-plus rather than ahead of it. The gate cannot
 see this - `pnpm run verify` passed with the split - so check `pnpm peers check`
 after any bump that touches either.
