@@ -616,8 +616,8 @@ Dependabot's `ignore` entries cannot express them; Renovate's `packageRules` +
 `prBodyNotes` can, so the reasoning arrives attached to the proposal. `typescript`
 is disabled outright, `pako` carries a 14-day age and a pointer at the
 byte-exactness invariant, `wrangler` + `@cloudflare/vitest-plugin` are
-grouped because the plugin hard-pins wrangler, and the `brace-expansion`
-override and `engines.node` floor are both marked as deliberate rather than stale.
+grouped because the plugin hard-pins wrangler, and the `engines.node` floor is
+marked as deliberate rather than stale.
 
 **The worker's `vitest` is coupled to `vite-plus`, and Renovate does NOT know
 it** (measured 2026-08-25). Renovate lists "Update dependency vitest to v4.1.11"
@@ -649,9 +649,11 @@ advisory) still installed through the old copy.
 
 **`enabled: false` also blocks SECURITY updates.** A Renovate rule with
 `enabled: false` stops every bot PR for that package, a CVE fix included.
-`brace-expansion` is held this way. Re-check any package held with
-`enabled: false` against the advisory database by hand, and read the comment on
-its override before concluding a red `pnpm audit` line is the known one.
+Nothing is held this way today; `brace-expansion` was, until its override was
+removed on 2026-10-20 (see the end of pnpm-workspace.yaml for why). Re-check any
+package held with `enabled: false` against the advisory database by hand, and
+read the comment on its override before concluding a red `pnpm audit` line is
+the known one.
 
 **That group's `prBodyNotes` says to regenerate the worker types BEFORE merging,
 and the order matters.** `types:check` runs inside `preview:test`, which runs
