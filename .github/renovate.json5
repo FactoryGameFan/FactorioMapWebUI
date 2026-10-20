@@ -103,7 +103,7 @@
   vulnerabilityAlerts: {
     minimumReleaseAge: "25 hours",
     prBodyNotes: [
-      'Security update - this bypassed the weekly schedule deliberately. Still read it: `brace-expansion`\'s advisory carries a flat `<=5.0.7` range, so `pnpm audit` flags a version that already has the fix. "The audit is red" is not by itself a reason to take a bump here.',
+      'Security update - this bypassed the weekly schedule deliberately. Still read it: advisory ranges are often flat and over-broad, so `pnpm audit` can flag a version that already has the fix. "The audit is red" is not by itself a reason to take a bump here.',
     ],
   },
 
@@ -193,25 +193,6 @@
       prBodyNotes: [
         "**Regenerate the worker types on this branch BEFORE merging** - this PR cannot go green without it. A wrangler bump moves `workerd`, and `wrangler types --check` compares that version as well as the config hash, so `types:check` fails inside `preview:test` inside the required `verify` check. Run `pnpm run types:sync` and commit the result. That script is `wrangler types && vp check --fix` together, and the formatter half is not optional - a raw `wrangler types` buries the real one-line change in a whole-file whitespace diff (25,411 lines vs 1, measured on #169).",
       ],
-    },
-    {
-      // `overrides.brace-expansion: 2.1.3` in pnpm-workspace.yaml is a
-      // deliberate maintenance-backport pin, not a stale version. Renovate would
-      // read it as three majors behind and propose 5.x, which is a spike into a
-      // dual-ESM/CJS package consumed by a CJS minimatch - explicitly rejected.
-      // The advisory's flat `<=5.0.7` range also means `pnpm audit` still flags
-      // 2.1.3 even though it carries the fix, so "the audit is red" is not a
-      // reason to take this bump. Read the comment in pnpm-workspace.yaml first.
-      //
-      // Deliberately NOT narrowed with `matchDepTypes: ["pnpm.overrides"]`. The
-      // override lives in pnpm-workspace.yaml, not package.json, and if the
-      // depType Renovate reports for that location is anything other than the
-      // string guessed here the rule would silently match nothing - a config bug
-      // no validator can catch. brace-expansion appears in no manifest in this
-      // repo (only as a transitive of js-beautify), so matching it by name alone
-      // is both correct and the only form that cannot miss.
-      matchPackageNames: ["brace-expansion"],
-      enabled: false,
     },
     {
       // `engines.node` is a deliberately permissive FLOOR (">=24.18.0"): older
