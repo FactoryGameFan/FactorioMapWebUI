@@ -1091,8 +1091,17 @@ pub extern "C" fn vulcanus_cliff_blocking_names_fnv1a64() -> u64 {
 /// **It costs nothing in the committed file.** A zero-initialised static lives
 /// in WebAssembly's memory section, not its data section, so this is 4 MB of
 /// declared linear memory and 0 bytes of `engine.wasm`.
+///
+/// **It is 8-aligned on purpose.** `surveyThroughWasm.ts` reads it as a
+/// `Float64Array`, and that constructor throws `RangeError: start offset of
+/// Float64Array should be a multiple of 8` at any other offset. A bare
+/// `[u8; N]` only promises 1-byte alignment: rustc 1.98.1 happened to place it
+/// on an 8-byte boundary and 1.99.1 did not, which broke the island finder and
+/// the cell survey (21 tests) the moment the toolchain moved (#473).
 const RENDER_BYTES: usize = 1024 * 1024 * 4;
-static mut RENDER: [u8; RENDER_BYTES] = [0; RENDER_BYTES];
+#[repr(C, align(8))]
+struct RenderBuffer([u8; RENDER_BYTES]);
+static mut RENDER: RenderBuffer = RenderBuffer([0; RENDER_BYTES]);
 
 /// Offset of the render output buffer in linear memory.
 #[unsafe(no_mangle)]
@@ -1410,6 +1419,15 @@ mod survey_tests {
     /// touches the statics - a `--test-threads=1` run passing while the default
     /// fails is the signature, and it is invisible to a single green CI run.
     static BUFFERS: Mutex<()> = Mutex::new(());
+
+    /// The TypeScript side views `RENDER` as a `Float64Array`, so its offset
+    /// must be a multiple of 8. Checks the declaration, not where one compiler
+    /// happened to put it - that luck is what #473 ran out of.
+    #[test]
+    fn the_render_buffer_is_aligned_for_a_float64_view() {
+        assert!(core::mem::align_of::<RenderBuffer>() >= core::mem::align_of::<f64>());
+        assert_eq!(render_ptr() % 8, 0);
+    }
 
     /// A Fulgora request over a strided box, built from the layout table.
     ///
