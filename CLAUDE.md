@@ -1019,7 +1019,7 @@ Consequences that constrain any change here:
 
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
   known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`, `2.1.16.0`,
-  `2.1.17.0`, `2.1.19.0`, `2.1.20.4`) and
+  `2.1.17.0`, `2.1.19.0`, `2.1.20.4`, `2.1.21.11`, `2.1.22.1`, `2.1.23.2`) and
   never a range, because the schemas here are empirical: accepting an unseen
   format would decode a changed layout into plausible wrong values. A version
   joins the list only with a fixture proving a real string of it round-trips
@@ -1037,15 +1037,26 @@ Consequences that constrain any change here:
   four-part exchange tag - confirmed on a binary whose tag we already knew
   (2.1.14 prints `2.1.14-1`, and `[2,1,14,1]` is what the list carries), which is
   a control rather than a pattern match. The fourth part is **not monotonic and
-  does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0`, `.0`, `.0`, `.4`
-  across 2.1.9 to 2.1.20. It fell to zero at 2.1.16, sat there for three
-  versions, then jumped to 4. It cannot be guessed, and
+  does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0`, `.0`, `.0`, `.4`,
+  `.11`, `.1`, `.2` across 2.1.9 to 2.1.23. It fell to zero at 2.1.16, sat
+  there for three versions, jumped to 4, then to 11. It cannot be guessed, and
   one `--version` answers "has import broken?" in a second.
 
   **This machine's Steam tracks the EXPERIMENTAL branch**, which is why two
   format moves arrived within hours of each other. Expect drift here to be more
   frequent than a user on stable would see, and do not read "the game moved
   again already" as a sign something is wrong.
+
+  **You do not have to wait for Steam.** `https://factorio.com/api/latest-releases`
+  names the newest build on each branch, and the headless build of any version
+  downloads with no login from
+  `https://factorio.com/get-download/<version>/headless/linux64`. 2.1.21 to
+  2.1.23 were captured that way on 2026-10-22, three tags at once. Point
+  `FACTORIO_BIN` at the unpacked `factorio/bin/x64/factorio` for `capture.ts`.
+  `test/oracle/previewCompare.ts` also needs `FACTORIO_DATA_DIR` set to that
+  install's own `factorio/data`: its default looks one level too shallow for
+  the Linux layout, and on tealc the variable already points at the
+  factorio-data clone, which is not a game data dir.
 
 - **Capturing a new version is now a script, not a recipe in a comment.**
   `scripts/probes/exchange-format/capture.ts` does the whole thing through

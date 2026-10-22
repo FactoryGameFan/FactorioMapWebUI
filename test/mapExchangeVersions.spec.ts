@@ -7,12 +7,18 @@ import fixture216 from "./fixtures/map-exchange-2.1.16.strings.json";
 import fixture217 from "./fixtures/map-exchange-2.1.17.strings.json";
 import fixture219 from "./fixtures/map-exchange-2.1.19.strings.json";
 import fixture220 from "./fixtures/map-exchange-2.1.20.strings.json";
+import fixture221 from "./fixtures/map-exchange-2.1.21.strings.json";
+import fixture222 from "./fixtures/map-exchange-2.1.22.strings.json";
+import fixture223 from "./fixtures/map-exchange-2.1.23.strings.json";
 import parsed214 from "./fixtures/map-exchange-parsed.2.1.14-default.dump.json";
 import parsed215 from "./fixtures/map-exchange-parsed.2.1.15-default.dump.json";
 import parsed216 from "./fixtures/map-exchange-parsed.2.1.16-default.dump.json";
 import parsed217 from "./fixtures/map-exchange-parsed.2.1.17-default.dump.json";
 import parsed219 from "./fixtures/map-exchange-parsed.2.1.19-default.dump.json";
 import parsed220 from "./fixtures/map-exchange-parsed.2.1.20-default.dump.json";
+import parsed221 from "./fixtures/map-exchange-parsed.2.1.21-default.dump.json";
+import parsed222 from "./fixtures/map-exchange-parsed.2.1.22-default.dump.json";
+import parsed223 from "./fixtures/map-exchange-parsed.2.1.23-default.dump.json";
 import builtins from "./fixtures/builtin-presets.json";
 import {
   SUPPORTED_VERSIONS,
@@ -84,6 +90,9 @@ describe("exchange format versions", () => {
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.17.0");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.19.0");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.20.4");
+    expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.21.11");
+    expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.22.1");
+    expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.23.2");
   });
 });
 
@@ -118,6 +127,9 @@ describe("every fixture records the tag it was captured at", () => {
     { version: "2.1.17", fixture: fixture217 },
     { version: "2.1.19", fixture: fixture219 },
     { version: "2.1.20", fixture: fixture220 },
+    { version: "2.1.21", fixture: fixture221 },
+    { version: "2.1.22", fixture: fixture222 },
+    { version: "2.1.23", fixture: fixture223 },
   ] as const;
 
   it.each(FIXTURES)("$version", ({ version, fixture: f }) => {
@@ -571,41 +583,83 @@ describe("exchange format 2.1.19", () => {
 });
 
 /**
- * Factorio 2.1.20 moved the tag to `2.1.20.4` and left the payload alone - a
- * tag-only move again, and the seventh version to break import. It inherits the
- * 2.1.19 layout, removed field and all, so it is mirrored against 2.1.19 here
- * rather than joining `LAYOUT_HEIRS`, whose contract is the 2.1.14 layout WITH
- * that field.
+ * Every version AFTER 2.1.19 that reuses its tail layout, removed field and
+ * all, each mirrored against the one before it. These are kept apart from
+ * `LAYOUT_HEIRS`, whose contract is the 2.1.14 layout WITH that field.
  *
- * Three readings, none "it looked the same":
+ * 2.1.20 had a describe block of its own. 2.1.21, 2.1.22 and 2.1.23 arrived
+ * together on 2026-10-22, so this is a table now, for the same reason
+ * `LAYOUT_HEIRS` is one. Like that table it is written out by hand, not derived
+ * from `SUPPORTED_VERSIONS`, so a wrong tag fails here rather than agreeing
+ * with the codec by construction.
  *
- * 1. `base/prototypes/map-settings.lua` is absent from the 2.1.19 -> 2.1.20 data
- *    diff.
- * 2. Every capture inflates to exactly its 2.1.19 twin's byte count
+ * Every entry is a tag-only move, read three ways, none "it looked the same":
+ *
+ * 1. `base/prototypes/map-settings.lua` is absent from each tag-to-tag data
+ *    diff. 2.1.22's tile changes only rename water-shader textures.
+ * 2. Every capture inflates to exactly its predecessor's byte count
  *    (702/702/741/702/702). Pinned below.
- * 3. The game's own parse of the new default string equals the 2.1.19 one on
- *    all 185 leaf fields. Asserted below, not described.
+ * 3. The game's own parse of each new default string equals the previous one on
+ *    every leaf field. Asserted below, not described.
  *
- * The fourth part jumped from `0` to `4`, so reading it off
- * `factorio --version` (`Map output version: 2.1.20-4`) stays the only way.
+ * The fourth part of the tag went `.4`, `.11`, `.1`, `.2` across 2.1.20 to
+ * 2.1.23, so reading it off `factorio --version` (`Map output version:
+ * 2.1.23-2`) stays the only way.
  */
-describe("exchange format 2.1.20", () => {
-  const REMOVED = "pollution.maxPollutionToRestoreTrees";
-  const label219 = (label: string) => label as keyof typeof fixture219.strings;
-  const label220 = (label: string) => label as keyof typeof fixture220.strings;
+const REMOVAL_HEIRS = [
+  {
+    version: "2.1.20",
+    tag: "2.1.20.4",
+    strings: fixture220.strings as Record<string, string>,
+    parsed: parsed220,
+    priorVersion: "2.1.19",
+    prior: fixture219.strings as Record<string, string>,
+    priorParsed: parsed219,
+  },
+  {
+    version: "2.1.21",
+    tag: "2.1.21.11",
+    strings: fixture221.strings as Record<string, string>,
+    parsed: parsed221,
+    priorVersion: "2.1.20",
+    prior: fixture220.strings as Record<string, string>,
+    priorParsed: parsed220,
+  },
+  {
+    version: "2.1.22",
+    tag: "2.1.22.1",
+    strings: fixture222.strings as Record<string, string>,
+    parsed: parsed222,
+    priorVersion: "2.1.21",
+    prior: fixture221.strings as Record<string, string>,
+    priorParsed: parsed221,
+  },
+  {
+    version: "2.1.23",
+    tag: "2.1.23.2",
+    strings: fixture223.strings as Record<string, string>,
+    parsed: parsed223,
+    priorVersion: "2.1.22",
+    prior: fixture222.strings as Record<string, string>,
+    priorParsed: parsed222,
+  },
+] as const;
 
-  it("round-trips every 2.1.20 capture byte-for-byte", () => {
-    const entries = Object.entries(fixture220.strings);
+describe.each(REMOVAL_HEIRS)("exchange format $version", (heir) => {
+  const REMOVED = "pollution.maxPollutionToRestoreTrees";
+
+  it("round-trips every capture byte-for-byte", () => {
+    const entries = Object.entries(heir.strings);
     expect(entries.length).toBeGreaterThanOrEqual(5);
     for (const [label, s] of entries) {
       const decoded = decodeExchangeString(s);
-      expect(decoded.version.join("."), `${label} format tag`).toBe("2.1.20.4");
+      expect(decoded.version.join("."), `${label} format tag`).toBe(heir.tag);
       expect(encodeExchangeString(decoded), `${label} re-encode`).toBe(s);
     }
   });
 
   it("types the whole tail - opaqueTail stays empty", () => {
-    for (const [label, s] of Object.entries(fixture220.strings)) {
+    for (const [label, s] of Object.entries(heir.strings)) {
       const tail = decodeExchangeString(s).tail;
       expect((tail.opaqueTail as Uint8Array).length, `${label} opaqueTail`).toBe(0);
     }
@@ -614,29 +668,29 @@ describe("exchange format 2.1.20", () => {
   it("does NOT read max_pollution_to_restore_trees, which the game still lacks", () => {
     // The removal is the one change that decodes SILENTLY when missed, so this
     // is asserted per version rather than inherited on trust.
-    for (const [label, s] of Object.entries(fixture220.strings)) {
-      expect(REMOVED in decodeExchangeString(s).tail, `2.1.20 ${label}`).toBe(false);
+    for (const [label, s] of Object.entries(heir.strings)) {
+      expect(REMOVED in decodeExchangeString(s).tail, `${heir.version} ${label}`).toBe(false);
     }
-    expect("max_pollution_to_restore_trees" in parsed220.map_settings.pollution).toBe(false);
+    expect("max_pollution_to_restore_trees" in heir.parsed.map_settings.pollution).toBe(false);
   });
 
-  it("has a payload the same size as 2.1.19's, case for case", () => {
-    const sizes = Object.keys(fixture219.strings).map((label) => ({
+  it("has a payload the same size as its predecessor's, case for case", () => {
+    const sizes = Object.keys(heir.prior).map((label) => ({
       label,
-      before: decodeExchangeString(fixture219.strings[label219(label)]).payload.length,
-      after: decodeExchangeString(fixture220.strings[label220(label)]).payload.length,
+      before: decodeExchangeString(heir.prior[label]).payload.length,
+      after: decodeExchangeString(heir.strings[label]).payload.length,
     }));
     for (const { label, before, after } of sizes) {
-      expect(after, `${label} payload size vs 2.1.19`).toBe(before);
+      expect(after, `${label} payload size vs ${heir.priorVersion}`).toBe(before);
     }
     expect(new Set(sizes.map((s) => s.after)).size).toBeGreaterThan(1);
   });
 
-  it("mirrors 2.1.19's cases setting-for-setting", () => {
+  it("mirrors its predecessor's cases setting-for-setting", () => {
     let compared = 0;
-    for (const label of Object.keys(fixture219.strings)) {
-      const a = decodeExchangeString(fixture219.strings[label219(label)]);
-      const b = decodeExchangeString(fixture220.strings[label220(label)]);
+    for (const label of Object.keys(heir.prior)) {
+      const a = decodeExchangeString(heir.prior[label]);
+      const b = decodeExchangeString(heir.strings[label]);
       expect(b.autoplaceControls, `${label} autoplace controls`).toEqual(a.autoplaceControls);
       expect(b.mid, `${label} mid-block`).toEqual(a.mid);
       expect(b.propertyExpressionNames, `${label} property expressions`).toEqual(
@@ -648,13 +702,13 @@ describe("exchange format 2.1.20", () => {
     expect(compared).toBe(5);
   });
 
-  it("parses to exactly what 2.1.19 parses to, in the game's own words", () => {
-    expect(parsed220).toEqual(parsed219);
+  it("parses to exactly what its predecessor parses to, in the game's own words", () => {
+    expect(heir.parsed).toEqual(heir.priorParsed);
   });
 
   it("agrees with the game's own parse across the whole tail", () => {
-    const tail = decodeExchangeString(fixture220.strings["default-seed123456"]).tail;
-    const game = parsed220.map_settings;
+    const tail = decodeExchangeString(heir.strings["default-seed123456"]).tail;
+    const game = heir.parsed.map_settings;
     const camel = (s: string) => s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
     const sections: Record<string, Record<string, unknown>> = {
       pollution: game.pollution,

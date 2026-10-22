@@ -286,13 +286,23 @@ function writeStartingPoints(writer: BinaryWriter, points: MapPosition[]): void 
  *   layout. The fourth part jumped from `0` to `4`, which is why it cannot be
  *   guessed from the patch number.
  *
+ * - `2.1.21.11`, `2.1.22.1` and `2.1.23.2` - what Factorio 2.1.21, 2.1.22 and
+ *   2.1.23 (experimental) emit. Added together 2026-10-22, captured from the
+ *   free headless builds rather than from a Steam update. All three are tag-only
+ *   moves, read the same three ways as 2.1.20: `map-settings.lua` is absent from
+ *   every data diff, all five cases inflate to 702/702/741/702/702, and the
+ *   game's parse of each default string is byte-identical to the 2.1.20 one. So
+ *   they join the 2.1.19 tail layout. The fourth part went `.4`, `.11`, `.1`,
+ *   `.2`.
+ *
  * Note the two directions are not symmetric, and only one has ever been broken:
  * 2.1.12 accepts a `2.1.9.3` string fine, 2.1.14 accepts one too, 2.1.15
  * parses all five `2.1.14.1` captures, and 2.1.19 parses all five `2.1.17.0`
  * ones (all verified through the game's own `helpers.parse_map_exchange_string`),
  * so EXPORT was never affected - the app's output stayed loadable throughout.
- * Import was the broken half every time: seven versions across six incidents,
- * since 2.1.15 and 2.1.16 landed the same day.
+ * Import was the broken half every time: ten versions across seven incidents,
+ * since 2.1.15 and 2.1.16 landed the same day and 2.1.21 to 2.1.23 were added
+ * together.
  */
 export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 9, 3],
@@ -303,6 +313,9 @@ export const SUPPORTED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 17, 0],
   [2, 1, 19, 0],
   [2, 1, 20, 4],
+  [2, 1, 21, 11],
+  [2, 1, 22, 1],
+  [2, 1, 23, 2],
 ];
 
 /** Human-readable list for UI and error messages, e.g. "2.1.9.3, 2.1.12.2". */
@@ -507,6 +520,9 @@ const TAIL_DISPATCH_COOLDOWN_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 17, 0],
   [2, 1, 19, 0],
   [2, 1, 20, 4],
+  [2, 1, 21, 11],
+  [2, 1, 22, 1],
+  [2, 1, 23, 2],
 ];
 
 /**
@@ -534,6 +550,9 @@ const TAIL_MAX_POLLUTION_TO_RESTORE_TREES_FIELD = "pollution.maxPollutionToResto
 const TAIL_MAX_POLLUTION_TO_RESTORE_TREES_REMOVED_VERSIONS: readonly FormatVersion[] = [
   [2, 1, 19, 0],
   [2, 1, 20, 4],
+  [2, 1, 21, 11],
+  [2, 1, 22, 1],
+  [2, 1, 23, 2],
 ];
 
 function tailSchemaFor(version: FormatVersion): Schema {
