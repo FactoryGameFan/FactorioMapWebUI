@@ -7,7 +7,6 @@ import ElevationPreviewPanel from "../src/components/ElevationPreviewPanel.vue";
 import EnemyTab from "../src/components/EnemyTab.vue";
 import ImportPanel from "../src/components/ImportPanel.vue";
 import PresetBar from "../src/components/PresetBar.vue";
-import PreviewPanel from "../src/components/PreviewPanel.vue";
 import ResourcesTab from "../src/components/ResourcesTab.vue";
 import TerrainTab from "../src/components/TerrainTab.vue";
 
@@ -78,7 +77,6 @@ const SCREENS: Record<string, () => ReturnType<typeof mount>> = {
   AdvancedTab: () => mount(AdvancedTab),
   PresetBar: () => mount(PresetBar),
   ImportPanel: () => mount(ImportPanel),
-  PreviewPanel: () => mount(PreviewPanel, { props: { planet: "nauvis" } }),
   ElevationPreviewPanel: () => mount(ElevationPreviewPanel, { props: { planet: "nauvis" } }),
 };
 

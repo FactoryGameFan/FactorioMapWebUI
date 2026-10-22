@@ -10,28 +10,27 @@ import EnemyTab from "./components/EnemyTab.vue";
 import ImportPanel from "./components/ImportPanel.vue";
 import IslandFinderPanel from "./components/IslandFinderPanel.vue";
 import PresetBar from "./components/PresetBar.vue";
-import PreviewPanel from "./components/PreviewPanel.vue";
 import ResourcesTab from "./components/ResourcesTab.vue";
 import TerrainTab from "./components/TerrainTab.vue";
 import type { Planet } from "./model/planets";
 import FTabs from "./ui/FTabs.vue";
 
-const TABS = ["Resources", "Terrain", "Enemy", "Advanced", "Preview"];
+const TABS = ["Resources", "Terrain", "Enemy", "Advanced", "Map Tools"];
 const activeTab = ref("Resources");
 const selectedPlanet = ref<Planet>("nauvis");
 const showImport = ref(false);
 /**
  * The last island the finder's results table was jumped to - fed straight to
- * ElevationPreviewPanel's `centerX`/`centerY` props, which move the client
- * preview's render window onto it. `null` (not 0) while nothing has been
+ * the right-hand ElevationPreviewPanel's `centerX`/`centerY` props, which move
+ * the preview's render window onto it (only once it has rendered). `null` (not 0) while nothing has been
  * jumped to yet, so the preview keeps its own "centered on world origin"
  * default rather than this component asserting a coordinate.
  */
 const jumpTarget = ref<{ x: number; y: number } | null>(null);
 
 function onIslandJump(target: { x: number; y: number }) {
+  // No tab switch: the preview lives in the always-visible right-hand box.
   jumpTarget.value = target;
-  activeTab.value = "Preview";
 }
 
 // A jump target named for one planet's geography is meaningless on another -
@@ -96,22 +95,21 @@ watch(selectedPlanet, () => {
           <ResourcesTab v-if="activeTab === 'Resources'" />
           <TerrainTab v-else-if="activeTab === 'Terrain'" />
           <EnemyTab v-else-if="activeTab === 'Enemy'" />
-          <div v-else-if="activeTab === 'Preview'" class="preview-tab">
+          <div v-else-if="activeTab === 'Map Tools'" class="map-tools-tab">
             <IslandFinderPanel :planet="selectedPlanet" @jump="onIslandJump" />
             <p v-if="jumpTarget" class="jump-note" data-test="jump-target">
               Centered on {{ jumpTarget.x }}, {{ jumpTarget.y }}.
             </p>
-            <ElevationPreviewPanel
-              :planet="selectedPlanet"
-              :center-x="jumpTarget?.x"
-              :center-y="jumpTarget?.y"
-            />
           </div>
           <AdvancedTab v-else />
         </div>
       </main>
       <aside class="preview f-bevel-out">
-        <PreviewPanel v-model:planet="selectedPlanet" />
+        <ElevationPreviewPanel
+          v-model:planet="selectedPlanet"
+          :center-x="jumpTarget?.x"
+          :center-y="jumpTarget?.y"
+        />
       </aside>
     </div>
     <ActionBar @import-requested="showImport = true" />
@@ -184,7 +182,7 @@ watch(selectedPlanet, () => {
  * at 901). 960 clears it with headroom for wider scrollbars.
  *
  * Editor above the preview panel, in DOM order: the editor is what the user came
- * to use, and the server-preview panel is a large mostly-empty box until Generate
+ * to use, and the preview panel is a large mostly-empty box until Generate
  * is pressed.
  */
 @media (max-width: 960px) {
@@ -219,18 +217,10 @@ watch(selectedPlanet, () => {
   flex: 1;
 }
 
-.preview-tab {
+.map-tools-tab {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  /* IslandFinderPanel sizes to its content; ElevationPreviewPanel is the one
-     that wants the remaining room. */
-  height: 100%;
-}
-
-.preview-tab > :last-child {
-  flex: 1;
-  min-height: 0;
 }
 
 .jump-note {

@@ -397,8 +397,8 @@ describe("ElevationPreviewPanel", () => {
   it("shows the render's OWN message when it rejects, not a constant", async () => {
     // Issue #341. This asserted only that the element existed, which stayed
     // true while a bare `catch` replaced every cause with "Preview failed." -
-    // the same string `PreviewPanel.vue` produces from the unrelated Docker
-    // preview service, which is what made the two impossible to tell apart.
+    // the same string the old server-rendered panel produced from its
+    // unrelated Docker preview service, which is what made the two impossible to tell apart.
     stubCanvas();
     const renderer: ElevationRenderer = {
       render: vi.fn(async () => {

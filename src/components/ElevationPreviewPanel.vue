@@ -281,7 +281,7 @@ async function generate(reroll = false) {
   } catch (e) {
     // The real cause, not a constant. A bare `catch` here discarded every
     // render failure's message - issue #341 - and produced the same
-    // "Preview failed." that `PreviewPanel.vue` produces from the unrelated
+    // "Preview failed." that the old server-rendered panel produced from the unrelated
     // Docker preview service, which is what made the two hard to tell apart.
     // Same idiom as `IslandFinderPanel.vue`.
     error.value = e instanceof Error ? e.message : "Preview failed.";

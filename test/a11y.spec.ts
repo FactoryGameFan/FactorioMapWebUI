@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import App from "../src/App.vue";
 import PresetBar from "../src/components/PresetBar.vue";
-import PreviewPanel from "../src/components/PreviewPanel.vue";
+import ElevationPreviewPanel from "../src/components/ElevationPreviewPanel.vue";
 
 /**
  * Regressions for the Lighthouse audit in issue #11. Every assertion here maps
@@ -32,7 +32,7 @@ describe("accessible names on dropdowns (Lighthouse: select-name)", () => {
   });
 
   it("labels the planet select", () => {
-    const wrapper = mount(PreviewPanel, { props: { planet: "nauvis" } });
+    const wrapper = mount(ElevationPreviewPanel, { props: { planet: "nauvis" } });
     const select = wrapper.find('[data-test="planet-select"]');
     expect(select.exists()).toBe(true);
     expect(select.attributes("aria-label")?.trim()).toBeTruthy();
@@ -63,7 +63,7 @@ describe("landmarks (Lighthouse: landmark-one-main)", () => {
   it("puts the editor inside it, not the preview aside", () => {
     const wrapper = mount(App);
     const main = wrapper.find("main");
-    // The editor column is the page's primary content; the server-preview panel
+    // The editor column is the page's primary content; the preview panel
     // beside it is complementary and stays an <aside>.
     expect(main.classes()).toContain("editor");
     expect(main.find("aside").exists()).toBe(false);
