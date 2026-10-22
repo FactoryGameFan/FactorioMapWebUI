@@ -203,8 +203,9 @@ the managed build under `~/.vite-plus/js_runtime/node/`, not Homebrew's. That
 only holds while `~/.vite-plus/bin` comes first on `PATH`; when something else
 wins, the shims are skipped silently and `vp env doctor` marks each tool
 `(not vp shim)` while still printing `All checks passed`. Cloudflare never
-builds this repo - `deploy:app` uploads an already-built `dist` - so an edit to
-it changes the version the gate runs on and nothing else.
+builds this repo - it uploads an already-built `dist` - so an edit to it
+changes the version the gate runs on. It also changes the Node that builds what
+ships: the CI `deploy` job builds production `dist` with it, on the next merge.
 Bump it only alongside a local `pnpm run verify` on the new version.
 
 Adding a root dependency needs `pnpm add -w` (or `--workspace-root`); a bare
@@ -476,14 +477,14 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
 3x slower than a dev machine and has only 4 cores, so the test phase dominated.
 Four jobs now run in parallel, and a fifth deploys after they pass:
 
-| job               | what                                                               |
-| ----------------- | ------------------------------------------------------------------ |
-| `static`          | `pnpm run verify:static` - `vp check`, `check:vue`, `preview:test` |
-| `tests (1..4, 4)` | `pnpm run verify:shard -- --shard=N/4` - the app suite             |
-| `rust`            | `scripts/verify-rust.sh` - ~6.5-8.5 min, added #219                |
-| `verify`          | the required check: asserts every job above succeeded              |
-| `build`           | `pnpm vp build`, unchanged (issue #61)                             |
-| `deploy`          | `main` only: deploys the app once the four jobs above pass         |
+| job               | what                                                                         |
+| ----------------- | ---------------------------------------------------------------------------- |
+| `static`          | `pnpm run verify:static` - `vp check`, `check:vue`, `preview:test`           |
+| `tests (1..4, 4)` | `pnpm run verify:shard -- --shard=N/4` - the app suite                       |
+| `rust`            | `scripts/verify-rust.sh` - ~6.5-8.5 min, added #219                          |
+| `verify`          | the required check: asserts every job above succeeded                        |
+| `build`           | `pnpm vp build`, unchanged (issue #61)                                       |
+| `deploy`          | `main` only: deploys the app once `static`, `tests`, `rust` and `build` pass |
 
 **`rust` is NOT a required status check, and its absence from ruleset `EJ` is
 deliberate rather than an oversight to fix.** `verify` asserts

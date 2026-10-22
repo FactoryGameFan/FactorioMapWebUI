@@ -103,18 +103,18 @@ and cannot check `needs.*.result`. It:
 
 ### Constraints the builder must meet
 
-- **No out-of-order deploys, and no stranded commits.** The workflow's own
-  concurrency does not cancel runs on `main` (on purpose, see its comment), so
-  two quick merges run side by side. Two obvious guards were rejected by the
-  design review:
-  - a concurrency group with `cancel-in-progress: false` keeps only ONE pending
-    job and a later arrival replaces it, so a slower older run can knock out the
-    newest commit's waiting deploy;
-  - "skip unless this SHA is the tip of `main`" then leaves the site on an older
-    commit with nothing queued to fix it, and does the same whenever the newest
-    commit fails the gate.
+- **No out-of-order deploys.** The workflow-level concurrency group
+  (`verify-<workflow>-<ref>`) already serializes every run on `main`,
+  dispatches included: one runs, at most one waits, and GitHub cancels the
+  waiting run when a newer one queues. So a newer merge can cancel an older
+  merge's waiting run, and the site then waits for the next green merge. That
+  is accepted: nothing deploys out of order, and the next good merge fixes it.
+  The gate below still matters for re-runs, manual dispatches, and a live site
+  that was deployed by hand. (This corrects the first draft, which said runs on
+  `main` are never cancelled and run side by side. The Task 5 review found
+  that was wrong.)
 
-  **Claude's call:** no deploy concurrency group. Just before `wrangler deploy`,
+  **Claude's call:** no deploy-specific concurrency group. Just before `wrangler deploy`,
   the job reads the live `/version.json` and compares it with the run's SHA
   against `main`'s full history (`fetch-depth: 0`, or fetch `main` explicitly):
 

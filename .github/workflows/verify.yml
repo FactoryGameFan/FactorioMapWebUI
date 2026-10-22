@@ -8,8 +8,8 @@
 # matrix that run in parallel, with a `verify` job aggregating them.
 #
 # The jobs here are `static`, `tests` (4 shards), `rust`, `verify`, `build` and
-# `deploy`. Only `verify` and `build` are REQUIRED status checks in ruleset `EJ`. `rust`
-# is deliberately not one, and its absence from the ruleset is not an oversight
+# `deploy`. Only `verify` and `build` are REQUIRED status checks in ruleset
+# `EJ`. `rust` is deliberately not one, and its absence from the ruleset is not an oversight
 # to fix: `verify` asserts `needs.rust.result`, so a red `rust` job turns the
 # required check red anyway, with no ruleset PUT and no two-step. Every
 # required NAME is a permanent liability - rename it and every PR blocks
@@ -92,9 +92,11 @@ on:
   workflow_dispatch:
 
 # Superseded pushes to the same PR are pointless at ~4 minutes a run, so those
-# get cancelled. Pushes to `main` do NOT - `cancel-in-progress` there means a
-# second merge kills the first one's run, and `main` is the branch the deploy
-# ships from, so every commit on it should carry its own verdict.
+# get cancelled. A run that is already going on `main` is NOT cancelled -
+# `cancel-in-progress` there means a second merge kills the first one's run, and
+# `main` is the branch the deploy ships from. The group still serializes `main`
+# runs: one runs, at most one waits, and a newer queued run cancels the older
+# one that is waiting (GitHub documents this).
 #
 # This is not hypothetical: on 2026-07-30 six PRs merged inside half an hour and
 # the runs for `605a4cc` and `be5f592` were both cancelled by the merges that
@@ -104,8 +106,8 @@ on:
 # second one survives a rebase-free merge into a `main` that has since moved.
 # Ruleset `EJ` has since set `strict_required_status_checks_policy: true`, which
 # closes most of that gap by forcing a PR up to date before it can merge; a
-# per-commit verdict on `main` is still the thing that proves it, so these runs
-# stay uncancelled.
+# per-commit verdict on `main` is still the thing that proves it, so a running
+# job is never cancelled.
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -284,7 +286,7 @@ jobs:
   # deploying rather than whoever broke it (issue #61). This job closes that.
   #
   # Deliberately a SEPARATE job rather than an extra phase inside `verify`:
-  # `deploy` already runs `pnpm build` immediately after `pnpm run verify`, so
+  # `deploy:app` already runs `pnpm build` immediately after `pnpm run verify`, so
   # folding the build into `verify` would build twice on every deploy and slow
   # the local gate people actually run by hand. Separate also means it runs in
   # parallel with the test job instead of after it.
@@ -350,12 +352,24 @@ jobs:
   # pull requests. The environment only releases its secret to runs on `main`
   # (its deployment branch rule), and the `if:` makes that intent plain here.
   #
-  # NO concurrency group, on purpose. Runs on `main` are never cancelled (see
-  # the top of this file), so two quick merges run side by side. A group with
-  # `cancel-in-progress: false` keeps only one waiting run and lets a later
-  # arrival replace it, which can drop the newest commit. Instead the
-  # `deploy-gate.ts` step compares the live commit with this run's commit and
-  # skips, deploys or fails. Its header comment has the full table.
+  # NO deploy-specific concurrency group. The workflow-level group at the top
+  # already runs `main` one at a time, dispatches included: one runs, at most
+  # one waits, and a newer merge can cancel an older merge's waiting run. The
+  # site then waits for the next green merge. That is accepted: nothing deploys
+  # out of order, and the next good merge fixes it. The `deploy-gate.ts` step
+  # still guards re-runs, manual dispatches, and a live site that was deployed
+  # by hand from a branch or a dirty tree: it compares the live commit with
+  # this run's commit and skips, deploys or fails. Its header comment has the
+  # full table.
+  #
+  # Because of `!cancelled()`, this job also starts, goes red and records a
+  # failed `production` deployment when a phase fails on `main`. That is
+  # expected.
+  #
+  # Dependency code from `pnpm install` and `vp build` runs in this job before
+  # the deploy step. It cannot read the token, but it could alter
+  # `node_modules/wrangler`, which then runs with it. The frozen lockfile and
+  # pnpm's 24-hour release-age guard are the mitigation.
   #
   # A plain `run:` step and not `cloudflare/wrangler-action`. The action looks
   # for wrangler at the repo root, finds none (it lives in the preview worker's

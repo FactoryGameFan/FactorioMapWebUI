@@ -14,10 +14,9 @@
   "name": "map-factorygamefan-com",
   // Not today's date on purpose. The pinned wrangler (4.151.1, held to the
   // version @cloudflare/vitest-plugin names) ships a workerd that refuses any
-  // date after 2026-10-19 (measured with `wrangler dev`: 2026-10-12 starts, 2026-10-22
-  // fails), so a newer date breaks `wrangler dev`. A Worker
-  // with no script barely depends on this value. Move it forward when wrangler
-  // moves.
+  // date after 2026-10-19 (measured with `wrangler dev`: 2026-10-12 starts,
+  // 2026-10-22 fails), so a newer date breaks `wrangler dev`. A Worker with no
+  // script barely depends on this value. Move it forward when wrangler moves.
   "compatibility_date": "2026-10-12",
   "assets": {
     "directory": "./dist",

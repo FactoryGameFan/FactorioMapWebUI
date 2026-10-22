@@ -146,12 +146,14 @@ and the `deploy` job publishes the app once they pass. You can also run the
 workflow by hand from `main` to redeploy it.
 
 `pnpm run deploy` is the hand path. It verifies, builds, and publishes the app,
-and aborts before `wrangler` if anything fails (`pnpm run verify` is `vp check`
+and aborts before `wrangler` if anything fails (`pnpm run verify` is `vp check`,
+`check:vue`, `vp test` and `preview:test`).
 
-- `check:vue` + `vp test` + `preview:test`). Take care: if you deploy anything
-  other than a clean `main`, the next CI deploy fails until `main` is redeployed
-  (run the workflow by hand from `main`). The one-time setup, for reference, needs a Cloudflare account
-  and Workers Paid ($5/mo, required for Containers):
+Take care: if you deploy anything other than a clean `main`, the next CI deploy
+fails until `main` is redeployed (run the workflow by hand from `main`).
+
+The one-time setup, for reference, needs a Cloudflare account
+and Workers Paid ($5/mo, required for Containers):
 
 ```
 pnpm --filter @fmw/preview-worker exec wrangler r2 bucket create fmw-preview-cache
