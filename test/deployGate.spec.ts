@@ -118,6 +118,17 @@ describe("decideDeploy", () => {
     const sha = "a".repeat(40);
     expect(decideDeploy(facts({ runSha: sha })).action).toBe("deploy");
   });
+
+  it("says redeploying, not behind, when the live commit is this run's", () => {
+    const sha = "a".repeat(40);
+    const text = decideDeploy(facts({ runSha: sha })).lines.join("\n");
+    expect(text).toMatch(/redeploying/);
+    expect(text).not.toMatch(/is behind/);
+  });
+
+  it("says behind when the live commit is older", () => {
+    expect(decideDeploy(facts()).lines.join("\n")).toMatch(/is behind/);
+  });
 });
 
 describe("gitIsAncestor", () => {

@@ -191,12 +191,16 @@ and cannot check `needs.*.result`. It:
   - with an expiry date one year out. **Claude's call** on the length; a
     reminder to rotate it goes in Eric's Todoist if he wants one.
   No IP filter: GitHub-hosted runners have no fixed addresses.
-- **The Custom Domain is the one unknown.** Custom Domains do not support
-  per-Worker roles yet, and changing a route or domain needs
-  `Zone > Workers Routes > Write` on the zone. A deploy that leaves the domain
-  as it is should need only `Editor`. The first real deploy proves which. If it
-  fails on the domain, the token gains exactly
-  `Zone > Workers Routes > Write` on `factorygamefan.com`, nothing broader.
+- **The Custom Domain was the one unknown, and the first deploy settled it.**
+  Custom Domains do not support per-Worker roles yet, and changing a route or
+  domain needs `Zone > Workers Routes > Write` on the zone. This design guessed
+  a deploy that leaves the domain alone would need only `Editor`. **It does
+  not** (measured 2026-10-22, PR #483's first run): wrangler re-asserts the
+  custom domain on every deploy, and with Editor alone it failed with
+  `The zone "map.factorygamefan.com" does not exist on your account.
+  [code: 10084]` - after the new version was already live. The token gained
+  exactly `Zone > Workers Routes > Edit` on `factorygamefan.com`, and the
+  re-run deployed the domain cleanly.
 - **Recovery is `wrangler rollback`**, run by hand with Eric's own login. It
   makes a new deployment of a previous version at once. The app has no
   bindings, so nothing else needs undoing. Gradual deployments are out: without

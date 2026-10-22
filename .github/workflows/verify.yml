@@ -370,8 +370,9 @@ jobs:
   # Dependency code from `pnpm install` (lifecycle scripts) and `vp build`
   # (plugins) runs in this job, so it could read the token from the runner. The
   # mitigations are the frozen lockfile, pnpm's 24-hour release-age guard, the
-  # uncached install, and the token's scope (Workers Editor on this one Worker),
-  # which bounds what a stolen token can do.
+  # uncached install, and the token's scope (Workers Editor on this one Worker,
+  # plus Workers Routes Edit on the factorygamefan.com zone), which bounds what
+  # a stolen token can do.
   #
   # A plain `run:` step and not `cloudflare/wrangler-action`. The action looks
   # for wrangler at the repo root, finds none (it lives in the preview worker's
@@ -379,8 +380,10 @@ jobs:
   # `ERR_PNPM_ADDING_TO_ROOT`. Pointed at the worker it would read the wrong
   # config. A `run:` step also keeps a third-party action away from the token.
   #
-  # The token's scope (Workers `Editor` on this one Worker) and the reasons for
-  # it are recorded in
+  # The token's scope (Workers `Editor` on this one Worker, plus
+  # `Zone > Workers Routes > Edit` on factorygamefan.com, which the custom
+  # domain needs on every deploy - see CLAUDE.md) and the reasons for it are
+  # recorded in
   # docs/superpowers/specs/2026-10-22-ci-deploy-and-container-removal-design.md.
   deploy:
     needs: [static, tests, rust, build]

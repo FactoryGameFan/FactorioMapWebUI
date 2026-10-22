@@ -100,7 +100,11 @@ export function decideDeploy(f: GateFacts): { action: GateAction; lines: string[
     };
   }
   if (f.liveBeforeRun === "yes") {
-    return { action: "deploy", lines: [`Live ${liveSha} is behind ${f.runSha}; deploying.`] };
+    const line =
+      liveSha === f.runSha
+        ? `Live ${liveSha} is this run's commit; redeploying it.`
+        : `Live ${liveSha} is behind ${f.runSha}; deploying.`;
+    return { action: "deploy", lines: [line] };
   }
   return {
     action: "fail",
