@@ -59,7 +59,7 @@ against a headless-Factorio oracle (`test/oracle/`). Shipped so far:
 
 The two reverse-engineered noise primitives that make this possible (`basis_noise`,
 `spot_noise`, plus `random_penalty` and the multioctave family) are documented in
-`docs/noise/`. The preview is also the only preview in the app: the old server
+`docs/noise/`. The in-browser preview is now the app's only preview: the old server
 preview was retired on 2026-10-22. The headless preview service below remains as
 a local tool that agents can use as a cross-check oracle.
 
@@ -126,8 +126,9 @@ simulates the R2 and Durable Object bindings, so no Cloudflare account is needed
 
 Then ask for a preview. The body needs `mapGenSettings` (an object), `planet`
 (`nauvis`, `vulcanus`, `gleba`, `fulgora` or `aquilo`), `seed` (an integer from
-0 to 4294967295) and `size` (must be `1024`). Keep the seed inside
-`mapGenSettings` the same as `seed`:
+0 to 4294967295) and `size` (must be `1024`). The old app also put
+the same seed inside `mapGenSettings`; that is a convention, and the Worker does
+not check it:
 
 ```bash
 curl --silent --show-error --request POST http://localhost:8787/preview \

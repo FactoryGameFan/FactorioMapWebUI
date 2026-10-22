@@ -268,7 +268,8 @@ fixed upstream.
 
 **`vp dev` is exercised by NOTHING - not `verify`, not CI.** The `build` job
 covers `vp build`, and the test shards cover `vp test`, but the dev server has
-no automated coverage at all, while both `dev` and `preview:app` depend on it.
+no automated coverage at all, while `dev` depends on it. (`localpreview` no
+longer runs the app.)
 That gap has teeth on a vite-plus bump specifically: 0.2.8 changed bare `vp dev`
 at a monorepo **root** to resolve a target package, with non-interactive runs
 listing candidates and exiting 1 rather than serving. This repo is a monorepo
@@ -953,9 +954,9 @@ project (`factoriomapwebui`) until #433. Things worth knowing:
   answered every unknown path with `index.html` and a 200. The app has one page
   and no router, and a 200 HTML answer for a stale hashed chunk hides the real
   error. The config comment has the full reasoning.
-- **`workers_dev` and `preview_urls` are off.** The preview Worker only answers
-  `https://map.factorygamefan.com`, so any other host could not render map
-  previews anyway.
+- **`workers_dev` and `preview_urls` are off.** The app Worker serves one Custom
+  Domain, `map.factorygamefan.com`, and the app makes no outbound calls, so a
+  `workers.dev` or preview URL has no use and only adds a second public address.
 - **`public/_headers` works the same as it did on Pages.** Vite copies it into
   `dist/`, Cloudflare applies it, and it is not served as a file. Check the CSP
   on a live response after any change to how the app is deployed, because a
