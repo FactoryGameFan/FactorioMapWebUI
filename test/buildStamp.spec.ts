@@ -19,7 +19,7 @@ import {
   VERSION_JSON_FILE,
   type BuildInfo,
 } from "../scripts/buildStamp";
-import { compareBuild } from "../scripts/verify-deploy";
+import { compareBuild, withRetries } from "../scripts/verify-deploy";
 import { BUILD_INFO } from "../src/model/buildStamp";
 
 const repoRoot = join(import.meta.dirname, "..");
@@ -175,6 +175,42 @@ describe("verify:deploy comparison", () => {
     // deploy did not land".
     const v = compareBuild({ ...local }, { ...local, dirty: true, stamp: "1111111-dirty" });
     expect(v.ok).toBe(true);
+  });
+});
+
+describe("verify:deploy retries", () => {
+  /** Returns the codes in order, then repeats the last one. */
+  function fakeRun(codes: number[]) {
+    let calls = 0;
+    const run = async () => codes[Math.min(calls++, codes.length - 1)]!;
+    return { run, calls: () => calls };
+  }
+
+  it("stops at the first success and sleeps between tries only", async () => {
+    const r = fakeRun([1, 1, 0]);
+    const waits: number[] = [];
+    const code = await withRetries(r.run, 5, 7000, async (ms) => void waits.push(ms));
+    expect(code).toBe(0);
+    expect(r.calls()).toBe(3);
+    expect(waits).toEqual([7000, 7000]);
+  });
+
+  it("returns the last code when every try fails, with no sleep after the last", async () => {
+    const r = fakeRun([2, 2, 2]);
+    const waits: number[] = [];
+    const code = await withRetries(r.run, 3, 5, async (ms) => void waits.push(ms));
+    expect(code).toBe(2);
+    expect(r.calls()).toBe(3);
+    expect(waits).toHaveLength(2);
+  });
+
+  it("with one attempt, runs once and never sleeps", async () => {
+    const r = fakeRun([1]);
+    const waits: number[] = [];
+    const code = await withRetries(r.run, 1, 5, async (ms) => void waits.push(ms));
+    expect(code).toBe(1);
+    expect(r.calls()).toBe(1);
+    expect(waits).toEqual([]);
   });
 });
 
