@@ -105,8 +105,8 @@ Expected: FAIL on the four tests above.
 
 - [ ] **Step 4: Prove nothing still references the deleted code**
 
-Run: `grep -rnw "PreviewPanel\|previewClient\|PREVIEW_SERVICE_URL" src test vite.config.ts index.html` and `grep -rn "from \"\.\./config\"\|from \"\./config\"" src test`
-Expected: no output. (`-w` matches whole words, so `ElevationPreviewPanel` is not a hit.)
+Run: `git grep -nE "\bPreviewPanel\b|\bpreviewClient\b|PREVIEW_SERVICE_URL" -- src test vite.config.ts index.html ':(glob).env*'` and `grep -rn "from \"\.\./config\"\|from \"\./config\"" src test`
+Expected: no output. (`\b` matches whole words, so `ElevationPreviewPanel` is not a hit. `PREVIEW_SERVICE_URL` has no word anchors on purpose so it also finds `VITE_PREVIEW_SERVICE_URL`. `git grep` searches tracked files only, so a missing `.env*` file cannot break the command.)
 
 - [ ] **Step 5: Run the affected specs and the static checks**
 

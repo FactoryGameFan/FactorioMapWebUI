@@ -197,6 +197,13 @@ const effectiveView = computed(() => {
   return ui.devMode ? view.value : "all";
 });
 
+// Each generate() takes the next number. Results from an older number (a render
+// that was still in flight when the planet changed) are ignored, so they cannot
+// paint over, or reveal, the new planet's box. The real renderer already
+// supersedes an older render when a newer one starts, but a planet change starts
+// none (renders only happen when asked), so the panel has to drop it itself.
+let generation = 0;
+
 async function generate(reroll = false) {
   const preset = store.activePreset;
   const info = preview.value;
@@ -216,6 +223,7 @@ async function generate(reroll = false) {
   error.value = null;
   elapsedMs.value = null;
   const startedAt = performance.now();
+  const mine = ++generation;
   try {
     const el = canvas.value;
     const g = el?.getContext("2d");
@@ -263,6 +271,7 @@ async function generate(reroll = false) {
         vulcanusVolcanismControls: info.vulcanusVolcanismControls,
       },
       (tile) => {
+        if (mine !== generation) return;
         g.putImageData(
           new ImageData(new Uint8ClampedArray(tile.buffer), tile.width, tile.height),
           tile.dx,
@@ -273,7 +282,7 @@ async function generate(reroll = false) {
         hasRendered.value = true;
       },
     );
-    if (completed) {
+    if (completed && mine === generation) {
       // Measured across the whole round trip (dispatch, compute, transfer,
       // blit) - that is the latency a user feels, and what tiling had to move.
       elapsedMs.value = Math.round(performance.now() - startedAt);
@@ -285,11 +294,26 @@ async function generate(reroll = false) {
     // unrelated Docker preview service, which is what made the two hard to
     // tell apart.
     // Same idiom as `IslandFinderPanel.vue`.
-    error.value = e instanceof Error ? e.message : "Preview failed.";
+    if (mine === generation) error.value = e instanceof Error ? e.message : "Preview failed.";
   } finally {
-    loading.value = false;
+    if (mine === generation) loading.value = false;
   }
 }
+
+// A picture of one planet must not sit under a dropdown that names another.
+// Back to the not-rendered state: the box shows its normal prompt or "not
+// available" message, and any in-flight render is dropped. The seed readout is
+// cleared too - it labels a finished picture, and with none on screen it would
+// mislead (the map seed itself is the same on every planet and is shown again by
+// the next Generate). Nothing renders until the user asks.
+watch(planet, () => {
+  generation++;
+  loading.value = false;
+  hasRendered.value = false;
+  error.value = null;
+  elapsedMs.value = null;
+  seed.value = null;
+});
 
 // Re-center on a jump target automatically, but only once the user has
 // already asked for a render at least once - a caller that sets centerX/

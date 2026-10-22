@@ -51,6 +51,16 @@ function okRenderer(tileOrder: number[][] = TILES): ElevationRenderer {
   };
 }
 
+/** v-show hides with an inline display:none; happy-dom's isVisible() is not reliable here. */
+function canvasHidden(w: ReturnType<typeof setup>): boolean {
+  return (w.find('[data-test="preview-canvas"]').element as HTMLElement).style.display === "none";
+}
+
+/** setProps is typed against the mounted component's emits, which hides `planet`. */
+function setPlanet(w: ReturnType<typeof setup>, planet: Planet): Promise<void> {
+  return (w as unknown as { setProps(p: { planet: Planet }): Promise<void> }).setProps({ planet });
+}
+
 const TILES = [
   [0, 0],
   [512, 0],
@@ -859,6 +869,48 @@ describe("ElevationPreviewPanel", () => {
 
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(arg).toMatchObject({ planet: "fulgora", view: "terrain" });
+    });
+  });
+
+  describe("changing the planet", () => {
+    it("returns to the Generate prompt when the planet changes after a render", async () => {
+      stubCanvas();
+      const w = setup("nauvis", okRenderer());
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      expect(canvasHidden(w)).toBe(false);
+      expect(w.find('[data-test="preview-seed"]').exists()).toBe(true);
+
+      await setPlanet(w, "vulcanus");
+      expect(canvasHidden(w)).toBe(true);
+      expect(w.text()).toContain('Click "Generate" to render the map.');
+      expect(w.find('[data-test="preview-seed"]').exists()).toBe(false);
+      expect(w.find('[data-test="preview-elapsed"]').exists()).toBe(false);
+    });
+
+    it("drops tiles from a render that was in flight when the planet changed", async () => {
+      const putImageData = stubCanvas();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const renderer: ElevationRenderer = {
+        render: vi.fn(async (_req, onTile) => {
+          await gate;
+          onTile({ dx: 0, dy: 0, width: 512, height: 512, buffer: new ArrayBuffer(512 * 512 * 4) });
+          return true;
+        }),
+        dispose: vi.fn(),
+      };
+      const w = setup("nauvis", renderer);
+      await w.find('[data-test="generate"]').trigger("click");
+      await setPlanet(w, "vulcanus");
+      release();
+      await flushPromises();
+
+      expect(putImageData).not.toHaveBeenCalled();
+      expect(canvasHidden(w)).toBe(true);
+      expect(w.find('[data-test="preview-elapsed"]').exists()).toBe(false);
+      // The in-flight render no longer blocks asking for the new planet.
+      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeUndefined();
     });
   });
 
