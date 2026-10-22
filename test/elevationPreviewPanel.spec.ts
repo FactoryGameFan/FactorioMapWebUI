@@ -860,4 +860,85 @@ describe("ElevationPreviewPanel", () => {
       expect(arg).toMatchObject({ planet: "fulgora", view: "terrain" });
     });
   });
+
+  describe("planet picker, Re-roll and limits", () => {
+    it("offers all five planets in the planet dropdown", () => {
+      const w = setup("nauvis", okRenderer());
+      const values = w
+        .findAll('[data-test="planet-select"] option')
+        .map((o) => (o.element as HTMLOptionElement).value);
+      expect(values).toEqual(["nauvis", "vulcanus", "gleba", "fulgora", "aquilo"]);
+    });
+
+    it("emits update:planet when a planet is picked", async () => {
+      const w = setup("nauvis", okRenderer());
+      await w.find('[data-test="planet-select"]').setValue("vulcanus");
+      expect(w.emitted("update:planet")).toEqual([["vulcanus"]]);
+    });
+
+    it("hides Re-roll when the preset has a fixed seed", () => {
+      const w = setup("nauvis", okRenderer());
+      expect(w.find('[data-test="reroll"]').exists()).toBe(false);
+    });
+
+    it("re-rolls a random-seed preset to a new seed and renders it", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      usePresetsStore().activePreset!.seed = null;
+      await w.vm.$nextTick();
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      await w.find('[data-test="reroll"]').trigger("click");
+      await flushPromises();
+      const calls = vi.mocked(renderer.render).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1][0].seed0).not.toBe(calls[0][0].seed0);
+    });
+
+    it("notes that a Lakes preset shows elevation only", async () => {
+      stubCanvas();
+      const lakes = setup("lakes", okRenderer());
+      expect(lakes.find('[data-test="elevation-only-note"]').exists()).toBe(false);
+      await lakes.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      const note = lakes.find('[data-test="elevation-only-note"]').text();
+      expect(note).toContain("Lakes");
+      expect(note).toContain("elevation");
+
+      const plain = setup("nauvis", okRenderer());
+      await plain.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      expect(plain.find('[data-test="elevation-only-note"]').exists()).toBe(false);
+    });
+
+    function nine() {
+      return Array.from({ length: 9 }, (_, i) => ({ x: i * 100, y: 0 }));
+    }
+
+    it("refuses a preset with more than the supported starting points, with a plain message", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      usePresetsStore().activePreset!.startingPoints = nine();
+      await w.vm.$nextTick();
+      const msg = w.find('[data-test="unsupported"]').text();
+      expect(msg).toContain("up to 8 starting points");
+      expect(msg).toContain("9");
+      const gen = w.find('[data-test="generate"]');
+      expect(gen.attributes("disabled")).toBeDefined();
+      await gen.trigger("click");
+      await flushPromises();
+      expect(renderer.render).not.toHaveBeenCalled();
+    });
+
+    it("does not apply the starting-point limit where starting points are not sent", async () => {
+      // Only the Nauvis writer passes startingPositions to the engine.
+      const w = setup("nauvis", okRenderer(), { planet: "vulcanus" });
+      usePresetsStore().activePreset!.startingPoints = nine();
+      await w.vm.$nextTick();
+      expect(w.find('[data-test="unsupported"]').exists()).toBe(false);
+      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeUndefined();
+    });
+  });
 });
