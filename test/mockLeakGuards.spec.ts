@@ -8,10 +8,9 @@ import { describe, it, expect, vi } from "vite-plus/test";
  * Both flags were turned on to close leaks that nothing in the suite could
  * observe, and that is exactly the problem: a guard against an unobservable
  * leak is indistinguishable from a no-op, so removing the flag would be silent.
- * Turning them on changed **no** existing test - `previewPanel.spec.ts` and
- * `previewClient.spec.ts` pass either way, and the two `previewPanel` tests
- * that were inheriting a `URL` stub from the test before them also pass when
- * run alone. The leak was real but not load-bearing.
+ * Turning them on changed **no** existing test - the suite passed either way,
+ * and two tests that were inheriting a `URL` stub from the test before them
+ * also passed when run alone. The leak was real but not load-bearing.
  *
  * So these two tests are the observation. Each is a PAIR: the first test dirties
  * state, the second asserts the runner cleaned it. They are order-dependent by

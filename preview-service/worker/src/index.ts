@@ -1,16 +1,15 @@
 import { getContainer } from "@cloudflare/containers";
 import { parsePreviewRequest, type PreviewRequest } from "./schema";
 import { previewObjectKey } from "./cacheKey";
+import { MAX_BODY_BYTES } from "./limits";
+// Only entrypoints (the default handler and Durable Object classes) may be
+// exported from this module, because workerd rejects any other named export at
+// startup.
 export { PreviewContainer } from "./container";
 export { RenderBudget } from "./budget";
 
 // Binding types come from `wrangler types` (worker-configuration.d.ts).
 type Env = Cloudflare.Env;
-
-// A real request is about 2 KB: measured 1,902 to 2,094 bytes over the nine
-// built-in presets. 64 KiB is room for any preset the app can build, and stops
-// a client from making the Worker buffer a body it would only reject.
-export const MAX_BODY_BYTES = 64 * 1024;
 
 // One JSON object per line, so Workers Logs can filter on its fields.
 function logError(message: string, detail: Record<string, unknown>): void {

@@ -2,6 +2,7 @@ import { mount } from "@vue/test-utils";
 import { createPinia } from "pinia";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import App from "../src/App.vue";
+import IslandFinderPanel from "../src/components/IslandFinderPanel.vue";
 import fixtures from "./fixtures/builtin-presets.json";
 
 const presetStrings = fixtures.presets as Record<string, string>;
@@ -113,8 +114,53 @@ describe("App shell", () => {
     expect(w.find('[data-test="import-error"]').text()).toContain("envelope");
   });
 
-  it("offers a Preview tab", () => {
+  it("offers a Map Tools tab and no Preview tab", () => {
     const w = mountApp();
-    expect(w.text()).toContain("Preview");
+    const labels = w.findAll('[role="tab"], .f-tab, button').map((b) => b.text().trim());
+    expect(labels).toContain("Map Tools");
+    expect(labels).not.toContain("Preview");
+  });
+
+  it("shows the WASM preview in the right-hand box", () => {
+    const w = mountApp();
+    const aside = w.find("aside");
+    expect(aside.find('[data-test="preview-canvas"]').exists()).toBe(true);
+    expect(aside.find('[data-test="planet-select"]').exists()).toBe(true);
+    expect(w.find('[data-test="preview-image"]').exists()).toBe(false);
+  });
+
+  async function openMapToolsAndJump(w: ReturnType<typeof mountApp>) {
+    const tab = w.findAll("button").find((b) => b.text().trim() === "Map Tools");
+    await tab?.trigger("click");
+    w.findComponent(IslandFinderPanel).vm.$emit("jump", { x: 10, y: 20 });
+    await w.vm.$nextTick();
+  }
+
+  it("clears the island jump target when the planet changes from the right-hand box", async () => {
+    const w = mountApp();
+    await openMapToolsAndJump(w);
+    expect(w.find('[data-test="jump-target"]').exists()).toBe(true);
+    await w.find("aside").find('[data-test="planet-select"]').setValue("vulcanus");
+    expect(w.find('[data-test="jump-target"]').exists()).toBe(false);
+  });
+
+  it("stays on Map Tools after an island jump and does not render first", async () => {
+    // App gives a test no way to inject a renderer, so "did not render" is
+    // asserted through the panel: its canvas stays hidden until Generate.
+    const w = mountApp();
+    await openMapToolsAndJump(w);
+    expect(w.find('[data-test="jump-target"]').exists()).toBe(true);
+    expect(w.findComponent(IslandFinderPanel).exists()).toBe(true);
+    const aside = w.find("aside");
+    // Hidden alone proves little: the canvas is also hidden when the preview is
+    // unsupported. These two hold only when it IS supported and has NOT rendered.
+    const canvas = aside.find('[data-test="preview-canvas"]');
+    expect((canvas.element as HTMLElement).style.display).toBe("none");
+    expect(aside.find('[data-test="unsupported"]').exists()).toBe(false);
+    expect(aside.find('[data-test="generate"]').attributes("disabled")).toBeUndefined();
+    expect(aside.text()).toContain('Click "Generate" to render the map.');
+    // generate() publishes the seed readout before it touches the canvas (which
+    // happy-dom cannot provide), so this shows whether a jump started a render.
+    expect(aside.find('[data-test="preview-seed"]').exists()).toBe(false);
   });
 });

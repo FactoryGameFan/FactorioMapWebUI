@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import worker, { MAX_BODY_BYTES } from "../src/index";
+import worker from "../src/index";
+import { MAX_BODY_BYTES } from "../src/limits";
 
 const body = {
   mapGenSettings: { width: 0, height: 0, seed: 123456 },

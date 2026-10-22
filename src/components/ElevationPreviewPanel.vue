@@ -2,12 +2,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { elevationCtxFromPreset } from "../model/elevationPreviewCtx";
-import { PLANET_LABELS, type Planet } from "../model/planets";
+import { PLANET_LABELS, PLANETS, type Planet } from "../model/planets";
+import { NAUVIS_MAX_STARTING_POINTS } from "../noise/wasm/request";
 import { surfaceSeedForPlanet } from "../model/planetSurfaceSeed";
 import { usePresetsStore } from "../store/presets";
 import { useUiStore } from "../store/ui";
 import FButton from "../ui/FButton.vue";
 import FCheckbox from "../ui/FCheckbox.vue";
+import FDropdown from "../ui/FDropdown.vue";
 import { useElevationPreview, type ElevationRenderer } from "./useElevationPreview";
 
 // Fixed view matched to the server --generate-map-preview: 1024 tiles across at
@@ -33,9 +35,11 @@ const props = defineProps<{
 }>();
 // In the app no renderer is passed -> build the real worker-backed one (which
 // registers its own onBeforeUnmount). Tests inject a fake, so no Worker is made.
+const emit = defineEmits<{ "update:planet": [value: Planet] }>();
+const planetOptions = PLANETS.map((p) => ({ value: p, label: PLANET_LABELS[p] }));
 const renderer = props.renderer ?? useElevationPreview();
 // Single source of truth for "which planet to render" - App.vue's
-// selectedPlanet, shared with the server-side PreviewPanel. Defaults to
+// selectedPlanet, chosen with the planet dropdown in this toolbar. Defaults to
 // "nauvis" so a caller that never passes the prop (e.g. every pre-Task-11
 // test) is unaffected.
 const planet = computed<Planet>(() => props.planet ?? "nauvis");
@@ -61,18 +65,32 @@ const preview = computed(() =>
 // `mapType`. Gleba/Fulgora/Aquilo have no client renderer at all (out of scope)
 // - without this guard they would silently fall through `runRenderRequest`'s
 // dispatch to the Nauvis terrain renderer and render mislabeled Nauvis colors.
+// Only the Nauvis writer sends `startingPositions` to the engine (Vulcanus and
+// Fulgora derive their own spawn), and it refuses more than the ABI cap. So the
+// limit is checked here, for Nauvis only, to give a plain message up front.
+const startingPointCount = computed(() => preview.value?.ctx.startingPositions.length ?? 0);
+const tooManyStartingPoints = computed(
+  () =>
+    planet.value === "nauvis" &&
+    (preview.value?.supported ?? false) &&
+    startingPointCount.value > NAUVIS_MAX_STARTING_POINTS,
+);
 const supported = computed(() => {
   if (planet.value === "vulcanus" || planet.value === "fulgora") return true;
   if (planet.value !== "nauvis") return false;
-  return preview.value?.supported ?? false;
+  return (preview.value?.supported ?? false) && !tooManyStartingPoints.value;
 });
-/** The "not available yet" message's subject: the planet when THAT is why
- * client preview is unsupported, else the preset's own map-type label. */
-const unsupportedLabel = computed(() =>
-  planet.value !== "nauvis" && planet.value !== "vulcanus" && planet.value !== "fulgora"
-    ? PLANET_LABELS[planet.value]
-    : (preview.value?.mapTypeLabel ?? "this map type"),
-);
+/** The one "why not" message shown when the preview cannot render. */
+const unsupportedMessage = computed(() => {
+  if (tooManyStartingPoints.value) {
+    return `Previews support up to ${NAUVIS_MAX_STARTING_POINTS} starting points; this preset has ${startingPointCount.value}.`;
+  }
+  const label =
+    planet.value !== "nauvis" && planet.value !== "vulcanus" && planet.value !== "fulgora"
+      ? PLANET_LABELS[planet.value]
+      : (preview.value?.mapTypeLabel ?? "this map type");
+  return `Client preview is not available for ${label} yet.`;
+});
 
 // The terrain render (renderTerrain, Task 11) always evaluates the Nauvis
 // climate + tile catalog, regardless of the active preset's actual map type -
@@ -107,6 +125,13 @@ const view = ref<
   "elevation" | "terrain" | "resources" | "enemies" | "cliffs" | "trees" | "rocks" | "all"
 >("all");
 const nauvisMapType = computed(() => preview.value?.mapType === "nauvis");
+// Lakes and Island render elevation only; say so once a render is asked for.
+const elevationOnlyNote = computed(() => {
+  const info = preview.value;
+  if (planet.value !== "nauvis" || !info?.supported || nauvisMapType.value) return null;
+  if (seed.value === null && !hasRendered.value) return null;
+  return `Full terrain is not available for the ${info.mapTypeLabel} map type yet; showing elevation.`;
+});
 const nauvisOverlaysAvailable = computed(
   () => planet.value !== "vulcanus" && planet.value !== "fulgora" && nauvisMapType.value,
 );
@@ -172,7 +197,14 @@ const effectiveView = computed(() => {
   return ui.devMode ? view.value : "all";
 });
 
-async function generate() {
+// Each generate() takes the next number. Results from an older number (a render
+// that was still in flight when the planet changed) are ignored, so they cannot
+// paint over, or reveal, the new planet's box. The real renderer already
+// supersedes an older render when a newer one starts, but a planet change starts
+// none (renders only happen when asked), so the panel has to drop it itself.
+let generation = 0;
+
+async function generate(reroll = false) {
   const preset = store.activePreset;
   const info = preview.value;
   if (!preset || !info || !supported.value || loading.value) return;
@@ -181,7 +213,7 @@ async function generate() {
   // generated at `mapSeed + map_seed_offset` (see model/planetSurfaceSeed).
   // The readout keeps showing the map seed - that is the number the player
   // typed and the one they would enter in the game.
-  const mapSeed = store.previewSeed();
+  const mapSeed = store.previewSeed(reroll);
   seed.value = mapSeed;
   const seed0 = surfaceSeedForPlanet(planet.value, mapSeed);
 
@@ -191,6 +223,7 @@ async function generate() {
   error.value = null;
   elapsedMs.value = null;
   const startedAt = performance.now();
+  const mine = ++generation;
   try {
     const el = canvas.value;
     const g = el?.getContext("2d");
@@ -238,6 +271,7 @@ async function generate() {
         vulcanusVolcanismControls: info.vulcanusVolcanismControls,
       },
       (tile) => {
+        if (mine !== generation) return;
         g.putImageData(
           new ImageData(new Uint8ClampedArray(tile.buffer), tile.width, tile.height),
           tile.dx,
@@ -248,7 +282,7 @@ async function generate() {
         hasRendered.value = true;
       },
     );
-    if (completed) {
+    if (completed && mine === generation) {
       // Measured across the whole round trip (dispatch, compute, transfer,
       // blit) - that is the latency a user feels, and what tiling had to move.
       elapsedMs.value = Math.round(performance.now() - startedAt);
@@ -256,14 +290,30 @@ async function generate() {
   } catch (e) {
     // The real cause, not a constant. A bare `catch` here discarded every
     // render failure's message - issue #341 - and produced the same
-    // "Preview failed." that `PreviewPanel.vue` produces from the unrelated
-    // Docker preview service, which is what made the two hard to tell apart.
+    // "Preview failed." that the old server-rendered panel produced from the
+    // unrelated Docker preview service, which is what made the two hard to
+    // tell apart.
     // Same idiom as `IslandFinderPanel.vue`.
-    error.value = e instanceof Error ? e.message : "Preview failed.";
+    if (mine === generation) error.value = e instanceof Error ? e.message : "Preview failed.";
   } finally {
-    loading.value = false;
+    if (mine === generation) loading.value = false;
   }
 }
+
+// A picture of one planet must not sit under a dropdown that names another.
+// Back to the not-rendered state: the box shows its normal prompt or "not
+// available" message, and any in-flight render is dropped. The seed readout is
+// cleared too - it labels a finished picture, and with none on screen it would
+// mislead (the map seed itself is the same on every planet and is shown again by
+// the next Generate). Nothing renders until the user asks.
+watch(planet, () => {
+  generation++;
+  loading.value = false;
+  hasRendered.value = false;
+  error.value = null;
+  elapsedMs.value = null;
+  seed.value = null;
+});
 
 // Re-center on a jump target automatically, but only once the user has
 // already asked for a render at least once - a caller that sets centerX/
@@ -280,6 +330,13 @@ watch(
 <template>
   <div class="elevation-preview">
     <div class="preview-toolbar">
+      <FDropdown
+        data-test="planet-select"
+        aria-label="Planet to preview"
+        :model-value="planet"
+        :options="planetOptions"
+        @update:model-value="emit('update:planet', $event as Planet)"
+      />
       <span v-if="seed !== null" class="seed" data-test="preview-seed">Seed: {{ seed }}</span>
       <span
         v-if="ui.devMode && elapsedMs !== null"
@@ -397,6 +454,16 @@ watch(
         @update:model-value="ui.setDevMode($event)"
       />
       <FButton
+        v-if="store.activePreset && store.activePreset.seed === null"
+        data-test="reroll"
+        variant="tool"
+        :disabled="!supported || loading"
+        title="Render a new random seed"
+        @click="generate(true)"
+      >
+        Re-roll
+      </FButton>
+      <FButton
         data-test="generate"
         variant="confirm"
         :disabled="!supported || loading"
@@ -405,6 +472,9 @@ watch(
         {{ loading ? "Rendering..." : "Generate" }}
       </FButton>
     </div>
+    <p v-if="elevationOnlyNote" class="dim note" data-test="elevation-only-note">
+      {{ elevationOnlyNote }}
+    </p>
     <div class="preview-stage f-bevel-in">
       <canvas
         v-show="supported && hasRendered && !error"
@@ -413,8 +483,9 @@ watch(
         class="preview-canvas f-preview-media"
       />
       <p v-if="!supported" class="dim" data-test="unsupported">
-        Client preview is not available for {{ unsupportedLabel }} yet.
+        {{ unsupportedMessage }}
       </p>
+
       <p v-else-if="error" class="error" role="alert" data-test="preview-error">{{ error }}</p>
       <p v-else-if="!hasRendered" class="dim">Click "Generate" to render the map.</p>
     </div>
@@ -472,5 +543,9 @@ watch(
 }
 .dim {
   color: var(--f-text-dim);
+}
+.note {
+  margin: 0;
+  font-size: 12px;
 }
 </style>

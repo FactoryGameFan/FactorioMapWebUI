@@ -31,9 +31,9 @@
     "not_found_handling": "none",
   },
   "routes": [{ "pattern": "map.factorygamefan.com", "custom_domain": true }],
-  // Served only on the custom domain. The preview Worker's ALLOWED_ORIGIN is
-  // exactly https://map.factorygamefan.com, so a workers.dev or preview URL
-  // could not render map previews anyway.
+  // Served only on the custom domain. The app makes no outbound calls and has
+  // one public address, so a workers.dev or preview URL has no use and only
+  // adds a second public address.
   "workers_dev": false,
   "preview_urls": false,
 }

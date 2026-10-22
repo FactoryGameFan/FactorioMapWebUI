@@ -235,7 +235,7 @@ describe("version.json cache headers", () => {
    * Read off the POLICY line only. The surrounding comments discuss both tokens
    * at length, so a search over the whole file would be a test of the prose.
    */
-  const scriptSrcTokens = (): string[] => {
+  const directiveTokens = (name: string): string[] => {
     const policy = headers
       .split("\n")
       .filter((l) => !l.trimStart().startsWith("#"))
@@ -244,10 +244,22 @@ describe("version.json cache headers", () => {
     const directive = policy
       ?.split(";")
       .map((d) => d.trim())
-      .find((d) => d.startsWith("script-src"));
-    expect(directive, "the policy has no script-src directive").toBeDefined();
+      .find((d) => d.split(/\s+/)[0]?.endsWith(name));
+    expect(directive, `the policy has no ${name} directive`).toBeDefined();
     return (directive ?? "").split(/\s+/).slice(1);
   };
+  const scriptSrcTokens = (): string[] => directiveTokens("script-src");
+
+  it("connect-src allows only the app itself", () => {
+    expect(directiveTokens("connect-src")).toEqual(["'self'"]);
+  });
+
+  it("img-src no longer allows blob: URLs", () => {
+    const tokens = directiveTokens("img-src");
+    expect(tokens).not.toContain("blob:");
+    expect(tokens).toContain("'self'");
+    expect(tokens).toContain("data:");
+  });
 
   it("still has no 'unsafe-eval' in script-src", () => {
     // Guard, not decoration: unsafe-eval was deliberately removed (3770a32) and

@@ -4,8 +4,7 @@
   "type": "module",
   "scripts": {
     "types:check": "wrangler types --check",
-    "test": "pnpm run types:check && vitest run",
-    "deploy": "pnpm run test && wrangler deploy"
+    "test": "pnpm run types:check && vitest run"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7"

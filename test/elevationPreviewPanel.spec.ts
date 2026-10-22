@@ -51,6 +51,16 @@ function okRenderer(tileOrder: number[][] = TILES): ElevationRenderer {
   };
 }
 
+/** v-show hides with an inline display:none; happy-dom's isVisible() is not reliable here. */
+function canvasHidden(w: ReturnType<typeof setup>): boolean {
+  return (w.find('[data-test="preview-canvas"]').element as HTMLElement).style.display === "none";
+}
+
+/** setProps is typed against the mounted component's emits, which hides `planet`. */
+function setPlanet(w: ReturnType<typeof setup>, planet: Planet): Promise<void> {
+  return (w as unknown as { setProps(p: { planet: Planet }): Promise<void> }).setProps({ planet });
+}
+
 const TILES = [
   [0, 0],
   [512, 0],
@@ -397,8 +407,9 @@ describe("ElevationPreviewPanel", () => {
   it("shows the render's OWN message when it rejects, not a constant", async () => {
     // Issue #341. This asserted only that the element existed, which stayed
     // true while a bare `catch` replaced every cause with "Preview failed." -
-    // the same string `PreviewPanel.vue` produces from the unrelated Docker
-    // preview service, which is what made the two impossible to tell apart.
+    // the same string the old server-rendered panel produced from its
+    // unrelated Docker preview service, which is what made the two
+    // impossible to tell apart.
     stubCanvas();
     const renderer: ElevationRenderer = {
       render: vi.fn(async () => {
@@ -858,6 +869,129 @@ describe("ElevationPreviewPanel", () => {
 
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(arg).toMatchObject({ planet: "fulgora", view: "terrain" });
+    });
+  });
+
+  describe("changing the planet", () => {
+    it("returns to the Generate prompt when the planet changes after a render", async () => {
+      stubCanvas();
+      const w = setup("nauvis", okRenderer());
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      expect(canvasHidden(w)).toBe(false);
+      expect(w.find('[data-test="preview-seed"]').exists()).toBe(true);
+
+      await setPlanet(w, "vulcanus");
+      expect(canvasHidden(w)).toBe(true);
+      expect(w.text()).toContain('Click "Generate" to render the map.');
+      expect(w.find('[data-test="preview-seed"]').exists()).toBe(false);
+      expect(w.find('[data-test="preview-elapsed"]').exists()).toBe(false);
+    });
+
+    it("drops tiles from a render that was in flight when the planet changed", async () => {
+      const putImageData = stubCanvas();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const renderer: ElevationRenderer = {
+        render: vi.fn(async (_req, onTile) => {
+          await gate;
+          onTile({ dx: 0, dy: 0, width: 512, height: 512, buffer: new ArrayBuffer(512 * 512 * 4) });
+          return true;
+        }),
+        dispose: vi.fn(),
+      };
+      const w = setup("nauvis", renderer);
+      await w.find('[data-test="generate"]').trigger("click");
+      await setPlanet(w, "vulcanus");
+      release();
+      await flushPromises();
+
+      expect(putImageData).not.toHaveBeenCalled();
+      expect(canvasHidden(w)).toBe(true);
+      expect(w.find('[data-test="preview-elapsed"]').exists()).toBe(false);
+      // The in-flight render no longer blocks asking for the new planet.
+      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeUndefined();
+    });
+  });
+
+  describe("planet picker, Re-roll and limits", () => {
+    it("offers all five planets in the planet dropdown", () => {
+      const w = setup("nauvis", okRenderer());
+      const values = w
+        .findAll('[data-test="planet-select"] option')
+        .map((o) => (o.element as HTMLOptionElement).value);
+      expect(values).toEqual(["nauvis", "vulcanus", "gleba", "fulgora", "aquilo"]);
+    });
+
+    it("emits update:planet when a planet is picked", async () => {
+      const w = setup("nauvis", okRenderer());
+      await w.find('[data-test="planet-select"]').setValue("vulcanus");
+      expect(w.emitted("update:planet")).toEqual([["vulcanus"]]);
+    });
+
+    it("hides Re-roll when the preset has a fixed seed", () => {
+      const w = setup("nauvis", okRenderer());
+      expect(w.find('[data-test="reroll"]').exists()).toBe(false);
+    });
+
+    it("re-rolls a random-seed preset to a new seed and renders it", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      usePresetsStore().activePreset!.seed = null;
+      await w.vm.$nextTick();
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      await w.find('[data-test="reroll"]').trigger("click");
+      await flushPromises();
+      const calls = vi.mocked(renderer.render).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1][0].seed0).not.toBe(calls[0][0].seed0);
+    });
+
+    it("notes that a Lakes preset shows elevation only", async () => {
+      stubCanvas();
+      const lakes = setup("lakes", okRenderer());
+      expect(lakes.find('[data-test="elevation-only-note"]').exists()).toBe(false);
+      await lakes.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      const note = lakes.find('[data-test="elevation-only-note"]').text();
+      expect(note).toContain("Lakes");
+      expect(note).toContain("elevation");
+
+      const plain = setup("nauvis", okRenderer());
+      await plain.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      expect(plain.find('[data-test="elevation-only-note"]').exists()).toBe(false);
+    });
+
+    function nine() {
+      return Array.from({ length: 9 }, (_, i) => ({ x: i * 100, y: 0 }));
+    }
+
+    it("refuses a preset with more than the supported starting points, with a plain message", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      usePresetsStore().activePreset!.startingPoints = nine();
+      await w.vm.$nextTick();
+      const msg = w.find('[data-test="unsupported"]').text();
+      expect(msg).toContain("up to 8 starting points");
+      expect(msg).toContain("9");
+      const gen = w.find('[data-test="generate"]');
+      expect(gen.attributes("disabled")).toBeDefined();
+      await gen.trigger("click");
+      await flushPromises();
+      expect(renderer.render).not.toHaveBeenCalled();
+    });
+
+    it("does not apply the starting-point limit where starting points are not sent", async () => {
+      // Only the Nauvis writer passes startingPositions to the engine.
+      const w = setup("nauvis", okRenderer(), { planet: "vulcanus" });
+      usePresetsStore().activePreset!.startingPoints = nine();
+      await w.vm.$nextTick();
+      expect(w.find('[data-test="unsupported"]').exists()).toBe(false);
+      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeUndefined();
     });
   });
 });
