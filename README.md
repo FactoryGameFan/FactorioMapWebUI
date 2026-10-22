@@ -143,14 +143,16 @@ Cloudflare account with it).
 
 The app deploys itself. Every merge to `main` runs the checks in GitHub Actions,
 and the `deploy` job publishes the app once they pass. You can also run the
-workflow by hand from `main` to redeploy it.
+workflow by hand ("Run workflow" on the Actions tab, from the `main` branch) to
+redeploy it.
 
 `pnpm run deploy` is the hand path. It verifies, builds, and publishes the app,
 and aborts before `wrangler` if anything fails (`pnpm run verify` is `vp check`,
-`check:vue`, `vp test` and `preview:test`).
+`check:vue`, `vp test`, `preview:test` and `verify:rust`).
 
 Take care: if you deploy anything other than a clean `main`, the next CI deploy
-fails until `main` is redeployed (run the workflow by hand from `main`).
+fails until `main` is redeployed ("Run workflow" from the `main` branch; a
+re-run of the failed run does not work).
 
 The one-time setup, for reference, needs a Cloudflare account
 and Workers Paid ($5/mo, required for Containers):

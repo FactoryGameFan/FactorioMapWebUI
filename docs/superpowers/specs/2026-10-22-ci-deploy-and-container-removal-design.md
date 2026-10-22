@@ -66,8 +66,9 @@ Each step ships on its own, so a failure in one never hides in another.
 ### Decided by Eric
 
 - **Trigger: every push to `main`**, plus `workflow_dispatch` for a redeploy.
-  Renovate merges go live too. That is accepted: Renovate automerges only
-  GitHub Action digest re-pins, and everything else still needs Eric to merge.
+  Renovate merges go live too. That is accepted: Renovate automerged only
+  GitHub Action digest re-pins, and everything else needed Eric to merge. That
+  automerge stopped in the same PR (see the digest bullet further down).
 - **Order: first, as its own PR**, before the container work.
 
 ### Shape
@@ -130,8 +131,11 @@ and cannot check `needs.*.result`. It:
   live site ran the branch commit `7711ad8`, not `main`'s `e9a2e9f` (#435). A
   plain "deploy if the live commit is an ancestor" rule would then skip every
   later run while showing green. Eric chose a red job over deploying on top of
-  it, so a deliberate branch hotfix is never overwritten silently; the fix is a
-  redeploy from `main` with the dispatch button. The failure message says so.
+  it, so a deliberate branch hotfix is never overwritten silently. A push goes
+  red. The fix is a manual "Run workflow" from `main`'s tip, which deploys over
+  the off-main or dirty build (the gate reads `GITHUB_EVENT_NAME` and checks the
+  run's commit is at or past `origin/main`). A stale manual run still skips when
+  a newer `main` commit is live. The failure message says so.
 
   Two runs checking in the same second can still race; that window is
   accepted. The builder checks the one-pending-job rule against GitHub's

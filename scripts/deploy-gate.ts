@@ -15,7 +15,10 @@
  * Why "not on main" fails: this repo squash-merges, so a deploy made from a
  * feature branch leaves a commit live that `main` will never contain (#434's
  * `7711ad8` was one). Ancestry checks against such a commit say nothing useful,
- * so the fix is a human redeploying `main` with the dispatch button.
+ * so a push fails. The fix is a human using "Run workflow" from the `main`
+ * branch: a manual run (`GITHUB_EVENT_NAME` is `workflow_dispatch`) whose commit
+ * is at or past `origin/main` deploys over an off-main or dirty live build. The
+ * skip row is checked first, so a stale manual run never rolls back newer work.
  *
  * Runs only in CI. `gitIsAncestor` needs the full history and `origin/main`
  * fetched, which a default shallow checkout does not give.
@@ -44,7 +47,13 @@ export interface GateFacts {
   liveBeforeRun: Ancestry;
   /** Is this run's commit an ancestor of (or equal to) the live commit? */
   runBeforeLive: Ancestry;
+  /** Was this run started by hand with "Run workflow" (`workflow_dispatch`)? */
+  manual: boolean;
+  /** Is this run's commit at or past the tip of `origin/main`? */
+  runIsMainTip: Ancestry;
 }
+
+const FULL_SHA = /^[0-9a-f]{40}$/;
 
 export type GateAction = "deploy" | "skip" | "fail";
 
@@ -54,35 +63,41 @@ export function decideDeploy(f: GateFacts): { action: GateAction; lines: string[
     return { action: "fail", lines: ["The live build stamp could not be read."] };
   }
   const liveSha = f.live.fullCommit;
-  if (!liveSha || liveSha === "unknown") {
+  // A real commit is 40 hex digits. Anything else ("HEAD", "origin/main") would
+  // let git resolve it to some other commit, so it counts as no commit.
+  if (typeof liveSha !== "string" || !FULL_SHA.test(liveSha)) {
     return { action: "fail", lines: ["There is no commit in the live build stamp."] };
   }
-  if (f.live.dirty === true) {
+  const dirty = f.live.dirty === true;
+  // A newer main commit is already live: an older run must not roll it back.
+  // This comes before the manual override so a stale dispatch cannot do it.
+  if (!dirty && f.liveOnMain === "yes" && f.runBeforeLive === "yes" && f.liveBeforeRun !== "yes") {
     return {
-      action: "fail",
-      lines: [
-        `Live (${liveSha}) was deployed from a dirty tree, so that commit does not describe what is running.`,
-        "Redeploy main with the dispatch button.",
-      ],
+      action: "skip",
+      lines: [`A newer commit is already live: live ${liveSha} is ahead of this run ${f.runSha}.`],
     };
   }
-  if (f.liveOnMain !== "yes") {
+  const offMain = dirty || f.liveOnMain !== "yes";
+  if (offMain) {
+    const why = dirty
+      ? `was deployed from a dirty tree`
+      : `is not on main (ancestry: ${f.liveOnMain})`;
+    if (f.manual && f.runIsMainTip === "yes") {
+      return {
+        action: "deploy",
+        lines: [`Manual run from main: replacing live ${liveSha}, which ${why}, with ${f.runSha}.`],
+      };
+    }
     return {
       action: "fail",
       lines: [
-        `The live commit ${liveSha} is not on main (ancestry: ${f.liveOnMain}).`,
-        "Redeploy main with the dispatch button.",
+        `The live commit ${liveSha} ${why}, so it does not describe main.`,
+        'Use "Run workflow" on the Actions tab from the main branch to redeploy main.',
       ],
     };
   }
   if (f.liveBeforeRun === "yes") {
     return { action: "deploy", lines: [`Live ${liveSha} is behind ${f.runSha}; deploying.`] };
-  }
-  if (f.runBeforeLive === "yes") {
-    return {
-      action: "skip",
-      lines: [`A newer commit is already live: live ${liveSha} is ahead of this run ${f.runSha}.`],
-    };
   }
   return {
     action: "fail",
@@ -116,13 +131,15 @@ async function main(): Promise<number> {
     live = null;
   }
   const liveSha = live?.fullCommit;
-  const known = typeof liveSha === "string" && liveSha !== "unknown";
+  const known = typeof liveSha === "string" && FULL_SHA.test(liveSha);
   const verdict = decideDeploy({
     live,
     runSha,
     liveOnMain: known ? gitIsAncestor(liveSha, "origin/main") : "unknown",
     liveBeforeRun: known ? gitIsAncestor(liveSha, runSha) : "unknown",
     runBeforeLive: known ? gitIsAncestor(runSha, liveSha) : "unknown",
+    manual: process.env.GITHUB_EVENT_NAME === "workflow_dispatch",
+    runIsMainTip: gitIsAncestor("origin/main", runSha),
   });
   const text = verdict.lines.join(" ");
   if (verdict.action === "fail") {

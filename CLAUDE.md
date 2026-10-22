@@ -611,8 +611,10 @@ should keep:
   the live site runs a commit that is not on `main` (a hand deploy from a
   branch or a dirty tree), the job goes **red** on purpose, so nothing
   overwrites it silently. Off-main deploys happen: after #434 the live site ran
-  a branch commit. The fix is to run the workflow from `main` with the
-  **Run workflow** button (`workflow_dispatch`), which redeploys `main`.
+  a branch commit. The fix is to use **Run workflow** on the Actions tab from
+  the `main` branch (`workflow_dispatch`). A manual run from the tip of `main`
+  deploys over an off-main or dirty live build; a push never does, and a
+  re-run of a push run is still a push.
 
   `pnpm refs:sync` is still absent from CI for the same reason it is absent
   from `verify`: no runner has a Factorio binary.
@@ -887,8 +889,9 @@ failures: a type error and a failing test each stop the chain before `wrangler`
 is reached, and a clean tree passes through.
 
 **A hand deploy of anything but a clean `main` makes the next CI deploy fail**,
-because the gate sees a live commit that is not on `main`. Redeploy `main`
-(dispatch the workflow) to clear it.
+because the gate sees a live commit that is not on `main`. Clear it with
+**Run workflow** on the Actions tab from the `main` branch. Re-running the
+failed push run does not work, because it keeps its push event.
 
 **To undo a bad deploy, run `wrangler rollback` by hand** with Eric's own
 login. It makes a new deployment of the previous version at once. Gradual

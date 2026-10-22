@@ -12,6 +12,8 @@ function facts(over: Partial<GateFacts> = {}): GateFacts {
     liveOnMain: "yes",
     liveBeforeRun: "yes",
     runBeforeLive: "yes",
+    manual: false,
+    runIsMainTip: "yes",
     ...over,
   };
 }
@@ -41,14 +43,14 @@ describe("decideDeploy", () => {
     const r = decideDeploy(facts({ live: { ...BASE, dirty: true } }));
     expect(r.action).toBe("fail");
     expect(r.lines.join("\n")).toMatch(/dirty/i);
-    expect(r.lines.join("\n")).toMatch(/redeploy/i);
+    expect(r.lines.join("\n")).toMatch(/Run workflow/);
   });
 
   it("fails when the live commit is not on main", () => {
     const r = decideDeploy(facts({ liveOnMain: "no" }));
     expect(r.action).toBe("fail");
     expect(r.lines.join("\n")).toMatch(/not on main/i);
-    expect(r.lines.join("\n")).toMatch(/dispatch/i);
+    expect(r.lines.join("\n")).toMatch(/Run workflow/);
   });
 
   it("fails when main ancestry is unknown", () => {
@@ -65,6 +67,40 @@ describe("decideDeploy", () => {
 
   it("fails when the two commits cannot be ordered", () => {
     expect(decideDeploy(facts({ liveBeforeRun: "no", runBeforeLive: "no" })).action).toBe("fail");
+  });
+
+  it("fails when fullCommit is not a 40-digit commit", () => {
+    expect(decideDeploy(facts({ live: { ...BASE, fullCommit: "HEAD" } })).action).toBe("fail");
+  });
+
+  it("deploys over a live commit that is not on main when run by hand from main", () => {
+    const r = decideDeploy(facts({ manual: true, liveOnMain: "no" }));
+    expect(r.action).toBe("deploy");
+    expect(r.lines.join("\n")).toContain("a".repeat(40));
+    expect(r.lines.join("\n")).toMatch(/not on main/i);
+  });
+
+  it("deploys over a dirty live build when run by hand from main", () => {
+    const r = decideDeploy(facts({ manual: true, live: { ...BASE, dirty: true } }));
+    expect(r.action).toBe("deploy");
+    expect(r.lines.join("\n")).toMatch(/dirty/i);
+  });
+
+  it("fails a manual run that is not at main's tip when live is off main", () => {
+    expect(decideDeploy(facts({ manual: true, runIsMainTip: "no", liveOnMain: "no" })).action).toBe(
+      "fail",
+    );
+  });
+
+  it("skips a manual run when a newer main commit is already live", () => {
+    const r = decideDeploy(
+      facts({ manual: true, runIsMainTip: "no", liveBeforeRun: "no", runBeforeLive: "yes" }),
+    );
+    expect(r.action).toBe("skip");
+  });
+
+  it("still fails a push when the live commit is not on main", () => {
+    expect(decideDeploy(facts({ manual: false, liveOnMain: "no" })).action).toBe("fail");
   });
 
   it("deploys a redeploy of the live commit", () => {

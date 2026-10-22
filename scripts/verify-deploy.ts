@@ -88,6 +88,8 @@ export async function fetchLiveBuild(site: string): Promise<Partial<BuildInfo>> 
   const res = await fetch(url, {
     cache: "no-store",
     headers: { "cache-control": "no-cache", pragma: "no-cache" },
+    // A hung request must fail, not hang the job until its timeout.
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     throw new Error(`GET ${url.href} -> HTTP ${res.status} ${res.statusText}`);
