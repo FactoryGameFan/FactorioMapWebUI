@@ -12,12 +12,12 @@
   "$schema": "./preview-service/worker/node_modules/wrangler/config-schema.json",
   // Named after its hostname. Dots are not allowed in a Worker name.
   "name": "map-factorygamefan-com",
-  // Not today's date on purpose. The pinned wrangler (4.131.1, held to the
+  // Not today's date on purpose. The pinned wrangler (4.151.1, held to the
   // version @cloudflare/vitest-plugin names) ships a workerd that refuses any
-  // date after 2026-09-18, so a newer date breaks `wrangler dev`. A Worker
-  // with no script barely depends on this value. Move it forward when wrangler
-  // moves.
-  "compatibility_date": "2026-09-18",
+  // date after 2026-10-19 (measured with `wrangler dev`: 2026-10-12 starts,
+  // 2026-10-22 fails), so a newer date breaks `wrangler dev`. A Worker with no
+  // script barely depends on this value. Move it forward when wrangler moves.
+  "compatibility_date": "2026-10-12",
   "assets": {
     "directory": "./dist",
     // A missing path gets a plain 404. The app has one page and no client-side

@@ -11,6 +11,10 @@
  *   pnpm run verify:deploy                       # against map.factorygamefan.com
  *   pnpm run verify:deploy http://localhost:5173 # against `vp dev`
  *
+ * CI deploys and then runs this, and the edge can serve the old stamp for a
+ * short while. So CI sets `FMW_VERIFY_ATTEMPTS` (default 1) and
+ * `FMW_VERIFY_WAIT_SECONDS` (default 10) to retry. Left unset, it tries once.
+ *
  * Why not grep the bundle: the previous method was curling the site and grepping
  * for the hashed `index-<hash>.js` name, or for a version string - and a version
  * string that the minifier turned into a numeric array grepped as ABSENT, making
@@ -84,6 +88,8 @@ export async function fetchLiveBuild(site: string): Promise<Partial<BuildInfo>> 
   const res = await fetch(url, {
     cache: "no-store",
     headers: { "cache-control": "no-cache", pragma: "no-cache" },
+    // A hung request must fail, not hang the job until its timeout.
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     throw new Error(`GET ${url.href} -> HTTP ${res.status} ${res.statusText}`);
@@ -96,7 +102,32 @@ export async function fetchLiveBuild(site: string): Promise<Partial<BuildInfo>> 
   }
 }
 
-async function main(): Promise<number> {
+/**
+ * Calls `run` until it returns 0 or `attempts` tries are used. Returns the last
+ * exit code. Sleeps `waitMs` between tries, never after the last one.
+ */
+export async function withRetries(
+  run: () => Promise<number>,
+  attempts: number,
+  waitMs: number,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
+): Promise<number> {
+  let code = 1;
+  for (let i = 1; i <= attempts; i++) {
+    code = await run();
+    if (code === 0 || i === attempts) break;
+    await sleep(waitMs);
+  }
+  return code;
+}
+
+/** Reads a positive integer from the environment, or the fallback. */
+function envInt(name: string, fallback: number): number {
+  const n = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
+async function checkOnce(): Promise<number> {
   const site = process.argv[2] ?? process.env.FMW_DEPLOY_URL ?? DEFAULT_SITE;
   const local = computeBuildInfo();
   if (local.commit === "unknown") {
@@ -124,5 +155,16 @@ async function main(): Promise<number> {
 // Only run when executed directly - `test/buildStamp.spec.ts` imports
 // `compareBuild` from here and must not trigger a network call.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.exitCode = await main();
+  const attempts = envInt("FMW_VERIFY_ATTEMPTS", 1);
+  const waitSeconds = envInt("FMW_VERIFY_WAIT_SECONDS", 10);
+  let n = 0;
+  process.exitCode = await withRetries(
+    () => {
+      n++;
+      if (attempts > 1) console.log(`attempt ${n} of ${attempts}`);
+      return checkOnce();
+    },
+    attempts,
+    waitSeconds * 1000,
+  );
 }

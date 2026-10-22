@@ -69,8 +69,8 @@
   // HERE is repo-specific and so stays written down: the central invariant is
   // byte-exactness against captured fixtures, and a green CI run is evidence of
   // consistency, not of a bump being *correct* (`pnpm run verify` does not exercise
-  // every dependency - see the js-beautify note in pnpm-workspace.yaml). The one
-  // narrow exception is the digest rule in packageRules below.
+  // every dependency - see the js-beautify note in pnpm-workspace.yaml). There
+  // are no exceptions: the digest rule in packageRules below stopped automerging too.
 
   // Renovate's `lockFileMaintenance` is automated `pnpm up` for the lockfile, and
   // that is the one dependency operation this repo has measured as harmful:
@@ -109,43 +109,27 @@
 
   packageRules: [
     {
-      // The ONE automerge exception (#62), and it is narrow on purpose.
+      // Digest re-pins do NOT automerge (#62 first allowed it; stopped when
+      // merges to `main` began deploying with a Cloudflare token).
       //
-      // Why this category and nothing else: a digest re-pin moves a SHA and the
-      // `# vX.Y.Z` comment beside it, together, and there is nothing else in the
-      // diff to read. It also recurs forever. Reviewing it by hand teaches
-      // nobody anything and trains the habit of skimming bot PRs, which is worse
-      // than automating the boring case.
-      //
-      // Why it is safe NOW and was not on 2026-07-30 morning: ruleset `EJ` makes
-      // `verify` a required check on `main` with `bypass_actors: []` AND
-      // `strict_required_status_checks_policy: true`. So an automerged PR cannot
-      // land red, and cannot land having been tested against a different `main`
-      // than the one it merges into. Both of those had to be true; the second
-      // arrived last and was the actual blocker.
-      //
-      // `platformAutomerge` hands the merge to GitHub's own auto-merge so the
-      // required check gates it, rather than Renovate polling and merging itself.
-      //
-      // If branch protection is ever loosened - bypass actors added, `verify`
-      // dropped, strict turned off - THIS RULE MUST GO WITH IT. It is not
-      // independently safe.
+      // A re-pin follows a moved upstream tag. That is how the 2025
+      // `tj-actions/changed-files` attack worked: the tag was moved to a bad
+      // commit. With deploys on merge, an automerged re-pin could ship that
+      // change unread. So these PRs get read like any other.
       //
       // `groupName` IS LOAD-BEARING AND IS NOT COSMETIC. The org preset contributes
       // a `{matchManagers: ["github-actions"], groupName: "github actions"}` rule
       // ahead of this one, and it matches every github-actions update including
       // these digests. Without a separate group name here, a digest re-pin and an
-      // action VERSION bump would land in one branch, and the automerge below would
-      // then be deciding the fate of a version bump nobody read - which is exactly
-      // the thing `automerge: false` exists to prevent. Naming a different group
+      // action VERSION bump would land in one branch, and a reviewer skimming a
+      // "boring" digest PR would be approving a version bump nobody read - which is
+      // exactly the thing `automerge: false` exists to prevent. Naming a different group
       // splits them back apart: version bumps go to "github actions", digests come
       // here. Do not remove this line while the preset rule exists.
       matchManagers: ["github-actions"],
       matchUpdateTypes: ["digest", "pin", "pinDigest"],
       groupName: "github action digest pins",
-      automerge: true,
-      automergeType: "pr",
-      platformAutomerge: true,
+      automerge: false,
     },
     {
       // Everything below stays manual, and the global `automerge: false` above is

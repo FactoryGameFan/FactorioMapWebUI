@@ -94,9 +94,12 @@ use. `npx vp` fails with `EBADDEVENGINES`; a bare `vp` does not, it runs fine.
 
 ### CI
 
-`.github/workflows/verify.yml` runs `pnpm run verify` on every pull request and
-every push to `main` - the same command, invoked verbatim, so CI and local cannot
-disagree about what passing means. It needs no secrets and does not deploy.
+`.github/workflows/verify.yml` runs the same checks as `pnpm run verify` on every
+pull request and every push to `main`. It splits them into jobs (`static`, four
+`tests` shards, `rust` and `build`), and each job calls a `package.json` script
+or `scripts/verify-rust.sh`, so CI and local cannot disagree about what passing
+means. Those check jobs need no secrets. The `deploy` job runs only for `main`
+and uses the token from the `production` environment; see Deploy below.
 
 Dependency updates are handled by Renovate (`.github/renovate.json5`), which
 encodes this project's deliberate holds rather than proposing them weekly - see
@@ -139,10 +142,22 @@ test: `pnpm --filter @fmw/preview-container test:integration`.
 The app and preview service are already deployed (a Worker with static assets +
 a Worker with Containers on the `wormeyman` **Cloudflare** account - unrelated to the
 GitHub org, which moved to `FactoryGameFan` on 2026-08-17 and did not take the
-Cloudflare account with it; `pnpm run deploy` verifies,
-builds, and publishes the app). Both deploy paths are gated: `pnpm run deploy`
-runs `pnpm run verify` (`vp check` + `check:vue` + `vp test` + `preview:test`) first and
-aborts before `wrangler` if anything fails. The one-time setup, for reference, needs a Cloudflare account
+Cloudflare account with it).
+
+The app deploys itself. Every merge to `main` runs the checks in GitHub Actions,
+and the `deploy` job publishes the app once they pass. You can also run the
+workflow by hand ("Run workflow" on the Actions tab, from the `main` branch) to
+redeploy it.
+
+`pnpm run deploy` is the hand path. It verifies, builds, and publishes the app,
+and aborts before `wrangler` if anything fails (`pnpm run verify` is `vp check`,
+`check:vue`, `vp test`, `preview:test` and `verify:rust`).
+
+Take care: if you deploy anything other than a clean `main`, the next CI deploy
+fails until `main` is redeployed ("Run workflow" from the `main` branch; a
+re-run of the failed run does not work).
+
+The one-time setup, for reference, needs a Cloudflare account
 and Workers Paid ($5/mo, required for Containers):
 
 ```
