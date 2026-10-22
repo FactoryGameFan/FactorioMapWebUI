@@ -7,8 +7,8 @@
 # PR #116. The phases are now split across a `static` job and a sharded `tests`
 # matrix that run in parallel, with a `verify` job aggregating them.
 #
-# The jobs here are `static`, `tests` (4 shards), `rust`, `verify` and `build`.
-# Only `verify` and `build` are REQUIRED status checks in ruleset `EJ`. `rust`
+# The jobs here are `static`, `tests` (4 shards), `rust`, `verify`, `build` and
+# `deploy`. Only `verify` and `build` are REQUIRED status checks in ruleset `EJ`. `rust`
 # is deliberately not one, and its absence from the ruleset is not an oversight
 # to fix: `verify` asserts `needs.rust.result`, so a red `rust` job turns the
 # required check red anyway, with no ruleset PUT and no two-step. Every
@@ -79,9 +79,9 @@
 #   - `pnpm refs:sync`. It needs a Factorio binary and ~/GitHub/factorio-data,
 #     neither of which exists on a runner. `verify` is designed to pass with no
 #     Factorio installed and that property is what makes this workflow possible.
-#   - Any deploy step or credential. Cloudflare does not build this repo
-#     (`deploy:app` uploads an already-built `dist`), so CI here is a check
-#     only and the job needs no secrets at all.
+#   - A deploy step on pull requests, or any credential outside the `deploy`
+#     job. Cloudflare does not build this repo, so the `deploy` job at the
+#     bottom builds `dist` and uploads it, and it runs only on `main`.
 name: verify
 
 on:
@@ -304,9 +304,10 @@ jobs:
       #
       # Worth knowing rather than fixing: on a `pull_request` event checkout
       # lands on the merge commit, so the stamp this job produces is a synthetic
-      # SHA that exists nowhere in the repo. Harmless, because CI never deploys
-      # its artifact - `deploy:app` builds locally and uploads that. If a CI
-      # build ever becomes the thing that ships, this needs revisiting.
+      # SHA that exists nowhere in the repo. Harmless, because this job's
+      # artifact is never deployed. The `deploy` job below builds its own
+      # `dist` on `push`, where the checkout is the real commit and the stamp
+      # is the real SHA.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -337,3 +338,96 @@ jobs:
       # So warnings stay visible in this job's log and unenforced. If that ever
       # needs to change, the `onLog` route is the sturdy one - not a grep.
       - run: pnpm vp build
+
+  # Deploys the app after a merge to `main`, or on a manual run from `main`.
+  # The `needs:` list is the gate, so `pnpm run verify` is not run a second time.
+  #
+  # NOT a required status check, and it must not become one. It never runs on a
+  # pull request, so requiring it would block every PR on a check that cannot
+  # appear. Ruleset `EJ` stays at `verify` + `build`.
+  #
+  # The job condition and the `production` environment both keep the token off
+  # pull requests. The environment only releases its secret to runs on `main`
+  # (its deployment branch rule), and the `if:` makes that intent plain here.
+  #
+  # NO concurrency group, on purpose. Runs on `main` are never cancelled (see
+  # the top of this file), so two quick merges run side by side. A group with
+  # `cancel-in-progress: false` keeps only one waiting run and lets a later
+  # arrival replace it, which can drop the newest commit. Instead the
+  # `deploy-gate.ts` step compares the live commit with this run's commit and
+  # skips, deploys or fails. Its header comment has the full table.
+  #
+  # A plain `run:` step and not `cloudflare/wrangler-action`. The action looks
+  # for wrangler at the repo root, finds none (it lives in the preview worker's
+  # workspace) and runs `pnpm add wrangler`, which fails with
+  # `ERR_PNPM_ADDING_TO_ROOT`. Pointed at the worker it would read the wrong
+  # config. A `run:` step also keeps a third-party action away from the token.
+  #
+  # The token's scope (Workers `Editor` on this one Worker) and the reasons for
+  # it are recorded in
+  # docs/superpowers/specs/2026-10-22-ci-deploy-and-container-removal-design.md.
+  deploy:
+    needs: [static, tests, rust, build]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      # A failed dependency makes this job skip rather than fail, and a skipped
+      # dependency must not let a deploy through. Same form as `verify` above.
+      - name: Assert every phase passed
+        env:
+          STATIC: ${{ needs.static.result }}
+          TESTS: ${{ needs.tests.result }}
+          RUST: ${{ needs.rust.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          echo "static=$STATIC tests=$TESTS rust=$RUST build=$BUILD"
+          [ "$STATIC" = "success" ] || { echo "::error::static phase: $STATIC"; exit 1; }
+          [ "$TESTS" = "success" ] || { echo "::error::test shards: $TESTS"; exit 1; }
+          [ "$RUST" = "success" ] || { echo "::error::rust phase: $RUST"; exit 1; }
+          [ "$BUILD" = "success" ] || { echo "::error::build phase: $BUILD"; exit 1; }
+
+      # Full history, because `deploy-gate.ts` asks git whether the live commit
+      # is an ancestor of `origin/main`. No credentials are kept in `.git`.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm vp build
+
+      # Writes `action=deploy` or `action=skip` to the step output, or fails the
+      # job when the live site runs a commit that is not on `main`.
+      - name: Decide whether to deploy
+        id: gate
+        run: node scripts/deploy-gate.ts
+
+      # The only step that sees the token or the account ID.
+      - name: Deploy
+        if: steps.gate.outputs.action == 'deploy'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: "false"
+        run: >-
+          pnpm --filter @fmw/preview-worker exec wrangler deploy --cwd ../..
+          --strict --message "$GITHUB_SHA" --tag "${GITHUB_SHA::7}"
+
+      # Green only when `/version.json` shows this commit. It can race
+      # propagation, so it retries: 6 tries, 10 seconds apart.
+      - name: Confirm the live site runs this commit
+        if: steps.gate.outputs.action == 'deploy'
+        env:
+          FMW_VERIFY_ATTEMPTS: 6
+          FMW_VERIFY_WAIT_SECONDS: 10
+        run: pnpm run verify:deploy

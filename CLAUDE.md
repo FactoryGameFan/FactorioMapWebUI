@@ -474,7 +474,7 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
 
 **Why it is split:** as one job the gate measured **9m03s**. A runner is about
 3x slower than a dev machine and has only 4 cores, so the test phase dominated.
-Four jobs now run in parallel:
+Four jobs now run in parallel, and a fifth deploys after they pass:
 
 | job               | what                                                               |
 | ----------------- | ------------------------------------------------------------------ |
@@ -483,6 +483,7 @@ Four jobs now run in parallel:
 | `rust`            | `scripts/verify-rust.sh` - ~6.5-8.5 min, added #219                |
 | `verify`          | the required check: asserts every job above succeeded              |
 | `build`           | `pnpm vp build`, unchanged (issue #61)                             |
+| `deploy`          | `main` only: deploys the app once the four jobs above pass         |
 
 **`rust` is NOT a required status check, and its absence from ruleset `EJ` is
 deliberate rather than an oversight to fix.** `verify` asserts
@@ -595,15 +596,34 @@ should keep:
   `devEngines.packageManager` from `package.json`, so the pnpm pin lives in one
   place. It must run _before_ `setup-node`, because `cache: pnpm` resolves the
   store path by invoking pnpm.
-- **No secrets, no deploy job.** Cloudflare does not build this repo, so CI
-  is a check only. `pnpm refs:sync` is absent for the same reason it is absent
+- **One deploy job, and it is the only place a secret appears.** The `deploy`
+  job runs on a push to `main` or a manual run from `main`, never on a pull
+  request. It needs `static`, `tests`, `rust` and `build`, and checks each
+  result by name. `CLOUDFLARE_API_TOKEN` is a secret on the GitHub environment
+  `production`, and `CLOUDFLARE_ACCOUNT_ID` is a variable there. Both are read
+  in the one `Deploy` step's `env:` and nowhere else. The environment only
+  releases them to runs on `main`, which is what keeps a PR from reading the
+  token. The job is not a required check.
+
+  Before it deploys, `scripts/deploy-gate.ts` compares the live commit with the
+  run's commit. If a newer `main` commit is already live, the job skips. If
+  the live site runs a commit that is not on `main` (a hand deploy from a
+  branch or a dirty tree), the job goes **red** on purpose, so nothing
+  overwrites it silently. Off-main deploys happen: after #434 the live site ran
+  a branch commit. The fix is to run the workflow from `main` with the
+  **Run workflow** button (`workflow_dispatch`), which redeploys `main`.
+
+  `pnpm refs:sync` is still absent from CI for the same reason it is absent
   from `verify`: no runner has a Factorio binary.
+
 - **The `build` job's default shallow checkout is correct, and that was
   measured.** #61 assumed the build stamp needed deeper history; it does not.
   `scripts/buildStamp.ts` runs `rev-parse HEAD`, `rev-parse --short HEAD` and
   `status --porcelain` - it reads git **state**, not history. On a
   `pull_request` event the checkout lands on the merge commit, so that job's
-  stamp is a synthetic SHA; harmless only because CI never deploys its artifact.
+  stamp is a synthetic SHA; harmless because that artifact is never deployed.
+  The `deploy` job builds its own `dist` on `push`, where the stamp is the real
+  commit.
 
 `preview:test` needs **no Docker** on a runner, which was confirmed rather than
 assumed: the worker tests run under `@cloudflare/vitest-plugin` (`workerd`
@@ -791,10 +811,10 @@ Three things here are load-bearing and easy to break by "tidying":
   PR, so `1` would make `main` unmergeable by its only maintainer - a lockout
   that looks like correct hardening until the first PR.
 - **`strict: true` stops a PR passing against a different `main` than the one
-  it lands on.** It once made the Renovate digest automerge rule safe.
-  `.github/renovate.json5` no longer automerges anything, Action digest re-pins
-  included: a re-pin follows a moved upstream tag, and once merges to `main`
-  deploy with a Cloudflare token, an automerged one could ship a bad tag unread.
+  it lands on.** Keep it on. `.github/renovate.json5` automerges nothing now,
+  Action digest re-pins included, and that is a rule to keep too: a re-pin
+  follows a moved upstream tag, and a merge to `main` now deploys with a
+  Cloudflare token, so an automerged re-pin could ship a bad tag unread.
 
 **Adding a new required check is a two-step, in this order.** Land the job
 first, confirm it ran green on `main`, and only then add its context to the
@@ -807,7 +827,7 @@ that introduces it, on a check that cannot run. `build` was added this way on
 Note the second-order effect of `strict: true`: once a PR merges, every other
 open PR is behind and needs **Update branch** before it can merge.
 
-Everything else stays `automerge: false`, because `verify` proves the repo is
+Nothing automerges (`automerge: false` everywhere), because `verify` proves the repo is
 consistent, not that a bump is correct - the pako entry in the codec section is
 a wrong belief a green suite endorsed.
 
@@ -856,11 +876,25 @@ settled by planting the failure, not by reading the code.
 
 ### Deploys are gated on `verify`
 
-Both deploy paths refuse to ship a broken tree. `deploy:app` runs
-`pnpm run verify` first, and the Worker's own `deploy` runs its `test` script
-(which itself chains `wrangler types --check`). Verified by planting failures:
-a type error and a failing test each stop the chain before `wrangler` is
-reached, and a clean tree passes through.
+Every deploy path refuses to ship a broken tree. **CI deploys the app** on each
+merge to `main`: the `deploy` job needs the four jobs `static`, `tests`, `rust`
+and `build`, so a red phase stops it. It does not run `pnpm run verify` again.
+`pnpm run deploy` (`deploy:app`) stays as the emergency path from a laptop. It
+runs `pnpm run verify` first, and the Worker's own `deploy` runs its `test`
+script (which itself chains `wrangler types --check`). Verified by planting
+failures: a type error and a failing test each stop the chain before `wrangler`
+is reached, and a clean tree passes through.
+
+**A hand deploy of anything but a clean `main` makes the next CI deploy fail**,
+because the gate sees a live commit that is not on `main`. Redeploy `main`
+(dispatch the workflow) to clear it.
+
+**To undo a bad deploy, run `wrangler rollback` by hand** with Eric's own
+login. It makes a new deployment of the previous version at once. Gradual
+deployments are not used: without version affinity, two versions with
+different hashed files can 404 the page, and this Worker has no script to set
+an affinity cookie. The design has the reasoning:
+`docs/superpowers/specs/2026-10-22-ci-deploy-and-container-removal-design.md`.
 
 Note `verify` uses plain `vp check`, **not** the `check` script - that one is
 `vp check --fix`, and a deploy must never silently rewrite files on its way out.

@@ -139,11 +139,19 @@ test: `pnpm --filter @fmw/preview-container test:integration`.
 The app and preview service are already deployed (a Worker with static assets +
 a Worker with Containers on the `wormeyman` **Cloudflare** account - unrelated to the
 GitHub org, which moved to `FactoryGameFan` on 2026-08-17 and did not take the
-Cloudflare account with it; `pnpm run deploy` verifies,
-builds, and publishes the app). Both deploy paths are gated: `pnpm run deploy`
-runs `pnpm run verify` (`vp check` + `check:vue` + `vp test` + `preview:test`) first and
-aborts before `wrangler` if anything fails. The one-time setup, for reference, needs a Cloudflare account
-and Workers Paid ($5/mo, required for Containers):
+Cloudflare account with it).
+
+The app deploys itself. Every merge to `main` runs the checks in GitHub Actions,
+and the `deploy` job publishes the app once they pass. You can also run the
+workflow by hand from `main` to redeploy it.
+
+`pnpm run deploy` is the hand path. It verifies, builds, and publishes the app,
+and aborts before `wrangler` if anything fails (`pnpm run verify` is `vp check`
+
+- `check:vue` + `vp test` + `preview:test`). Take care: if you deploy anything
+  other than a clean `main`, the next CI deploy fails until `main` is redeployed
+  (run the workflow by hand from `main`). The one-time setup, for reference, needs a Cloudflare account
+  and Workers Paid ($5/mo, required for Containers):
 
 ```
 pnpm --filter @fmw/preview-worker exec wrangler r2 bucket create fmw-preview-cache
