@@ -48,7 +48,9 @@
 #      cd1a79c1..., byte-identical to src/noise/wasm/engine.wasm) compiled AND
 #      instantiated in the page world, all 28 exports present.
 #   4. NORMAL OPERATION, with a securitypolicyviolation listener installed
-#      before any page script ran: server preview (so connect-src is right), a
+#      before any page script ran: server preview (so connect-src is right;
+#      that probe describes the 2026-08-19 build, and the server preview and
+#      its Worker origin have since been removed from the policy), a
 #      client-side Fulgora terrain render at 1024x1024 across 11 workers, and a
 #      radius-1024 island search. Zero violations, zero console errors.
 #
@@ -58,10 +60,16 @@
 #   anything that ships: pako replaced zlib-asm, and the WASM engine arrived
 #   after both, so the run being cited had never exercised the token this rule
 #   now turns on. Re-verify after any deploy that changes what the app compiles
-#   or fetches, and name the build the run was against.
-# - img-src needs blob:: the preview PNG is shown via URL.createObjectURL(blob).
-# - connect-src must include the preview Worker origin (the app's only outbound
-#   call). Replace the placeholder with the deployed Worker origin.
+#   or fetches, and name the build the run was against. The CSP changed again
+#   when the server preview was retired (2026-10-22): re-check it live after
+#   that deploy, with the same calibration and control steps.
+# - img-src is 'self' data:. The app makes no outbound calls: the map preview
+#   renders in the browser (a Rust/WebAssembly engine in workers). blob: was
+#   only for the server preview's PNG, shown via URL.createObjectURL, and it
+#   was removed with that preview. (The download link in ActionBar.vue uses a
+#   blob URL, which img-src does not govern.)
+# - connect-src is 'self' alone, for the same reason. The preview Worker origin
+#   that used to be listed here is gone.
 # - style-src 'unsafe-inline' covers runtime-injected component styles.
 # - script-src allows static.cloudflareinsights.com: Cloudflare AUTO-INJECTS its
 #   Web Analytics beacon into proxied responses, and the old policy blocked
@@ -80,7 +88,7 @@
 #   to this site's own /cdn-cgi/rum, which 'self' already covers; the separate
 #   cloudflareinsights.com endpoint applies only to manual embedding.
 /*
-  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://fmw-preview.wormeyman.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com
+  Content-Security-Policy: default-src 'self'; img-src 'self' data:; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
 
