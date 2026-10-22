@@ -790,12 +790,11 @@ Three things here are load-bearing and easy to break by "tidying":
 - **The review count is 0 on purpose.** GitHub does not let you approve your own
   PR, so `1` would make `main` unmergeable by its only maintainer - a lockout
   that looks like correct hardening until the first PR.
-- **`strict: true` is what makes the Renovate automerge rule safe.** With strict
-  checks a PR cannot merge having passed against a different `main` than the one
-  it lands on. `.github/renovate.json5` automerges GitHub **Action digest
-  re-pins** and only those; if bypass actors are ever added, `verify` dropped, or
-  strict turned off, **that rule must be removed in the same change.** It is not
-  independently safe, and the config says so at the rule.
+- **`strict: true` stops a PR passing against a different `main` than the one
+  it lands on.** It once made the Renovate digest automerge rule safe.
+  `.github/renovate.json5` no longer automerges anything, Action digest re-pins
+  included: a re-pin follows a moved upstream tag, and once merges to `main`
+  deploy with a Cloudflare token, an automerged one could ship a bad tag unread.
 
 **Adding a new required check is a two-step, in this order.** Land the job
 first, confirm it ran green on `main`, and only then add its context to the
