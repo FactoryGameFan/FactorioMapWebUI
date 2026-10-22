@@ -151,7 +151,16 @@ describe("App shell", () => {
     await openMapToolsAndJump(w);
     expect(w.find('[data-test="jump-target"]').exists()).toBe(true);
     expect(w.findComponent(IslandFinderPanel).exists()).toBe(true);
-    const canvas = w.find("aside").find('[data-test="preview-canvas"]');
+    const aside = w.find("aside");
+    // Hidden alone proves little: the canvas is also hidden when the preview is
+    // unsupported. These two hold only when it IS supported and has NOT rendered.
+    const canvas = aside.find('[data-test="preview-canvas"]');
     expect((canvas.element as HTMLElement).style.display).toBe("none");
+    expect(aside.find('[data-test="unsupported"]').exists()).toBe(false);
+    expect(aside.find('[data-test="generate"]').attributes("disabled")).toBeUndefined();
+    expect(aside.text()).toContain('Click "Generate" to render the map.');
+    // generate() publishes the seed readout before it touches the canvas (which
+    // happy-dom cannot provide), so this shows whether a jump started a render.
+    expect(aside.find('[data-test="preview-seed"]').exists()).toBe(false);
   });
 });

@@ -22,9 +22,10 @@ const showImport = ref(false);
 /**
  * The last island the finder's results table was jumped to - fed straight to
  * the right-hand ElevationPreviewPanel's `centerX`/`centerY` props, which move
- * the preview's render window onto it (only once it has rendered). `null` (not 0) while nothing has been
- * jumped to yet, so the preview keeps its own "centered on world origin"
- * default rather than this component asserting a coordinate.
+ * the preview's render window onto it (only once it has rendered). `null`
+ * (not 0) while nothing has been jumped to yet, so the preview keeps its own
+ * "centered on world origin" default rather than this component asserting a
+ * coordinate.
  */
 const jumpTarget = ref<{ x: number; y: number } | null>(null);
 
