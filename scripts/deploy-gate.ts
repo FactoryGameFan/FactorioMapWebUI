@@ -68,7 +68,8 @@ export function decideDeploy(f: GateFacts): { action: GateAction; lines: string[
   if (typeof liveSha !== "string" || !FULL_SHA.test(liveSha)) {
     return { action: "fail", lines: ["There is no commit in the live build stamp."] };
   }
-  const dirty = f.live.dirty === true;
+  // Only an explicit `false` counts as clean; a missing flag is treated as dirty.
+  const dirty = f.live.dirty !== false;
   // A newer main commit is already live: an older run must not roll it back.
   // This comes before the manual override so a stale dispatch cannot do it.
   if (!dirty && f.liveOnMain === "yes" && f.runBeforeLive === "yes" && f.liveBeforeRun !== "yes") {
@@ -80,7 +81,9 @@ export function decideDeploy(f: GateFacts): { action: GateAction; lines: string[
   const offMain = dirty || f.liveOnMain !== "yes";
   if (offMain) {
     const why = dirty
-      ? `was deployed from a dirty tree`
+      ? f.live.dirty === true
+        ? `was deployed from a dirty tree`
+        : `has no clean flag in its stamp`
       : `is not on main (ancestry: ${f.liveOnMain})`;
     if (f.manual && f.runIsMainTip === "yes") {
       return {

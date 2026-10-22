@@ -99,6 +99,17 @@ describe("decideDeploy", () => {
     expect(r.action).toBe("skip");
   });
 
+  it("fails a push when the stamp has no dirty field", () => {
+    const r = decideDeploy(facts({ live: { fullCommit: "a".repeat(40), commit: "aaaaaaa" } }));
+    expect(r.action).toBe("fail");
+    expect(r.lines.join("\n")).toMatch(/no clean flag/i);
+  });
+
+  it("deploys over a stamp with no dirty field when run by hand from main", () => {
+    const live = { fullCommit: "a".repeat(40), commit: "aaaaaaa" };
+    expect(decideDeploy(facts({ manual: true, live })).action).toBe("deploy");
+  });
+
   it("still fails a push when the live commit is not on main", () => {
     expect(decideDeploy(facts({ manual: false, liveOnMain: "no" })).action).toBe("fail");
   });

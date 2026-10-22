@@ -94,9 +94,12 @@ use. `npx vp` fails with `EBADDEVENGINES`; a bare `vp` does not, it runs fine.
 
 ### CI
 
-`.github/workflows/verify.yml` runs `pnpm run verify` on every pull request and
-every push to `main` - the same command, invoked verbatim, so CI and local cannot
-disagree about what passing means. It needs no secrets and does not deploy.
+`.github/workflows/verify.yml` runs the same checks as `pnpm run verify` on every
+pull request and every push to `main`. It splits them into jobs (`static`, four
+`tests` shards, `rust` and `build`), and each job calls a `package.json` script
+or `scripts/verify-rust.sh`, so CI and local cannot disagree about what passing
+means. Those check jobs need no secrets. The `deploy` job runs only for `main`
+and uses the token from the `production` environment; see Deploy below.
 
 Dependency updates are handled by Renovate (`.github/renovate.json5`), which
 encodes this project's deliberate holds rather than proposing them weekly - see
