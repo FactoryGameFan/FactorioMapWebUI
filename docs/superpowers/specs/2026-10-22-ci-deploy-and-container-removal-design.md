@@ -193,7 +193,8 @@ and cannot check `needs.*.result`. It:
   No IP filter: GitHub-hosted runners have no fixed addresses.
 - **The Custom Domain was the one unknown, and the first deploy settled it.**
   Custom Domains do not support per-Worker roles yet, and changing a route or
-  domain needs `Zone > Workers Routes > Write` on the zone. This design guessed
+  domain needs `Zone > Workers Routes > Edit` on the zone (Cloudflare's docs call it "Write";
+  the dashboard labels it "Edit"). This design guessed
   a deploy that leaves the domain alone would need only `Editor`. **It does
   not** (measured 2026-10-22, PR #483's first run): wrangler re-asserts the
   custom domain on every deploy, and with Editor alone it failed with
