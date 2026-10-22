@@ -4,9 +4,9 @@
 
 A static SPA for authoring and exchanging Factorio 2.1.x map generation presets
 (exchange-string codec format `2.1.9.3`). The core editor has no backend -
-everything runs in the browser. An optional, opt-in map preview service (the app's only outbound call)
-renders real Factorio previews via Cloudflare; the editor stays fully functional
-offline without it. See [Map preview service](#map-preview-service).
+everything runs in the browser, including the map preview, and the app makes no
+outbound calls. A separate local tool can render real Factorio previews for
+agents. See [Map preview service](#map-preview-service).
 
 ## Status
 
@@ -37,10 +37,9 @@ shown scaled up from the tiny wire floats, cooldowns in minutes), linked min/max
 expansion distance, and in-game tooltip text on every field.
 
 The app is **deployed and live** as a Cloudflare Worker (static assets) at
-[`map.factorygamefan.com`](https://map.factorygamefan.com), with the map preview
-service deployed alongside it. The apex
+[`map.factorygamefan.com`](https://map.factorygamefan.com). The apex
 [`factorygamefan.com`](https://factorygamefan.com) is a separate landing page,
-**not** the app - the worker's `ALLOWED_ORIGIN` is the `map.` subdomain.
+**not** the app.
 
 ### Client-side map preview
 
@@ -60,14 +59,9 @@ against a headless-Factorio oracle (`test/oracle/`). Shipped so far:
 
 The two reverse-engineered noise primitives that make this possible (`basis_noise`,
 `spot_noise`, plus `random_penalty` and the multioctave family) are documented in
-`docs/noise/`. This is an offline/instant alternative to the headless preview
-service below; the service remains as a cross-check oracle.
-
-The **map preview service** (`preview-service/`) renders real Factorio previews
-server-side: clicking "Generate preview" POSTs the active preset's
-`map-gen-settings` to a Cloudflare Worker, which serves a cached PNG from R2 or
-renders one with the real Factorio headless engine in a container. It is deployed
-and live.
+`docs/noise/`. The preview is also the only preview in the app: the old server
+preview was retired on 2026-10-22. The headless preview service below remains as
+a local tool that agents can use as a cross-check oracle.
 
 Design and phase history live in `docs/superpowers/specs/`,
 `docs/superpowers/plans/`, and `docs/noise/` (point-in-time records, not living
@@ -107,42 +101,49 @@ the CI section of `CLAUDE.md` for what is held and why.
 
 ## Map preview service
 
+This is a **local tool for agents**. It is not deployed, the app does not call
+it, and nothing here publishes it. It renders a real Factorio preview PNG so an
+agent can compare it with the in-browser preview.
+
 `preview-service/` is a pnpm workspace holding the two backend pieces:
 
 - `worker/` - a Cloudflare Worker: validates the request, computes a cache key,
   serves a cached PNG from R2 on a hit, and on a miss enforces a monthly render
-  budget (Durable Object) before calling the container. Returns the PNG through
-  the Worker so it stays same-origin with the app.
+  budget (Durable Object) before calling the container.
 - `container/` - a digest-pinned `factoriotools/factorio:2.1.12` image plus a thin
   Node HTTP server that shells out to `factorio --generate-map-preview` and
   returns the PNG bytes.
 
-### Run the whole stack locally (needs Docker)
+### Run it locally (needs Docker)
 
 `wrangler dev` builds and runs the container through your local Docker daemon and
-simulates the R2 and Durable Object bindings, so no Cloudflare deploy is needed
-to develop or test the feature:
+simulates the R2 and Durable Object bindings, so no Cloudflare account is needed:
 
-- `pnpm localpreview` - alias for `pnpm preview:dev`, below. Use whichever you
-  remember.
-- `pnpm preview:dev` - runs the Worker (on `:8787`) and the app (on `:5173`)
-  together; Ctrl-C tears down both. Wires `ALLOWED_ORIGIN` and
-  `VITE_PREVIEW_SERVICE_URL` so the local CORS and service URL match.
-- `pnpm preview:worker` - just the Worker + container (`wrangler dev`)
-- `pnpm preview:app` - just the app, pointed at the local Worker
+- `pnpm localpreview` - alias for `pnpm preview:dev`. Starts the Worker (on
+  `:8787`) and its container. Ctrl-C stops them.
+- `pnpm preview:worker` - the same Worker + container, without the Docker check
 - `pnpm preview:test` - Worker + container unit tests
-- `pnpm preview:deploy` - `wrangler deploy` the Worker (gated on its tests +
-  `wrangler types --check`)
+
+Then ask for a preview. The body needs `mapGenSettings` (an object), `planet`
+(`nauvis`, `vulcanus`, `gleba`, `fulgora` or `aquilo`), `seed` (an integer from
+0 to 4294967295) and `size` (must be `1024`). Keep the seed inside
+`mapGenSettings` the same as `seed`:
+
+```bash
+curl --silent --show-error --request POST http://localhost:8787/preview \
+  --header 'content-type: application/json' \
+  --data '{"mapGenSettings":{"seed":12345},"planet":"nauvis","seed":12345,"size":1024}' \
+  --output preview.png
+```
 
 The container image build and render are also covered by a Docker integration
 test: `pnpm --filter @fmw/preview-container test:integration`.
 
 ### Deploy
 
-The app and preview service are already deployed (a Worker with static assets +
-a Worker with Containers on the `wormeyman` **Cloudflare** account - unrelated to the
-GitHub org, which moved to `FactoryGameFan` on 2026-08-17 and did not take the
-Cloudflare account with it).
+The app is a Worker with static assets on the `wormeyman` **Cloudflare** account -
+unrelated to the GitHub org, which moved to `FactoryGameFan` on 2026-08-17 and did
+not take the Cloudflare account with it. The preview service is not deployed.
 
 The app deploys itself. Every merge to `main` runs the checks in GitHub Actions,
 and the `deploy` job publishes the app once they pass. You can also run the
@@ -156,18 +157,6 @@ and aborts before `wrangler` if anything fails (`pnpm run verify` is `vp check`,
 Take care: if you deploy anything other than a clean `main`, the next CI deploy
 fails until `main` is redeployed ("Run workflow" from the `main` branch; a
 re-run of the failed run does not work).
-
-The one-time setup, for reference, needs a Cloudflare account
-and Workers Paid ($5/mo, required for Containers):
-
-```
-pnpm --filter @fmw/preview-worker exec wrangler r2 bucket create fmw-preview-cache
-# fill REPLACE_WITH_APP_ORIGIN in preview-service/worker/wrangler.jsonc, then:
-pnpm run types:sync   # wrangler types + the formatter pass; never run the first alone
-pnpm preview:deploy
-# set VITE_PREVIEW_SERVICE_URL and fill REPLACE_WITH_WORKER_ORIGIN in public/_headers
-pnpm vp build
-```
 
 ### Confirm a deploy actually landed
 
