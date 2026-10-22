@@ -606,6 +606,18 @@ should keep:
   releases them to runs on `main`, which is what keeps a PR from reading the
   token. The job is not a required check.
 
+  **The token needs two permissions, and the second one was measured, not
+  guessed.** It is an account-owned Cloudflare token with Workers `Editor` on
+  `map-factorygamefan-com` only, plus `Zone > Workers Routes > Edit` on the
+  `factorygamefan.com` zone. The first CI deploy (2026-10-22) ran with Editor
+  alone: wrangler uploaded and activated the new version, then failed on the
+  custom domain with `The zone "map.factorygamefan.com" does not exist on your
+  account. [code: 10084]`. Custom Domains do not support per-Worker roles, and
+  wrangler re-asserts the domain on every deploy, so the zone permission is
+  needed even when nothing about the domain changes. Note the order: a token
+  missing it still ships the code before the job goes red. The token expires
+  2027-10-22.
+
   Before it deploys, `scripts/deploy-gate.ts` compares the live commit with the
   run's commit. If a newer `main` commit is already live, the job skips. If
   the live site runs a commit that is not on `main` (a hand deploy from a
