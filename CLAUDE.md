@@ -876,7 +876,7 @@ global leaked into every later test in the same file.
 
 **The leak was real but nothing depended on it**, which is the part worth
 knowing: turning the flags on changed no existing test, and the two
-`previewPanel.spec.ts` tests that were inheriting a `URL` stub pass alone too. So
+tests that were inheriting a `URL` stub pass alone too. So
 the suite cannot tell whether these flags are set, and deleting them would be
 silent. `test/mockLeakGuards.spec.ts` is the observation that makes them
 load-bearing - two dirty/clean test PAIRS, deliberately order-dependent, each
@@ -1523,14 +1523,18 @@ job must become `pnpm run verify:rust` with the setup steps restored.
 A separate pnpm workspace (`worker/` Cloudflare Worker + `container/`
 digest-pinned Factorio headless image).
 
-**The Worker no longer runs in production (2026-10-22, the PR that retired the
+**The app stopped calling the Worker on 2026-10-22 (the PR that retired the
 paid server preview).** The app makes no outbound calls: every preview renders
 in the browser through the Rust/WASM engine. `preview-service/` stays as a local
-tool for agents (`pnpm localpreview`, needs Docker). Nothing deploys it: the
-`preview:deploy` and `preview:app` scripts and the worker's `deploy` script are
-gone. The sizing, `sleepAfter`, SIGTERM and billing-metrics bullets below are
-HISTORY from when it was deployed. They stay because the container code and its
-tests still carry those fixes, but none of them describes a live service.
+tool for agents (`pnpm localpreview`, needs Docker). No script deploys it any
+more: the `preview:deploy` and `preview:app` scripts and the worker's `deploy`
+script are gone. **The old deployment still exists**: the `fmw-preview` Worker,
+its container app and its R2 bucket stay live until the follow-up deletion
+("step 3" of `docs/superpowers/specs/2026-10-22-ci-deploy-and-container-removal-design.md`),
+and anyone with curl can still wake and bill the container until then. The
+sizing, `sleepAfter`, SIGTERM and billing-metrics bullets below stay relevant
+until that deletion. The deletion step uses the billing-metrics bullet to
+confirm nothing is billed.
 
 **The base image `FROM` carries a TAG as well as a digest, and dropping the tag
 is a real bug.** With a bare digest, Renovate's docker manager assumes `latest`,
@@ -1553,7 +1557,7 @@ have drifted apart. **`refs:sync` reports against the local Steam binary and
 the container pins to a registry tag; either can move independently**, so check
 which one actually changed before assuming the container is stale.
 
-**History (deployed era): the container's sizing is a measured cost decision, not a default** (#116).
+**Still relevant until the deletion: the container's sizing is a measured cost decision, not a default** (#116).
 Memory bills on **provisioned** size for the whole time an instance is awake, so
 `instance_type` is the dominant cost lever - it was `standard-1` (4 GiB) while
 production peaked at **603 MiB**, idled at ~205 MiB, and served ~7 requests/day.
@@ -1572,7 +1576,7 @@ before changing it:
   clock - the SIGTERM bug below did. Keep the drain guard anyway; the hazard is
   real.
 
-- **History (deployed era): the container ignored SIGTERM, so it never stopped at all** (#120). Node runs
+- **Still relevant until the deletion: the container ignored SIGTERM, so it never stopped at all** (#120). Node runs
   as **PID 1** under the Dockerfile's exec-form `ENTRYPOINT`, and Linux gives PID
   1 no default signal dispositions. `@cloudflare/containers` stops an idle
   instance by sending SIGTERM and **never escalating to SIGKILL**, so with no
@@ -1580,7 +1584,7 @@ before changing it:
   away when a deploy replaced the placement. The handler and its regression test
   live in `preview-service/container/server.mjs` and `test/shutdown.test.mjs`.
 
-- **History (deployed era): to check what is actually running, read the billing metrics, not
+- **Still relevant until the deletion: to check what is actually running, read the billing metrics, not
   `wrangler containers instances`.** That command reported `state: running` with
   an 80-minute-old `created` timestamp during an hour when allocation was zero -
   it describes the placement, not whether you are paying. The
@@ -1609,8 +1613,8 @@ to act on the app Worker instead.
 `wrangler.jsonc`.** It once drifted silently (the types declared the apex origin
 while the config said the `map.` subdomain). Nothing caught that: it is not a
 type error, so both `vp check` and the worker tests pass with a wrong value in
-it. `wrangler types --check` now gates the worker's `test` and `deploy` scripts,
-so `pnpm preview:test` fails loudly on drift.
+it. `wrangler types --check` now gates the worker's `test` script (the
+`deploy` script is gone), so `pnpm preview:test` and `verify` fail loudly on drift.
 
 - Regenerate with **`pnpm run types:sync`**, which is
   `wrangler types && vp check --fix` in one step. Use the script rather than the

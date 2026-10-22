@@ -43,14 +43,17 @@ The app is **deployed and live** as a Cloudflare Worker (static assets) at
 
 ### Client-side map preview
 
-Beyond the codec editor, the app renders Factorio **2.1.11** map previews
-**entirely in the browser** - no server round-trip - by hand-porting the game's
-noise/autoplace expressions to TypeScript and validating each one point-by-point
-against a headless-Factorio oracle (`test/oracle/`). Shipped so far:
+Beyond the codec editor, the app renders map previews **entirely in the
+browser** - no server round-trip - with a Rust/WebAssembly port of the game's
+noise/autoplace expressions, checked point by point against a headless-Factorio
+oracle (`test/oracle/`). The Factorio version it targets is the app's own badge
+(see `src/model/factorioTarget.ts`). It covers Nauvis, Vulcanus and Fulgora;
+Gleba and Aquilo are not done yet. Shipped so far:
 
 - **Terrain / elevation** (M1-M2): land/water/coastline plus colored Nauvis
   terrain tiles (grass/sand/dirt/desert variants), matching the game's tile
-  placement. All three base map types (Nauvis, Lakes, Island) render.
+  placement. All three base map types (Nauvis, Lakes, Island) render; Lakes and Island show
+  elevation only.
 - **Resources** (M3): all six Nauvis resources (iron, copper, coal, stone,
   uranium, crude-oil) as a solid-footprint overlay - both the whole-map
   `regular_patches` and the near-spawn guaranteed `starting_patches`
@@ -101,8 +104,9 @@ the CI section of `CLAUDE.md` for what is held and why.
 
 ## Map preview service
 
-This is a **local tool for agents**. It is not deployed, the app does not call
-it, and nothing here publishes it. It renders a real Factorio preview PNG so an
+This is a **local tool for agents**. The app does not call it and nothing here
+deploys it. The old deployment is still live and is being removed in a follow-up
+change. It renders a real Factorio preview PNG so an
 agent can compare it with the in-browser preview.
 
 `preview-service/` is a pnpm workspace holding the two backend pieces:
@@ -110,7 +114,7 @@ agent can compare it with the in-browser preview.
 - `worker/` - a Cloudflare Worker: validates the request, computes a cache key,
   serves a cached PNG from R2 on a hit, and on a miss enforces a monthly render
   budget (Durable Object) before calling the container.
-- `container/` - a digest-pinned `factoriotools/factorio:2.1.12` image plus a thin
+- `container/` - a digest-pinned `factoriotools/factorio` image (tag in `preview-service/container/Dockerfile`) plus a thin
   Node HTTP server that shells out to `factorio --generate-map-preview` and
   returns the PNG bytes.
 
@@ -144,7 +148,8 @@ test: `pnpm --filter @fmw/preview-container test:integration`.
 
 The app is a Worker with static assets on the `wormeyman` **Cloudflare** account -
 unrelated to the GitHub org, which moved to `FactoryGameFan` on 2026-08-17 and did
-not take the Cloudflare account with it. The preview service is not deployed.
+not take the Cloudflare account with it. The app no longer uses the preview
+service and nothing deploys it. The old deployment is being removed.
 
 The app deploys itself. Every merge to `main` runs the checks in GitHub Actions,
 and the `deploy` job publishes the app once they pass. You can also run the

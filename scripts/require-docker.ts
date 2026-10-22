@@ -1,7 +1,7 @@
 /**
- * Preflight for the two scripts that genuinely need a container runtime:
- * `preview:dev` (wrangler dev builds the Factorio image) and `preview:deploy`
- * (wrangler deploy builds and pushes it). Without this, a stopped daemon
+ * Preflight for the script that genuinely needs a container runtime:
+ * `preview:dev`, also run as `localpreview` (wrangler dev builds the Factorio
+ * image). Without this, a stopped daemon
  * surfaces as a wrangler build error several screens deep that does not say
  * "start Docker".
  *

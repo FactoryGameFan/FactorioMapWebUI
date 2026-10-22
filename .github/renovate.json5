@@ -220,7 +220,7 @@
       matchDatasources: ["docker"],
       matchPackageNames: ["factoriotools/factorio"],
       prBodyNotes: [
-        "**A digest re-pin of the SAME tag is routine. A tag change is not** - it changes the game that renders every server-side preview, and the app advertises a Factorio version of its own (`FACTORIO_TARGET_VERSION`) that would then disagree with the container.",
+        "**A digest re-pin of the SAME tag is routine. A tag change is not** - it changes the game that local preview renders use (the container is now a local tool for agents), and the app advertises a Factorio version of its own (`FACTORIO_TARGET_VERSION`) that would then disagree with the container.",
         "Before merging a tag change: (1) update the `RUN factorio --version | grep -q` assertion in the same commit - `dockerfile.test.mjs` fails if the two disagree; (2) build the image, which no CI job does (#183) - `pnpm --filter @fmw/preview-container run test:integration` builds it and renders both a Nauvis and a non-Nauvis preview; (3) run `pnpm refs:sync --check` and `pnpm refs:sync --fixtures` to see which oracle fixtures now predate the game.",
         "Note the local Factorio binary is what `refs:sync` pins to, and Steam moves it without asking - so the container and the dev machine can drift apart in either direction. Check which one actually moved before assuming the container is stale.",
       ],
