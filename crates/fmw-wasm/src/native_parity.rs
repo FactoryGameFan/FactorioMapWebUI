@@ -115,13 +115,53 @@ const AQUILO_SEED0: u32 = 3_111_923_328;
 /// `[(label, [crude f, crude s, lithium f, lithium s, fluorine f, fluorine s])]`.
 /// The moved levers are the read-back `moved` controls of
 /// `test/fixtures/oracle-aquilo-entity-fields.seed123456.json`.
-const AQUILO_CASES: [(&str, [f64; 6]); 2] = [
-    ("default sliders", [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+const AQUILO_DEFAULT: [f64; 6] = [1.0; 6];
+const AQUILO_MOVED: [f64; 6] = [1.5, 0.5, 0.5, 2.0, 2.0, 0.166_666_671_633_720_4];
+
+/// `(label, levers, window)` with the window as `(x0, y0, step)`, all 26x26.
+/// The first two are the original window; the others are named in the spec.
+type AquiloCase = (&'static str, [f64; 6], (f64, f64, f64));
+const AQUILO_CASES: [AquiloCase; 8] = [
+    ("default sliders", AQUILO_DEFAULT, (X0, Y0, STEP)),
+    ("moved sliders", AQUILO_MOVED, (X0, Y0, STEP)),
     (
-        "moved sliders",
-        [1.5, 0.5, 0.5, 2.0, 2.0, 0.166_666_671_633_720_4],
+        "default sliders, spawn window",
+        AQUILO_DEFAULT,
+        SPAWN_WINDOW,
     ),
+    ("moved sliders, spawn window", AQUILO_MOVED, SPAWN_WINDOW),
+    ("default sliders, ring window", AQUILO_DEFAULT, RING_WINDOW),
+    ("moved sliders, ring window", AQUILO_MOVED, RING_WINDOW),
+    ("default sliders, vent window", AQUILO_DEFAULT, VENT_WINDOW),
+    ("moved sliders, vent window", AQUILO_MOVED, VENT_WINDOW),
 ];
+const SPAWN_WINDOW: (f64, f64, f64) = (-156.0, -156.0, 12.0);
+const VENT_WINDOW: (f64, f64, f64) = (-110.0, -150.0, 3.0);
+const RING_WINDOW: (f64, f64, f64) = (100.0, 100.0, 16.0);
+
+/// The request bytes for one case: the fixture's header and bearing trig (they
+/// belong to this seed), with the window, levers and sweep box written the way
+/// `encodeRenderRequest` writes them. The box defaults to the window itself.
+fn aquilo_case_bytes(levers: [f64; 6], (x0, y0, step): (f64, f64, f64)) -> Vec<u8> {
+    let mut bytes = aquilo_fixture_bytes();
+    assert_eq!(&bytes[16..20], &AQUILO_SEED0.to_le_bytes());
+    let put = |bytes: &mut [u8], at: usize, v: f64| {
+        bytes[at..at + 8].copy_from_slice(&v.to_le_bytes());
+    };
+    bytes[20..24].copy_from_slice(&N.to_le_bytes());
+    bytes[24..28].copy_from_slice(&N.to_le_bytes());
+    put(&mut bytes, 32, x0);
+    put(&mut bytes, 40, y0);
+    put(&mut bytes, 48, step);
+    for (i, v) in levers.into_iter().enumerate() {
+        put(&mut bytes, 56 + i * 8, v);
+    }
+    let extent = f64::from(N) * step;
+    for (i, v) in [x0, y0, x0 + extent, y0 + extent].into_iter().enumerate() {
+        put(&mut bytes, 56 + 96 + i * 8, v);
+    }
+    bytes
+}
 
 /// The names in the Aquilo spec's `const FIELD_NAMES = [ ... ];`, in order.
 fn aquilo_field_names() -> Vec<&'static str> {
@@ -183,22 +223,8 @@ fn native_aquilo_folds_match_the_frozen_wasm_folds() {
     assert_eq!(fields, 28);
     assert_eq!(names.len(), fields as usize, "scanned FIELD_NAMES count");
 
-    let mut bytes = aquilo_fixture_bytes();
-    let put =
-        |bytes: &mut [u8], at: usize, v: f64| bytes[at..at + 8].copy_from_slice(&v.to_le_bytes());
-    let put_u32 =
-        |bytes: &mut [u8], at: usize, v: u32| bytes[at..at + 4].copy_from_slice(&v.to_le_bytes());
-    // The fixture's trig belongs to this seed; check before trusting it.
-    assert_eq!(&bytes[16..20], &AQUILO_SEED0.to_le_bytes());
-    put_u32(&mut bytes, 20, N);
-    put_u32(&mut bytes, 24, N);
-    put(&mut bytes, 32, X0);
-    put(&mut bytes, 40, Y0);
-    put(&mut bytes, 48, STEP);
-    for (label, levers) in AQUILO_CASES {
-        for (i, v) in levers.into_iter().enumerate() {
-            put(&mut bytes, 56 + i * 8, v);
-        }
+    for (label, levers, window) in AQUILO_CASES {
+        let bytes = aquilo_case_bytes(levers, window);
         for (field, name) in (0..fields).zip(&names) {
             assert_eq!(
                 aquilo_fold(&bytes, field),
@@ -209,21 +235,28 @@ fn native_aquilo_folds_match_the_frozen_wasm_folds() {
     }
 }
 
-/// The brief forbids a NaN in any frozen fold, since WASM permits any NaN
-/// payload. Sweep the same windows value by value and refuse one; also print
-/// how many distinct values each field takes, so a field that folds a constant
-/// (every sample identical) is visible with `--nocapture`.
+/// An index past the end folds 0, like a request the module rejects; the last
+/// real index on the same request folds non-zero (the control).
 #[test]
-fn no_aquilo_tier_two_field_is_nan_in_either_window() {
+fn an_aquilo_field_index_past_the_end_folds_zero() {
+    let (_, levers, window) = AQUILO_CASES[0];
+    let bytes = aquilo_case_bytes(levers, window);
+    let count = aquilo_field_count();
+    assert_ne!(aquilo_fold(&bytes, count - 1), 0);
+    assert_eq!(aquilo_fold(&bytes, count), 0);
+    assert_eq!(aquilo_fold(&bytes, u32::MAX), 0);
+}
+
+/// No NaN in any sample (WASM permits any NaN payload). Also prints how many
+/// distinct values each field takes, and asserts that across all cases every
+/// field takes more than one in at least one.
+#[test]
+fn no_aquilo_tier_two_field_is_nan_and_none_is_constant_everywhere() {
     use fmw_noise::expressions::aquilo_stack::AquiloParity;
     let names = aquilo_field_names();
-    let mut bytes = aquilo_fixture_bytes();
-    bytes[20..24].copy_from_slice(&N.to_le_bytes());
-    bytes[24..28].copy_from_slice(&N.to_le_bytes());
-    for (label, levers) in AQUILO_CASES {
-        for (i, v) in levers.into_iter().enumerate() {
-            bytes[56 + i * 8..64 + i * 8].copy_from_slice(&v.to_le_bytes());
-        }
+    let mut varies = vec![false; names.len()];
+    for (label, levers, (x0, y0, step)) in AQUILO_CASES {
+        let bytes = aquilo_case_bytes(levers, (x0, y0, step));
         let req = super::abi::decode(&bytes).expect("decodes");
         let super::abi::Params::Aquilo(p) = req.params else {
             panic!("aquilo block")
@@ -234,14 +267,18 @@ fn no_aquilo_tier_two_field_is_nan_in_either_window() {
             let mut distinct = std::collections::BTreeSet::new();
             for py in 0..N {
                 for px in 0..N {
-                    let x = X0 + f64::from(px) * STEP;
-                    let y = Y0 + f64::from(py) * STEP;
+                    let x = x0 + f64::from(px) * step;
+                    let y = y0 + f64::from(py) * step;
                     let v = parity.field(field, x, y);
                     assert!(!v.is_nan(), "{label} | {name} is NaN at ({x}, {y})");
                     distinct.insert(v.to_bits());
                 }
             }
             eprintln!("DISTINCT {label} | {name}: {}", distinct.len());
+            varies[field as usize] |= distinct.len() > 1;
         }
+    }
+    for (name, v) in names.iter().zip(varies) {
+        assert!(v, "{name} folds a constant in every case");
     }
 }

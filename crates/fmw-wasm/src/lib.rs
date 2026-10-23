@@ -1066,8 +1066,9 @@ pub extern "C" fn vulcanus_field_count() -> u32 {
 /// request, as in [`checksum_vulcanus`]. `field` selects an expression,
 /// `0..AquiloParity::FIELD_COUNT`.
 ///
-/// **Returns 0 if the request does not decode as an Aquilo one**, rather than
-/// trapping, for the reason `checksum_vulcanus` gives.
+/// **Returns 0 if the request does not decode as an Aquilo one, or if `field`
+/// is not below `aquilo_field_count()`**, rather than trapping, for the reason
+/// `checksum_vulcanus` gives.
 #[unsafe(no_mangle)]
 pub extern "C" fn checksum_aquilo(request_len: u32, field: u32) -> u64 {
     let bytes = unsafe {
@@ -1082,6 +1083,11 @@ pub extern "C" fn checksum_aquilo(request_len: u32, field: u32) -> u64 {
 /// [`checksum_aquilo`] over request bytes held anywhere, so the native test
 /// can fold without touching the shared scratch buffer.
 fn aquilo_fold(bytes: &[u8], field: u32) -> u64 {
+    // An index past the end is refused like an undecodable request: it would
+    // otherwise fold the constant 0.0 and read as a real, constant field.
+    if field >= AquiloParity::FIELD_COUNT {
+        return 0;
+    }
     let Ok(req) = abi::decode(bytes) else {
         return 0;
     };
