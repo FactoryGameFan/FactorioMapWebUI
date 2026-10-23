@@ -855,6 +855,13 @@ describe("ElevationPreviewPanel", () => {
       }
     });
 
+    it("disables the Elevation toggle, since Fulgora has no elevation view", () => {
+      const w = setup("nauvis", okRenderer(), { planet: "fulgora", dev: true });
+      const toggle = w.find('[data-test="view-elevation"]');
+      expect(toggle.attributes("disabled")).toBeDefined();
+      expect(toggle.attributes("title")).toBe("Elevation view is not available for Fulgora yet");
+    });
+
     it("honors the Terrain toggle on Fulgora in dev mode", async () => {
       // Fulgora enables the Terrain toggle (`terrainAvailable` includes it), so
       // "terrain" has to be in the branch's ported list or the enabled button
@@ -869,6 +876,29 @@ describe("ElevationPreviewPanel", () => {
 
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(arg).toMatchObject({ planet: "fulgora", view: "terrain" });
+    });
+  });
+
+  describe("planets with no renderer", () => {
+    it.each([
+      ["gleba", "Gleba"],
+      ["aquilo", "Aquilo"],
+    ] as const)("%s shows the unsupported note and renders nothing", async (planet, label) => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      const calls = (renderer.render as ReturnType<typeof vi.fn>).mock.calls.length;
+
+      await setPlanet(w, planet);
+
+      expect(w.find('[data-test="unsupported"]').text()).toBe(
+        `Client preview is not available for ${label} yet.`,
+      );
+      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeDefined();
+      expect(w.find('[data-test="view-terrain"]').exists()).toBe(false);
+      expect((renderer.render as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
     });
   });
 

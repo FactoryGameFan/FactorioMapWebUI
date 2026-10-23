@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { elevationCtxFromPreset } from "../model/elevationPreviewCtx";
+import { PLANET_CAPABILITIES, type PreviewView } from "../model/planetCapabilities";
 import { PLANET_LABELS, PLANETS, type Planet } from "../model/planets";
 import { NAUVIS_MAX_STARTING_POINTS } from "../noise/wasm/request";
 import { surfaceSeedForPlanet } from "../model/planetSurfaceSeed";
@@ -76,8 +77,7 @@ const tooManyStartingPoints = computed(
     startingPointCount.value > NAUVIS_MAX_STARTING_POINTS,
 );
 const supported = computed(() => {
-  if (planet.value === "vulcanus" || planet.value === "fulgora") return true;
-  if (planet.value !== "nauvis") return false;
+  if (planet.value !== "nauvis") return PLANET_CAPABILITIES[planet.value].rendered;
   return (preview.value?.supported ?? false) && !tooManyStartingPoints.value;
 });
 /** The one "why not" message shown when the preview cannot render. */
@@ -86,7 +86,7 @@ const unsupportedMessage = computed(() => {
     return `Previews support up to ${NAUVIS_MAX_STARTING_POINTS} starting points; this preset has ${startingPointCount.value}.`;
   }
   const label =
-    planet.value !== "nauvis" && planet.value !== "vulcanus" && planet.value !== "fulgora"
+    planet.value !== "nauvis"
       ? PLANET_LABELS[planet.value]
       : (preview.value?.mapTypeLabel ?? "this map type");
   return `Client preview is not available for ${label} yet.`;
@@ -96,7 +96,7 @@ const unsupportedMessage = computed(() => {
 // climate + tile catalog, regardless of the active preset's actual map type -
 // it is only faithful for mapType "nauvis". Enemies and Trees each layer a
 // Nauvis-only overlay on top of it, so those toggles gate on
-// `nauvisOverlaysAvailable` specifically - which requires BOTH the preset's
+// `enemiesAvailable` / `treesAvailable` - which requires BOTH the preset's
 // own elevation `mapType` to be "nauvis" AND the selected planet to actually
 // be Nauvis (neither has a Vulcanus port - runRenderRequest skips them for
 // `planet: "vulcanus"` regardless of `view`, so leaving them enabled there
@@ -121,9 +121,7 @@ const unsupportedMessage = computed(() => {
 // The user's desired view. Defaults to the full composite, which is the closest
 // thing to the game's own map preview - and with dev mode off (the default) it
 // is the only view a user ever gets, since the toggles are hidden.
-const view = ref<
-  "elevation" | "terrain" | "resources" | "enemies" | "cliffs" | "trees" | "rocks" | "all"
->("all");
+const view = ref<PreviewView>("all");
 const nauvisMapType = computed(() => preview.value?.mapType === "nauvis");
 // Lakes and Island render elevation only; say so once a render is asked for.
 const elevationOnlyNote = computed(() => {
@@ -132,24 +130,22 @@ const elevationOnlyNote = computed(() => {
   if (seed.value === null && !hasRendered.value) return null;
   return `Full terrain is not available for the ${info.mapTypeLabel} map type yet; showing elevation.`;
 });
-const nauvisOverlaysAvailable = computed(
-  () => planet.value !== "vulcanus" && planet.value !== "fulgora" && nauvisMapType.value,
-);
-const terrainAvailable = computed(
-  () => nauvisOverlaysAvailable.value || planet.value === "vulcanus" || planet.value === "fulgora",
-);
-// Resources (V2) and Cliffs (V3) both have Vulcanus ports, so they gate more
-// broadly than enemies/trees/rocks: Nauvis-with-Nauvis-map-type, OR Vulcanus.
-const resourcesAvailable = computed(
-  () => nauvisOverlaysAvailable.value || planet.value === "vulcanus",
-);
-const cliffsAvailable = computed(
-  () => nauvisOverlaysAvailable.value || planet.value === "vulcanus",
-);
-const rocksAvailable = computed(() => nauvisOverlaysAvailable.value || planet.value === "vulcanus");
-// "All" composites whatever the planet has. On Nauvis that is all six overlays;
-// on Vulcanus it is terrain + cliffs + rocks + resources, the four ported.
-const allAvailable = computed(() => nauvisOverlaysAvailable.value || planet.value === "vulcanus");
+// Nauvis gates every overlay on the preset's map type. Any other planet reads
+// its views from PLANET_CAPABILITIES, so turning a planet on is a table edit.
+// A view that is not in the table is a disabled toggle, never terrain: the
+// render path refuses it.
+const viewAvailable = (v: PreviewView): boolean =>
+  planet.value === "nauvis"
+    ? nauvisMapType.value
+    : PLANET_CAPABILITIES[planet.value].views.includes(v);
+const terrainAvailable = computed(() => viewAvailable("terrain"));
+const resourcesAvailable = computed(() => viewAvailable("resources"));
+const cliffsAvailable = computed(() => viewAvailable("cliffs"));
+const rocksAvailable = computed(() => viewAvailable("rocks"));
+const enemiesAvailable = computed(() => viewAvailable("enemies"));
+const treesAvailable = computed(() => viewAvailable("trees"));
+const allAvailable = computed(() => viewAvailable("all"));
+const elevationAvailable = computed(() => viewAvailable("elevation") || planet.value === "nauvis");
 // What actually renders, in priority order:
 //   1. Vulcanus, dev mode on, "terrain"/"resources"/"cliffs"/"rocks"/"all"
 //      last picked - honor it (those are the views with a Vulcanus port).
@@ -179,18 +175,13 @@ const allAvailable = computed(() => nauvisOverlaysAvailable.value || planet.valu
 //      no way back.
 // Deriving this (instead of the old watch that reset `view`) means a round trip
 // through a Lakes preset no longer destroys the chosen view.
-const effectiveView = computed(() => {
-  if (planet.value === "vulcanus") {
-    // Only these have a Vulcanus port; anything else the user last picked on
-    // Nauvis (enemies, trees, elevation) falls back to the composite.
-    const ported = ["terrain", "resources", "cliffs", "rocks", "all"];
-    if (ui.devMode && ported.includes(view.value)) return view.value;
-    return "all";
-  }
-  if (planet.value === "fulgora") {
-    // Terrain is the only non-composite view Fulgora enables a toggle for.
-    const ported = ["terrain", "all"];
-    if (ui.devMode && ported.includes(view.value)) return view.value;
+const effectiveView = computed<PreviewView>(() => {
+  if (planet.value !== "nauvis") {
+    // Only views in the planet's table row have a toggle; anything else the
+    // user last picked (on Nauvis, say) falls back to the composite.
+    if (ui.devMode && PLANET_CAPABILITIES[planet.value].views.includes(view.value)) {
+      return view.value;
+    }
     return "all";
   }
   if (!nauvisMapType.value) return "elevation";
@@ -354,9 +345,11 @@ watch(
         <FButton
           data-test="view-elevation"
           :variant="effectiveView === 'elevation' ? 'tool' : 'default'"
-          :disabled="planet === 'vulcanus'"
+          :disabled="!elevationAvailable"
           :title="
-            planet === 'vulcanus' ? 'Elevation view is not available for Vulcanus yet' : undefined
+            elevationAvailable
+              ? undefined
+              : `Elevation view is not available for ${PLANET_LABELS[planet]} yet`
           "
           @click="view = 'elevation'"
         >
@@ -389,11 +382,9 @@ watch(
         <FButton
           data-test="view-enemies"
           :variant="effectiveView === 'enemies' ? 'tool' : 'default'"
-          :disabled="!nauvisOverlaysAvailable"
+          :disabled="!enemiesAvailable"
           :title="
-            nauvisOverlaysAvailable
-              ? undefined
-              : 'Enemies view is only available for the Nauvis map type'
+            enemiesAvailable ? undefined : 'Enemies view is only available for the Nauvis map type'
           "
           @click="view = 'enemies'"
         >
@@ -413,11 +404,9 @@ watch(
         <FButton
           data-test="view-trees"
           :variant="effectiveView === 'trees' ? 'tool' : 'default'"
-          :disabled="!nauvisOverlaysAvailable"
+          :disabled="!treesAvailable"
           :title="
-            nauvisOverlaysAvailable
-              ? undefined
-              : 'Trees view is only available for the Nauvis map type'
+            treesAvailable ? undefined : 'Trees view is only available for the Nauvis map type'
           "
           @click="view = 'trees'"
         >
