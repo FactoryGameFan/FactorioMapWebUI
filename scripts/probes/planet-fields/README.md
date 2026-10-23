@@ -63,11 +63,12 @@ the `tile:<name>:probability` name answered on each version.
   back an f32 exactly, so this is a real bit comparison. A one-bit change
   planted in a copy of their Gleba file made the script stop and write
   nothing.
-- **One gap is on their side.** Their Gleba file has no
+- **One gap, cause unknown.** Their Gleba file has no
   `lowland-red-infection` column. Our run gets 100 distinct values for it on
   both versions. A replay of their exact 62-name batch on 2.0.77 also
-  returned it. So the game does not drop it; why their writer skipped it is
-  unknown.
+  returned it, so the game does not drop it for that batch. Why their file
+  lacks it is not known. That field is graded only by our own 2.0.77 against
+  2.1.23 agreement (see `test/fixtures/PROVENANCE.json`).
 - **The two versions agree.** All values at all 1,024 positions are
   bit-identical between 2.1.23 and 2.0.77, for both planets.
 - **`tile:<name>:probability` works in 2.0.77 too.** It answered for all 41

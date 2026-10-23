@@ -21,9 +21,9 @@ widens it.
 
 Gleba's own `autoplace_settings.entity` lists only `stone`,
 `copper-stromatolite` and `iron-stromatolite`. Yet the region holds 7,020
-trees, 162 plants and 9 pentapod nests (`gleba-spawner-small`, plus 1
-`gleba-spawner`). Generating Gleba again with one control at size 0 (read
-back as 0):
+trees, 162 plants and 9 pentapod nests, all `gleba-spawner-small` (no large
+`gleba-spawner` at all). Generating Gleba again with one control at size 0
+(read back as 0):
 
 | surface                   |  tree | plant | unit-spawner |
 | ------------------------- | ----: | ----: | -----------: |
@@ -37,8 +37,10 @@ So frankh's rule holds: the planet's own list plus every entity whose
 ten `tree:` ones such as `boompuff`, `funneltrunk`, `water-cane`) and
 `gleba_enemy_base` as `unit-spawner:gleba-spawner` and `gleba-spawner-small`
 (`byControl` in the fixture). Two side notes. Zeroing plants moved the nest
-count from 9 to 10 (nests avoid plants, so freeing the ground lets one more
-fit). Gleba also has 513 `cliff-gleba` cliffs, from `gleba_cliff`.
+count from 9 to 10: the same 9 small nests plus 1 large `gleba-spawner`, the
+only large one in either run. Why is not measured. One guess is that nests
+avoid plants, so freeing the ground lets one more fit. Gleba also has 513
+`cliff-gleba` cliffs, from `gleba_cliff`.
 
 ### (b) Aquilo has no cliffs
 
@@ -75,12 +77,16 @@ same 387, but 681 tiles differ away from the wells, including
 `ammoniacal-ocean>brash-ice`, `>ice-smooth` and `>snow-crests`, which no
 explosion writes. Cause: `aquilo_island_peaks` (in `aquilo_elevation`) takes
 the max over the crude-oil, lithium-brine and fluorine-vent spot noises, so
-the resource controls reshape the islands. Stage 3 must port the
+the resource controls reshape the islands. Stage 1 (Aquilo) must port the
 `aquilo_*_spots` expressions as part of elevation, not only as resources. The
 size-0 numbers stay in the fixture (`aquiloNoWells`, `wellRewrite`) with that
 caveat; `effectToggle` is the clean result.
 
-Whether the preview PNG shows the rewrite is Task 11's question.
+The preview PNG does not show the rewrite. A preview captured with
+`created_effect` stripped differs from the full preview in 0 pixels (see the
+`oracle-preview-aquilo-full.seed123456.png` entry in
+`test/fixtures/PROVENANCE.json`). So a render graded against the preview PNG
+need not model the rewrite.
 
 ## Traps
 

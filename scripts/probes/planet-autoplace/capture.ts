@@ -60,13 +60,6 @@ const SURFACE_SEEDS = { gleba: 3215206427, aquilo: 3111923328 };
 /** Chunks each side of the origin; 8 gives the 512x512 tile region -256..255. */
 const CHUNKS = Number(process.env.REGION_CHUNKS ?? 8);
 const AQUILO_RESOURCE_CONTROLS = ["aquilo_crude_oil", "lithium_brine", "fluorine_vent"];
-const GLEBA_CONTROLS = [
-  "gleba_stone",
-  "gleba_plants",
-  "gleba_enemy_base",
-  "gleba_water",
-  "gleba_cliff",
-];
 
 const dataFinalFixesLua = (
   stripEffect: boolean,
@@ -412,7 +405,7 @@ function expectSeed(label: string, got: number, want: number): void {
 
 /** Rows of palette letters back to tile names, indexed [y][x] from the region corner. */
 function decodeTiles(t: { palette: string[]; rows: string[] }): string[][] {
-  return t.rows.map((r) => [...r].map((c) => t.palette[c.charCodeAt(0) - 97]));
+  return t.rows.map((r) => Array.from(r, (c) => t.palette[c.charCodeAt(0) - 97]));
 }
 
 async function main(): Promise<void> {

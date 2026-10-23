@@ -112,6 +112,23 @@ counts 22 and 23 on one key, plus offset, span and offset-past-span variants, an
 `calculate_tile_properties` raised no assertion in any of them. The assertion
 probably needs another path, such as chunk generation.
 
+**Open question: the game's own Aquilo wells do not fit that key.** At default
+sliders the three shipped well expressions (`aquilo_crude_oil_spots`,
+`aquilo_lithium_brine_spots`, `aquilo_flourine_vent_spots` in 2.1.23
+`planet-aquilo-map-gen.lua`) share `seed0`, `seed1` 567, `region_size` 1000
+(`600 + 400 / 1`) and spacing 128, with counts 4, 3 and 2 (and skip span 3, so
+12, 9 and 6 accepted spots). They run through chunk generation on every Aquilo
+map without crashing. So either the cache key holds more than those four fields,
+or the asserted count is something other than `candidate_spot_count`. Not
+measured yet.
+
+Our own port does not share this question: its region cache (`SpotCacheKey` in
+`crates/fmw-noise/src/expressions/vulcanus_resources.rs`) keys on the whole spot
+spec, and a test per field proves the count, skip offset and region size each
+keep two specs apart. That key is private to the Vulcanus module and embeds the
+Vulcanus-only `Favor` enum and `SKIP_SPAN`, so Stage 1 (Aquilo) must lift it
+into a shared spot helper before Aquilo can use it.
+
 Practical consequence: to vary `candidate_spot_count` or `skip_offset` you need
 **one headless run per value**. Recovering generation *order* is then a matter of
 running `candidate_spot_count = 1, 2, 3, ...` and diffing the resulting cone sets;
@@ -270,6 +287,13 @@ region sizes 1024/2048):
    skip_span, ... (the `generateSpotList` rule; measured at span 1, offset 1 by
    scripts/probes/spot-skip-offset - see the `skip_offset` gotcha above). For
    skip_offset < skip_span this is "j mod skip_span == skip_offset".
+   **The shipped `select_spots` (`crates/fmw-noise/src/spot_selection.rs`)
+   implements only that special case**: it filters `j % span == skip_offset`,
+   which keeps nothing when the offset is not below the span. Gleba's
+   `gleba_simple_spot` call (span 1, offset 1, count 22) would come out empty,
+   where the game keeps every accepted spot but the first (21 of 22 per region,
+   before the target trim). It must change before Gleba stone is ported (issue:
+   see PR).
 3. TARGET: regional quantity target = mean of density_expression over the
    set's accepted spot positions, times region_size^2. (Proven to sample the
    ACCEPTED spots, not the first candidates and not a uniform average, via

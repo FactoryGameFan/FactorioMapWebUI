@@ -339,8 +339,9 @@ What the gap means:
 
 - A gap of a few ULPs would point to a rounding near-tie. The game keeps these
   scores in f32, so a one-ULP difference in an input could flip the winner.
-- A large gap points to a step that runs after tile choice, which we do not
-  port.
+- A large gap pointed to a step that runs after tile choice, which we do not
+  port. That was the hypothesis Task 7 tested, and the next section refutes
+  it: the preview PNG runs no such step.
 
 Nauvis sits at 53 ULPs (about 6.3e-6). That is small but not one or two ULPs.
 Vulcanus sits at 19,301 ULPs (about 5.8e-4), which is far too wide for
@@ -404,12 +405,15 @@ to `TileCorrectionMapGenerationTask` or `correctAndSelectTileTransitions`.
   That rests on our point kernel matching the game's. The point-kernel
   fixtures show this for the noise primitives, but nobody checked the
   elevation, aux and moisture inputs at this tile. Which term moves was not
-  measured.
+  measured. The likely home is issue #452 (Nauvis fields), which already
+  records our elevation, moisture and aux missing exact matches that an
+  independent engine gets.
 - **Vulcanus.** The game's own scores put volcanic-cracks first by 40,448 ULPs.
   Our volcanic-cracks-warm matches the game's to the ULP, but our
   volcanic-cracks is 60,387 ULPs (1.8e-3) low. Our own grid-vs-point shift is
-  627 ULPs, about 1% of that. That is a defect in how we compute the
-  volcanic-cracks score at this tile, far too large for trig or rounding.
+  627 ULPs, about 1% of that. That is a defect in our volcanic-cracks score
+  at this tile, far too large for trig or rounding. It is tracked in a new
+  issue (see PR) and not fixed here.
   `get_tile` reads volcanic-cracks-warm here because correction rewrote the
   raw tile. That is the tile we draw, but only by coincidence, and the PNG does
   not show it.

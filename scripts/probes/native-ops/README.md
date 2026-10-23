@@ -45,12 +45,16 @@ The game accepted every expression, so none was dropped. `sqrt` exists, and
   `result = (up + f) * w + off`, with `v = x / 10` also narrowed to f32 and
   `s`, `off`, `w` narrowed constants. Using a reciprocal in place of either
   divide loses matches, so the divides are real divides.
-- **VM trig is not libm.** `fround(Math.sin(fround(arg)))`, with the argument
-  built in f32, matches only 964 to 987 of 1,024 per row (94% to 96%). The
-  misses are 1 ULP (5.96e-8 near 1). A port that calls libm would fail about
-  5% of the time; the fixture's trig rows exist to catch that. The
-  `sin(x * 13.37)` row reaches arguments near 55,000, which also exercises the
-  polynomial's range reduction.
+- **The game's trig is not f64 `sin` narrowed to f32.** `fround(Math.sin(fround(arg)))`,
+  with the argument built in f32, matches only 964 to 987 of 1,024 per row
+  (94% to 96%). The misses are 1 ULP (5.96e-8 near 1). That is all this data
+  shows. Why it differs comes from the disassembly, not from here:
+  `UnaryOperation<25,sin>::run` at `0x2525620` in the 2.1.23 binary is a
+  polynomial with its own range reduction, not a libm call (see the design
+  spec, `docs/superpowers/specs/2026-10-22-gleba-and-aquilo-design.md`). A port
+  that calls libm would fail about 5% of the time; the fixture's trig rows
+  exist to catch that. The `sin(x * 13.37)` row reaches arguments near 55,000,
+  which also exercises the range reduction.
 
 These numbers come from a throwaway check, not from a committed spec. Stage 2
 owns the grading.

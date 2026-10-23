@@ -252,13 +252,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
   // Naming a control the planet does not define is harmless, so the Nauvis
-  // names stay in every arm; each planet's OWN disableable controls are added.
+  // names stay in every arm but `full`, which disables nothing; each planet's
+  // OWN disableable controls are added.
   // Fulgora's are `scrap` and `fulgora_cliff` - `fulgora_islands` reports
   // can_be_disabled: false, so it cannot be switched off and is not listed.
-  // Gleba's are `gleba_stone` and `gleba_cliff`. Aquilo's three resource
-  // controls also RESHAPE its islands (`aquilo_island_peaks` takes a max over
-  // their spot fields), so a render compared with the Aquilo terrain PNG must
-  // set `lithium_brine`, `fluorine_vent` and `aquilo_crude_oil` to size 0 too.
+  // Gleba's are `gleba_stone` and `gleba_cliff`, so a render compared with the
+  // Gleba terrain PNG must set both to size 0, as the capture did. Aquilo's
+  // three resource controls also RESHAPE its islands (`aquilo_island_peaks`
+  // takes a max over their spot fields), so a render compared with the Aquilo
+  // terrain PNG must set `lithium_brine`, `fluorine_vent` and
+  // `aquilo_crude_oil` to size 0 too.
   const disabled = full
     ? []
     : planet === "vulcanus"
