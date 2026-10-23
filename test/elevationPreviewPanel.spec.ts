@@ -880,25 +880,60 @@ describe("ElevationPreviewPanel", () => {
   });
 
   describe("planets with no renderer", () => {
-    it.each([
-      ["gleba", "Gleba"],
-      ["aquilo", "Aquilo"],
-    ] as const)("%s shows the unsupported note and renders nothing", async (planet, label) => {
+    it.each([["gleba", "Gleba"]] as const)(
+      "%s shows the unsupported note and renders nothing",
+      async (planet, label) => {
+        stubCanvas();
+        const renderer = okRenderer();
+        const w = setup("nauvis", renderer);
+        await w.find('[data-test="generate"]').trigger("click");
+        await flushPromises();
+        const calls = (renderer.render as ReturnType<typeof vi.fn>).mock.calls.length;
+
+        await setPlanet(w, planet);
+
+        expect(w.find('[data-test="unsupported"]').text()).toBe(
+          `Client preview is not available for ${label} yet.`,
+        );
+        expect(w.find('[data-test="generate"]').attributes("disabled")).toBeDefined();
+        expect(w.find('[data-test="view-terrain"]').exists()).toBe(false);
+        expect((renderer.render as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+      },
+    );
+  });
+
+  describe("Aquilo", () => {
+    it("shows its four toggles and no unsupported note", async () => {
+      const w = setup("nauvis", okRenderer(), { planet: "aquilo", dev: true });
+      expect(w.find('[data-test="unsupported"]').exists()).toBe(false);
+      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeUndefined();
+      for (const t of ["terrain", "resources", "rocks", "all"]) {
+        expect(
+          w.find(`[data-test="view-${t}"]`).attributes("disabled"),
+          `view-${t} should be enabled for Aquilo`,
+        ).toBeUndefined();
+      }
+      for (const t of ["elevation", "enemies", "cliffs", "trees"]) {
+        expect(
+          w.find(`[data-test="view-${t}"]`).attributes("disabled"),
+          `view-${t} should be disabled for Aquilo`,
+        ).toBeDefined();
+      }
+    });
+
+    it("passes the preset's Aquilo levers on Generate", async () => {
       stubCanvas();
       const renderer = okRenderer();
-      const w = setup("nauvis", renderer);
+      const w = setup("nauvis", renderer, { planet: "aquilo" });
       await w.find('[data-test="generate"]').trigger("click");
       await flushPromises();
-      const calls = (renderer.render as ReturnType<typeof vi.fn>).mock.calls.length;
-
-      await setPlanet(w, planet);
-
-      expect(w.find('[data-test="unsupported"]').text()).toBe(
-        `Client preview is not available for ${label} yet.`,
-      );
-      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeDefined();
-      expect(w.find('[data-test="view-terrain"]').exists()).toBe(false);
-      expect((renderer.render as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({ planet: "aquilo", view: "all" });
+      expect(arg.aquiloResourceControls).toEqual({
+        crudeOil: { frequency: 1, size: 1 },
+        lithiumBrine: { frequency: 1, size: 1 },
+        fluorineVent: { frequency: 1, size: 1 },
+      });
     });
   });
 

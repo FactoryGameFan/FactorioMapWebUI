@@ -7,6 +7,7 @@ import type { Planet } from "../../model/planets";
 import type { ResourceControlLevers } from "../resources/resourceCatalog";
 import type { RockControls } from "../rocks/rockCatalog";
 import { renderThroughWasm, type EngineExports } from "../wasm/engine";
+import type { AquiloResourceControls } from "../wasm/request";
 import { RESOURCE_CATALOG } from "../resources/resourceCatalog";
 
 /** A render job posted to the worker. `id` tags the response for staleness. */
@@ -118,6 +119,12 @@ export interface ElevationRenderRequest {
    * and `view: "resources"`. Defaults to all-neutral.
    */
   vulcanusResourceControls?: VulcanusResourceControls;
+  /**
+   * The three Aquilo resource controls - consumed only when `planet: "aquilo"`.
+   * Left undefaulted here: `writeAquiloParams` is the one place an absent slider
+   * becomes the neutral 1.
+   */
+  aquiloResourceControls?: AquiloResourceControls;
   /**
    * The `fulgora_islands` autoplace control's frequency/size
    * (`control:fulgora_islands:*`) - consumed only when `planet: "fulgora"`.
@@ -424,6 +431,36 @@ function renderFulgoraThroughWasm(
 }
 
 /**
+ * The Rust engine's Aquilo path: terrain, resources, rocks and the composite.
+ *
+ * Wells and icebergs are placement marks, so the request carries the same
+ * halo-widened sweep box Vulcanus sends. Without it a mark centred just outside
+ * a worker tile would be missing from that tile (`test/wasmAquiloRenderParity.spec.ts`
+ * plants exactly that). The resource levers are passed through undefaulted:
+ * `writeAquiloParams` turns an absent slider into the neutral 1.
+ */
+function renderAquiloThroughWasm(
+  req: ElevationRenderRequest,
+  engine: EngineExports,
+  view: "terrain" | "resources" | "rocks" | "all",
+): ElevationRenderResult {
+  const pixels = renderThroughWasm(engine, {
+    planet: "aquilo",
+    view,
+    seed0: req.seed0,
+    width: req.width,
+    height: req.height,
+    originX: req.originX,
+    originY: req.originY,
+    tilesPerPixel: req.tilesPerPixel,
+    aquiloResourceControls: req.aquiloResourceControls,
+    placementSweepBox: placementMarkSweepBox(req),
+  });
+  const owned = new Uint8ClampedArray(pixels);
+  return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
+}
+
+/**
  * The Rust engine's Nauvis path - every view `view` declares, plus the three
  * elevation codes.
  *
@@ -682,6 +719,14 @@ export function runRenderRequest(
         view === "all"
       ) {
         return renderVulcanusThroughWasm(req, requireEngine(engine), view);
+      }
+      throw new Error(unsupportedPair(planet, view));
+    }
+    if (planet === "aquilo") {
+      // `enemies`, `cliffs` and `trees` cannot arrive: `servedView` turns them
+      // into `"terrain"`. `landmask` likewise.
+      if (view === "terrain" || view === "resources" || view === "rocks" || view === "all") {
+        return renderAquiloThroughWasm(req, requireEngine(engine), view);
       }
       throw new Error(unsupportedPair(planet, view));
     }

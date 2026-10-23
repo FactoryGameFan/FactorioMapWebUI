@@ -47,5 +47,9 @@ export const PLANET_CAPABILITIES: Readonly<Record<Planet, PlanetCapability>> = {
     fallToTerrain: ["enemies", "cliffs", "trees", "rocks"],
   },
   gleba: { rendered: false, views: [], fallToTerrain: [] },
-  aquilo: { rendered: false, views: [], fallToTerrain: [] },
+  aquilo: {
+    rendered: true,
+    views: ["terrain", "resources", "rocks", "all"],
+    fallToTerrain: ["enemies", "cliffs", "trees", "landmask"],
+  },
 };

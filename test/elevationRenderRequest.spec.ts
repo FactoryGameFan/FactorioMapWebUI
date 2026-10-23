@@ -8,6 +8,7 @@ import {
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
 import { compileEngine, instantiateEngine, type EngineExports } from "../src/noise/wasm/engine";
+import { COMMON_BYTES, VIEW } from "../src/noise/wasm/request";
 import { RESOURCE_CATALOG } from "../src/noise/resources/resourceCatalog";
 import { ENEMY_MAP_COLOR } from "../src/noise/enemies/enemyCatalog";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
@@ -690,14 +691,99 @@ describe("fulgora scrap is gated on the view", () => {
     expect(scrapPixels("terrain")).toBe(0);
   }, 120000);
 
-  it.each(["gleba", "aquilo"] as const)(
-    "refuses planet %s rather than painting Nauvis",
-    (planet) => {
-      expect(() => runRenderRequest({ ...REQ, planet, view: "all" }, engine)).toThrow(
-        new RegExp(`no renderer for planet ${planet}`),
+  it.each(["gleba"] as const)("refuses planet %s rather than painting Nauvis", (planet) => {
+    expect(() => runRenderRequest({ ...REQ, planet, view: "all" }, engine)).toThrow(
+      new RegExp(`no renderer for planet ${planet}`),
+    );
+  });
+
+  describe("Aquilo dispatch", () => {
+    /** An engine that records the request bytes and draws nothing. */
+    function recordingEngine(): { engine: EngineExports; sent: () => DataView } {
+      const memory = new WebAssembly.Memory({ initial: 4 });
+      let len = 0;
+      const stub = {
+        memory,
+        scratch_ptr: () => 0,
+        scratch_len: () => 65536,
+        render_ptr: () => 65536,
+        render_len: () => 65536,
+        render_request: (n: number) => {
+          len = n;
+          return 0;
+        },
+      } as unknown as EngineExports;
+      return { engine: stub, sent: () => new DataView(memory.buffer, 0, len) };
+    }
+    const AQ = { ...REQ, planet: "aquilo" as const };
+
+    it("sends planet code 3 and the preset's levers", () => {
+      const { engine: stub, sent } = recordingEngine();
+      runRenderRequest(
+        {
+          ...AQ,
+          view: "all",
+          aquiloResourceControls: {
+            crudeOil: { frequency: 2, size: 3 },
+            lithiumBrine: { frequency: 1, size: 0 },
+            fluorineVent: { frequency: 0.5, size: 1.5 },
+          },
+        },
+        stub,
       );
-    },
-  );
+      const v = sent();
+      expect(v.getUint32(8, true)).toBe(3);
+      expect(v.getUint32(12, true)).toBe(VIEW.all);
+      const lever = (i: number) => [
+        v.getFloat64(COMMON_BYTES + i * 8, true),
+        v.getFloat64(COMMON_BYTES + 8 + i * 8, true),
+      ];
+      expect(lever(0)).toEqual([2, 3]);
+      expect(lever(2)).toEqual([1, 0]);
+      expect(lever(4)).toEqual([0.5, 1.5]);
+    });
+
+    it("renders absent controls at neutral 1, not 0", () => {
+      const { engine: stub, sent } = recordingEngine();
+      runRenderRequest({ ...AQ, view: "terrain" }, stub);
+      for (let i = 0; i < 6; i++) {
+        expect(sent().getFloat64(COMMON_BYTES + i * 8, true)).toBe(1);
+      }
+    });
+
+    it("sends a placement sweep box wider than the pixel box when the request has a full image", () => {
+      const { engine: stub, sent } = recordingEngine();
+      runRenderRequest(
+        {
+          ...AQ,
+          view: "all",
+          originX: 0,
+          originY: 0,
+          width: 64,
+          height: 64,
+          tilesPerPixel: 1,
+          fullImage: { originX: -128, originY: -128, width: 256, height: 256 },
+        },
+        stub,
+      );
+      expect(sent().getFloat64(COMMON_BYTES + 96, true)).toBe(-1);
+    });
+
+    it.each(["cliffs", "enemies", "trees"] as const)("serves view %s as terrain", (view) => {
+      const { engine: stub, sent } = recordingEngine();
+      runRenderRequest({ ...AQ, view }, stub);
+      expect(sent().getUint32(12, true)).toBe(VIEW.terrain);
+    });
+
+    it("refuses the elevation view", () => {
+      expect(() => runRenderRequest({ ...AQ, view: "elevation" }, engine)).toThrow(
+        "no renderer for planet aquilo, view elevation",
+      );
+      expect(() => runRenderRequest({ ...AQ }, engine)).toThrow(
+        "no renderer for planet aquilo, view elevation",
+      );
+    });
+  });
 
   it("refuses a planet marked rendered that has no dispatch branch, rather than painting Nauvis", () => {
     // Turning a planet on in PLANET_CAPABILITIES before its branch exists must
