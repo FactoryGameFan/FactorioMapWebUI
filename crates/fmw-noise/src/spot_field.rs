@@ -20,7 +20,8 @@
 //! difference of 2.3e-6. The slope is `f32(peak / r)`, the distance is an f32
 //! `sqrtss` of an f32 sum of f32 squares, the cull is `max_r < d` on that f32
 //! distance, and the cone is `max(out, peak - d * slope)` in f32. Aquilo's
-//! fields are bit-exact with it (Task 3 of the Aquilo stage).
+//! fields are bit-exact with it (`aquilo_resource_fields_match_the_game_default`,
+//! `_size0` and `_moved` in `fixtures.rs`).
 //!
 //! [`ConeArithmetic::PortedF32`] is what the TypeScript port did and what
 //! Vulcanus's frozen counts were measured with: per-op f32, `PI * r` with the
@@ -78,9 +79,16 @@ pub struct SpotGeometry {
 /// How [`spot_cone_max`] turns a spot into a cone. See the module docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConeArithmetic {
-    /// The TypeScript port's arithmetic, which Vulcanus's frozen counts use.
+    /// The TypeScript port's arithmetic. **It is known to differ from the
+    /// game.** Vulcanus keeps it only so its frozen counts do not move until a
+    /// separate, graded fix; new callers use [`ConeArithmetic::GameBinary`].
     PortedF32,
     /// The game's own arithmetic, read from the binary.
+    ///
+    /// Its hard-target path (a spot whose `cone_scale` is below 1) is
+    /// written from the disassembly and is NOT verified against the game: the
+    /// only caller, Aquilo, sets `hard_region_target_quantity = 0`, so no
+    /// fixture reaches it.
     GameBinary,
 }
 

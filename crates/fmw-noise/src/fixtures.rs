@@ -1612,6 +1612,12 @@ fn reproduces_the_amplitude_corrected_wrapper_at_the_typescripts_own_count() {
     // running the wrapper's transform in the noise machine's f32 - which is
     // what took its SIBLING from 38/152 to 152/152 - scores 84/152 here, no
     // better than the f64 form that ships. Do not "fix" this by guessing.
+    //
+    // Explained 2026-10-23: the f32 transform AND an f32 persistence together
+    // score 152/152 - see `AmplitudeCorrectedGame` and
+    // `the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly`.
+    // This count stays at 81 until Nauvis moves to that form in its own graded
+    // change.
     let fixture = load_captured_at(
         "test/fixtures/oracle-multioctave-wrappers.seed123456.json",
         "2.1.12",
@@ -11304,7 +11310,7 @@ use crate::expressions::aquilo_resources::{
     AquiloBearings, AquiloLevers, AquiloResourceControls, AquiloResourceFields, AquiloResources,
 };
 
-/// Aquilo's entity-field capture (Task 1 of the Aquilo stage).
+/// Aquilo's entity-field capture, written by `scripts/probes/aquilo-fields`.
 const AQUILO_ENTITY_FIELDS: &str = "test/fixtures/oracle-aquilo-entity-fields.seed123456.json";
 
 /// Reads one field of [`AquiloResourceFields`].
@@ -11450,4 +11456,204 @@ fn aquilo_resource_fields_match_the_game_size0() {
 fn aquilo_resource_fields_match_the_game_moved() {
     let got = score_aquilo_resource_case("moved", 626);
     assert_eq!(got, vec![626; 11]);
+}
+
+use crate::expressions::aquilo_stack::{AquiloCtx, AquiloStack};
+use crate::expressions::aquilo_terrain::AquiloTerrainFields;
+use crate::variable_persistence_multioctave_noise::AmplitudeCorrectedGame;
+
+/// Aquilo's planet-field capture: 1,024 positions at default levers, with
+/// `climate.elevation` (`aquilo_elevation`) and `climate.aux` (`aquilo_aux`).
+const AQUILO_FIELDS: &str = "test/fixtures/oracle-aquilo-fields.seed123456.json";
+
+/// Reads one field of [`AquiloTerrainFields`].
+type AquiloTerrainSelect = fn(&AquiloTerrainFields) -> f64;
+
+/// The fixture's terrain field names against this layer's fields, in
+/// dependency order: each field reads only those above it.
+const AQUILO_TERRAIN_FIELDS: [(&str, AquiloTerrainSelect); 8] = [
+    ("aquilo_wobble_x", |f| f.wobble_x),
+    ("aquilo_wobble_y", |f| f.wobble_y),
+    ("aquilo_aux", |f| f.aux),
+    ("aquilo_high_frequency_peaks", |f| f.high_frequency_peaks),
+    ("aquilo_snow_ice", |f| f.snow_ice),
+    ("aquilo_tile_variant", |f| f.tile_variant),
+    ("aquilo_island_peaks", |f| f.island_peaks),
+    ("aquilo_elevation", |f| f.elevation),
+];
+
+/// Positions whose f32 BITS equal the game's hex values.
+fn count_exact_bits(got: &[f64], want: &[Json]) -> usize {
+    assert_eq!(got.len(), want.len());
+    got.iter()
+        .zip(want)
+        .filter(|(g, w)| {
+            let bits = u32::from_str_radix(w.as_str(), 16).expect("hex f32 bits");
+            (**g as f32).to_bits() == bits
+        })
+        .count()
+}
+
+/// Score one lever case of the entity-field capture on the terrain fields.
+fn score_aquilo_terrain_case(label: &str, positions_expected: usize) -> Vec<usize> {
+    let fixture = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    assert_eq!(fixture.get("seed").as_f64(), 123_456.0);
+    let case = fixture.get("cases").get(label);
+    let positions = case.get("positions").as_array();
+    assert_eq!(
+        positions.len(),
+        positions_expected,
+        "{label} position count"
+    );
+    let mut stack = AquiloStack::with_host_trig(&AquiloCtx {
+        seed0: 123_456,
+        controls: aquilo_case_controls(case),
+    });
+    let fields: Vec<AquiloTerrainFields> = positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            stack
+                .eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+                .terrain
+        })
+        .collect();
+    let counts: Vec<usize> = AQUILO_TERRAIN_FIELDS
+        .iter()
+        .map(|(name, select)| {
+            let got: Vec<f64> = fields.iter().map(select).collect();
+            count_exact_bits(&got, case.get("fields").get(name).as_array())
+        })
+        .collect();
+    eprintln!("aquilo terrain {label} ({} positions):", positions.len());
+    for ((name, _), n) in AQUILO_TERRAIN_FIELDS.iter().zip(&counts) {
+        eprintln!("  {name}: {n}");
+    }
+    counts
+}
+
+/// The default levers. Every field is a full house, frozen 2026-10-23.
+///
+/// Each layer was graded before the next. Two constants decided whole layers:
+/// the wobbles' `output_scale` 0.35 (as a double: 144 and 99 of 632) and
+/// `random_island_peaks` (the shipped amplitude-corrected form, #254: the
+/// elevation at 608). Planted back one at a time, each of these also costs
+/// counts, so the grade sees it: the lerp weight 0.4 as a double (elevation
+/// 601), the billow scales folded in f64 (187), the crack sum rooted before it
+/// is narrowed (620), `aux`'s warp folded to `w * 200` (`aux` 525), `1.2` and
+/// `0.2` as doubles in the large-cell term (576), the island-peak constants as
+/// doubles (`aquilo_island_peaks` 554), and the fluorine spot field left out
+/// of the island peaks (566).
+///
+/// What the counts can and cannot see:
+///
+/// - **They grade the point kernel only.** Every position is a
+///   `calculate_tile_properties` read. The chunk-grid path that a render takes
+///   for the raw-coordinate fields is graded by the render, not here.
+/// - **The spot arm of `aquilo_island_peaks` is graded where a cone or spot is
+///   live.** It wins with a field above the basement at about 330 positions; most of
+///   the rest sit at -0.75, the arm's basement.
+/// - **Every branch of the elevation is live.** The random peaks beat the
+///   island peaks at 240 positions, the broken formation beats the clumped one
+///   at 470, the large Voronoi term is above 0 at 480 and the small one at 495.
+#[test]
+fn aquilo_terrain_fields_match_the_game_default() {
+    let got = score_aquilo_terrain_case("default", 632);
+    assert_eq!(got, vec![632; 8]);
+}
+
+/// All three sizes at 0. Every field is a full house, frozen 2026-10-23.
+///
+/// The spot fields are at the basement everywhere, so the spot arm of
+/// `aquilo_island_peaks` is graded on the starting cones alone, which the size
+/// does not gate (live at about 140 positions). The shipped amplitude-corrected form
+/// scored the elevation at 434 here.
+#[test]
+fn aquilo_terrain_fields_match_the_game_size0() {
+    let got = score_aquilo_terrain_case("size0", 452);
+    assert_eq!(got, vec![452; 8]);
+}
+
+/// Moved levers (see `aquilo_resource_fields_match_the_game_moved`). Every
+/// field is a full house, frozen 2026-10-23. The levers reach the terrain only
+/// through `aquilo_island_peaks`; the shipped amplitude-corrected form scored
+/// the elevation at 602 here.
+#[test]
+fn aquilo_terrain_fields_match_the_game_moved() {
+    let got = score_aquilo_terrain_case("moved", 626);
+    assert_eq!(got, vec![626; 8]);
+}
+
+/// The second grade of `aquilo_elevation` and `aquilo_aux`: 1,024 positions out
+/// to 16,000 tiles, picked so every Aquilo tile wins somewhere. Both are full
+/// houses, frozen 2026-10-23. The shipped amplitude-corrected form scored the
+/// elevation at 911 here; the random peaks beat the island peaks at 921 of
+/// these positions, which is why this set sees it more than the entity cases.
+#[test]
+fn aquilo_elevation_and_aux_match_the_game_at_default_levers() {
+    let fixture = load_captured_at(AQUILO_FIELDS, "2.1.23");
+    assert_eq!(fixture.get("seed").as_f64(), 123_456.0);
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 1024);
+    let mut stack = AquiloStack::with_host_trig(&AquiloCtx {
+        seed0: 123_456,
+        controls: AquiloResourceControls::default(),
+    });
+    let fields: Vec<AquiloTerrainFields> = positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            stack
+                .eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+                .terrain
+        })
+        .collect();
+    let climate = fixture.get("climate");
+    let elevation: Vec<f64> = fields.iter().map(|f| f.elevation).collect();
+    let aux: Vec<f64> = fields.iter().map(|f| f.aux).collect();
+    let got = (
+        count_exact_bits(&elevation, climate.get("elevation").as_array()),
+        count_exact_bits(&aux, climate.get("aux").as_array()),
+    );
+    eprintln!(
+        "aquilo fields (1024 positions): elevation {}, aux {}",
+        got.0, got.1
+    );
+    assert_eq!(got, (1024, 1024));
+}
+
+/// [`AmplitudeCorrectedGame`] against the same 152 points that
+/// `reproduces_the_amplitude_corrected_wrapper_at_the_typescripts_own_count`
+/// scores at 81 (#254). Measured 2026-10-23: 152 of 152. The f64 transform with
+/// the f32 persistence scores 122.
+#[test]
+fn the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-multioctave-wrappers.seed123456.json",
+        "2.1.12",
+    );
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = fixture.get("positions").as_array();
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    for case in fixture.get("amplitudeCorrected").as_array() {
+        let values = case.get("values").as_array();
+        let op = AmplitudeCorrectedGame::new(&AmplitudeCorrectedParams {
+            seed0,
+            seed1: case.get("seed1").as_f64() as u32,
+            octaves: case.get("octaves").as_f64() as u32,
+            input_scale: case.get("inputScale").as_f64(),
+            offset_x: case.get("offsetX").as_f64(),
+            persistence: case.get("persistence").as_f64(),
+            amplitude: case.get("amplitude").as_f64(),
+        });
+        let (exact, _) = score_case(values, |i| {
+            let p = &positions[i];
+            op.eval_at(At::point(p.get("x").as_f64(), p.get("y").as_f64()))
+        });
+        total += values.len();
+        exact_total += exact;
+    }
+    assert_eq!(total, 152, "fixture size");
+    assert_eq!(exact_total, 152, "exact f32 matches");
 }

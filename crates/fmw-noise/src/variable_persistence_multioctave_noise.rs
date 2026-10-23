@@ -191,6 +191,9 @@ pub struct AmplitudeCorrectedParams {
 ///
 /// ## It is 81 of 152 against the game, and that is #254
 ///
+/// [`AmplitudeCorrectedGame`] is the game's form, 152 of 152. This one stays
+/// as it is until Nauvis moves over in its own graded change.
+///
 /// The op underneath is bit-exact on the same fixture (152/152), so the gap is
 /// in this transform. It is ported EXACTLY as the TypeScript writes it, in f64,
 /// rather than corrected - the port's standing rule, so tier 2 compares two
@@ -327,6 +330,83 @@ pub fn amplitude_corrected_multioctave_noise_at(at: At, params: &AmplitudeCorrec
                 &terms(&vp),
                 &tables_from_seed(params.seed0, params.seed1),
             )
+        }
+    }
+}
+
+/// `amplitude_corrected_multioctave_noise` as the game evaluates it: 152 of
+/// 152 on `oracle-multioctave-wrappers`, where the shipped
+/// [`amplitude_corrected_multioctave_noise`] is 81 of 152 (#254).
+///
+/// Two terms, and neither is enough alone:
+///
+/// - **The persistence is an f32 constant slot.** The op's Horner step
+///   multiplies by `f32(0.8)`, not by the double `0.8`.
+/// - **The `output_scale` transform is folded in f32, in the Lua's order**:
+///   `((1 - p) / 2^octaves) / (1 - p^octaves) * amplitude`, each op rounded to
+///   f32, with `p^octaves` the f64 `powf` of the f32 `p`, narrowed. The noise
+///   machine's own square-and-multiply `pow` is NOT it: on Aquilo's elevation
+///   it scored 901 of 1,024 where this scores 1,024.
+///
+/// Measured 2026-10-23 on the wrapper fixture's 152 points: the f64 transform
+/// with an f32 persistence scores 122 (in either of two operation orders, and
+/// with `amplitude` narrowed too); this form scores 152. The doc on [`eval`]
+/// records the f32 persistence alone at 89, and `test/multioctaveWrappers.spec.ts`
+/// records the f32 transform alone at 84, so each half was tried before and
+/// only the pair closes it.
+///
+/// **A separate type rather than a fix to the shipped function**, by the
+/// port's rule: Nauvis's `elevation_lakes` and `elevation_nauvis` read the
+/// shipped form, and their frozen counts were measured with it. Moving them is
+/// its own graded change (#254). Aquilo is new code, so it takes the game's
+/// form from the start.
+///
+/// Built once per render: the seed tables and the octave terms are derived
+/// here, not per position.
+pub struct AmplitudeCorrectedGame {
+    terms: VariablePersistenceTerms,
+    tables: BasisNoiseTables,
+    persistence: f32,
+}
+
+impl AmplitudeCorrectedGame {
+    #[must_use]
+    pub fn new(params: &AmplitudeCorrectedParams) -> Self {
+        let p = params.persistence as f32;
+        let n = params.octaves;
+        let gain_base = (1.0 - p) / (2u32.pow(n) as f32);
+        let series = 1.0 - (f64::from(p).powf(f64::from(n)) as f32);
+        let output_scale = gain_base / series * (params.amplitude as f32);
+        Self {
+            terms: terms(&VariablePersistenceParams {
+                seed0: params.seed0,
+                seed1: params.seed1,
+                octaves: n,
+                input_scale: params.input_scale,
+                output_scale: f64::from(output_scale),
+                offset_x: params.offset_x,
+            }),
+            tables: tables_from_seed(params.seed0, params.seed1),
+            persistence: p,
+        }
+    }
+
+    /// The op at an [`At`]: the chunk-grid path for a tile, the point path
+    /// otherwise.
+    #[must_use]
+    pub fn eval_at(&self, at: At) -> f32 {
+        match at {
+            At::Point { x, y } => {
+                eval(x, y, f64::from(self.persistence), &self.terms, &self.tables)
+            }
+            At::Grid { cx, cy, i, r } => eval_grid(
+                (cx, cy),
+                (i, r),
+                self.persistence,
+                0.0,
+                &self.terms,
+                &self.tables,
+            ),
         }
     }
 }

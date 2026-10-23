@@ -167,6 +167,14 @@ POISONED_TESTS=(
   fixtures::aquilo_resource_fields_match_the_game_default
   fixtures::aquilo_resource_fields_match_the_game_size0
   fixtures::aquilo_resource_fields_match_the_game_moved
+  # Aquilo's terrain fields. Every field reads basis_noise or Voronoi hooks;
+  # the elevation also carries `poison::f64_result`.
+  fixtures::aquilo_terrain_fields_match_the_game_default
+  fixtures::aquilo_terrain_fields_match_the_game_size0
+  fixtures::aquilo_terrain_fields_match_the_game_moved
+  fixtures::aquilo_elevation_and_aux_match_the_game_at_default_levers
+  # The game's amplitude-corrected form (#254), through basis_noise's hook.
+  fixtures::the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

@@ -740,6 +740,14 @@ put a divergence into every Nauvis elevation value with nothing to grade it.
 Neither form is the game's. Posted to #254 as one term worth 8 points, with 63
 still unexplained.
 
+**The rest was found on 2026-10-23, porting Aquilo.** The f32 persistence and
+the `output_scale` transform folded in f32, in the Lua's order, together score
+**152/152** (the f64 transform with the f32 persistence scores 122). That form
+is `AmplitudeCorrectedGame`, graded by
+`the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly`,
+and Aquilo's `random_island_peaks` uses it. Nauvis still reads the shipped
+form, so its counts did not move; moving it is its own graded change (#254).
+
 Two harness compensations went with that work, and both are worth copying.
 `checksum_variable_persistence` crossed the ABI as an f32, so the spec narrowed
 its own value with `Math.fround` first - making the two sides agree by
