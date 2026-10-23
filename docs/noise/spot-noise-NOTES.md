@@ -70,8 +70,21 @@ off a heightmap.
   probe that sets it to 0 as an apparently harmless default.
 - **`hard_region_target_quantity` takes 0/1**, not `true`/`false`. The game's own
   calls in `core/prototypes/noise-functions.lua` pass integers.
-- **`skip_offset` must be < `skip_span`.** With `skip_span = 1`, only
-  `skip_offset = 0` is legal; anything else hard-crashes the game (see below).
+- **`skip_offset = 1` with `skip_span = 1` is legal.** An older version of this
+  note said only offset 0 works with span 1 and anything else hard-crashes the
+  game. That was wrong. `scripts/probes/spot-skip-offset` (2026-10-22, 2.1.23 and
+  2.0.77, fixture `test/fixtures/oracle-spot-skip-offset.json`) ran Gleba's own
+  `gleba_simple_spot` call with offset 1 and an offset 0 control, one process
+  each. Offset 1 ran cleanly, returned a field with 177 of 512 positions on a
+  cone, and differed from offset 0 at 14 positions (never higher). That fits the
+  binary: the game draws `candidate_spot_count * skip_span` accepted spots and
+  keeps indices `skip_offset, skip_offset + skip_span, ...`, so with span 1 offset
+  1 is offset 0 minus the first spot. Offset 5 with span 1 also ran without a
+  crash (field not inspected).
+  The probe simplified three things: no wobble, radius 30, and density and
+  favorability both the constant 1 (Gleba uses a varying field). "Legal" does not
+  depend on those, but the 14-position and 177-versus-182 figures hold for
+  constant favorability only.
 - **`density_expression` is quantity per unit area**, so it is a small number.
   The regional target is `average density * region area`; with `density = 1` and
   `region_size = 1024` the target is 1048576, i.e. ~104 spots of quantity 10000.
@@ -81,7 +94,9 @@ off a heightmap.
 
 ## The candidate-point cache (a hard crash, and what it reveals)
 
-Probing many `skip_offset` values in one map crashes the game:
+Probing many `skip_offset` values in one map crashed the game once. Offset 1
+with span 1 is not by itself a crash on the `calculate_tile_properties` path (see
+the `skip_offset` gotcha above); the original cause is unreproduced:
 
 ```
 SpotNoiseCache.cpp:150: this->candidateSpotCount == candidateSpotCount was not true
@@ -91,6 +106,28 @@ This corroborates the documented claim that the candidate series is shared acros
 expressions with the same `seed0`, `seed1`, `region_size` and
 `suggested_minimum_candidate_point_spacing` - the game caches it on exactly that
 key and **asserts** that every expression sharing the key agrees on the count.
+This is the likely cause of the recorded crash, but it is read from the assertion
+text, not reproduced: `scripts/probes/spot-skip-offset` put two expressions with
+counts 22 and 23 on one key, plus offset, span and offset-past-span variants, and
+`calculate_tile_properties` raised no assertion in any of them. The assertion
+probably needs another path, such as chunk generation.
+
+**Open question: the game's own Aquilo wells do not fit that key.** At default
+sliders the three shipped well expressions (`aquilo_crude_oil_spots`,
+`aquilo_lithium_brine_spots`, `aquilo_flourine_vent_spots` in 2.1.23
+`planet-aquilo-map-gen.lua`) share `seed0`, `seed1` 567, `region_size` 1000
+(`600 + 400 / 1`) and spacing 128, with counts 4, 3 and 2 (and skip span 3, so
+12, 9 and 6 accepted spots). They run through chunk generation on every Aquilo
+map without crashing. So either the cache key holds more than those four fields,
+or the asserted count is something other than `candidate_spot_count`. Not
+measured yet.
+
+Our own port does not share this question: its region cache (`SpotCacheKey` in
+`crates/fmw-noise/src/expressions/vulcanus_resources.rs`) keys on the whole spot
+spec, and a test per field proves the count, skip offset and region size each
+keep two specs apart. That key is private to the Vulcanus module and embeds the
+Vulcanus-only `Favor` enum and `SKIP_SPAN`, so Stage 1 (Aquilo) must lift it
+into a shared spot helper before Aquilo can use it.
 
 Practical consequence: to vary `candidate_spot_count` or `skip_offset` you need
 **one headless run per value**. Recovering generation *order* is then a matter of
@@ -246,8 +283,16 @@ region sizes 1024/2048):
        previously accepted a; on each rejection spacingSq *= 15/16.
      Walk until candidate_spot_count * skip_span spots are accepted.
      (No cap observed through ~170 tried; rejected candidates never return.)
-2. SKIP: accepted spot j (acceptance order) belongs to set j mod skip_span;
-   an expression renders the set matching its skip_offset.
+2. SKIP: an expression renders accepted spots skip_offset, skip_offset +
+   skip_span, ... (the `generateSpotList` rule; measured at span 1, offset 1 by
+   scripts/probes/spot-skip-offset - see the `skip_offset` gotcha above). For
+   skip_offset < skip_span this is "j mod skip_span == skip_offset".
+   **The shipped `select_spots` (`crates/fmw-noise/src/spot_selection.rs`)
+   implements only that special case**: it filters `j % span == skip_offset`,
+   which keeps nothing when the offset is not below the span. Gleba's
+   `gleba_simple_spot` call (span 1, offset 1, count 22) would come out empty,
+   where the game keeps every accepted spot but the first (21 of 22 per region,
+   before the target trim). It must change before Gleba stone is ported (#489).
 3. TARGET: regional quantity target = mean of density_expression over the
    set's accepted spot positions, times region_size^2. (Proven to sample the
    ACCEPTED spots, not the first candidates and not a uniform average, via

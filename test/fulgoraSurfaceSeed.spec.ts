@@ -44,6 +44,7 @@ beforeAll(async () => {
 /** A 48x48 terrain window at 8 tiles/px, as a copy rather than a view over module memory. */
 function terrain(seed0: number): Uint8ClampedArray {
   return renderThroughWasm(engine, {
+    planet: "fulgora",
     view: "terrain",
     seed0,
     width: 48,
@@ -111,6 +112,7 @@ describe("fulgora render request dispatch", () => {
   it("planet 'fulgora' + view 'terrain' matches a direct renderThroughWasm call", () => {
     const req: ElevationRenderRequest = { ...BASE, planet: "fulgora" };
     const direct = renderThroughWasm(engine, {
+      planet: "fulgora",
       view: "terrain",
       seed0: req.seed0,
       width: req.width,

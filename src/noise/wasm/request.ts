@@ -124,16 +124,16 @@ interface CommonRenderRequest {
 }
 
 export interface FulgoraRenderRequest extends CommonRenderRequest {
-  /** Optional so existing Fulgora call sites need no change. */
-  readonly planet?: "fulgora";
+  /** Required: every request names its planet, so none is guessed. */
+  readonly planet: "fulgora";
   readonly islandsFrequency: number;
   readonly islandsSize: number;
   /**
    * `control:scrap:frequency` and `control:scrap:size`, wire values, neutral
    * at 1.
    *
-   * **Optional, for the reason `planet` is**, so the existing Fulgora call
-   * sites need no change. `writeFulgoraParams` substitutes the neutral 1.
+   * **Optional** so the existing Fulgora call sites need no change.
+   * `writeFulgoraParams` substitutes the neutral 1.
    *
    * **The module does NOT default these**, which is why the substitution has to
    * happen and why it happens exactly once. `FulgoraParams` reads both straight
@@ -412,13 +412,17 @@ export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }
  * handed the length so it can check the declared block against what arrived.
  */
 export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest): number {
-  const planet = req.planet ?? "fulgora";
-  const paramsBytes =
-    planet === "vulcanus"
-      ? VULCANUS_PARAMS_BYTES
-      : planet === "nauvis"
-        ? NAUVIS_PARAMS_BYTES
-        : FULGORA_PARAMS_BYTES;
+  const planet = req.planet;
+  if (!Object.hasOwn(PLANET, planet)) {
+    throw new Error(`unknown planet ${String(planet)} in render request`);
+  }
+  // Each planet names its own block. A planet added to `PLANET` without an arm
+  // here throws rather than being sent Fulgora's layout.
+  let paramsBytes: number;
+  if (planet === "vulcanus") paramsBytes = VULCANUS_PARAMS_BYTES;
+  else if (planet === "nauvis") paramsBytes = NAUVIS_PARAMS_BYTES;
+  else if (planet === "fulgora") paramsBytes = FULGORA_PARAMS_BYTES;
+  else throw new Error(`no params layout for planet ${String(planet)} in render request`);
   const total = COMMON_BYTES + paramsBytes;
   if (target.byteLength < total) {
     throw new RangeError(
@@ -446,8 +450,10 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
     writeVulcanusParams(view, req as VulcanusRenderRequest);
   } else if (planet === "nauvis") {
     writeNauvisParams(view, req as NauvisRenderRequest);
-  } else {
+  } else if (planet === "fulgora") {
     writeFulgoraParams(view, req as FulgoraRenderRequest);
+  } else {
+    throw new Error(`no params writer for planet ${String(planet)} in render request`);
   }
   return total;
 }

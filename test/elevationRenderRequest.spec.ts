@@ -13,6 +13,8 @@ import { ENEMY_MAP_COLOR } from "../src/noise/enemies/enemyCatalog";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
 import { ROCK_MAP_COLOR } from "../src/noise/rocks/rockCatalog";
 import { SCRAP_MAP_COLOR } from "../src/noise/resources/fulgoraResourceCatalog";
+import { PLANET_CAPABILITIES, type PlanetCapability } from "../src/model/planetCapabilities";
+import type { Planet } from "../src/model/planets";
 
 const REQ: ElevationRenderRequest = {
   id: 7,
@@ -687,6 +689,33 @@ describe("fulgora scrap is gated on the view", () => {
     // Confirmed to discriminate by adding `"terrain"` to the same gate.
     expect(scrapPixels("terrain")).toBe(0);
   }, 120000);
+
+  it.each(["gleba", "aquilo"] as const)(
+    "refuses planet %s rather than painting Nauvis",
+    (planet) => {
+      expect(() => runRenderRequest({ ...REQ, planet, view: "all" }, engine)).toThrow(
+        new RegExp(`no renderer for planet ${planet}`),
+      );
+    },
+  );
+
+  it("refuses a planet marked rendered that has no dispatch branch, rather than painting Nauvis", () => {
+    // Turning a planet on in PLANET_CAPABILITIES before its branch exists must
+    // fail loudly. Flip Gleba on for this one test and restore it in `finally`.
+    const table = PLANET_CAPABILITIES as Record<Planet, PlanetCapability>;
+    const saved = table.gleba;
+    table.gleba = { rendered: true, views: ["terrain", "all"], fallToTerrain: [] };
+    try {
+      for (const view of ["terrain", "all"] as const) {
+        expect(() => runRenderRequest({ ...REQ, planet: "gleba", view }, engine)).toThrow(
+          `no renderer for planet gleba, view ${view}`,
+        );
+      }
+    } finally {
+      table.gleba = saved;
+    }
+    expect(PLANET_CAPABILITIES.gleba.rendered).toBe(false);
+  });
 
   it("refuses view 'elevation' on Fulgora rather than drawing the Nauvis field", () => {
     // **The hole this row used to pin is closed, and this is the flip its own

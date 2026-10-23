@@ -33,9 +33,16 @@
 //!
 //! The four spot fields are the exception. A query at `(x, y)` reads selected
 //! spots from every region within `MAX_SPOT_BASEMENT_RADIUS`, which is genuine
-//! cross-position state, so it is a `RefCell<BTreeMap>` keyed by `(seed1,
-//! region_x, region_y)`. One map rather than four, because `seed1` already
-//! separates the four streams and a second container could only drift from it.
+//! cross-position state, so it is a `RefCell<BTreeMap>` keyed by a
+//! `SpotCacheKey`: the whole spot spec plus the region. One map rather than
+//! four, because the key itself separates the streams and a second container
+//! could only drift from it.
+//!
+//! `seed1` alone is NOT the separator. It is distinct across Vulcanus's four
+//! streams (789, 782349, 749, 759), but Aquilo's three wells share `seed1` 567
+//! and, at default sliders, region size 1000; they differ in count (4, 3, 2),
+//! skip offset (0, 1, 2) and radius, so `(seed1, region)` would mix them up.
+//! Every `SpotSpec` field that shapes `select_spots` or the spot values is keyed.
 //!
 //! `BTreeMap` rather than `HashMap` for the reason `vulcanus_biomes` records:
 //! nothing iterates it today, but a determinism-critical port should not carry
@@ -127,7 +134,7 @@ const CONTRAST: f64 = 2.0;
 /// A plain-data selector rather than a boxed closure, so the density and
 /// favorability expressions handed to `select_spots` can borrow `&self`
 /// immutably alongside the region cache.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Favor {
     Basalts,
     Ashlands,
@@ -152,7 +159,44 @@ struct SpotSpec {
     favor: Favor,
 }
 
+/// The cache key of one region of one spot stream: the WHOLE spec, not `seed1`.
+///
+/// Every [`SpotSpec`] field is here. The f64 fields go in as `to_bits`, which
+/// is exact where a rounded or floored form could merge two specs: `region_size`
+/// is kept UNFLOORED, so 833.3 and 833.9 stay apart even though
+/// `select_spots` floors both. [`Favor`] is a plain C-like enum, so deriving
+/// `Ord` on it gives a stable identity with no discriminant cast. `skip_span` is
+/// the module constant today; it is in the key so a future spec that varies it
+/// cannot collide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct SpotCacheKey {
+    seed1: u32,
+    region_size_bits: u64,
+    skip_span: u32,
+    skip_offset: u32,
+    candidate_spot_count: u32,
+    size_rescaled_bits: u64,
+    favor: Favor,
+    region_x: i64,
+    region_y: i64,
+}
+
 impl SpotSpec {
+    /// The cache key of one of this spec's regions.
+    fn cache_key(self, region_x: i64, region_y: i64) -> SpotCacheKey {
+        SpotCacheKey {
+            seed1: self.seed1,
+            region_size_bits: self.region_size.to_bits(),
+            skip_span: SKIP_SPAN as u32,
+            skip_offset: self.skip_offset as u32,
+            candidate_spot_count: self.candidate_spot_count as u32,
+            size_rescaled_bits: self.size_rescaled.to_bits(),
+            favor: self.favor,
+            region_x,
+            region_y,
+        }
+    }
+
     /// `Math.floor(region_size)`.
     ///
     /// `select_spots` uses this as an integer modulus. Only the default
@@ -236,7 +280,7 @@ pub struct VulcanusResources<'a> {
     /// `vulcanus_sulfuric_acid_patches`' own two-octave noise.
     patch_noise: Prepared,
 
-    region_cache: RefCell<BTreeMap<(u32, i64, i64), Vec<SelectedSpot>>>,
+    region_cache: RefCell<BTreeMap<SpotCacheKey, Vec<SelectedSpot>>>,
 }
 
 impl<'a> VulcanusResources<'a> {
@@ -485,7 +529,7 @@ impl<'a> VulcanusResources<'a> {
 
     /// The selected spots of one region of one stream, computed once and cached.
     fn region_spots(&self, spec: SpotSpec, region_x: i64, region_y: i64) -> Vec<SelectedSpot> {
-        let cache_key = (spec.seed1, region_x, region_y);
+        let cache_key = spec.cache_key(region_x, region_y);
         if let Some(hit) = self.region_cache.borrow().get(&cache_key) {
             return hit.clone();
         }
@@ -949,5 +993,105 @@ mod tests {
             "the two mountains favorabilities agreed at all 40 probe positions, \
              so this test cannot see them being collapsed"
         );
+    }
+
+    /// Two specs that share a `seed1` must not share cached spots.
+    ///
+    /// Aquilo's three fluid wells (2.1.23 `planet-aquilo-map-gen.lua`) all call
+    /// `aquilo_spot_noise` with seed 567, skip span 3 and spacing 128, and at
+    /// default sliders all three region sizes are `600 + 400 / 1 = 1000`. What
+    /// differs is the count (4, 3, 2), the skip offset (0, 1, 2) and the radius.
+    /// So a key of `(seed1, region)` would hand the second well the first one's
+    /// spots. One test per key field that can tell such specs apart: region
+    /// size (a moved frequency slider), skip offset and count.
+    ///
+    /// Each is cold-against-warm, so a collision shows as a difference rather
+    /// than as two equal wrong answers. Each also asserts that the two specs
+    /// really select different spots, or the test could not see a collision.
+    /// Each was planted: with its field dropped from `SpotCacheKey`, its own
+    /// test fails.
+    ///
+    /// `SpotCacheKey` is private to this module and embeds the Vulcanus-only
+    /// `Favor` enum and `SKIP_SPAN`, so Aquilo cannot reuse it as is; a shared
+    /// spot helper must lift it out first.
+    fn assert_specs_do_not_share_cached_spots(first: SpotSpec, second: SpotSpec) {
+        let (ctx, helpers) = layer_at(123_456);
+        let spawn = VulcanusSpawn::with_host_trig(&ctx);
+        let biomes = VulcanusBiomes::with_host_trig(&ctx, &helpers, &spawn);
+        let cracks = VulcanusCracks::new(&helpers);
+        let build = || VulcanusResources::with_host_trig(&ctx, &helpers, &spawn, &biomes, &cracks);
+
+        let regions: Vec<(i64, i64)> = (-3..=3)
+            .flat_map(|x| (-3..=3).map(move |y| (x, y)))
+            .collect();
+
+        let cold = build();
+        let expected: Vec<_> = regions
+            .iter()
+            .map(|&(x, y)| cold.region_spots(second, x, y))
+            .collect();
+        assert!(
+            expected.iter().any(|spots| !spots.is_empty()),
+            "no region produced a spot, so this test cannot see a collision"
+        );
+        let cold_first = build();
+        assert!(
+            regions
+                .iter()
+                .zip(&expected)
+                .any(|(&(x, y), want)| &cold_first.region_spots(first, x, y) != want),
+            "the two specs select the same spots everywhere, so this test cannot see a collision"
+        );
+
+        let warm = build();
+        for &(x, y) in &regions {
+            let _ = warm.region_spots(first, x, y);
+        }
+        for (&(x, y), want) in regions.iter().zip(&expected) {
+            assert_eq!(
+                &warm.region_spots(second, x, y),
+                want,
+                "region ({x}, {y}) took the first spec's cached spots"
+            );
+        }
+    }
+
+    const SHARED_SEED1_SPEC: SpotSpec = SpotSpec {
+        seed1: 789,
+        candidate_spot_count: 15,
+        skip_offset: 2,
+        region_size: 1000.0,
+        size_rescaled: 1.0,
+        favor: Favor::Basalts,
+    };
+
+    #[test]
+    fn two_specs_sharing_seed1_do_not_share_cached_spots() {
+        let first = SHARED_SEED1_SPEC;
+        let second = SpotSpec {
+            region_size: 800.0,
+            ..first
+        };
+        assert_specs_do_not_share_cached_spots(first, second);
+    }
+
+    #[test]
+    fn two_specs_sharing_seed1_and_differing_only_in_skip_offset_do_not_share_cached_spots() {
+        let first = SHARED_SEED1_SPEC;
+        let second = SpotSpec {
+            skip_offset: 0,
+            ..first
+        };
+        assert_specs_do_not_share_cached_spots(first, second);
+    }
+
+    #[test]
+    fn two_specs_sharing_seed1_and_differing_only_in_count_do_not_share_cached_spots() {
+        let first = SHARED_SEED1_SPEC;
+        let second = SpotSpec {
+            candidate_spot_count: 8,
+            ..first
+        };
+        assert_specs_do_not_share_cached_spots(first, second);
     }
 }

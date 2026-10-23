@@ -273,6 +273,12 @@ faithfully at all: one pixel covers many tiles and the correction is per tile.
 
 So this is not a patch to the argmax. It is a change to how a planet renders.
 
+**And the game's own preview does not run it.** Measured on 2026-10-22 (see
+"Does the preview PNG run it?" below): the `--generate-map-preview` PNG shows
+the raw argmax, never the corrected tile. So a client preview that matches the
+game's preview must NOT port this pass. It matters only to anyone who wants to
+match `get_tile` in a real save.
+
 ## What is NOT established
 
 - The body of `isTileConsistentWithFixedTiles` - the actual rule that decides a
@@ -285,13 +291,14 @@ So this is not a patch to the argmax. It is a change to how a planet renders.
   `0x4850` and `0x4858` hold.
 - What `apply(Surface&)` writes back, and whether it can change tiles outside
   the centre chunk.
-- **How much of the Fulgora residual this pass actually explains.** Nothing here
-  measures that. The mechanism matching the residual's direction and shape is
-  suggestive, not a measurement. `canStartTask` gating on neighbour chunks
-  suggests an experiment - generate an isolated chunk, which may never be
-  corrected, and compare `get_tile` against the same coordinates inside a filled
-  region - but that lever is untested and the task may well run on save, on
-  load, or on first access.
+- **How much of the Fulgora residual this pass actually explains.** Not
+  measured at the forced seed. At the derived seed, in two boundary-heavy
+  blocks, `get_tile` differs from the game's own raw argmax at 1,445 of 18,432
+  tiles (see below), which is the size of effect the forced-seed residual
+  suggested. `canStartTask` suggested an experiment - generate an isolated
+  chunk, which may never be corrected. **That lever was tried and does not
+  work** (2026-10-22): a chunk generated alone is corrected exactly as one with
+  all its neighbours generated. See below.
 - There is **no user-facing debug toggle**. `TileCorrectionDebugPreview::save()`
   exists but no settings string references it, so it is presumably dev-build
   only.
@@ -308,3 +315,133 @@ objdump -d --start-address=0x1016827e4 --stop-address=0x1016828cc /tmp/factorio.
 Addresses are from the 2.1.14 build (Steam, `pnpm refs:sync --check` in sync at
 capture time, 2026-08-14) and **will move on any update**. Re-derive them from
 the symbol table rather than reusing the numbers above.
+
+## The last differing pixel on Nauvis and Vulcanus
+
+Each planet still differs from the game's own preview PNG at exactly one
+pixel. This section records how close the tile scores are at those two tiles,
+measured on our side only. `the_last_nauvis_pixel_is_a_known_argmax` and
+`the_last_vulcanus_pixel_is_a_known_argmax` in `crates/fmw-noise/src/fixtures.rs`
+freeze the numbers, and both are in `POISONED_TESTS`.
+
+Measured 2026-10-22, through the chunk-grid path (`At::tile`), with the
+preview comparison's setup:
+
+| planet   | PNG pixel | tile       | game draws       | we draw                | runner-up (ours)  | winner score | runner-up score | gap in f32 ULPs |
+| -------- | --------- | ---------- | ---------------- | ---------------------- | ----------------- | -----------: | --------------: | --------------: |
+| Nauvis   | 741,493   | 229,-19    | grass-1          | grass-3                | grass-1           |    1.3117754 |       1.3117691 |              53 |
+| Vulcanus | 151,523   | -361,11    | volcanic-cracks  | volcanic-cracks-warm   | volcanic-cracks   |    0.3568011 |       0.3562259 |          19,301 |
+
+In both cases the runner-up is the tile the game draws. So the game's choice
+is our second-best, not some tile we score far away.
+
+What the gap means:
+
+- A gap of a few ULPs would point to a rounding near-tie. The game keeps these
+  scores in f32, so a one-ULP difference in an input could flip the winner.
+- A large gap pointed to a step that runs after tile choice, which we do not
+  port. That was the hypothesis Task 7 tested, and the next section refutes
+  it: the preview PNG runs no such step.
+
+Nauvis sits at 53 ULPs (about 6.3e-6). That is small but not one or two ULPs.
+Vulcanus sits at 19,301 ULPs (about 5.8e-4), which is far too wide for
+rounding. The Vulcanus numbers use host libm trig; the shipped engine takes V8
+trig narrowed to f32, but a gap this wide is not something a few-ULP trig
+difference can close.
+
+The probe in the next section settled it: neither pixel is tile correction.
+The game's own raw argmax already picks the tile it draws, and our scores
+differ from the game's.
+
+## Does the preview PNG run it? No - measured 2026-10-22
+
+`scripts/probes/preview-tile-correction/` asks the game three things about the
+same tiles, at map seed 123456 with the derived surface seeds, the terrain-only
+mod and the PNGs' disabled controls:
+
+- **raw** - the winner among the game's own tile scores. `calculate_tile_properties`
+  accepts the property name `tile:<name>:probability` in 2.1.23 and returns the
+  tile's `probability_expression`. A data-stage copy of each expression returns
+  the same value at every position. Both run on the POINT noise kernel, not the
+  chunk-grid kernel that map generation uses, so a near tie could differ.
+- **filled** - `get_tile` after the block and all its neighbours are generated.
+- **the PNG** - the committed terrain-only preview, matched through `map_color`.
+
+The fixture is `test/fixtures/oracle-preview-tile-correction.json`.
+
+| 96 x 96 block | agree | PNG matches there | differ | PNG shows raw | PNG shows filled | same colour |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Nauvis, around (229, -19) | 9,177 | 9,177 | 39 | 39 | 0 | 0 |
+| Vulcanus, around (-361, 11) | 8,760 | 8,760 | 456 | 454 | 0 | 2 |
+| Fulgora, chunks (-4..-2, 10..12) | 8,494 | 8,494 | 722 | 722 | 0 | 0 |
+| Fulgora, chunks (-12..-10, -1..1) | 8,493 | 8,493 | 723 | 717 | 0 | 6 |
+
+**The PNG never shows a corrected tile.** Of 1,940 tiles where `get_tile` and
+the raw winner differ, the PNG shows the raw tile at 1,932 and the corrected
+tile at none. The other 8 fall where both tiles share a map colour. On Fulgora,
+1,436 of the differing tiles lose the raw score by at least 0.001, far more
+than the two kernels can move a score. Those are tiles the game rewrote after
+the argmax, so the probe could see correction, and the PNG could have shown it.
+Where the two readings agree, the PNG matches all 34,924 tiles, so the pixel
+grid and colour table are right.
+
+The binary agrees, as far as direct calls go. In 2.1.23 the preview worker
+calls `BasicTilesMapGenerationTask::generateBasicTiles` and makes no direct call
+to `TileCorrectionMapGenerationTask` or `correctAndSelectTileTransitions`.
+
+### The two pixels are a score difference, not correction
+
+| tile | the game's raw scores | ours, same point kernel | ours, grid (Task 1) | `get_tile` | PNG |
+| --- | --- | --- | --- | --- | --- |
+| Nauvis (229, -19) | grass-1 1.3117774, grass-3 1.3117646 | grass-1 1.3117714, grass-3 1.3117754 | grass-1 1.3117691, grass-3 1.3117754 | grass-1 | grass-1 |
+| Vulcanus (-361, 11) | volcanic-cracks 0.3580069, volcanic-cracks-warm 0.3568015 | volcanic-cracks 0.3562072, volcanic-cracks-warm 0.3568015 | volcanic-cracks 0.3562259, volcanic-cracks-warm 0.3568011 | volcanic-cracks-warm | volcanic-cracks |
+
+- **Nauvis.** The game's own scores put grass-1 first by 107 f32 ULPs. Ours put
+  grass-3 first, on the point kernel and the grid kernel alike. Through the
+  same point kernel, our grass-1 is 50 ULPs (6.0e-6) low and our grass-3 is 90
+  ULPs (1.08e-5) high. Switching our own engine from the point kernel to the
+  grid kernel moves those two scores by only 19 and 0 ULPs here. So the gap is
+  most likely in our expressions or their inputs, and it is not a later pass.
+  That rests on our point kernel matching the game's. The point-kernel
+  fixtures show this for the noise primitives, but nobody checked the
+  elevation, aux and moisture inputs at this tile. Which term moves was not
+  measured. The likely home is issue #452 (Nauvis fields), which already
+  records our elevation, moisture and aux missing exact matches that an
+  independent engine gets.
+- **Vulcanus.** The game's own scores put volcanic-cracks first by 40,448 ULPs.
+  Our volcanic-cracks-warm matches the game's to the ULP, but our
+  volcanic-cracks is 60,387 ULPs (1.8e-3) low. Our own grid-vs-point shift is
+  627 ULPs, about 1% of that. That is a defect in our volcanic-cracks score
+  at this tile, far too large for trig or rounding. It is tracked in #488
+  and not fixed here.
+  `get_tile` reads volcanic-cracks-warm here because correction rewrote the
+  raw tile. That is the tile we draw, but only by coincidence, and the PNG does
+  not show it.
+
+The "ours, same point kernel" column and the ULP counts are frozen in
+`the_last_nauvis_pixel_on_the_point_kernel_against_the_game` and
+`the_last_vulcanus_pixel_on_the_point_kernel_against_the_game` in
+`crates/fmw-noise/src/fixtures.rs`. They read the game's scores from the
+fixture and state their setup: `At::point` at the integer tile corner the
+probe sampled, Nauvis's `grid` flag off, Vulcanus with host libm trig and its
+four resource controls at size 0. Both are in `POISONED_TESTS`. The grid
+column is Task 1's frozen numbers.
+
+### An isolated chunk is still corrected
+
+The probe's second arm generates one chunk alone, in a separate run, with
+`request_to_generate_chunks(p, 0)`. `is_chunk_generated` then reports only that
+chunk, before and after reading its neighbours. Its tiles still equal the
+filled arm's at all 1,024 positions, on Nauvis, Vulcanus and Fulgora alike. In
+the Fulgora chunk, (-4, 10), all 112 tiles the game rewrote come back
+rewritten. The centre chunk is read before any neighbour, so reading cannot
+have caused this. The game builds the neighbourhood it needs without marking
+those chunks generated, and `get_tile` on them also returns tiles that mostly
+match the filled arm. So "generate an isolated chunk" cannot switch correction
+off.
+
+### What this means for the pixel bar
+
+A pixel where the engine differs from the game's preview cannot be explained as
+tile correction, because the preview does not run it. Every such pixel is a
+difference in the raw scores.

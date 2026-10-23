@@ -86,7 +86,7 @@ def check(label, got, want):
 def decode_common(b, req, params_bytes):
     check("magic", u32(b, 0), MAGIC)
     check("abiVersion", u32(b, 4), ABI_VERSION)
-    check("planet", u32(b, 8), PLANET[req.get("planet", "fulgora")])
+    check("planet", u32(b, 8), PLANET[req["planet"]])
     check("view", u32(b, 12), VIEW[req.get("view", "landmask")])
     check("seed0", u32(b, 16), req["seed0"])
     check("width", u32(b, 20), req["width"])

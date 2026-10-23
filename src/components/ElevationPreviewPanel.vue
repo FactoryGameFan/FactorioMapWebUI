@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { elevationCtxFromPreset } from "../model/elevationPreviewCtx";
+import { PLANET_CAPABILITIES, type PreviewView } from "../model/planetCapabilities";
 import { PLANET_LABELS, PLANETS, type Planet } from "../model/planets";
 import { NAUVIS_MAX_STARTING_POINTS } from "../noise/wasm/request";
 import { surfaceSeedForPlanet } from "../model/planetSurfaceSeed";
@@ -76,8 +77,7 @@ const tooManyStartingPoints = computed(
     startingPointCount.value > NAUVIS_MAX_STARTING_POINTS,
 );
 const supported = computed(() => {
-  if (planet.value === "vulcanus" || planet.value === "fulgora") return true;
-  if (planet.value !== "nauvis") return false;
+  if (planet.value !== "nauvis") return PLANET_CAPABILITIES[planet.value].rendered;
   return (preview.value?.supported ?? false) && !tooManyStartingPoints.value;
 });
 /** The one "why not" message shown when the preview cannot render. */
@@ -86,44 +86,22 @@ const unsupportedMessage = computed(() => {
     return `Previews support up to ${NAUVIS_MAX_STARTING_POINTS} starting points; this preset has ${startingPointCount.value}.`;
   }
   const label =
-    planet.value !== "nauvis" && planet.value !== "vulcanus" && planet.value !== "fulgora"
+    planet.value !== "nauvis"
       ? PLANET_LABELS[planet.value]
       : (preview.value?.mapTypeLabel ?? "this map type");
   return `Client preview is not available for ${label} yet.`;
 });
 
-// The terrain render (renderTerrain, Task 11) always evaluates the Nauvis
-// climate + tile catalog, regardless of the active preset's actual map type -
-// it is only faithful for mapType "nauvis". Enemies and Trees each layer a
-// Nauvis-only overlay on top of it, so those toggles gate on
-// `nauvisOverlaysAvailable` specifically - which requires BOTH the preset's
-// own elevation `mapType` to be "nauvis" AND the selected planet to actually
-// be Nauvis (neither has a Vulcanus port - runRenderRequest skips them for
-// `planet: "vulcanus"` regardless of `view`, so leaving them enabled there
-// would offer a control that silently does nothing).
-// Fulgora (Task 11) has a terrain renderer, and the scrap resource overlay
-// (see `makeFulgoraScrap`) now renders too - but only through the default
-// "all" composite. `resourcesAvailable` below still excludes Fulgora, so it
-// joins `terrainAvailable` only and every dev-mode toggle stays off for it,
-// matching how runRenderRequest falls back to plain terrain for a view it
-// cannot honour. That keeps the dev-mode Resources toggle disabled for
-// Fulgora while ordinary users - who only ever see "all" - get scrap painted
-// automatically. Deliberately out of scope to wire the toggle up too; see
-// `resourcesAvailable`'s comment below.
-// Three views gate more broadly, because each has a Vulcanus port:
-//   Terrain   -> renderVulcanusTerrain (V1)
-//   Resources -> renderVulcanusResources (V2)
-//   Cliffs    -> renderVulcanusCliffs (V3)
-//   Rocks     -> renderVulcanusRocks (V3)
-// so they gate on `terrainAvailable` / `resourcesAvailable` / `cliffsAvailable`
-// / `rocksAvailable`, all of which admit Vulcanus as well as
-// Nauvis-with-Nauvis-map-type.
+// Which toggles a planet offers comes from PLANET_CAPABILITIES, the one table
+// `runRenderRequest` also reads. Nauvis is the exception: its tile views read
+// the Nauvis climate, so they are only faithful for the "nauvis" map type, and
+// a Lakes or Island preset gets elevation only. See `viewAvailable` and
+// `effectiveView` below.
+
 // The user's desired view. Defaults to the full composite, which is the closest
 // thing to the game's own map preview - and with dev mode off (the default) it
 // is the only view a user ever gets, since the toggles are hidden.
-const view = ref<
-  "elevation" | "terrain" | "resources" | "enemies" | "cliffs" | "trees" | "rocks" | "all"
->("all");
+const view = ref<PreviewView>("all");
 const nauvisMapType = computed(() => preview.value?.mapType === "nauvis");
 // Lakes and Island render elevation only; say so once a render is asked for.
 const elevationOnlyNote = computed(() => {
@@ -132,65 +110,46 @@ const elevationOnlyNote = computed(() => {
   if (seed.value === null && !hasRendered.value) return null;
   return `Full terrain is not available for the ${info.mapTypeLabel} map type yet; showing elevation.`;
 });
-const nauvisOverlaysAvailable = computed(
-  () => planet.value !== "vulcanus" && planet.value !== "fulgora" && nauvisMapType.value,
-);
-const terrainAvailable = computed(
-  () => nauvisOverlaysAvailable.value || planet.value === "vulcanus" || planet.value === "fulgora",
-);
-// Resources (V2) and Cliffs (V3) both have Vulcanus ports, so they gate more
-// broadly than enemies/trees/rocks: Nauvis-with-Nauvis-map-type, OR Vulcanus.
-const resourcesAvailable = computed(
-  () => nauvisOverlaysAvailable.value || planet.value === "vulcanus",
-);
-const cliffsAvailable = computed(
-  () => nauvisOverlaysAvailable.value || planet.value === "vulcanus",
-);
-const rocksAvailable = computed(() => nauvisOverlaysAvailable.value || planet.value === "vulcanus");
-// "All" composites whatever the planet has. On Nauvis that is all six overlays;
-// on Vulcanus it is terrain + cliffs + rocks + resources, the four ported.
-const allAvailable = computed(() => nauvisOverlaysAvailable.value || planet.value === "vulcanus");
-// What actually renders, in priority order:
-//   1. Vulcanus, dev mode on, "terrain"/"resources"/"cliffs"/"rocks"/"all"
-//      last picked - honor it (those are the views with a Vulcanus port).
-//   1b. Vulcanus otherwise - "all", which on Vulcanus means terrain + cliffs +
-//      rocks + resources. Enemies and trees have no Vulcanus port, so "all"
-//      composites exactly the four layers that exist.
-//   1c. Fulgora, same shape as Vulcanus, and it must return BEFORE the map-type
-//      check below for the same reason. Its ported views are "terrain" and
-//      "all"; `resourcesAvailable` deliberately excludes Fulgora (see above),
-//      so scrap reaches the user only through the "all" composite. Falling
-//      through to rule 2 on a Lakes/Island preset returned "elevation", and
-//      `runRenderRequest`'s Fulgora branch paints scrap only for "resources"
-//      or "all" - so the whole V3 layer vanished on those presets. Measured at
-//      256x256 around the origin, seed0 123456: "all" and "resources" paint
-//      177 scrap pixels, "elevation" and "terrain" paint 0.
-//   2. Nauvis planet, off-Nauvis map type (Lakes/Island), always "elevation" -
-//      renderTerrain always evaluates the Nauvis climate + tile catalog
-//      regardless of the preset's map type, so every non-elevation view would
-//      be unfaithful there.
-//   3. Nauvis planet, "nauvis" map type, dev mode on: the user's chosen
-//      `view` - `view` is component state that outlives the toggles being
-//      hidden, so this only applies while the toggles are actually visible to
-//      explain it.
-//   4. Nauvis planet, "nauvis" map type, dev mode off: always "all" - the
-//      toggles are hidden from ordinary users, so `view` could otherwise be
-//      stuck on a stale non-composite pick from a prior dev-mode session with
-//      no way back.
+// Nauvis gates every overlay on the preset's map type. Any other planet offers a
+// toggle for each view in its PLANET_CAPABILITIES `views`, so turning a planet's
+// toggles on is a table edit (the render path still needs a branch for it, and
+// throws without one). A view in neither `views` nor `fallToTerrain` gets a
+// disabled toggle, and the render path may refuse it - though Fulgora still
+// renders `landmask` and `resources` internally.
+const viewAvailable = (v: PreviewView): boolean =>
+  planet.value === "nauvis"
+    ? nauvisMapType.value
+    : PLANET_CAPABILITIES[planet.value].views.includes(v);
+const terrainAvailable = computed(() => viewAvailable("terrain"));
+const resourcesAvailable = computed(() => viewAvailable("resources"));
+const cliffsAvailable = computed(() => viewAvailable("cliffs"));
+const rocksAvailable = computed(() => viewAvailable("rocks"));
+const enemiesAvailable = computed(() => viewAvailable("enemies"));
+const treesAvailable = computed(() => viewAvailable("trees"));
+const allAvailable = computed(() => viewAvailable("all"));
+// Nauvis renders elevation for every map type (Lakes and Island show nothing
+// else), so the toggle stays on there even when the map type is not "nauvis".
+const elevationAvailable = computed(() => viewAvailable("elevation") || planet.value === "nauvis");
+// What actually renders:
+//   - Any planet but Nauvis: in dev mode, the user's pick when it is one of the
+//     planet's `views` in PLANET_CAPABILITIES; otherwise "all". This returns
+//     before the map-type check, which is about the Nauvis climate and must not
+//     turn another planet's render into "elevation".
+//   - Nauvis with a Lakes or Island preset: always "elevation". The tile views
+//     read the Nauvis climate and tile catalog whatever the map type, so they
+//     would be unfaithful there.
+//   - Nauvis with the "nauvis" map type: the user's pick in dev mode, "all"
+//     otherwise. `view` outlives the hidden toggles, so without this a stale
+//     pick from an earlier dev-mode session could get stuck with no way back.
 // Deriving this (instead of the old watch that reset `view`) means a round trip
 // through a Lakes preset no longer destroys the chosen view.
-const effectiveView = computed(() => {
-  if (planet.value === "vulcanus") {
-    // Only these have a Vulcanus port; anything else the user last picked on
-    // Nauvis (enemies, trees, elevation) falls back to the composite.
-    const ported = ["terrain", "resources", "cliffs", "rocks", "all"];
-    if (ui.devMode && ported.includes(view.value)) return view.value;
-    return "all";
-  }
-  if (planet.value === "fulgora") {
-    // Terrain is the only non-composite view Fulgora enables a toggle for.
-    const ported = ["terrain", "all"];
-    if (ui.devMode && ported.includes(view.value)) return view.value;
+const effectiveView = computed<PreviewView>(() => {
+  if (planet.value !== "nauvis") {
+    // Only views in the planet's table row have a toggle; anything else the
+    // user last picked (on Nauvis, say) falls back to the composite.
+    if (ui.devMode && PLANET_CAPABILITIES[planet.value].views.includes(view.value)) {
+      return view.value;
+    }
     return "all";
   }
   if (!nauvisMapType.value) return "elevation";
@@ -354,9 +313,11 @@ watch(
         <FButton
           data-test="view-elevation"
           :variant="effectiveView === 'elevation' ? 'tool' : 'default'"
-          :disabled="planet === 'vulcanus'"
+          :disabled="!elevationAvailable"
           :title="
-            planet === 'vulcanus' ? 'Elevation view is not available for Vulcanus yet' : undefined
+            elevationAvailable
+              ? undefined
+              : `Elevation view is not available for ${PLANET_LABELS[planet]} yet`
           "
           @click="view = 'elevation'"
         >
@@ -389,11 +350,9 @@ watch(
         <FButton
           data-test="view-enemies"
           :variant="effectiveView === 'enemies' ? 'tool' : 'default'"
-          :disabled="!nauvisOverlaysAvailable"
+          :disabled="!enemiesAvailable"
           :title="
-            nauvisOverlaysAvailable
-              ? undefined
-              : 'Enemies view is only available for the Nauvis map type'
+            enemiesAvailable ? undefined : 'Enemies view is only available for the Nauvis map type'
           "
           @click="view = 'enemies'"
         >
@@ -413,11 +372,9 @@ watch(
         <FButton
           data-test="view-trees"
           :variant="effectiveView === 'trees' ? 'tool' : 'default'"
-          :disabled="!nauvisOverlaysAvailable"
+          :disabled="!treesAvailable"
           :title="
-            nauvisOverlaysAvailable
-              ? undefined
-              : 'Trees view is only available for the Nauvis map type'
+            treesAvailable ? undefined : 'Trees view is only available for the Nauvis map type'
           "
           @click="view = 'trees'"
         >

@@ -23,6 +23,7 @@ import {
   MAGIC,
   REQUEST_BYTES,
   NAUVIS_PARAMS_BYTES,
+  PLANET,
   VULCANUS_PARAMS_BYTES,
   type WasmRenderRequest,
 } from "../src/noise/wasm/request";
@@ -195,7 +196,7 @@ describe("the WASM engine renders Fulgora's land mask and terrain to their froze
     async (view) => {
       const e = await engine();
       for (const w of WINDOWS) {
-        const wasm = renderThroughWasm(e, { view, seed0: SEED0, ...w });
+        const wasm = renderThroughWasm(e, { planet: "fulgora", view, seed0: SEED0, ...w });
         expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
         freeze(w.label, view, wasm);
       }
@@ -208,8 +209,18 @@ describe("the WASM engine renders Fulgora's land mask and terrain to their froze
     // the same pixels, running it twice would be running it once.
     const e = await engine();
     const w = WINDOWS[0] as Window;
-    const mask = renderThroughWasm(e, { view: "landmask", seed0: SEED0, ...w }).slice();
-    const terrain = renderThroughWasm(e, { view: "terrain", seed0: SEED0, ...w });
+    const mask = renderThroughWasm(e, {
+      planet: "fulgora",
+      view: "landmask",
+      seed0: SEED0,
+      ...w,
+    }).slice();
+    const terrain = renderThroughWasm(e, {
+      planet: "fulgora",
+      view: "terrain",
+      seed0: SEED0,
+      ...w,
+    });
     expect(Array.from(terrain)).not.toEqual(Array.from(mask));
 
     // And the terrain view paints more than the three colours the mask has -
@@ -226,7 +237,7 @@ describe("the WASM engine renders Fulgora's land mask and terrain to their froze
     // the test above one assertion repeated.
     const e = await engine();
     const digests = WINDOWS.map((w) => {
-      const px = renderThroughWasm(e, { seed0: SEED0, ...w });
+      const px = renderThroughWasm(e, { planet: "fulgora", seed0: SEED0, ...w });
       let h = 0;
       for (const v of px) h = (h * 31 + v) | 0;
       return `${String(px.length)}:${String(h)}`;
@@ -239,7 +250,7 @@ describe("the WASM engine renders Fulgora's land mask and terrain to their froze
     // ports while testing nothing about the elevation chain.
     const e = await engine();
     for (const w of WINDOWS) {
-      const px = renderThroughWasm(e, { seed0: SEED0, ...w });
+      const px = renderThroughWasm(e, { planet: "fulgora", seed0: SEED0, ...w });
       let land = 0;
       let ocean = 0;
       for (let i = 0; i < px.length; i += 4) {
@@ -316,9 +327,61 @@ describe("the request encoding is pinned on both sides", () => {
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.fulgora.totalBytes);
   });
 
+  it("refuses a planet the engine has no block for, rather than encoding it as Fulgora", () => {
+    const fulgoraReq = {
+      planet: "fulgora",
+      seed0: 1,
+      width: 1,
+      height: 1,
+      originX: 0,
+      originY: 0,
+      tilesPerPixel: 1,
+      islandsFrequency: 1,
+      islandsSize: 1,
+    } as const;
+    const buf = new Uint8Array(REQUEST_BYTES);
+    // Control: the same request with a known planet encodes.
+    expect(encodeRenderRequest(buf, fulgoraReq)).toBe(120);
+    expect(() => encodeRenderRequest(buf, { ...fulgoraReq, planet: "gleba" } as never)).toThrow(
+      /unknown planet gleba/,
+    );
+    // A missing planet is no longer read as Fulgora either.
+    const { planet: _omitted, ...noPlanet } = fulgoraReq;
+    expect(() => encodeRenderRequest(buf, noPlanet as never)).toThrow(/unknown planet undefined/);
+  });
+
+  it("refuses a planet that has a PLANET code but no params arm, rather than sending Fulgora's", () => {
+    // The next planet will get its `PLANET` code before its params block. Add
+    // a code by hand for this one test: the encoder must throw, not fall back
+    // to Fulgora's 64-byte layout. Restored in `finally`.
+    const codes = PLANET as Record<string, number>;
+    codes.gleba = 99;
+    try {
+      const buf = new Uint8Array(REQUEST_BYTES);
+      const req = {
+        planet: "gleba",
+        seed0: 1,
+        width: 1,
+        height: 1,
+        originX: 0,
+        originY: 0,
+        tilesPerPixel: 1,
+        islandsFrequency: 1,
+        islandsSize: 1,
+      };
+      expect(() => encodeRenderRequest(buf, req as never)).toThrow(
+        /no params layout for planet gleba/,
+      );
+    } finally {
+      delete codes.gleba;
+    }
+    expect(Object.keys(PLANET)).toEqual(["fulgora", "vulcanus", "nauvis"]);
+  });
+
   it("refuses a target buffer too small to hold the request", () => {
     expect(() =>
       encodeRenderRequest(new Uint8Array(119), {
+        planet: "fulgora",
         seed0: 1,
         width: 1,
         height: 1,
@@ -362,7 +425,7 @@ describe("the request encoding is pinned on both sides", () => {
     expect(e.render_request(REQUEST_BYTES)).toBe(2); // bad magic
 
     const w = WINDOWS[0] as Window;
-    const recovered = renderThroughWasm(e, { seed0: SEED0, ...w });
+    const recovered = renderThroughWasm(e, { planet: "fulgora", seed0: SEED0, ...w });
     expect(recovered.length).toBe(w.width * w.height * 4);
   });
 
@@ -371,6 +434,7 @@ describe("the request encoding is pinned on both sides", () => {
     const side = 1024;
     expect(() =>
       renderThroughWasm(e, {
+        planet: "fulgora",
         seed0: SEED0,
         width: side + 1,
         height: side,
@@ -413,6 +477,7 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
 
     const e = await engine();
     const wasm = renderThroughWasm(e, {
+      planet: "fulgora",
       view: "terrain",
       // The SURFACE seed. See the block comment - this is the trap.
       seed0: SEED0,
@@ -513,6 +578,7 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     const SIZE = 256;
     const e = await engine();
     const withMapSeed = renderThroughWasm(e, {
+      planet: "fulgora",
       view: "terrain",
       seed0: 123456,
       width: SIZE,
@@ -574,6 +640,7 @@ describe("the WASM engine's scrap footprint contains the game's scrap", () => {
 
     const e = await engine();
     const footprint = renderThroughWasm(e, {
+      planet: "fulgora",
       view: "scrapFootprint",
       seed0: SEED0,
       width: SIZE,
@@ -627,6 +694,7 @@ describe("the WASM engine's scrap footprint contains the game's scrap", () => {
     const SIZE = 512;
     const e = await engine();
     const footprint = renderThroughWasm(e, {
+      planet: "fulgora",
       view: "scrapFootprint",
       seed0: SEED0,
       width: SIZE,
@@ -665,7 +733,7 @@ describe("the WASM engine renders Fulgora's composite to its frozen bytes", () =
     async (view) => {
       const e = await engine();
       for (const w of [...WINDOWS, ...SCRAP_WINDOWS]) {
-        const wasm = renderThroughWasm(e, { view, seed0: SEED0, ...w });
+        const wasm = renderThroughWasm(e, { planet: "fulgora", view, seed0: SEED0, ...w });
         expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
         freeze(w.label, view, wasm);
       }
@@ -681,8 +749,13 @@ describe("the WASM engine renders Fulgora's composite to its frozen bytes", () =
   it("serves resources and all as the same picture, which is why one arm does both", async () => {
     const e = await engine();
     const w = WINDOWS[0] as Window;
-    const resources = renderThroughWasm(e, { view: "resources", seed0: SEED0, ...w }).slice();
-    const all = renderThroughWasm(e, { view: "all", seed0: SEED0, ...w });
+    const resources = renderThroughWasm(e, {
+      planet: "fulgora",
+      view: "resources",
+      seed0: SEED0,
+      ...w,
+    }).slice();
+    const all = renderThroughWasm(e, { planet: "fulgora", view: "all", seed0: SEED0, ...w });
     expect(Array.from(all)).toEqual(Array.from(resources));
   });
 
@@ -701,8 +774,13 @@ describe("the WASM engine renders Fulgora's composite to its frozen bytes", () =
     const perWindow = new Map<string, number>();
     let total = 0;
     for (const w of [...WINDOWS, ...SCRAP_WINDOWS]) {
-      const terrain = renderThroughWasm(e, { view: "terrain", seed0: SEED0, ...w }).slice();
-      const all = renderThroughWasm(e, { view: "all", seed0: SEED0, ...w });
+      const terrain = renderThroughWasm(e, {
+        planet: "fulgora",
+        view: "terrain",
+        seed0: SEED0,
+        ...w,
+      }).slice();
+      const all = renderThroughWasm(e, { planet: "fulgora", view: "all", seed0: SEED0, ...w });
       let changed = 0;
       for (let i = 0; i < terrain.length; i += 4) {
         if (
@@ -775,8 +853,14 @@ describe("the scrap sliders cross the ABI and are read", () => {
 
   it.each(CASES)("$label changes the engine's picture", async ({ scrap }) => {
     const e = await engine();
-    const neutral = renderThroughWasm(e, { view: "all", seed0: SEED0, ...w }).slice();
+    const neutral = renderThroughWasm(e, {
+      planet: "fulgora",
+      view: "all",
+      seed0: SEED0,
+      ...w,
+    }).slice();
     const moved = renderThroughWasm(e, {
+      planet: "fulgora",
       view: "all",
       seed0: SEED0,
       ...w,
@@ -789,6 +873,7 @@ describe("the scrap sliders cross the ABI and are read", () => {
   it.each(CASES)("$label renders to its frozen bytes", async ({ label, scrap }) => {
     const e = await engine();
     const wasm = renderThroughWasm(e, {
+      planet: "fulgora",
       view: "all",
       seed0: SEED0,
       ...w,
@@ -805,8 +890,14 @@ describe("the scrap sliders cross the ABI and are read", () => {
    */
   it("raising frequency above neutral is a no-op on this window, which is why the cases lower it", async () => {
     const e = await engine();
-    const neutral = renderThroughWasm(e, { view: "all", seed0: SEED0, ...w }).slice();
+    const neutral = renderThroughWasm(e, {
+      planet: "fulgora",
+      view: "all",
+      seed0: SEED0,
+      ...w,
+    }).slice();
     const raised = renderThroughWasm(e, {
+      planet: "fulgora",
       view: "all",
       seed0: SEED0,
       ...w,

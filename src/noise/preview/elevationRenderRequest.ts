@@ -2,6 +2,7 @@ import { CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX } from "../cliffs/cliffCatalog";
 import type { CliffControls, CliffSettingsInput } from "../cliffs/cliffCatalog";
 import type { Point, VulcanusResourceControls } from "../eval/ctx";
 import type { EnemyControls } from "../enemies/enemyCatalog";
+import { PLANET_CAPABILITIES } from "../../model/planetCapabilities";
 import type { Planet } from "../../model/planets";
 import type { ResourceControlLevers } from "../resources/resourceCatalog";
 import type { RockControls } from "../rocks/rockCatalog";
@@ -402,6 +403,7 @@ function renderFulgoraThroughWasm(
   which: "landmask" | "terrain" | "resources" | "all",
 ): ElevationRenderResult {
   const view = renderThroughWasm(engine, {
+    planet: "fulgora",
     view: which,
     seed0: req.seed0,
     width: req.width,
@@ -596,16 +598,8 @@ function servedView(
   planet: Planet,
   view: ElevationRenderRequest["view"],
 ): ElevationRenderRequest["view"] {
-  if (planet === "vulcanus" && (view === "enemies" || view === "trees" || view === "landmask")) {
-    return "terrain";
-  }
-  if (planet === "nauvis" && view === "landmask") return "terrain";
-  if (
-    planet === "fulgora" &&
-    (view === "enemies" || view === "cliffs" || view === "trees" || view === "rocks")
-  ) {
-    return "terrain";
-  }
+  const fallToTerrain: readonly string[] = PLANET_CAPABILITIES[planet].fallToTerrain;
+  if (view !== undefined && fallToTerrain.includes(view)) return "terrain";
   return view;
 }
 
@@ -656,6 +650,8 @@ export function runRenderRequest(
     throw new Error(STARTING_LAKE_POSITIONS_UNSUPPORTED);
   }
   const planet = req.planet ?? "nauvis";
+  // Before any dispatch: a planet with no renderer must not fall through to Nauvis.
+  if (!PLANET_CAPABILITIES[planet].rendered) throw new Error(unsupportedPair(planet, req.view));
   const view = servedView(planet, req.view);
   if (
     view === "terrain" ||
@@ -709,6 +705,10 @@ export function runRenderRequest(
       }
       throw new Error(unsupportedPair(planet, view));
     }
+    // Only Nauvis may reach the Nauvis dispatch below. A planet the capability
+    // table marks `rendered` but that has no branch above throws here, rather
+    // than being painted as Nauvis under its own label.
+    if (planet !== "nauvis") throw new Error(unsupportedPair(planet, view));
     // Every Nauvis tile-family view, all of them served by the module. The
     // TypeScript renderers this used to fall back to are deleted in #227, so
     // the gate stops being a choice between two right answers and becomes the

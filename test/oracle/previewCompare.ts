@@ -53,6 +53,9 @@
  *   node --experimental-strip-types test/oracle/previewCompare.ts <planet> [scrap]
  *
  * `scrap` is Fulgora only: it leaves the `scrap` control on, for the scrap PNG.
+ * `full` leaves every control at its default and loads no data-stage mod, so the
+ * PNG shows everything the game draws (Gleba and Aquilo have a full arm so their
+ * entity footprints can be graded).
  */
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -241,29 +244,46 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const seed = 123456;
   const size = 1024;
   const planet = process.argv[2] ?? "nauvis";
-  const scrap = process.argv[3] === "scrap";
+  const arm = process.argv[3];
+  const scrap = arm === "scrap";
+  const full = arm === "full";
   if (scrap && planet !== "fulgora") {
     console.error("`scrap` applies to fulgora only.");
     process.exit(1);
   }
   // Naming a control the planet does not define is harmless, so the Nauvis
-  // names stay in every arm; each planet's OWN disableable controls are added.
+  // names stay in every arm but `full`, which disables nothing; each planet's
+  // OWN disableable controls are added.
   // Fulgora's are `scrap` and `fulgora_cliff` - `fulgora_islands` reports
   // can_be_disabled: false, so it cannot be switched off and is not listed.
-  const disabled =
-    planet === "vulcanus"
+  // Gleba's are `gleba_stone` and `gleba_cliff`, so a render compared with the
+  // Gleba terrain PNG must set both to size 0, as the capture did. Aquilo's
+  // three resource controls also RESHAPE its islands (`aquilo_island_peaks`
+  // takes a max over their spot fields), so a render compared with the Aquilo
+  // terrain PNG must set `lithium_brine`, `fluorine_vent` and
+  // `aquilo_crude_oil` to size 0 too.
+  const disabled = full
+    ? []
+    : planet === "vulcanus"
       ? [...DISABLEABLE, "calcite", "tungsten_ore", "vulcanus_coal", "sulfuric_acid_geyser"]
       : planet === "fulgora"
         ? [...DISABLEABLE, ...(scrap ? [] : ["scrap"]), "fulgora_cliff"]
-        : DISABLEABLE;
+        : planet === "gleba"
+          ? [...DISABLEABLE, "gleba_stone", "gleba_cliff"]
+          : planet === "aquilo"
+            ? [...DISABLEABLE, "lithium_brine", "fluorine_vent", "aquilo_crude_oil"]
+            : DISABLEABLE;
   const png = await generatePreview({
     seed,
     planet,
     size,
     disabled,
-    dataFinalFixes: TERRAIN_ONLY_DATA_FINAL_FIXES,
+    ...(full ? {} : { dataFinalFixes: TERRAIN_ONLY_DATA_FINAL_FIXES }),
   });
-  const out = join(process.cwd(), `preview-${planet}-${scrap ? "scrap" : "terrain"}.png`);
+  const out = join(
+    process.cwd(),
+    `preview-${planet}-${scrap ? "scrap" : full ? "full" : "terrain"}.png`,
+  );
   await writeFile(out, png);
   console.log(`wrote ${out} (${String(png.length)} bytes)`);
 }
