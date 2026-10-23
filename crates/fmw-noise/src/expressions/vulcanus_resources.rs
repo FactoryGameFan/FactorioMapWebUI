@@ -33,20 +33,17 @@
 //!
 //! The four spot fields are the exception. A query at `(x, y)` reads selected
 //! spots from every region within `MAX_SPOT_BASEMENT_RADIUS`, which is genuine
-//! cross-position state, so it is a `RefCell<BTreeMap>` keyed by a
-//! `SpotCacheKey`: the whole spot spec plus the region. One map rather than
-//! four, because the key itself separates the streams and a second container
-//! could only drift from it.
+//! cross-position state. The cache and the cone walk live in
+//! [`crate::spot_field`], shared with Aquilo; this module supplies the key
+//! (`SpotCacheKey`: the whole spot spec) and the selection. One cache rather
+//! than four, because the key itself separates the streams and a second
+//! container could only drift from it.
 //!
 //! `seed1` alone is NOT the separator. It is distinct across Vulcanus's four
 //! streams (789, 782349, 749, 759), but Aquilo's three wells share `seed1` 567
 //! and, at default sliders, region size 1000; they differ in count (4, 3, 2),
 //! skip offset (0, 1, 2) and radius, so `(seed1, region)` would mix them up.
 //! Every `SpotSpec` field that shapes `select_spots` or the spot values is keyed.
-//!
-//! `BTreeMap` rather than `HashMap` for the reason `vulcanus_biomes` records:
-//! nothing iterates it today, but a determinism-critical port should not carry
-//! a container whose iteration order is unspecified.
 //!
 //! ## Cost
 //!
@@ -89,9 +86,6 @@
 //! the answer this time is that it does not matter.
 
 use crate::at::At;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
 use crate::eval::ctx::EvalCtx;
 use crate::eval::math::{clamp, max2, min2, slider_rescale};
@@ -103,8 +97,8 @@ use crate::expressions::vulcanus_spawn::{
     VulcanusSpawn, WobbleSums, VULCANUS_STARTING_AREA_RADIUS,
 };
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
-use crate::poison;
 use crate::spot_candidates::SpotRegionKey;
+use crate::spot_field::{spot_cone_max, SpotGeometry, SpotRegionCache};
 use crate::spot_selection::{select_spots, SelectedSpot, SpotSelectParams};
 
 /// `vulcanus_ore_spacing` (`suggested_minimum_candidate_point_spacing`).
@@ -159,7 +153,8 @@ struct SpotSpec {
     favor: Favor,
 }
 
-/// The cache key of one region of one spot stream: the WHOLE spec, not `seed1`.
+/// The cache key of one spot stream: the WHOLE spec, not `seed1`. The region
+/// rides beside it in [`SpotRegionCache`]'s own tuple key.
 ///
 /// Every [`SpotSpec`] field is here. The f64 fields go in as `to_bits`, which
 /// is exact where a rounded or floored form could merge two specs: `region_size`
@@ -177,13 +172,11 @@ struct SpotCacheKey {
     candidate_spot_count: u32,
     size_rescaled_bits: u64,
     favor: Favor,
-    region_x: i64,
-    region_y: i64,
 }
 
 impl SpotSpec {
-    /// The cache key of one of this spec's regions.
-    fn cache_key(self, region_x: i64, region_y: i64) -> SpotCacheKey {
+    /// The cache key of this spec's regions.
+    fn cache_key(self) -> SpotCacheKey {
         SpotCacheKey {
             seed1: self.seed1,
             region_size_bits: self.region_size.to_bits(),
@@ -192,32 +185,16 @@ impl SpotSpec {
             candidate_spot_count: self.candidate_spot_count as u32,
             size_rescaled_bits: self.size_rescaled.to_bits(),
             favor: self.favor,
-            region_x,
-            region_y,
         }
     }
 
-    /// `Math.floor(region_size)`.
-    ///
-    /// `select_spots` uses this as an integer modulus. Only the default
-    /// (frequency 1, an exact integer) is oracle-covered.
-    fn floored_region_size(self) -> i64 {
-        self.region_size.floor() as i64
-    }
-
-    /// `Math.floor(rs / 2)`, matching `spotSelection`'s own `half` exactly.
-    ///
-    /// Identical to `rs / 2` at every oracle-covered region size (1000, 900 and
-    /// 800 are all even), but it must not silently diverge at an odd `rs` that a
-    /// non-default frequency slider can reach - frequency 1.5 gives 833.
-    fn half(self) -> i64 {
-        self.floored_region_size() / 2
-    }
-
-    /// The region a coordinate falls in. Regions are centred on multiples of the
-    /// size, which is why this offsets by half before dividing.
-    fn region_index(self, c: f64) -> i64 {
-        ((c + self.half() as f64) / self.floored_region_size() as f64).floor() as i64
+    /// The region math and cone constants of this spec.
+    fn geometry(self) -> SpotGeometry {
+        SpotGeometry {
+            region_size: self.region_size,
+            max_basement_radius: MAX_SPOT_BASEMENT_RADIUS,
+            basement_value: BASEMENT_VALUE,
+        }
     }
 }
 
@@ -280,7 +257,7 @@ pub struct VulcanusResources<'a> {
     /// `vulcanus_sulfuric_acid_patches`' own two-octave noise.
     patch_noise: Prepared,
 
-    region_cache: RefCell<BTreeMap<SpotCacheKey, Vec<SelectedSpot>>>,
+    region_cache: SpotRegionCache<SpotCacheKey>,
 }
 
 impl<'a> VulcanusResources<'a> {
@@ -398,7 +375,7 @@ impl<'a> VulcanusResources<'a> {
                 output_scale: 1.0,
             }),
 
-            region_cache: RefCell::new(BTreeMap::new()),
+            region_cache: SpotRegionCache::new(),
         }
     }
 
@@ -529,10 +506,19 @@ impl<'a> VulcanusResources<'a> {
 
     /// The selected spots of one region of one stream, computed once and cached.
     fn region_spots(&self, spec: SpotSpec, region_x: i64, region_y: i64) -> Vec<SelectedSpot> {
-        let cache_key = spec.cache_key(region_x, region_y);
-        if let Some(hit) = self.region_cache.borrow().get(&cache_key) {
-            return hit.clone();
-        }
+        self.region_cache
+            .get_or_select(spec.cache_key(), region_x, region_y, || {
+                self.select_region_spots(spec, region_x, region_y)
+            })
+    }
+
+    /// Select one region's spots (the cache miss path of [`Self::region_spots`]).
+    fn select_region_spots(
+        &self,
+        spec: SpotSpec,
+        region_x: i64,
+        region_y: i64,
+    ) -> Vec<SelectedSpot> {
         let key = SpotRegionKey {
             seed0: self.seed0,
             seed1: spec.seed1,
@@ -556,10 +542,10 @@ impl<'a> VulcanusResources<'a> {
                 0.0
             }
         };
-        let spots = select_spots(
+        select_spots(
             &key,
             &SpotSelectParams {
-                region_size: spec.floored_region_size() as u64,
+                region_size: spec.geometry().floored_region_size() as u64,
                 candidate_spot_count: spec.candidate_spot_count,
                 spacing: VULCANUS_ORE_SPACING,
                 skip_span: SKIP_SPAN,
@@ -570,11 +556,7 @@ impl<'a> VulcanusResources<'a> {
                 favorability: &favorability,
                 quantity_batch: None,
             },
-        );
-        self.region_cache
-            .borrow_mut()
-            .insert(cache_key, spots.clone());
-        spots
+        )
     }
 
     /// `vulcanus_spot_noise{...}` - the shared noise-function wrapper.
@@ -584,67 +566,19 @@ impl<'a> VulcanusResources<'a> {
     /// distance is measured from. Using the raw coordinate for the region lookup
     /// produces a plausible-looking but wrong field.
     ///
-    /// `hard_region_target_quantity = 0` means no last-spot shrink, so
-    /// `cone_scale` is always 1. It is still applied, so the cone math stays
-    /// faithful if that ever changes.
+    /// The region walk, cull and cone arithmetic are [`spot_cone_max`]; this
+    /// supplies the wobble, the cached spots and the radius
+    /// (`size_expr` at the spot).
     fn spot_noise_at(&self, spec: SpotSpec, at: At) -> f64 {
         let (x, y) = (at.x(), at.y());
         let (wx, wy) = self.resource_wobble_at(at);
-        let sx = x + wx;
-        let sy = y + wy;
-
-        let mut best = BASEMENT_VALUE;
-        let r_x = spec.region_index(sx - MAX_SPOT_BASEMENT_RADIUS)
-            ..=spec.region_index(sx + MAX_SPOT_BASEMENT_RADIUS);
-        for region_x in r_x {
-            let r_y = spec.region_index(sy - MAX_SPOT_BASEMENT_RADIUS)
-                ..=spec.region_index(sy + MAX_SPOT_BASEMENT_RADIUS);
-            for region_y in r_y {
-                for s in self.region_spots(spec, region_x, region_y) {
-                    let dx = sx - s.x as f64;
-                    let dy = sy - s.y as f64;
-                    let d2 = dx * dx + dy * dy;
-                    if d2 > MAX_SPOT_BASEMENT_RADIUS * MAX_SPOT_BASEMENT_RADIUS {
-                        continue;
-                    }
-                    // The game's effective radius is
-                    // `min(maximum_spot_basement_radius, radius_expression)`.
-                    // That cap is deliberately omitted, because it is
-                    // unreachable from every reachable UI state: the `size`
-                    // slider is bounded to [1/6, 6], so the radius is at most
-                    // `2 * 1.2 * 25 = 60`, well under 128. It does NOT hold for
-                    // a `size` an imported map-exchange string can carry - but
-                    // adding it "defensively" would be dead code at every
-                    // slider-reachable setting, and the TypeScript omits it for
-                    // the same reason.
-                    let radius = f64::from(
-                        (self.size_expr(spec, s.x as f64, s.y as f64) * s.cone_scale) as f32,
-                    );
-                    if radius <= 0.0 {
-                        continue;
-                    }
-                    // Same f32 cone arithmetic as the Nauvis regular patches:
-                    // the game renders the cone in the f32 noise machine.
-                    let numerator = f64::from((3.0 * s.quantity) as f32);
-                    let area = f64::from(
-                        (f64::from((std::f64::consts::PI * radius) as f32) * radius) as f32,
-                    );
-                    let peak = f64::from((numerator / area) as f32);
-                    let slope = f64::from((peak / radius) as f32);
-                    let cone = f64::from(
-                        (peak - f64::from((f64::from(d2.sqrt() as f32) * slope) as f32)) as f32,
-                    );
-                    if cone > best {
-                        best = cone;
-                    }
-                }
-            }
-        }
-        // This layer's own poison hook. The cone arithmetic above is the one op
-        // here that nothing upstream already covers - `starting_spot_at_angle`
-        // and `select_spots` carry their own - and it reaches all four regions
-        // and `metal_tile`.
-        poison::f64_result(best)
+        spot_cone_max(
+            &spec.geometry(),
+            x + wx,
+            y + wy,
+            |region_x, region_y| self.region_spots(spec, region_x, region_y),
+            |s| self.size_expr(spec, s.x as f64, s.y as f64),
+        )
     }
 
     /// `vulcanus_place_metal_spots` - the tungsten placer.
@@ -910,51 +844,6 @@ mod tests {
         assert_eq!(acc, FROZEN_FOLD, "fold {acc:#018x}");
     }
 
-    /// The four `region_size` bases, and the floor that `select_spots` needs.
-    ///
-    /// At the default frequency of 1 each is exactly twice its base, so the
-    /// floor is inert - which is exactly why it needs a case where it is not.
-    #[test]
-    fn region_size_floors_only_where_a_fractional_frequency_reaches_it() {
-        let default = SpotSpec {
-            seed1: 0,
-            candidate_spot_count: 1,
-            skip_offset: 0,
-            region_size: 500.0 + 500.0 / 1.0,
-            size_rescaled: 1.0,
-            favor: Favor::Basalts,
-        };
-        assert_eq!(default.floored_region_size(), 1000);
-        assert_eq!(default.half(), 500);
-
-        // Frequency 1.5 gives 833.33..., which floors to an ODD region size.
-        // `half` must floor too, or this diverges from `spot_selection`.
-        let odd = SpotSpec {
-            region_size: 500.0 + 500.0 / 1.5,
-            ..default
-        };
-        assert_eq!(odd.floored_region_size(), 833);
-        assert_eq!(odd.half(), 416, "half must floor, not round");
-    }
-
-    /// Regions are centred on multiples of the size, not cornered at them.
-    #[test]
-    fn the_region_index_offsets_by_half_before_dividing() {
-        let spec = SpotSpec {
-            seed1: 0,
-            candidate_spot_count: 1,
-            skip_offset: 0,
-            region_size: 1000.0,
-            size_rescaled: 1.0,
-            favor: Favor::Basalts,
-        };
-        assert_eq!(spec.region_index(0.0), 0);
-        assert_eq!(spec.region_index(499.0), 0);
-        assert_eq!(spec.region_index(500.0), 1);
-        assert_eq!(spec.region_index(-500.0), 0);
-        assert_eq!(spec.region_index(-501.0), -1);
-    }
-
     /// The favorability shape, including the gate that zeroes it inside spawn.
     ///
     /// `starting_area >= 0.01` collapses the biome term entirely, so the whole
@@ -1051,9 +940,8 @@ mod tests {
     /// Each was planted: with its field dropped from `SpotCacheKey`, its own
     /// test fails.
     ///
-    /// `SpotCacheKey` is private to this module and embeds the Vulcanus-only
-    /// `Favor` enum and `SKIP_SPAN`, so Aquilo cannot reuse it as is; a shared
-    /// spot helper must lift it out first.
+    /// `SpotCacheKey` stays here because it embeds the Vulcanus-only `Favor`
+    /// enum and `SKIP_SPAN`; the cache it keys is `spot_field`'s.
     fn assert_specs_do_not_share_cached_spots(first: SpotSpec, second: SpotSpec) {
         let (ctx, helpers) = layer_at(123_456);
         let spawn = VulcanusSpawn::with_host_trig(&ctx);

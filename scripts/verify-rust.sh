@@ -159,6 +159,8 @@ POISONED_TESTS=(
   fixtures::reproduces_the_vulcanus_elevation_surface_at_every_captured_position
   fixtures::reproduces_the_vulcanus_temperature_at_every_captured_position
   fixtures::reproduces_the_vulcanus_resource_layer_at_every_captured_position
+  # The spot cone's own hook, which moved to `spot_field::spot_cone_max`.
+  expressions::vulcanus_resources::tests::the_shared_spot_query_is_the_vulcanus_one_bit_for_bit
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

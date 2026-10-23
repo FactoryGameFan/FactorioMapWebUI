@@ -30,6 +30,7 @@ pub mod random_penalty;
 pub mod resources;
 pub mod rocks;
 pub mod spot_candidates;
+pub mod spot_field;
 pub mod spot_selection;
 pub mod starting_lakes;
 pub mod taus88;
