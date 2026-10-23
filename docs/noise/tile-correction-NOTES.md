@@ -397,19 +397,31 @@ to `TileCorrectionMapGenerationTask` or `correctAndSelectTileTransitions`.
 
 - **Nauvis.** The game's own scores put grass-1 first by 107 f32 ULPs. Ours put
   grass-3 first, on the point kernel and the grid kernel alike. Through the
-  same point kernel, our grass-1 is 6.0e-6 low and our grass-3 is 1.08e-5 high.
-  So the gap is in our expressions or their inputs, not in a later pass and not
-  only in the kernel. Which term moves was not measured.
+  same point kernel, our grass-1 is 50 ULPs (6.0e-6) low and our grass-3 is 90
+  ULPs (1.08e-5) high. Switching our own engine from the point kernel to the
+  grid kernel moves those two scores by only 19 and 0 ULPs here. So the gap is
+  most likely in our expressions or their inputs, and it is not a later pass.
+  That rests on our point kernel matching the game's. The point-kernel
+  fixtures show this for the noise primitives, but nobody checked the
+  elevation, aux and moisture inputs at this tile. Which term moves was not
+  measured.
 - **Vulcanus.** The game's own scores put volcanic-cracks first by 40,448 ULPs.
-  Our volcanic-cracks-warm matches the game's to about 1e-8, but our
-  volcanic-cracks is 1.8e-3 low. That is a defect in how we compute the
+  Our volcanic-cracks-warm matches the game's to the ULP, but our
+  volcanic-cracks is 60,387 ULPs (1.8e-3) low. Our own grid-vs-point shift is
+  627 ULPs, about 1% of that. That is a defect in how we compute the
   volcanic-cracks score at this tile, far too large for trig or rounding.
   `get_tile` reads volcanic-cracks-warm here because correction rewrote the
   raw tile. That is the tile we draw, but only by coincidence, and the PNG does
   not show it.
 
-The "ours, same point kernel" column came from a one-off engine run at
-`At::point`, not committed. The grid column is Task 1's frozen numbers.
+The "ours, same point kernel" column and the ULP counts are frozen in
+`the_last_nauvis_pixel_on_the_point_kernel_against_the_game` and
+`the_last_vulcanus_pixel_on_the_point_kernel_against_the_game` in
+`crates/fmw-noise/src/fixtures.rs`. They read the game's scores from the
+fixture and state their setup: `At::point` at the integer tile corner the
+probe sampled, Nauvis's `grid` flag off, Vulcanus with host libm trig and its
+four resource controls at size 0. Both are in `POISONED_TESTS`. The grid
+column is Task 1's frozen numbers.
 
 ### An isolated chunk is still corrected
 

@@ -58,9 +58,12 @@ game's own raw winner, and our scores differ from the game's:
 | Nauvis (229, -19)   | grass-1 1.3117774, grass-3 1.3117646                      | grass-1 1.3117714, grass-3 1.3117754                      |
 | Vulcanus (-361, 11) | volcanic-cracks 0.3580069, volcanic-cracks-warm 0.3568015 | volcanic-cracks 0.3562072, volcanic-cracks-warm 0.3568015 |
 
-The right column came from a one-off run of the engine at `At::point`, the same
-kernel `calculate_tile_properties` uses. It is not committed. Task 1's grid
-numbers are in `docs/noise/tile-correction-NOTES.md`.
+The right column is frozen, with its setup, in
+`the_last_nauvis_pixel_on_the_point_kernel_against_the_game` and
+`the_last_vulcanus_pixel_on_the_point_kernel_against_the_game`
+(`crates/fmw-noise/src/fixtures.rs`). They use `At::point`, the same kernel
+`calculate_tile_properties` uses, and read the game's scores from this probe's
+fixture. Task 1's grid numbers are in `docs/noise/tile-correction-NOTES.md`.
 
 The binary agrees. In 2.1.23 the preview worker's code calls
 `BasicTilesMapGenerationTask::generateBasicTiles` directly and makes no direct

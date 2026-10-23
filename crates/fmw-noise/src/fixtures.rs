@@ -11157,3 +11157,145 @@ fn the_last_vulcanus_pixel_is_a_known_argmax() {
     // moved number, do not adjust it.
     assert_eq!(got, ("volcanic-cracks-warm", "volcanic-cracks", 19_301));
 }
+
+/// The game's own POINT-kernel score for `tile` at a Task 7 target, read from
+/// `oracle-preview-tile-correction.json` (`calculate_tile_properties` with
+/// `tile:<name>:probability`, which runs the point kernel, not the chunk grid).
+fn game_point_score(planet: &str, tile: &str) -> f64 {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-preview-tile-correction.json",
+        "2.1.23",
+    );
+    let target = fixture
+        .get("targets")
+        .as_array()
+        .iter()
+        .find(|t| t.get("planet").as_str() == planet)
+        .unwrap_or_else(|| panic!("no {planet} target in the fixture"));
+    target
+        .get("rawTopScores")
+        .as_array()
+        .iter()
+        .find(|s| s.get("tile").as_str() == tile)
+        .unwrap_or_else(|| panic!("no {tile} score for {planet}"))
+        .get("score")
+        .as_f64()
+}
+
+/// `(ours - game)` in f32 ULPs at the game score's magnitude.
+fn delta_ulps(ours: f64, game: f64) -> i64 {
+    let g = game as f32;
+    let ulp = f64::from(f32::from_bits(g.abs().to_bits() + 1) - g.abs());
+    ((ours - game) / ulp).round() as i64
+}
+
+/// Task 7: the last Nauvis pixel, scored on the POINT kernel the game's own
+/// raw scores came from, so the kernel cannot be the difference.
+///
+/// Setup: seed 123456 with default Nauvis controls (the controls the preview
+/// switches off reach no tile expression), `NauvisTileFields.grid = false`, so
+/// every noise layer takes `At::point` at the integer tile corner (229, -19),
+/// which is where the probe sampled. Our point kernel reproduces the game's
+/// point-kernel fixtures exactly, so what is left is our expressions or their
+/// inputs.
+#[test]
+fn the_last_nauvis_pixel_on_the_point_kernel_against_the_game() {
+    let seed0 = 123_456;
+    let stack = NauvisStack::new(&NauvisCtx::defaults(seed0));
+    let catalog = NauvisTileCatalog::new(seed0);
+    let scores = |grid: bool| {
+        let at = if grid {
+            At::tile(229, -19)
+        } else {
+            At::point(229.0, -19.0)
+        };
+        let f = NauvisTileFields {
+            x: 229.0,
+            y: -19.0,
+            elevation: stack.elevation_nauvis.eval_at(at),
+            aux: stack.aux.eval_at(at),
+            moisture: stack.moisture.eval_at(at),
+            grid,
+        };
+        let probs = catalog.probabilities(&f);
+        let of = |name: &str| probs[TILE_ORDER.iter().position(|t| t.name() == name).unwrap()];
+        (of("grass-1"), of("grass-3"))
+    };
+    let (point_g1, point_g3) = scores(false);
+    let (grid_g1, grid_g3) = scores(true);
+    let game_g1 = game_point_score("nauvis", "grass-1");
+    let game_g3 = game_point_score("nauvis", "grass-3");
+    let got = (
+        delta_ulps(point_g1, game_g1),
+        delta_ulps(point_g3, game_g3),
+        // Our own grid-minus-point, for scale: what the kernel alone moves here.
+        delta_ulps(grid_g1, point_g1),
+        delta_ulps(grid_g3, point_g3),
+    );
+    eprintln!(
+        "nauvis (229,-19) point: grass-1 {point_g1} (game {game_g1}), grass-3 {point_g3} \
+         (game {game_g3}); grid: {grid_g1}, {grid_g3}; ulps {got:?}"
+    );
+    // The game's point scores put grass-1 first; ours, on the same kernel, put
+    // grass-3 first.
+    assert!(game_g1 > game_g3 && point_g3 > point_g1);
+    // Measured 2026-10-22: on the point kernel our grass-1 is 50 ULPs low and
+    // our grass-3 is 90 ULPs high, against our own grid-vs-point shift of 19
+    // and 0 ULPs. Read a moved number, do not adjust it.
+    assert_eq!(got, (-50, 90, -19, 0));
+}
+
+/// Task 7: the last Vulcanus pixel on the POINT kernel, as above.
+///
+/// Setup: surface seed 1,249,936,247 (derived from map seed 123456), the four
+/// Vulcanus resource controls at size 0 as in the preview PNG, HOST libm trig
+/// (`with_host_trig`; the shipped engine takes V8 trig narrowed to f32, a
+/// few-ULP difference), at `At::point(-361, 11)`, the integer tile corner the
+/// probe sampled.
+#[test]
+fn the_last_vulcanus_pixel_on_the_point_kernel_against_the_game() {
+    let levers = ResourceLevers {
+        frequency: 1.0,
+        size: 0.0,
+    };
+    let mut ctx = crate::eval::ctx::EvalCtx::new(1_249_936_247);
+    ctx.vulcanus_resource_controls = VulcanusResourceControls {
+        tungsten_ore: levers,
+        vulcanus_coal: levers,
+        calcite: levers,
+        sulfuric_acid_geyser: levers,
+    };
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let scores = |at: At| {
+        let probs = stack.tile_probabilities_at(at);
+        let of = |name: &str| {
+            probs[crate::tiles::vulcanus_catalog::TILE_ORDER
+                .iter()
+                .position(|t| t.name() == name)
+                .unwrap()]
+        };
+        (of("volcanic-cracks"), of("volcanic-cracks-warm"))
+    };
+    let (point_cracks, point_warm) = scores(At::point(-361.0, 11.0));
+    let (grid_cracks, grid_warm) = scores(At::tile(-361, 11));
+    let game_cracks = game_point_score("vulcanus", "volcanic-cracks");
+    let game_warm = game_point_score("vulcanus", "volcanic-cracks-warm");
+    let got = (
+        delta_ulps(point_cracks, game_cracks),
+        delta_ulps(point_warm, game_warm),
+        delta_ulps(grid_cracks, point_cracks),
+        delta_ulps(grid_warm, point_warm),
+    );
+    eprintln!(
+        "vulcanus (-361,11) point: cracks {point_cracks} (game {game_cracks}), warm \
+         {point_warm} (game {game_warm}); grid: {grid_cracks}, {grid_warm}; ulps {got:?}"
+    );
+    assert!(game_cracks > game_warm && point_warm > point_cracks);
+    // Measured 2026-10-22: our volcanic-cracks-warm equals the game's to the
+    // ULP, and our volcanic-cracks is 60,387 ULPs (about 1.8e-3) low. Our own
+    // grid-vs-point shift is 627 and -12 ULPs, two orders smaller. Read a moved
+    // number, do not adjust it.
+    assert_eq!(got, (-60_387, 0, 627, -12));
+}

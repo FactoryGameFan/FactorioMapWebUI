@@ -126,6 +126,9 @@ POISONED_TESTS=(
   # f64_result hooks on the elevation, aux and moisture fields move the gap.
   fixtures::the_last_nauvis_pixel_is_a_known_argmax
   fixtures::the_last_vulcanus_pixel_is_a_known_argmax
+  # The same two pixels on the point kernel, against the game's own scores (Task 7).
+  fixtures::the_last_nauvis_pixel_on_the_point_kernel_against_the_game
+  fixtures::the_last_vulcanus_pixel_on_the_point_kernel_against_the_game
   fixtures::reproduces_the_jitter_zero_voronoi_fixture_exactly
   fixtures::reproduces_the_jittered_voronoi_fixture_exactly
   fixtures::reproduces_the_voronoi_point_inversion_lattice_exactly
