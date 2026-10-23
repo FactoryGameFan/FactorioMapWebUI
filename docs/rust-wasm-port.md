@@ -287,8 +287,12 @@ catches the port moving - including underneath it in the toolchain.
 
 **Native against WASM.** `crates/fmw-wasm/src/native_parity.rs` is a
 `cargo test` that recomputes Fulgora's 76 tier-2 folds natively, for both
-cases of `test/wasmFulgoraParity.spec.ts`, and compares each case's sorted
-list with the frozen rows in `test/fixtures/tier2-checksums.json`. The WASM
+cases of `test/wasmFulgoraParity.spec.ts`, and compares them field by field:
+the native fold for field index `i` must equal the frozen row
+`"<case> | <FIELD_NAMES[i]>"` in `test/fixtures/tier2-checksums.json`. The names
+are scanned from the spec's own `FIELD_NAMES` block at compile time, so the
+mapping cannot drift (a sorted-list comparison would pass if two fields
+swapped values). The WASM
 spec already checks the module against those same rows, so native equals
 frozen and WASM equals frozen together mean native equals WASM. This is the
 check that sees a libm call differing between the two hosts. It covers the
