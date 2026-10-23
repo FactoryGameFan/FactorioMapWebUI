@@ -17,10 +17,18 @@ return any different value. The header of `capture.ts` explains the design.
 ## What it compares
 
 The call is `gleba_simple_spot`'s: seed 1000, `skip_span = 1`, 22 candidates,
-spacing 80, `region_size = 400`, quantity `radius^2`, basement -1. The wobble is
-left out, and the radius is 30 so a coarse grid hits cones. The surface is Gleba
-with its seed forced to 123456 (read back). The 512 positions are a 32 x 16 grid
-over 3 x 3 regions.
+spacing 80, `region_size = 400`, quantity `radius^2`, basement -1. Three things
+are simplified:
+
+- the wobble is left out;
+- the radius is 30, so a coarse grid hits cones;
+- `density_expression` and `spot_favorability_expression` are the constant 1.
+  Gleba passes a varying field (such as `gleba_highland`).
+
+Favorability changes which spots are accepted. So "legal" does not depend on it,
+but the 14-position and 177-versus-182 figures below hold for constant
+favorability only. The surface is Gleba with its seed forced to 123456 (read
+back). The 512 positions are a 32 x 16 grid over 3 x 3 regions.
 
 Each arm is its own Factorio process, so no two arms share a spot cache key.
 
@@ -57,6 +65,8 @@ assertion probably needs a path `calculate_tile_properties` does not take, such
 as chunk generation. The search for the line cannot be checked against a real
 crash, because none happened.
 
-What this does settle: offset 1 with span 1 does not crash by itself, and the
-old note's cause (offset must be below span) is not what the crash was. Offset 5
-with span 1 also ran without a crash; its field was not inspected.
+What this does settle: offset 1 with span 1 is not, by itself, a crash on the
+`calculate_tile_properties` path. The cause of the original crash is still
+unreproduced. It came from probing many `skip_offset` values in one map, perhaps
+through another harness or through chunk generation. Offset 5 with span 1 also
+ran without a crash; its field was not inspected.

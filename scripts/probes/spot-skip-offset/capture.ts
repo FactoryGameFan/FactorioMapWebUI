@@ -1,5 +1,5 @@
 /**
- * Is spot_noise with skip_span = ${String(span)}, skip_offset = 1 legal? Gleba's stone and
+ * Is spot_noise with skip_span = 1, skip_offset = 1 legal? Gleba's stone and
  * ore (`gleba_simple_spot`, planet-gleba-map-gen.lua) call it that way.
  *
  *   node --experimental-strip-types scripts/probes/spot-skip-offset/capture.ts
@@ -13,9 +13,12 @@
  * The call is `gleba_simple_spot`'s own: seed0 = map_seed, seed1 = 1000,
  * region_size = spacing * 5, candidate_spot_count = 22, spacing 80,
  * quantity radius^2, hard_region_target_quantity = 0, basement_value = -1,
- * maximum_spot_basement_radius = radius * 2. Two things differ on purpose:
- * the wobble is left out (it only moves x and y), and the radius is 30 rather
- * than Gleba's 6 * size^0.5, so a coarse grid lands on cones.
+ * maximum_spot_basement_radius = radius * 2. Three things differ on purpose:
+ * the wobble is left out (it only moves x and y), the radius is 30 rather
+ * than Gleba's 6 * size^0.5 so a coarse grid lands on cones, and density and
+ * favorability are the constant 1 where Gleba passes a varying field (such as
+ * gleba_highland). Favorability changes which spots are accepted, so the
+ * offset 1 versus offset 0 differences hold for constant favorability only.
  *
  * - Fixture arms, each in its OWN Factorio process so no two can share a spot
  *   cache key: `offset1` (skip_offset = 1) and `offset0` (the control).
@@ -328,7 +331,10 @@ async function main(): Promise<void> {
     `Ground truth from Factorio ${primary.version} and ${others.map((o) => o.version).join(", ")}, read with ` +
     "calculate_tile_properties on a Gleba surface with seed forced to 123456. Each arm is its own Factorio process. " +
     "The call is gleba_simple_spot's (seed1 1000, skip_span 1, region_size 400, 22 candidates, spacing 80, quantity " +
-    "radius^2, basement -1) minus the wobble, with radius 30. `positions` is a 32 x 16 grid (x -400..375 step 25, " +
+    "radius^2, basement -1) with three simplifications: no wobble, radius 30, and density_expression and " +
+    "spot_favorability_expression both the constant 1 (Gleba uses a varying field, e.g. gleba_highland). " +
+    "Favorability changes which spots are accepted, so the offset 1 versus offset 0 differences are specific to " +
+    "constant favorability; that offset 1 is legal does not depend on it. `positions` is a 32 x 16 grid (x -400..375 step 25, " +
     "y -400..350 step 50), i.e. 3 x 3 regions. `offset1` and `offset0` are the field at skip_offset 1 and 0. " +
     "Captured by scripts/probes/spot-skip-offset. Graded by Stage 3 (Gleba stone and ore).";
   const lines = [

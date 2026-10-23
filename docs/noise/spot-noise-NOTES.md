@@ -81,6 +81,10 @@ off a heightmap.
   keeps indices `skip_offset, skip_offset + skip_span, ...`, so with span 1 offset
   1 is offset 0 minus the first spot. Offset 5 with span 1 also ran without a
   crash (field not inspected).
+  The probe simplified three things: no wobble, radius 30, and density and
+  favorability both the constant 1 (Gleba uses a varying field). "Legal" does not
+  depend on those, but the 14-position and 177-versus-182 figures hold for
+  constant favorability only.
 - **`density_expression` is quantity per unit area**, so it is a small number.
   The regional target is `average density * region area`; with `density = 1` and
   `region_size = 1024` the target is 1048576, i.e. ~104 spots of quantity 10000.
@@ -90,8 +94,9 @@ off a heightmap.
 
 ## The candidate-point cache (a hard crash, and what it reveals)
 
-Probing many `skip_offset` values in one map crashed the game once (the cause
-is not the offset - see the `skip_offset` gotcha above):
+Probing many `skip_offset` values in one map crashed the game once. Offset 1
+with span 1 is not by itself a crash on the `calculate_tile_properties` path (see
+the `skip_offset` gotcha above); the original cause is unreproduced:
 
 ```
 SpotNoiseCache.cpp:150: this->candidateSpotCount == candidateSpotCount was not true
@@ -261,8 +266,10 @@ region sizes 1024/2048):
        previously accepted a; on each rejection spacingSq *= 15/16.
      Walk until candidate_spot_count * skip_span spots are accepted.
      (No cap observed through ~170 tried; rejected candidates never return.)
-2. SKIP: accepted spot j (acceptance order) belongs to set j mod skip_span;
-   an expression renders the set matching its skip_offset.
+2. SKIP: an expression renders accepted spots skip_offset, skip_offset +
+   skip_span, ... (the `generateSpotList` rule; measured at span 1, offset 1 by
+   scripts/probes/spot-skip-offset - see the `skip_offset` gotcha above). For
+   skip_offset < skip_span this is "j mod skip_span == skip_offset".
 3. TARGET: regional quantity target = mean of density_expression over the
    set's accepted spot positions, times region_size^2. (Proven to sample the
    ACCEPTED spots, not the first candidates and not a uniform average, via
