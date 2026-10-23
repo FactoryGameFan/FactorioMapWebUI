@@ -51,9 +51,13 @@ describe("Fulgora land-mask render", () => {
   it("produces a byte-identical land mask to the full terrain render", () => {
     for (const tpp of [8, 2]) {
       for (const w of windows(tpp, 3)) {
-        const terrain = renderThroughWasm(engine, { view: "terrain", ...w }).slice();
+        const terrain = renderThroughWasm(engine, {
+          planet: "fulgora",
+          view: "terrain",
+          ...w,
+        }).slice();
         const viaTerrain = landMaskFromImage(terrain, w.width, w.height);
-        const mask = renderThroughWasm(engine, { view: "landmask", ...w });
+        const mask = renderThroughWasm(engine, { planet: "fulgora", view: "landmask", ...w });
         const direct = landMaskFromImage(mask, w.width, w.height);
 
         // Not vacuous: a window that were all ocean (or all land) would make

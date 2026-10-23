@@ -402,6 +402,7 @@ function renderFulgoraThroughWasm(
   which: "landmask" | "terrain" | "resources" | "all",
 ): ElevationRenderResult {
   const view = renderThroughWasm(engine, {
+    planet: "fulgora",
     view: which,
     seed0: req.seed0,
     width: req.width,

@@ -124,8 +124,8 @@ interface CommonRenderRequest {
 }
 
 export interface FulgoraRenderRequest extends CommonRenderRequest {
-  /** Optional so existing Fulgora call sites need no change. */
-  readonly planet?: "fulgora";
+  /** Required: every request names its planet, so none is guessed. */
+  readonly planet: "fulgora";
   readonly islandsFrequency: number;
   readonly islandsSize: number;
   /**
@@ -412,7 +412,10 @@ export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }
  * handed the length so it can check the declared block against what arrived.
  */
 export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest): number {
-  const planet = req.planet ?? "fulgora";
+  const planet = req.planet;
+  if (!Object.hasOwn(PLANET, planet)) {
+    throw new Error(`unknown planet ${String(planet)} in render request`);
+  }
   const paramsBytes =
     planet === "vulcanus"
       ? VULCANUS_PARAMS_BYTES
