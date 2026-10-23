@@ -159,6 +159,31 @@ POISONED_TESTS=(
   fixtures::reproduces_the_vulcanus_elevation_surface_at_every_captured_position
   fixtures::reproduces_the_vulcanus_temperature_at_every_captured_position
   fixtures::reproduces_the_vulcanus_resource_layer_at_every_captured_position
+  # The spot cone's own hook, which moved to `spot_field::spot_cone_max`.
+  expressions::vulcanus_resources::tests::the_shared_spot_query_is_the_vulcanus_one_bit_for_bit
+  # Aquilo's starting cones, spot fields and well probabilities. The size-0
+  # case reds through the starting cones' hook and the basement passing
+  # through `spot_cone_max`'s.
+  fixtures::aquilo_resource_fields_match_the_game_default
+  fixtures::aquilo_resource_fields_match_the_game_size0
+  fixtures::aquilo_resource_fields_match_the_game_moved
+  # Aquilo's terrain fields. Every field reads basis_noise or Voronoi hooks;
+  # the elevation also carries `poison::f64_result`.
+  fixtures::aquilo_terrain_fields_match_the_game_default
+  fixtures::aquilo_terrain_fields_match_the_game_size0
+  fixtures::aquilo_terrain_fields_match_the_game_moved
+  fixtures::aquilo_elevation_and_aux_match_the_game_at_default_levers
+  # Aquilo's nine tile scores (through `poison::f64_result`) and winner
+  # (through `poison::index_result` in `argmax`).
+  fixtures::aquilo_tile_scores_match_the_game
+  fixtures::aquilo_tile_winner_matches_the_game
+  # The two iceberg probabilities, through `poison::f64_result` in
+  # `iceberg_probabilities`. The first also reds through the field's hooks; the
+  # second feeds the game's own peaks, so only the formula's hook reaches it.
+  fixtures::aquilo_iceberg_probabilities_match_the_game
+  fixtures::the_aquilo_iceberg_formula_reproduces_the_game_from_its_own_peaks
+  # The game's amplitude-corrected form (#254), through basis_noise's hook.
+  fixtures::the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

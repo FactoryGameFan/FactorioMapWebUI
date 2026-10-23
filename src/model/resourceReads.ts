@@ -8,6 +8,7 @@
  * `makeResourceResolver`'s `controls` map. See M3a plan T6.
  */
 import type { AutoplaceSetting } from "./types";
+import type { AquiloResourceControls } from "../noise/wasm/request";
 import type { VulcanusResourceControls, VulcanusResourceLevers } from "../noise/eval/ctx";
 import type { ResourceControlLevers } from "../noise/resources/resourceCatalog";
 import { RESOURCE_CATALOG } from "../noise/resources/resourceCatalog";
@@ -44,5 +45,26 @@ export function readVulcanusResourceControls(preset: {
     vulcanusCoal: read("vulcanus_coal"),
     calcite: read("calcite"),
     sulfuricAcidGeyser: read("sulfuric_acid_geyser"),
+  };
+}
+
+/**
+ * The three Aquilo resource autoplace controls (`aquilo_crude_oil`,
+ * `lithium_brine`, `fluorine_vent`). An absent control reads as the neutral
+ * 1/1, never size 0: a preset imported from a Nauvis-era string carries none of
+ * them, and size 0 would remove the wells and reshape the islands. A control
+ * that IS present keeps whatever it holds, a size of 0 included.
+ */
+export function readAquiloResourceControls(preset: {
+  autoplaceControls: Record<string, AutoplaceSetting>;
+}): Required<AquiloResourceControls> {
+  const read = (name: string) => {
+    const c = preset.autoplaceControls[name];
+    return c ? { frequency: c.frequency, size: c.size } : { frequency: 1, size: 1 };
+  };
+  return {
+    crudeOil: read("aquilo_crude_oil"),
+    lithiumBrine: read("lithium_brine"),
+    fluorineVent: read("fluorine_vent"),
   };
 }

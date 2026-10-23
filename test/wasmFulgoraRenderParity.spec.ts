@@ -19,6 +19,7 @@ import {
   ABI_VERSION,
   COMMON_BYTES,
   encodeRenderRequest,
+  AQUILO_PARAMS_BYTES,
   FULGORA_PARAMS_BYTES,
   MAGIC,
   REQUEST_BYTES,
@@ -281,11 +282,12 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.abiVersion).toBe(ABI_VERSION);
     expect(fixture.commonBytes).toBe(COMMON_BYTES);
 
-    // All THREE planets, since #226. A block added without a version bump is
-    // exactly the change this fixture exists to notice: the prefix declares its
-    // own length, so a wrong Nauvis block would decode as a length error rather
-    // than as garbage - but only if something writes it and compares.
-    for (const planet of ["fulgora", "vulcanus", "nauvis"] as const) {
+    // All FOUR planets (Aquilo joined in #454; Nauvis in #226). A block added
+    // without a version bump is exactly the change this fixture exists to
+    // notice: the prefix declares its own length, so a wrong Nauvis block would
+    // decode as a length error rather than as garbage - but only if something
+    // writes it and compares.
+    for (const planet of ["fulgora", "vulcanus", "nauvis", "aquilo"] as const) {
       const arm = fixture[planet];
       const target = new Uint8Array(REQUEST_BYTES);
       const written = encodeRenderRequest(target, arm.request as WasmRenderRequest);
@@ -307,6 +309,10 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.fulgora.totalBytes).toBe(COMMON_BYTES + FULGORA_PARAMS_BYTES);
     expect(fixture.vulcanus.totalBytes).toBe(COMMON_BYTES + VULCANUS_PARAMS_BYTES);
     expect(fixture.nauvis.totalBytes).toBe(COMMON_BYTES + NAUVIS_PARAMS_BYTES);
+    // Aquilo's block is 128 bytes, so its request is 184 - smaller than
+    // Vulcanus's, so `REQUEST_BYTES` stays Nauvis's 568.
+    expect(fixture.aquilo.totalBytes).toBe(COMMON_BYTES + AQUILO_PARAMS_BYTES);
+    expect(fixture.aquilo.totalBytes).toBe(184);
     // Nauvis is the LARGEST now, at 568 - the resource overlay's eighteen
     // per-resource levers took it past Vulcanus's 368, and #227's
     // starting-point block (a count plus eight `[x, y]` pairs) grew it again so
@@ -320,6 +326,7 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.nauvis.totalBytes).toBe(568);
     expect(REQUEST_BYTES).toBe(fixture.nauvis.totalBytes);
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.vulcanus.totalBytes);
+    expect(REQUEST_BYTES).toBeGreaterThan(fixture.aquilo.totalBytes);
     // Fulgora's block moved for the first time since v1: 48 to 64 bytes, so
     // 104 to 120, when #363 appended the two scrap sliders. It is still the
     // smallest of the three by a wide margin.
@@ -355,7 +362,7 @@ describe("the request encoding is pinned on both sides", () => {
     // a code by hand for this one test: the encoder must throw, not fall back
     // to Fulgora's 64-byte layout. Restored in `finally`.
     const codes = PLANET as Record<string, number>;
-    codes.gleba = 99;
+    codes.gleba = 4;
     try {
       const buf = new Uint8Array(REQUEST_BYTES);
       const req = {
@@ -375,7 +382,7 @@ describe("the request encoding is pinned on both sides", () => {
     } finally {
       delete codes.gleba;
     }
-    expect(Object.keys(PLANET)).toEqual(["fulgora", "vulcanus", "nauvis"]);
+    expect(Object.keys(PLANET)).toEqual(["fulgora", "vulcanus", "nauvis", "aquilo"]);
   });
 
   it("refuses a target buffer too small to hold the request", () => {

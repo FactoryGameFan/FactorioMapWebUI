@@ -184,3 +184,14 @@ describe("elevationCtxFromPreset", () => {
     expect(r.ctx.temperatureBias).toBe(0);
   });
 });
+
+describe("elevationCtxFromPreset: Aquilo resource controls", () => {
+  it("reads the three Aquilo controls off the preset", () => {
+    const p = lakesPreset();
+    p.autoplaceControls.lithium_brine = { frequency: 1, size: 0, richness: 1 };
+    const c = elevationCtxFromPreset(p).aquiloResourceControls;
+    expect(c.lithiumBrine).toEqual({ frequency: 1, size: 0 });
+    expect(c.crudeOil).toEqual({ frequency: 1, size: 1 });
+    expect(c.fluorineVent).toEqual({ frequency: 1, size: 1 });
+  });
+});

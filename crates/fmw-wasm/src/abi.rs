@@ -57,7 +57,7 @@
 //! common prefix
 //!   0  u32  magic          'FMWR' little-endian
 //!   4  u32  abi_version
-//!   8  u32  planet         0 = fulgora, 1 = vulcanus, 2 = nauvis
+//!   8  u32  planet         0 = fulgora, 1 = vulcanus, 2 = nauvis, 3 = aquilo
 //!  12  u32  view           see the VIEW_* constants in render.rs; 0 = landmask
 //!                          through 7 = trees. Adding a code is not a layout
 //!                          change - only `supported` has to name it.
@@ -95,6 +95,18 @@
 //! +88  f64 x 20  trig, as ten (sin, cos) pairs in TRIG ORDER below
 //! +248 f64 x 4   cell_query_box: x0, y0, x1, y1
 //! +280 f64 x 4   placement_sweep_box: x0, y0, x1, y1
+//!
+//! aquilo block (128 bytes, so an Aquilo request is 184)
+//!  +0  f64  crude_oil_frequency
+//!  +8  f64  crude_oil_size
+//! +16  f64  lithium_brine_frequency
+//! +24  f64  lithium_brine_size
+//! +32  f64  fluorine_vent_frequency
+//! +40  f64  fluorine_vent_size
+//! +48  f64 x 6   trig: (sin, cos) for the crude oil, lithium brine and
+//!                fluorine vent bearings, in that order
+//! +96  f64 x 4   placement_sweep_box: x0, y0, x1, y1 (same meaning as
+//!                Vulcanus's)
 //!
 //! nauvis block (512 bytes, so a Nauvis request is 568 - the largest, so
 //! `REQUEST_BYTES` is Nauvis's)
@@ -171,6 +183,10 @@ pub const FULGORA_PARAMS_BYTES: usize = 64;
 /// Size of Vulcanus's parameter block.
 pub const VULCANUS_PARAMS_BYTES: usize = 312;
 
+/// Size of Aquilo's parameter block: six levers, three bearings' trig and the
+/// placement sweep box.
+pub const AQUILO_PARAMS_BYTES: usize = 128;
+
 /// Nauvis's block: eight climate and elevation levers, the tree overlay's four,
 /// the rock overlay's two, its sweep box, the enemy overlay's two, the cliff
 /// overlay's five and its own query box, then the resource overlay's eighteen.
@@ -220,6 +236,8 @@ pub const REQUEST_BYTES: usize = COMMON_BYTES
     } else {
         VULCANUS_PARAMS_BYTES
     };
+// Aquilo's block (128) is smaller than both, so it does not enter the `max`.
+const _: () = assert!(AQUILO_PARAMS_BYTES < VULCANUS_PARAMS_BYTES);
 
 /// `planet` code for Fulgora.
 pub const PLANET_FULGORA: u32 = 0;
@@ -227,6 +245,8 @@ pub const PLANET_FULGORA: u32 = 0;
 pub const PLANET_VULCANUS: u32 = 1;
 /// Planet code for Nauvis.
 pub const PLANET_NAUVIS: u32 = 2;
+/// Planet code for Aquilo.
+pub const PLANET_AQUILO: u32 = 3;
 
 /// The ten Vulcanus bearings, in the order their `(sin, cos)` pairs appear in
 /// the block.
@@ -304,6 +324,7 @@ pub enum Params {
     Fulgora(FulgoraParams),
     Vulcanus(VulcanusParams),
     Nauvis(NauvisParams),
+    Aquilo(AquiloParams),
 }
 
 /// Fulgora's block.
@@ -327,6 +348,31 @@ pub struct FulgoraParams {
     /// [`FulgoraParams::scrap_frequency`].
     pub scrap_size: f64,
 }
+
+/// Aquilo's block.
+///
+/// The levers are wire values for `control:aquilo_crude_oil`,
+/// `control:lithium_brine` and `control:fluorine_vent`. Neutral is 1, and
+/// `Default` gives 0 on purpose, as [`FulgoraParams::scrap_frequency`]
+/// explains: the writer substitutes the neutral value once.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct AquiloParams {
+    pub crude_oil_frequency: f64,
+    pub crude_oil_size: f64,
+    pub lithium_brine_frequency: f64,
+    pub lithium_brine_size: f64,
+    pub fluorine_vent_frequency: f64,
+    pub fluorine_vent_size: f64,
+    /// Three `(sin, cos)` pairs, V8's values: crude oil, lithium brine, then
+    /// fluorine vent.
+    pub trig: [(f64, f64); AQUILO_BEARINGS],
+    /// The world box to sweep for placement-roll hits, as `[x0, y0, x1, y1]`.
+    /// Same meaning as [`VulcanusParams::placement_sweep_box`].
+    pub placement_sweep_box: [f64; 4],
+}
+
+/// How many bearings Aquilo sends.
+pub const AQUILO_BEARINGS: usize = 3;
 
 /// Vulcanus's block.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -606,6 +652,7 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
         PLANET_FULGORA => FULGORA_PARAMS_BYTES,
         PLANET_VULCANUS => VULCANUS_PARAMS_BYTES,
         PLANET_NAUVIS => NAUVIS_PARAMS_BYTES,
+        PLANET_AQUILO => AQUILO_PARAMS_BYTES,
         _ => return Err(Status::UnsupportedPlanetOrView),
     };
     if declared != expected {
@@ -683,6 +730,27 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
                 points
             },
         }),
+        PLANET_AQUILO => {
+            let mut trig = [(0.0, 0.0); AQUILO_BEARINGS];
+            for (i, slot) in trig.iter_mut().enumerate() {
+                let at = p + 48 + i * 16;
+                *slot = (f64_at(bytes, at), f64_at(bytes, at + 8));
+            }
+            let mut placement_sweep_box = [0.0; 4];
+            for (i, slot) in placement_sweep_box.iter_mut().enumerate() {
+                *slot = f64_at(bytes, p + 96 + i * 8);
+            }
+            Params::Aquilo(AquiloParams {
+                crude_oil_frequency: f64_at(bytes, p),
+                crude_oil_size: f64_at(bytes, p + 8),
+                lithium_brine_frequency: f64_at(bytes, p + 16),
+                lithium_brine_size: f64_at(bytes, p + 24),
+                fluorine_vent_frequency: f64_at(bytes, p + 32),
+                fluorine_vent_size: f64_at(bytes, p + 40),
+                trig,
+                placement_sweep_box,
+            })
+        }
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
             for (i, slot) in trig.iter_mut().enumerate() {
@@ -922,7 +990,9 @@ mod tests {
                 assert_eq!(f.islands_frequency, 1.0);
                 assert_eq!(f.islands_size, 1.0);
             }
-            Params::Vulcanus(_) | Params::Nauvis(_) => panic!("wrong block decoded"),
+            Params::Vulcanus(_) | Params::Nauvis(_) | Params::Aquilo(_) => {
+                panic!("wrong block decoded")
+            }
         }
     }
 
@@ -944,6 +1014,7 @@ mod tests {
     fn the_split_left_a_fulgora_request_the_size_it_was_in_v1() {
         assert_eq!(COMMON_BYTES + FULGORA_PARAMS_BYTES, 120);
         assert_eq!(COMMON_BYTES + VULCANUS_PARAMS_BYTES, 368);
+        assert_eq!(COMMON_BYTES + AQUILO_PARAMS_BYTES, 184);
         // **`REQUEST_BYTES` is NAUVIS's now.** It equalled Vulcanus's request
         // for three planets and this assertion read `368` the whole time,
         // which made it look like a property of the split rather than of
@@ -963,10 +1034,11 @@ mod tests {
             COMMON_BYTES + FULGORA_PARAMS_BYTES,
             COMMON_BYTES + VULCANUS_PARAMS_BYTES,
             COMMON_BYTES + NAUVIS_PARAMS_BYTES,
+            COMMON_BYTES + AQUILO_PARAMS_BYTES,
         ];
         assert_eq!(
             REQUEST_BYTES,
-            sizes.into_iter().max().expect("three planets")
+            sizes.into_iter().max().expect("four planets")
         );
     }
 
@@ -1127,5 +1199,96 @@ mod tests {
         {
             assert_eq!(v.bearing(which), (i as f64, -(i as f64)), "{which:?}");
         }
+    }
+
+    fn good_aquilo() -> Vec<u8> {
+        header(PLANET_AQUILO, AQUILO_PARAMS_BYTES)
+    }
+
+    /// Planet code 4 has no block, so it is refused by the planet check
+    /// rather than read as some other planet's layout.
+    #[test]
+    fn a_planet_code_past_aquilo_is_refused() {
+        let mut b = good_aquilo();
+        b[8..12].copy_from_slice(&4u32.to_le_bytes());
+        assert_eq!(decode(&b), Err(Status::UnsupportedPlanetOrView));
+        // Control: the same bytes under Aquilo's own code decode.
+        b[8..12].copy_from_slice(&PLANET_AQUILO.to_le_bytes());
+        assert!(decode(&b).is_ok());
+    }
+
+    /// A distinct value into every one of Aquilo's 16 slots, all read back:
+    /// six levers, six trig components and the four box edges.
+    #[test]
+    fn no_two_aquilo_fields_share_an_offset() {
+        let mut b = good_aquilo();
+        for i in 0..16 {
+            let at = COMMON_BYTES + i * 8;
+            b[at..at + 8].copy_from_slice(&(100.0f64 + i as f64).to_le_bytes());
+        }
+        let Params::Aquilo(a) = decode(&b).expect("should decode").params else {
+            panic!("wrong block")
+        };
+        let mut got = vec![
+            a.crude_oil_frequency,
+            a.crude_oil_size,
+            a.lithium_brine_frequency,
+            a.lithium_brine_size,
+            a.fluorine_vent_frequency,
+            a.fluorine_vent_size,
+        ];
+        for (sin, cos) in a.trig {
+            got.push(sin);
+            got.push(cos);
+        }
+        got.extend_from_slice(&a.placement_sweep_box);
+        let want: Vec<f64> = (0..16).map(|i| 100.0 + i as f64).collect();
+        assert_eq!(got, want);
+        assert_eq!(AQUILO_PARAMS_BYTES, 16 * 8);
+    }
+
+    /// The committed fixture's Aquilo bytes decode to the request it records.
+    /// Those bytes were checked by `verify-wasm-request.py`, a decoder written
+    /// from the layout table, so this is the Rust reader agreeing with it.
+    #[test]
+    fn the_committed_aquilo_fixture_decodes_to_its_request() {
+        const FIXTURE: &str = include_str!("../../../test/fixtures/wasm-request.v2.json");
+        let arm = FIXTURE
+            .split("\"aquilo\": {")
+            .nth(1)
+            .expect("the fixture has an aquilo arm");
+        let list = arm
+            .split("\"bytes\": [")
+            .nth(1)
+            .and_then(|t| t.split(']').next())
+            .expect("the aquilo arm has bytes");
+        let bytes: Vec<u8> = list
+            .split(',')
+            .map(|t| t.trim().parse().expect("a byte"))
+            .collect();
+        assert_eq!(bytes.len(), COMMON_BYTES + AQUILO_PARAMS_BYTES);
+        let r = decode(&bytes).expect("should decode");
+        assert_eq!(r.planet, PLANET_AQUILO);
+        assert_eq!((r.seed0, r.width, r.height), (3_111_923_328, 8, 4));
+        let Params::Aquilo(a) = r.params else {
+            panic!("wrong block")
+        };
+        // Moved sliders, distinct per lever, so a swapped field shows.
+        assert_eq!(
+            [
+                a.crude_oil_frequency,
+                a.crude_oil_size,
+                a.lithium_brine_frequency,
+                a.lithium_brine_size,
+                a.fluorine_vent_frequency,
+                a.fluorine_vent_size,
+            ],
+            [1.5, 0.5, 0.75, 2.0, 3.0, 0.166_666_671_633_720_4]
+        );
+        for (sin, cos) in a.trig {
+            assert!((sin * sin + cos * cos - 1.0).abs() < 1e-6);
+        }
+        assert!(a.placement_sweep_box[0] < a.placement_sweep_box[2]);
+        assert!(a.placement_sweep_box[1] < a.placement_sweep_box[3]);
     }
 }

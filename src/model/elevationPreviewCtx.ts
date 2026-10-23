@@ -1,7 +1,12 @@
 import { readClimateControls } from "./climateReads";
 import type { Point, VulcanusResourceControls } from "../noise/eval/ctx";
 import { readMapType } from "./mapType";
-import { readResourceControls, readVulcanusResourceControls } from "./resourceReads";
+import type { AquiloResourceControls } from "../noise/wasm/request";
+import {
+  readAquiloResourceControls,
+  readResourceControls,
+  readVulcanusResourceControls,
+} from "./resourceReads";
 import type { ResourceControlLevers } from "../noise/resources/resourceCatalog";
 import type { Preset } from "./types";
 import { ENEMY_CONTROL_NAME, type EnemyControls } from "../noise/enemies/enemyCatalog";
@@ -33,6 +38,12 @@ export interface ElevationPreviewCtx {
    * size: 1 }`.
    */
   vulcanusResourceControls: VulcanusResourceControls;
+  /**
+   * The three Aquilo resource controls (`aquilo_crude_oil`, `lithium_brine`,
+   * `fluorine_vent`), consumed only when the selected planet is Aquilo. Absent
+   * controls read as the neutral 1/1; size 0 is a real setting and is kept.
+   */
+  aquiloResourceControls: Required<AquiloResourceControls>;
   /**
    * The enemy-base autoplace control's frequency/size (control:enemy-base:*) -
    * consumed only by the `view: "enemies"` overlay (renderEnemies). Absent
@@ -152,6 +163,7 @@ export function elevationCtxFromPreset(preset: Preset): ElevationPreviewCtx {
     mapTypeLabel: mt.label,
     resourceControls: readResourceControls(preset),
     vulcanusResourceControls: readVulcanusResourceControls(preset),
+    aquiloResourceControls: readAquiloResourceControls(preset),
     enemyControls: eb ? { frequency: eb.frequency, size: eb.size } : { frequency: 1, size: 1 },
     cliffControls: cc
       ? { frequency: cc.frequency, continuity: cc.size }

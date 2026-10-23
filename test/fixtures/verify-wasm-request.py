@@ -11,14 +11,20 @@ What it can and cannot check:
 - It CAN check every offset, the endianness, the field order, the eleven
   Vulcanus scalars and both world boxes' edges against the request that produced
   them.
-- It CANNOT reproduce the trig VALUES, because those are V8's `Math.sin` after
-  an `f32` narrowing and Python's libm is a different implementation - which is
-  the whole point of #270 and the reason the trig crosses the boundary as values
-  in the first place. So it checks the trig block by a property instead:
-  `sin^2 + cos^2 == 1` to within an f32 epsilon for each of the ten pairs, which
-  a mis-offset or half-shifted block fails.
+- It CANNOT reproduce the Fulgora and Vulcanus trig VALUES, because those are
+  V8's `Math.sin` after an `f32` narrowing and Python's libm is a different
+  implementation - which is the whole point of #270 and the reason the trig
+  crosses the boundary as values in the first place. So it checks that trig
+  block by a property instead: `sin^2 + cos^2 == 1` to within an f32 epsilon
+  for each of the ten pairs, which a mis-offset or half-shifted block fails.
+- For Aquilo it DOES reproduce them. The Aquilo arm's trig bytes are Python's
+  own `f32(sin)` and `f32(cos)` of the three bearings, and they equal what V8
+  gives after the same narrowing for these three angles: the TypeScript writer
+  produces exactly these bytes (`wasmFulgoraRenderParity.spec.ts`). That is a
+  fact about these three angles, not a guarantee. A libm can differ by one ULP
+  somewhere else, so `decode_aquilo` still compares with a 2e-7 tolerance.
 
-Usage: python3 verifyAbi.py <encoder-output.json> <fixture-output.json>
+Usage: python3 verify-wasm-request.py <encoder-output.json> <fixture-output.json>
 """
 
 import json
@@ -31,7 +37,7 @@ ABI_VERSION = 2
 COMMON_BYTES = 56
 FULGORA_PARAMS_BYTES = 64
 VULCANUS_PARAMS_BYTES = 312
-PLANET = {"fulgora": 0, "vulcanus": 1, "nauvis": 2}
+PLANET = {"fulgora": 0, "vulcanus": 1, "nauvis": 2, "aquilo": 3}
 VIEW = {
     "landmask": 0,
     "terrain": 1,
@@ -42,6 +48,10 @@ VIEW = {
     "all": 6,
     "trees": 7,
     "enemies": 8,
+    "elevationLakes": 9,
+    "elevationNauvis": 10,
+    "elevationIsland": 11,
+    "entityFootprint": 12,
 }
 
 BEARING_NAMES = [
@@ -57,6 +67,9 @@ BEARING_NAMES = [
     "resourceSulfurNear",
 ]
 
+
+AQUILO_PARAMS_BYTES = 128
+"""Must equal fmw_wasm::abi::AQUILO_PARAMS_BYTES."""
 
 NAUVIS_MAX_STARTING_POINTS = 8
 """Must equal fmw_wasm::abi::NAUVIS_MAX_STARTING_POINTS."""
@@ -479,6 +492,144 @@ def decode_vulcanus(b, req):
     return trig, cell_box, {"x0": sweep[0], "y0": sweep[1], "x1": sweep[2], "y1": sweep[3]}
 
 
+def f32(v):
+    """Round a Python float to the nearest f32, the noise machine's per-op step."""
+    return struct.unpack("<f", struct.pack("<f", v))[0]
+
+
+# The Aquilo arm's request, written HERE rather than read from the encoder's
+# output. The bytes below are built by `encode_aquilo` from the layout table in
+# abi.rs and then checked by `decode_aquilo`, so the committed arm comes from
+# this file and not from running request.ts and pasting what it printed.
+AQUILO_REQUEST = {
+    "planet": "aquilo",
+    "view": "all",
+    "seed0": 3111923328,
+    "width": 8,
+    "height": 4,
+    "originX": -512.5,
+    "originY": 256.25,
+    "tilesPerPixel": 2,
+    # Distinct, non-default per lever, so a swapped field is visible. The
+    # fluorine size is the f32 the game reads back for 1/6.
+    "aquiloResourceControls": {
+        "crudeOil": {"frequency": 1.5, "size": 0.5},
+        "lithiumBrine": {"frequency": 0.75, "size": 2},
+        "fluorineVent": {"frequency": 3, "size": 0.1666666716337204},
+    },
+    # A symmetric one-pixel (two-tile) halo, as the placement marks need.
+    "placementSweepBox": {"x0": -514.5, "y0": 254.25, "x1": -494.5, "y1": 266.25},
+}
+
+
+def aquilo_angles(seed0):
+    """The three bearings in degrees, from aquilo's map-gen Lua: the seed
+    normalised, times 3600, then + 120 and + 240, each step narrowed to f32."""
+    base = f32(f32(seed0 / 4294967296) * 3600)
+    return [base, f32(base + 120), f32(base + 240)]
+
+
+def aquilo_trig(angle):
+    """(sin, cos) of an angle through the same f32 lattice request.ts names:
+    radians = f32(f32(a / 180) * f32(pi)), then f32 sin and cos.
+
+    Python's libm is not V8's, so decode_aquilo compares these with a tolerance
+    rather than exactly - see the module docstring on why trig crosses the
+    boundary as values at all.
+    """
+    radians = f32(f32(angle / 180) * f32(math.pi))
+    return f32(math.sin(radians)), f32(math.cos(radians))
+
+
+def encode_aquilo(req):
+    """Build the 184-byte request from the layout table, with struct."""
+    b = bytearray(COMMON_BYTES + AQUILO_PARAMS_BYTES)
+    struct.pack_into(
+        "<IIIIIII",
+        b,
+        0,
+        MAGIC,
+        ABI_VERSION,
+        PLANET[req["planet"]],
+        VIEW[req["view"]],
+        req["seed0"],
+        req["width"],
+        req["height"],
+    )
+    struct.pack_into("<I", b, 28, AQUILO_PARAMS_BYTES)
+    struct.pack_into("<ddd", b, 32, req["originX"], req["originY"], req["tilesPerPixel"])
+    p = COMMON_BYTES
+    c = req["aquiloResourceControls"]
+    levers = [c["crudeOil"], c["lithiumBrine"], c["fluorineVent"]]
+    for i, lv in enumerate(levers):
+        struct.pack_into("<dd", b, p + i * 16, lv["frequency"], lv["size"])
+    for i, angle in enumerate(aquilo_angles(req["seed0"])):
+        s, co = aquilo_trig(angle)
+        struct.pack_into("<dd", b, p + 48 + i * 16, s, co)
+    box = req["placementSweepBox"]
+    struct.pack_into("<dddd", b, p + 96, box["x0"], box["y0"], box["x1"], box["y1"])
+    return bytes(b)
+
+
+def decode_aquilo(b, req):
+    """Aquilo's block: six levers, three (sin, cos) pairs, one sweep box."""
+    want = COMMON_BYTES + AQUILO_PARAMS_BYTES
+    if len(b) != want:
+        raise AssertionError(f"aquilo request is {len(b)} bytes, expected {want}")
+    decode_common(b, req, AQUILO_PARAMS_BYTES)
+    p = COMMON_BYTES
+    c = req["aquiloResourceControls"]
+    names = ["crudeOil", "lithiumBrine", "fluorineVent"]
+    flat = []
+    for i, name in enumerate(names):
+        check(f"{name}.frequency", f64(b, p + i * 16), c[name]["frequency"])
+        check(f"{name}.size", f64(b, p + 8 + i * 16), c[name]["size"])
+        flat += [c[name]["frequency"], c[name]["size"]]
+    # Distinct per lever, or a swap of two that share a value reads correct.
+    if len(set(flat)) != len(flat):
+        raise AssertionError("the aquilo fixture must use a DISTINCT value per lever")
+
+    # The trig: unit norm, then each angle recovered with atan2 and checked
+    # against the offsets the Lua gives the three bearings. Unit norm alone
+    # cannot see two bearings swapped, and a swap rotates the wells.
+    trig = {}
+    pairs = []
+    for i, name in enumerate(names):
+        s, co = f64(b, p + 48 + i * 16), f64(b, p + 56 + i * 16)
+        if abs(s * s + co * co - 1.0) > 1e-6:
+            raise AssertionError(f"{name}: sin^2+cos^2 = {s * s + co * co}, not 1")
+        trig[name] = {"sin": s, "cos": co}
+        pairs.append((s, co))
+    if len(set(pairs)) != 3:
+        raise AssertionError("two aquilo bearings collapsed onto each other")
+    degrees = [math.degrees(math.atan2(s, co)) % 360.0 for s, co in pairs]
+    for i, want_deg in enumerate(aquilo_angles(req["seed0"])):
+        diff = abs((degrees[i] - want_deg + 180.0) % 360.0 - 180.0)
+        if diff > 0.01:
+            raise AssertionError(
+                f"{names[i]}: bearing is {degrees[i]:.4f} degrees, expected "
+                f"{want_deg % 360.0:.4f}"
+            )
+        # And the pair itself matches Python's own f32 trig to a few f32 ULPs.
+        es, ec = aquilo_trig(want_deg)
+        if abs(pairs[i][0] - es) > 2e-7 or abs(pairs[i][1] - ec) > 2e-7:
+            raise AssertionError(f"{names[i]}: trig {pairs[i]} is not ({es}, {ec})")
+
+    sweep_req = req["placementSweepBox"]
+    sweep = [f64(b, p + 96 + i * 8) for i in range(4)]
+    for i, key in enumerate(["x0", "y0", "x1", "y1"]):
+        check(f"placementSweepBox.{key}", sweep[i], sweep_req[key])
+    if len(set(sweep)) != 4 or not (sweep[0] < sweep[2] and sweep[1] < sweep[3]):
+        raise AssertionError(f"placementSweepBox is degenerate or inverted: {sweep}")
+    px0, py0 = req["originX"], req["originY"]
+    px1 = px0 + req["width"] * req["tilesPerPixel"]
+    py1 = py0 + req["height"] * req["tilesPerPixel"]
+    halos = (px0 - sweep[0], sweep[2] - px1, py0 - sweep[1], sweep[3] - py1)
+    if not (halos[0] == halos[1] == halos[2] == halos[3] > 0):
+        raise AssertionError(f"placementSweepBox is not a symmetric halo: {halos}")
+    return trig, {"x0": sweep[0], "y0": sweep[1], "x1": sweep[2], "y1": sweep[3]}
+
+
 def main():
     src, dest = sys.argv[1], sys.argv[2]
     d = json.load(open(src))
@@ -488,10 +639,16 @@ def main():
     vtrig, vbox, vsweep = decode_vulcanus(vb, d["vulcanus"]["request"])
     nb = bytes(d["nauvis"]["bytes"])
     nlevers = decode_nauvis(nb, d["nauvis"]["request"])
+    ab = encode_aquilo(AQUILO_REQUEST)
+    atrig, abox = decode_aquilo(ab, AQUILO_REQUEST)
     print("fulgora: all fields agree, both bearings unit-norm")
     print(
         "vulcanus: all fields agree, ten bearings unit-norm, 1 legitimate duplicate, "
         "both world boxes distinct and non-inverted, placement halo symmetric"
+    )
+    print(
+        "aquilo: all six levers agree and are pairwise distinct, three bearings "
+        f"unit-norm and at their Lua offsets, placement halo symmetric, {len(ab)} bytes"
     )
     print(
         f"nauvis: all {len(nlevers['levers'])} levers agree at their own "
@@ -543,6 +700,11 @@ def main():
             "placement halo really is symmetric about the pixel box, where the cliff halo is not, "
             "which is the whole reason there are two boxes rather than one. The no-coinciding-edge "
             "check caught none of the six and is a fixture constraint like the distinctness ones. "
+            "The Aquilo arm (184 bytes, six levers, three bearings and a placement sweep box) "
+            "is built and decoded by this script from the layout table, so its bytes did not "
+            "come from request.ts at all; the trig pairs are checked by unit norm, by each "
+            "angle's offset from the first bearing, and against Python's own f32 sin and cos to "
+            "2e-7. "
             "Regenerating "
             "these bytes from the encoder would make the fixture agree with itself and prove "
             "nothing; if the layout changes, bump ABI_VERSION on both sides and re-verify the "
@@ -575,6 +737,13 @@ def main():
             "request": d["nauvis"]["request"],
             "decoded": nlevers,
             "bytes": d["nauvis"]["bytes"],
+        },
+        "aquilo": {
+            "paramsBytes": AQUILO_PARAMS_BYTES,
+            "totalBytes": len(ab),
+            "request": AQUILO_REQUEST,
+            "decoded": {"trig": atrig, "placementSweepBox": abox},
+            "bytes": list(ab),
         },
     }
     with open(dest, "w") as f:

@@ -1252,9 +1252,9 @@ the code agreed with each other while both disagreed with the game.
 ### Diff artifacts are NOT fixtures - `test-output/` vs `test/fixtures/`
 
 When an image comparison in `test/wasmFulgoraRenderParity.spec.ts`,
-`test/wasmNauvisRenderParity.spec.ts` or `test/wasmVulcanusRenderParity.spec.ts`
-fails, `test/diffArtifacts.ts` writes the
-reference, our render, a magenta mask, a false-coloured magnitude view and a
+`test/wasmNauvisRenderParity.spec.ts`, `test/wasmVulcanusRenderParity.spec.ts`
+or `test/wasmAquiloRenderParity.spec.ts` fails, `test/diffArtifacts.ts`
+writes the reference, our render, a magenta mask, a false-coloured magnitude view and a
 `stats.json` into `test-output/preview-diffs/<spec>/<case>/`, and the assertion
 message names that directory - both repo-relative and absolute, because the
 relative form does not resolve from a CI log (#252). A scalar like
@@ -1283,11 +1283,13 @@ artifacts describe a different comparison than the bound that failed - the same
 objection that made wrapping the assertions the right shape in the first place.
 Excluded pixels are navy in **both** images: left black in `diff-magnitude.png`
 they are drawn exactly like pixels that agree, so the picture claims agreement
-over a region nothing looked at. **No spec passes `ignore` today**: since
+over a region nothing looked at. **Only one spec passes `ignore` today**
+(`test/wasmAquiloRenderParity.spec.ts`, in its full-PNG test). Since
 2026-09-14 the preview PNGs are captured terrain-only, with a data-stage mod in
 `test/oracle/previewCompare.ts` removing the enemy bases, Vulcanus cliffs and
 rocks, and Fulgora entities that no control can disable, so the masks that used
-to exclude them are gone. The rule stands for the next caller that needs one.
+to exclude them are gone for the other planets. The rule stands for the next
+caller that needs one.
 
 `test/diffArtifacts.spec.ts` is the guard on the writer itself - the machinery
 runs only when something else is broken, which is the worst time to find out it
@@ -1378,8 +1380,8 @@ gate was proven green on `main` before any port code depended on it. Two crates:
 boundary. The design record is
 `docs/superpowers/specs/2026-08-16-rust-wasm-noise-engine-design.md`.
 
-**Every planet, every view the panel offers, renders through the engine, and
-there is no TypeScript fallback left.** #227 deleted the Nauvis and Vulcanus
+**Every planet except Gleba (#454), every view the panel offers, renders
+through the engine, and there is no TypeScript fallback left.** #227 deleted the Nauvis and Vulcanus
 arms and #371 the Fulgora one.
 
 #### Read `docs/rust-wasm-port.md` before editing the port

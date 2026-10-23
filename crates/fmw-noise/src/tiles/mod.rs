@@ -7,6 +7,7 @@
 //! tiles (#225), and phase 6 Nauvis's 21 plus the `expression_in_range` builtin
 //! every one of its land tiles composes (#226).
 
+pub mod aquilo_catalog;
 pub mod expression_in_range;
 pub mod fulgora_catalog;
 pub mod fulgora_ocean;

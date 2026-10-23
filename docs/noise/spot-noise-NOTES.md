@@ -479,6 +479,81 @@ the case where a favorability expression DOES contain a `random_penalty` term:
   for whatever primitive needs it next (spec risk item, closed as "not needed
   here, kept for the next caller").
 
+## The shared Rust module, and Aquilo's spots (2026-10-23, #454)
+
+The Rust port keeps the region arithmetic and the cone walk in one module,
+`crates/fmw-noise/src/spot_field.rs`. Vulcanus and Aquilo both use it for their
+resource spot fields. It holds four things:
+
+- `SpotGeometry` - region size, the floored region index
+  (`floor((x + region_size / 2) / region_size)`, as above), and the cull radius.
+- `SpotRegionCache` - selects each region's spots once per key and keeps them.
+  The key must hold everything that changes a region's spots, and the region
+  size is kept UNFLOORED so two frequencies that floor to the same size stay
+  apart.
+- `spot_cone_max` - the max-of-cones walk from "Field rendering" above.
+- Two cone arithmetics, `ConeArithmetic::PortedF32` and `GameBinary`. Selection
+  of the spots is not shared, because each planet selects differently. Two older
+  near-twins of this walk remain in `vulcanus_biomes.rs` (`raw_spots_at`) and
+  `starting_patches.rs`.
+
+**The two cone arithmetics differ, and only `GameBinary` is the game's.** It was
+read from the 2.1.23 Linux binary (the disassembly of `SpotNoise::run` and the
+spot-list generator):
+
+- The peak is `(f64(q) * 3.0) / ((f64(r) * PI) * f64(r))`, narrowed to f32 once.
+- `PI` here is the double `3.1416` (stored at `.rodata` `0xffc028`, bytes
+  `a7e8482eff210940`), not the true pi.
+- The slope is `f32(peak / radius)`. The distance is an f32 square root of an
+  f32 sum of f32 squares, a spot is skipped when its cull radius is below that
+  distance, and the cone is `max(out, peak - d * slope)`, all in f32.
+- The `min(maximum_spot_basement_radius, radius)` caps the CONE radius only.
+  The cull test compares the distance against the uncapped
+  `maximum_spot_basement_radius`. The two matter for Aquilo, where the cull is
+  `2r`: between `r` and `2r` the cone is negative but still above the basement
+  (about -0.955 at `2r`, against -1). That skirt is part of the field, and the
+  cull cuts it at `2r`.
+
+`PortedF32` is what the TypeScript port did: per-op f32 with the true pi and an
+f64 distance. Each difference was planted alone into the game's form on
+Aquilo's default case (the crude, lithium and fluorine spot fields, out of 632):
+the true pi gives 568, 568 and 561; an f64 distance gives 623, 618 and 620; a
+per-op f32 peak with pi `3.1416` gives 632, 579 and 632. Only the full
+`GameBinary` form gives 632 on all three. Vulcanus keeps `PortedF32`; the
+follow-up that moves it is #491, with the measured counts.
+
+**Aquilo's three spot fields** (`crates/fmw-noise/src/expressions/aquilo_resources.rs`,
+from `aquilo_spot_noise` in `planet-aquilo-map-gen.lua`):
+
+| | crude oil | lithium brine | fluorine vent |
+| --- | --- | --- | --- |
+| seed1 | 567 | 567 | 567 |
+| skip span | 3 | 3 | 3 |
+| skip offset | 0 | 1 | 2 |
+| candidate spots per region | 4 | 3 | 2 |
+| spacing | 128 | 128 | 128 |
+| radius | `30 * sqrt(size)` | `(30 * 1.2) * sqrt(size)` | `(30 * 1.5) * sqrt(size)` |
+| quantity | `r * r` | `r * r` | `r * r` |
+
+- **Region size is `600 + 400 / frequency`**, narrowed to f32. At frequency 1 it
+  is 1000. At frequency 1.5 it is 866.67, which is fractional: the region index
+  floors it, and the cache key keeps it unfloored.
+- **Density and favorability are the constant 1**, so the regional target is
+  `region_size^2` and the trim keeps every spot.
+- **`basement_value` is -1** and **`maximum_spot_basement_radius = radius * 2`**.
+  The `min(cull, radius)` cap on the cone radius is inert here, since `2r` is
+  never below `r`. The cull test itself is not inert: it uses the uncapped `2r`,
+  so the negative skirt of each cone (about -0.955 at `2r`, above the basement
+  -1) is kept out to `2r` and cut there.
+- **Size 0 makes the radius 0.** The peak `3q / (pi r^2)` would be 0/0. The port
+  never computes it: selection skips every spot (quantity 0) and `spot_cone_max`
+  skips any radius at or below 0, so the field is the basement -1 everywhere,
+  never NaN. The game's capture reads exactly -1 across 16,384 positions, and
+  the port matches it.
+- **The `GameBinary` hard-target path is not verified.** A spot whose
+  `cone_scale` is below 1 is written from the disassembly, and no fixture
+  reaches it, because Aquilo sets `hard_region_target_quantity = 0`.
+
 ## Nothing left open
 
 `basis_noise` seeding (the sibling primitive a client-side preview needs) is also

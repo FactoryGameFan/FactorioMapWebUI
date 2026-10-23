@@ -1612,6 +1612,12 @@ fn reproduces_the_amplitude_corrected_wrapper_at_the_typescripts_own_count() {
     // running the wrapper's transform in the noise machine's f32 - which is
     // what took its SIBLING from 38/152 to 152/152 - scores 84/152 here, no
     // better than the f64 form that ships. Do not "fix" this by guessing.
+    //
+    // Explained 2026-10-23: the f32 transform AND an f32 persistence together
+    // score 152/152 - see `AmplitudeCorrectedGame` and
+    // `the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly`.
+    // This count stays at 81 until Nauvis moves to that form in its own graded
+    // change.
     let fixture = load_captured_at(
         "test/fixtures/oracle-multioctave-wrappers.seed123456.json",
         "2.1.12",
@@ -11298,4 +11304,712 @@ fn the_last_vulcanus_pixel_on_the_point_kernel_against_the_game() {
     // grid-vs-point shift is 627 and -12 ULPs, two orders smaller. Read a moved
     // number, do not adjust it.
     assert_eq!(got, (-60_387, 0, 627, -12));
+}
+
+use crate::expressions::aquilo_resources::{
+    AquiloBearings, AquiloLevers, AquiloResourceControls, AquiloResourceFields, AquiloResources,
+};
+
+/// Aquilo's entity-field capture, written by `scripts/probes/aquilo-fields`.
+const AQUILO_ENTITY_FIELDS: &str = "test/fixtures/oracle-aquilo-entity-fields.seed123456.json";
+
+/// Reads one field of [`AquiloResourceFields`].
+type AquiloFieldSelect = fn(&AquiloResourceFields) -> f64;
+
+/// The fixture's field names (the game's `flourine` spelling) against this
+/// layer's fields, in the fixture's order.
+const AQUILO_RESOURCE_FIELDS: [(&str, AquiloFieldSelect); 11] = [
+    ("aquilo_starting_crude_oil", |f| f.starting_crude_oil),
+    ("aquilo_starting_lithium_brine", |f| {
+        f.starting_lithium_brine
+    }),
+    ("aquilo_starting_flourine_vent", |f| {
+        f.starting_fluorine_vent
+    }),
+    ("aquilo_starting_flourine_vent_tiny", |f| {
+        f.starting_fluorine_vent_tiny
+    }),
+    ("aquilo_starting_mask", |f| f.starting_mask),
+    ("aquilo_crude_oil_spots", |f| f.crude_oil_spots),
+    ("aquilo_lithium_brine_spots", |f| f.lithium_brine_spots),
+    ("aquilo_flourine_vent_spots", |f| f.fluorine_vent_spots),
+    ("aquilo_crude_oil_probability", |f| f.crude_oil_probability),
+    ("aquilo_lithium_brine_probability", |f| {
+        f.lithium_brine_probability
+    }),
+    ("aquilo_flourine_vent_probability", |f| {
+        f.fluorine_vent_probability
+    }),
+];
+
+/// One lever case's controls, as the game READ THEM BACK.
+fn aquilo_case_controls(case: &Json) -> AquiloResourceControls {
+    let controls = case.get("controls");
+    let levers = |name: &str| AquiloLevers {
+        frequency: controls.get(name).get("frequency").as_f64(),
+        size: controls.get(name).get("size").as_f64(),
+    };
+    AquiloResourceControls {
+        crude_oil: levers("aquilo_crude_oil"),
+        lithium_brine: levers("lithium_brine"),
+        fluorine_vent: levers("fluorine_vent"),
+    }
+}
+
+/// Score one lever case: per field, the positions whose f32 BITS equal the
+/// game's (so `-0` against `+0` is a miss). Asserts the case's position count.
+fn score_aquilo_resource_case(label: &str, positions_expected: usize) -> Vec<usize> {
+    let fixture = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    assert_eq!(fixture.get("seed").as_f64(), 123_456.0);
+    let case = fixture.get("cases").get(label);
+    let positions = case.get("positions").as_array();
+    assert_eq!(
+        positions.len(),
+        positions_expected,
+        "{label} position count"
+    );
+
+    let seed0 = 123_456;
+    let layer = AquiloResources::new(
+        seed0,
+        &aquilo_case_controls(case),
+        AquiloBearings::from_host(seed0),
+    );
+    let fields: Vec<AquiloResourceFields> = positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            layer.eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+        })
+        .collect();
+
+    let mut counts = Vec::new();
+    for (name, select) in AQUILO_RESOURCE_FIELDS {
+        let want = case.get("fields").get(name).as_array();
+        assert_eq!(want.len(), positions.len(), "{label} {name} length");
+        let got: Vec<f64> = fields.iter().map(select).collect();
+        counts.push(count_exact_bits(&got, want));
+    }
+    eprintln!("aquilo {label} ({} positions):", positions.len());
+    for ((name, _), n) in AQUILO_RESOURCE_FIELDS.iter().zip(&counts) {
+        eprintln!("  {name}: {n}");
+    }
+    counts
+}
+
+/// The default levers. Every field is a full house, frozen 2026-10-23.
+///
+/// What the counts can and cannot see:
+///
+/// - **The spot fields are graded on their cones.** 64 positions per field were
+///   picked where it is above the basement, and the rest are mostly at -1. The
+///   cone arithmetic is the game's ([`crate::spot_field::ConeArithmetic::GameBinary`]):
+///   with the ported arithmetic the three spot fields scored 568, 568 and 561,
+///   and each of its three parts was planted back alone and costs counts - the
+///   std pi (568, 568, 561), an f64 distance (623, 618, 620) and a per-op f32
+///   peak (632, 579, 632 on the spots).
+/// - **The spot branch of each probability is thin.** Positions where the spot
+///   field is above 0 AND the starting mask is above 0 number 15, 18 and 17
+///   (crude oil, lithium brine, fluorine vent). The rest of each count grades
+///   the starting cone or a negative spot term.
+/// - **`aquilo_starting_mask` is off its clamps at only 21 positions.** The
+///   other 611 sit at -1 or 1, which any clamp reproduces.
+#[test]
+fn aquilo_resource_fields_match_the_game_default() {
+    let got = score_aquilo_resource_case("default", 632);
+    assert_eq!(got, vec![632; 11]);
+}
+
+/// All three sizes at 0. Every field is a full house, frozen 2026-10-23.
+///
+/// The spot fields are exactly -1 at every position (the radius is 0, so no
+/// spot is placed), and the three probabilities are +0. The `+0` is the
+/// constant fold in `aquilo_resources::gated`: a literal `0 * max(...)` gives
+/// `-0` wherever the `max` is negative, and planted back it drops crude oil and
+/// lithium brine to 64 of 452 each. Fluorine stays at 452 under that plant,
+/// because its `max` holds `tiny > 0`, which is never negative.
+///
+/// `aquilo_starting_mask` is off its clamps at only 13 of these positions.
+#[test]
+fn aquilo_resource_fields_match_the_game_size0() {
+    let got = score_aquilo_resource_case("size0", 452);
+    assert_eq!(got, vec![452; 11]);
+}
+
+/// Moved levers: crude oil 1.5/0.5, lithium brine 0.5/2, fluorine vent 2/(1/6)
+/// (frequency/size, as read back). Every field is a full house, frozen
+/// 2026-10-23.
+///
+/// Crude oil's frequency 1.5 makes `region_size` 866.67, which the selection
+/// floors to 866 and the cache keeps unfloored. Fluorine's size is the f32
+/// `0.1666666716337204`, not 1/6. The spot branch of each probability is
+/// thinner here than at default: 10, 5 and 15 positions. The starting mask is
+/// off its clamps at 22.
+#[test]
+fn aquilo_resource_fields_match_the_game_moved() {
+    let got = score_aquilo_resource_case("moved", 626);
+    assert_eq!(got, vec![626; 11]);
+}
+
+use crate::expressions::aquilo_stack::{AquiloCtx, AquiloStack};
+use crate::expressions::aquilo_terrain::AquiloTerrainFields;
+use crate::variable_persistence_multioctave_noise::AmplitudeCorrectedGame;
+
+/// Aquilo's planet-field capture: 1,024 positions at default levers, with
+/// `climate.elevation` (`aquilo_elevation`) and `climate.aux` (`aquilo_aux`).
+const AQUILO_FIELDS: &str = "test/fixtures/oracle-aquilo-fields.seed123456.json";
+
+/// Reads one field of [`AquiloTerrainFields`].
+type AquiloTerrainSelect = fn(&AquiloTerrainFields) -> f64;
+
+/// The fixture's terrain field names against this layer's fields, in
+/// dependency order: each field reads only those above it.
+const AQUILO_TERRAIN_FIELDS: [(&str, AquiloTerrainSelect); 8] = [
+    ("aquilo_wobble_x", |f| f.wobble_x),
+    ("aquilo_wobble_y", |f| f.wobble_y),
+    ("aquilo_aux", |f| f.aux),
+    ("aquilo_high_frequency_peaks", |f| f.high_frequency_peaks),
+    ("aquilo_snow_ice", |f| f.snow_ice),
+    ("aquilo_tile_variant", |f| f.tile_variant),
+    ("aquilo_island_peaks", |f| f.island_peaks),
+    ("aquilo_elevation", |f| f.elevation),
+];
+
+/// Positions whose f32 BITS equal the game's hex values.
+fn count_exact_bits(got: &[f64], want: &[Json]) -> usize {
+    assert_eq!(got.len(), want.len());
+    got.iter()
+        .zip(want)
+        .filter(|(g, w)| {
+            let bits = u32::from_str_radix(w.as_str(), 16).expect("hex f32 bits");
+            // The narrowing below must not be what makes a field pass: a
+            // final op that stopped narrowing would score the same.
+            assert!(
+                **g == f64::from(**g as f32),
+                "our value {g:?} is not f32-representable (want bits {bits:08x})"
+            );
+            (**g as f32).to_bits() == bits
+        })
+        .count()
+}
+
+/// Score one lever case of the entity-field capture on the terrain fields.
+fn score_aquilo_terrain_case(label: &str, positions_expected: usize) -> Vec<usize> {
+    let fixture = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    assert_eq!(fixture.get("seed").as_f64(), 123_456.0);
+    let case = fixture.get("cases").get(label);
+    let positions = case.get("positions").as_array();
+    assert_eq!(
+        positions.len(),
+        positions_expected,
+        "{label} position count"
+    );
+    let mut stack = AquiloStack::with_host_trig(&AquiloCtx {
+        seed0: 123_456,
+        controls: aquilo_case_controls(case),
+    });
+    let fields: Vec<AquiloTerrainFields> = positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            stack
+                .eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+                .terrain
+        })
+        .collect();
+    let counts: Vec<usize> = AQUILO_TERRAIN_FIELDS
+        .iter()
+        .map(|(name, select)| {
+            let got: Vec<f64> = fields.iter().map(select).collect();
+            count_exact_bits(&got, case.get("fields").get(name).as_array())
+        })
+        .collect();
+    eprintln!("aquilo terrain {label} ({} positions):", positions.len());
+    for ((name, _), n) in AQUILO_TERRAIN_FIELDS.iter().zip(&counts) {
+        eprintln!("  {name}: {n}");
+    }
+    counts
+}
+
+/// The default levers. Every field is a full house, frozen 2026-10-23.
+///
+/// Each layer was graded before the next. Two constants decided whole layers:
+/// the wobbles' `output_scale` 0.35 (as a double: 144 and 99 of 632) and
+/// `random_island_peaks` (the shipped amplitude-corrected form, #254: the
+/// elevation at 608). Planted back one at a time, each of these also costs
+/// counts, so the grade sees it: the lerp weight 0.4 as a double (elevation
+/// 601), the billow scales folded in f64 (187), the crack sum rooted before it
+/// is narrowed (620), `aux`'s warp folded to `w * 200` (`aux` 525), `1.2` and
+/// `0.2` as doubles in the large-cell term (576), the island-peak constants as
+/// doubles (`aquilo_island_peaks` 554), and the fluorine spot field left out
+/// of the island peaks (566).
+///
+/// What the counts can and cannot see:
+///
+/// - **They grade the point kernel only.** Every position is a
+///   `calculate_tile_properties` read. The chunk-grid path that a render takes
+///   for the raw-coordinate fields is graded by the render, not here.
+/// - **The spot arm of `aquilo_island_peaks` is graded where a cone or spot is
+///   live.** It wins with a field above the basement at about 330 positions; most of
+///   the rest sit at -0.75, the arm's basement.
+/// - **Every branch of the elevation is live.** The random peaks beat the
+///   island peaks at 240 positions, the broken formation beats the clumped one
+///   at 470, the large Voronoi term is above 0 at 480 and the small one at 495.
+#[test]
+fn aquilo_terrain_fields_match_the_game_default() {
+    let got = score_aquilo_terrain_case("default", 632);
+    assert_eq!(got, vec![632; 8]);
+}
+
+/// All three sizes at 0. Every field is a full house, frozen 2026-10-23.
+///
+/// The spot fields are at the basement everywhere, so the spot arm of
+/// `aquilo_island_peaks` is graded on the starting cones alone, which the size
+/// does not gate (live at about 140 positions). The shipped amplitude-corrected form
+/// scored the elevation at 434 here.
+#[test]
+fn aquilo_terrain_fields_match_the_game_size0() {
+    let got = score_aquilo_terrain_case("size0", 452);
+    assert_eq!(got, vec![452; 8]);
+}
+
+/// Moved levers (see `aquilo_resource_fields_match_the_game_moved`). Every
+/// field is a full house, frozen 2026-10-23. The levers reach the terrain only
+/// through `aquilo_island_peaks`; the shipped amplitude-corrected form scored
+/// the elevation at 602 here.
+#[test]
+fn aquilo_terrain_fields_match_the_game_moved() {
+    let got = score_aquilo_terrain_case("moved", 626);
+    assert_eq!(got, vec![626; 8]);
+}
+
+use crate::tiles::aquilo_catalog::{
+    probabilities, resolve_tile, AquiloTile, TILE_ORDER as AQUILO_TILE_ORDER,
+};
+
+/// Evaluate our terrain fields at every position of a fixture case.
+fn aquilo_terrain_at(
+    positions: &[Json],
+    controls: AquiloResourceControls,
+) -> Vec<AquiloTerrainFields> {
+    let mut stack = AquiloStack::with_host_trig(&AquiloCtx {
+        seed0: 123_456,
+        controls,
+    });
+    positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            stack
+                .eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+                .terrain
+        })
+        .collect()
+}
+
+/// The fixture's score for one tile, as f32 hex bits turned into values.
+fn aquilo_game_scores(per_tile: &[&[Json]; 9], i: usize) -> [f64; 9] {
+    let mut out = [0.0; 9];
+    for (t, scores) in per_tile.iter().enumerate() {
+        let bits = u32::from_str_radix(scores[i].as_str(), 16).expect("hex f32 bits");
+        out[t] = f64::from(f32::from_bits(bits));
+    }
+    out
+}
+
+/// The nine tile scores (probabilities) against the game: the 1,024 positions
+/// of `oracle-aquilo-fields` plus the three lever cases of
+/// `oracle-aquilo-entity-fields`, an exact count per tile in `TILE_ORDER`.
+///
+/// Full houses, frozen 2026-10-23: 1,024 at default levers; 632, 452 and 626
+/// in the cases. Scores run through our own terrain fields, so this grades the
+/// formulas and the fields together. The `100 * min_elevation` term is
+/// +-100, so a score is exact only if the f32 rounding of every later op
+/// matches. The first draft kept the inexact constants (`0.01`, `0.05`, `0.4`,
+/// `0.6`) as doubles and scored, of 1,024: snow-patchy
+/// 1,018, brash-ice 835 and the two oceans 756 each; the six other tiles were
+/// already exact. Narrowing each constant to f32 closed all nine. (`0.75` is
+/// exact in binary, so narrowing it changes nothing.)
+#[test]
+fn aquilo_tile_scores_match_the_game() {
+    let fixture = load_captured_at(AQUILO_FIELDS, "2.1.23");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 1024);
+    let fields = aquilo_terrain_at(positions, AquiloResourceControls::default());
+    let mut all = vec![("fields".to_string(), fields, fixture.get("tiles"), "")];
+    let entity = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    for (label, n) in [("default", 632), ("size0", 452), ("moved", 626)] {
+        let case = entity.get("cases").get(label);
+        let positions = case.get("positions").as_array();
+        assert_eq!(positions.len(), n, "{label} position count");
+        let fields = aquilo_terrain_at(positions, aquilo_case_controls(case));
+        all.push((label.to_string(), fields, case.get("fields"), "tile:"));
+    }
+    let mut frozen = Vec::new();
+    for (label, fields, source, prefix) in &all {
+        let scores: Vec<[f64; 9]> = fields.iter().map(probabilities).collect();
+        let mut counts = Vec::new();
+        for (t, tile) in AQUILO_TILE_ORDER.iter().enumerate() {
+            let key = if prefix.is_empty() {
+                tile.game_name().to_string()
+            } else {
+                format!("tile:{}:probability", tile.game_name())
+            };
+            let got: Vec<f64> = scores.iter().map(|s| s[t]).collect();
+            counts.push(count_exact_bits(&got, source.get(&key).as_array()));
+        }
+        eprintln!("aquilo tile scores {label}: {counts:?}");
+        frozen.push(counts);
+    }
+    assert_eq!(
+        frozen,
+        vec![vec![1024; 9], vec![632; 9], vec![452; 9], vec![626; 9]]
+    );
+}
+
+/// Our winner against the argmax of the GAME's own scores, at the same four
+/// sets of positions. Frozen 2026-10-23. The fixture reports 0 ties, so it
+/// cannot say which way the game breaks one; ours keeps the first in
+/// `AQUILO_TILE_ORDER`. Every tile wins somewhere in the 1,024-position set, so a
+/// catalog that mapped one tile to another's colour or name would show.
+#[test]
+fn aquilo_tile_winner_matches_the_game() {
+    let fixture = load_captured_at(AQUILO_FIELDS, "2.1.23");
+    let positions = fixture.get("positions").as_array();
+    let mut sets = vec![(
+        "fields".to_string(),
+        aquilo_terrain_at(positions, AquiloResourceControls::default()),
+        fixture.get("tiles").clone(),
+        false,
+    )];
+    let entity = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    for label in ["default", "size0", "moved"] {
+        let case = entity.get("cases").get(label);
+        sets.push((
+            label.to_string(),
+            aquilo_terrain_at(case.get("positions").as_array(), aquilo_case_controls(case)),
+            case.get("fields").clone(),
+            true,
+        ));
+    }
+    let mut matched = Vec::new();
+    let mut wins = std::collections::BTreeMap::new();
+    for (label, fields, source, long_keys) in &sets {
+        let keys: Vec<String> = AQUILO_TILE_ORDER
+            .iter()
+            .map(|t| {
+                if *long_keys {
+                    format!("tile:{}:probability", t.game_name())
+                } else {
+                    t.game_name().to_string()
+                }
+            })
+            .collect();
+        let per_tile: Vec<&[Json]> = keys.iter().map(|k| source.get(k).as_array()).collect();
+        let per_tile: [&[Json]; 9] = per_tile.try_into().expect("nine tiles");
+        let mut same = 0;
+        for (i, f) in fields.iter().enumerate() {
+            let scores = aquilo_game_scores(&per_tile, i);
+            let mut want: Option<AquiloTile> = None;
+            let mut best = f64::NEG_INFINITY;
+            for (t, v) in scores.iter().enumerate() {
+                if *v > best {
+                    best = *v;
+                    want = Some(AQUILO_TILE_ORDER[t]);
+                }
+            }
+            let want = want.expect("a winner");
+            if *label == "fields" {
+                *wins.entry(want.game_name()).or_insert(0usize) += 1;
+            }
+            if resolve_tile(f) == want {
+                same += 1;
+            }
+        }
+        eprintln!("aquilo tile winner {label}: {same} of {}", fields.len());
+        matched.push(same);
+    }
+    assert_eq!(matched, vec![1024, 632, 452, 626]);
+    // Non-vacuity: all nine tiles win somewhere in the 1,024-position set.
+    assert_eq!(wins.len(), 9, "{wins:?}");
+}
+
+/// The second grade of `aquilo_elevation` and `aquilo_aux`: 1,024 positions out
+/// to 16,000 tiles, picked so every Aquilo tile wins somewhere. Both are full
+/// houses, frozen 2026-10-23. The shipped amplitude-corrected form scored the
+/// elevation at 911 here; the random peaks beat the island peaks at 921 of
+/// these positions, which is why this set sees it more than the entity cases.
+#[test]
+fn aquilo_elevation_and_aux_match_the_game_at_default_levers() {
+    let fixture = load_captured_at(AQUILO_FIELDS, "2.1.23");
+    assert_eq!(fixture.get("seed").as_f64(), 123_456.0);
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 1024);
+    let mut stack = AquiloStack::with_host_trig(&AquiloCtx {
+        seed0: 123_456,
+        controls: AquiloResourceControls::default(),
+    });
+    let fields: Vec<AquiloTerrainFields> = positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            stack
+                .eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+                .terrain
+        })
+        .collect();
+    let climate = fixture.get("climate");
+    let elevation: Vec<f64> = fields.iter().map(|f| f.elevation).collect();
+    let aux: Vec<f64> = fields.iter().map(|f| f.aux).collect();
+    let got = (
+        count_exact_bits(&elevation, climate.get("elevation").as_array()),
+        count_exact_bits(&aux, climate.get("aux").as_array()),
+    );
+    eprintln!(
+        "aquilo fields (1024 positions): elevation {}, aux {}",
+        got.0, got.1
+    );
+    assert_eq!(got, (1024, 1024));
+}
+
+/// [`AmplitudeCorrectedGame`] against the same 152 points that
+/// `reproduces_the_amplitude_corrected_wrapper_at_the_typescripts_own_count`
+/// scores at 81 (#254). Measured 2026-10-23: 152 of 152. The f64 transform with
+/// the f32 persistence scores 122.
+#[test]
+fn the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-multioctave-wrappers.seed123456.json",
+        "2.1.12",
+    );
+    let seed0 = fixture.get("seed0").as_f64() as u32;
+    let positions = fixture.get("positions").as_array();
+    let mut total = 0usize;
+    let mut exact_total = 0usize;
+    for case in fixture.get("amplitudeCorrected").as_array() {
+        let values = case.get("values").as_array();
+        let op = AmplitudeCorrectedGame::new(&AmplitudeCorrectedParams {
+            seed0,
+            seed1: case.get("seed1").as_f64() as u32,
+            octaves: case.get("octaves").as_f64() as u32,
+            input_scale: case.get("inputScale").as_f64(),
+            offset_x: case.get("offsetX").as_f64(),
+            persistence: case.get("persistence").as_f64(),
+            amplitude: case.get("amplitude").as_f64(),
+        });
+        let (exact, _) = score_case(values, |i| {
+            let p = &positions[i];
+            op.eval_at(At::point(p.get("x").as_f64(), p.get("y").as_f64()))
+        });
+        total += values.len();
+        exact_total += exact;
+    }
+    assert_eq!(total, 152, "fixture size");
+    assert_eq!(exact_total, 152, "exact f32 matches");
+}
+
+use crate::rocks::aquilo_icebergs::{iceberg_probabilities, ICEBERG_ORDER};
+
+/// The two iceberg probabilities, `(h - 0.8) * 0.1` and `(h - 0.7) * 0.8`,
+/// against `entity:<name>:probability` in the three lever cases of
+/// `oracle-aquilo-entity-fields`, an exact count per prototype in
+/// `ICEBERG_ORDER`.
+///
+/// The probabilities run through our own `aquilo_high_frequency_peaks`, so
+/// this grades the field and the formula together. Each case kept 64
+/// positions where each probability is above 0; the rest are below, where only
+/// the sign and the arithmetic are graded.
+#[test]
+fn aquilo_iceberg_probabilities_match_the_game() {
+    let entity = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    let mut frozen = Vec::new();
+    for (label, n) in [("default", 632), ("size0", 452), ("moved", 626)] {
+        let case = entity.get("cases").get(label);
+        let positions = case.get("positions").as_array();
+        assert_eq!(positions.len(), n, "{label} position count");
+        let fields = aquilo_terrain_at(positions, aquilo_case_controls(case));
+        let scores: Vec<[f64; 2]> = fields
+            .iter()
+            .map(|f| iceberg_probabilities(f.high_frequency_peaks))
+            .collect();
+        let mut counts = Vec::new();
+        for (k, iceberg) in ICEBERG_ORDER.iter().enumerate() {
+            let key = format!("entity:{}:probability", iceberg.game_name());
+            let got: Vec<f64> = scores.iter().map(|s| s[k]).collect();
+            let positive = got.iter().filter(|v| **v > 0.0).count();
+            // Non-vacuity: the case holds positions where this prototype can
+            // place, not only the negative side.
+            assert!(positive >= 64, "{label} {key}: {positive} positive");
+            counts.push(count_exact_bits(
+                &got,
+                case.get("fields").get(&key).as_array(),
+            ));
+        }
+        eprintln!("aquilo iceberg probabilities {label}: {counts:?}");
+        frozen.push(counts);
+    }
+    assert_eq!(frozen, vec![vec![632; 2], vec![452; 2], vec![626; 2]]);
+}
+
+/// The iceberg formula alone: fed the GAME's own `aquilo_high_frequency_peaks`
+/// at every position of the three lever cases, it must give the game's own two
+/// probabilities. Frozen 2026-10-23 as full houses.
+///
+/// `aquilo_iceberg_probabilities_match_the_game` grades the formula through
+/// our field, so the field's hooks redden it under `poison` whether or not the
+/// formula has one. This one reads no field of ours, so only
+/// `iceberg_probabilities`' own hook can redden it. Planted 2026-10-23: the
+/// constants as doubles (`(h - 0.8) * 0.1` folded in f64) score, through our
+/// field, 246 and 328 of 632, 178 and 246 of 452, 254 and 323 of 626.
+#[test]
+fn the_aquilo_iceberg_formula_reproduces_the_game_from_its_own_peaks() {
+    let entity = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    let mut frozen = Vec::new();
+    for label in ["default", "size0", "moved"] {
+        let fields = entity.get("cases").get(label).get("fields");
+        let peaks: Vec<f64> = fields
+            .get("aquilo_high_frequency_peaks")
+            .as_array()
+            .iter()
+            .map(|w| {
+                let bits = u32::from_str_radix(w.as_str(), 16).expect("hex f32 bits");
+                f64::from(f32::from_bits(bits))
+            })
+            .collect();
+        let scores: Vec<[f64; 2]> = peaks.iter().map(|h| iceberg_probabilities(*h)).collect();
+        let mut counts = vec![peaks.len()];
+        for (k, iceberg) in ICEBERG_ORDER.iter().enumerate() {
+            let key = format!("entity:{}:probability", iceberg.game_name());
+            let got: Vec<f64> = scores.iter().map(|s| s[k]).collect();
+            counts.push(count_exact_bits(&got, fields.get(&key).as_array()));
+        }
+        frozen.push(counts);
+    }
+    assert_eq!(
+        frozen,
+        vec![
+            vec![632, 632, 632],
+            vec![452, 452, 452],
+            vec![626, 626, 626]
+        ]
+    );
+}
+
+use crate::resources::aquilo_wells::{AquiloWellPlacement, WELL_ORDER};
+
+/// Aquilo's entity census at the derived seed, written by
+/// `scripts/probes/aquilo-fields`.
+const AQUILO_ENTITIES: &str = "test/fixtures/oracle-aquilo-entities.seed123456.json";
+
+/// The derived Aquilo surface seed for map seed 123456.
+const AQUILO_DERIVED_SEED: u32 = 3_111_923_328;
+
+fn aquilo_derived_stack() -> core::cell::RefCell<AquiloStack> {
+    core::cell::RefCell::new(AquiloStack::with_host_trig(&AquiloCtx {
+        seed0: AQUILO_DERIVED_SEED,
+        controls: AquiloResourceControls::default(),
+    }))
+}
+
+/// Every entity in the game's census stands on a tile where our probability
+/// for ITS prototype is above 0, read at the tile's integer corner on the chunk
+/// grid, and on the side of the shore (land or water) our tile resolver puts
+/// there. Frozen 2026-10-23: 199 of 199 on both.
+///
+/// The first count is the footprint check: a placed entity outside our
+/// footprint would be one the overlay can never draw. It also settles where the
+/// overlays read their probabilities. Read at the tile CENTRE instead
+/// (`x + 0.5`, point kernel), 7 of the 199 fall outside: the tiny fluorine vent
+/// at (-40.5, -67.5) and 6 big icebergs.
+///
+/// The second is what the iceberg gate reads. The exact tile name agrees at
+/// 185 of 199, also frozen: all 19 wells, and 166 of 180 icebergs. The 14
+/// misses are all land against land, one snow or ice tile for another, at
+/// iceberg sites, which sit on `aquilo_high_frequency_peaks` peaks where the
+/// snow tiles form small patches. The cause is not established. The census
+/// comes from a real surface, not the preview, and a real surface runs
+/// `TileCorrectionMapGenerationTask` (see `docs/noise/tile-correction-NOTES.md`),
+/// which rewrites small patches; that is the lead, not a measurement.
+///
+/// The census covers only the default levers, and the roll's salt is ours, so
+/// which tiles place is not graded here, only that they can.
+#[test]
+fn aquilo_census_entities_stand_inside_our_footprint_on_the_census_tile() {
+    let census = load_captured_at(AQUILO_ENTITIES, "2.1.23");
+    assert_eq!(census.get("surfaceSeed").as_f64(), 3_111_923_328.0);
+    let stack = aquilo_derived_stack();
+    let is_land = |name: &str| {
+        !matches!(
+            name,
+            "brash-ice" | "ammoniacal-ocean" | "ammoniacal-ocean-2"
+        )
+    };
+    let (mut inside, mut same_side, mut same_tile, mut total) = (0usize, 0usize, 0usize, 0usize);
+    for row in census.get("entities").as_array() {
+        let r = row.as_array();
+        let name = r[0].as_str();
+        let (tx, ty) = (r[1].as_f64().floor() as i32, r[2].as_f64().floor() as i32);
+        let f = stack.borrow_mut().eval_at(At::tile(tx, ty));
+        let p = match ICEBERG_ORDER.iter().position(|i| i.game_name() == name) {
+            Some(k) => iceberg_probabilities(f.terrain.high_frequency_peaks)[k],
+            None => WELL_ORDER
+                .iter()
+                .find(|w| w.game_name() == name)
+                .unwrap_or_else(|| panic!("unknown census entity {name}"))
+                .probability(&f.resources),
+        };
+        let (ours, game) = (f.tile().game_name(), r[4].as_str());
+        total += 1;
+        inside += usize::from(p > 0.0);
+        same_side += usize::from(is_land(ours) == is_land(game));
+        same_tile += usize::from(ours == game);
+    }
+    eprintln!(
+        "aquilo census of {total}: {inside} inside, {same_side} on the same side, \
+         {same_tile} on the same tile"
+    );
+    assert_eq!((inside, same_side, same_tile, total), (199, 199, 185, 199));
+}
+
+/// The tiny fluorine vent lands on the census's own tile, (-41, -68), and it
+/// is the only well placed near it.
+///
+/// Its cone centre is (-41.94, -68.13), so the corner it ROUNDS to is
+/// (-42, -68). That corner is inside the radius-1 disk too, but the two share a
+/// chunk, and the 2.8-tile box lets through only the first in the chunk's
+/// decreasing tile order, which is (-41, -68). So the game's tile is the one
+/// the processing order picks, not the rounded centre.
+#[test]
+fn the_tiny_vent_lands_where_the_game_puts_it() {
+    let census = load_captured_at(AQUILO_ENTITIES, "2.1.23");
+    let vents: Vec<(f64, f64)> = census
+        .get("entities")
+        .as_array()
+        .iter()
+        .map(Json::as_array)
+        .filter(|r| r[0].as_str() == "fluorine-vent" && r[1].as_f64().abs() < 50.0)
+        .map(|r| (r[1].as_f64(), r[2].as_f64()))
+        .collect();
+    assert_eq!(vents, vec![(-40.5, -67.5)], "the census's near vent");
+
+    let stack = aquilo_derived_stack();
+    let wells = AquiloWellPlacement::new(&stack);
+    let set = wells.placement_set();
+    let mut placed = Vec::new();
+    for ty in -72..-64 {
+        for tx in -46..-38 {
+            let (x, y) = (f64::from(tx), f64::from(ty));
+            if set.placed(x, y) {
+                placed.push((tx, ty, wells.winner(x, y)));
+            }
+        }
+    }
+    assert_eq!(
+        placed,
+        vec![(
+            -41,
+            -68,
+            Some(crate::resources::aquilo_wells::AquiloWell::FluorineVent)
+        )]
+    );
 }

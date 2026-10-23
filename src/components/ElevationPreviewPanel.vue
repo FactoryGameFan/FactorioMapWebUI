@@ -63,7 +63,7 @@ const preview = computed(() =>
 // island), which `preview.value.supported` already gates. Vulcanus (Task 11)
 // needs none of the preset's Nauvis-specific fields (V1 renders it with
 // neutral/default ctx), so it is unconditionally supported regardless of
-// `mapType`. Gleba/Fulgora/Aquilo have no client renderer at all (out of scope)
+// `mapType`. Gleba has no client renderer at all (out of scope)
 // - without this guard they would silently fall through `runRenderRequest`'s
 // dispatch to the Nauvis terrain renderer and render mislabeled Nauvis colors.
 // Only the Nauvis writer sends `startingPositions` to the engine (Vulcanus and
@@ -221,6 +221,7 @@ async function generate(reroll = false) {
         startingAreaMoistureFrequency: info.ctx.startingAreaMoistureFrequency,
         resourceControls: info.resourceControls,
         vulcanusResourceControls: info.vulcanusResourceControls,
+        aquiloResourceControls: info.aquiloResourceControls,
         enemyControls: info.enemyControls,
         cliffControls: info.cliffControls,
         cliffSettings: info.cliffSettings,
