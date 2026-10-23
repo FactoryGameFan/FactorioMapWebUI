@@ -982,6 +982,7 @@ pub extern "C" fn fulgora_field_count() -> u32 {
 // Tier 2 for phase 5 - the whole Vulcanus field graph (#225).
 // ---------------------------------------------------------------------------
 
+use fmw_noise::expressions::aquilo_stack::AquiloParity;
 use fmw_noise::expressions::vulcanus_stack::VulcanusParity;
 
 /// Tier 2 for the Vulcanus field graph, one named field at a time.
@@ -1056,6 +1057,57 @@ pub extern "C" fn checksum_vulcanus(request_len: u32, field: u32) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn vulcanus_field_count() -> u32 {
     VulcanusParity::FIELD_COUNT
+}
+
+/// Tier 2 for the Aquilo field graph, one named field at a time.
+///
+/// Built through `render::aquilo_stack`, the helper the renderer uses, so the
+/// levers and bearings arrive the way a render's do. The window comes from the
+/// request, as in [`checksum_vulcanus`]. `field` selects an expression,
+/// `0..AquiloParity::FIELD_COUNT`.
+///
+/// **Returns 0 if the request does not decode as an Aquilo one**, rather than
+/// trapping, for the reason `checksum_vulcanus` gives.
+#[unsafe(no_mangle)]
+pub extern "C" fn checksum_aquilo(request_len: u32, field: u32) -> u64 {
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            core::ptr::addr_of!(SCRATCH).cast::<u8>(),
+            request_len as usize,
+        )
+    };
+    aquilo_fold(bytes, field)
+}
+
+/// [`checksum_aquilo`] over request bytes held anywhere, so the native test
+/// can fold without touching the shared scratch buffer.
+fn aquilo_fold(bytes: &[u8], field: u32) -> u64 {
+    let Ok(req) = abi::decode(bytes) else {
+        return 0;
+    };
+    let abi::Params::Aquilo(p) = req.params else {
+        return 0;
+    };
+
+    let mut stack = render::aquilo_stack(req.seed0, &p);
+    let mut parity = AquiloParity::new(&mut stack);
+
+    let mut acc = 0u64;
+    for py in 0..req.height {
+        let y = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let x = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            acc = checksum::fold_f64(acc, parity.field(field, x, y));
+        }
+    }
+    acc
+}
+
+/// How many fields [`checksum_aquilo`] can select, so the spec cannot silently
+/// stop covering one.
+#[unsafe(no_mangle)]
+pub extern "C" fn aquilo_field_count() -> u32 {
+    AquiloParity::FIELD_COUNT
 }
 
 /// FNV-1a 64 over the sorted names of the tiles that block a Vulcanus cliff.

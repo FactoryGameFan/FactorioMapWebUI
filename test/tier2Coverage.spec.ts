@@ -27,7 +27,12 @@ import { frozenNames } from "./tier2Frozen";
 const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
 
 /** Exports that fold through a request rather than arguments, frozen by their planet specs. */
-const PLANET_EXPORTS = new Set(["checksum_fulgora", "checksum_vulcanus", "checksum_nauvis"]);
+const PLANET_EXPORTS = new Set([
+  "checksum_fulgora",
+  "checksum_vulcanus",
+  "checksum_nauvis",
+  "checksum_aquilo",
+]);
 
 describe("tier-2 freeze coverage", () => {
   it("freezes every checksum export the module ships", async () => {
@@ -50,6 +55,7 @@ describe("tier-2 freeze coverage", () => {
       if (planet === "fulgora") covered.add("checksum_fulgora");
       else if (planet === "vulcanus") covered.add("checksum_vulcanus");
       else if (planet === "nauvis") covered.add("checksum_nauvis");
+      else if (planet === "aquilo") covered.add("checksum_aquilo");
       for (const n of names) {
         const head = n.split("|").pop()?.trim().split(":")[0] ?? "";
         if (head.startsWith("checksum_")) covered.add(head);

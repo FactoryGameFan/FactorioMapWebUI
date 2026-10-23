@@ -84,6 +84,62 @@ impl AquiloStack {
     }
 }
 
+/// Tier 2's field selector for the Aquilo graph: one named expression, by index.
+///
+/// The order is `AquiloResourceFields` (11), then `AquiloTerrainFields` (8),
+/// then the nine tile scores in `TILE_ORDER`, 28 in all. The spec's
+/// `FIELD_NAMES` block lists them in the same order, and `native_parity.rs`
+/// scans that block, so the mapping cannot drift.
+///
+/// Every call evaluates the whole stack at the point and picks one value. The
+/// redundancy is free: tier 2 runs it a few thousand times, and it keeps each
+/// field reached through the one entry point its consumers use.
+pub struct AquiloParity<'a> {
+    stack: &'a mut AquiloStack,
+}
+
+impl<'a> AquiloParity<'a> {
+    /// How many named fields [`Self::field`] can select, `0..FIELD_COUNT`.
+    pub const FIELD_COUNT: u32 = 28;
+
+    #[must_use]
+    pub fn new(stack: &'a mut AquiloStack) -> Self {
+        Self { stack }
+    }
+
+    /// One field at world position `(x, y)`, evaluated as a point (tier 2
+    /// sweeps a zoomed-out window, which the renderer also treats as points).
+    /// An index past the end gives 0.
+    pub fn field(&mut self, i: u32, x: f64, y: f64) -> f64 {
+        let f = self.stack.eval_at(At::point(x, y));
+        let r = &f.resources;
+        let t = &f.terrain;
+        match i {
+            0 => r.starting_crude_oil,
+            1 => r.starting_lithium_brine,
+            2 => r.starting_fluorine_vent,
+            3 => r.starting_fluorine_vent_tiny,
+            4 => r.starting_mask,
+            5 => r.crude_oil_spots,
+            6 => r.lithium_brine_spots,
+            7 => r.fluorine_vent_spots,
+            8 => r.crude_oil_probability,
+            9 => r.lithium_brine_probability,
+            10 => r.fluorine_vent_probability,
+            11 => t.wobble_x,
+            12 => t.wobble_y,
+            13 => t.aux,
+            14 => t.island_peaks,
+            15 => t.elevation,
+            16 => t.high_frequency_peaks,
+            17 => t.snow_ice,
+            18 => t.tile_variant,
+            19..=27 => crate::tiles::aquilo_catalog::probabilities(t)[(i - 19) as usize],
+            _ => 0.0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
