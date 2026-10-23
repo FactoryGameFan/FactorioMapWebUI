@@ -11299,3 +11299,155 @@ fn the_last_vulcanus_pixel_on_the_point_kernel_against_the_game() {
     // number, do not adjust it.
     assert_eq!(got, (-60_387, 0, 627, -12));
 }
+
+use crate::expressions::aquilo_resources::{
+    AquiloBearings, AquiloLevers, AquiloResourceControls, AquiloResourceFields, AquiloResources,
+};
+
+/// Aquilo's entity-field capture (Task 1 of the Aquilo stage).
+const AQUILO_ENTITY_FIELDS: &str = "test/fixtures/oracle-aquilo-entity-fields.seed123456.json";
+
+/// Reads one field of [`AquiloResourceFields`].
+type AquiloFieldSelect = fn(&AquiloResourceFields) -> f64;
+
+/// The fixture's field names (the game's `flourine` spelling) against this
+/// layer's fields, in the fixture's order.
+const AQUILO_RESOURCE_FIELDS: [(&str, AquiloFieldSelect); 11] = [
+    ("aquilo_starting_crude_oil", |f| f.starting_crude_oil),
+    ("aquilo_starting_lithium_brine", |f| {
+        f.starting_lithium_brine
+    }),
+    ("aquilo_starting_flourine_vent", |f| {
+        f.starting_fluorine_vent
+    }),
+    ("aquilo_starting_flourine_vent_tiny", |f| {
+        f.starting_fluorine_vent_tiny
+    }),
+    ("aquilo_starting_mask", |f| f.starting_mask),
+    ("aquilo_crude_oil_spots", |f| f.crude_oil_spots),
+    ("aquilo_lithium_brine_spots", |f| f.lithium_brine_spots),
+    ("aquilo_flourine_vent_spots", |f| f.fluorine_vent_spots),
+    ("aquilo_crude_oil_probability", |f| f.crude_oil_probability),
+    ("aquilo_lithium_brine_probability", |f| {
+        f.lithium_brine_probability
+    }),
+    ("aquilo_flourine_vent_probability", |f| {
+        f.fluorine_vent_probability
+    }),
+];
+
+/// One lever case's controls, as the game READ THEM BACK.
+fn aquilo_case_controls(case: &Json) -> AquiloResourceControls {
+    let controls = case.get("controls");
+    let levers = |name: &str| AquiloLevers {
+        frequency: controls.get(name).get("frequency").as_f64(),
+        size: controls.get(name).get("size").as_f64(),
+    };
+    AquiloResourceControls {
+        crude_oil: levers("aquilo_crude_oil"),
+        lithium_brine: levers("lithium_brine"),
+        fluorine_vent: levers("fluorine_vent"),
+    }
+}
+
+/// Score one lever case: per field, the positions whose f32 BITS equal the
+/// game's (so `-0` against `+0` is a miss). Asserts the case's position count.
+fn score_aquilo_resource_case(label: &str, positions_expected: usize) -> Vec<usize> {
+    let fixture = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    assert_eq!(fixture.get("seed").as_f64(), 123_456.0);
+    let case = fixture.get("cases").get(label);
+    let positions = case.get("positions").as_array();
+    assert_eq!(
+        positions.len(),
+        positions_expected,
+        "{label} position count"
+    );
+
+    let seed0 = 123_456;
+    let layer = AquiloResources::new(
+        seed0,
+        &aquilo_case_controls(case),
+        AquiloBearings::from_host(seed0),
+    );
+    let fields: Vec<AquiloResourceFields> = positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            layer.eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+        })
+        .collect();
+
+    let mut counts = Vec::new();
+    for (name, select) in AQUILO_RESOURCE_FIELDS {
+        let want = case.get("fields").get(name).as_array();
+        assert_eq!(want.len(), positions.len(), "{label} {name} length");
+        let exact = fields
+            .iter()
+            .zip(want)
+            .filter(|(f, w)| {
+                let bits = u32::from_str_radix(w.as_str(), 16).expect("hex f32 bits");
+                (select(f) as f32).to_bits() == bits
+            })
+            .count();
+        counts.push(exact);
+    }
+    eprintln!("aquilo {label} ({} positions):", positions.len());
+    for ((name, _), n) in AQUILO_RESOURCE_FIELDS.iter().zip(&counts) {
+        eprintln!("  {name}: {n}");
+    }
+    counts
+}
+
+/// The default levers. Every field is a full house, frozen 2026-10-23.
+///
+/// What the counts can and cannot see:
+///
+/// - **The spot fields are graded on their cones.** 64 positions per field were
+///   picked where it is above the basement, and the rest are mostly at -1. The
+///   cone arithmetic is the game's ([`crate::spot_field::ConeArithmetic::GameBinary`]):
+///   with the ported arithmetic the three spot fields scored 568, 568 and 561,
+///   and each of its three parts was planted back alone and costs counts - the
+///   std pi (568, 568, 561), an f64 distance (623, 618, 620) and a per-op f32
+///   peak (632, 579, 632 on the spots).
+/// - **The spot branch of each probability is thin.** Positions where the spot
+///   field is above 0 AND the starting mask is above 0 number 15, 18 and 17
+///   (crude oil, lithium brine, fluorine vent). The rest of each count grades
+///   the starting cone or a negative spot term.
+/// - **`aquilo_starting_mask` is off its clamps at only 21 positions.** The
+///   other 611 sit at -1 or 1, which any clamp reproduces.
+#[test]
+fn aquilo_resource_fields_match_the_game_default() {
+    let got = score_aquilo_resource_case("default", 632);
+    assert_eq!(got, vec![632; 11]);
+}
+
+/// All three sizes at 0. Every field is a full house, frozen 2026-10-23.
+///
+/// The spot fields are exactly -1 at every position (the radius is 0, so no
+/// spot is placed), and the three probabilities are +0. The `+0` is the
+/// constant fold in `aquilo_resources::gated`: a literal `0 * max(...)` gives
+/// `-0` wherever the `max` is negative, and planted back it drops crude oil and
+/// lithium brine to 64 of 452 each. Fluorine stays at 452 under that plant,
+/// because its `max` holds `tiny > 0`, which is never negative.
+///
+/// `aquilo_starting_mask` is off its clamps at only 13 of these positions.
+#[test]
+fn aquilo_resource_fields_match_the_game_size0() {
+    let got = score_aquilo_resource_case("size0", 452);
+    assert_eq!(got, vec![452; 11]);
+}
+
+/// Moved levers: crude oil 1.5/0.5, lithium brine 0.5/2, fluorine vent 2/(1/6)
+/// (frequency/size, as read back). Every field is a full house, frozen
+/// 2026-10-23.
+///
+/// Crude oil's frequency 1.5 makes `region_size` 866.67, which the selection
+/// floors to 866 and the cache keeps unfloored. Fluorine's size is the f32
+/// `0.1666666716337204`, not 1/6. The spot branch of each probability is
+/// thinner here than at default: 10, 5 and 15 positions. The starting mask is
+/// off its clamps at 22.
+#[test]
+fn aquilo_resource_fields_match_the_game_moved() {
+    let got = score_aquilo_resource_case("moved", 626);
+    assert_eq!(got, vec![626; 11]);
+}

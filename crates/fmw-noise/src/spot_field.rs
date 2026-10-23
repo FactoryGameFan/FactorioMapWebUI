@@ -1,9 +1,36 @@
-//! The spot-noise query shared by every planet that uses `spot_noise`.
+//! The spot-noise query shared by the resource spot fields of Vulcanus and
+//! Aquilo.
 //!
 //! Lifted out of `expressions/vulcanus_resources.rs` so Aquilo's three spot
 //! fields can reuse it. Vulcanus is bit-identical across the move, graded by
 //! `the_shared_spot_query_is_the_vulcanus_one_bit_for_bit` there, which was
 //! frozen against the old code first.
+//!
+//! Not every `spot_noise` caller uses it. Two near-twins carry their own copy
+//! of the region walk and cone: `raw_spots_at` in `expressions/vulcanus_biomes.rs`
+//! and the spot loop in `resources/starting_patches.rs`.
+//!
+//! ## Two cone arithmetics, and only one is the game's
+//!
+//! [`ConeArithmetic::GameBinary`] is read from the 2.1.23 Linux binary
+//! (`NoiseOperations::SpotNoise::run` and the `placeSpots` code inlined into
+//! the spot-list generator). The peak is computed ONCE in f64 and narrowed:
+//! `f32((q * 3.0) / ((r * 3.1416) * r))`. **The game's pi is the double
+//! `3.1416`** (`0x400921FF2E48E8A7`), not `std::f64::consts::PI`, a relative
+//! difference of 2.3e-6. The slope is `f32(peak / r)`, the distance is an f32
+//! `sqrtss` of an f32 sum of f32 squares, the cull is `max_r < d` on that f32
+//! distance, and the cone is `max(out, peak - d * slope)` in f32. Aquilo's
+//! fields are bit-exact with it (Task 3 of the Aquilo stage).
+//!
+//! [`ConeArithmetic::PortedF32`] is what the TypeScript port did and what
+//! Vulcanus's frozen counts were measured with: per-op f32, `PI * r` with the
+//! f64 pi, an f64 distance. Vulcanus keeps it so its frozen counts do not move
+//! here. Moving Vulcanus to the game's arithmetic is a separate, graded change,
+//! and it looks worth making: measured 2026-10-23 by switching Vulcanus to
+//! `GameBinary` (not committed), its tier-1 region counts rise from 1033, 1026,
+//! 999, 1020 and 1020 to 1058, 1048, 1056, 1052 and 1043 of 1085 (tungsten,
+//! coal, calcite, sulfuric acid, sulfuric acid patchy), and no other count in
+//! that test moves.
 //!
 //! ## What is shared, and what is not
 //!
@@ -44,7 +71,23 @@ pub struct SpotGeometry {
     pub max_basement_radius: f64,
     /// `basement_value`, the field's value where no cone reaches.
     pub basement_value: f64,
+    /// Which cone arithmetic [`spot_cone_max`] runs. See the module docs.
+    pub cone: ConeArithmetic,
 }
+
+/// How [`spot_cone_max`] turns a spot into a cone. See the module docs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConeArithmetic {
+    /// The TypeScript port's arithmetic, which Vulcanus's frozen counts use.
+    PortedF32,
+    /// The game's own arithmetic, read from the binary.
+    GameBinary,
+}
+
+/// The game's pi in the spot cone's peak: the double `3.1416`, read from the
+/// 2.1.23 binary as these bits. Written as bits because it is a constant read
+/// from the binary, and so clippy does not take it for a typo of `PI`.
+const GAME_SPOT_PI: f64 = f64::from_bits(0x4009_21ff_2e48_e8a7);
 
 impl SpotGeometry {
     /// `Math.floor(region_size)`.
@@ -123,9 +166,12 @@ impl<K: Ord + Copy> SpotRegionCache<K> {
 /// stays faithful if that ever changes.
 ///
 /// The game's effective radius is `min(maximum_spot_basement_radius,
-/// radius_expression)`. That cap is deliberately omitted: it is unreachable from
-/// every reachable Vulcanus UI state (the radius is at most `2 * 1.2 * 25 = 60`,
-/// under 128), and the TypeScript omits it for the same reason.
+/// radius_expression)`. [`ConeArithmetic::PortedF32`] omits that cap: it is
+/// unreachable from every reachable Vulcanus UI state (the radius is at most
+/// `2 * 1.2 * 25 = 60`, under 128), and the TypeScript omits it for the same
+/// reason. [`ConeArithmetic::GameBinary`] applies it, as the binary does. For
+/// Aquilo it is inert by construction, since `maximum_spot_basement_radius =
+/// radius * 2` there.
 pub fn spot_cone_max(
     geometry: &SpotGeometry,
     sx: f64,
@@ -139,6 +185,12 @@ pub fn spot_cone_max(
     for region_x in r_x {
         let r_y = geometry.region_index(sy - max_r)..=geometry.region_index(sy + max_r);
         for region_y in r_y {
+            if geometry.cone == ConeArithmetic::GameBinary {
+                for s in spots_in(region_x, region_y) {
+                    best = game_cone_max(best, max_r, sx, sy, &s, radius_at(&s));
+                }
+                continue;
+            }
             for s in spots_in(region_x, region_y) {
                 let dx = sx - s.x as f64;
                 let dy = sy - s.y as f64;
@@ -171,6 +223,39 @@ pub fn spot_cone_max(
     poison::f64_result(best)
 }
 
+/// One spot's cone against the running maximum, in the game's arithmetic
+/// ([`ConeArithmetic::GameBinary`]).
+///
+/// `radius` is the spot's radius before the `min` with the cull radius and
+/// before `cone_scale`.
+fn game_cone_max(best: f64, max_r: f64, sx: f64, sy: f64, s: &SelectedSpot, radius: f64) -> f64 {
+    // `placeSpots`: radius = min(maximum_spot_basement_radius, radius), then
+    // the hard-target shrink. A spot at or below 0 is never emitted.
+    let max_r32 = max_r as f32;
+    let radius = radius as f32;
+    // `minss`, written out: the cull radius wins only when strictly smaller.
+    let capped = if max_r32 < radius { max_r32 } else { radius };
+    let radius = (f64::from(capped) * s.cone_scale) as f32;
+    if radius <= 0.0 || s.quantity <= 0.0 {
+        return best;
+    }
+    // `SpotNoise::run`: an f32 distance, culled when `max_r < d`.
+    let dx = sx as f32 - s.x as f32;
+    let dy = sy as f32 - s.y as f32;
+    let d = (dx * dx + dy * dy).sqrt();
+    if max_r32 < d {
+        return best;
+    }
+    // The peak in f64, narrowed once, with the game's pi; the slope in f32.
+    let r = f64::from(radius);
+    let peak = ((f64::from(s.quantity as f32) * 3.0) / ((r * GAME_SPOT_PI) * r)) as f32;
+    let slope = peak / radius;
+    let cone = peak - d * slope;
+    // `maxss`: the running value wins only when strictly greater.
+    let best32 = best as f32;
+    f64::from(if best32 > cone { best32 } else { cone })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +265,7 @@ mod tests {
             region_size,
             max_basement_radius: 128.0,
             basement_value: -1.0,
+            cone: ConeArithmetic::PortedF32,
         }
     }
 
@@ -229,6 +315,14 @@ mod tests {
         assert_eq!(calls, 1);
         let other = cache.get_or_select(8, 0, 0, Vec::new);
         assert!(other.is_empty(), "a different key must not share the entry");
+    }
+
+    /// The bits are the decimal the game's source must have held, and not
+    /// the std pi.
+    #[test]
+    fn the_game_spot_pi_is_the_four_digit_decimal() {
+        assert_eq!(GAME_SPOT_PI.to_string(), "3.1416");
+        assert_ne!(GAME_SPOT_PI, std::f64::consts::PI);
     }
 
     #[test]

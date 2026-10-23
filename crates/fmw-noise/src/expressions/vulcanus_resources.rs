@@ -98,7 +98,7 @@ use crate::expressions::vulcanus_spawn::{
 };
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::spot_candidates::SpotRegionKey;
-use crate::spot_field::{spot_cone_max, SpotGeometry, SpotRegionCache};
+use crate::spot_field::{spot_cone_max, ConeArithmetic, SpotGeometry, SpotRegionCache};
 use crate::spot_selection::{select_spots, SelectedSpot, SpotSelectParams};
 
 /// `vulcanus_ore_spacing` (`suggested_minimum_candidate_point_spacing`).
@@ -194,6 +194,9 @@ impl SpotSpec {
             region_size: self.region_size,
             max_basement_radius: MAX_SPOT_BASEMENT_RADIUS,
             basement_value: BASEMENT_VALUE,
+            // Vulcanus's frozen counts were measured with the ported
+            // arithmetic, so it stays here; see `spot_field`'s module docs.
+            cone: ConeArithmetic::PortedF32,
         }
     }
 }

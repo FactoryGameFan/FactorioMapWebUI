@@ -161,6 +161,12 @@ POISONED_TESTS=(
   fixtures::reproduces_the_vulcanus_resource_layer_at_every_captured_position
   # The spot cone's own hook, which moved to `spot_field::spot_cone_max`.
   expressions::vulcanus_resources::tests::the_shared_spot_query_is_the_vulcanus_one_bit_for_bit
+  # Aquilo's starting cones, spot fields and well probabilities. The size-0
+  # case reds through the starting cones' hook and the basement passing
+  # through `spot_cone_max`'s.
+  fixtures::aquilo_resource_fields_match_the_game_default
+  fixtures::aquilo_resource_fields_match_the_game_size0
+  fixtures::aquilo_resource_fields_match_the_game_moved
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a
