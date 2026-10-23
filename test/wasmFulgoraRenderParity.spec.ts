@@ -282,10 +282,11 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.abiVersion).toBe(ABI_VERSION);
     expect(fixture.commonBytes).toBe(COMMON_BYTES);
 
-    // All FOUR planets (Aquilo joined in Stage 1; Nauvis in #226). A block added without a version bump is
-    // exactly the change this fixture exists to notice: the prefix declares its
-    // own length, so a wrong Nauvis block would decode as a length error rather
-    // than as garbage - but only if something writes it and compares.
+    // All FOUR planets (Aquilo joined in #454; Nauvis in #226). A block added
+    // without a version bump is exactly the change this fixture exists to
+    // notice: the prefix declares its own length, so a wrong Nauvis block would
+    // decode as a length error rather than as garbage - but only if something
+    // writes it and compares.
     for (const planet of ["fulgora", "vulcanus", "nauvis", "aquilo"] as const) {
       const arm = fixture[planet];
       const target = new Uint8Array(REQUEST_BYTES);

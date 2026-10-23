@@ -26,8 +26,8 @@
 //! [`ConeArithmetic::PortedF32`] is what the TypeScript port did and what
 //! Vulcanus's frozen counts were measured with: per-op f32, `PI * r` with the
 //! f64 pi, an f64 distance. Vulcanus keeps it so its frozen counts do not move
-//! here. Moving Vulcanus to the game's arithmetic is a separate, graded change,
-//! and it looks worth making: measured 2026-10-23 by switching Vulcanus to
+//! here. Moving Vulcanus to the game's arithmetic is a separate, graded change
+//! (#491), and it looks worth making: measured 2026-10-23 by switching Vulcanus to
 //! `GameBinary` (not committed), its tier-1 region counts rise from 1033, 1026,
 //! 999, 1020 and 1020 to 1058, 1048, 1056, 1052 and 1043 of 1085 (tungsten,
 //! coal, calcite, sulfuric acid, sulfuric acid patchy), and no other count in
@@ -81,7 +81,7 @@ pub struct SpotGeometry {
 pub enum ConeArithmetic {
     /// The TypeScript port's arithmetic. **It is known to differ from the
     /// game.** Vulcanus keeps it only so its frozen counts do not move until a
-    /// separate, graded fix; new callers use [`ConeArithmetic::GameBinary`].
+    /// separate, graded fix (#491); new callers use [`ConeArithmetic::GameBinary`].
     PortedF32,
     /// The game's own arithmetic, read from the binary.
     ///

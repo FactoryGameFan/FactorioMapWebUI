@@ -53,8 +53,9 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 6 (#226) | Nauvis - every expression, the terrain render, all five overlays, the `all` composite, and (as of #227) the three `elevation` views | done |
 | 7 (#227, #371) | delete the ported TypeScript under `src/noise/` - Nauvis and the render fallbacks in #227, then Fulgora and the Vulcanus expressions in #371, which left `src/noise/` holding orchestration, catalogs and the ABI only | done |
 | 8 (#363) | Fulgora's `resources` and `all` composites                                                            | done |
+| 9 (#454) | Aquilo end to end - terrain, tiles, wells, icebergs; Rust-first, no TypeScript counterpart            | done |
 
-**Every planet, every view the panel offers, renders through the engine.** The
+**Every planet except Gleba, every view the panel offers, renders through the engine.** The
 per-layer landing narrative is in the history doc; what follows is only what is
 still a rule.
 
@@ -756,6 +757,179 @@ construction on exactly the term that differed. Both are f64 now. And
 0.7^4, 0.7^6 and 0.7^8, and one ULP there flips the f32 rounding of the octave
 gain, which moves every point in the case.
 
+### Aquilo (#454)
+
+Aquilo is the fourth planet to render through the engine. It was ported
+Rust-first: there is no TypeScript version to agree with, so tier 2 only freezes
+the module's own folds, and tier 1 and tier 3 are what grade it against the
+game. `docs/noise/aquilo-NOTES.md` holds the findings behind the
+numbers here.
+
+**The ABI block.** `PLANET_AQUILO = 3`. The block is 128 bytes (six resource
+levers, three bearing pairs of sine and cosine, and one placement sweep box), so
+a request is 184 bytes. That is smaller than Vulcanus's 368, so
+`REQUEST_BYTES` stays Nauvis's 568. The offered views are terrain, resources,
+rocks and all. `VIEW_ENTITY_FOOTPRINT = 12` exists for the test that grades
+placement, and the panel never offers it. Elevation, enemies, cliffs, trees and
+the land mask are not served by the module. The app falls back to terrain for
+the last four, and an elevation request throws `unsupportedPair`.
+
+**Tier 1: every field is a full house.** The fixtures capture 30 fields at 3
+lever settings (default, all three resource sliders at size 0, and a moved
+setting) from two game versions that agree bit for bit. All counts are exact
+f32 bit matches, and every one is full:
+
+| group                                                  | default | size 0 | moved |
+| ------------------------------------------------------ | ------: | -----: | ----: |
+| resource fields (11: 4 cones, mask, 3 spots, 3 odds)   |     632 |    452 |   626 |
+| terrain fields (8)                                     |     632 |    452 |   626 |
+| tile scores (9) and tile winner                        |     632 |    452 |   626 |
+| iceberg odds (2)                                       |     632 |    452 |   626 |
+
+`aquilo_elevation` and `aquilo_aux` are also 1024/1024 on the Stage 0 fixture
+(`oracle-aquilo-fields`, default levers only), and the nine tile scores are
+1024 of 1024 there. The counts live in `fixtures.rs`; this table is the shape,
+not the authority.
+
+- **Size 0 is the basement, never NaN.** At size 0 the spot radius is 0, so the
+  cone formula `3q / (pi r^2)` is 0/0. The game reads exactly -1 (the basement
+  value) over the whole capture pool, and the port does too
+  (`a_zero_size_spot_field_is_the_basement_everywhere`). The size gate in the
+  probability is a constant fold: at size 0 it is `+0`, where a literal multiply
+  by zero gives `-0`.
+- **Every constant is an f32 slot.** The wobble fields scored 144 and 99 of 632
+  with `output_scale` as a double, and 632 with it narrowed. Five tile-score
+  constants (`0.01`, `0.05`, `0.75`, `0.4`, `0.6`) did the same.
+- **The grid path is graded only by tier 3.** Every tier-1 position is a point
+  capture, so the chunk-grid path of the plain fields, the billows and
+  `AmplitudeCorrectedGame` is first graded by the terrain comparison below.
+
+**Two findings that change shipped code, each filed rather than fixed here**
+(see "Do not fix the next one inside the port" above):
+
+- `ConeArithmetic::GameBinary` (#491). The game's spot cone, read from the 2.1.23
+  binary: `PI` is the double `3.1416` (at `.rodata` `0xffc028`), the peak narrows
+  once, the distance is an f32 square root of an f32 sum of f32 squares. The
+  ported cone, `ConeArithmetic::PortedF32`, uses the true pi and an f64
+  distance, and left Aquilo's spot fields at 568, 568 and 561 of 632. Aquilo
+  uses `GameBinary`. Vulcanus keeps `PortedF32` so its frozen counts do not move.
+  Measured by switching Vulcanus over without committing it, its five spot
+  fields would rise from 1033, 1026, 999, 1020, 1020 to 1058, 1048, 1056, 1052,
+  1043 of 1085. Nauvis's spot code probably has the same cone. #491 holds the
+  follow-up.
+- `AmplitudeCorrectedGame` (#254). The shipped amplitude-corrected form is wrong
+  in two ways: the persistence is f32, and the `output_scale` transform is folded
+  in f32 in the Lua's order. On the wrapper fixture the game's form scores
+  152/152 and the shipped form 81. Aquilo's `random_island_peaks` scored 608, 434
+  and 602 of 632, 452 and 626 with the shipped form. Nauvis keeps the shipped form;
+  the finding is posted on #254.
+
+**Tier 2: four windows, two lever settings, 224 rows.** `checksum_aquilo` folds
+all 28 fields (11 resource, 8 terrain, 9 tile scores) over a 26 by 26 window.
+The frozen table `tier2-checksums.json` has an `aquilo` section of 224 rows: 4
+windows by 2 lever settings by 28 fields. The first window is the original one,
+and three more were added because it held a constant on 8 of 28 fields at
+default levers (the window is mostly ocean away from any well). The added
+windows hold the spawn cones, a ring across the starting mask ramp (distance
+300 to 340), and the guaranteed vent. This is the "a window must contain the
+thing it grades" rule again: the plan's window was kept for its original rows,
+and the extra windows were added beside it rather than accepting the constants.
+
+- All 28 fields take more than one value in some case (graded in
+  `native_parity.rs`), and moving each of the six levers alone changes at least
+  one fold (`wasmAquiloParity.spec.ts`). Fluorine size changes nothing in the
+  first window, because the default layout has no random fluorine spot to
+  resize; the test failed first, which showed it can discriminate.
+- A field index past the last real field (28 or more) folds 0 rather than a
+  plausible checksum of zeros, and the specs assert index 27 folds non-zero.
+  `checksum_vulcanus` has the same shape and was not changed, because it is
+  shipped code.
+- Tier 2 here compares the module run native with the module run in WASM, so it
+  sees the wasm libm, but it cannot see a mistake that both share. The frozen
+  rows were written from the WASM run and the native test matched them with no
+  copying.
+
+**Tier 3: the terrain gap is 0 of 1,048,576.** The spec is
+`test/wasmAquiloRenderParity.spec.ts` (26 tests, about 20 seconds on tealc,
+about 1.5 times Fulgora's). All of it uses the derived surface seed 3111923328
+for map seed 123456, and the window is -512 to 511 at one tile per pixel.
+
+| what                                                           | frozen                |
+| -------------------------------------------------------------- | --------------------- |
+| terrain view against the terrain PNG (levers at size 0)        | 0 of 1,048,576        |
+| same, levers left at neutral (control)                         | 13,194                |
+| raw map seed instead of the derived one, 256 by 256 at spawn   | 7,376 of 8,843 land pixels differ (83%) |
+| terrain view against the full PNG, entity pixels masked        | 0 of 1,023,862 compared |
+| the same comparison on the composite                           | 1,102 (reported, not frozen) |
+| footprint pixels outside at the mark radius of 1               | 7                     |
+| footprint pixels outside at radius 2                           | 0                     |
+| footprint share of the window                                  | 3.59% (asserted 1% to 10%) |
+| tiled render against whole render, four 128 tiles with halo    | 0 bytes differ        |
+| same without the halo (control)                                | 84 bytes differ       |
+| `aquilo:render` rows in `tier3-render-checksums.json`          | 14                    |
+
+- **The terrain PNG was captured with all three resource controls at size 0,
+  and those controls reshape the islands.** A render that names no levers
+  renders at size 1 and differs from the PNG in 13,194 pixels. The matched
+  pairing gives 0. The spec freezes both numbers so the levers stay load-bearing.
+  This is the Vulcanus lesson again (see tier 3 above).
+- **The full-PNG tile comparison grades the terrain view, not the composite.**
+  Our wells and icebergs sit where our own roll put them, so comparing the
+  composite would mix placement into a tile grade and count it twice. The mask
+  (a game pixel is a tile colour with no entity colour within 3 pixels) is built
+  once and passed to the counter and to `withDiffArtifacts`. Radii 1 to 5 all
+  give 0 differing pixels.
+- **The footprint is 7 outside at radius 1, not 0.** All 7 are iceberg edge
+  pixels. A huge iceberg is 3.7 by 2.5 tiles and the game draws it that wide, so
+  an edge can sit two pixels from its centre tile, one more than our 3 by 3
+  mark. Both radii are frozen.
+- **The per-colour fingerprint, and #492.** Counts in our composite are crude
+  295, lithium 444, vent 189 and iceberg 4,716, against the game's 475, 451, 157
+  and 4,609. Game pixels with no same-colour pixel of ours within 3 pixels:
+  crude 396, lithium 257, vent 130, iceberg 122. In the other direction, 202 of
+  our 295 crude pixels and 777 of our iceberg pixels have no game match. The
+  fields agree at tier 1, so the roll (salts `0x00682f53` and `0x0027d9c1`, with
+  no cross-chunk collision) is the suspect. The counts are frozen as a
+  fingerprint, not as a score. #492 holds the follow-up.
+- **The `aquilo:render` digests are a self-snapshot, not a correctness grade.**
+  They are the bytes our own module produced when they were frozen, in 14 rows
+  (4 views by 2 windows, and 6 slider cases). They catch a render that changed.
+  They cannot say the render was right. The 0 above, the control counts and the
+  fingerprint are what grade it against the game.
+- **Each slider crosses the ABI.** Six cases move one lever each to 2 (crude
+  frequency and size, lithium frequency and size, fluorine frequency and size),
+  each in a window where it matters, and each asserts the picture changed. Most
+  windows are dead to most levers. Near spawn, sizes of 0.25 to 4 moved no well,
+  and only size 0 did. That was not checked against a game capture.
+- **A planted swap of two bearings turned 12 of 26 tests red** (terrain gap 0 to
+  1,189, full-PNG tiles 0 to 554). It was reverted and the rebuilt module
+  matched the committed one again.
+
+**Two rulings that shaped those numbers.**
+
+- *The footprint is frozen at two radii.* The plan expected 0 at the mark
+  radius. Measuring found 7 edge pixels, each checked by flooding its iceberg
+  in the game PNG, so both 7 and 0 are frozen, with the reason.
+- *The tile grade uses the terrain view.* The plan did not name the view. The
+  composite number is reported but placement is graded by the fingerprint.
+
+**Placement choices that are counts, not derivations.**
+
+- Wells are allowed on every tile. The census had 19 wells, none on brash ice
+  or flat snow, which is too few to prove an exclusion. Icebergs are allowed on
+  the six land tiles only: all 180 census icebergs stand on land, and both
+  iceberg prototypes carry `water_tile` in their collision mask, which both
+  oceans and brash ice also carry.
+- Icebergs use `lithium-iceberg-huge`'s 3.7 by 2.5 box everywhere. Huge never
+  wins the argmax (big beats it wherever either is above 0), so the argmax rule
+  gives big's smaller box and 357 icebergs in the census window against the
+  game's 180. Huge's box everywhere gives 195, the rule Vulcanus ships for the
+  same reason. It was chosen by comparing counts, not derived, and the overlay
+  claims density, not identity.
+- No well tile rewrite. The wells' `created_effect` rewrites nearby ocean during
+  map generation, but the game's preview PNG shows none of it (0 pixels), so
+  the port does not model it. The preview also runs no tile correction.
+
 ### Current tier-1 counts
 
 **`crates/fmw-noise/src/fixtures.rs` is the authority, and the tables live in
@@ -809,6 +983,7 @@ declares `params_bytes`, then a per-planet block follows:
 
 | planet   | block | request |
 | -------- | ----- | ------- |
+| Aquilo   | 128   | 184     |
 | Fulgora  | 64    | 120     |
 | Nauvis   | 512   | 568     |
 | Vulcanus | 312   | 368     |
@@ -880,8 +1055,8 @@ renders successfully through the same instance.
 **Trig crosses as VALUES computed in V8**, never computed in the module (#270).
 Nauvis carries none, because it is the one planet free of transcendentals.
 
-`test/fixtures/wasm-request.v2.json` pins the encoding for all four planets (Aquilo, 128 bytes, request 184, added in Stage 1). It
-is declared under `notFixtures` because it is our own ABI rather than Factorio
+`test/fixtures/wasm-request.v2.json` pins the encoding for all four planets
+(Aquilo, 128 bytes, request 184, added in #454). It is declared under `notFixtures` because it is our own ABI rather than Factorio
 ground truth, and its bytes are checked by
 `test/fixtures/verify-wasm-request.py` - **a third implementation, not the
 writer under test** - so a future version is re-verified the same way rather
@@ -890,12 +1065,16 @@ than regenerated from the encoder.
 Two lessons from that checker, and both generalise past it:
 
 - **A property check is not a structural check.** The checker cannot reproduce
-  the trig values, since those are V8's `Math.sin` after an f32 narrowing, so it
-  checked each pair for `sin^2 + cos^2 = 1` instead. That property **passed a
-  planted swap of two bearings** - rendering a plausible planet with its biomes
-  rotated - because a property is invariant under permutation. It now also
-  recovers each angle with `atan2` and checks it against the offset the game's
-  Lua gives it. **Ask what your property is invariant under, and plant that.**
+  the Fulgora and Vulcanus trig values, since those are V8's `Math.sin` after an
+  f32 narrowing, so it checked each pair for `sin^2 + cos^2 = 1` instead. That
+  property **passed a planted swap of two bearings** - rendering a plausible
+  planet with its biomes rotated - because a property is invariant under
+  permutation. It now also recovers each angle with `atan2` and checks it
+  against the offset the game's Lua gives it. **Ask what your property is
+  invariant under, and plant that.** Aquilo is the exception: its arm's trig
+  bytes ARE Python's own f32 sine and cosine, and they equal V8's after the
+  narrowing for those three angles, so the checker also compares them to 2e-7.
+  That is a fact about three angles, not a guarantee for every angle.
 - **Check that a structural claim's DATA instantiates it.** Nauvis's check is
   "distinct scalars at distinct offsets", which was sound - and the committed
   request carried only two distinct values across its eight fields, five `1.0`

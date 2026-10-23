@@ -11,12 +11,18 @@ What it can and cannot check:
 - It CAN check every offset, the endianness, the field order, the eleven
   Vulcanus scalars and both world boxes' edges against the request that produced
   them.
-- It CANNOT reproduce the trig VALUES, because those are V8's `Math.sin` after
-  an `f32` narrowing and Python's libm is a different implementation - which is
-  the whole point of #270 and the reason the trig crosses the boundary as values
-  in the first place. So it checks the trig block by a property instead:
-  `sin^2 + cos^2 == 1` to within an f32 epsilon for each of the ten pairs, which
-  a mis-offset or half-shifted block fails.
+- It CANNOT reproduce the Fulgora and Vulcanus trig VALUES, because those are
+  V8's `Math.sin` after an `f32` narrowing and Python's libm is a different
+  implementation - which is the whole point of #270 and the reason the trig
+  crosses the boundary as values in the first place. So it checks that trig
+  block by a property instead: `sin^2 + cos^2 == 1` to within an f32 epsilon
+  for each of the ten pairs, which a mis-offset or half-shifted block fails.
+- For Aquilo it DOES reproduce them. The Aquilo arm's trig bytes are Python's
+  own `f32(sin)` and `f32(cos)` of the three bearings, and they equal what V8
+  gives after the same narrowing for these three angles: the TypeScript writer
+  produces exactly these bytes (`wasmFulgoraRenderParity.spec.ts`). That is a
+  fact about these three angles, not a guarantee. A libm can differ by one ULP
+  somewhere else, so `decode_aquilo` still compares with a 2e-7 tolerance.
 
 Usage: python3 verify-wasm-request.py <encoder-output.json> <fixture-output.json>
 """

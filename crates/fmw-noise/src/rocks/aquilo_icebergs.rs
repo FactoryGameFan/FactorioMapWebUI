@@ -17,6 +17,9 @@
 //! `lithium-iceberg-medium` and smaller kin are `optimized-decorative`s, which
 //! the map preview does not draw.
 //!
+//! Where the icebergs land is not yet the game's: the density is close, but
+//! individual icebergs fall in other places (#492).
+//!
 //! ## One stream, winner by largest probability
 //!
 //! The two share one [`PlacementSet`] and one salt,

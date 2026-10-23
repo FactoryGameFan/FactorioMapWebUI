@@ -7,6 +7,9 @@
 //! collision box and the colours. There is no TypeScript counterpart; Aquilo
 //! is ported Rust-first.
 //!
+//! Where the wells land is not yet the game's: the fields agree, but individual
+//! wells fall in other places (#492).
+//!
 //! ## One stream, winner by largest probability
 //!
 //! The three wells share one [`PlacementSet`] and one salt,
