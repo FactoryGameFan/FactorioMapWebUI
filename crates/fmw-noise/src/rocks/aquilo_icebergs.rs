@@ -28,31 +28,44 @@
 //!
 //! **Under that rule huge never wins.** `huge > big` means
 //! `0.1 h - 0.08 > 0.8 h - 0.56`, so `h < 0.6857`, where huge is negative. So
-//! wherever either probability is above 0, big is the larger, and the overlay
-//! is big's probability with big's box everywhere. Nauvis has the same shape
-//! (`huge-rock` cannot win there either). The game's census at the derived
-//! seed has 21 huge icebergs against 159 big, so the game does NOT arbitrate
-//! this way; `docs/noise/placement-roll-NOTES.md` records the same finding for
-//! the Vulcanus and Nauvis rocks (issue #22, item 1). Both icebergs draw the
-//! same colour, so the visible cost is the density.
+//! wherever either probability is above 0, big is the larger, and the overlay's
+//! probability is big's everywhere. `rocks::vulcanus_placement` is the matching
+//! precedent: two rock prototypes, the huge one provably never the argmax.
+//! (Nauvis keeps an argmax box because its `big-sand-rock` can win.) The
+//! game's census at the derived seed has 21 huge icebergs against 159 big, so
+//! the game does NOT arbitrate this way; `docs/noise/placement-roll-NOTES.md`
+//! records the same finding for the Vulcanus and Nauvis rocks (issue #22,
+//! item 1).
 //!
-//! **Measured 2026-10-23, and the density is about twice the game's.** Over
-//! the census window (tiles -256..255, derived seed 3111923328, default
-//! levers) the game places 180 icebergs. This overlay places 357, all big.
-//! What the same window places under other rules, for whoever revisits it:
+//! ## The box: huge's, everywhere
 //!
-//! | rule | icebergs |
-//! | --- | ---: |
-//! | the game (census) | 180 |
-//! | shipped: argmax, so big's 2.0 x 1.5 box everywhere | 357 |
-//! | no collision at all | 718 |
-//! | huge's 3.7 x 2.5 box everywhere (what `vulcanus_placement` does) | 195 |
-//! | big's box, and all 3x3 tiles around the iceberg on land | 234 |
-//! | huge's box, and all 3x3 tiles on land | 132 |
+//! **The collision box is `lithium-iceberg-huge`'s 3.7 x 2.5 at every tile**,
+//! the rule `vulcanus_placement` ships, not the box of the winning prototype.
+//! The argmax box would be big's 2.0 x 1.5 everywhere, and that roughly doubles
+//! the game's density. Measured 2026-10-23 over the census window (tiles
+//! -256..255, derived seed 3111923328, default levers):
+//!
+//! | box rule | icebergs | against the game's 180 |
+//! | --- | ---: | ---: |
+//! | **shipped: huge's 3.7 x 2.5 box everywhere** | **195** | **+8%** |
+//! | argmax, so big's 2.0 x 1.5 box everywhere | 357 | +98% |
+//! | no collision at all | 718 | +299% |
+//! | big's box, and all 3x3 tiles around the iceberg on land | 234 | +30% |
+//! | huge's box, and all 3x3 tiles on land | 132 | -27% |
 //!
 //! The probabilities sum to 724 over the window's 7,420 land tiles, so the
 //! box, not the field, decides the count.
 //!
+//! **What that settles and what it does not**, as for Vulcanus: the box was
+//! CHOSEN by comparing candidates against the game's count, not derived. The
+//! tile-level huge/big identity is known WRONG (the model gives 0% huge, the
+//! game about 12%); the claim this overlay makes is density, and huge's box
+//! everywhere is the rule measured closest in count. Both icebergs draw the
+//! same colour, so identity is not visible in the preview. [`winner`] still
+//! reports the argmax, which is always big.
+//!
+//! [`winner`]: AquiloIcebergPlacement::winner
+
 //! ## Where the probability is evaluated
 //!
 //! At the tile's integer corner on the chunk grid
@@ -102,10 +115,9 @@
 //! pixels of exactly (168, 188, 211), the one non-tile colour there besides
 //! the three wells' (see `resources::aquilo_wells`).
 
-use crate::expressions::aquilo_stack::AquiloStack;
+use crate::expressions::aquilo_stack::{tile_at, AquiloStack};
 use crate::placement::roll::{salt, PlacementCollisionBox, PlacementSet, PlacementSource};
 use crate::poison;
-use crate::resources::aquilo_wells::tile_at;
 use crate::tiles::aquilo_catalog::AquiloTile;
 use core::cell::RefCell;
 
@@ -245,8 +257,10 @@ impl PlacementSource for AquiloIcebergPlacement<'_> {
         iceberg_tile_allowed(tile)
     }
 
-    fn collision_box(&self, x: f64, y: f64) -> Option<PlacementCollisionBox> {
-        self.winner(x, y).map(AquiloIceberg::collision_box)
+    /// `lithium-iceberg-huge`'s box at every tile, whichever prototype wins:
+    /// see "The box: huge's, everywhere" in the module docs.
+    fn collision_box(&self, _x: f64, _y: f64) -> Option<PlacementCollisionBox> {
+        Some(HUGE_ICEBERG_BOX)
     }
 }
 
@@ -297,6 +311,30 @@ mod tests {
         assert_eq!(pick_iceberg(0.7), None, "big is exactly 0 at 0.7");
     }
 
+    /// The box is huge's at a tile big wins, and at a tile neither wins: the
+    /// R7 rule, pinned because only density can show it otherwise, and the
+    /// argmax box (big's) roughly doubles the count (357 against 195 in the
+    /// census window).
+    #[test]
+    fn the_box_is_huges_at_every_tile_whichever_iceberg_wins() {
+        let s = stack(DERIVED_SEED);
+        let placement = AquiloIcebergPlacement::new(&s);
+        let mut big_wins = 0;
+        for ty in -16..16 {
+            for tx in -16..16 {
+                let (x, y) = (f64::from(tx), f64::from(ty));
+                if placement.winner(x, y) == Some(AquiloIceberg::Big) {
+                    big_wins += 1;
+                }
+                assert_eq!(placement.collision_box(x, y), Some(HUGE_ICEBERG_BOX));
+            }
+        }
+        assert!(
+            big_wins > 0,
+            "no tile where big wins, so this grades little"
+        );
+    }
+
     /// The gate is the six land tiles, and only those.
     #[test]
     fn icebergs_stand_on_the_six_land_tiles_only() {
@@ -326,9 +364,9 @@ mod tests {
     /// costs about 4 s per overlay in a debug build, and under `poison` the
     /// flipped roll would make it place on nearly every tile. Scanned in full
     /// on 2026-10-23, the window holds 24 wells (8 crude oil, 10 lithium
-    /// brine, 6 fluorine vents) against the game's 19 (11, 4, 4), and 357
-    /// icebergs, all big, against the game's 180 (159 big, 21 huge); see the
-    /// module docs.
+    /// brine, 6 fluorine vents) against the game's 19 (11, 4, 4), and 195
+    /// icebergs, all big by `winner`, against the game's 180 (159 big, 21
+    /// huge); see the module docs.
     #[test]
     fn wells_and_icebergs_place_on_a_real_window() {
         let s = stack(DERIVED_SEED);
@@ -381,6 +419,7 @@ mod tests {
             }
         }
         second.reverse();
+        assert_eq!(first.len(), 4096);
         assert_eq!(first, second);
         let placed = first.iter().filter(|p| **p).count();
         eprintln!("icebergs placed in the window: {placed}");

@@ -38,6 +38,18 @@ impl AquiloFields {
     }
 }
 
+/// The map-generation position of the tile whose integer corner `(x, y)` falls
+/// in: `At::tile` of the floor, on the chunk grid.
+///
+/// Both Aquilo overlays (`resources::aquilo_wells`, `rocks::aquilo_icebergs`)
+/// read the stack here. `PlacementSet` hands them whole-tile positions, so the
+/// floor only matters for a direct caller.
+#[must_use]
+pub fn tile_at(x: f64, y: f64) -> At {
+    #[allow(clippy::cast_possible_truncation)]
+    At::tile(x.floor() as i32, y.floor() as i32)
+}
+
 /// The per-render state of the Aquilo graph.
 pub struct AquiloStack {
     resources: AquiloResources,

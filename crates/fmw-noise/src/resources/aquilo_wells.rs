@@ -24,7 +24,7 @@
 //!
 //! The three probabilities are evaluated at the tile's integer corner, the
 //! position `PlacementSet` hands every overlay, through the chunk-grid kernel
-//! ([`At::tile`]). None of them reads a noise primitive, so the kernel does not
+//! ([`tile_at`]). None of them reads a noise primitive, so the kernel does not
 //! change their values.
 //!
 //! ## The guaranteed vent near spawn
@@ -36,7 +36,11 @@
 //! least one tile always has probability 1 and its roll always passes. Two to
 //! four corners can share the disk; the 2.8-tile box then lets only the first
 //! of them in the chunk's processing order through, unless they sit in
-//! different chunks (`PlacementSet` does not model cross-chunk collision).
+//! different chunks: `PlacementSet` does not model collision across a chunk
+//! boundary, so when the in-disk corners straddle one, two vents are drawn
+//! where the game draws one. A scan of 400 seeds spread over the u32 range
+//! found it at 20 (5%); `a_vent_disk_across_a_chunk_boundary_draws_two_vents`
+//! pins one of them.
 //! At the derived seed 3111923328 the game's own census puts the vent at
 //! tile (-41, -68); `the_tiny_vent_lands_where_the_game_puts_it` (in
 //! `fixtures`) checks it.
@@ -98,9 +102,8 @@
 //! Crude oil's 198 (from 198.9) is what shows the channels are truncated, not
 //! rounded.
 
-use crate::at::At;
 use crate::expressions::aquilo_resources::AquiloResourceFields;
-use crate::expressions::aquilo_stack::AquiloStack;
+use crate::expressions::aquilo_stack::{tile_at, AquiloStack};
 use crate::placement::roll::{salt, PlacementCollisionBox, PlacementSet, PlacementSource};
 use core::cell::RefCell;
 
@@ -174,15 +177,6 @@ pub fn pick_well(f: &AquiloResourceFields) -> Option<(AquiloWell, f64)> {
         }
     }
     best.map(|(well, v)| (well, v.min(1.0)))
-}
-
-/// The tile whose integer corner `(x, y)` falls in, on the chunk grid.
-///
-/// `PlacementSet` hands every overlay whole-tile positions, so the floor only
-/// matters for a direct caller.
-pub(crate) fn tile_at(x: f64, y: f64) -> At {
-    #[allow(clippy::cast_possible_truncation)]
-    At::tile(x.floor() as i32, y.floor() as i32)
 }
 
 /// The well overlay's placement source.
@@ -312,6 +306,27 @@ mod tests {
             let rounded = (rx as i32, ry as i32);
             assert_eq!((tx, ty), rounded, "seed {seed}");
         }
+    }
+
+    /// The known departure: at seed 64424508 the tiny vent's centre is
+    /// (-73.08, -32.54), and the two in-disk corners (-73, -33) and (-73, -32)
+    /// sit either side of the chunk boundary at y = -32. `PlacementSet` does
+    /// not test collision across chunks, so both place. The game would keep
+    /// one. Measured 2026-10-23; 20 of 400 seeds spread over the u32 range
+    /// straddle like this.
+    #[test]
+    fn a_vent_disk_across_a_chunk_boundary_draws_two_vents() {
+        let seed = 64_424_508;
+        let s = stack(seed);
+        let placement = AquiloWellPlacement::new(&s);
+        let centre = tiny_vent_centre(seed);
+        assert_eq!(
+            placed_near(&placement, centre),
+            vec![
+                (-73, -33, Some(AquiloWell::FluorineVent)),
+                (-73, -32, Some(AquiloWell::FluorineVent)),
+            ]
+        );
     }
 
     /// At fluorine size 0 the probability is gated to 0, so the tiny vent goes
