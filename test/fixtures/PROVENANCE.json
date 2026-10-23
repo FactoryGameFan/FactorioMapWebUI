@@ -575,6 +575,11 @@
       "evidence": "captured 2026-10-18 by scripts/probes/multioctave-grid (gdb, not Lua) from the Linux headless build whose --version reads 'Version: 2.1.20 (build 87512, linux64, headless)': every call MultioctaveNoise::run's chunk-grid branch made to the grid basis_noise kernel, chained per chunk by buffer content. Cross-checked the same run: 'Version: 2.0.77 (build 84539, linux64, headless)' returned bit-identical values for every chunk.",
       "versionDifferences": "none: 2.0.77 and 2.1.20 bit-identical on every value"
     },
+    "oracle-planet-autoplace.2.1.23.json": {
+      "factorioVersion": "2.1.23",
+      "evidence": "captured 2026-10-22 by scripts/probes/planet-autoplace (factorio-oracle, map seed 123456, DERIVED surface seeds Gleba 3215206427 and Aquilo 3111923328, read back) from the Linux headless build whose --version reads 'Version: 2.1.23 (build 87750, linux64, headless)': Gleba and Aquilo autoplace settings, entity counts by name and type over tiles -256..255, Gleba reruns with gleba_plants and gleba_enemy_base at size 0, and an Aquilo world generated with and without the wells' created_effect (wells asserted identical) compared tile by tile.",
+      "versionDifferences": "none: single version, 2.1.23 only"
+    },
     "oracle-quick-vp-grid.seed123456.json": {
       "factorioVersion": "2.1.20",
       "evidence": "captured 2026-10-18 by scripts/probes/quick-vp-grid (gdb, not Lua) from the Linux headless build whose --version reads 'Version: 2.1.20 (build 87512, linux64, headless)': quick_multioctave_noise as every chunk-grid basis_noise kernel call its octaves made, chained by buffer content; variable_persistence_multioctave_noise as its output register read when VariablePersistenceMultioctaveNoise::run returned. Cross-checked the same run: 'Version: 2.0.77 (build 84539, linux64, headless)' returned bit-identical values for every chunk.",

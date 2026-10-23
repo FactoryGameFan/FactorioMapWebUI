@@ -1,0 +1,840 @@
+{
+  "_comment": "Ground truth from Factorio 2.1.23 (build 87750, linux64, headless) via factorio-oracle, map seed 123456, DERIVED surface seeds (Gleba 3215206427, Aquilo 3111923328), no terrain-only mod. Region: chunks -8..8 around the origin, entities and tiles read over tiles -256..255. gleba.asis/noplants/noenemy: settings tables and entity counts with gleba_plants or gleba_enemy_base at size 0. byControl: every entity prototype with an autoplace table, grouped by its autoplace.control. aquilo: settings and entity census. effectToggle: the CLEAN well test - the same Aquilo world generated twice, once as shipped and once with created_effect removed from the three resources in data-final-fixes, every region tile compared, split into tiles within 3 of a well (7x7) and the rest; wells are asserted identical in both runs. aquiloNoWells/wellRewrite: the brief's size-0 control, CONFOUNDED - the resource spots feed aquilo_island_peaks, so size 0 reshapes the islands; diffFar there is terrain change, not well rewrite. positiveControl: a well created by script on the size-0 surface, tiles read before and after. Regenerate: node --experimental-strip-types scripts/probes/planet-autoplace/capture.ts",
+  "_factorioVersion": "2.1.23",
+  "_buildLine": "Version: 2.1.23 (build 87750, linux64, headless)",
+  "_crossChecked": false,
+  "mapSeed": 123456,
+  "surfaceSeeds": {
+    "gleba": 3215206427,
+    "aquilo": 3111923328
+  },
+  "region": [
+    -256,
+    255
+  ],
+  "gleba": {
+    "asis": {
+      "surface": "gleba",
+      "seed": 3215206427,
+      "zeroed": {},
+      "counts": {
+        "total": 9295,
+        "byName": {
+          "water-cane": 4060,
+          "funneltrunk": 491,
+          "stingfrond": 570,
+          "teflilly": 524,
+          "copper-stromatolite": 424,
+          "hairyclubnub": 175,
+          "cliff-gleba": 513,
+          "cuttlepop": 282,
+          "yumako-tree": 68,
+          "sunnycomb": 270,
+          "boompuff": 370,
+          "iron-stromatolite": 701,
+          "stone": 466,
+          "slipstack": 210,
+          "lickmaw": 68,
+          "jellystem": 94,
+          "gleba-spawner-small": 9
+        },
+        "byType": {
+          "tree": 7020,
+          "simple-entity": 1125,
+          "cliff": 513,
+          "plant": 162,
+          "resource": 466,
+          "unit-spawner": 9
+        }
+      },
+      "settings": {
+        "seed": 3215206427,
+        "controls": {
+          "gleba_cliff": {
+            "frequency": 1,
+            "size": 1,
+            "richness": 1
+          },
+          "gleba_enemy_base": {
+            "frequency": 1,
+            "size": 1,
+            "richness": 1
+          },
+          "gleba_plants": {
+            "frequency": 1,
+            "size": 1,
+            "richness": 1
+          },
+          "gleba_stone": {
+            "frequency": 1,
+            "size": 1,
+            "richness": 1
+          },
+          "gleba_water": {
+            "frequency": 1,
+            "size": 1,
+            "richness": 1
+          }
+        },
+        "cliff_settings": {
+          "name": "cliff-gleba",
+          "control": "gleba_cliff",
+          "cliff_elevation_0": 40,
+          "cliff_elevation_interval": 60,
+          "cliff_smoothing": 0,
+          "richness": 0.800000011920929
+        },
+        "autoplace_settings": {
+          "decorative": [
+            "barnacles-decal",
+            "black-sceptre",
+            "blood-grape",
+            "blood-grape-vibrant",
+            "brambles",
+            "brown-cup",
+            "coral-land",
+            "coral-stunted",
+            "coral-stunted-grey",
+            "coral-water",
+            "cracked-mud-decal",
+            "cream-nerve-roots-veins-dense",
+            "cream-nerve-roots-veins-sparse",
+            "curly-roots-orange",
+            "dark-mud-decal",
+            "fuchsia-pita",
+            "green-bush-mini",
+            "green-carpet-grass",
+            "green-croton",
+            "green-cup",
+            "green-hairy-grass",
+            "green-lettuce-lichen-1x1",
+            "green-lettuce-lichen-3x3",
+            "green-lettuce-lichen-6x6",
+            "green-lettuce-lichen-water-1x1",
+            "green-lettuce-lichen-water-3x3",
+            "green-lettuce-lichen-water-6x6",
+            "green-pita",
+            "green-pita-mini",
+            "grey-cracked-mud-decal",
+            "honeycomb-fungus",
+            "honeycomb-fungus-1x1",
+            "honeycomb-fungus-decayed",
+            "knobbly-roots",
+            "knobbly-roots-orange",
+            "lichen-decal",
+            "light-mud-decal",
+            "matches-small",
+            "mycelium",
+            "pale-lettuce-lichen-1x1",
+            "pale-lettuce-lichen-3x3",
+            "pale-lettuce-lichen-6x6",
+            "pale-lettuce-lichen-cups-1x1",
+            "pale-lettuce-lichen-cups-3x3",
+            "pale-lettuce-lichen-cups-6x6",
+            "pale-lettuce-lichen-water-1x1",
+            "pale-lettuce-lichen-water-3x3",
+            "pale-lettuce-lichen-water-6x6",
+            "pink-lichen-decal",
+            "pink-phalanges",
+            "polycephalum-balloon",
+            "polycephalum-slime",
+            "purple-nerve-roots-veins-dense",
+            "purple-nerve-roots-veins-sparse",
+            "red-desert-bush",
+            "red-lichen-decal",
+            "red-nerve-roots-veins-dense",
+            "red-nerve-roots-veins-sparse",
+            "red-pita",
+            "shroom-decal",
+            "solo-barnacle",
+            "split-gill-1x1",
+            "split-gill-2x2",
+            "split-gill-dying-1x1",
+            "split-gill-dying-2x2",
+            "split-gill-red-1x1",
+            "split-gill-red-2x2",
+            "veins",
+            "veins-small",
+            "white-carpet-grass",
+            "white-desert-bush",
+            "wispy-lichen",
+            "yellow-coral",
+            "yellow-lettuce-lichen-1x1",
+            "yellow-lettuce-lichen-3x3",
+            "yellow-lettuce-lichen-6x6",
+            "yellow-lettuce-lichen-cups-1x1",
+            "yellow-lettuce-lichen-cups-3x3",
+            "yellow-lettuce-lichen-cups-6x6"
+          ],
+          "entity": [
+            "copper-stromatolite",
+            "iron-stromatolite",
+            "stone"
+          ],
+          "tile": [
+            "gleba-deep-lake",
+            "highland-dark-rock",
+            "highland-dark-rock-2",
+            "highland-yellow-rock",
+            "lowland-brown-blubber",
+            "lowland-cream-cauliflower",
+            "lowland-cream-cauliflower-2",
+            "lowland-cream-red",
+            "lowland-dead-skin",
+            "lowland-dead-skin-2",
+            "lowland-olive-blubber",
+            "lowland-olive-blubber-2",
+            "lowland-olive-blubber-3",
+            "lowland-pale-green",
+            "lowland-red-infection",
+            "lowland-red-vein",
+            "lowland-red-vein-2",
+            "lowland-red-vein-3",
+            "lowland-red-vein-4",
+            "lowland-red-vein-dead",
+            "midland-cracked-lichen",
+            "midland-cracked-lichen-dark",
+            "midland-cracked-lichen-dull",
+            "midland-turquoise-bark",
+            "midland-turquoise-bark-2",
+            "midland-yellow-crust",
+            "midland-yellow-crust-2",
+            "midland-yellow-crust-3",
+            "midland-yellow-crust-4",
+            "natural-jellynut-soil",
+            "natural-yumako-soil",
+            "pit-rock",
+            "wetland-blue-slime",
+            "wetland-dead-skin",
+            "wetland-green-slime",
+            "wetland-jellynut",
+            "wetland-light-dead-skin",
+            "wetland-light-green-slime",
+            "wetland-pink-tentacle",
+            "wetland-red-tentacle",
+            "wetland-yumako"
+          ]
+        },
+        "property_expression_names": {
+          "aux": "gleba_aux",
+          "cliff_elevation": "cliff_elevation_from_elevation",
+          "cliffiness": "gleba_cliffiness",
+          "decorative:cracked-mud-decal:probability": "gleba_cracked_mud_probability",
+          "decorative:dark-mud-decal:probability": "gleba_dark_mud_probability",
+          "decorative:green-bush-mini:probability": "gleba_green_bush_probability",
+          "decorative:green-carpet-grass:probability": "gleba_green_carpet_grass_probability",
+          "decorative:green-croton:probability": "gleba_green_cronton_probability",
+          "decorative:green-hairy-grass:probability": "gleba_green_hairy_grass_probability",
+          "decorative:green-pita-mini:probability": "gleba_green_pita_mini_probability",
+          "decorative:green-pita:probability": "gleba_green_pita_probability",
+          "decorative:lichen-decal:probability": "gleba_orange_lichen_probability",
+          "decorative:light-mud-decal:probability": "gleba_light_mud_probability",
+          "decorative:red-desert-bush:probability": "gleba_red_desert_bush_probability",
+          "decorative:red-pita:probability": "gleba_red_pita_probability",
+          "decorative:shroom-decal:probability": "gleba_carpet_shroom_probability",
+          "decorative:white-desert-bush:probability": "gleba_white_desert_bush_probability",
+          "elevation": "gleba_elevation",
+          "enemy_base_frequency": "gleba_enemy_base_frequency",
+          "enemy_base_radius": "gleba_enemy_base_radius",
+          "entity:stone:probability": "gleba_stone_probability",
+          "entity:stone:richness": "gleba_stone_richness",
+          "moisture": "gleba_moisture",
+          "temperature": "gleba_temperature"
+        }
+      }
+    },
+    "noplants": {
+      "surface": "gleba-noplants",
+      "seed": 3215206427,
+      "zeroed": {
+        "gleba_plants": 0
+      },
+      "counts": {
+        "total": 2114,
+        "byName": {
+          "copper-stromatolite": 424,
+          "cliff-gleba": 513,
+          "gleba-spawner-small": 9,
+          "iron-stromatolite": 701,
+          "stone": 466,
+          "gleba-spawner": 1
+        },
+        "byType": {
+          "simple-entity": 1125,
+          "cliff": 513,
+          "unit-spawner": 10,
+          "resource": 466
+        }
+      }
+    },
+    "noenemy": {
+      "surface": "gleba-noenemy",
+      "seed": 3215206427,
+      "zeroed": {
+        "gleba_enemy_base": 0
+      },
+      "counts": {
+        "total": 9286,
+        "byName": {
+          "water-cane": 4060,
+          "funneltrunk": 491,
+          "stingfrond": 570,
+          "teflilly": 524,
+          "copper-stromatolite": 424,
+          "hairyclubnub": 175,
+          "cliff-gleba": 513,
+          "cuttlepop": 282,
+          "yumako-tree": 68,
+          "sunnycomb": 270,
+          "boompuff": 370,
+          "iron-stromatolite": 701,
+          "stone": 466,
+          "slipstack": 210,
+          "lickmaw": 68,
+          "jellystem": 94
+        },
+        "byType": {
+          "tree": 7020,
+          "simple-entity": 1125,
+          "cliff": 513,
+          "plant": 162,
+          "resource": 466
+        }
+      }
+    }
+  },
+  "aquilo": {
+    "seed": 3111923328,
+    "settings": {
+      "seed": 3111923328,
+      "controls": {
+        "aquilo_crude_oil": {
+          "frequency": 1,
+          "size": 1,
+          "richness": 1
+        },
+        "fluorine_vent": {
+          "frequency": 1,
+          "size": 1,
+          "richness": 1
+        },
+        "lithium_brine": {
+          "frequency": 1,
+          "size": 1,
+          "richness": 1
+        }
+      },
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 10,
+        "cliff_elevation_interval": 40,
+        "cliff_smoothing": 1,
+        "richness": 1
+      },
+      "autoplace_settings": {
+        "decorative": [
+          "aqulio-ice-decal-blue",
+          "aqulio-snowy-decal",
+          "floating-iceberg-large",
+          "floating-iceberg-small",
+          "lithium-iceberg-medium",
+          "lithium-iceberg-small",
+          "lithium-iceberg-tiny",
+          "snow-drift-decal"
+        ],
+        "entity": [
+          "crude-oil",
+          "fluorine-vent",
+          "lithium-brine",
+          "lithium-iceberg-big",
+          "lithium-iceberg-huge"
+        ],
+        "tile": [
+          "ammoniacal-ocean",
+          "ammoniacal-ocean-2",
+          "brash-ice",
+          "ice-rough",
+          "ice-smooth",
+          "snow-crests",
+          "snow-flat",
+          "snow-lumpy",
+          "snow-patchy"
+        ]
+      },
+      "property_expression_names": {
+        "aux": "aquilo_aux",
+        "cliff_elevation": "cliff_elevation_from_elevation",
+        "cliffiness": "cliffiness_basic",
+        "elevation": "aquilo_elevation",
+        "entity:crude-oil:probability": "aquilo_crude_oil_probability",
+        "entity:crude-oil:richness": "aquilo_crude_oil_richness",
+        "moisture": "moisture_basic",
+        "temperature": "aquilo_temperature"
+      }
+    },
+    "counts": {
+      "total": 237,
+      "byName": {
+        "lithium-iceberg-big": 159,
+        "fluorine-vent": 4,
+        "lithium-iceberg-huge": 21,
+        "aquilo-tiles-outer-explosion": 19,
+        "aquilo-tiles-inner-explosion": 19,
+        "crude-oil": 11,
+        "lithium-brine": 4
+      },
+      "byType": {
+        "simple-entity": 180,
+        "resource": 19,
+        "explosion": 38
+      }
+    }
+  },
+  "byControl": {
+    "rocks": [
+      "simple-entity:big-rock",
+      "simple-entity:big-sand-rock",
+      "simple-entity:huge-rock"
+    ],
+    "(none)": [
+      "cliff:crater-cliff",
+      "fish:fish",
+      "lightning-attractor:fulgoran-ruin-attractor",
+      "plant:tree-plant",
+      "resource:calcite",
+      "resource:coal",
+      "resource:copper-ore",
+      "resource:crude-oil",
+      "resource:fluorine-vent",
+      "resource:iron-ore",
+      "resource:lithium-brine",
+      "resource:stone",
+      "resource:sulfuric-acid-geyser",
+      "resource:tungsten-ore",
+      "resource:uranium-ore",
+      "simple-entity:big-demolisher-corpse",
+      "simple-entity:big-fulgora-rock",
+      "simple-entity:big-volcanic-rock",
+      "simple-entity:big-volcanic-rock-hot",
+      "simple-entity:copper-stromatolite",
+      "simple-entity:fulgora-sunk-ruin-big",
+      "simple-entity:fulgora-sunk-ruin-medium-tall",
+      "simple-entity:fulgoran-ruin-big",
+      "simple-entity:fulgoran-ruin-colossal",
+      "simple-entity:fulgoran-ruin-huge",
+      "simple-entity:fulgoran-ruin-medium",
+      "simple-entity:fulgoran-ruin-small",
+      "simple-entity:fulgoran-ruin-stonehenge",
+      "simple-entity:fulgoran-ruin-vault",
+      "simple-entity:fulgurite",
+      "simple-entity:fulgurite-small",
+      "simple-entity:huge-volcanic-rock",
+      "simple-entity:huge-volcanic-rock-hot",
+      "simple-entity:iron-stromatolite",
+      "simple-entity:lithium-iceberg-big",
+      "simple-entity:lithium-iceberg-huge",
+      "simple-entity:medium-demolisher-corpse",
+      "simple-entity:small-demolisher-corpse",
+      "simple-entity:vulcanus-chimney",
+      "simple-entity:vulcanus-chimney-cold",
+      "simple-entity:vulcanus-chimney-faded",
+      "simple-entity:vulcanus-chimney-short",
+      "simple-entity:vulcanus-chimney-truncated",
+      "tree:ashland-lichen-tree",
+      "tree:ashland-lichen-tree-flaming"
+    ],
+    "scrap": [
+      "resource:scrap"
+    ],
+    "enemy-base": [
+      "turret:behemoth-worm-turret",
+      "turret:big-worm-turret",
+      "turret:medium-worm-turret",
+      "turret:small-worm-turret",
+      "unit-spawner:biter-spawner",
+      "unit-spawner:spitter-spawner"
+    ],
+    "gleba_enemy_base": [
+      "unit-spawner:gleba-spawner",
+      "unit-spawner:gleba-spawner-small"
+    ],
+    "trees": [
+      "tree:dead-dry-hairy-tree",
+      "tree:dead-grey-trunk",
+      "tree:dead-tree-desert",
+      "tree:dry-hairy-tree",
+      "tree:dry-tree",
+      "tree:tree-01",
+      "tree:tree-02",
+      "tree:tree-02-red",
+      "tree:tree-03",
+      "tree:tree-04",
+      "tree:tree-05",
+      "tree:tree-06",
+      "tree:tree-06-brown",
+      "tree:tree-07",
+      "tree:tree-08",
+      "tree:tree-08-brown",
+      "tree:tree-08-red",
+      "tree:tree-09",
+      "tree:tree-09-brown",
+      "tree:tree-09-red"
+    ],
+    "gleba_plants": [
+      "plant:jellystem",
+      "plant:yumako-tree",
+      "tree:boompuff",
+      "tree:cuttlepop",
+      "tree:funneltrunk",
+      "tree:hairyclubnub",
+      "tree:lickmaw",
+      "tree:slipstack",
+      "tree:stingfrond",
+      "tree:sunnycomb",
+      "tree:teflilly",
+      "tree:water-cane"
+    ]
+  },
+  "resourcePrototypes": {
+    "crude-oil": {
+      "control": "",
+      "has_created_effect": true
+    },
+    "lithium-brine": {
+      "control": "",
+      "has_created_effect": true
+    },
+    "fluorine-vent": {
+      "control": "",
+      "has_created_effect": true
+    }
+  },
+  "effectToggle": {
+    "wells": 19,
+    "explosionEntitiesWithEffect": 38,
+    "explosionEntitiesWithoutEffect": 0,
+    "tilesNearWells7x7": 867,
+    "diffNear": 387,
+    "diffFar": 70,
+    "pairsNear": {
+      "brash-ice>ice-rough": 56,
+      "ammoniacal-ocean-2>ice-rough": 50,
+      "ammoniacal-ocean-2>snow-patchy": 22,
+      "ammoniacal-ocean>snow-patchy": 41,
+      "ammoniacal-ocean>ice-rough": 109,
+      "brash-ice>snow-patchy": 21,
+      "ammoniacal-ocean-2>snow-lumpy": 38,
+      "ammoniacal-ocean>snow-lumpy": 44,
+      "brash-ice>snow-lumpy": 6
+    },
+    "pairsFar": {
+      "ammoniacal-ocean>ice-rough": 35,
+      "ammoniacal-ocean-2>ice-rough": 10,
+      "brash-ice>ice-rough": 15,
+      "ammoniacal-ocean-2>snow-patchy": 3,
+      "ammoniacal-ocean>snow-patchy": 4,
+      "brash-ice>snow-patchy": 3
+    },
+    "wellPositions": [
+      [
+        "fluorine-vent",
+        -93.5,
+        -131.5
+      ],
+      [
+        "fluorine-vent",
+        -72.5,
+        -140.5
+      ],
+      [
+        "fluorine-vent",
+        -68.5,
+        -137.5
+      ],
+      [
+        "lithium-brine",
+        -46.5,
+        73.5
+      ],
+      [
+        "fluorine-vent",
+        -40.5,
+        -67.5
+      ],
+      [
+        "lithium-brine",
+        -35.5,
+        71.5
+      ],
+      [
+        "lithium-brine",
+        -35.5,
+        84.5
+      ],
+      [
+        "lithium-brine",
+        -25.5,
+        68.5
+      ],
+      [
+        "crude-oil",
+        32.5,
+        1.5
+      ],
+      [
+        "crude-oil",
+        32.5,
+        10.5
+      ],
+      [
+        "crude-oil",
+        37.5,
+        10.5
+      ],
+      [
+        "crude-oil",
+        39.5,
+        -6.5
+      ],
+      [
+        "crude-oil",
+        39.5,
+        7.5
+      ],
+      [
+        "crude-oil",
+        40.5,
+        -20.5
+      ],
+      [
+        "crude-oil",
+        42.5,
+        -2.5
+      ],
+      [
+        "crude-oil",
+        46.5,
+        -7.5
+      ],
+      [
+        "crude-oil",
+        48.5,
+        12.5
+      ],
+      [
+        "crude-oil",
+        52.5,
+        3.5
+      ],
+      [
+        "crude-oil",
+        59.5,
+        5.5
+      ]
+    ]
+  },
+  "aquiloNoWells": {
+    "seed": 3111923328,
+    "zeroed": {
+      "aquilo_crude_oil": 0,
+      "lithium_brine": 0,
+      "fluorine_vent": 0
+    },
+    "counts": {
+      "total": 166,
+      "byName": {
+        "lithium-iceberg-huge": 20,
+        "lithium-iceberg-big": 146
+      },
+      "byType": {
+        "simple-entity": 166
+      }
+    }
+  },
+  "wellRewrite": {
+    "wells": {
+      "fluorine-vent.wells": 4,
+      "crude-oil.wells": 11,
+      "lithium-brine.wells": 4
+    },
+    "wellsWithOceanIn7x7": {
+      "fluorine-vent": 3,
+      "crude-oil": 8,
+      "lithium-brine": 4
+    },
+    "wellsCentredOnOcean": {},
+    "wellsWithNonOceanIn7x7": {
+      "fluorine-vent": 4,
+      "crude-oil": 11,
+      "lithium-brine": 4
+    },
+    "nearTileCount": 867,
+    "tilesBySurfaceUnderWells": {
+      "fluorine-vent|brash-ice": 9,
+      "fluorine-vent|ice-rough": 88,
+      "fluorine-vent|ammoniacal-ocean": 16,
+      "fluorine-vent|snow-patchy": 33,
+      "fluorine-vent|snow-lumpy": 40,
+      "fluorine-vent|ammoniacal-ocean-2": 10,
+      "crude-oil|ice-smooth": 91,
+      "crude-oil|ice-rough": 206,
+      "crude-oil|snow-patchy": 52,
+      "crude-oil|brash-ice": 21,
+      "crude-oil|snow-lumpy": 53,
+      "crude-oil|ammoniacal-ocean": 23,
+      "crude-oil|snow-crests": 69,
+      "crude-oil|snow-flat": 14,
+      "crude-oil|ammoniacal-ocean-2": 10,
+      "lithium-brine|ammoniacal-ocean": 16,
+      "lithium-brine|ice-rough": 75,
+      "lithium-brine|ammoniacal-ocean-2": 13,
+      "lithium-brine|snow-patchy": 19,
+      "lithium-brine|snow-lumpy": 24,
+      "lithium-brine|snow-crests": 21,
+      "lithium-brine|ice-smooth": 28
+    },
+    "diffNear": 387,
+    "diffFar": 681,
+    "pairsNear": {
+      "brash-ice>ice-rough": 56,
+      "ammoniacal-ocean-2>ice-rough": 50,
+      "ammoniacal-ocean-2>snow-patchy": 22,
+      "ammoniacal-ocean>snow-patchy": 41,
+      "ammoniacal-ocean>ice-rough": 109,
+      "brash-ice>snow-patchy": 21,
+      "ammoniacal-ocean-2>snow-lumpy": 38,
+      "ammoniacal-ocean>snow-lumpy": 44,
+      "brash-ice>snow-lumpy": 6
+    },
+    "pairsFar": {
+      "ammoniacal-ocean-2>brash-ice": 208,
+      "ammoniacal-ocean>brash-ice": 50,
+      "ammoniacal-ocean-2>ice-rough": 91,
+      "ammoniacal-ocean-2>snow-flat": 1,
+      "ammoniacal-ocean-2>snow-patchy": 12,
+      "ammoniacal-ocean-2>snow-lumpy": 45,
+      "ammoniacal-ocean-2>ice-smooth": 44,
+      "ammoniacal-ocean>snow-patchy": 6,
+      "ammoniacal-ocean>snow-flat": 3,
+      "ammoniacal-ocean-2>snow-crests": 23,
+      "ammoniacal-ocean>ice-rough": 54,
+      "ammoniacal-ocean>ice-smooth": 37,
+      "ammoniacal-ocean>snow-lumpy": 16,
+      "brash-ice>ice-smooth": 3,
+      "brash-ice>ice-rough": 16,
+      "brash-ice>snow-patchy": 3,
+      "ammoniacal-ocean>snow-crests": 69
+    }
+  },
+  "tileCensus": {
+    "withWells": {
+      "ammoniacal-ocean": 128045,
+      "ammoniacal-ocean-2": 122415,
+      "brash-ice": 3912,
+      "ice-rough": 2119,
+      "snow-flat": 1051,
+      "snow-patchy": 879,
+      "snow-lumpy": 1112,
+      "ice-smooth": 1531,
+      "snow-crests": 1080
+    },
+    "noWells": {
+      "ammoniacal-ocean": 128474,
+      "ammoniacal-ocean-2": 122949,
+      "brash-ice": 3759,
+      "ice-smooth": 1447,
+      "ice-rough": 1743,
+      "snow-crests": 988,
+      "snow-flat": 1047,
+      "snow-patchy": 774,
+      "snow-lumpy": 963
+    }
+  },
+  "positiveControl": [
+    {
+      "entity": "crude-oil",
+      "onOcean": false,
+      "site": [
+        -1,
+        -31
+      ],
+      "created": true,
+      "changedTiles": 0,
+      "pairs": {}
+    },
+    {
+      "entity": "crude-oil",
+      "onOcean": true,
+      "site": [
+        -236,
+        -236
+      ],
+      "created": true,
+      "changedTiles": 46,
+      "pairs": {
+        "ammoniacal-ocean-2>ice-rough": 24,
+        "ammoniacal-ocean-2>snow-patchy": 13,
+        "ammoniacal-ocean-2>snow-lumpy": 9
+      }
+    },
+    {
+      "entity": "lithium-brine",
+      "onOcean": false,
+      "site": [
+        24,
+        -11
+      ],
+      "created": true,
+      "changedTiles": 8,
+      "pairs": {
+        "brash-ice>ice-rough": 7,
+        "brash-ice>snow-lumpy": 1
+      }
+    },
+    {
+      "entity": "lithium-brine",
+      "onOcean": true,
+      "site": [
+        -211,
+        -236
+      ],
+      "created": true,
+      "changedTiles": 40,
+      "pairs": {
+        "ammoniacal-ocean-2>ice-rough": 17,
+        "ammoniacal-ocean-2>snow-patchy": 5,
+        "ammoniacal-ocean-2>snow-lumpy": 8,
+        "ammoniacal-ocean>snow-lumpy": 1,
+        "ammoniacal-ocean>ice-rough": 7,
+        "ammoniacal-ocean>snow-patchy": 2
+      }
+    },
+    {
+      "entity": "fluorine-vent",
+      "onOcean": false,
+      "site": [
+        -6,
+        -6
+      ],
+      "created": true,
+      "changedTiles": 0,
+      "pairs": {}
+    },
+    {
+      "entity": "fluorine-vent",
+      "onOcean": true,
+      "site": [
+        -186,
+        -236
+      ],
+      "created": true,
+      "changedTiles": 43,
+      "pairs": {
+        "ammoniacal-ocean-2>ice-rough": 25,
+        "ammoniacal-ocean-2>snow-patchy": 9,
+        "ammoniacal-ocean-2>snow-lumpy": 9
+      }
+    }
+  ]
+}
