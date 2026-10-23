@@ -273,6 +273,12 @@ faithfully at all: one pixel covers many tiles and the correction is per tile.
 
 So this is not a patch to the argmax. It is a change to how a planet renders.
 
+**And the game's own preview does not run it.** Measured on 2026-10-22 (see
+"Does the preview PNG run it?" below): the `--generate-map-preview` PNG shows
+the raw argmax, never the corrected tile. So a client preview that matches the
+game's preview must NOT port this pass. It matters only to anyone who wants to
+match `get_tile` in a real save.
+
 ## What is NOT established
 
 - The body of `isTileConsistentWithFixedTiles` - the actual rule that decides a
@@ -285,13 +291,14 @@ So this is not a patch to the argmax. It is a change to how a planet renders.
   `0x4850` and `0x4858` hold.
 - What `apply(Surface&)` writes back, and whether it can change tiles outside
   the centre chunk.
-- **How much of the Fulgora residual this pass actually explains.** Nothing here
-  measures that. The mechanism matching the residual's direction and shape is
-  suggestive, not a measurement. `canStartTask` gating on neighbour chunks
-  suggests an experiment - generate an isolated chunk, which may never be
-  corrected, and compare `get_tile` against the same coordinates inside a filled
-  region - but that lever is untested and the task may well run on save, on
-  load, or on first access.
+- **How much of the Fulgora residual this pass actually explains.** Not
+  measured at the forced seed. At the derived seed, in two boundary-heavy
+  blocks, `get_tile` differs from the game's own raw argmax at 1,445 of 18,432
+  tiles (see below), which is the size of effect the forced-seed residual
+  suggested. `canStartTask` suggested an experiment - generate an isolated
+  chunk, which may never be corrected. **That lever was tried and does not
+  work** (2026-10-22): a chunk generated alone is corrected exactly as one with
+  all its neighbours generated. See below.
 - There is **no user-facing debug toggle**. `TileCorrectionDebugPreview::save()`
   exists but no settings string references it, so it is presumably dev-build
   only.
@@ -341,5 +348,84 @@ rounding. The Vulcanus numbers use host libm trig; the shipped engine takes V8
 trig narrowed to f32, but a gap this wide is not something a few-ULP trig
 difference can close.
 
-The conclusion is left open until the probe in Task 7 reports what the game
-scores at these tiles.
+The probe in the next section settled it: neither pixel is tile correction.
+The game's own raw argmax already picks the tile it draws, and our scores
+differ from the game's.
+
+## Does the preview PNG run it? No - measured 2026-10-22
+
+`scripts/probes/preview-tile-correction/` asks the game three things about the
+same tiles, at map seed 123456 with the derived surface seeds, the terrain-only
+mod and the PNGs' disabled controls:
+
+- **raw** - the winner among the game's own tile scores. `calculate_tile_properties`
+  accepts the property name `tile:<name>:probability` in 2.1.23 and returns the
+  tile's `probability_expression`. A data-stage copy of each expression returns
+  the same value at every position. Both run on the POINT noise kernel, not the
+  chunk-grid kernel that map generation uses, so a near tie could differ.
+- **filled** - `get_tile` after the block and all its neighbours are generated.
+- **the PNG** - the committed terrain-only preview, matched through `map_color`.
+
+The fixture is `test/fixtures/oracle-preview-tile-correction.json`.
+
+| 96 x 96 block | agree | PNG matches there | differ | PNG shows raw | PNG shows filled | same colour |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Nauvis, around (229, -19) | 9,177 | 9,177 | 39 | 39 | 0 | 0 |
+| Vulcanus, around (-361, 11) | 8,760 | 8,760 | 456 | 454 | 0 | 2 |
+| Fulgora, chunks (-4..-2, 10..12) | 8,494 | 8,494 | 722 | 722 | 0 | 0 |
+| Fulgora, chunks (-12..-10, -1..1) | 8,493 | 8,493 | 723 | 717 | 0 | 6 |
+
+**The PNG never shows a corrected tile.** Of 1,940 tiles where `get_tile` and
+the raw winner differ, the PNG shows the raw tile at 1,932 and the corrected
+tile at none. The other 8 fall where both tiles share a map colour. On Fulgora,
+1,436 of the differing tiles lose the raw score by at least 0.001, far more
+than the two kernels can move a score. Those are tiles the game rewrote after
+the argmax, so the probe could see correction, and the PNG could have shown it.
+Where the two readings agree, the PNG matches all 34,924 tiles, so the pixel
+grid and colour table are right.
+
+The binary agrees, as far as direct calls go. In 2.1.23 the preview worker
+calls `BasicTilesMapGenerationTask::generateBasicTiles` and makes no direct call
+to `TileCorrectionMapGenerationTask` or `correctAndSelectTileTransitions`.
+
+### The two pixels are a score difference, not correction
+
+| tile | the game's raw scores | ours, same point kernel | ours, grid (Task 1) | `get_tile` | PNG |
+| --- | --- | --- | --- | --- | --- |
+| Nauvis (229, -19) | grass-1 1.3117774, grass-3 1.3117646 | grass-1 1.3117714, grass-3 1.3117754 | grass-1 1.3117691, grass-3 1.3117754 | grass-1 | grass-1 |
+| Vulcanus (-361, 11) | volcanic-cracks 0.3580069, volcanic-cracks-warm 0.3568015 | volcanic-cracks 0.3562072, volcanic-cracks-warm 0.3568015 | volcanic-cracks 0.3562259, volcanic-cracks-warm 0.3568011 | volcanic-cracks-warm | volcanic-cracks |
+
+- **Nauvis.** The game's own scores put grass-1 first by 107 f32 ULPs. Ours put
+  grass-3 first, on the point kernel and the grid kernel alike. Through the
+  same point kernel, our grass-1 is 6.0e-6 low and our grass-3 is 1.08e-5 high.
+  So the gap is in our expressions or their inputs, not in a later pass and not
+  only in the kernel. Which term moves was not measured.
+- **Vulcanus.** The game's own scores put volcanic-cracks first by 40,448 ULPs.
+  Our volcanic-cracks-warm matches the game's to about 1e-8, but our
+  volcanic-cracks is 1.8e-3 low. That is a defect in how we compute the
+  volcanic-cracks score at this tile, far too large for trig or rounding.
+  `get_tile` reads volcanic-cracks-warm here because correction rewrote the
+  raw tile. That is the tile we draw, but only by coincidence, and the PNG does
+  not show it.
+
+The "ours, same point kernel" column came from a one-off engine run at
+`At::point`, not committed. The grid column is Task 1's frozen numbers.
+
+### An isolated chunk is still corrected
+
+The probe's second arm generates one chunk alone, in a separate run, with
+`request_to_generate_chunks(p, 0)`. `is_chunk_generated` then reports only that
+chunk, before and after reading its neighbours. Its tiles still equal the
+filled arm's at all 1,024 positions, on Nauvis, Vulcanus and Fulgora alike. In
+the Fulgora chunk, (-4, 10), all 112 tiles the game rewrote come back
+rewritten. The centre chunk is read before any neighbour, so reading cannot
+have caused this. The game builds the neighbourhood it needs without marking
+those chunks generated, and `get_tile` on them also returns tiles that mostly
+match the filled arm. So "generate an isolated chunk" cannot switch correction
+off.
+
+### What this means for the pixel bar
+
+A pixel where the engine differs from the game's preview cannot be explained as
+tile correction, because the preview does not run it. Every such pixel is a
+difference in the raw scores.
