@@ -292,8 +292,7 @@ region sizes 1024/2048):
    which keeps nothing when the offset is not below the span. Gleba's
    `gleba_simple_spot` call (span 1, offset 1, count 22) would come out empty,
    where the game keeps every accepted spot but the first (21 of 22 per region,
-   before the target trim). It must change before Gleba stone is ported (issue:
-   see PR).
+   before the target trim). It must change before Gleba stone is ported (#489).
 3. TARGET: regional quantity target = mean of density_expression over the
    set's accepted spot positions, times region_size^2. (Proven to sample the
    ACCEPTED spots, not the first candidates and not a uniform average, via

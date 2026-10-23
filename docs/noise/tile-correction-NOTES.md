@@ -412,8 +412,8 @@ to `TileCorrectionMapGenerationTask` or `correctAndSelectTileTransitions`.
   Our volcanic-cracks-warm matches the game's to the ULP, but our
   volcanic-cracks is 60,387 ULPs (1.8e-3) low. Our own grid-vs-point shift is
   627 ULPs, about 1% of that. That is a defect in our volcanic-cracks score
-  at this tile, far too large for trig or rounding. It is tracked in a new
-  issue (see PR) and not fixed here.
+  at this tile, far too large for trig or rounding. It is tracked in #488
+  and not fixed here.
   `get_tile` reads volcanic-cracks-warm here because correction rewrote the
   raw tile. That is the tile we draw, but only by coincidence, and the PNG does
   not show it.
