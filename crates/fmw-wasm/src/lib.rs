@@ -1595,3 +1595,6 @@ mod survey_tests {
         assert_ne!(step, other);
     }
 }
+
+#[cfg(test)]
+mod native_parity;

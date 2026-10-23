@@ -285,6 +285,19 @@ table could not be wrong, because each arm was checked against it; with the
 reference gone, a row can no longer find a NEW disagreement, but it still
 catches the port moving - including underneath it in the toolchain.
 
+**Native against WASM.** `crates/fmw-wasm/src/native_parity.rs` is a
+`cargo test` that recomputes Fulgora's 76 tier-2 folds natively, for both
+cases of `test/wasmFulgoraParity.spec.ts`, and compares each case's sorted
+list with the frozen rows in `test/fixtures/tier2-checksums.json`. The WASM
+spec already checks the module against those same rows, so native equals
+frozen and WASM equals frozen together mean native equals WASM. This is the
+check that sees a libm call differing between the two hosts. It covers the
+point path only (`checksum_fulgora`), not `At::Grid`. It is not in the poison
+run, which uses `-p fmw-noise` only. The module is the last line of
+`lib.rs` so no reachable code moves. Planting a one-ULP nudge in
+`slider_rescale` (native builds only) made the "frequency 2, size 3" case
+fail while "default sliders" still passed.
+
 **The island finder has a freeze of the same shape** - `test/islandsFrozen.ts`
 over `test/fixtures/island-finder-checksums.json`, four rows in two sections,
 because the survey and the finder's ranked list were the last two things still
