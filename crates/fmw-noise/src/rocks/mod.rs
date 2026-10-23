@@ -9,6 +9,7 @@
 //! needs `aux`, `moisture` and the shared Nauvis layer and none of them was
 //! ported. All three arrived earlier in #226, and the field followed.
 
+pub mod aquilo_icebergs;
 pub mod catalog;
 pub mod field;
 pub mod nauvis_placement;

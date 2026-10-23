@@ -11800,3 +11800,209 @@ fn the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly() {
     assert_eq!(total, 152, "fixture size");
     assert_eq!(exact_total, 152, "exact f32 matches");
 }
+
+use crate::rocks::aquilo_icebergs::{iceberg_probabilities, ICEBERG_ORDER};
+
+/// The two iceberg probabilities, `(h - 0.8) * 0.1` and `(h - 0.7) * 0.8`,
+/// against `entity:<name>:probability` in the three lever cases of
+/// `oracle-aquilo-entity-fields`, an exact count per prototype in
+/// `ICEBERG_ORDER`.
+///
+/// The probabilities run through our own `aquilo_high_frequency_peaks`, so
+/// this grades the field and the formula together. Each case kept 64
+/// positions where each probability is above 0; the rest are below, where only
+/// the sign and the arithmetic are graded.
+#[test]
+fn aquilo_iceberg_probabilities_match_the_game() {
+    let entity = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    let mut frozen = Vec::new();
+    for (label, n) in [("default", 632), ("size0", 452), ("moved", 626)] {
+        let case = entity.get("cases").get(label);
+        let positions = case.get("positions").as_array();
+        assert_eq!(positions.len(), n, "{label} position count");
+        let fields = aquilo_terrain_at(positions, aquilo_case_controls(case));
+        let scores: Vec<[f64; 2]> = fields
+            .iter()
+            .map(|f| iceberg_probabilities(f.high_frequency_peaks))
+            .collect();
+        let mut counts = Vec::new();
+        for (k, iceberg) in ICEBERG_ORDER.iter().enumerate() {
+            let key = format!("entity:{}:probability", iceberg.game_name());
+            let got: Vec<f64> = scores.iter().map(|s| s[k]).collect();
+            let positive = got.iter().filter(|v| **v > 0.0).count();
+            // Non-vacuity: the case holds positions where this prototype can
+            // place, not only the negative side.
+            assert!(positive >= 64, "{label} {key}: {positive} positive");
+            counts.push(count_exact_bits(
+                &got,
+                case.get("fields").get(&key).as_array(),
+            ));
+        }
+        eprintln!("aquilo iceberg probabilities {label}: {counts:?}");
+        frozen.push(counts);
+    }
+    assert_eq!(frozen, vec![vec![632; 2], vec![452; 2], vec![626; 2]]);
+}
+
+/// The iceberg formula alone: fed the GAME's own `aquilo_high_frequency_peaks`
+/// at every position of the three lever cases, it must give the game's own two
+/// probabilities. Frozen 2026-10-23 as full houses.
+///
+/// `aquilo_iceberg_probabilities_match_the_game` grades the formula through
+/// our field, so the field's hooks redden it under `poison` whether or not the
+/// formula has one. This one reads no field of ours, so only
+/// `iceberg_probabilities`' own hook can redden it. Planted 2026-10-23: the
+/// constants as doubles (`(h - 0.8) * 0.1` folded in f64) score, through our
+/// field, 246 and 328 of 632, 178 and 246 of 452, 254 and 323 of 626.
+#[test]
+fn the_aquilo_iceberg_formula_reproduces_the_game_from_its_own_peaks() {
+    let entity = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    let mut frozen = Vec::new();
+    for label in ["default", "size0", "moved"] {
+        let fields = entity.get("cases").get(label).get("fields");
+        let peaks: Vec<f64> = fields
+            .get("aquilo_high_frequency_peaks")
+            .as_array()
+            .iter()
+            .map(|w| {
+                let bits = u32::from_str_radix(w.as_str(), 16).expect("hex f32 bits");
+                f64::from(f32::from_bits(bits))
+            })
+            .collect();
+        let scores: Vec<[f64; 2]> = peaks.iter().map(|h| iceberg_probabilities(*h)).collect();
+        let mut counts = vec![peaks.len()];
+        for (k, iceberg) in ICEBERG_ORDER.iter().enumerate() {
+            let key = format!("entity:{}:probability", iceberg.game_name());
+            let got: Vec<f64> = scores.iter().map(|s| s[k]).collect();
+            counts.push(count_exact_bits(&got, fields.get(&key).as_array()));
+        }
+        frozen.push(counts);
+    }
+    assert_eq!(
+        frozen,
+        vec![
+            vec![632, 632, 632],
+            vec![452, 452, 452],
+            vec![626, 626, 626]
+        ]
+    );
+}
+
+use crate::resources::aquilo_wells::{AquiloWellPlacement, WELL_ORDER};
+
+/// Aquilo's entity census at the derived seed, written by
+/// `scripts/probes/aquilo-fields`.
+const AQUILO_ENTITIES: &str = "test/fixtures/oracle-aquilo-entities.seed123456.json";
+
+/// The derived Aquilo surface seed for map seed 123456.
+const AQUILO_DERIVED_SEED: u32 = 3_111_923_328;
+
+fn aquilo_derived_stack() -> core::cell::RefCell<AquiloStack> {
+    core::cell::RefCell::new(AquiloStack::with_host_trig(&AquiloCtx {
+        seed0: AQUILO_DERIVED_SEED,
+        controls: AquiloResourceControls::default(),
+    }))
+}
+
+/// Every entity in the game's census stands on a tile where our probability
+/// for ITS prototype is above 0, read at the tile's integer corner on the chunk
+/// grid, and on the side of the shore (land or water) our tile resolver puts
+/// there. Frozen 2026-10-23: 199 of 199 on both.
+///
+/// The first count is the footprint check: a placed entity outside our
+/// footprint would be one the overlay can never draw. It also settles where the
+/// overlays read their probabilities. Read at the tile CENTRE instead
+/// (`x + 0.5`, point kernel), 7 of the 199 fall outside: the tiny fluorine vent
+/// at (-40.5, -67.5) and 6 big icebergs.
+///
+/// The second is what the iceberg gate reads. The exact tile name agrees at
+/// 185 of 199, also frozen: all 19 wells, and 166 of 180 icebergs. The 14
+/// misses are all land against land, one snow or ice tile for another, at
+/// iceberg sites, which sit on `aquilo_high_frequency_peaks` peaks where the
+/// snow tiles form small patches. The cause is not established. The census
+/// comes from a real surface, not the preview, and a real surface runs
+/// `TileCorrectionMapGenerationTask` (see `docs/noise/tile-correction-NOTES.md`),
+/// which rewrites small patches; that is the lead, not a measurement.
+///
+/// The census covers only the default levers, and the roll's salt is ours, so
+/// which tiles place is not graded here, only that they can.
+#[test]
+fn aquilo_census_entities_stand_inside_our_footprint_on_the_census_tile() {
+    let census = load_captured_at(AQUILO_ENTITIES, "2.1.23");
+    assert_eq!(census.get("surfaceSeed").as_f64(), 3_111_923_328.0);
+    let stack = aquilo_derived_stack();
+    let is_land = |name: &str| {
+        !matches!(
+            name,
+            "brash-ice" | "ammoniacal-ocean" | "ammoniacal-ocean-2"
+        )
+    };
+    let (mut inside, mut same_side, mut same_tile, mut total) = (0usize, 0usize, 0usize, 0usize);
+    for row in census.get("entities").as_array() {
+        let r = row.as_array();
+        let name = r[0].as_str();
+        let (tx, ty) = (r[1].as_f64().floor() as i32, r[2].as_f64().floor() as i32);
+        let f = stack.borrow_mut().eval_at(At::tile(tx, ty));
+        let p = match ICEBERG_ORDER.iter().position(|i| i.game_name() == name) {
+            Some(k) => iceberg_probabilities(f.terrain.high_frequency_peaks)[k],
+            None => WELL_ORDER
+                .iter()
+                .find(|w| w.game_name() == name)
+                .unwrap_or_else(|| panic!("unknown census entity {name}"))
+                .probability(&f.resources),
+        };
+        let (ours, game) = (f.tile().game_name(), r[4].as_str());
+        total += 1;
+        inside += usize::from(p > 0.0);
+        same_side += usize::from(is_land(ours) == is_land(game));
+        same_tile += usize::from(ours == game);
+    }
+    eprintln!(
+        "aquilo census of {total}: {inside} inside, {same_side} on the same side, \
+         {same_tile} on the same tile"
+    );
+    assert_eq!((inside, same_side, same_tile, total), (199, 199, 185, 199));
+}
+
+/// The tiny fluorine vent lands on the census's own tile, (-41, -68), and it
+/// is the only well placed near it.
+///
+/// Its cone centre is (-41.94, -68.13), so the corner it ROUNDS to is
+/// (-42, -68). That corner is inside the radius-1 disk too, but the two share a
+/// chunk, and the 2.8-tile box lets through only the first in the chunk's
+/// decreasing tile order, which is (-41, -68). So the game's tile is the one
+/// the processing order picks, not the rounded centre.
+#[test]
+fn the_tiny_vent_lands_where_the_game_puts_it() {
+    let census = load_captured_at(AQUILO_ENTITIES, "2.1.23");
+    let vents: Vec<(f64, f64)> = census
+        .get("entities")
+        .as_array()
+        .iter()
+        .map(Json::as_array)
+        .filter(|r| r[0].as_str() == "fluorine-vent" && r[1].as_f64().abs() < 50.0)
+        .map(|r| (r[1].as_f64(), r[2].as_f64()))
+        .collect();
+    assert_eq!(vents, vec![(-40.5, -67.5)], "the census's near vent");
+
+    let stack = aquilo_derived_stack();
+    let wells = AquiloWellPlacement::new(&stack);
+    let set = wells.placement_set();
+    let mut placed = Vec::new();
+    for ty in -72..-64 {
+        for tx in -46..-38 {
+            let (x, y) = (f64::from(tx), f64::from(ty));
+            if set.placed(x, y) {
+                placed.push((tx, ty, wells.winner(x, y)));
+            }
+        }
+    }
+    assert_eq!(
+        placed,
+        vec![(
+            -41,
+            -68,
+            Some(crate::resources::aquilo_wells::AquiloWell::FluorineVent)
+        )]
+    );
+}

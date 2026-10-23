@@ -177,6 +177,11 @@ POISONED_TESTS=(
   # (through `poison::index_result` in `argmax`).
   fixtures::aquilo_tile_scores_match_the_game
   fixtures::aquilo_tile_winner_matches_the_game
+  # The two iceberg probabilities, through `poison::f64_result` in
+  # `iceberg_probabilities`. The first also reds through the field's hooks; the
+  # second feeds the game's own peaks, so only the formula's hook reaches it.
+  fixtures::aquilo_iceberg_probabilities_match_the_game
+  fixtures::the_aquilo_iceberg_formula_reproduces_the_game_from_its_own_peaks
   # The game's amplitude-corrected form (#254), through basis_noise's hook.
   fixtures::the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly
 
