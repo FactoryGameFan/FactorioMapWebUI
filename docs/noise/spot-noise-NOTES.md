@@ -507,7 +507,12 @@ spot-list generator):
 - The slope is `f32(peak / radius)`. The distance is an f32 square root of an
   f32 sum of f32 squares, a spot is skipped when its cull radius is below that
   distance, and the cone is `max(out, peak - d * slope)`, all in f32.
-- The cull radius is `min(maximum_spot_basement_radius, radius)`.
+- The `min(maximum_spot_basement_radius, radius)` caps the CONE radius only.
+  The cull test compares the distance against the uncapped
+  `maximum_spot_basement_radius`. The two matter for Aquilo, where the cull is
+  `2r`: between `r` and `2r` the cone is negative but still above the basement
+  (about -0.955 at `2r`, against -1). That skirt is part of the field, and the
+  cull cuts it at `2r`.
 
 `PortedF32` is what the TypeScript port did: per-op f32 with the true pi and an
 f64 distance. Each difference was planted alone into the game's form on
@@ -536,8 +541,10 @@ from `aquilo_spot_noise` in `planet-aquilo-map-gen.lua`):
 - **Density and favorability are the constant 1**, so the regional target is
   `region_size^2` and the trim keeps every spot.
 - **`basement_value` is -1** and **`maximum_spot_basement_radius = radius * 2`**.
-  That cull radius is twice the cone radius, so it never cuts a cone; the
-  `min(cull, radius)` in `GameBinary` makes it inert for Aquilo by construction.
+  The `min(cull, radius)` cap on the cone radius is inert here, since `2r` is
+  never below `r`. The cull test itself is not inert: it uses the uncapped `2r`,
+  so the negative skirt of each cone (about -0.955 at `2r`, above the basement
+  -1) is kept out to `2r` and cut there.
 - **Size 0 makes the radius 0.** The peak `3q / (pi r^2)` would be 0/0. The port
   never computes it: selection skips every spot (quantity 0) and `spot_cone_max`
   skips any radius at or below 0, so the field is the basement -1 everywhere,

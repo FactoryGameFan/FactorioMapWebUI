@@ -116,9 +116,9 @@ places paid for it:
 
 - The wobble fields scored 144 and 99 of 632 with `output_scale` `0.35` as a
   double, and 632 with `f32(0.35)`.
-- Five tile-score constants (`0.01`, `0.05`, `0.75`, `0.4`, `0.6`) did the same:
+- Four tile-score constants (`0.01`, `0.05`, `0.4`, `0.6`) did the same:
   snow-patchy 1018, brash ice 835 and both oceans 756 of 1024 as doubles, then
-  full.
+  full. (`0.75` is exact in binary, so narrowing it changes nothing.)
 
 ## The nine tiles
 
@@ -180,9 +180,11 @@ split is known wrong, with 0% huge against the game's about 12%.
 
 **Sizes near spawn.** In the render tests, well sizes of 0.25, 0.5, 2 and 4 move
 no well in the 256 window around spawn, and only size 0 does. Frequency moves
-only some wells. This was not checked against a game capture. Tier 1's
-moved-slider case grades the fields, so it is probably the game's own starting
-patches behaviour.
+only some wells. This is the game's own behaviour, and the Lua explains it. The
+window is within 181 tiles of spawn. Out to 260 tiles `aquilo_starting_mask` is
+-1, so each spot term `min(mask, spots) * k` is the constant `-k`. The starting
+cones have radii of `aquilo_spot_size * 0.8` or `* 0.6`, which the size slider
+does not scale. So inside 260 tiles only the `size > 0` gate reads size.
 
 **#492.** The roll uses salts `0x00682f53` (wells) and `0x0027d9c1` (icebergs),
 and has no collision across chunks. Against the game's preview, in

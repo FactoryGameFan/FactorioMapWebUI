@@ -721,7 +721,7 @@ describe("each slider crosses the ABI", () => {
    * **The windows were swept for, because most windows are dead to most
    * levers.** Measured 2026-10-23 on 256 x 256 composites, one lever at a time:
    * the window around spawn does not move for a size of 0.25, 0.5, 2 or 4 on
-   * any of the three wells, only for 0 (the cause was not measured), and a
+   * any of the three wells, only for 0, and a
    * window moves only for the wells whose fields reach it. The crude-and-lithium window
    * below moves 2,048 / 1,585 / 1,391 / 2,481 pixels for crude frequency, crude
    * size, lithium frequency and lithium size at 2; the fluorine window moves

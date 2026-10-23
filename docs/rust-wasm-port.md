@@ -798,8 +798,9 @@ not the authority.
   probability is a constant fold: at size 0 it is `+0`, where a literal multiply
   by zero gives `-0`.
 - **Every constant is an f32 slot.** The wobble fields scored 144 and 99 of 632
-  with `output_scale` as a double, and 632 with it narrowed. Five tile-score
-  constants (`0.01`, `0.05`, `0.75`, `0.4`, `0.6`) did the same.
+  with `output_scale` as a double, and 632 with it narrowed. Four tile-score
+  constants (`0.01`, `0.05`, `0.4`, `0.6`) did the same. `0.75` is exact in
+  binary, so narrowing it is a no-op.
 - **The grid path is graded only by tier 3.** Every tier-1 position is a point
   capture, so the chunk-grid path of the plain fields, the billows and
   `AmplitudeCorrectedGame` is first graded by the terrain comparison below.
@@ -861,7 +862,7 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
 | -------------------------------------------------------------- | --------------------- |
 | terrain view against the terrain PNG (levers at size 0)        | 0 of 1,048,576        |
 | same, levers left at neutral (control)                         | 13,194                |
-| raw map seed instead of the derived one, 256 by 256 at spawn   | 7,376 of 8,843 land pixels differ (83%) |
+| raw map seed instead of the derived one, 256 by 256 at spawn   | 7,376 of 8,843 land pixels differ (83%; measured, asserted > 50%) |
 | terrain view against the full PNG, entity pixels masked        | 0 of 1,023,862 compared |
 | the same comparison on the composite                           | 1,102 (reported, not frozen) |
 | footprint pixels outside at the mark radius of 1               | 7                     |
@@ -904,7 +905,10 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
   frequency and size, lithium frequency and size, fluorine frequency and size),
   each in a window where it matters, and each asserts the picture changed. Most
   windows are dead to most levers. Near spawn, sizes of 0.25 to 4 moved no well,
-  and only size 0 did. That was not checked against a game capture.
+  and only size 0 did. That is the game's own rule: out to 260 tiles
+  `aquilo_starting_mask` is -1, so each spot term is the constant `-k`, and the
+  starting cones' radii (`aquilo_spot_size * 0.8` or `* 0.6`) ignore the size
+  slider. Only the `size > 0` gate reads size there.
 - **A planted swap of two bearings turned 12 of 26 tests red** (terrain gap 0 to
   1,189, full-PNG tiles 0 to 554). It was reverted and the rebuilt module
   matched the committed one again.

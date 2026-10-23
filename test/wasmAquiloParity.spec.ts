@@ -39,7 +39,10 @@ import {
  *
  * A 26x26 window at 7.3 tiles per pixel from (-613.5, 428.25), Fulgora's own
  * window. Its positions are not whole tiles, so every sample takes the point
- * path, as a zoomed-out render does.
+ * path, as a zoomed-out render does. That is true of this first window only.
+ * The three added windows are whole tiles, but `AquiloParity::field` forces
+ * `At::point` anyway, so tier 2 never reaches the chunk-grid kernel. Only
+ * tier 3 grades that.
  */
 const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
 

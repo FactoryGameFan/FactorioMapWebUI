@@ -1824,7 +1824,7 @@ mod aquilo_render_tests {
 
     #[test]
     fn views_aquilo_does_not_serve_are_refused() {
-        for view in [VIEW_LANDMASK, VIEW_CLIFFS, VIEW_TREES, 9, 10, 11, 13] {
+        for view in [VIEW_LANDMASK, 2, VIEW_CLIFFS, VIEW_TREES, 8, 9, 10, 11, 13] {
             let b = request(view, (2, 2), (0.0, 0.0), 1.0);
             let mut out = vec![0u8; 16];
             assert_eq!(

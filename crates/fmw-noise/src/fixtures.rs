@@ -11482,6 +11482,12 @@ fn count_exact_bits(got: &[f64], want: &[Json]) -> usize {
         .zip(want)
         .filter(|(g, w)| {
             let bits = u32::from_str_radix(w.as_str(), 16).expect("hex f32 bits");
+            // The narrowing below must not be what makes a field pass: a
+            // final op that stopped narrowing would score the same.
+            assert!(
+                **g == f64::from(**g as f32),
+                "our value {g:?} is not f32-representable (want bits {bits:08x})"
+            );
             (**g as f32).to_bits() == bits
         })
         .count()
@@ -11619,10 +11625,11 @@ fn aquilo_game_scores(per_tile: &[&[Json]; 9], i: usize) -> [f64; 9] {
 /// in the cases. Scores run through our own terrain fields, so this grades the
 /// formulas and the fields together. The `100 * min_elevation` term is
 /// +-100, so a score is exact only if the f32 rounding of every later op
-/// matches. The first draft kept the non-binary constants (`0.01`, `0.05`,
-/// `0.75`, `0.4`, `0.6`, ...) as doubles and scored, of 1,024: snow-patchy
+/// matches. The first draft kept the inexact constants (`0.01`, `0.05`, `0.4`,
+/// `0.6`) as doubles and scored, of 1,024: snow-patchy
 /// 1,018, brash-ice 835 and the two oceans 756 each; the six other tiles were
-/// already exact. Narrowing each constant to f32 closed all nine.
+/// already exact. Narrowing each constant to f32 closed all nine. (`0.75` is
+/// exact in binary, so narrowing it changes nothing.)
 #[test]
 fn aquilo_tile_scores_match_the_game() {
     let fixture = load_captured_at(AQUILO_FIELDS, "2.1.23");
