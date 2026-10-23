@@ -864,10 +864,50 @@ mod tests {
         );
     }
 
+    const FROZEN_FOLD: u64 = 0x41c3_2b2d_06e8_89ed;
+
     fn layer_at(seed0: u32) -> (EvalCtx, VulcanusHelpers) {
         let ctx = EvalCtx::new(seed0);
         let helpers = VulcanusHelpers::new(&ctx);
         (ctx, helpers)
+    }
+
+    /// A fold of the four spot-driven region fields over a grid, frozen BEFORE
+    /// the spot query moved into `spot_field` and unchanged by the move.
+    ///
+    /// Raw bits through an order-sensitive fold, so a one-ULP slip anywhere in
+    /// the region walk, the cull, the cone arithmetic or the cache shows.
+    #[test]
+    fn the_shared_spot_query_is_the_vulcanus_one_bit_for_bit() {
+        let (ctx, helpers) = layer_at(1_249_936_247);
+        let spawn = VulcanusSpawn::with_host_trig(&ctx);
+        let biomes = VulcanusBiomes::with_host_trig(&ctx, &helpers, &spawn);
+        let cracks = VulcanusCracks::new(&helpers);
+        let layer = VulcanusResources::with_host_trig(&ctx, &helpers, &spawn, &biomes, &cracks);
+
+        let mut acc = 0u64;
+        let mut nonzero = 0usize;
+        for i in 0..26 {
+            for j in 0..26 {
+                let x = -480.0 + f64::from(i) * 37.3;
+                let y = -480.0 + f64::from(j) * 37.3;
+                let f = layer.eval(x, y);
+                for v in [
+                    f.tungsten_region,
+                    f.coal_region,
+                    f.calcite_region,
+                    f.sulfuric_acid_region,
+                ] {
+                    assert!(!v.is_nan());
+                    if v != 0.0 {
+                        nonzero += 1;
+                    }
+                    acc = crate::checksum::fold_f64(acc, v);
+                }
+            }
+        }
+        assert!(nonzero > 100, "only {nonzero} nonzero region values");
+        assert_eq!(acc, FROZEN_FOLD, "fold {acc:#018x}");
     }
 
     /// The four `region_size` bases, and the floor that `select_spots` needs.
