@@ -65,8 +65,9 @@ Frozen in `test/wasmAquiloRenderParity.spec.ts`: 0, and the 13,194 control.
 Aquilo's starting cones and well spots sit on three bearings:
 
 - The base is `f32(seed_normalized * 3600)` degrees, where `seed_normalized` is
-  the surface seed divided by 2^32. At forced seed 123456 the capture reads
-  0.10347962.
+  the surface seed divided by 2^32. At forced seed 123456 that is
+  123456 / 2^32 = 2.87e-5, and the capture reads the resulting `aquilo_angle` as
+  0.10347962 degrees.
 - The second and third are the base plus 120 and plus 240, each step narrowed to
   f32.
 - The sine and cosine of each cross the ABI as values computed in V8
@@ -196,8 +197,10 @@ the 1024 window at default levers:
 
 The census window also has 24 wells placed by us against the game's 19 (8, 10
 and 6 against 11, 4 and 4). The wells and the fields are not in doubt; individual
-positions differ. This is the open follow-up. The counts are frozen as a
-fingerprint in `wasmAquiloRenderParity.spec.ts`.
+positions differ. This is the open follow-up. The spec freezes only our own
+pixel counts and the game-unmatched counts in the table. The "ours with no game
+match" column (202 of 295 crude, 777 iceberg) was measured once and is not
+frozen.
 
 ## Other measured facts
 

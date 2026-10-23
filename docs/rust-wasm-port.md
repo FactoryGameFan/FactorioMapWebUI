@@ -837,9 +837,12 @@ and the extra windows were added beside it rather than accepting the constants.
 
 - All 28 fields take more than one value in some case (graded in
   `native_parity.rs`), and moving each of the six levers alone changes at least
-  one fold (`wasmAquiloParity.spec.ts`). Fluorine size changes nothing in the
-  first window, because the default layout has no random fluorine spot to
-  resize; the test failed first, which showed it can discriminate.
+  one fold (`wasmAquiloParity.spec.ts`). Each lever is compared over every
+  window against the default, except the size levers, which are compared against
+  the same lever with only its frequency moved. The default layout puts no
+  random fluorine spot in any window, so a fluorine size change has nothing to
+  resize there; moving the frequency first relocates the spots into the windows.
+  The test failed first, which showed it can discriminate.
 - A field index past the last real field (28 or more) folds 0 rather than a
   plausible checksum of zeros, and the specs assert index 27 folds non-zero.
   `checksum_vulcanus` has the same shape and was not changed, because it is
@@ -887,10 +890,11 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
   295, lithium 444, vent 189 and iceberg 4,716, against the game's 475, 451, 157
   and 4,609. Game pixels with no same-colour pixel of ours within 3 pixels:
   crude 396, lithium 257, vent 130, iceberg 122. In the other direction, 202 of
-  our 295 crude pixels and 777 of our iceberg pixels have no game match. The
+  our 295 crude pixels and 777 of our iceberg pixels have no game match; those
+  two numbers were measured, not frozen. The
   fields agree at tier 1, so the roll (salts `0x00682f53` and `0x0027d9c1`, with
-  no cross-chunk collision) is the suspect. The counts are frozen as a
-  fingerprint, not as a score. #492 holds the follow-up.
+  no cross-chunk collision) is the suspect. The spec freezes our own pixel
+  counts and the game-unmatched counts as a fingerprint, not as a score. #492 holds the follow-up.
 - **The `aquilo:render` digests are a self-snapshot, not a correctness grade.**
   They are the bytes our own module produced when they were frozen, in 14 rows
   (4 views by 2 windows, and 6 slider cases). They catch a render that changed.
@@ -1056,7 +1060,8 @@ renders successfully through the same instance.
 Nauvis carries none, because it is the one planet free of transcendentals.
 
 `test/fixtures/wasm-request.v2.json` pins the encoding for all four planets
-(Aquilo, 128 bytes, request 184, added in #454). It is declared under `notFixtures` because it is our own ABI rather than Factorio
+(Aquilo, 128 bytes, request 184, added in #454). It is declared under
+`notFixtures` because it is our own ABI rather than Factorio
 ground truth, and its bytes are checked by
 `test/fixtures/verify-wasm-request.py` - **a third implementation, not the
 writer under test** - so a future version is re-verified the same way rather
