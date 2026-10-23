@@ -67,7 +67,7 @@ This could not have read zero by accident: 15 of the 19 wells (8 of 11
 `crude-oil`, 3 of 4 `fluorine-vent`, all 4 `lithium-brine`) have ocean inside
 their 7x7, and a positive control agrees: a well created by script on the
 no-wells surface rewrites 40 to 46 tiles when placed on ocean (and 8 on
-`brash-ice`; 0 on `crude-oil` and `fluorine-vent` over land; nothing changed there
+`brash-ice`; 0 on `crude-oil` and `fluorine-vent` over land).
 
 **The brief's size-0 control is confounded, and that is a finding of its
 own.** With the three resource controls at size 0 the near-well diff is the
