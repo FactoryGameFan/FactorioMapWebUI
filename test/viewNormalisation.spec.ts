@@ -62,6 +62,10 @@ const FALL_THROUGH = [
   { label: "vulcanus trees", planet: "vulcanus", view: "trees" },
   { label: "vulcanus landmask", planet: "vulcanus", view: "landmask" },
   { label: "nauvis landmask", planet: "nauvis", view: "landmask" },
+  { label: "fulgora enemies", planet: "fulgora", view: "enemies" },
+  { label: "fulgora cliffs", planet: "fulgora", view: "cliffs" },
+  { label: "fulgora trees", planet: "fulgora", view: "trees" },
+  { label: "fulgora rocks", planet: "fulgora", view: "rocks" },
 ] as const;
 
 function pixels(

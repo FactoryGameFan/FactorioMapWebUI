@@ -2,6 +2,7 @@ import { CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX } from "../cliffs/cliffCatalog";
 import type { CliffControls, CliffSettingsInput } from "../cliffs/cliffCatalog";
 import type { Point, VulcanusResourceControls } from "../eval/ctx";
 import type { EnemyControls } from "../enemies/enemyCatalog";
+import { PLANET_CAPABILITIES } from "../../model/planetCapabilities";
 import type { Planet } from "../../model/planets";
 import type { ResourceControlLevers } from "../resources/resourceCatalog";
 import type { RockControls } from "../rocks/rockCatalog";
@@ -597,16 +598,8 @@ function servedView(
   planet: Planet,
   view: ElevationRenderRequest["view"],
 ): ElevationRenderRequest["view"] {
-  if (planet === "vulcanus" && (view === "enemies" || view === "trees" || view === "landmask")) {
-    return "terrain";
-  }
-  if (planet === "nauvis" && view === "landmask") return "terrain";
-  if (
-    planet === "fulgora" &&
-    (view === "enemies" || view === "cliffs" || view === "trees" || view === "rocks")
-  ) {
-    return "terrain";
-  }
+  const fallToTerrain: readonly string[] = PLANET_CAPABILITIES[planet].fallToTerrain;
+  if (view !== undefined && fallToTerrain.includes(view)) return "terrain";
   return view;
 }
 
@@ -657,6 +650,8 @@ export function runRenderRequest(
     throw new Error(STARTING_LAKE_POSITIONS_UNSUPPORTED);
   }
   const planet = req.planet ?? "nauvis";
+  // Before any dispatch: a planet with no renderer must not fall through to Nauvis.
+  if (!PLANET_CAPABILITIES[planet].rendered) throw new Error(unsupportedPair(planet, req.view));
   const view = servedView(planet, req.view);
   if (
     view === "terrain" ||

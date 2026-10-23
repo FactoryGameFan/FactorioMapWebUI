@@ -688,6 +688,15 @@ describe("fulgora scrap is gated on the view", () => {
     expect(scrapPixels("terrain")).toBe(0);
   }, 120000);
 
+  it.each(["gleba", "aquilo"] as const)(
+    "refuses planet %s rather than painting Nauvis",
+    (planet) => {
+      expect(() => runRenderRequest({ ...REQ, planet, view: "all" }, engine)).toThrow(
+        new RegExp(`no renderer for planet ${planet}`),
+      );
+    },
+  );
+
   it("refuses view 'elevation' on Fulgora rather than drawing the Nauvis field", () => {
     // **The hole this row used to pin is closed, and this is the flip its own
     // comment asked for.** It read: "It is pinned rather than fixed because
