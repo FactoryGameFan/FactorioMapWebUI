@@ -43,6 +43,9 @@ export const FULGORA_PARAMS_BYTES = 64;
 /** Must equal `fmw_wasm::abi::VULCANUS_PARAMS_BYTES`. */
 export const VULCANUS_PARAMS_BYTES = 312;
 
+/** Must equal `fmw_wasm::abi::AQUILO_PARAMS_BYTES`. */
+export const AQUILO_PARAMS_BYTES = 128;
+
 /** Capacity of a Nauvis request's starting-point list. Mirrors
  * `fmw_wasm::abi::NAUVIS_MAX_STARTING_POINTS`. */
 export const NAUVIS_MAX_STARTING_POINTS = 8;
@@ -66,10 +69,11 @@ export const NAUVIS_PARAMS_BYTES = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16;
  * rather than as a size error.
  */
 export const REQUEST_BYTES =
-  COMMON_BYTES + Math.max(FULGORA_PARAMS_BYTES, VULCANUS_PARAMS_BYTES, NAUVIS_PARAMS_BYTES);
+  COMMON_BYTES +
+  Math.max(FULGORA_PARAMS_BYTES, VULCANUS_PARAMS_BYTES, NAUVIS_PARAMS_BYTES, AQUILO_PARAMS_BYTES);
 
 /** The `planet` codes the module understands. */
-export const PLANET = { fulgora: 0, vulcanus: 1, nauvis: 2 } as const;
+export const PLANET = { fulgora: 0, vulcanus: 1, nauvis: 2, aquilo: 3 } as const;
 
 /**
  * The `view` codes the module understands.
@@ -92,6 +96,11 @@ export const VIEW = {
   elevationLakes: 9,
   elevationNauvis: 10,
   elevationIsland: 11,
+  /**
+   * Aquilo only: white where a well or an iceberg has a probability above 0.
+   * A superset check for the render parity work, never offered by the panel.
+   */
+  entityFootprint: 12,
 } as const;
 
 /**
@@ -304,7 +313,49 @@ export interface NauvisRenderRequest extends CommonRenderRequest {
   readonly resourceLevers: readonly (readonly [number, number, number])[];
 }
 
-export type WasmRenderRequest = FulgoraRenderRequest | VulcanusRenderRequest | NauvisRenderRequest;
+/** One Aquilo resource control's two sliders. Richness is not read. */
+export interface AquiloLevers {
+  readonly frequency?: number;
+  readonly size?: number;
+}
+
+/** The three Aquilo resource autoplace controls. */
+export interface AquiloResourceControls {
+  readonly crudeOil?: AquiloLevers;
+  readonly lithiumBrine?: AquiloLevers;
+  readonly fluorineVent?: AquiloLevers;
+}
+
+export interface AquiloRenderRequest extends CommonRenderRequest {
+  readonly planet: "aquilo";
+  /**
+   * The three resource controls, wire values, neutral at 1.
+   *
+   * **Optional at every level**, and `writeAquiloParams` substitutes the
+   * neutral 1 for anything absent, as `writeFulgoraParams` does for scrap. The
+   * module does NOT default these, and `Default` on the Rust side is 0, which
+   * is a real slider setting (size 0 removes the wells and reshapes the
+   * islands). A preset with no Aquilo controls must render at 1, not 0.
+   */
+  readonly aquiloResourceControls?: AquiloResourceControls;
+  /**
+   * The world box to sweep for placement-roll hits, for the `resources`,
+   * `rocks` and `all` views. Defaults to the request's own pixel box. A well
+   * or iceberg mark is a symmetric 3x3, so the halo is symmetric.
+   */
+  readonly placementSweepBox?: {
+    readonly x0: number;
+    readonly y0: number;
+    readonly x1: number;
+    readonly y1: number;
+  };
+}
+
+export type WasmRenderRequest =
+  | FulgoraRenderRequest
+  | VulcanusRenderRequest
+  | NauvisRenderRequest
+  | AquiloRenderRequest;
 
 /**
  * `f32(f32(a / 180) * f32(PI))`, then f32 `sin`/`cos` - the narrowing lattice
@@ -405,6 +456,19 @@ export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }
 }
 
 /**
+ * Aquilo's three bearings, in the order the block carries them: crude oil,
+ * lithium brine, fluorine vent.
+ *
+ * `aquilo_angle = map_seed_normalized * 3600`, narrowed to f32, then `+ 120`
+ * and `+ 240`, each sum narrowed. The fluorine vent's two cones share the
+ * third bearing.
+ */
+export function aquiloBearingTrig(seed0: number): { sin: number; cos: number }[] {
+  const base = f32(seedNormalized(seed0) * 3600);
+  return [trigOf(base), trigOf(f32(base + 120)), trigOf(f32(base + 240))];
+}
+
+/**
  * Write a request into `target`, returning the bytes written.
  *
  * The return value is the LENGTH of this request, not the buffer's capacity -
@@ -422,6 +486,7 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
   if (planet === "vulcanus") paramsBytes = VULCANUS_PARAMS_BYTES;
   else if (planet === "nauvis") paramsBytes = NAUVIS_PARAMS_BYTES;
   else if (planet === "fulgora") paramsBytes = FULGORA_PARAMS_BYTES;
+  else if (planet === "aquilo") paramsBytes = AQUILO_PARAMS_BYTES;
   else throw new Error(`no params layout for planet ${String(planet)} in render request`);
   const total = COMMON_BYTES + paramsBytes;
   if (target.byteLength < total) {
@@ -452,6 +517,8 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
     writeNauvisParams(view, req as NauvisRenderRequest);
   } else if (planet === "fulgora") {
     writeFulgoraParams(view, req as FulgoraRenderRequest);
+  } else if (planet === "aquilo") {
+    writeAquiloParams(view, req as AquiloRenderRequest);
   } else {
     throw new Error(`no params writer for planet ${String(planet)} in render request`);
   }
@@ -546,6 +613,34 @@ function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
     view.setFloat64(at, pt ? pt.x : 0, true);
     view.setFloat64(at + 8, pt ? pt.y : 0, true);
   }
+}
+
+/**
+ * Aquilo's block: six levers, three bearings' trig and the placement sweep box.
+ * See `fmw_wasm::abi` for the table.
+ */
+function writeAquiloParams(view: DataView, req: AquiloRenderRequest): void {
+  const p = COMMON_BYTES;
+  const c = req.aquiloResourceControls ?? {};
+  // The ONE place an absent Aquilo slider becomes the neutral 1.
+  [c.crudeOil, c.lithiumBrine, c.fluorineVent].forEach((lever, i) => {
+    view.setFloat64(p + i * 16, lever?.frequency ?? 1, true);
+    view.setFloat64(p + 8 + i * 16, lever?.size ?? 1, true);
+  });
+  aquiloBearingTrig(req.seed0).forEach((t, i) => {
+    view.setFloat64(p + 48 + i * 16, t.sin, true);
+    view.setFloat64(p + 56 + i * 16, t.cos, true);
+  });
+  const box = req.placementSweepBox ?? {
+    x0: req.originX,
+    y0: req.originY,
+    x1: req.originX + req.width * req.tilesPerPixel,
+    y1: req.originY + req.height * req.tilesPerPixel,
+  };
+  view.setFloat64(p + 96, box.x0, true);
+  view.setFloat64(p + 104, box.y0, true);
+  view.setFloat64(p + 112, box.x1, true);
+  view.setFloat64(p + 120, box.y1, true);
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {

@@ -880,7 +880,7 @@ renders successfully through the same instance.
 **Trig crosses as VALUES computed in V8**, never computed in the module (#270).
 Nauvis carries none, because it is the one planet free of transcendentals.
 
-`test/fixtures/wasm-request.v2.json` pins the encoding for all three planets. It
+`test/fixtures/wasm-request.v2.json` pins the encoding for all four planets (Aquilo, 128 bytes, request 184, added in Stage 1). It
 is declared under `notFixtures` because it is our own ABI rather than Factorio
 ground truth, and its bytes are checked by
 `test/fixtures/verify-wasm-request.py` - **a third implementation, not the

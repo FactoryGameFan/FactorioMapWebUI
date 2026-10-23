@@ -5,7 +5,8 @@
 //! `runRenderRequest`'s signature does not change.
 
 use crate::abi::{
-    self, FulgoraParams, NauvisParams, Params, Request, Status, VulcanusBearing, VulcanusParams,
+    self, AquiloParams, FulgoraParams, NauvisParams, Params, Request, Status, VulcanusBearing,
+    VulcanusParams,
 };
 use core::cell::RefCell;
 use fmw_noise::at::At;
@@ -23,6 +24,10 @@ use fmw_noise::enemies::catalog::{EnemyControls, ENEMY_MAP_COLOR};
 use fmw_noise::enemies::field::{EnemyBaseField, EnemyFieldParams};
 use fmw_noise::enemies::placement::NauvisEnemyPlacement;
 use fmw_noise::eval::ctx::{EvalCtx, ResourceLevers, VulcanusResourceControls};
+use fmw_noise::expressions::aquilo_resources::{
+    AquiloBearings, AquiloLevers, AquiloResourceControls,
+};
+use fmw_noise::expressions::aquilo_stack::{tile_at, AquiloCtx, AquiloStack};
 use fmw_noise::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
 use fmw_noise::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
@@ -33,6 +38,7 @@ use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
+use fmw_noise::resources::aquilo_wells::{AquiloWell, AquiloWellPlacement};
 use fmw_noise::resources::fulgora_catalog::{FulgoraScrapPlacement, SCRAP_MAP_COLOR};
 use fmw_noise::resources::nauvis_catalog::NAUVIS_RESOURCE_CATALOG;
 use fmw_noise::resources::nauvis_oil::{crude_oil, NauvisOilPlacement};
@@ -46,6 +52,9 @@ use fmw_noise::resources::vulcanus_catalog::{
 };
 use fmw_noise::resources::vulcanus_geyser::VulcanusGeyserPlacement;
 use fmw_noise::resources::vulcanus_ore_roll::{ore_probability, VulcanusOreRoll};
+use fmw_noise::rocks::aquilo_icebergs::{
+    iceberg_probabilities, iceberg_tile_allowed, AquiloIcebergPlacement, ICEBERG_COLOR,
+};
 use fmw_noise::rocks::catalog::{RockControls, NAUVIS_ROCK_MARK_RADIUS_PX};
 use fmw_noise::rocks::catalog::{ROCK_MAP_COLOR, VULCANUS_ROCK_MARK_RADIUS_PX};
 use fmw_noise::rocks::field::{NauvisRockFields, RockFieldParams};
@@ -69,6 +78,8 @@ pub const PLANET_FULGORA: u32 = 0;
 pub const PLANET_VULCANUS: u32 = 1;
 /// Planet code for Nauvis.
 pub const PLANET_NAUVIS: u32 = 2;
+/// Planet code for Aquilo.
+pub const PLANET_AQUILO: u32 = 3;
 /// `view` code for the land mask - land versus ocean, no land argmax.
 pub const VIEW_LANDMASK: u32 = 0;
 /// `view` code for the full terrain render, all ten tile colours.
@@ -144,6 +155,16 @@ pub const VIEW_ELEVATION_NAUVIS: u32 = 10;
 /// segmentation goes in and the divide happens there, so this path must not
 /// pre-divide or it lands twice.
 pub const VIEW_ELEVATION_ISLAND: u32 = 11;
+
+/// Aquilo only: white where any well's probability, or an iceberg's on a tile
+/// that allows one, is above 0, and black elsewhere.
+///
+/// A superset check for the render parity work, never offered by the panel. An
+/// entity the roll placed must sit on a white pixel, so a black pixel under a
+/// painted mark is a placement bug. Probability is read per tile; the placement
+/// roll and the collision test are NOT applied, which is what makes it a
+/// superset.
+pub const VIEW_ENTITY_FOOTPRINT: u32 = 12;
 
 /// The land colour, `FULGORA_LANDMASK_LAND_RGB` in
 /// `src/noise/preview/renderFulgoraTerrain.ts`.
@@ -258,6 +279,9 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
                 | VIEW_ELEVATION_LAKES
                 | VIEW_ELEVATION_NAUVIS
                 | VIEW_ELEVATION_ISLAND
+        ) | (
+            PLANET_AQUILO,
+            VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ROCKS | VIEW_ALL | VIEW_ENTITY_FOOTPRINT
         )
     );
     if !supported {
@@ -280,6 +304,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         (PLANET_FULGORA, Params::Fulgora(p)) => render_fulgora(&req, &p, &mut out[..needed]),
         (PLANET_VULCANUS, Params::Vulcanus(p)) => render_vulcanus(&req, &p, &mut out[..needed]),
         (PLANET_NAUVIS, Params::Nauvis(p)) => render_nauvis(&req, &p, &mut out[..needed]),
+        (PLANET_AQUILO, Params::Aquilo(p)) => render_aquilo(&req, &p, &mut out[..needed]),
         _ => return Status::UnsupportedPlanetOrView,
     }
     Status::Ok
@@ -500,6 +525,189 @@ fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
     }
     if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
         paint_vulcanus_cliffs(req, p, &ctx, &stack, out);
+    }
+}
+
+/// The three resource controls as the engine reads them.
+pub(crate) fn aquilo_controls(p: &AquiloParams) -> AquiloResourceControls {
+    let levers = |frequency: f64, size: f64| AquiloLevers { frequency, size };
+    AquiloResourceControls {
+        crude_oil: levers(p.crude_oil_frequency, p.crude_oil_size),
+        lithium_brine: levers(p.lithium_brine_frequency, p.lithium_brine_size),
+        fluorine_vent: levers(p.fluorine_vent_frequency, p.fluorine_vent_size),
+    }
+}
+
+/// The three starting-cone bearings, from the six trig values in the block.
+///
+/// The values are V8's, computed on the TypeScript side; see
+/// `starting_spot_at_angle`'s module docs and #270.
+fn aquilo_bearings(p: &AquiloParams) -> AquiloBearings {
+    let pair = |i: usize| AngleTrig::new(p.trig[i].0, p.trig[i].1);
+    AquiloBearings {
+        crude_oil: pair(0),
+        lithium_brine: pair(1),
+        fluorine_vent: pair(2),
+    }
+}
+
+/// Build the Aquilo graph for one render.
+pub(crate) fn aquilo_stack(seed0: u32, p: &AquiloParams) -> AquiloStack {
+    AquiloStack::new(
+        &AquiloCtx {
+            seed0,
+            controls: aquilo_controls(p),
+        },
+        aquilo_bearings(p),
+    )
+}
+
+/// Sweep the window and paint Aquilo: terrain, then wells, then icebergs.
+///
+/// The stack sits behind a `RefCell` because the two placement sources and the
+/// terrain pass all evaluate it and `eval_at` needs `&mut self`. Every borrow
+/// is taken and dropped inside one statement.
+fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
+    let stack = RefCell::new(aquilo_stack(req.seed0, p));
+
+    if req.view == VIEW_ENTITY_FOOTPRINT {
+        paint_aquilo_entity_footprint(req, &stack, out);
+        return;
+    }
+
+    let mut offset = 0usize;
+    for py in 0..req.height {
+        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            let color = stack
+                .borrow_mut()
+                .eval_at(terrain_at(req, wx, wy))
+                .tile()
+                .color();
+            out[offset] = color[0];
+            out[offset + 1] = color[1];
+            out[offset + 2] = color[2];
+            out[offset + 3] = 255;
+            offset += 4;
+        }
+    }
+
+    // Wells first, then icebergs: an iceberg crossing a well reads as the
+    // thing in the way, as rocks do over ore on the other planets.
+    if matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
+        paint_aquilo_wells(req, p, &stack, out);
+    }
+    if matches!(req.view, VIEW_ROCKS | VIEW_ALL) {
+        paint_aquilo_icebergs(req, p, &stack, out);
+    }
+}
+
+/// Paint each placed well as a 3x3 mark in its own colour.
+///
+/// The mark can straddle a tile seam, so the sweep runs over the halo-widened
+/// `placement_sweep_box` rather than the request's own pixel box.
+fn paint_aquilo_wells(
+    req: &Request,
+    p: &AquiloParams,
+    stack: &RefCell<AquiloStack>,
+    out: &mut [u8],
+) {
+    let placement = AquiloWellPlacement::new(stack);
+    let set = placement.placement_set();
+    let (px0, px1, py0, py1) = sweep_pixel_range(req, p.placement_sweep_box);
+    let width = i64::from(req.width);
+    let height = i64::from(req.height);
+    for py in py0..py1 {
+        #[allow(clippy::cast_precision_loss)]
+        let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+        for px in px0..px1 {
+            #[allow(clippy::cast_precision_loss)]
+            let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+            if !set.placed(wx, wy) {
+                continue;
+            }
+            let Some(well) = placement.winner(wx, wy) else {
+                continue;
+            };
+            paint_mark(
+                out,
+                width,
+                height,
+                px,
+                py,
+                well.color(),
+                PLACEMENT_MARK_RADIUS_PX,
+            );
+        }
+    }
+}
+
+/// Paint each placed iceberg as a 3x3 mark. Both prototypes share one colour.
+fn paint_aquilo_icebergs(
+    req: &Request,
+    p: &AquiloParams,
+    stack: &RefCell<AquiloStack>,
+    out: &mut [u8],
+) {
+    let placement = AquiloIcebergPlacement::new(stack);
+    let set = placement.placement_set();
+    let (px0, px1, py0, py1) = sweep_pixel_range(req, p.placement_sweep_box);
+    let width = i64::from(req.width);
+    let height = i64::from(req.height);
+    for py in py0..py1 {
+        #[allow(clippy::cast_precision_loss)]
+        let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+        for px in px0..px1 {
+            #[allow(clippy::cast_precision_loss)]
+            let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+            if !set.placed(wx, wy) {
+                continue;
+            }
+            paint_mark(
+                out,
+                width,
+                height,
+                px,
+                py,
+                ICEBERG_COLOR,
+                PLACEMENT_MARK_RADIUS_PX,
+            );
+        }
+    }
+}
+
+/// [`VIEW_ENTITY_FOOTPRINT`]: white where a well or an iceberg could stand by
+/// probability alone, black elsewhere.
+///
+/// An iceberg counts only on a tile its placement allows, the rule the
+/// overlay itself applies through `tile_allowed`; a well has no tile rule.
+fn paint_aquilo_entity_footprint(req: &Request, stack: &RefCell<AquiloStack>, out: &mut [u8]) {
+    const WELLS: [AquiloWell; 3] = [
+        AquiloWell::CrudeOil,
+        AquiloWell::LithiumBrine,
+        AquiloWell::FluorineVent,
+    ];
+    let mut offset = 0usize;
+    for py in 0..req.height {
+        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            let fields = stack.borrow_mut().eval_at(tile_at(wx, wy));
+            let well = WELLS
+                .into_iter()
+                .any(|w| w.probability(&fields.resources) > 0.0);
+            let iceberg = iceberg_tile_allowed(fields.tile())
+                && iceberg_probabilities(fields.terrain.high_frequency_peaks)
+                    .into_iter()
+                    .any(|v| v > 0.0);
+            let v = if well || iceberg { 255 } else { 0 };
+            out[offset] = v;
+            out[offset + 1] = v;
+            out[offset + 2] = v;
+            out[offset + 3] = 255;
+            offset += 4;
+        }
     }
 }
 

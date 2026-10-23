@@ -1598,3 +1598,182 @@ mod survey_tests {
 
 #[cfg(test)]
 mod native_parity;
+
+/// The Aquilo render entry, through the real decoder.
+#[cfg(test)]
+mod aquilo_render_tests {
+    use crate::abi::{self, Status, AQUILO_PARAMS_BYTES, COMMON_BYTES};
+    use crate::render::{
+        render, PLANET_AQUILO, VIEW_ALL, VIEW_CLIFFS, VIEW_ENTITY_FOOTPRINT, VIEW_LANDMASK,
+        VIEW_RESOURCES, VIEW_ROCKS, VIEW_TERRAIN, VIEW_TREES,
+    };
+    use fmw_noise::expressions::aquilo_resources::AquiloBearings;
+    use fmw_noise::tiles::aquilo_catalog::TILE_ORDER;
+
+    /// The derived Aquilo surface seed for map seed 123456.
+    const SEED0: u32 = 3_111_923_328;
+    const FLUORINE_COLOR: [u8; 3] = [0, 204, 255];
+
+    /// A request with the three bearings from the host libm. The shipped
+    /// engine gets V8's values; these are close enough for the tiny vent's
+    /// position, which the test reads back from the same values.
+    fn request(view: u32, (w, h): (u32, u32), (ox, oy): (f64, f64), fluorine_size: f64) -> Vec<u8> {
+        let mut b = vec![0u8; COMMON_BYTES + AQUILO_PARAMS_BYTES];
+        let put_u32 = |b: &mut Vec<u8>, at: usize, v: u32| {
+            b[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        };
+        let put_f64 = |b: &mut Vec<u8>, at: usize, v: f64| {
+            b[at..at + 8].copy_from_slice(&v.to_le_bytes());
+        };
+        put_u32(&mut b, 0, abi::MAGIC);
+        put_u32(&mut b, 4, abi::ABI_VERSION);
+        put_u32(&mut b, 8, PLANET_AQUILO);
+        put_u32(&mut b, 12, view);
+        put_u32(&mut b, 16, SEED0);
+        put_u32(&mut b, 20, w);
+        put_u32(&mut b, 24, h);
+        put_u32(&mut b, 28, AQUILO_PARAMS_BYTES as u32);
+        put_f64(&mut b, 32, ox);
+        put_f64(&mut b, 40, oy);
+        put_f64(&mut b, 48, 1.0);
+        let p = COMMON_BYTES;
+        for (i, (f, s)) in [(1.0, 1.0), (1.0, 1.0), (1.0, fluorine_size)]
+            .into_iter()
+            .enumerate()
+        {
+            put_f64(&mut b, p + i * 16, f);
+            put_f64(&mut b, p + 8 + i * 16, s);
+        }
+        let bearings = AquiloBearings::from_host(SEED0);
+        for (i, t) in [
+            bearings.crude_oil,
+            bearings.lithium_brine,
+            bearings.fluorine_vent,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            put_f64(&mut b, p + 48 + i * 16, t.sin);
+            put_f64(&mut b, p + 56 + i * 16, t.cos);
+        }
+        let sweep = [
+            ox - 1.0,
+            oy - 1.0,
+            ox + f64::from(w) + 1.0,
+            oy + f64::from(h) + 1.0,
+        ];
+        for (i, v) in sweep.into_iter().enumerate() {
+            put_f64(&mut b, p + 96 + i * 8, v);
+        }
+        b
+    }
+
+    fn run(view: u32, dims: (u32, u32), origin: (f64, f64), fluorine_size: f64) -> Vec<u8> {
+        let mut out = vec![0u8; dims.0 as usize * dims.1 as usize * 4];
+        let status = render(&request(view, dims, origin, fluorine_size), &mut out);
+        assert_eq!(status, Status::Ok);
+        out
+    }
+
+    /// A 48x48 window centred on the tiny fluorine vent, which the game puts
+    /// 80 tiles from the origin on the fluorine bearing.
+    fn vent_window() -> ((u32, u32), (f64, f64)) {
+        let t = AquiloBearings::from_host(SEED0).fluorine_vent;
+        let (cx, cy) = (80.0 * t.sin, -80.0 * t.cos);
+        ((48, 48), ((cx - 24.0).floor(), (cy - 24.0).floor()))
+    }
+
+    fn count(px: &[u8], color: [u8; 3]) -> usize {
+        px.as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| p[..3] == color)
+            .count()
+    }
+
+    #[test]
+    fn terrain_paints_only_catalogued_tile_colours_and_more_than_one() {
+        let (dims, origin) = vent_window();
+        let px = run(VIEW_TERRAIN, dims, origin, 1.0);
+        let allowed: Vec<[u8; 3]> = TILE_ORDER.iter().map(|t| t.color()).collect();
+        let mut seen = std::collections::BTreeSet::new();
+        for p in px.as_chunks::<4>().0.iter() {
+            assert!(allowed.contains(&[p[0], p[1], p[2]]), "stray {p:?}");
+            assert_eq!(p[3], 255);
+            seen.insert([p[0], p[1], p[2]]);
+        }
+        assert!(seen.len() > 1, "a constant image grades nothing");
+    }
+
+    #[test]
+    fn the_resource_view_paints_the_guaranteed_vent_and_the_size_lever_removes_it() {
+        let (dims, origin) = vent_window();
+        let terrain = run(VIEW_TERRAIN, dims, origin, 1.0);
+        let wells = run(VIEW_RESOURCES, dims, origin, 1.0);
+        assert_eq!(
+            count(&terrain, FLUORINE_COLOR),
+            0,
+            "control: terrain has none"
+        );
+        assert!(
+            count(&wells, FLUORINE_COLOR) > 0,
+            "no vent mark near the spawn cone"
+        );
+        // The fluorine size lever is wired to the fluorine well and nothing
+        // else: at size 0 the same window has no vent mark.
+        let off = run(VIEW_RESOURCES, dims, origin, 0.0);
+        assert_eq!(count(&off, FLUORINE_COLOR), 0);
+    }
+
+    #[test]
+    fn the_all_view_is_terrain_plus_both_overlays() {
+        let (dims, origin) = vent_window();
+        let all = run(VIEW_ALL, dims, origin, 1.0);
+        let wells = run(VIEW_RESOURCES, dims, origin, 1.0);
+        let rocks = run(VIEW_ROCKS, dims, origin, 1.0);
+        let terrain = run(VIEW_TERRAIN, dims, origin, 1.0);
+        // Every pixel `all` shares with neither overlay is terrain.
+        for i in (0..all.len()).step_by(4) {
+            if wells[i..i + 4] == terrain[i..i + 4] && rocks[i..i + 4] == terrain[i..i + 4] {
+                assert_eq!(all[i..i + 4], terrain[i..i + 4]);
+            }
+        }
+        assert!(count(&all, FLUORINE_COLOR) > 0);
+        assert_ne!(all, terrain);
+    }
+
+    #[test]
+    fn the_footprint_view_is_black_and_white_and_covers_the_vent() {
+        let (dims, origin) = vent_window();
+        let px = run(VIEW_ENTITY_FOOTPRINT, dims, origin, 1.0);
+        let white = count(&px, [255, 255, 255]);
+        let black = count(&px, [0, 0, 0]);
+        assert_eq!(white + black, px.len() / 4, "only black and white");
+        assert!(white > 0 && black > 0, "white {white}, black {black}");
+        // The tiny vent's centre tile has probability 1, so it is white.
+        let t = AquiloBearings::from_host(SEED0).fluorine_vent;
+        let (cx, cy) = (80.0 * t.sin, -80.0 * t.cos);
+        let (px_x, px_y) = (
+            (cx.round() - origin.0) as usize,
+            (cy.round() - origin.1) as usize,
+        );
+        let o = (px_y * dims.0 as usize + px_x) * 4;
+        assert_eq!(px[o..o + 3], [255, 255, 255]);
+        // With the fluorine size at 0 that vent no longer counts.
+        let off = run(VIEW_ENTITY_FOOTPRINT, dims, origin, 0.0);
+        assert_ne!(px, off);
+    }
+
+    #[test]
+    fn views_aquilo_does_not_serve_are_refused() {
+        for view in [VIEW_LANDMASK, VIEW_CLIFFS, VIEW_TREES, 9, 10, 11, 13] {
+            let b = request(view, (2, 2), (0.0, 0.0), 1.0);
+            let mut out = vec![0u8; 16];
+            assert_eq!(
+                render(&b, &mut out),
+                Status::UnsupportedPlanetOrView,
+                "view {view}"
+            );
+        }
+    }
+}
