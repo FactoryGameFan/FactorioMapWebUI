@@ -304,3 +304,42 @@ impl AquiloTerrain {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The random island peaks and each billow octave set follow the `At`:
+    /// on a whole-tile sweep the grid kernel differs from the point kernel
+    /// somewhere in each. These reach the output only through
+    /// `aquilo_elevation`, where the other grid-following fields would hide a
+    /// dropped `At` on one of them, so they are checked at the source.
+    #[test]
+    fn the_random_peaks_and_every_billow_follow_the_at() {
+        let t = AquiloTerrain::new(123_456);
+        let mut random = 0;
+        let mut billows = [0usize; 3];
+        for j in 0..40 {
+            for i in 0..40 {
+                let (x, y) = (i * 23 - 460, j * 19 - 380);
+                let (g, p) = (At::tile(x, y), At::point(f64::from(x), f64::from(y)));
+                if t.random_island_peaks.eval_at(g).to_bits()
+                    != t.random_island_peaks.eval_at(p).to_bits()
+                {
+                    random += 1;
+                }
+                for (n, terms) in t.billows.iter().enumerate() {
+                    if sum_octaves_at(g, terms).to_bits() != sum_octaves_at(p, terms).to_bits() {
+                        billows[n] += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("random {random}, billows {billows:?} of 1600");
+        assert!(
+            random > 0,
+            "random_island_peaks never left the point kernel"
+        );
+        assert!(billows.iter().all(|n| *n > 0), "a billow ignored the At");
+    }
+}

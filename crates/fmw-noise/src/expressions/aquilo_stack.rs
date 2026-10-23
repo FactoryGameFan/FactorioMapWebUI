@@ -13,6 +13,7 @@ use crate::expressions::aquilo_resources::{
     AquiloBearings, AquiloResourceControls, AquiloResourceFields, AquiloResources,
 };
 use crate::expressions::aquilo_terrain::{AquiloTerrain, AquiloTerrainFields};
+use crate::tiles::aquilo_catalog::{resolve_tile, AquiloTile};
 
 /// What a render fixes: the map seed (the Aquilo surface seed, which a preview
 /// derives and a tier-1 capture forces) and the three resource controls.
@@ -27,6 +28,14 @@ pub struct AquiloCtx {
 pub struct AquiloFields {
     pub resources: AquiloResourceFields,
     pub terrain: AquiloTerrainFields,
+}
+
+impl AquiloFields {
+    /// The tile at this position: the argmax of the nine probabilities.
+    #[must_use]
+    pub fn tile(&self) -> AquiloTile {
+        resolve_tile(&self.terrain)
+    }
 }
 
 /// The per-render state of the Aquilo graph.
@@ -75,15 +84,19 @@ mod tests {
     }
 
     /// A sweep of whole tiles on the chunk-grid path gives finite values in
-    /// every field, and the raw-coordinate fields really take that path: the
-    /// grid and point kernels round differently, so they disagree somewhere.
-    /// A stack that dropped the `At` and always used the point kernel would
-    /// agree everywhere.
+    /// every field, and EVERY raw-coordinate field really takes that path: the
+    /// grid and point kernels round differently, so each one disagrees with
+    /// its point twin somewhere. A field that dropped its `At` and always used
+    /// the point kernel would agree everywhere and go red here. The billows
+    /// have no field of their own; they reach the grid through `elevation`.
+    /// `aquilo_aux` runs the point kernel on a warped coordinate, but the warp
+    /// reads the wobbles, which follow the `At`, so it differs too.
     #[test]
-    fn a_tile_sweep_is_finite_and_reaches_the_grid_kernel() {
+    fn a_tile_sweep_is_finite_and_every_raw_field_reaches_the_grid_kernel() {
         let mut on_grid = stack();
         let mut on_points = stack();
-        let mut differ = 0;
+        // Differing positions per field, in `AquiloTerrainFields` order.
+        let mut differ = [0usize; 8];
         let mut land = 0;
         for j in 0..40 {
             for i in 0..40 {
@@ -92,30 +105,50 @@ mod tests {
                 let p = on_points
                     .eval_at(At::point(f64::from(x), f64::from(y)))
                     .terrain;
-                for v in [
-                    g.wobble_x,
-                    g.wobble_y,
-                    g.aux,
-                    g.island_peaks,
-                    g.elevation,
-                    g.high_frequency_peaks,
-                    g.snow_ice,
-                    g.tile_variant,
-                ] {
-                    assert!(v.is_finite(), "non-finite {v} at ({x}, {y})");
-                }
-                if g.tile_variant.to_bits() != p.tile_variant.to_bits() {
-                    differ += 1;
+                let pairs = |f: &AquiloTerrainFields| {
+                    [
+                        f.wobble_x,
+                        f.wobble_y,
+                        f.aux,
+                        f.island_peaks,
+                        f.elevation,
+                        f.high_frequency_peaks,
+                        f.snow_ice,
+                        f.tile_variant,
+                    ]
+                };
+                for (n, (gv, pv)) in pairs(&g).into_iter().zip(pairs(&p)).enumerate() {
+                    assert!(gv.is_finite(), "non-finite {gv} at ({x}, {y})");
+                    if gv.to_bits() != pv.to_bits() {
+                        differ[n] += 1;
+                    }
                 }
                 if g.elevation > 0.0 {
                     land += 1;
                 }
             }
         }
-        assert!(
-            differ > 0,
-            "the grid path never differed from the point path"
-        );
+        // `island_peaks` is the spot arm alone (cones and spot fields, which are
+        // distance maths) and reads no raw-coordinate noise, so it is the one
+        // field that must agree. The random peaks and the billows reach the
+        // grid only through `elevation`; the terrain module's own test grades
+        // each of them directly.
+        assert_eq!(differ[3], 0, "island_peaks is not a noise field");
+        differ[3] = 1;
+        let names = [
+            "wobble_x",
+            "wobble_y",
+            "aux",
+            "island_peaks",
+            "elevation",
+            "high_frequency_peaks",
+            "snow_ice",
+            "tile_variant",
+        ];
+        eprintln!("grid-vs-point differing positions of 1600: {names:?} {differ:?}");
+        for (name, n) in names.iter().zip(differ) {
+            assert!(n > 0, "{name} never differed from its point twin");
+        }
         // Non-vacuity: the sweep is not all ocean.
         assert!(land > 0, "the sweep saw no land");
     }

@@ -11387,15 +11387,8 @@ fn score_aquilo_resource_case(label: &str, positions_expected: usize) -> Vec<usi
     for (name, select) in AQUILO_RESOURCE_FIELDS {
         let want = case.get("fields").get(name).as_array();
         assert_eq!(want.len(), positions.len(), "{label} {name} length");
-        let exact = fields
-            .iter()
-            .zip(want)
-            .filter(|(f, w)| {
-                let bits = u32::from_str_radix(w.as_str(), 16).expect("hex f32 bits");
-                (select(f) as f32).to_bits() == bits
-            })
-            .count();
-        counts.push(exact);
+        let got: Vec<f64> = fields.iter().map(select).collect();
+        counts.push(count_exact_bits(&got, want));
     }
     eprintln!("aquilo {label} ({} positions):", positions.len());
     for ((name, _), n) in AQUILO_RESOURCE_FIELDS.iter().zip(&counts) {
@@ -11582,6 +11575,156 @@ fn aquilo_terrain_fields_match_the_game_size0() {
 fn aquilo_terrain_fields_match_the_game_moved() {
     let got = score_aquilo_terrain_case("moved", 626);
     assert_eq!(got, vec![626; 8]);
+}
+
+use crate::tiles::aquilo_catalog::{
+    probabilities, resolve_tile, AquiloTile, TILE_ORDER as AQUILO_TILE_ORDER,
+};
+
+/// Evaluate our terrain fields at every position of a fixture case.
+fn aquilo_terrain_at(
+    positions: &[Json],
+    controls: AquiloResourceControls,
+) -> Vec<AquiloTerrainFields> {
+    let mut stack = AquiloStack::with_host_trig(&AquiloCtx {
+        seed0: 123_456,
+        controls,
+    });
+    positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            stack
+                .eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+                .terrain
+        })
+        .collect()
+}
+
+/// The fixture's score for one tile, as f32 hex bits turned into values.
+fn aquilo_game_scores(per_tile: &[&[Json]; 9], i: usize) -> [f64; 9] {
+    let mut out = [0.0; 9];
+    for (t, scores) in per_tile.iter().enumerate() {
+        let bits = u32::from_str_radix(scores[i].as_str(), 16).expect("hex f32 bits");
+        out[t] = f64::from(f32::from_bits(bits));
+    }
+    out
+}
+
+/// The nine tile scores (probabilities) against the game: the 1,024 positions
+/// of `oracle-aquilo-fields` plus the three lever cases of
+/// `oracle-aquilo-entity-fields`, an exact count per tile in `TILE_ORDER`.
+///
+/// Full houses, frozen 2026-10-23: 1,024 at default levers; 632, 452 and 626
+/// in the cases. Scores run through our own terrain fields, so this grades the
+/// formulas and the fields together. The `100 * min_elevation` term is
+/// +-100, so a score is exact only if the f32 rounding of every later op
+/// matches. The first draft kept the non-binary constants (`0.01`, `0.05`,
+/// `0.75`, `0.4`, `0.6`, ...) as doubles and scored, of 1,024: snow-patchy
+/// 1,018, brash-ice 835 and the two oceans 756 each; the six other tiles were
+/// already exact. Narrowing each constant to f32 closed all nine.
+#[test]
+fn aquilo_tile_scores_match_the_game() {
+    let fixture = load_captured_at(AQUILO_FIELDS, "2.1.23");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 1024);
+    let fields = aquilo_terrain_at(positions, AquiloResourceControls::default());
+    let mut all = vec![("fields".to_string(), fields, fixture.get("tiles"), "")];
+    let entity = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    for (label, n) in [("default", 632), ("size0", 452), ("moved", 626)] {
+        let case = entity.get("cases").get(label);
+        let positions = case.get("positions").as_array();
+        assert_eq!(positions.len(), n, "{label} position count");
+        let fields = aquilo_terrain_at(positions, aquilo_case_controls(case));
+        all.push((label.to_string(), fields, case.get("fields"), "tile:"));
+    }
+    let mut frozen = Vec::new();
+    for (label, fields, source, prefix) in &all {
+        let scores: Vec<[f64; 9]> = fields.iter().map(probabilities).collect();
+        let mut counts = Vec::new();
+        for (t, tile) in AQUILO_TILE_ORDER.iter().enumerate() {
+            let key = if prefix.is_empty() {
+                tile.game_name().to_string()
+            } else {
+                format!("tile:{}:probability", tile.game_name())
+            };
+            let got: Vec<f64> = scores.iter().map(|s| s[t]).collect();
+            counts.push(count_exact_bits(&got, source.get(&key).as_array()));
+        }
+        eprintln!("aquilo tile scores {label}: {counts:?}");
+        frozen.push(counts);
+    }
+    assert_eq!(
+        frozen,
+        vec![vec![1024; 9], vec![632; 9], vec![452; 9], vec![626; 9]]
+    );
+}
+
+/// Our winner against the argmax of the GAME's own scores, at the same four
+/// sets of positions. Frozen 2026-10-23. The fixture reports 0 ties, so it
+/// cannot say which way the game breaks one; ours keeps the first in
+/// `AQUILO_TILE_ORDER`. Every tile wins somewhere in the 1,024-position set, so a
+/// catalog that mapped one tile to another's colour or name would show.
+#[test]
+fn aquilo_tile_winner_matches_the_game() {
+    let fixture = load_captured_at(AQUILO_FIELDS, "2.1.23");
+    let positions = fixture.get("positions").as_array();
+    let mut sets = vec![(
+        "fields".to_string(),
+        aquilo_terrain_at(positions, AquiloResourceControls::default()),
+        fixture.get("tiles").clone(),
+        false,
+    )];
+    let entity = load_captured_at(AQUILO_ENTITY_FIELDS, "2.1.23");
+    for label in ["default", "size0", "moved"] {
+        let case = entity.get("cases").get(label);
+        sets.push((
+            label.to_string(),
+            aquilo_terrain_at(case.get("positions").as_array(), aquilo_case_controls(case)),
+            case.get("fields").clone(),
+            true,
+        ));
+    }
+    let mut matched = Vec::new();
+    let mut wins = std::collections::BTreeMap::new();
+    for (label, fields, source, long_keys) in &sets {
+        let keys: Vec<String> = AQUILO_TILE_ORDER
+            .iter()
+            .map(|t| {
+                if *long_keys {
+                    format!("tile:{}:probability", t.game_name())
+                } else {
+                    t.game_name().to_string()
+                }
+            })
+            .collect();
+        let per_tile: Vec<&[Json]> = keys.iter().map(|k| source.get(k).as_array()).collect();
+        let per_tile: [&[Json]; 9] = per_tile.try_into().expect("nine tiles");
+        let mut same = 0;
+        for (i, f) in fields.iter().enumerate() {
+            let scores = aquilo_game_scores(&per_tile, i);
+            let mut want: Option<AquiloTile> = None;
+            let mut best = f64::NEG_INFINITY;
+            for (t, v) in scores.iter().enumerate() {
+                if *v > best {
+                    best = *v;
+                    want = Some(AQUILO_TILE_ORDER[t]);
+                }
+            }
+            let want = want.expect("a winner");
+            if *label == "fields" {
+                *wins.entry(want.game_name()).or_insert(0usize) += 1;
+            }
+            if resolve_tile(f) == want {
+                same += 1;
+            }
+        }
+        eprintln!("aquilo tile winner {label}: {same} of {}", fields.len());
+        matched.push(same);
+    }
+    assert_eq!(matched, vec![1024, 632, 452, 626]);
+    // Non-vacuity: all nine tiles win somewhere in the 1,024-position set.
+    assert_eq!(wins.len(), 9, "{wins:?}");
 }
 
 /// The second grade of `aquilo_elevation` and `aquilo_aux`: 1,024 positions out

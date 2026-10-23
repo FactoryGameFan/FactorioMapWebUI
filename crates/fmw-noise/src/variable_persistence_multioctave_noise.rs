@@ -395,19 +395,9 @@ impl AmplitudeCorrectedGame {
     /// otherwise.
     #[must_use]
     pub fn eval_at(&self, at: At) -> f32 {
-        match at {
-            At::Point { x, y } => {
-                eval(x, y, f64::from(self.persistence), &self.terms, &self.tables)
-            }
-            At::Grid { cx, cy, i, r } => eval_grid(
-                (cx, cy),
-                (i, r),
-                self.persistence,
-                0.0,
-                &self.terms,
-                &self.tables,
-            ),
-        }
+        // The grid convention lives in the free `eval_at`; the persistence is
+        // already an f32 here, so its narrowing on the grid path is a no-op.
+        eval_at(at, f64::from(self.persistence), &self.terms, &self.tables)
     }
 }
 
@@ -453,6 +443,31 @@ mod amplitude_corrected_tests {
                 (near(1.0 - 1e-9) - limit).abs() < 1e-6,
                 "the series does not approach 1/{n} at {octaves} octaves"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod amplitude_corrected_libm_pins {
+    /// `f64::from(p as f32).powf(n)` is the series term
+    /// `AmplitudeCorrectedGame::new` narrows, and it leans on the host's libm.
+    /// These are the correctly rounded f64 bits of the exact rational power
+    /// (computed with Python `fractions`, 2026-10-23), for every (p, n) the
+    /// wrapper fixture and Aquilo's `random_island_peaks` use. A host whose
+    /// `pow` is off by an ULP fails HERE, naming its cause, rather than as a
+    /// one-in-N miss in a frozen count.
+    #[test]
+    fn the_series_term_powf_is_correctly_rounded_on_this_host() {
+        for (p, n, f64_bits, f32_bits) in [
+            (0.7f64, 2.0f64, 0x3fdf_5c28_e3d7_0a40u64, 0x3efa_e147u32),
+            (0.7, 4.0, 0x3fce_bb98_a4c2_f847, 0x3e75_dcc5),
+            (0.6, 6.0, 0x3fa7_e34b_f3e0_37ac, 0x3d3f_1a60),
+            (0.85, 3.0, 0x3fe3_a6e9_9493_74c9, 0x3f1d_374d),
+            (0.8, 6.0, 0x3fd0_c6f7_b9e0_610e, 0x3e86_37be),
+        ] {
+            let v = f64::from(p as f32).powf(n);
+            assert_eq!(v.to_bits(), f64_bits, "powf({p} as f32, {n}) f64 bits");
+            assert_eq!((v as f32).to_bits(), f32_bits, "powf({p}, {n}) f32 bits");
         }
     }
 }

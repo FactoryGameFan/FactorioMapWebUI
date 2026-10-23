@@ -173,6 +173,10 @@ POISONED_TESTS=(
   fixtures::aquilo_terrain_fields_match_the_game_size0
   fixtures::aquilo_terrain_fields_match_the_game_moved
   fixtures::aquilo_elevation_and_aux_match_the_game_at_default_levers
+  # Aquilo's nine tile scores (through `poison::f64_result`) and winner
+  # (through `poison::index_result` in `argmax`).
+  fixtures::aquilo_tile_scores_match_the_game
+  fixtures::aquilo_tile_winner_matches_the_game
   # The game's amplitude-corrected form (#254), through basis_noise's hook.
   fixtures::the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly
 
