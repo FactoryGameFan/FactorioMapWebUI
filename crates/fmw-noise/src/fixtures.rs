@@ -11067,3 +11067,93 @@ fn the_vulcanus_ore_roll_is_the_chunk_batch() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The last differing pixel on Nauvis and Vulcanus
+// ---------------------------------------------------------------------------
+
+use crate::at::At;
+use crate::eval::ctx::{ResourceLevers, VulcanusResourceControls};
+
+/// The two best scores in a probability vector, and how close they are.
+///
+/// Returns `(winner index, runner-up index, gap in f32 ULPs)`. The winner is
+/// the first index holding the maximum, as the game's strict `>` picks it; the
+/// runner-up is the best of the rest. The gap counts f32 ULPs at the winner's
+/// magnitude, because the game keeps these scores in f32.
+fn top_two_gap_ulps(probs: &[f64]) -> (usize, usize, u64) {
+    let mut winner = 0;
+    for (i, &p) in probs.iter().enumerate() {
+        if p > probs[winner] {
+            winner = i;
+        }
+    }
+    let mut runner_up = usize::from(winner == 0);
+    for (i, &p) in probs.iter().enumerate() {
+        if i != winner && p > probs[runner_up] {
+            runner_up = i;
+        }
+    }
+    let w = probs[winner] as f32;
+    let ulp = f64::from(f32::from_bits(w.abs().to_bits() + 1) - w.abs());
+    let gap = ((probs[winner] - probs[runner_up]).abs() / ulp).round() as u64;
+    (winner, runner_up, gap)
+}
+
+#[test]
+fn the_last_nauvis_pixel_is_a_known_argmax() {
+    let seed0 = 123_456;
+    let stack = NauvisStack::new(&NauvisCtx::defaults(seed0));
+    let catalog = NauvisTileCatalog::new(seed0);
+    let at = At::tile(229, -19);
+    let f = NauvisTileFields {
+        x: 229.0,
+        y: -19.0,
+        elevation: stack.elevation_nauvis.eval_at(at),
+        aux: stack.aux.eval_at(at),
+        moisture: stack.moisture.eval_at(at),
+        grid: true,
+    };
+    let probs = catalog.probabilities(&f);
+    let (w, r, gap) = top_two_gap_ulps(&probs);
+    let got = (TILE_ORDER[w].name(), TILE_ORDER[r].name(), gap);
+    eprintln!("nauvis (229,-19): {got:?} probs {:?}", (probs[w], probs[r]));
+    // Measured 2026-10-22: the runner-up is grass-1, the game's tile, 53 f32
+    // ULPs behind (gap about 6.3e-6 on a score of 1.31). Read a moved number,
+    // do not adjust it.
+    assert_eq!(got, ("grass-3", "grass-1", 53));
+}
+
+#[test]
+fn the_last_vulcanus_pixel_is_a_known_argmax() {
+    let levers = ResourceLevers {
+        frequency: 1.0,
+        size: 0.0,
+    };
+    let mut ctx = crate::eval::ctx::EvalCtx::new(1_249_936_247);
+    ctx.vulcanus_resource_controls = VulcanusResourceControls {
+        tungsten_ore: levers,
+        vulcanus_coal: levers,
+        calcite: levers,
+        sulfuric_acid_geyser: levers,
+    };
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let probs = stack.tile_probabilities_at(At::tile(-361, 11));
+    let (w, r, gap) = top_two_gap_ulps(&probs);
+    let got = (
+        crate::tiles::vulcanus_catalog::TILE_ORDER[w].name(),
+        crate::tiles::vulcanus_catalog::TILE_ORDER[r].name(),
+        gap,
+    );
+    eprintln!(
+        "vulcanus (-361,11): {got:?} probs {:?}",
+        (probs[w], probs[r])
+    );
+    // Measured 2026-10-22 with host trig: the runner-up is volcanic-cracks, the
+    // game's tile, 19,301 f32 ULPs behind (gap about 5.8e-4 on a score of
+    // 0.357). Far past a few ULPs, so host-vs-V8 trig cannot close it. Read a
+    // moved number, do not adjust it.
+    assert_eq!(got, ("volcanic-cracks-warm", "volcanic-cracks", 19_301));
+}

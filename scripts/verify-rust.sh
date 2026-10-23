@@ -123,6 +123,9 @@ POISONED_TESTS=(
   fixtures::reproduces_every_game_captured_candidate_set
   fixtures::reproduces_every_game_captured_spot_selection_probe
   fixtures::reproduces_the_games_per_cell_voronoi_draw_across_all_nine_seed_series
+  # f64_result hooks on the elevation, aux and moisture fields move the gap.
+  fixtures::the_last_nauvis_pixel_is_a_known_argmax
+  fixtures::the_last_vulcanus_pixel_is_a_known_argmax
   fixtures::reproduces_the_jitter_zero_voronoi_fixture_exactly
   fixtures::reproduces_the_jittered_voronoi_fixture_exactly
   fixtures::reproduces_the_voronoi_point_inversion_lattice_exactly

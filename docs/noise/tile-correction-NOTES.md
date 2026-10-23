@@ -308,3 +308,38 @@ objdump -d --start-address=0x1016827e4 --stop-address=0x1016828cc /tmp/factorio.
 Addresses are from the 2.1.14 build (Steam, `pnpm refs:sync --check` in sync at
 capture time, 2026-08-14) and **will move on any update**. Re-derive them from
 the symbol table rather than reusing the numbers above.
+
+## The last differing pixel on Nauvis and Vulcanus
+
+Each planet still differs from the game's own preview PNG at exactly one
+pixel. This section records how close the tile scores are at those two tiles,
+measured on our side only. `the_last_nauvis_pixel_is_a_known_argmax` and
+`the_last_vulcanus_pixel_is_a_known_argmax` in `crates/fmw-noise/src/fixtures.rs`
+freeze the numbers, and both are in `POISONED_TESTS`.
+
+Measured 2026-10-22, through the chunk-grid path (`At::tile`), with the
+preview comparison's setup:
+
+| planet   | PNG pixel | tile       | game draws       | we draw                | runner-up (ours)  | winner score | runner-up score | gap in f32 ULPs |
+| -------- | --------- | ---------- | ---------------- | ---------------------- | ----------------- | -----------: | --------------: | --------------: |
+| Nauvis   | 741,493   | 229,-19    | grass-1          | grass-3                | grass-1           |    1.3117754 |       1.3117691 |              53 |
+| Vulcanus | 151,523   | -361,11    | volcanic-cracks  | volcanic-cracks-warm   | volcanic-cracks   |    0.3568011 |       0.3562259 |          19,301 |
+
+In both cases the runner-up is the tile the game draws. So the game's choice
+is our second-best, not some tile we score far away.
+
+What the gap means:
+
+- A gap of a few ULPs would point to a rounding near-tie. The game keeps these
+  scores in f32, so a one-ULP difference in an input could flip the winner.
+- A large gap points to a step that runs after tile choice, which we do not
+  port.
+
+Nauvis sits at 53 ULPs (about 6.3e-6). That is small but not one or two ULPs.
+Vulcanus sits at 19,301 ULPs (about 5.8e-4), which is far too wide for
+rounding. The Vulcanus numbers use host libm trig; the shipped engine takes V8
+trig narrowed to f32, but a gap this wide is not something a few-ULP trig
+difference can close.
+
+The conclusion is left open until the probe in Task 7 reports what the game
+scores at these tiles.
