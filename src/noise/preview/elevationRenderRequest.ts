@@ -705,6 +705,10 @@ export function runRenderRequest(
       }
       throw new Error(unsupportedPair(planet, view));
     }
+    // Only Nauvis may reach the Nauvis dispatch below. A planet the capability
+    // table marks `rendered` but that has no branch above throws here, rather
+    // than being painted as Nauvis under its own label.
+    if (planet !== "nauvis") throw new Error(unsupportedPair(planet, view));
     // Every Nauvis tile-family view, all of them served by the module. The
     // TypeScript renderers this used to fall back to are deleted in #227, so
     // the gate stops being a choice between two right answers and becomes the

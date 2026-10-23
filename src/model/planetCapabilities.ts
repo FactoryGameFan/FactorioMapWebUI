@@ -14,13 +14,22 @@ export type PreviewView =
 export interface PlanetCapability {
   /** false = "Client preview is not available for <label> yet." */
   readonly rendered: boolean;
-  /** Views the engine renders for this planet, in toggle order. */
+  /**
+   * The views the preview panel offers as toggles for this planet, in toggle
+   * order. A view in neither `views` nor `fallToTerrain` gets no toggle, and
+   * the render path may refuse it. It may also still serve it: Fulgora renders
+   * `landmask` (for `findIslands`) and `resources` though neither is listed.
+   */
   readonly views: readonly PreviewView[];
   /** Views that render this planet's terrain instead (what servedView does today). */
   readonly fallToTerrain: readonly (PreviewView | "landmask")[];
 }
 
-/** What each planet's preview renders. One table, read by the renderer and the panel. */
+/**
+ * What each planet's preview renders. One table, read by the renderer and the
+ * panel. Setting `rendered: true` is not enough on its own: `runRenderRequest`
+ * also needs a dispatch branch for the planet, and throws without one.
+ */
 export const PLANET_CAPABILITIES: Readonly<Record<Planet, PlanetCapability>> = {
   nauvis: {
     rendered: true,

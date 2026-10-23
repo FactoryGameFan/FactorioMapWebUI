@@ -23,6 +23,7 @@ import {
   MAGIC,
   REQUEST_BYTES,
   NAUVIS_PARAMS_BYTES,
+  PLANET,
   VULCANUS_PARAMS_BYTES,
   type WasmRenderRequest,
 } from "../src/noise/wasm/request";
@@ -347,6 +348,34 @@ describe("the request encoding is pinned on both sides", () => {
     // A missing planet is no longer read as Fulgora either.
     const { planet: _omitted, ...noPlanet } = fulgoraReq;
     expect(() => encodeRenderRequest(buf, noPlanet as never)).toThrow(/unknown planet undefined/);
+  });
+
+  it("refuses a planet that has a PLANET code but no params arm, rather than sending Fulgora's", () => {
+    // The next planet will get its `PLANET` code before its params block. Add
+    // a code by hand for this one test: the encoder must throw, not fall back
+    // to Fulgora's 64-byte layout. Restored in `finally`.
+    const codes = PLANET as Record<string, number>;
+    codes.gleba = 99;
+    try {
+      const buf = new Uint8Array(REQUEST_BYTES);
+      const req = {
+        planet: "gleba",
+        seed0: 1,
+        width: 1,
+        height: 1,
+        originX: 0,
+        originY: 0,
+        tilesPerPixel: 1,
+        islandsFrequency: 1,
+        islandsSize: 1,
+      };
+      expect(() => encodeRenderRequest(buf, req as never)).toThrow(
+        /no params layout for planet gleba/,
+      );
+    } finally {
+      delete codes.gleba;
+    }
+    expect(Object.keys(PLANET)).toEqual(["fulgora", "vulcanus", "nauvis"]);
   });
 
   it("refuses a target buffer too small to hold the request", () => {
