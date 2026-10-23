@@ -70,8 +70,17 @@ off a heightmap.
   probe that sets it to 0 as an apparently harmless default.
 - **`hard_region_target_quantity` takes 0/1**, not `true`/`false`. The game's own
   calls in `core/prototypes/noise-functions.lua` pass integers.
-- **`skip_offset` must be < `skip_span`.** With `skip_span = 1`, only
-  `skip_offset = 0` is legal; anything else hard-crashes the game (see below).
+- **`skip_offset = 1` with `skip_span = 1` is legal.** An older version of this
+  note said only offset 0 works with span 1 and anything else hard-crashes the
+  game. That was wrong. `scripts/probes/spot-skip-offset` (2026-10-22, 2.1.23 and
+  2.0.77, fixture `test/fixtures/oracle-spot-skip-offset.json`) ran Gleba's own
+  `gleba_simple_spot` call with offset 1 and an offset 0 control, one process
+  each. Offset 1 ran cleanly, returned a field with 177 of 512 positions on a
+  cone, and differed from offset 0 at 14 positions (never higher). That fits the
+  binary: the game draws `candidate_spot_count * skip_span` accepted spots and
+  keeps indices `skip_offset, skip_offset + skip_span, ...`, so with span 1 offset
+  1 is offset 0 minus the first spot. Offset 5 with span 1 also ran without a
+  crash (field not inspected).
 - **`density_expression` is quantity per unit area**, so it is a small number.
   The regional target is `average density * region area`; with `density = 1` and
   `region_size = 1024` the target is 1048576, i.e. ~104 spots of quantity 10000.
@@ -81,7 +90,8 @@ off a heightmap.
 
 ## The candidate-point cache (a hard crash, and what it reveals)
 
-Probing many `skip_offset` values in one map crashes the game:
+Probing many `skip_offset` values in one map crashed the game once (the cause
+is not the offset - see the `skip_offset` gotcha above):
 
 ```
 SpotNoiseCache.cpp:150: this->candidateSpotCount == candidateSpotCount was not true
@@ -91,6 +101,11 @@ This corroborates the documented claim that the candidate series is shared acros
 expressions with the same `seed0`, `seed1`, `region_size` and
 `suggested_minimum_candidate_point_spacing` - the game caches it on exactly that
 key and **asserts** that every expression sharing the key agrees on the count.
+This is the likely cause of the recorded crash, but it is read from the assertion
+text, not reproduced: `scripts/probes/spot-skip-offset` put two expressions with
+counts 22 and 23 on one key, plus offset, span and offset-past-span variants, and
+`calculate_tile_properties` raised no assertion in any of them. The assertion
+probably needs another path, such as chunk generation.
 
 Practical consequence: to vary `candidate_spot_count` or `skip_offset` you need
 **one headless run per value**. Recovering generation *order* is then a matter of
