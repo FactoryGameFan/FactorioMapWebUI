@@ -50,10 +50,10 @@
   // helpers:pinGitHubActionDigests (pin every GitHub Action to a commit SHA rather
   // than a moving tag, keeping the `# vX.Y.Z` comment beside it updated - which is
   // how .github/workflows/verify.yml is already written by hand), the
-  // America/Los_Angeles timezone, the "before 6am on monday" batch, automerge:false,
-  // prConcurrentLimit/prHourlyLimit, dependencyDashboard, osvVulnerabilityAlerts,
-  // the rule that security fixes skip the weekly window, and a "github actions"
-  // grouping.
+  // America/Los_Angeles timezone, the weekly batch from noon Sunday to noon
+  // Monday, automerge:false, prConcurrentLimit/prHourlyLimit, dependencyDashboard,
+  // osvVulnerabilityAlerts, the rule that security fixes skip the weekly window,
+  // and a "github actions" grouping.
   // Source: https://github.com/FactoryGameFan/.github/blob/main/renovate-config.json
   //
   // THIS MATTERS GIVEN "Require config file", noted above: Renovate cannot read a
@@ -82,8 +82,8 @@
   lockFileMaintenance: { enabled: false },
 
   // The preset already clears the weekly window for security PRs, so a CVE fix
-  // cannot sit up to 7 days waiting for Monday. What stays here is the AGE VALUE,
-  // which is derived from this repo's pnpm setup and belongs nowhere else.
+  // cannot sit up to 7 days waiting for the next batch. What stays here is the AGE
+  // VALUE, which is derived from this repo's pnpm setup and belongs nowhere else.
   //
   // (`vulnerabilityAlerts` is a mergeable option, so setting `minimumReleaseAge`
   // here KEEPS the preset's schedule override rather than replacing the block -
