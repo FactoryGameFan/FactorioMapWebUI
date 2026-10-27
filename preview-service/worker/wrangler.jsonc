@@ -20,7 +20,7 @@
   // Stack traces in Workers Logs then name src/*.ts lines, not the bundle's.
   "upload_source_maps": true,
   "vars": {
-    "FACTORIO_VERSION": "2.1.17",
+    "FACTORIO_VERSION": "2.1.23",
     "MONTHLY_RENDER_BUDGET": "5000",
     "ALLOWED_ORIGIN": "https://map.factorygamefan.com",
   },
