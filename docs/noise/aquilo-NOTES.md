@@ -18,16 +18,28 @@ the game) and tier 3 (against the preview PNGs) carry the grading.
 ## Where the counts are not full, and what is left
 
 Every tier-1 field is a full house in all three lever cases, and the terrain gap
-is 0 of 1,048,576. What is left is placement:
+is 0 of 1,048,576. Since #492 (2026-10-31) placement is full too:
 
-- **Individual wells and icebergs land in different places from the game's
-  preview (#492).** The fields agree, so the suspect is the roll. See "Wells and
-  icebergs" below for the numbers.
-- **14 of the 180 census icebergs stand on a different land subtype than our
-  resolver gives.** All 14 are land against land (snow or ice), and the shore
-  agrees for all 199 census entities. The census is a real surface, which runs
-  the game's tile correction, and the preview does not (next section), so tile
-  correction on real surfaces is the lead. It was not tested.
+- **Wells and icebergs come from the game's own per-chunk entity generator.**
+  Our composite matches the game's full preview PNG on every pixel inside a
+  4-pixel border, and 3 pixels differ at the bottom edge. Replayed on the
+  game's real-surface land, the same generator places 209 of 209 entities of a
+  real surface at the game's positions. See "Wells and icebergs" below, and
+  `entity-generation-NOTES.md` for the generator itself.
+- **What is left:** the 3 edge pixels (one huge iceberg whose box reaches past
+  the capture; the explanation is a lead, not read from code), and the gaps
+  listed under "Not ported" below.
+
+**The 14 census icebergs on a different land subtype.** Before #492, 14 of the
+180 census icebergs stood on a different land subtype than our resolver gives
+(snow against ice, all land against land; the shore agreed for all 199 census
+entities). The census is a real surface, which runs the game's tile correction,
+and the preview does not (next section). Tile correction is still the leading
+explanation for the subtypes. It was not checked directly: the new real-surface
+fixture records land against water only. What #492 did show is that tile
+correction matters for placement through the SHORE, not the subtype. Every land
+tile spends an iceberg draw, so a moved shore shifts the stream, while snow
+against ice changes nothing.
 
 ## The preview runs no tile correction, and shows no well rewrite
 
@@ -36,6 +48,10 @@ pass. The wells have a `created_effect` that rewrites the nearby ocean when a
 real surface is generated. On a real surface every well that stands on ocean
 reads `snow-lumpy` under it. The preview PNG shows 0 pixels of that rewrite, so
 the port does not model it.
+
+The preview also runs no entity-against-entity collision (measured in #492,
+see "Wells and icebergs"). So the preview and a real surface differ in two
+ways that touch placement: the tiles (tile correction) and the collision step.
 
 That is why the census needed a second arm. It strips the wells' `created_effect`
 in the data stage and records `tileWithoutEffect`, the tile before the rewrite.
@@ -57,7 +73,6 @@ shapes of the islands.
   Aquilo) renders at neutral levers, 1 and 1, not size 0.
 - Comparing with the full PNG (the one with wells and icebergs drawn) uses
   default levers, all 1.
-
 Frozen in `test/wasmAquiloRenderParity.spec.ts`: 0, and the 13,194 control.
 
 ## The bearings
@@ -76,7 +91,9 @@ Aquilo's starting cones and well spots sit on three bearings:
 
 A planted swap of two of the three bearings in the renderer turned 12 of the 26
 render tests red: the terrain gap went 0 to 1,189 and the full-PNG tiles 0 to 554,
-because the bearings feed the island peaks through the spot fields.
+because the bearings feed the island peaks through the spot fields. (Measured
+before #492, when the full-PNG test graded the terrain view with entity pixels
+masked. Not re-run since.)
 
 ## The game's cone arithmetic
 
@@ -141,42 +158,128 @@ tiles. `ice-rough` and `ice-smooth` share one colour in the PNG.
 
 ## Wells and icebergs
 
-**Where each kind may stand.**
+**How they are placed (#492, 2026-10-31).** By the game's own per-chunk entity
+generator, `EntityMapGenerationTask::generateEntities`, read from the 2.1.23
+Linux headless build (DWARF) and written up in `entity-generation-NOTES.md`. The
+code is `crates/fmw-noise/src/placement/generate.rs` (the model) and
+`placement/aquilo.rs` (Aquilo's five autoplacers). In short: one taus88 stream
+per chunk, seeded from the chunk position only (no map seed, no salt), shared
+by five autoplace groups in `order`: fluorine vent, lithium brine, huge
+iceberg, big iceberg, crude oil. Each group arbitrates its tiles from -inf, so a
+tile with probability 0 still draws. Icebergs take two jitter draws per
+success, before the box tile check. The old salted roll and its salts
+(`0x00682f53` wells, `0x0027d9c1` icebergs) are deleted.
 
-- Wells are allowed on every tile. The census has 19 wells (11 crude oil, 4
-  lithium brine, 4 fluorine vent). None stood on brash ice, snow-flat or
-  snow-patchy, which is too few to prove an exclusion.
-- Icebergs are allowed on the six land tiles only. All 180 census icebergs (159
-  big, 21 huge) stand on land. Both iceberg prototypes carry `water_tile` in
-  their collision mask, and both oceans and brash ice carry it too
-  (`tile-collision-masks.lua`, `ammoniacal_ocean()`). The wells declare no
-  collision mask of their own.
+**Where each kind may stand.** Both rules below are now read from the
+prototypes and confirmed by the 209/209 replay, not only counted.
 
-**The iceberg box rule.** Huge never wins the argmax: big's probability is higher
-wherever either is above 0 (swept in 1/1024 steps). So the argmax rule gives big's
-2.0 by 1.5 box everywhere, and places 357 icebergs in the census window (tiles
--256 to 255, derived seed, default levers) against the game's 180. The rule in
-the port is the huge iceberg's 3.7 by 2.5 box at every tile, as Vulcanus ships
-for the same reason (`rocks::vulcanus_placement`). It places **195** against
-**180**. It was chosen by comparing counts, not derived. Other rules, same window:
-no collision 718, big box plus 3 by 3 tiles on land 234, huge box plus 3 by 3
-tiles on land 132. The overlay claims density, not identity: the huge-or-big
-split is known wrong, with 0% huge against the game's about 12%.
+- Wells are candidates on every tile. Their `collision_mask` is `{resource}`,
+  and no Aquilo tile carries that layer: `ammoniacal_ocean()` comments it out
+  (`tile-collision-masks.lua`). So each well group spends 1,024 draws per
+  chunk. The census has 19 wells (11 crude oil, 4 lithium brine, 4 fluorine
+  vent); 9 stand on ocean before the wells' tile rewrite.
+- Icebergs are candidates on the six land tiles only. Both iceberg prototypes
+  carry `water_tile` in their collision mask, and both oceans and brash ice
+  carry it too. All 180 census icebergs (159 big, 21 huge) stand on land. The
+  whole box must cover land as well.
 
-**The tiny vent.** `aquilo_starting_flourine_vent_tiny` has radius 1 at distance
-80, so its probability is 1 at its centre whenever `fluorine_vent` size is above
-0. The port places a vent there on every seed.
+**The real surface: 209 of 209.**
+`aquilo_real_surface_replay_places_every_entity_the_game_did` (`fixtures.rs`)
+replays the generator over the 289 chunks of a real surface
+(`test/fixtures/oracle-aquilo-surface.seed123456.json`, from
+`scripts/probes/aquilo-entity-stream`). It uses our probability fields and the
+game's own land and water, then applies each chunk's queue with entity
+collision. Every one of the game's 209 entities is placed at its position, to
+the 1/16 tile, and nothing else. Two apply rules were measured there: boxes
+that only touch collide (the strict-overlap control fails), and chunks apply
+row-major. A spiral order gave 206 and the reverse order 191 in a scratch
+simulator.
 
-- It lands on the first in-disk corner in the chunk's decreasing tile order, not
-  on the rounded centre. At the derived seed the rounded centre is (-42, -68),
-  the placed vent is (-41, -68), and the game's census also has (-41, -68). Our
-  model matches the game where the "rounded to its tile" wording would not.
-- When the disk straddles a chunk boundary, two vents are drawn. Of 400 seeds
-  spread over the 32-bit range, 20 (5%) do. One is pinned: seed 64424508, centre
-  (-73.08, -32.54), vents at (-73, -33) and (-73, -32), either side of y = -32.
-  The game's behaviour in that case was not captured.
+The game's own land is needed because a real surface runs tile correction and
+our resolver does not. It moves the shore: about 136 land/water flips against
+our tiles in the 640 by 640 window. On our tiles, only 60 of the census's 159
+big icebergs matched in the scratch simulator, which is how tile correction
+was found to matter.
+
+**The preview: every pixel.** The preview runs no tile correction, so on our
+tiles (the preview's tiles) the generator reproduces the game's full preview
+PNG. The preview draws by its own rule, measured against the PNG and not read
+from code: no entity-against-entity collision, each entity drawn as the tiles
+`floor(left)` to `ceil(right) - 1` (the high edge is exclusive), clipped to its
+own chunk, and the first queued wins an overlap. "matches the full PNG on
+every pixel" (`test/wasmAquiloRenderParity.spec.ts`) freezes **0 differing
+pixels inside a 4-pixel border and 3 at the edge**, out of 1,048,576:
+
+| colour | game pixels | our pixels |
+| --- | ---: | ---: |
+| crude oil | 475 | 475 |
+| lithium brine | 451 | 451 |
+| fluorine vent | 157 | 157 |
+| iceberg | 4,609 | 4,612 |
+
+The 3 extra iceberg pixels are one huge iceberg at (211.375, 511.6875), whose
+box reaches tile row 512, one past the capture. The game did not draw it. The
+leading explanation is that the preview has no tiles past its own area, so the
+generator's tile check finds no ground there. That was seen once and not read
+from code. The other 3 of our entities that cross the capture edge are hidden
+under neighbours, so they cannot test it.
+
+Because each entity is drawn only inside its own chunk, a pixel depends on one
+chunk's queue. So a tiled render needs no halo, and the ABI's Aquilo
+`placement_sweep_box` is no longer read (the slot stays so the layout does not
+move). The tiling test cuts tiles through the middle of chunks and still
+matches the whole render byte for byte.
+
+**Huge against big icebergs (superseded rule kept for the record).** Huge never
+wins an argmax: big's probability is higher wherever either is above 0 (swept
+in 1/1024 steps). Before #492 this forced a box rule chosen by count: the huge
+iceberg's 3.7 by 2.5 box at every tile placed 195 against the game's 180 in the
+census window, with 0% huge against the game's about 12%. Other rules in that
+window were: big box 357, no collision 718, big box plus 3 by 3 tiles on land
+234, huge box plus 3 by 3 tiles on land 132. **The game never arbitrates huge
+against big.** They are separate `order` groups, huge first, and big fills the
+gaps at apply time. That gives the game's mix: 22 huge of 190 icebergs on the
+real surface, all placed by the replay. The same mechanism should explain
+issue #22 item 1 (Vulcanus and Nauvis place 20-30% huge rocks that never win
+an argmax), but it has not been re-run on those planets.
+
+**The tiny vent.** `aquilo_starting_flourine_vent_tiny` has radius 1 at
+distance 80, so its probability is exactly 1 on every integer tile corner
+inside its unit disk whenever `fluorine_vent` size is above 0. At least one
+corner is always inside, and probability 1 always passes its roll.
+
+- The generator queues a vent on every in-disk corner its chunk reaches. A
+  real surface keeps only the first in queue order; the others' 2.8-tile boxes
+  overlap it and are dropped at apply. The preview has no collision step, so
+  it draws them all.
+- At the derived seed the cone centre is (-41.94, -68.13). The rounded centre
+  would be (-42, -68), but (-41, -68) comes first in the chunk's decreasing
+  tile order. The game's census has its vent at (-40.5, -67.5), the centre of
+  (-41, -68), and no other vent within 50 tiles of spawn. Pinned by
+  `the_tiny_vent_lands_where_the_game_puts_it` (`fixtures.rs`).
+- `the_tiny_vent_is_queued_on_every_seed` (`placement/aquilo.rs`) checks five
+  seeds, and `a_zero_fluorine_size_removes_the_tiny_vent` is its control.
+- Superseded: before #492 the port drew one vent per chunk the disk touched,
+  and 20 of 400 seeds (5%) drew two, for example seed 64424508 at (-73, -33)
+  and (-73, -32). Under the generator those are still two queued vents in two
+  chunks, and the preview draws both. A real surface keeps whichever its chunk
+  order applies first. The game's preview for such a seed was not captured.
 - The census vent at (-40.5, -67.5) has amount exactly 420,000 and sits 78.7
   tiles out, which fits the tiny vent.
+
+**Not ported, each unreachable today** (details in `entity-generation-NOTES.md`):
+
+- The richness slider is not passed to the engine. A well places only where
+  its richness is above 0. The app's smallest step is 1/6, so richness is
+  always above 0. **An imported string with an Aquilo richness of 0 would draw
+  wells the game does not place.**
+- `placement_density` (no entity sets it), grid snapping (`buildPosition`; no
+  Aquilo entity needs it), the richness tie-break inside a group of more than
+  one prototype (every Aquilo group has one; `generate_chunk` refuses a
+  bigger group), and `tile_restriction` (no Aquilo entity declares one).
+- Whether the game drops a group entirely when its control's size is 0 was not
+  checked. We keep the group, with probability 0, so it still draws. That
+  changes the stream for every later group in the chunk.
 
 **Sizes near spawn.** In the render tests, well sizes of 0.25, 0.5, 2 and 4 move
 no well in the 256 window around spawn, and only size 0 does. Frequency moves
@@ -185,10 +288,13 @@ window is within 181 tiles of spawn. Out to 260 tiles `aquilo_starting_mask` is
 -1, so each spot term `min(mask, spots) * k` is the constant `-k`. The starting
 cones have radii of `aquilo_spot_size * 0.8` or `* 0.6`, which the size slider
 does not scale. So inside 260 tiles only the `size > 0` gate reads size.
+(Measured before #492 with the salted roll. The generator reads the same
+fields, so the claim carries over, but it was not re-measured.)
 
-**#492.** The roll uses salts `0x00682f53` (wells) and `0x0027d9c1` (icebergs),
-and has no collision across chunks. Against the game's preview, in
-the 1024 window at default levers:
+**Before #492, for contrast.** The old roll used salts `0x00682f53` (wells) and
+`0x0027d9c1` (icebergs), one stream each, with no jitter, no shared stream and
+no collision across chunks, and painted 3x3 marks. Against the game's preview,
+in the 1024 window at default levers:
 
 | colour | game pixels | our pixels | game pixels with no match of ours within 3 | ours with no game match |
 | --- | ---: | ---: | ---: | ---: |
@@ -197,12 +303,10 @@ the 1024 window at default levers:
 | fluorine vent | 157 | 189 | 130 | not recorded as a count |
 | iceberg | 4,609 | 4,716 | 122 | 777 |
 
-The census window also has 24 wells placed by us against the game's 19 (8, 10
-and 6 against 11, 4 and 4). The wells and the fields are not in doubt; individual
-positions differ. This is the open follow-up. The spec freezes only our own
-pixel counts and the game-unmatched counts in the table. The "ours with no game
-match" column (202 of 295 crude, 777 iceberg) was measured once and is not
-frozen.
+The census window had 24 wells placed by us against the game's 19 (8, 10 and 6
+against 11, 4 and 4). The fields were right and the stream was not. The spec
+that froze this table as a fingerprint was replaced in #492 by the
+every-pixel test above.
 
 ## Other measured facts
 

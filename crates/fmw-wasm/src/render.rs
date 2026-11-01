@@ -37,8 +37,9 @@ use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack, NAUVIS_RESOUR
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
+use fmw_noise::placement::aquilo::{AquiloEntities, AquiloEntityView};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
-use fmw_noise::resources::aquilo_wells::{AquiloWell, AquiloWellPlacement};
+use fmw_noise::resources::aquilo_wells::AquiloWell;
 use fmw_noise::resources::fulgora_catalog::{FulgoraScrapPlacement, SCRAP_MAP_COLOR};
 use fmw_noise::resources::nauvis_catalog::NAUVIS_RESOURCE_CATALOG;
 use fmw_noise::resources::nauvis_oil::{crude_oil, NauvisOilPlacement};
@@ -52,9 +53,7 @@ use fmw_noise::resources::vulcanus_catalog::{
 };
 use fmw_noise::resources::vulcanus_geyser::VulcanusGeyserPlacement;
 use fmw_noise::resources::vulcanus_ore_roll::{ore_probability, VulcanusOreRoll};
-use fmw_noise::rocks::aquilo_icebergs::{
-    iceberg_probabilities, iceberg_tile_allowed, AquiloIcebergPlacement, ICEBERG_COLOR,
-};
+use fmw_noise::rocks::aquilo_icebergs::{iceberg_probabilities, iceberg_tile_allowed};
 use fmw_noise::rocks::catalog::{RockControls, NAUVIS_ROCK_MARK_RADIUS_PX};
 use fmw_noise::rocks::catalog::{ROCK_MAP_COLOR, VULCANUS_ROCK_MARK_RADIUS_PX};
 use fmw_noise::rocks::field::{NauvisRockFields, RockFieldParams};
@@ -593,86 +592,40 @@ fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
         }
     }
 
-    // Wells first, then icebergs: an iceberg crossing a well reads as the
-    // thing in the way, as rocks do over ore on the other planets.
-    if matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
-        paint_aquilo_wells(req, p, &stack, out);
-    }
-    if matches!(req.view, VIEW_ROCKS | VIEW_ALL) {
-        paint_aquilo_icebergs(req, p, &stack, out);
-    }
-}
-
-/// Paint each placed well as a 3x3 mark in its own colour.
-///
-/// The mark can straddle a tile seam, so the sweep runs over the halo-widened
-/// `placement_sweep_box` rather than the request's own pixel box.
-fn paint_aquilo_wells(
-    req: &Request,
-    p: &AquiloParams,
-    stack: &RefCell<AquiloStack>,
-    out: &mut [u8],
-) {
-    let placement = AquiloWellPlacement::new(stack);
-    let set = placement.placement_set();
-    let (px0, px1, py0, py1) = sweep_pixel_range(req, p.placement_sweep_box);
-    let width = i64::from(req.width);
-    let height = i64::from(req.height);
-    for py in py0..py1 {
-        #[allow(clippy::cast_precision_loss)]
-        let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
-        for px in px0..px1 {
-            #[allow(clippy::cast_precision_loss)]
-            let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
-            if !set.placed(wx, wy) {
-                continue;
-            }
-            let Some(well) = placement.winner(wx, wy) else {
-                continue;
-            };
-            paint_mark(
-                out,
-                width,
-                height,
-                px,
-                py,
-                well.color(),
-                PLACEMENT_MARK_RADIUS_PX,
-            );
-        }
+    // Wells and icebergs together: the game's own generator, one stream per
+    // chunk, drawn by the preview's rule (#492). A pixel reads only its own
+    // chunk, so no sweep halo is needed.
+    let view = match req.view {
+        VIEW_ALL => Some(AquiloEntityView::All),
+        VIEW_RESOURCES => Some(AquiloEntityView::Wells),
+        VIEW_ROCKS => Some(AquiloEntityView::Icebergs),
+        _ => None,
+    };
+    if let Some(view) = view {
+        paint_aquilo_entities(req, &stack, view, out);
     }
 }
 
-/// Paint each placed iceberg as a 3x3 mark. Both prototypes share one colour.
-fn paint_aquilo_icebergs(
+/// Paint the entities the preview draws, tile by tile, in each one's colour.
+fn paint_aquilo_entities(
     req: &Request,
-    p: &AquiloParams,
     stack: &RefCell<AquiloStack>,
+    view: AquiloEntityView,
     out: &mut [u8],
 ) {
-    let placement = AquiloIcebergPlacement::new(stack);
-    let set = placement.placement_set();
-    let (px0, px1, py0, py1) = sweep_pixel_range(req, p.placement_sweep_box);
-    let width = i64::from(req.width);
-    let height = i64::from(req.height);
-    for py in py0..py1 {
-        #[allow(clippy::cast_precision_loss)]
-        let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
-        for px in px0..px1 {
-            #[allow(clippy::cast_precision_loss)]
-            let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
-            if !set.placed(wx, wy) {
-                continue;
+    let entities = AquiloEntities::new(stack);
+    let mut offset = 0usize;
+    for py in 0..req.height {
+        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            if let Some(e) = entities.drawn_at(wx, wy, view) {
+                let c = e.color();
+                out[offset] = c[0];
+                out[offset + 1] = c[1];
+                out[offset + 2] = c[2];
             }
-            paint_mark(
-                out,
-                width,
-                height,
-                px,
-                py,
-                ICEBERG_COLOR,
-                PLACEMENT_MARK_RADIUS_PX,
-            );
+            offset += 4;
         }
     }
 }

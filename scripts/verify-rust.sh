@@ -184,6 +184,11 @@ POISONED_TESTS=(
   fixtures::the_aquilo_iceberg_formula_reproduces_the_game_from_its_own_peaks
   # The game's amplitude-corrected form (#254), through basis_noise's hook.
   fixtures::the_games_amplitude_corrected_form_reproduces_the_wrapper_fixture_exactly
+  # Aquilo's entity stream (#492): the per-chunk generator's roll, through
+  # `poison::bool_result` in `placement::generate`. A flipped roll queues a
+  # different set of entities and moves every later draw in the chunk.
+  fixtures::aquilo_real_surface_replay_places_every_entity_the_game_did
+  fixtures::the_tiny_vent_lands_where_the_game_puts_it
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

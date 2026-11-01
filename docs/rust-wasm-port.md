@@ -54,6 +54,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 7 (#227, #371) | delete the ported TypeScript under `src/noise/` - Nauvis and the render fallbacks in #227, then Fulgora and the Vulcanus expressions in #371, which left `src/noise/` holding orchestration, catalogs and the ABI only | done |
 | 8 (#363) | Fulgora's `resources` and `all` composites                                                            | done |
 | 9 (#454) | Aquilo end to end - terrain, tiles, wells, icebergs; Rust-first, no TypeScript counterpart            | done |
+| 10 (#492) | Aquilo's wells and icebergs through the game's own per-chunk entity generator (`placement/generate.rs`), replacing the salted roll there | done |
 
 **Every planet except Gleba, every view the panel offers, renders through the engine.** The
 per-layer landing narrative is in the history doc; what follows is only what is
@@ -723,6 +724,14 @@ and did not close, so each still has to be applied and re-scored one at a time.
   with or without the solid ores competing for the tile, places 0 to 1 of
   the game's 44 geysers, so that stream is still unknown.
 
+  **Probable cause, found 2026-10-31 on Aquilo (#492), not tested on
+  Vulcanus.** The game runs one stream per chunk shared by every autoplace
+  group in `order`, and the geyser (`c`) is the last group. Its draws start
+  after every earlier group's - rocks, the three solid ores - and every tile
+  an earlier group can stand on spends a draw even at probability 0. A stream
+  that starts at the chunk's first draw cannot line up with it. See
+  `docs/noise/entity-generation-NOTES.md`.
+
   It is close to free. Timed against `main` in turn, all 27 view and window
   pairs came in between 0.99x and 1.02x, each within a 3% spread.
 
@@ -767,7 +776,9 @@ numbers here.
 
 **The ABI block.** `PLANET_AQUILO = 3`. The block is 128 bytes (six resource
 levers, three bearing pairs of sine and cosine, and one placement sweep box), so
-a request is 184 bytes. That is smaller than Vulcanus's 368, so
+a request is 184 bytes. Since #492 the sweep box is decoded and not read: each
+pixel reads only its own chunk's entities, so there is no halo. The slot stays
+so the layout does not move. That is smaller than Vulcanus's 368, so
 `REQUEST_BYTES` stays Nauvis's 568. The offered views are terrain, resources,
 rocks and all. `VIEW_ENTITY_FOOTPRINT = 12` exists for the test that grades
 placement, and the panel never offers it. Elevation, enemies, cliffs, trees and
@@ -853,9 +864,11 @@ and the extra windows were added beside it rather than accepting the constants.
   rows were written from the WASM run and the native test matched them with no
   copying.
 
-**Tier 3: the terrain gap is 0 of 1,048,576.** The spec is
-`test/wasmAquiloRenderParity.spec.ts` (26 tests, about 20 seconds on tealc,
-about 1.5 times Fulgora's). All of it uses the derived surface seed 3111923328
+**Tier 3: the terrain gap is 0 of 1,048,576, and since #492 the composite is
+too, inside a 4-pixel border.** The spec is
+`test/wasmAquiloRenderParity.spec.ts` (24 tests since #492, 26 before: the
+per-colour fingerprint and the halo-radius check went. About 17 to 20 seconds on
+tealc, about 1.5 times Fulgora's). All of it uses the derived surface seed 3111923328
 for map seed 123456, and the window is -512 to 511 at one tile per pixel.
 
 | what                                                           | frozen                |
@@ -863,13 +876,13 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
 | terrain view against the terrain PNG (levers at size 0)        | 0 of 1,048,576        |
 | same, levers left at neutral (control)                         | 13,194                |
 | raw map seed instead of the derived one, 256 by 256 at spawn   | 7,376 of 8,843 land pixels differ (83%; measured, asserted > 50%) |
-| terrain view against the full PNG, entity pixels masked        | 0 of 1,023,862 compared |
-| the same comparison on the composite                           | 1,102 (reported, not frozen) |
-| footprint pixels outside at the mark radius of 1               | 7                     |
-| footprint pixels outside at radius 2                           | 0                     |
+| composite (wells and icebergs) against the full PNG, every pixel | 3 of 1,048,576; 0 inside a 4-pixel border |
+| per-colour pixels in that composite                            | equal to the game's, except iceberg +3 |
+| footprint pixels outside, grown by 1 pixel                     | 7                     |
+| footprint pixels outside, grown by 2 pixels                    | 0                     |
 | footprint share of the window                                  | 3.59% (asserted 1% to 10%) |
-| tiled render against whole render, four 128 tiles with halo    | 0 bytes differ        |
-| same without the halo (control)                                | 84 bytes differ       |
+| tiled render against whole render, 100-pixel tiles cutting through chunks, no halo | 0 bytes differ |
+| entity pixels straddling those seams (control)                 | asserted > 0          |
 | `aquilo:render` rows in `tier3-render-checksums.json`          | 14                    |
 
 - **The terrain PNG was captured with all three resource controls at size 0,
@@ -877,30 +890,50 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
   renders at size 1 and differs from the PNG in 13,194 pixels. The matched
   pairing gives 0. The spec freezes both numbers so the levers stay load-bearing.
   This is the Vulcanus lesson again (see tier 3 above).
-- **The full-PNG tile comparison grades the terrain view, not the composite.**
-  Our wells and icebergs sit where our own roll put them, so comparing the
-  composite would mix placement into a tile grade and count it twice. The mask
-  (a game pixel is a tile colour with no entity colour within 3 pixels) is built
-  once and passed to the counter and to `withDiffArtifacts`. Radii 1 to 5 all
-  give 0 differing pixels.
-- **The footprint is 7 outside at radius 1, not 0.** All 7 are iceberg edge
-  pixels. A huge iceberg is 3.7 by 2.5 tiles and the game draws it that wide, so
-  an edge can sit two pixels from its centre tile, one more than our 3 by 3
-  mark. Both radii are frozen.
-- **The per-colour fingerprint, and #492.** Counts in our composite are crude
-  295, lithium 444, vent 189 and iceberg 4,716, against the game's 475, 451, 157
-  and 4,609. Game pixels with no same-colour pixel of ours within 3 pixels:
-  crude 396, lithium 257, vent 130, iceberg 122. In the other direction, 202 of
-  our 295 crude pixels and 777 of our iceberg pixels have no game match; those
-  two numbers were measured, not frozen. The
-  fields agree at tier 1, so the roll (salts `0x00682f53` and `0x0027d9c1`, with
-  no cross-chunk collision) is the suspect. The spec freezes our own pixel
-  counts and the game-unmatched counts as a fingerprint, not as a score. #492 holds the follow-up.
+- **The full-PNG test grades the composite, every pixel, nothing masked
+  (#492).** Wells and icebergs come from the game's own per-chunk entity
+  generator (`crates/fmw-noise/src/placement/generate.rs`; the
+  reverse-engineering is `docs/noise/entity-generation-NOTES.md`): one
+  unsalted taus88 stream per chunk, shared by the five autoplace groups in
+  `order`, jitter draws included. They are drawn by the preview's rule, which
+  was measured against the PNG rather than read: no entity-against-entity
+  collision, each entity covering `floor(left)` to `ceil(right) - 1`, clipped
+  to its own chunk, the first queued winning an overlap. The 3 differing pixels
+  belong to one huge iceberg at (211.375, 511.6875) whose box reaches tile row
+  512, past the capture; the game did not draw it. The lead is that the preview
+  has no tiles past its own area. It was seen once and not read from code, so
+  the engine does not copy it. The per-colour counts are asserted beside the
+  total so a failure names the layer that moved.
+- **The same generator reproduces a real surface: 209 of 209 entities** at the
+  game's positions, to the 1/16 tile
+  (`aquilo_real_surface_replay_places_every_entity_the_game_did` in
+  `fixtures.rs`). That replay needs the game's own land, because a real
+  surface runs tile correction and moves the shore, and the preview does not.
+  It also applies entity collision, which the preview skips. Two of its apply
+  rules (touching boxes collide; chunks apply row-major) were measured, and
+  the touching rule has a control that fails without it.
+- **The footprint is 7 outside when grown by 1 pixel, not 0.** All 7 are
+  iceberg edge pixels. A huge iceberg is 3.7 by 2.5 tiles and the game draws it
+  that wide, so an edge can sit two pixels from the tile it was rolled on.
+  Both radii are frozen.
+- **Overlaps show whichever entity was queued first.** Groups queue in
+  `order`: fluorine vent and lithium brine before the icebergs, crude oil after.
+  So the composite shows brine or vent over an iceberg, and an iceberg over
+  crude oil. The overlap test finds both kinds in the two windows and asserts
+  each occurs, so neither half is vacuous.
+- **Before #492, for the record.** The salted roll (salts `0x00682f53` and
+  `0x0027d9c1`, now deleted) painted 3x3 marks: crude 295, lithium 444, vent
+  189 and iceberg 4,716 pixels against the game's 475, 451, 157 and 4,609, and
+  the full-PNG test graded the terrain view with entity pixels masked (0 of
+  1,023,862). `docs/noise/aquilo-NOTES.md` keeps that table.
 - **The `aquilo:render` digests are a self-snapshot, not a correctness grade.**
   They are the bytes our own module produced when they were frozen, in 14 rows
-  (4 views by 2 windows, and 6 slider cases). They catch a render that changed.
-  They cannot say the render was right. The 0 above, the control counts and the
-  fingerprint are what grade it against the game.
+  (4 views by 2 windows, and 6 slider cases). #492 changed 11 of the 14 (by
+  `git diff` of `tier3-render-checksums.json`). The two terrain rows did not
+  move, and neither did "slider fluorine vent frequency | all"; why that one
+  window shows no entity change was not looked into. They catch a render that
+  changed. They cannot say the render was right. The full-PNG test and the
+  control counts are what grade it against the game.
 - **Each slider crosses the ABI.** Six cases move one lever each to 2 (crude
   frequency and size, lithium frequency and size, fluorine frequency and size),
   each in a window where it matters, and each asserts the picture changed. Most
@@ -911,32 +944,38 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
   slider. Only the `size > 0` gate reads size there.
 - **A planted swap of two bearings turned 12 of 26 tests red** (terrain gap 0 to
   1,189, full-PNG tiles 0 to 554). It was reverted and the rebuilt module
-  matched the committed one again.
+  matched the committed one again. This was before #492 and was not re-run.
 
 **Two rulings that shaped those numbers.**
 
 - *The footprint is frozen at two radii.* The plan expected 0 at the mark
   radius. Measuring found 7 edge pixels, each checked by flooding its iceberg
   in the game PNG, so both 7 and 0 are frozen, with the reason.
-- *The tile grade uses the terrain view.* The plan did not name the view. The
-  composite number is reported but placement is graded by the fingerprint.
+- *The tile grade uses the terrain view.* Superseded by #492: the full-PNG test
+  now grades the composite, every pixel.
 
-**Placement choices that are counts, not derivations.**
+**Placement rules, now read from the game (#492).** Before #492 these were
+choices made by comparing counts. Now each follows from the prototypes and the
+generator, and the 209/209 real-surface replay confirms them.
 
-- Wells are allowed on every tile. The census had 19 wells, none on brash ice
-  or flat snow, which is too few to prove an exclusion. Icebergs are allowed on
-  the six land tiles only: all 180 census icebergs stand on land, and both
-  iceberg prototypes carry `water_tile` in their collision mask, which both
-  oceans and brash ice also carry.
-- Icebergs use `lithium-iceberg-huge`'s 3.7 by 2.5 box everywhere. Huge never
-  wins the argmax (big beats it wherever either is above 0), so the argmax rule
-  gives big's smaller box and 357 icebergs in the census window against the
-  game's 180. Huge's box everywhere gives 195, the rule Vulcanus ships for the
-  same reason. It was chosen by comparing counts, not derived, and the overlay
-  claims density, not identity.
+- Wells are candidates on every tile: their `collision_mask` is `{resource}`,
+  and no Aquilo tile carries that layer. So each well group spends 1,024 draws
+  per chunk. Icebergs are candidates on the six land tiles only: both iceberg
+  prototypes carry `water_tile`, which both oceans and brash ice also carry.
+- Each iceberg uses its own box (huge 3.7 by 2.5, big 2.0 by 1.5). The old rule,
+  huge's box everywhere because huge never wins an argmax, is gone: huge and big
+  are separate `order` groups and are never arbitrated against each other.
+  That is how the game gets about 12% huge (22 of 190 on the real surface).
 - No well tile rewrite. The wells' `created_effect` rewrites nearby ocean during
   map generation, but the game's preview PNG shows none of it (0 pixels), so
   the port does not model it. The preview also runs no tile correction.
+- Not ported, each unreachable on Aquilo today: `placement_density`, grid
+  snapping, the richness tie-break inside a multi-prototype group
+  (`generate_chunk` refuses one; Vulcanus's solid ores share `order` `"b"` and
+  will need it), and `tile_restriction`. The richness slider is not passed to
+  the engine; the app's minimum is 1/6, so richness is always above 0, but an
+  imported string with an Aquilo richness of 0 would draw wells the game does
+  not place.
 
 ### Current tier-1 counts
 
@@ -1405,6 +1444,11 @@ equality and never against a rolled overlay. `map_grid` defaults to true, so the
 game draws solid ore as a 2x2 checkerboard at about 0.5 pixels per entity, and a
 roll paints only where a draw succeeds - about 40% of the nonzero positions.
 Diffing rolled pixels measures the salt rather than the model.
+
+**Aquilo is the exception since #492.** It runs the game's own unsalted
+stream (`placement/generate.rs`), so its rolled pixels ARE the model, and its
+composite is diffed against the game's PNG pixel for pixel. The rule above
+still holds for every planet that ships a salted roll.
 
 **The seed trap has its own test.** The preview PNGs come from
 `--generate-map-preview --map-gen-seed`, a MAP seed, while every `oracle-*.json`

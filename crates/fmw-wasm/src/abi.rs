@@ -105,8 +105,8 @@
 //! +40  f64  fluorine_vent_size
 //! +48  f64 x 6   trig: (sin, cos) for the crude oil, lithium brine and
 //!                fluorine vent bearings, in that order
-//! +96  f64 x 4   placement_sweep_box: x0, y0, x1, y1 (same meaning as
-//!                Vulcanus's)
+//! +96  f64 x 4   placement_sweep_box: x0, y0, x1, y1 (decoded, NOT read
+//!                since #492; kept so the layout does not move)
 //!
 //! nauvis block (512 bytes, so a Nauvis request is 568 - the largest, so
 //! `REQUEST_BYTES` is Nauvis's)
@@ -366,8 +366,11 @@ pub struct AquiloParams {
     /// Three `(sin, cos)` pairs, V8's values: crude oil, lithium brine, then
     /// fluorine vent.
     pub trig: [(f64, f64); AQUILO_BEARINGS],
-    /// The world box to sweep for placement-roll hits, as `[x0, y0, x1, y1]`.
-    /// Same meaning as [`VulcanusParams::placement_sweep_box`].
+    /// Decoded and no longer read. It was the world box to sweep for
+    /// placement-roll hits, as for [`VulcanusParams::placement_sweep_box`].
+    /// Since #492 Aquilo's entities come from the game's per-chunk generator
+    /// and each pixel reads only its own chunk, so there is no halo to sweep.
+    /// The slot stays so the block's layout does not move.
     pub placement_sweep_box: [f64; 4],
 }
 

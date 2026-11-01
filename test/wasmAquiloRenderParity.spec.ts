@@ -15,10 +15,6 @@ import {
   RECORDING,
 } from "./tier3Frozen";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
-import {
-  placementMarkSweepBox,
-  type ElevationRenderRequest,
-} from "../src/noise/preview/elevationRenderRequest";
 import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
 import {
   compileEngine,
@@ -39,9 +35,10 @@ import type { AquiloRenderRequest, AquiloResourceControls } from "../src/noise/w
  *    every one of the 1,048,576 pixels, frozen as an exact count. This is the
  *    first time the whole Aquilo terrain is graded as an image, so it is the
  *    main result of the port.
- * 2. The entity layers (three wells, one iceberg colour) against
- *    `oracle-preview-aquilo-full.seed123456.png`, as a superset check on the
- *    footprint and a per-colour nearness count on the composite.
+ * 2. The composite, wells and icebergs included, against
+ *    `oracle-preview-aquilo-full.seed123456.png`, every pixel: 0 differ inside
+ *    a 4-pixel border, 3 at the edge (#492). Plus a superset check on the
+ *    entity footprint view.
  * 3. Byte-identity of the composites on small windows, frozen in
  *    `tier3-render-checksums.json` under `aquilo:render`, plus the tiling and
  *    slider checks that keep the worker pool honest.
@@ -86,15 +83,6 @@ const PNG_WINDOW = {
   originY: -SIZE / 2,
   tilesPerPixel: 1,
 } as const satisfies AquiloRenderRequest;
-
-/**
- * The radius of the 3x3 mark a well or an iceberg paints. The engine's copy is
- * `PLACEMENT_MARK_RADIUS_PX` in `crates/fmw-noise/src/placement/roll.rs`, and
- * the worker pool's is the private one in `elevationRenderRequest.ts` that
- * `placementMarkSweepBox` widens by. The tiling test below asserts that box is
- * widened by exactly this much, so the three cannot drift apart silently.
- */
-const PLACEMENT_MARK_RADIUS_PX = 1;
 
 type Rgb = readonly [number, number, number];
 
@@ -335,74 +323,64 @@ describe("the WASM engine agrees with the game's Aquilo terrain PNG", () => {
   }, 300000);
 });
 
-/**
- * One mask, built once, used by both the counter and the diff artifacts.
- * Written out twice, the two copies would drift, and the artifacts would then
- * describe a different comparison from the one that failed.
- *
- * A pixel is graded when the game drew a TILE colour there and no entity
- * colour within `ENTITY_MASK_RADIUS_PX` of it (a square, so Chebyshev
- * distance). The radius keeps the comparison off the ground right beside an
- * entity, where the game's mark edge and the tile under it meet. The count does
- * not hang on the choice: measured 2026-10-23, radii 1 to 5 all give 0
- * differing pixels; the radius only decides how many pixels are compared.
- */
-const ENTITY_MASK_RADIUS_PX = 3;
-let ignoredMask: Uint8Array | undefined;
-function fullPngIgnoreMask(): Uint8Array {
-  if (ignoredMask) return ignoredMask;
-  const game = fullPng();
-  const mask = new Uint8Array(SIZE * SIZE);
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const i = y * SIZE + x;
-      const notTile = !TILE_KEYS.has(gameKey(game, i));
-      const nearEntity = anyWithin(x, y, ENTITY_MASK_RADIUS_PX, SIZE, SIZE, (j) =>
-        ENTITY_BY_KEY.has(gameKey(game, j)),
-      );
-      if (notTile || nearEntity) mask[i] = 1;
-    }
-  }
-  ignoredMask = mask;
-  return mask;
-}
-
-describe("the WASM engine agrees with the full PNG on the tiles the game drew", () => {
+describe("the WASM engine draws the game's full preview, entities included", () => {
   /**
-   * The only reference with the resource controls at NEUTRAL, so the only one
-   * that grades the island shapes the three spot fields give at default
-   * sliders. The terrain test above grades them at size 0.
+   * **Our composite against the game's full preview, every pixel, nothing
+   * masked.** The full PNG is the only reference with the resource controls at
+   * NEUTRAL, so it grades the island shapes at default sliders as well as
+   * every well and iceberg.
    *
-   * **Our TERRAIN view, not our composite.** Our wells and icebergs land where
-   * our roll put them, and the roll's salt is ours, so the composite would add
-   * every mark of ours the game has no mark beside (1,102 pixels, measured) to
-   * a count meant to grade tiles. Where the marks land is graded by the
-   * per-colour test further down.
+   * The entities come from the game's own per-chunk generator
+   * (`crates/fmw-noise/src/placement/generate.rs`, #492): one unsalted taus88
+   * stream per chunk shared by the five autoplace groups, jitter included, and
+   * drawn by the preview's rule - no entity-against-entity collision, each
+   * entity clipped to its own chunk, the first queued winning an overlap. The
+   * per-colour counts are asserted beside the total so a failure says which
+   * layer moved.
+   *
+   * **3 pixels differ, all at the capture's bottom edge, and they are frozen
+   * there.** They belong to one huge iceberg at (211.375, 511.6875) whose box
+   * reaches tile row 512, one past the 1024-tile capture. The game did not
+   * draw it; we do. The leading explanation is that the preview generates
+   * tiles only inside its own area, so the generator's tile check finds no
+   * ground past the edge. That was seen once, not read from code. Only 4 of
+   * our entities cross the capture edge at all, and the other 3 (big icebergs
+   * beside it) are fully covered by neighbours, so they cannot confirm or
+   * refute it. The app renders a continuous map, so the engine does not copy
+   * an edge that only a fixed-size capture has. Inside a border of
+   * `EDGE_PX` pixels - more than any Aquilo box reaches - the count is 0.
    */
-  it("matches the full PNG on the tiles the game drew", async () => {
+  it("matches the full PNG on every pixel", async () => {
     const game = fullPng();
-    const ours = await pngWindowRender("terrain, levers neutral", { view: "terrain" });
-    const mask = fullPngIgnoreMask();
-    const ignore = (i: number): boolean => mask[i] === 1;
-    let compared = 0;
+    const ours = await pngWindowRender("all, levers neutral", { view: "all" });
+    const EDGE_PX = 4;
     let differing = 0;
+    let differingInside = 0;
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const i = y * SIZE + x;
+        if (gameKey(game, i) === oursKey(ours, i)) continue;
+        differing++;
+        const inside = x >= EDGE_PX && y >= EDGE_PX && x < SIZE - EDGE_PX && y < SIZE - EDGE_PX;
+        if (inside) differingInside++;
+      }
+    }
+    let gameEntities = { crudeOil: 0, lithiumBrine: 0, fluorineVent: 0, iceberg: 0 };
     for (let i = 0; i < SIZE * SIZE; i++) {
-      if (ignore(i)) continue;
-      compared++;
-      if (gameKey(game, i) !== oursKey(ours, i)) differing++;
+      const n = ENTITY_BY_KEY.get(gameKey(game, i));
+      if (n) gameEntities = { ...gameEntities, [n]: gameEntities[n] + 1 };
     }
     withDiffArtifacts(
       {
         spec: "wasmAquiloRenderParity",
-        case: "aquilo-full-tiles-vs-game",
+        case: "aquilo-full-vs-game",
         game,
         ours: { width: SIZE, height: SIZE, rgba: ours },
-        ignore,
       },
       () => {
-        // Anti-vacuity: the mask leaves almost the whole image to compare.
-        expect(compared).toBe(1023862);
-        expect(differing).toBe(0);
+        expect(differingInside).toBe(0);
+        expect(differing).toBe(3);
+        expect(entityCounts(ours)).toEqual({ ...gameEntities, iceberg: gameEntities.iceberg + 3 });
       },
     );
   }, 300000);
@@ -414,12 +392,11 @@ describe("the WASM engine's entity footprint contains every entity the game drew
    * land tile, has a probability above 0; no roll and no collision test. Every
    * entity pixel the game drew should sit on or next to a white pixel.
    *
-   * **At the mark radius, 7 game pixels fall outside, all iceberg.** The game
+   * **Grown by one pixel, 7 game pixels fall outside, all iceberg.** The game
    * draws a huge iceberg at its own size, 3.7 x 2.5 tiles, so its far edge can
-   * sit two pixels from its centre tile, one more than the 3x3 mark we paint.
-   * Grown by two pixels the footprint holds every one. Both numbers are frozen,
-   * so a footprint that shrinks (or a placement that moves out of it) shows at
-   * once at either radius.
+   * sit two pixels from the tile it was rolled on. Grown by two pixels the
+   * footprint holds every one. Both numbers are frozen, so a footprint that
+   * shrinks shows at once at either radius.
    */
   it("the footprint contains every entity pixel the game drew", async () => {
     const game = fullPng();
@@ -439,13 +416,13 @@ describe("the WASM engine's entity footprint contains every entity the game drew
     let gameEntityPx = 0;
     for (let i = 0; i < SIZE * SIZE; i++) if (ENTITY_BY_KEY.has(gameKey(game, i))) gameEntityPx++;
     expect(gameEntityPx).toBe(5692);
-    expect(outsideAt(PLACEMENT_MARK_RADIUS_PX)).toEqual({
+    expect(outsideAt(1)).toEqual({
       crudeOil: 0,
       lithiumBrine: 0,
       fluorineVent: 0,
       iceberg: 7,
     });
-    expect(outsideAt(PLACEMENT_MARK_RADIUS_PX + 1)).toEqual({
+    expect(outsideAt(2)).toEqual({
       crudeOil: 0,
       lithiumBrine: 0,
       fluorineVent: 0,
@@ -460,50 +437,6 @@ describe("the WASM engine's entity footprint contains every entity the game drew
     const share = painted / (SIZE * SIZE);
     expect(share).toBeGreaterThan(0.01);
     expect(share).toBeLessThan(0.1);
-  }, 300000);
-});
-
-describe("each entity colour lands near the game's own marks of that colour", () => {
-  /**
-   * The union footprint above cannot see a well's identity, so it cannot tell
-   * crude oil from lithium brine. (Under the planted bearing swap it did go red,
-   * but only because the swap also moved the islands: the terrain gap became
-   * 1,189.) This counts, per
-   * colour, the game's pixels of that colour with no pixel of the SAME colour in
-   * our default-lever composite within `2 * PLACEMENT_MARK_RADIUS_PX + 1`
-   * pixels (two marks' radii plus one pixel of slack). A swap moves these.
-   *
-   * The counts are large for the wells because the placement roll's salt is
-   * ours, so individual wells land elsewhere; they are frozen as a fingerprint,
-   * not as a quality score. Icebergs are dense, so theirs is small. Our own
-   * pixel count per colour is frozen beside them, as is the game's.
-   */
-  const NEAR_PX = 2 * PLACEMENT_MARK_RADIUS_PX + 1;
-
-  it("the per-colour unmatched counts are frozen", async () => {
-    const game = fullPng();
-    const ours = await pngWindowRender("all, levers neutral", { view: "all" });
-    const unmatched = { crudeOil: 0, lithiumBrine: 0, fluorineVent: 0, iceberg: 0 };
-    for (let y = 0; y < SIZE; y++) {
-      for (let x = 0; x < SIZE; x++) {
-        const k = gameKey(game, y * SIZE + x);
-        const n = ENTITY_BY_KEY.get(k);
-        if (!n) continue;
-        if (!anyWithin(x, y, NEAR_PX, SIZE, SIZE, (j) => oursKey(ours, j) === k)) unmatched[n]++;
-      }
-    }
-    expect(entityCounts(ours)).toEqual({
-      crudeOil: 295,
-      lithiumBrine: 444,
-      fluorineVent: 189,
-      iceberg: 4716,
-    });
-    expect(unmatched).toEqual({
-      crudeOil: 396,
-      lithiumBrine: 257,
-      fluorineVent: 130,
-      iceberg: 122,
-    });
   }, 300000);
 });
 
@@ -524,13 +457,12 @@ interface Window {
 
 /**
  * Two 128 x 128 windows, each chosen from a sweep of the composite to hold
- * at least one well mark and one iceberg mark (asserted below, not assumed).
+ * at least one well and one iceberg (asserted below, not assumed).
  *
  * - **spawn**: the tiny fluorine vent near spawn at (-41, -68), crude oil and
  *   dense icebergs.
  * - **lithium, north-east**: a lithium brine field with icebergs, at an origin
- *   off the 32-tile chunk grid. It holds 14 pixels where a lithium mark and an
- *   iceberg mark overlap.
+ *   off the 32-tile chunk grid, where lithium brine and icebergs overlap.
  *
  * Between them the two windows carry all three well colours.
  */
@@ -576,10 +508,12 @@ describe("the WASM engine renders Aquilo's views to their frozen bytes", () => {
 
   /**
    * "A window must contain the thing it grades." Each window's composite holds
-   * a well mark and an iceberg mark, and its rocks view really paints
-   * `ICEBERG_COLOR` - the only render test that shows the icebergs painting.
+   * a well and an iceberg, and its rocks view really paints `ICEBERG_COLOR`.
+   * The rocks view can show MORE iceberg pixels than the composite, never
+   * fewer: in the composite an earlier-queued well keeps a tile both cover
+   * (see the overlap test below).
    */
-  it("every window holds a well mark and an iceberg mark, and the rocks view paints icebergs", async () => {
+  it("every window holds a well and an iceberg, and the rocks view paints icebergs", async () => {
     const e = await engine();
     const seen = new Set<EntityName>();
     for (const w of WINDOWS) {
@@ -590,9 +524,10 @@ describe("the WASM engine renders Aquilo's views to their frozen bytes", () => {
       for (const n of WELL_NAMES) if (all[n] > 0) seen.add(n);
       const rocks = entityCounts(renderThroughWasm(e, windowRequest(w, { view: "rocks" })));
       expect(rocks.iceberg, `${w.label}: rocks view iceberg pixels`).toBeGreaterThan(0);
-      expect(rocks.iceberg, `${w.label}: the composite draws every iceberg pixel`).toBe(
-        all.iceberg,
-      );
+      expect(
+        rocks.iceberg,
+        `${w.label}: the composite hides no iceberg pixel the rocks view lacks`,
+      ).toBeGreaterThanOrEqual(all.iceberg);
     }
     expect([...seen].sort(), "all three wells across the two windows").toEqual(
       [...WELL_NAMES].sort(),
@@ -600,27 +535,37 @@ describe("the WASM engine renders Aquilo's views to their frozen bytes", () => {
   });
 
   /**
-   * Icebergs paint after wells, so a pixel both marks cover shows the iceberg.
-   * The north-east window has such pixels; this finds them from the two
-   * single-layer views and checks the composite at each.
+   * Where a well and an iceberg cover the same tile, the one the game queued
+   * FIRST is drawn. The groups queue in autoplace `order`: fluorine vent and
+   * lithium brine before the icebergs, crude oil after them. So the composite
+   * shows brine or vent over an iceberg, and an iceberg over crude oil. Both
+   * kinds of overlap are found from the two single-layer views over both
+   * windows; each must occur, so neither half of the rule is vacuous.
    */
-  it("an iceberg mark over a well mark shows the iceberg", async () => {
+  it("an overlap shows whichever entity the game queued first", async () => {
     const e = await engine();
-    const w = WINDOWS[1] as Window;
-    const resources = renderThroughWasm(e, windowRequest(w, { view: "resources" })).slice();
-    const rocks = renderThroughWasm(e, windowRequest(w, { view: "rocks" })).slice();
-    const all = renderThroughWasm(e, windowRequest(w, { view: "all" }));
     const iceberg = colorKey(...ENTITY_COLORS.iceberg);
-    let both = 0;
-    let icebergWins = 0;
-    for (let i = 0; i < WINDOW_SIDE * WINDOW_SIDE; i++) {
-      const well = ENTITY_BY_KEY.get(oursKey(resources, i));
-      if (!well || well === "iceberg" || oursKey(rocks, i) !== iceberg) continue;
-      both++;
-      if (oursKey(all, i) === iceberg) icebergWins++;
+    const seen = { earlyWellOverIceberg: 0, icebergOverCrude: 0 };
+    for (const w of WINDOWS) {
+      const resources = renderThroughWasm(e, windowRequest(w, { view: "resources" })).slice();
+      const rocks = renderThroughWasm(e, windowRequest(w, { view: "rocks" })).slice();
+      const all = renderThroughWasm(e, windowRequest(w, { view: "all" }));
+      for (let i = 0; i < WINDOW_SIDE * WINDOW_SIDE; i++) {
+        const well = ENTITY_BY_KEY.get(oursKey(resources, i));
+        if (!well || oursKey(rocks, i) !== iceberg) continue;
+        if (well === "crudeOil") {
+          seen.icebergOverCrude++;
+          expect(oursKey(all, i), `${w.label}: iceberg over crude oil`).toBe(iceberg);
+        } else {
+          seen.earlyWellOverIceberg++;
+          expect(oursKey(all, i), `${w.label}: ${well} over an iceberg`).toBe(
+            oursKey(resources, i),
+          );
+        }
+      }
     }
-    expect(both).toBe(14);
-    expect(icebergWins).toBe(both);
+    expect(seen.earlyWellOverIceberg).toBeGreaterThan(0);
+    expect(seen.icebergOverCrude).toBeGreaterThan(0);
   });
 
   it("the windows are not the same picture", async () => {
@@ -634,14 +579,15 @@ describe("the WASM engine renders Aquilo's views to their frozen bytes", () => {
 
 describe("tiled equals whole for the all view", () => {
   /**
-   * 256 x 256 as one request against the same window as four 128 x 128
-   * requests, each carrying the halo-widened `placementSweepBox` the worker
-   * pool sends. A well or iceberg centred just outside a tile still owes that
-   * tile part of its 3x3 mark.
+   * 256 x 256 as one request against the same window cut into tiles. Since
+   * #492 a pixel reads only its own chunk's entities (the preview draws each
+   * entity inside its own chunk only), so the tiles need no halo at all, and
+   * the worker pool's `placementSweepBox` is not read for Aquilo.
    *
-   * The window holds spawn, so it carries all three wells and the tiny vent,
-   * and its seams at x = 0 and y = 0 cross marks (the no-halo control below
-   * shows they do).
+   * The tiles are 100 pixels wide, so their seams at x = -28 and x = 72 cut
+   * through chunks rather than along chunk lines. That is the case a
+   * chunk-local cache could get wrong, and the control below shows entities
+   * really are drawn across those seams.
    */
   const FULL: ImageBox = {
     originX: -128,
@@ -656,15 +602,14 @@ describe("tiled equals whole for the all view", () => {
     view: "all",
     ...FULL,
   };
+  const TILE_PX = 100;
 
-  function renderTiled(e: EngineExports, halo: boolean): Uint8ClampedArray {
-    const fullImage = {
-      originX: FULL.originX,
-      originY: FULL.originY,
-      width: FULL.width,
-      height: FULL.height,
-    };
-    const tiles = planTiles(FULL, 128).map((t) => {
+  it("tiled equals whole for the all view, with seams inside chunks", async () => {
+    const e = await engine();
+    const whole = renderThroughWasm(e, base).slice();
+    const counts = entityCounts(whole);
+    for (const n of ENTITY_NAMES) expect(counts[n], `${n} pixels in the window`).toBeGreaterThan(0);
+    const tiles = planTiles(FULL, TILE_PX).map((t) => {
       const sub: AquiloRenderRequest = {
         ...base,
         originX: t.originX,
@@ -672,43 +617,24 @@ describe("tiled equals whole for the all view", () => {
         width: t.width,
         height: t.height,
       };
-      // The box the worker pool computes. Only the geometry fields are read.
-      const box = placementMarkSweepBox({ ...sub, fullImage } as unknown as ElevationRenderRequest);
-      const req = halo ? { ...sub, placementSweepBox: box } : sub;
-      return { ...t, data: renderThroughWasm(e, req).slice() };
+      return { ...t, data: renderThroughWasm(e, sub).slice() };
     });
-    return stitchTiles(FULL, tiles);
-  }
-
-  it("tiled equals whole for the all view", async () => {
-    const e = await engine();
-    const whole = renderThroughWasm(e, base).slice();
-    const counts = entityCounts(whole);
-    for (const n of ENTITY_NAMES) expect(counts[n], `${n} pixels in the window`).toBeGreaterThan(0);
-    expect(renderTiled(e, true)).toEqual(whole);
+    expect(stitchTiles(FULL, tiles)).toEqual(whole);
   });
 
-  it("without the halo the tiles do NOT match, so the test above can fail", async () => {
+  it("entities are drawn across the tile seams, so the test above can fail", async () => {
     const e = await engine();
-    const whole = renderThroughWasm(e, base).slice();
-    const tiled = renderTiled(e, false);
-    let differing = 0;
-    for (let i = 0; i < whole.length; i++) if (whole[i] !== tiled[i]) differing++;
-    expect(differing).toBe(84);
-  });
-
-  it("the worker pool's halo is exactly the mark radius", () => {
-    const sub = { originX: 0, originY: 0, width: 128, height: 128, tilesPerPixel: 1 };
-    const box = placementMarkSweepBox({
-      ...sub,
-      fullImage: { originX: -128, originY: -128, width: 256, height: 256 },
-    } as unknown as ElevationRenderRequest);
-    expect(box).toEqual({
-      x0: -PLACEMENT_MARK_RADIUS_PX,
-      y0: -PLACEMENT_MARK_RADIUS_PX,
-      x1: 128,
-      y1: 128,
-    });
+    const whole = renderThroughWasm(e, base);
+    // Entity pixels on both sides of a vertical seam, in the same row.
+    let straddling = 0;
+    for (const seam of [TILE_PX, 2 * TILE_PX]) {
+      for (let y = 0; y < FULL.height; y++) {
+        const left = ENTITY_BY_KEY.get(oursKey(whole, y * FULL.width + seam - 1));
+        const right = ENTITY_BY_KEY.get(oursKey(whole, y * FULL.width + seam));
+        if (left && right) straddling++;
+      }
+    }
+    expect(straddling).toBeGreaterThan(0);
   });
 });
 

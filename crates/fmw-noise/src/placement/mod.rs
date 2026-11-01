@@ -9,4 +9,6 @@
 //! `docs/noise/placement-roll-NOTES.md` carries the disassembly this was
 //! recovered from.
 
+pub mod aquilo;
+pub mod generate;
 pub mod roll;
