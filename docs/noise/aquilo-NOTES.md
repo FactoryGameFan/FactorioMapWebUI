@@ -277,9 +277,12 @@ corner is always inside, and probability 1 always passes its roll.
   Aquilo entity needs it), the richness tie-break inside a group of more than
   one prototype (every Aquilo group has one; `generate_chunk` refuses a
   bigger group), and `tile_restriction` (no Aquilo entity declares one).
-- Whether the game drops a group entirely when its control's size is 0 was not
-  checked. We keep the group, with probability 0, so it still draws. That
-  changes the stream for every later group in the chunk.
+- No Aquilo slider can drop a group, read from the 2.1.23 data. The game
+  drops a group only through the autoplace spec's own `control`, and none of
+  the five has one: the wells' is commented out in `resource-autoplace.lua`
+  (`:137`) and the icebergs' tables hold only `order` and the probability. So
+  size 0 sets the probability to 0 and the group still draws, as the port
+  does. `entity-generation-NOTES.md` has the line references.
 
 **Sizes near spawn.** In the render tests, well sizes of 0.25, 0.5, 2 and 4 move
 no well in the 256 window around spawn, and only size 0 does. Frequency moves
