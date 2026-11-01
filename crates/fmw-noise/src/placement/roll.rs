@@ -79,8 +79,9 @@ pub const PLACEMENT_MARK_RADIUS_PX: i64 = 1;
 /// leaving the probability field bit-exact, which no field-level fixture can
 /// see.
 ///
-/// Aquilo's two salts are the exception: Aquilo is ported Rust-first, so they
-/// have no TypeScript counterpart and this module is their only table.
+/// Aquilo has no salt: it runs the game's own unsalted stream through
+/// [`super::generate`], because every one of its entity autoplacers is ported
+/// (#492).
 pub mod salt {
     /// Vulcanus rocks. Zero on purpose - see the module docs.
     pub const VULCANUS_ROCKS: u32 = 0;
@@ -108,10 +109,6 @@ pub mod salt {
     /// rather than thresholding, because its probability is capped at 0.5 by
     /// the Lua's own `min` and so never saturates into a patch.
     pub const FULGORA_SCRAP: u32 = 0x003b_a58c;
-    /// Aquilo's three wells: crude oil, lithium brine and fluorine vent share one stream.
-    pub const AQUILO_WELLS: u32 = 0x0068_2f53;
-    /// Aquilo's two lithium icebergs, huge and big, sharing one stream.
-    pub const AQUILO_ICEBERGS: u32 = 0x0027_d9c1;
 }
 
 /// `max(341, 0x3FBE2C + 7919*chunkX + 7907*chunkY + salt)` in `u32` arithmetic.
@@ -402,7 +399,7 @@ mod tests {
         assert_eq!(placement_roll_word(0, 0, salt), 341);
     }
 
-    /// Every salt in the table is distinct, Aquilo's two included, and Fulgora
+    /// Every salt in the table is distinct, and Fulgora
     /// scrap's matches the TypeScript's literal.
     ///
     /// A salt IS the stream, so a wrong one moves every placed entity while
@@ -421,8 +418,6 @@ mod tests {
             salt::CRUDE_OIL,
             salt::CRUDE_OIL_PENALTY,
             salt::FULGORA_SCRAP,
-            salt::AQUILO_WELLS,
-            salt::AQUILO_ICEBERGS,
         ];
         let mut sorted = all.to_vec();
         sorted.sort_unstable();

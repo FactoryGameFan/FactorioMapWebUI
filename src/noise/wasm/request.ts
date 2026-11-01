@@ -339,9 +339,11 @@ export interface AquiloRenderRequest extends CommonRenderRequest {
    */
   readonly aquiloResourceControls?: AquiloResourceControls;
   /**
-   * The world box to sweep for placement-roll hits, for the `resources`,
-   * `rocks` and `all` views. Defaults to the request's own pixel box. A well
-   * or iceberg mark is a symmetric 3x3, so the halo is symmetric.
+   * Written to the ABI slot and NOT read by the engine since #492: Aquilo's
+   * wells and icebergs come from the game's per-chunk generator, and each
+   * pixel reads only its own chunk, so there is no halo to sweep. Kept so the
+   * worker pool can send one request shape to every planet and the block's
+   * layout does not move.
    */
   readonly placementSweepBox?: {
     readonly x0: number;
@@ -616,7 +618,8 @@ function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
 }
 
 /**
- * Aquilo's block: six levers, three bearings' trig and the placement sweep box.
+ * Aquilo's block: six levers, three bearings' trig and the placement sweep box
+ * (written, but unread since #492).
  * See `fmw_wasm::abi` for the table.
  */
 function writeAquiloParams(view: DataView, req: AquiloRenderRequest): void {

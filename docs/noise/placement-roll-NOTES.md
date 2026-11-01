@@ -11,6 +11,40 @@ Companion to `random-penalty-NOTES.md`, `spot-noise-NOTES.md`,
 `basis-noise-NOTES.md` (same taus88 RNG family). Nothing was implemented; this file
 exists so the disassembly does not have to be redone.
 
+> **Resolved 2026-10-31 (#492): the stream is solved, and Aquilo runs it.**
+> `generateEntities` was re-read from the Factorio **2.1.23 Linux headless**
+> build, which ships DWARF debug info, so every step now has a source file and
+> line. The full record is `entity-generation-NOTES.md`. It is implemented in
+> `crates/fmw-noise/src/placement/generate.rs` and used for Aquilo by
+> `placement/aquilo.rs`. Replayed on the game's own land, it places 209 of 209
+> entities of a real Aquilo surface at the game's positions, to the 1/16 tile.
+> The other planets still ship the salted roll below; this file stays their
+> history.
+>
+> What it corrects in this file:
+>
+> - **Jitter.** The 2 jitter draws are taken only for `placeable-off-grid`
+>   entities that are not resources, and they come BEFORE the box tile check.
+>   So an entity that then fails the check still used them. Resources never
+>   jitter. ("2 extra draws per PLACED entity" below is wrong both ways.)
+> - **Arbitration is per autoplace `order` group.** The group key is exactly
+>   the `order` string; autoplacers are sorted by (`order`, name). The
+>   `+848..+964` loop is that compare.
+> - **Groups share space through collision at apply time, not through
+>   arbitration.** Entity-against-entity collision is tested when the queue is
+>   applied to the surface, in queue order, and it draws nothing.
+> - **A tile with probability 0 still draws.** The best value starts at -inf,
+>   so any finite probability wins an empty tile and gets one draw, as long as
+>   the tile's collision mask admits the entity.
+> - **The "untested hypothesis" about sequential groups is confirmed** in its
+>   stream half: groups run in sorted order on one shared stream. The
+>   shared-space half is the apply-time collision above.
+> - **The game's map preview skips entity collision.** It draws every queued
+>   entity, each clipped to its own chunk, with the first queued winning an
+>   overlap (measured against the Aquilo preview PNG, not read from code).
+>
+> Inline markers below point here.
+
 ## The functions
 
 Located by demangling the (non-stripped) shipped binary:
@@ -121,6 +155,11 @@ the algorithm; it is the seeding and the stream order.
      **data-dependent**: whether tile N rolls the value it does depends on how many
      earlier tiles placed.
 
+  > **Resolved 2026-10-31, see `entity-generation-NOTES.md`.** The jitter is
+  > drawn per successful roll only for off-grid non-resources, before the box
+  > tile check, so a rejected entity still spends it. The draw count is still
+  > data-dependent.
+
 ## Arbitration (resolves the "cross-resource interaction" question)
 
 Before rolling, `generateEntities` runs an arbitration loop (`+456..+844`) that, per
@@ -135,6 +174,11 @@ roll phase rolls **once per tile for that one winner**.
 > file: one global max-probability arbitration would leave zero spawners in oracle
 > region 1, against the game's 142. Arbitration is scoped to autoplace-order groups.
 > The rest of the paragraph - one winner per tile, then one roll - still stands.
+>
+> **Resolved 2026-10-31, see `entity-generation-NOTES.md`.** The groups are
+> runs of equal autoplace `order`. Within a group the winner is the max
+> probability, with a richness tie-break. The roll is one draw per tile with a
+> winner, and a probability of 0 still wins an empty tile and draws.
 
 So resources do NOT each roll independently against a shared stream - there is a
 per-tile max-probability arbitration first, then one roll. This app's
@@ -220,6 +264,14 @@ even though big rocks outnumber huge ones. That is consistent with both the obse
 ~28% split and the measured density, but **nothing here tests it**; it would need a
 re-read of the `+848..+964` grouping loop. Nobody should treat it as established.
 
+> **Resolved 2026-10-31, see `entity-generation-NOTES.md`.** The loop is the
+> `order` compare, so huge and big are separate groups, run in sorted order on
+> one shared stream, and apply-time collision lets big fill the gaps huge left.
+> On Aquilo (huge `a[rock]-a[huge]`, big `a[rock]-b[big]`) the real-surface
+> replay places the game's 22 huge and 168 big icebergs, every one at the
+> game's position. It has NOT been re-run on Vulcanus or
+> Nauvis rocks, so issue #22 item 1 is explained in principle only.
+
 > **Partially promoted 2026-07-27.** The *global* alternative to this hypothesis is
 > now falsified outright by the enemy prototypes - see "Enemy bases: what Task 6
 > added to the arbitration picture" at the end of this file. That removes the
@@ -227,6 +279,9 @@ re-read of the `+848..+964` grouping loop. Nobody should treat it as established
 > groups processed **sequentially with shared space** (huge rocks claiming tiles, big
 > rocks filling gaps). Separate arbitration alone would not produce the mixed
 > population. The `+848..+964` re-read is still the work.
+>
+> **Resolved 2026-10-31:** done, see the marker above and
+> `entity-generation-NOTES.md`.
 
 ### Independently replicated on Nauvis rocks (2026-07-27)
 
@@ -300,6 +355,11 @@ To reproduce resource stipple faithfully we would need, per chunk:
    default 1, and no entity prototype overrides it. See "The roll" above. This
    removes item 4 from the list; items 1-3 are unchanged.
 
+> **Resolved 2026-10-31 for items 1 and 3, see `entity-generation-NOTES.md`.**
+> Group order is (`order`, name) bytewise, and the stream is built in
+> `placement/generate.rs`. Item 2 is still the cost on Nauvis and Vulcanus,
+> which is why only Aquilo, whose five autoplacers are all ported, runs it.
+
 That is multiple sessions and pulls in un-ported systems. Per the spike's charter
 (Eric, 2026-07-20: "if the RNG resists as multi-session batch semantics, stop and
 report rather than pushing into the render build"), we stop here.
@@ -351,6 +411,13 @@ on traversal order. It is also why `resolveChunk` may gate *after* rolling
 
 So the departures are not two separate approximations; (2) is the enabling
 simplification and (1) is its consequence.
+
+> **2026-10-31: Aquilo no longer uses this design (#492).** It runs the game's
+> own unsalted stream, jitter included (`placement/generate.rs`). Its salts
+> `AQUILO_WELLS` and `AQUILO_ICEBERGS` are deleted. Window-independence holds
+> there for a different reason: the preview draws each entity only inside its
+> own chunk, so a pixel depends on one chunk's stream. Everything in this
+> section is still true for the other planets.
 
 ### One stream per overlay, via a salt
 
@@ -472,6 +539,10 @@ exactly the split the `+848..+964` name-`memcmp` grouping would produce.
 This does NOT establish the rock hypothesis, which needs groups to be processed
 *sequentially with shared space* rather than merely arbitrated separately. It removes
 the competing explanation, nothing more.
+
+> **Resolved 2026-10-31, see `entity-generation-NOTES.md`.** Groups are
+> processed sequentially on one stream, and they share space through
+> collision when the queue is applied.
 
 ### `map_generator_bounding_box` beats `collision_box` - check for it first
 
@@ -595,6 +666,13 @@ work could only clear the competing explanation for. **It is still not a test.**
 comment states a developer's intent, and the code path is where the truth is - the
 `+848..+964` grouping re-read is still the work. But it is worth more than the
 hypothesis had before, and it comes from a file nobody had read for this purpose.
+
+> **Resolved 2026-10-31, see `entity-generation-NOTES.md`.** The code agrees
+> with the comment: a later group's entity is dropped at apply time when its
+> box meets an entity already placed. The geyser, as the last group (`c`),
+> also starts its draws after every earlier group's. That is probably why a
+> salt-0 roll matched only 0 to 1 of 44 game geysers (`rust-wasm-port.md`).
+> Not tested on Vulcanus yet.
 
 It also fixes the geyser's place in the queue: `c` sorts after the three solid ores
 (`b`) and after the rocks (`a[landscape]-c[rock]-*`), so **the geyser is last of every

@@ -257,6 +257,17 @@ Nauvis rocks, Nauvis enemy bases, Vulcanus geysers, Nauvis crude oil - the four
 issue #9 named, plus Vulcanus rocks). See "WHAT WAS ACTUALLY BUILT" in
 `placement-roll-NOTES.md`.
 
+**The whole-chunk simulator exists now, for Aquilo only (#492, 2026-10-31).**
+The stream was re-read from the 2.1.23 Linux build with source lines
+(`entity-generation-NOTES.md`). Two details above were wrong: the jitter draws
+are taken only for off-grid non-resources, before the box tile check, and
+arbitration is per autoplace `order` group, with groups sharing space through
+collision at apply time. `crates/fmw-noise/src/placement/generate.rs` runs it,
+and Aquilo uses it because all five of its entity autoplacers are ported. It
+matches the game's Aquilo preview on every pixel inside a 4-pixel border, and
+a real surface 209 of 209 entities. The other planets keep the salted roll,
+because their streams still need autoplacers that are not ported.
+
 M3a follow-ups (known, deferred by priority - 2026-07-20):
 
 - [~] **Ore excluded from cliffs** - WITHDRAWN 2026-07-30 (issue #24, PR #57).
