@@ -64,43 +64,79 @@ test("the FROM tag and the in-build version assertion name the same version", ()
 });
 
 /**
- * Resolves the tag's real digest from the registry. Network-dependent, so a
- * network failure SKIPS rather than fails - an offline dev machine must not
- * turn this into a red suite. A reachable registry that disagrees is a real
- * failure: it means the digest is not the tag it claims to be.
+ * Asks the registry what the PINNED digest is: its image config must carry the
+ * FROM tag's Factorio version in the publisher's `factorio.version` label and
+ * its `VERSION` env. Network-dependent, so a network failure SKIPS rather than
+ * fails - an offline dev machine must not turn this into a red suite. A
+ * reachable registry that does not know the digest, or that describes a
+ * different Factorio, is a real failure: the pin is not the version it claims.
+ *
+ * It deliberately does NOT ask whether the tag still points at the pin. It used
+ * to, and that went red on main and every branch when factoriotools rebuilt the
+ * 2.1.23 tag on 2026-10-27 (their auto-update job, run for experimental
+ * 2.1.24) with the same Factorio download inside (#502). A rebuilt tag is not a
+ * wrong pin; Renovate proposes the new digest on its own schedule.
  */
-test("the pinned digest really is that tag's digest", async (t) => {
+const REGISTRY_ACCEPT = [
+  "application/vnd.oci.image.index.v1+json",
+  "application/vnd.docker.distribution.manifest.list.v2+json",
+  "application/vnd.oci.image.manifest.v1+json",
+  "application/vnd.docker.distribution.manifest.v2+json",
+].join(", ");
+
+test("the pinned digest is an image of the FROM tag's Factorio version", async (t) => {
   const [, image, tag, digest] = /^FROM\s+(\S+?):(\S+?)@(sha256:[0-9a-f]{64})\s*$/.exec(fromLine());
 
-  let live;
+  let unknownDigest = false;
+  let config;
   try {
     const auth = await fetch(
       `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${image}:pull`,
       { signal: AbortSignal.timeout(15000) },
     );
     const { token } = await auth.json();
-    const res = await fetch(`https://registry-1.docker.io/v2/${image}/manifests/${tag}`, {
-      method: "HEAD",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept:
-          "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json",
-      },
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok) throw new Error(`registry returned ${res.status}`);
-    live = res.headers.get("docker-content-digest");
-    if (!live) throw new Error("registry returned no docker-content-digest header");
+    const get = (path) =>
+      fetch(`https://registry-1.docker.io/v2/${image}/${path}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: REGISTRY_ACCEPT },
+        signal: AbortSignal.timeout(15000),
+      });
+
+    const top = await get(`manifests/${digest}`);
+    if (top.status === 404) {
+      unknownDigest = true;
+    } else {
+      if (!top.ok) throw new Error(`registry returned ${top.status}`);
+      let manifest = await top.json();
+      if (manifest.manifests) {
+        // A multi-platform index: read the platform the container runs on.
+        const amd64 = manifest.manifests.find(
+          (m) => m.platform?.os === "linux" && m.platform?.architecture === "amd64",
+        );
+        assert.ok(amd64, `${image}@${digest} is an index with no linux/amd64 image`);
+        const sub = await get(`manifests/${amd64.digest}`);
+        if (!sub.ok) throw new Error(`registry returned ${sub.status}`);
+        manifest = await sub.json();
+      }
+      const blob = await get(`blobs/${manifest.config.digest}`);
+      if (!blob.ok) throw new Error(`registry returned ${blob.status}`);
+      config = (await blob.json()).config ?? {};
+    }
   } catch (err) {
+    if (err instanceof assert.AssertionError) throw err;
     t.skip(`registry unreachable (${err.message}) - digest not verified`);
     return;
   }
 
+  assert.ok(!unknownDigest, `the registry has no ${image}@${digest}: the pin is not a real image`);
   assert.equal(
-    live,
-    digest,
-    `${image}:${tag} now resolves to ${live}, but the Dockerfile pins ${digest}.\n` +
-      `Either the publisher re-pushed the tag, or the pin is not the version it claims.`,
+    config.Labels?.["factorio.version"],
+    tag,
+    `${image}@${digest} is labelled factorio.version ${String(config.Labels?.["factorio.version"])}, ` +
+      `but the FROM tag says ${tag}: the pin is not the version it claims.`,
+  );
+  assert.ok(
+    (config.Env ?? []).includes(`VERSION=${tag}`),
+    `${image}@${digest} does not set VERSION=${tag} (env: ${JSON.stringify(config.Env)})`,
   );
 });
 
