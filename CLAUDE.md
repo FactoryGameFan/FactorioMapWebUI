@@ -1548,9 +1548,14 @@ Read the current pin in `preview-service/container/Dockerfile`, not here.
 `preview-service/container/test/dockerfile.test.mjs` runs in `preview:test`
 (needs no Docker) and asserts three things: the `FROM` has **both** a tag and a
 digest, the tag agrees with the version assertion below it, and - when the
-registry is reachable - the digest really is that tag's. The registry check
-**skips** on a network error rather than failing, so it cannot redden an offline
-machine; a reachable registry that disagrees is a genuine failure.
+registry is reachable - the PINNED digest is an image of that Factorio version
+(its `factorio.version` label and `VERSION` env). The registry check **skips**
+on a network error rather than failing, so it cannot redden an offline machine;
+a reachable registry that does not know the digest, or names another version,
+is a genuine failure. It does **not** ask whether the tag still points at the
+pin: factoriotools rebuilds tags (2.1.23 on 2026-10-27, same Factorio inside),
+and that check turned `main` red until #502 re-pinned. Renovate proposes the
+rebuilt digest on its own schedule.
 
 Two things it deliberately does not do: it does not build the image (that is
 `pnpm --filter @fmw/preview-container run test:integration`, which needs Docker
