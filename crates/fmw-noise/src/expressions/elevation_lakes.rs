@@ -25,6 +25,14 @@
 //! branch 2 keeps its own 20 - and that is why the island fixture is graded
 //! here rather than treated as a duplicate of the lakes one.
 //!
+//! ## Every step is rounded to f32, as the game evaluates it
+//!
+//! The noise ops were already exact; the arithmetic joining them ran in f64,
+//! which held `elevation_lakes` at 21 of 26 against the game. Each step now
+//! goes through [`f32r`] in the order the Lua writes it, and the constants
+//! (`segmentation_multiplier`, `water_level`, `0.1 * segmentation_multiplier`)
+//! are narrowed the way the game folds them (#452).
+//!
 //! ## No poison hook, and that is measured rather than an oversight
 //!
 //! Every field in this tree composes `basis_noise` and inherits its hook. The
@@ -37,7 +45,7 @@
 
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{clamp, max2, min};
+use crate::eval::math::{clamp, f32r, max2, min};
 use crate::eval::primitives::{basis_noise_expr, BasisExprParams};
 use crate::quick_multioctave_noise::{
     quick_persistence_terms, sum_octaves as quick_sum_octaves, QuickOctaves, QuickPersistenceParams,
@@ -137,9 +145,11 @@ impl ElevationLakes {
     #[must_use]
     pub fn new(params: &ElevationLakesParams) -> Self {
         let seed0 = params.seed0;
-        let seg = params.segmentation_multiplier;
-        let input_scale = seg / 2.0;
-        let offset_x = 10_000.0 / seg;
+        // `control:water:frequency` is an f32 constant to the game, and so is
+        // everything folded from it. Quartering it for the island is exact.
+        let seg = f32r(params.segmentation_multiplier);
+        let input_scale = f32r(seg / 2.0);
+        let offset_x = f32r(10_000.0 / seg);
 
         let starting_positions = params.starting_positions.clone();
         let starting_lake_positions = params
@@ -165,9 +175,9 @@ impl ElevationLakes {
         };
 
         Self {
-            water_level: params.water_level,
+            water_level: f32r(params.water_level),
             seg,
-            bias: params.bias,
+            bias: f32r(params.bias),
             starting_positions,
             starting_lake_positions,
             var_pers_1: var_pers_terms(&branch_1),
@@ -215,13 +225,15 @@ impl ElevationLakes {
     /// [`crate::variable_persistence_multioctave_noise::eval`].
     fn persistence(&self, x: f64, y: f64) -> f64 {
         clamp(
-            f64::from(amplitude_corrected_multioctave_noise(
-                x,
-                y,
-                &self.persistence,
-            )) + 0.3,
-            0.1,
-            0.9,
+            f32r(
+                f64::from(amplitude_corrected_multioctave_noise(
+                    x,
+                    y,
+                    &self.persistence,
+                )) + f32r(0.3),
+            ),
+            f32r(0.1),
+            f32r(0.9),
         )
     }
 
@@ -234,22 +246,31 @@ impl ElevationLakes {
             &self.starting_positions,
             f64::INFINITY,
         ));
-        let branch_1 = self.bias
-            + f64::from(var_pers_eval(
-                x,
-                y,
-                p,
-                &self.var_pers_1,
-                &self.var_pers_1_tables,
-            ));
-        let branch_2 = BRANCH_2_LITERAL + self.water_level - 0.1 * self.seg * distance
-            + f64::from(var_pers_eval(
-                x,
-                y,
-                p,
-                &self.var_pers_2,
-                &self.var_pers_2_tables,
-            ));
+        let branch_1 = f32r(
+            self.bias
+                + f64::from(var_pers_eval(
+                    x,
+                    y,
+                    p,
+                    &self.var_pers_1,
+                    &self.var_pers_1_tables,
+                )),
+        );
+        // `20 + water_level - 0.1 * segmentation_multiplier * distance + vp`:
+        // the first sum and `0.1 * segmentation_multiplier` are constants the
+        // game folds before the per-position steps.
+        let base = f32r(BRANCH_2_LITERAL + self.water_level);
+        let slope = f32r(f32r(0.1) * self.seg);
+        let branch_2 = f32r(
+            f32r(base - f32r(slope * distance))
+                + f64::from(var_pers_eval(
+                    x,
+                    y,
+                    p,
+                    &self.var_pers_2,
+                    &self.var_pers_2_tables,
+                )),
+        );
         max2(branch_1, branch_2)
     }
 
@@ -262,11 +283,13 @@ impl ElevationLakes {
             STARTING_LAKE_DISTANCE_CAP,
         ));
         let sln = f64::from(quick_sum_octaves(x, y, &self.lake_noise));
-        let term_1 = (elevation - self.water_level) / self.seg;
-        let term_2 =
-            basis_noise_expr(x, y, &self.basis_123, &self.basis_123_tables) + sld / 4.0 - 4.0;
-        let term_3 = -1.0 + (sld + sln) / 16.0;
-        let term_4 = max2(2.0, 2.0 + sld / 16.0 + sln / 2.0);
+        let term_1 = f32r(f32r(elevation - self.water_level) / self.seg);
+        let term_2 = f32r(
+            f32r(basis_noise_expr(x, y, &self.basis_123, &self.basis_123_tables) + f32r(sld / 4.0))
+                - 4.0,
+        );
+        let term_3 = f32r(-1.0 + f32r(f32r(sld + sln) / 16.0));
+        let term_4 = max2(2.0, f32r(f32r(2.0 + f32r(sld / 16.0)) + f32r(sln / 2.0)));
         // Argument order kept as the TypeScript writes it: `min` folds left and
         // signed zero is reachable, so reordering is not a no-op (#224).
         min(&[term_1, term_2, term_3, term_4])
@@ -340,15 +363,20 @@ mod tests {
     fn the_persistence_field_saturates_its_lower_clamp_and_never_its_upper() {
         // A clamp nothing saturates is a clamp no test is grading.
         let lakes = ElevationLakes::new(&ElevationLakesParams::defaults(123_456));
+        // The bounds are the f32 literals the game holds, not the f64 ones.
+        let (lo_bound, hi_bound) = (f32r(0.1), f32r(0.9));
         let (mut lo, mut hi) = (0usize, 0usize);
         for i in -30i32..30 {
             for j in -30i32..30 {
                 let p = lakes.persistence(f64::from(i) * 23.5, f64::from(j) * 29.25);
-                assert!((0.1..=0.9).contains(&p), "persistence {p} out of range");
-                if p == 0.1 {
+                assert!(
+                    (lo_bound..=hi_bound).contains(&p),
+                    "persistence {p} out of range"
+                );
+                if p == lo_bound {
                     lo += 1;
                 }
-                if p == 0.9 {
+                if p == hi_bound {
                     hi += 1;
                 }
             }

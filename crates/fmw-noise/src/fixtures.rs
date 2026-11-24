@@ -7709,16 +7709,12 @@ fn reproduces_the_games_elevation_lakes_tree_at_every_captured_position() {
     let (exact, worst) = score_elevation(&fixture, &lakes);
 
     // Measured on the TypeScript side against the same fixture with the same
-    // snap: 21 and 3.814697e-6, to every printed digit.
-    //
-    // `test/elevationLakes.spec.ts` asserts a BOUND (`worst < 4e-6`) and splits
-    // the fixture into a far field and a near-spawn band. This grades all 26 at
-    // once and freezes the count instead, for the reason the header records: a
-    // bound cannot tell "close" from "identical", and the 4 far-field misses
-    // are #255, still open. If this number moves, read it - up is worth taking,
-    // down is a regression.
-    assert_eq!(exact, 21, "exact f32 matches, worst {worst:e}");
-    assert!(worst < 4e-6, "worst absolute error {worst:e}");
+    // snap: 21 and 3.814697e-6, to every printed digit. #452 took it to all
+    // 26, exact, by rounding every step of the tree to f32 as the game does;
+    // the noise ops underneath were already exact. If this number moves, read
+    // it - up is worth taking, down is a regression.
+    assert_eq!(exact, 26, "exact f32 matches, worst {worst:e}");
+    assert_eq!(worst, 0.0, "worst absolute error {worst:e}");
 }
 
 #[test]
@@ -7740,9 +7736,10 @@ fn reproduces_the_games_elevation_island_tree_at_every_captured_position() {
     let island = ElevationLakes::new(&ElevationLakesParams::island(123_456));
     let (exact, worst) = score_elevation(&fixture, &island);
 
-    // Measured on the TypeScript side: 19 and 1.525879e-5.
-    assert_eq!(exact, 19, "exact f32 matches, worst {worst:e}");
-    assert!(worst < 1.6e-5, "worst absolute error {worst:e}");
+    // Measured on the TypeScript side: 19 and 1.525879e-5. #452: all 26,
+    // exact, with the same f32 steps as `elevation_lakes`.
+    assert_eq!(exact, 26, "exact f32 matches, worst {worst:e}");
+    assert_eq!(worst, 0.0, "worst absolute error {worst:e}");
 }
 
 #[test]
