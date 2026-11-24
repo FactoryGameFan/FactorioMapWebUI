@@ -7923,9 +7923,10 @@ fn reproduces_the_games_aux_at_every_captured_position() {
         aux.eval(x, y)
     });
 
-    // `test/aux.spec.ts` asserts the same 14 and bounds the same residual at
-    // 2^-24, which is one f32 ULP at 1.0 - the field's own scale.
-    assert_eq!(exact, 14, "exact f32 matches, worst {worst:e}");
+    // 14 until #452, when `aux` and the `plateaus` it reads moved to one f32
+    // step at a time in the Lua's order. The noise underneath was already
+    // exact; the f64 arithmetic around it was the whole residual.
+    assert_eq!(exact, 26, "exact f32 matches, worst {worst:e}");
     assert!(worst <= f64::from(f32::EPSILON) / 2.0, "worst {worst:e}");
 }
 
@@ -9175,12 +9176,15 @@ fn reproduces_the_games_nauvis_cliff_elevation_at_both_seeds() {
     // snap nobody adds.
     assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
 
-    // Measured on the TypeScript side first: (seed, exact of 1024).
+    // (seed, exact of 1024). Measured on the TypeScript side first at 355 and
+    // 281. #452 moved them to 699 and 648 without touching this field's own
+    // code: `nauvis_hills_cliff_level` became f32 per step, and the cliff
+    // elevation reads it. The field's own `10 + 30 * (...)` is still f64.
     for (case, &(seed, want)) in fixture
         .get("cases")
         .as_array()
         .iter()
-        .zip([(123_456u32, 355usize), (777_771, 281)].iter())
+        .zip([(123_456u32, 699usize), (777_771, 648)].iter())
     {
         assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
         let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(seed));
@@ -11248,7 +11252,10 @@ fn the_last_nauvis_pixel_on_the_point_kernel_against_the_game() {
     // Measured 2026-10-22: on the point kernel our grass-1 is 50 ULPs low and
     // our grass-3 is 90 ULPs high, against our own grid-vs-point shift of 19
     // and 0 ULPs. Read a moved number, do not adjust it.
-    assert_eq!(got, (-50, 90, -19, 0));
+    //
+    // #452, `aux` and `plateaus` in f32 per step: grass-3 90 -> 80 high, and
+    // its own grid-vs-point shift 0 -> 10.
+    assert_eq!(got, (-50, 80, -19, 10));
 }
 
 /// Task 7: the last Vulcanus pixel on the POINT kernel, as above.

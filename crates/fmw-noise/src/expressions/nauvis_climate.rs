@@ -34,7 +34,7 @@
 
 use crate::at::At;
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{clamp, lerp, max2, min, min2, slider_to_linear};
+use crate::eval::math::{clamp, f32r, lerp, max2, min, min2, slider_to_linear};
 use crate::expressions::nauvis_shared::{NauvisShared, NauvisSharedParams};
 use crate::quick_multioctave_noise::{
     octave_terms as quick_octave_terms, sum_octaves_at as quick_sum_octaves_at,
@@ -113,12 +113,15 @@ impl Aux {
     }
 
     /// Evaluate at an [`At`]; on a tile every noise op takes the grid path.
+    ///
+    /// One f32 step at a time, left to right as the Lua writes it (#452).
+    /// `0.5 + bias` is a constant, so the game folds it first.
     #[must_use]
     pub fn eval_at(&self, at: At) -> f64 {
+        let base = f32r(0.5 + f32r(self.bias));
+        let plateaus = f32r(f32r(0.06) * f32r(self.shared.plateaus_at(at) - f32r(0.4)));
         clamp(
-            0.5 + self.bias
-                + 0.06 * (self.shared.plateaus_at(at) - 0.4)
-                + f64::from(quick_sum_octaves_at(at, &self.noise)),
+            f32r(f32r(base + plateaus) + f64::from(quick_sum_octaves_at(at, &self.noise))),
             0.0,
             1.0,
         )
@@ -418,7 +421,14 @@ mod tests {
                 let t = base_t.eval(x, y);
                 if a > 0.0 && a + 0.1 < 1.0 && t > -20.0 && t + 5.0 < 50.0 {
                     interior += 1;
-                    assert!((biased_aux.eval(x, y) - (a + 0.1)).abs() < 1e-9);
+                    // `aux` is rounded to f32 at every step (#452), and so is
+                    // its bias, so the shift is 0.1 to within one f32 step at
+                    // the field's scale of 1, not to 1e-9. Measured worst:
+                    // 0.7 of a step.
+                    assert!(
+                        (biased_aux.eval(x, y) - (a + 0.1)).abs() < f64::from(f32::EPSILON),
+                        "aux bias shift at ({x}, {y})"
+                    );
                     assert!((biased_t.eval(x, y) - (t + 5.0)).abs() < 1e-9);
                 } else {
                     saturated += 1;

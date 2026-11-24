@@ -329,6 +329,22 @@ pub(crate) fn slider_rescale_rounded_once(v: f64, n: f64) -> f64 {
     2.0f64.powf((log2(v) / log2(6.0)) * log2(n))
 }
 
+/// Narrow to f32 and back: one step of the noise machine.
+///
+/// The game evaluates a noise expression one operation at a time, and every
+/// value in it, literals included, is an f32. So `0.06 * (plateaus - 0.4)` is
+/// `f32r(f32r(0.06) * f32r(plateaus - f32r(0.4)))`, rounded at each step in the
+/// order the Lua writes it. An f64 operation on two f32 values, rounded once,
+/// is exactly the f32 operation, so the values can stay `f64` between steps.
+///
+/// Measured on Nauvis (#452): with the arithmetic around the noise ops in f64,
+/// `aux`, `moisture`, `elevation_lakes` and `elevation_nauvis` matched the game
+/// at 14, 18, 21 and 8 of 26 points. Rounded per step they match at all 26.
+#[must_use]
+pub fn f32r(v: f64) -> f64 {
+    f64::from(v as f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
