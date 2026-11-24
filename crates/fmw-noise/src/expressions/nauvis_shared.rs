@@ -104,7 +104,8 @@ impl NauvisShared {
     #[must_use]
     pub fn new(params: &NauvisSharedParams) -> Self {
         let seed0 = params.seed0;
-        let nauvis_seg = 1.5 * params.segmentation_multiplier;
+        // A constant the game folds in f32 (#452). Exact at the default 1.5.
+        let nauvis_seg = f32r(1.5 * f32r(params.segmentation_multiplier));
         Self {
             nauvis_seg,
             hills: Prepared::new(&MultioctaveParams {

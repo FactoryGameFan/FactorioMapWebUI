@@ -7796,17 +7796,13 @@ fn reproduces_the_games_elevation_nauvis_tree_at_every_captured_position() {
     });
 
     // Measured on the TypeScript side against the same fixture with the same
-    // snap: 8 and 3.852844e-4, to every printed digit.
-    //
-    // **8 of 26 is the WEAKEST tier-1 count in the Nauvis port so far, and that
-    // is inherited rather than new.** This tree stacks the shared layer, an
-    // amplitude-corrected persistence field and a variable-persistence detail
-    // stack on top of each other, so it carries every unported narrowing
-    // underneath it at once - including the 81/152 of #254, which sits directly
-    // in its persistence term. `test/elevationNauvis.spec.ts` bounds the same
-    // quantity at 4e-4 and reports no count at all.
-    assert_eq!(exact, 8, "exact f32 matches, worst {worst:e}");
-    assert!(worst < 4e-4, "worst absolute error {worst:e}");
+    // snap: 8 and 3.852844e-4, the weakest tier-1 count in the Nauvis port.
+    // #452 took it to all 26, exact, with two changes that are each partial
+    // alone: every step of the tree rounded to f32 as the game does (19 by
+    // itself), and `offset_x = 10000 / 1.5` rounded to f32 before it meets a
+    // coordinate (10 by itself). The noise ops underneath were already exact.
+    assert_eq!(exact, 26, "exact f32 matches, worst {worst:e}");
+    assert_eq!(worst, 0.0, "worst absolute error {worst:e}");
 }
 
 #[test]
@@ -7823,13 +7819,22 @@ fn reproduces_the_games_elevation_nauvis_no_cliff_variant_at_both_seeds() {
     assert_eq!(positions.len(), 26, "a regen cannot empty the loop");
     assert_eq!(count_off_grid(&positions), 14, "off-grid positions");
 
-    // Measured on the TypeScript side: (seed, exact) pairs, worst 3.833771e-4
-    // and 3.089905e-4 respectively.
+    // Measured on the TypeScript side: (seed, exact) pairs 6 and 4, worst
+    // 3.833771e-4 and 3.089905e-4. #452's f32 steps took them to 25 and 26.
+    //
+    // **The one miss is open.** Seed 123456, position 10, snapped to
+    // (1556.1328125, 1555.8828125): ours 4.3539667, the game 4.353967, one f32
+    // step low. The full tree is exact at the same point, and this variant
+    // differs only in `added_cliff_elevation` being the constant 0, which
+    // makes both ends of the `lerp` constants. Rounding `-0.6 + 2.2 * t` once
+    // instead of twice was tried and is WORSE (9 misses), so it is not a fused
+    // step. How the game compiles a `lerp` with constant ends is the next
+    // thing to read, in the binary.
     for (case, &(seed, want)) in fixture
         .get("cases")
         .as_array()
         .iter()
-        .zip([(123_456u32, 6usize), (777_771, 4)].iter())
+        .zip([(123_456u32, 25usize), (777_771, 26)].iter())
     {
         assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
         let mut params = ElevationNauvisParams::defaults(seed);
