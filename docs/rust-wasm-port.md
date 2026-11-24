@@ -425,11 +425,14 @@ result:
 - **A discrete output scores high.** `mountain_volcano_spots` is 359 of 434
   because it is dominated by which candidate survives, and a sub-ULP error
   almost never changes that. `voronoi_cell_id` has the same property.
-- **Depth beats everything.** Nauvis `temperature` is bit-exact because it is
-  one `quick_multioctave_noise` and a clamp with nothing beneath it.
-  `elevation_nauvis` is the weakest Nauvis count because it stacks three layers
-  and carries every unported narrowing at once. Read the spread by depth, not as
-  a ranking.
+- **Depth looked like the cause and was not.** Nauvis `temperature` was
+  bit-exact while `elevation_nauvis` sat at 8 of 26, and this bullet used to
+  put that down to depth. #452 refuted it: the noise ops were exact all along,
+  and the residual was the f64 arithmetic joining them. Rounded to f32 at every
+  step (`eval::math::f32r`), with `offset_x = 10000 / 1.5` rounded before it
+  meets a coordinate, `aux`, `moisture`, `elevation_lakes` and
+  `elevation_nauvis` all reach 26 of 26. A deep tree scores low when its
+  glue is f64, so look there before blaming depth.
 - **A small residual is not a high count.** `detailNoise` once had the smallest
   residual of its three sibling fields and the fewest exact matches, 1 of 38.
   That one number is the whole argument for counting matches instead of bounding

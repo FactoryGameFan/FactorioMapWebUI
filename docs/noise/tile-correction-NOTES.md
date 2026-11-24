@@ -408,6 +408,12 @@ to `TileCorrectionMapGenerationTask` or `correctAndSelectTileTransitions`.
   measured. The likely home is issue #452 (Nauvis fields), which already
   records our elevation, moisture and aux missing exact matches that an
   independent engine gets.
+
+  **Update, #452 (2026-11-24):** elevation, aux and moisture now match the
+  game at every point of their fixtures, and the gap here barely moved:
+  grass-1 is 60 ULPs low (was 50) and grass-3 80 high (was 90). So the inputs
+  were not the cause, as far as the fixtures can show; the tile scores'
+  own arithmetic, which is still f64, is the next suspect.
 - **Vulcanus.** The game's own scores put volcanic-cracks first by 40,448 ULPs.
   Our volcanic-cracks-warm matches the game's to the ULP, but our
   volcanic-cracks is 60,387 ULPs (1.8e-3) low. Our own grid-vs-point shift is
