@@ -7942,8 +7942,9 @@ fn reproduces_the_games_moisture_at_every_captured_position() {
         moisture.eval(x, y)
     });
 
-    // `test/moisture.spec.ts` asserts the same 18 and the same 2^-24 bound.
-    assert_eq!(exact, 18, "exact f32 matches, worst {worst:e}");
+    // 18 until #452, when `moisture` moved to one f32 step at a time in the
+    // Lua's order, on top of the `plateaus` that moved in the commit before.
+    assert_eq!(exact, 26, "exact f32 matches, worst {worst:e}");
     assert!(worst <= f64::from(f32::EPSILON) / 2.0, "worst {worst:e}");
 }
 
@@ -8842,22 +8843,28 @@ fn reproduces_the_games_tree_layer_at_every_captured_position() {
     );
 
     // (species name, exact of 26). The order is the catalog's.
+    //
+    // #452 made `moisture` exact, which every species reads: the total went
+    // 120 -> 144, and eight species rose. `tree_04` FELL, 11 -> 10. The
+    // species' own arithmetic is still f64, so some of its exact matches were
+    // coincidences that a correct input can undo; read the total, and the
+    // species' own f32 pass is the fix for the rest.
     let expected: [(&str, usize); 15] = [
         ("tree_01", 1),
-        ("tree_04", 11),
+        ("tree_04", 10),
         ("tree_05", 2),
-        ("tree_02", 8),
+        ("tree_02", 9),
         ("tree_03", 7),
         ("tree_07", 8),
         ("tree_02_red", 1),
-        ("tree_08", 1),
-        ("tree_09", 11),
-        ("tree_06", 2),
-        ("tree_08_brown", 4),
-        ("tree_09_brown", 5),
-        ("tree_06_brown", 7),
-        ("tree_08_red", 9),
-        ("tree_09_red", 8),
+        ("tree_08", 2),
+        ("tree_09", 13),
+        ("tree_06", 7),
+        ("tree_08_brown", 9),
+        ("tree_09_brown", 8),
+        ("tree_06_brown", 8),
+        ("tree_08_red", 13),
+        ("tree_09_red", 11),
     ];
     let mut total = small + faded;
     for (index, (name, want)) in expected.iter().enumerate() {
@@ -8874,7 +8881,7 @@ fn reproduces_the_games_tree_layer_at_every_captured_position() {
     // The total is frozen too, so a species silently dropped from the loop
     // above - which would leave every remaining assertion passing - moves a
     // number.
-    assert_eq!(total, 120, "total exact of 442");
+    assert_eq!(total, 144, "total exact of 442");
 }
 
 #[test]
@@ -8971,7 +8978,8 @@ fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
             &defaults,
             &all
         ),
-        85,
+        // 85 until #452 made `moisture` exact.
+        99,
         "unsnapped total of 442"
     );
 
@@ -11131,7 +11139,9 @@ fn the_last_nauvis_pixel_is_a_known_argmax() {
     // Measured 2026-10-22: the runner-up is grass-1, the game's tile, 53 f32
     // ULPs behind (gap about 6.3e-6 on a score of 1.31). Read a moved number,
     // do not adjust it.
-    assert_eq!(got, ("grass-3", "grass-1", 53));
+    //
+    // #452: 53 -> 63 once `moisture` was exact. Elevation is still f64 here.
+    assert_eq!(got, ("grass-3", "grass-1", 63));
 }
 
 #[test]
@@ -11254,8 +11264,9 @@ fn the_last_nauvis_pixel_on_the_point_kernel_against_the_game() {
     // and 0 ULPs. Read a moved number, do not adjust it.
     //
     // #452, `aux` and `plateaus` in f32 per step: grass-3 90 -> 80 high, and
-    // its own grid-vs-point shift 0 -> 10.
-    assert_eq!(got, (-50, 80, -19, 10));
+    // its own grid-vs-point shift 0 -> 10. Then `moisture`: grass-1 50 -> 60
+    // low.
+    assert_eq!(got, (-60, 80, -19, 10));
 }
 
 /// Task 7: the last Vulcanus pixel on the POINT kernel, as above.
