@@ -13,6 +13,7 @@
 //!
 //! The eight land formulas and the argmax between them are phase 4 (#224).
 
+use crate::eval::math::f32r;
 use crate::expressions::fulgora_elevation::{ElevationFields, COASTLINE};
 use crate::tiles::helpers::{best_probability, water_base};
 
@@ -47,15 +48,21 @@ pub fn ocean_tile(fields: &ElevationFields) -> Option<Ocean> {
     // `s`'s SIGN is what picks between the two shallow variants: `shallow`
     // takes `max(-s, 0)` and `shallow2` takes `max(s, 0)`, so exactly one of
     // them is non-zero away from `s == 0`.
-    let s = fields.scrap_medium + fields.dunes;
+    //
+    // Every step is f32, left to right as `tiles-fulgora.lua` writes it
+    // (#521): `50 * mask * water_base(...) * max(...)` is three products.
+    let s = f32r(fields.scrap_medium + fields.dunes);
 
-    let shallow_base = 50.0 * mask * water_base(e, COASTLINE, 1000.0);
-    let shallow = shallow_base * (-s).max(0.0);
-    let shallow2 = shallow_base * s.max(0.0);
+    let shallow_base = f32r(f32r(50.0 * mask) * water_base(e, COASTLINE, 1000.0));
+    let shallow = f32r(shallow_base * (-s).max(0.0));
+    let shallow2 = f32r(shallow_base * s.max(0.0));
 
-    let deep_base = 100.0 * mask * water_base(e, DEEP_LEVEL, 2000.0);
-    let deep2_scale = -(e - 60.0).min(0.0) / 100.0 + (fields.dunes - (e / 100.0).max(0.0)).max(0.0);
-    let deep2 = deep2_scale * deep_base;
+    let deep_base = f32r(f32r(100.0 * mask) * water_base(e, DEEP_LEVEL, 2000.0));
+    let deep2_scale = f32r(
+        f32r(-f32r(e - 60.0).min(0.0) / 100.0)
+            + (f32r(fields.dunes - f32r(e / 100.0).max(0.0))).max(0.0),
+    );
+    let deep2 = f32r(deep2_scale * deep_base);
 
     let best_shallow = best_probability(&[shallow, shallow2]);
     let best_deep = best_probability(&[deep_base, deep2]);

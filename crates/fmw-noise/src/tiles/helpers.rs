@@ -2,6 +2,7 @@
 //!
 //! Phase 3 needed two of them; phase 6 adds the two the Nauvis catalog composes.
 
+use crate::eval::math::f32r;
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::tiles::expression_in_range::expression_in_range;
 
@@ -22,10 +23,13 @@ use crate::tiles::expression_in_range::expression_in_range;
 /// exactly 0 multiplied by `-inf` is NaN, which is how the ocean branch can
 /// produce one. A NaN must LOSE the argmax rather than poison it - see
 /// [`best_probability`].
+///
+/// **Each step is f32** (#521): the headroom, then the product with the
+/// influence, as the game evaluates it.
 #[must_use]
 pub fn water_base(elevation: f64, max_elevation: f64, influence: f64) -> f64 {
     if max_elevation >= elevation {
-        influence * (max_elevation - elevation).min(1.0)
+        f32r(f32r(influence) * f32r(max_elevation - elevation).min(1.0))
     } else {
         f64::NEG_INFINITY
     }
