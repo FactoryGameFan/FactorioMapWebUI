@@ -11145,8 +11145,9 @@ fn the_last_nauvis_pixel_is_a_known_argmax() {
     // #452: 53 -> 63 once `moisture` was exact. Elevation is still f64 here.
     //
     // #521: `expression_in_range` in the game's center/half-width form puts
-    // grass-1, the game's tile, first by 28 ULPs on the grid kernel.
-    assert_eq!(got, ("grass-1", "grass-3", 28));
+    // grass-1, the game's tile, first by 28 ULPs on the grid kernel; 27 once
+    // each score's `box + layer` is rounded to f32.
+    assert_eq!(got, ("grass-1", "grass-3", 27));
 }
 
 #[test]
@@ -11273,11 +11274,12 @@ fn the_last_nauvis_pixel_on_the_point_kernel_against_the_game() {
     // low.
     //
     // #521: with the inputs exact, the whole gap was `expression_in_range`'s
-    // form. In the game's center/half-width form both scores are within half
-    // an ULP of the game's on the point kernel (grass-1 bit-exact; grass-3
-    // differs only because the catalog's `box + layer` is not yet rounded).
-    // The grid kernel moves grass-1 by 79 ULPs here.
-    assert_eq!(got, (0, 0, -79, 0));
+    // form. In the game's center/half-width form, with each score's
+    // `box + layer` rounded to f32, both scores equal the game's bit for bit
+    // on the point kernel. The grid kernel moves them by 79 and 1 ULPs here.
+    assert_eq!(point_g1, game_g1, "grass-1 on the point kernel");
+    assert_eq!(point_g3, game_g3, "grass-3 on the point kernel");
+    assert_eq!(got, (0, 0, -79, 1));
 }
 
 /// Task 7: the last Vulcanus pixel on the POINT kernel, as above.
