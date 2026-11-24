@@ -4,45 +4,48 @@
 use crate::eval::math::min2;
 
 /// The native Factorio `expression_in_range(peak_multiplier, peak_maximum,
-/// expr_1..N, from_1..N, to_1..N)` builtin, reverse-engineered from the headless
-/// oracle (see `docs/noise/expression-in-range-NOTES.md`). The tile-autoplace
-/// system uses it to make a tile probable only inside an N-dimensional box of
-/// climate values, with a linear falloff outside.
+/// expr_1..N, from_1..N, to_1..N)` builtin. The tile-autoplace system uses it to
+/// make a tile probable only inside an N-dimensional box of climate values, with
+/// a linear falloff outside.
 ///
 /// ```text
-/// m      = min over all dims i of min(value_i - from_i, to_i - value_i)
-/// result = min(peak_maximum, peak_multiplier * m)
+/// per dim i:  half_i   = (to_i - from_i) / 2      (constants, folded in f64)
+///             center_i = (from_i + to_i) / 2
+///             d_i      = min(peak_maximum, peak_multiplier * (half_i - |value_i - center_i|))
+/// result    = min over all dims of d_i
 /// ```
 ///
-/// Per dimension, `min(value - from, to - value)` is the signed distance to the
-/// nearer edge of `[from, to]`: positive inside, zero on an edge, negative
-/// outside. Taking the min across dims makes the box a hard AND. Scaling by
-/// `peak_multiplier` sets the falloff slope; clamping at `peak_maximum` caps the
-/// in-range plateau. There is **no lower clamp** - the value falls linearly
-/// without bound outside the range.
+/// `half - |value - center|` is the signed distance to the nearer edge of
+/// `[from, to]`: positive inside, zero on an edge, negative outside. Taking the
+/// min across dims makes the box a hard AND. There is **no lower clamp**.
 ///
-/// # Every step is f32, and that is what makes it exact
+/// # The game builds it from a CENTER and a HALF-WIDTH, and that is not cosmetic
 ///
-/// The TypeScript spells this with 5 `Math.fround` calls because JavaScript
-/// computes in f64; here the narrowing is the type. It is not decoration. The
-/// arithmetic used to run in f64 and round once at the end, which left a worst
-/// residual of ~9.5e-7 that a spec accepted under an `8e-3` floor - a ceiling
-/// ~8400x looser than the actual error (#162). Per-operation f32 takes the
-/// residual to **exactly 0 on all 404 committed oracle samples**, where the f64
-/// form matched only 285.
+/// Read off the 2.1.23 binary with Ghidra (`NoiseExpressions::expressionInRange`,
+/// file 0x1542990): the builder folds `(to - from) * 0.5` and `(from + to) * 0.5`
+/// into two constants, then emits `subtract(value, center)`, an absolute value,
+/// `subtract(half, ...)`, `multiply(..., peak_multiplier)` (skipped at 1) and
+/// `clamp(..., -inf, peak_maximum)` (skipped at +inf) per dim, and folds the dims
+/// with `clamp(acc, -inf, d_i)`, starting from +inf.
 ///
-/// **The `from`/`to` CONSTANTS are narrowed too, not just the products.** The
-/// catalog passes literals like `0.7`, `0.45` and `0.35`, none of which is
-/// f32-exact, so this is the `narrow the CONSTANT` half of the rule in
-/// `eval/mod.rs` rather than the `narrow the PRODUCT` half.
+/// In exact math it equals `min(value - from, to - value)`, which this function
+/// used to compute. In f32 it does not: `value - center` subtracts a far-away
+/// center, so the low bits round differently. At the last differing Nauvis
+/// pixel, (229, -19), the game's grass scores came back exact under this form at
+/// all 36 values in its 3x3 neighbourhood, and the edge form matched 11 (#521).
+///
+/// # Every step is f32
+///
+/// `half` and `center` are folded from the f64 constants and then held as f32,
+/// like every noise-machine constant. Every operation after that is one f32
+/// step.
 ///
 /// # Two things that look like tidying and are not
 ///
-/// - **The accumulator loop uses a strict `<`, not [`min2`].** A NaN
-///   `edge_distance` compares false against everything, so it never becomes the
-///   running minimum and NaN does **not** propagate out of the loop - which is
-///   the opposite of what `min2` does. That is the TypeScript's behaviour and
-///   the engine's, so it is reproduced rather than cleaned up.
+/// - **The accumulator loop uses a strict `<`, not [`min2`].** A NaN dim
+///   compares false against everything, so it never becomes the running minimum
+///   and NaN does **not** propagate out of the loop. That is the TypeScript's
+///   behaviour and was kept.
 /// - **`peak_maximum` stays unrounded.** It is `f64::INFINITY` at `sand-1`'s
 ///   call site, where the plateau is deliberately uncapped and in-range values
 ///   exceed 1. Do not clamp that case.
@@ -54,19 +57,21 @@ pub fn expression_in_range(
     froms: &[f64],
     tos: &[f64],
 ) -> f64 {
+    let multiplier = peak_multiplier as f32;
     let mut m = f64::INFINITY;
     for i in 0..values.len() {
         let v = values[i] as f32;
-        let from = froms[i] as f32;
-        let to = tos[i] as f32;
+        let half = ((tos[i] - froms[i]) * 0.5) as f32;
+        let center = ((froms[i] + tos[i]) * 0.5) as f32;
+        let distance = half - (v - center).abs();
         // `min2` and not `f64::min`: this feeds an argmax whose tie-break is
         // order-sensitive, and the two differ on signed zero.
-        let edge_distance = min2(f64::from(v - from), f64::from(to - v));
-        if edge_distance < m {
-            m = edge_distance;
+        let d = min2(f64::from(multiplier * distance), peak_maximum);
+        if d < m {
+            m = d;
         }
     }
-    min2(peak_maximum, f64::from(peak_multiplier as f32 * m as f32))
+    m
 }
 
 #[cfg(test)]
@@ -151,11 +156,36 @@ mod tests {
         assert_eq!(v, 1.0, "the remaining axis decides the result");
     }
 
-    /// No dimensions at all leaves the accumulator at its starting value, so
-    /// the result is `peak_maximum`. Not reachable from the catalog; pinned
-    /// because the starting value is otherwise invisible.
+    /// The center form against the game's own numbers at (229, -19), read with
+    /// `calculate_tile_properties` on 2.1.23: aux, moisture, `noise_layer_noise(19)`
+    /// and the `grass-1` score. The edge form `min(v - from, to - v)` is equal in
+    /// exact math and lands 60 f32 steps low here; this is the control that it
+    /// does not come back.
     #[test]
-    fn no_dimensions_gives_the_peak_maximum() {
-        assert_eq!(expression_in_range(20.0, 1.0, &[], &[], &[]), 1.0);
+    fn the_center_form_reproduces_the_games_grass_1_score() {
+        let (aux, moisture) = (0.603_208_422_660_827_6, 0.737_899_124_622_345);
+        let layer = 0.553_787_469_863_891_6;
+        let game = 1.311_777_353_286_743_2;
+        let box_ = expression_in_range(20.0, 1.0, &[aux, moisture], &[-10.0, 0.7], &[11.0, 11.0]);
+        assert_eq!(f64::from((box_ + layer) as f32), game);
+
+        let edge = {
+            let v = moisture as f32;
+            f64::from(20.0f32 * (v - 0.7f32))
+        };
+        assert_ne!(
+            f64::from((edge + layer) as f32),
+            game,
+            "the edge form must miss"
+        );
+    }
+
+    /// No dimensions at all leaves the accumulator at its starting value, +inf,
+    /// as the game's builder starts it; the cap is applied per dim, so it never
+    /// runs. Not reachable: the game refuses fewer than 5 arguments (one dim).
+    /// Pinned because the starting value is otherwise invisible.
+    #[test]
+    fn no_dimensions_gives_the_starting_infinity() {
+        assert_eq!(expression_in_range(20.0, 1.0, &[], &[], &[]), f64::INFINITY);
     }
 }

@@ -11143,7 +11143,10 @@ fn the_last_nauvis_pixel_is_a_known_argmax() {
     // do not adjust it.
     //
     // #452: 53 -> 63 once `moisture` was exact. Elevation is still f64 here.
-    assert_eq!(got, ("grass-3", "grass-1", 63));
+    //
+    // #521: `expression_in_range` in the game's center/half-width form puts
+    // grass-1, the game's tile, first by 28 ULPs on the grid kernel.
+    assert_eq!(got, ("grass-1", "grass-3", 28));
 }
 
 #[test]
@@ -11258,9 +11261,9 @@ fn the_last_nauvis_pixel_on_the_point_kernel_against_the_game() {
         "nauvis (229,-19) point: grass-1 {point_g1} (game {game_g1}), grass-3 {point_g3} \
          (game {game_g3}); grid: {grid_g1}, {grid_g3}; ulps {got:?}"
     );
-    // The game's point scores put grass-1 first; ours, on the same kernel, put
-    // grass-3 first.
-    assert!(game_g1 > game_g3 && point_g3 > point_g1);
+    // The game's point scores put grass-1 first. Ours put grass-3 first until
+    // #521, and grass-1 first since.
+    assert!(game_g1 > game_g3 && point_g1 > point_g3);
     // Measured 2026-10-22: on the point kernel our grass-1 is 50 ULPs low and
     // our grass-3 is 90 ULPs high, against our own grid-vs-point shift of 19
     // and 0 ULPs. Read a moved number, do not adjust it.
@@ -11268,7 +11271,13 @@ fn the_last_nauvis_pixel_on_the_point_kernel_against_the_game() {
     // #452, `aux` and `plateaus` in f32 per step: grass-3 90 -> 80 high, and
     // its own grid-vs-point shift 0 -> 10. Then `moisture`: grass-1 50 -> 60
     // low.
-    assert_eq!(got, (-60, 80, -19, 10));
+    //
+    // #521: with the inputs exact, the whole gap was `expression_in_range`'s
+    // form. In the game's center/half-width form both scores are within half
+    // an ULP of the game's on the point kernel (grass-1 bit-exact; grass-3
+    // differs only because the catalog's `box + layer` is not yet rounded).
+    // The grid kernel moves grass-1 by 79 ULPs here.
+    assert_eq!(got, (0, 0, -79, 0));
 }
 
 /// Task 7: the last Vulcanus pixel on the POINT kernel, as above.
@@ -12176,4 +12185,48 @@ fn aquilo_real_surface_replay_needs_touching_boxes_to_collide() {
     eprintln!("aquilo real surface, strict overlap: {matched} matched, ours {ours}, game {game}");
     assert_eq!(game, 209);
     assert!(ours > game && matched < game, "{matched} {ours}");
+}
+
+#[test]
+fn zz_probe_last_pixel_parts() {
+    use crate::tiles::helpers::{expression_in_range_base, noise_layer_noise};
+    let seed0 = 123_456;
+    let stack = NauvisStack::new(&NauvisCtx::defaults(seed0));
+    for &(px, py) in &[(229.0, -19.0), (229.5, -18.5)] {
+        let at = At::point(px, py);
+        eprintln!("PART at ({px}, {py})");
+        let a = stack.aux.eval_at(at);
+        let m = stack.moisture.eval_at(at);
+        let e = stack.elevation_nauvis.eval_at(at);
+        eprintln!("PART aux {a:.9} ({:e}) moisture {m:.9} elevation {e:.6}", a);
+        for (tile, layer, box_) in [
+            ("grass-1", 19u32, (-10.0, 0.7, 11.0, 11.0)),
+            ("grass-2", 20, (0.45, 0.45, 11.0, 0.8)),
+            ("grass-3", 21, (-10.0, 0.6, 0.65, 0.9)),
+            ("grass-4", 22, (-10.0, 0.5, 0.55, 0.7)),
+        ] {
+            let _ = noise_layer_noise;
+            let l = f64::from(
+                crate::multioctave_noise::Prepared::new(
+                    &crate::multioctave_noise::MultioctaveParams {
+                        seed0,
+                        seed1: layer,
+                        octaves: 4.0,
+                        persistence: crate::eval::math::f32r(0.7),
+                        input_scale: 1.0 / 6.0,
+                        output_scale: crate::eval::math::f32r(2.0 / 3.0),
+                    },
+                )
+                .eval_at(at),
+            );
+            let b = expression_in_range_base(a, m, box_.0, box_.1, box_.2, box_.3);
+            let g = game_point_score("nauvis", tile);
+            let ours = f64::from((b + l) as f32);
+            eprintln!(
+            "PART {tile}: layer {l:.9} box {b:.9} ours {ours:.9} game {g:.9} implied_box {:.9} box_err {:e}",
+            g - l,
+            b - (g - l)
+        );
+        }
+    }
 }
