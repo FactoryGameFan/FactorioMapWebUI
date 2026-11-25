@@ -33,10 +33,13 @@
 //!
 //! So the sine and cosine of the angle are computed **once per render, outside
 //! the per-pixel path**, and handed in. The caller that owns them is the one
-//! that owns the engine question: in a tier-1 test that is Rust's own libm,
-//! graded against the oracle; in tier-2 parity and in the shipped engine it is
-//! V8's, passed across the boundary, which makes a libm disagreement impossible
-//! rather than unlikely.
+//! that owns the engine question: in a tier-1 test that is the game's own
+//! polynomial in Rust ([`vm_sin`], #531), graded against the oracle; in tier-2
+//! parity and in the shipped engine it is the same polynomial computed in V8 and
+//! passed across the boundary, which makes a libm disagreement impossible rather
+//! than unlikely.
+
+use crate::eval::math::{vm_cos, vm_sin};
 
 /// The sine and cosine of one bearing, in the order the expression uses them.
 ///
@@ -56,16 +59,18 @@ impl AngleTrig {
         Self { sin, cos }
     }
 
-    /// From an angle in DEGREES, via Rust's libm.
+    /// From an angle in DEGREES, through the game's own sin/cos polynomial (#531).
     ///
     /// `(angle / 180) * PI` in that order and with those parentheses, matching
     /// the TypeScript: `angle / 180 * PI` and `angle * (PI / 180)` are different
     /// numbers, because `PI / 180` is not exact.
     ///
-    /// **Not for the shipped engine.** See the module docs: this reaches
-    /// whichever libm the target links, and the WASM one is measurably not
-    /// V8's. It is here so a tier-1 test can grade the expression against the
-    /// oracle without a fixture having to carry pre-computed trig.
+    /// Since #531 this uses the game's own polynomial ([`vm_sin`], [`vm_cos`]),
+    /// which touches no libm and returns the same bits on every host. The
+    /// shipped engine still takes its trig as values from V8 (#270), and V8's
+    /// copy is the same polynomial. This constructor is here so a tier-1 test
+    /// can grade the expression against the oracle without a fixture having to
+    /// carry pre-computed trig.
     #[must_use]
     pub fn from_degrees(angle: f64) -> Self {
         // f32 `pi`, and per-operation narrowing, matching `PI32` and
@@ -77,8 +82,8 @@ impl AngleTrig {
         let pi32 = f64::from(std::f64::consts::PI as f32);
         let radians = f64::from(((angle / 180.0) as f32 as f64 * pi32) as f32);
         Self {
-            sin: f64::from(radians.sin() as f32),
-            cos: f64::from(radians.cos() as f32),
+            sin: vm_sin(radians),
+            cos: vm_cos(radians),
         }
     }
 }

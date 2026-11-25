@@ -27,6 +27,7 @@
 
 import { f32 } from "../eval/f32";
 import { seedNormalized, seedSmall } from "../expressions/vulcanusSeed";
+import { gameCos, gameSin } from "../gameTrig";
 
 /** `'FMWR'` little-endian. Must equal `fmw_wasm::abi::MAGIC`. */
 export const MAGIC = 0x52574d46;
@@ -360,15 +361,20 @@ export type WasmRenderRequest =
   | AquiloRenderRequest;
 
 /**
- * `f32(f32(a / 180) * f32(PI))`, then f32 `sin`/`cos` - the narrowing lattice
- * `startingSpotAtAngle` needs (#279).
+ * `f32(f32(a / 180) * f32(PI))`, then the GAME's `sin`/`cos` - the narrowing
+ * lattice `startingSpotAtAngle` needs (#279).
  *
  * `(a / 180) * PI32` is in that order on purpose: `a * (PI32 / 180)` is a
  * different number, because `PI32 / 180` is not exact.
+ *
+ * The sine and cosine are the game's own polynomial from `../gameTrig`, not
+ * `Math.sin`: the two differ by one ULP on about 5% of inputs (#531). They use
+ * no libm, so V8 and the WASM module agree, and the #270 rule still holds -
+ * the values are computed here and cross the boundary as numbers.
  */
 function trigOf(angleDegrees: number): { sin: number; cos: number } {
   const radians = f32(f32(angleDegrees / 180) * f32(Math.PI));
-  return { sin: f32(Math.sin(radians)), cos: f32(Math.cos(radians)) };
+  return { sin: gameSin(radians), cos: gameCos(radians) };
 }
 
 /**

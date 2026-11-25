@@ -4104,14 +4104,13 @@ fn reproduces_the_vulcanus_spawn_layer_at_every_captured_position() {
     // before, and the f32 radius is what took it to 410. The three wobble sums
     // and the distortion products are rounded in the Lua's order.
     //
-    // **`startingArea` stops at 392 because of one `sin`.** Every one of its 18
-    // misses is `basalts_start`, one ULP off, and the one ULP is the basalts
-    // bearing's sine (angle -239.8965 degrees, -4.18698 rad): the correctly
-    // rounded f32 sine is 0.86512095 and the game's is the f32 below it,
-    // 0.86512089. Nudging that one value down by one ULP takes `startingArea`
-    // to 410 of 410 here and every one of the eight biome fields to 434 of 434.
-    // The game's `sin` is not correctly rounded, and `AngleTrig::from_degrees`
-    // (and the V8 trig the wasm boundary passes in) is.
+    // **#531: `startingArea` 392 -> 410 (all of them).** It stopped at 392
+    // because of one `sin`. Every one of its 18 misses was `basalts_start`, one
+    // ULP off, and the one ULP was the basalts bearing's sine (angle -239.8965
+    // degrees, -4.18698 rad): the correctly rounded f32 sine is 0.86512095 and
+    // the game's is the f32 below it, 0.86512089. The game's `sin` is its own
+    // polynomial, not a correctly rounded one, and `AngleTrig::from_degrees`
+    // (and the V8 trig the wasm boundary passes in) now uses that polynomial.
     //
     // Those residuals are two to three orders of magnitude SMALLER than the
     // crack layer's and the exact counts are still far from full - 61 of 410 on
@@ -4128,7 +4127,7 @@ fn reproduces_the_vulcanus_spawn_layer_at_every_captured_position() {
     for (key, want_exact, select) in [
         (
             "startingArea",
-            392usize,
+            410usize,
             &(|f: &S| f.starting_area) as &dyn Fn(&S) -> f64,
         ),
         ("startingCircle", 410, &|f| f.starting_circle),
@@ -4209,9 +4208,17 @@ fn reproduces_the_vulcanus_biome_layer_at_every_captured_position() {
     // arithmetic (f32 distance, the double `3.1416` for pi, peak in f64 then
     // narrowed), which alone takes `mountain_volcano_spots` from 380 to 434.
     //
-    // **The remaining misses are one `sin`.** The basalts bearing's sine is one
-    // ULP above the game's (see the spawn test); nudged down by one ULP, all
-    // eight fields here are 434 of 434.
+    // **#531: the remaining misses were one `sin`, and all eight fields are now
+    // 434 of 434.** The basalts bearing's sine was one ULP above the game's (see
+    // the spawn test). The game's own sin/cos polynomial replaced the libm call:
+    //
+    //   vulcanus_mountains_raw_volcano  343 -> 434
+    //   vulcanus_mountains_biome_full   354 -> 434
+    //   vulcanus_ashlands_biome_full    365 -> 434
+    //   vulcanus_basalts_biome_full     343 -> 434
+    //   vulcanus_mountains_biome        428 -> 434
+    //   vulcanus_ashlands_biome         429 -> 434
+    //   vulcanus_basalts_biome          426 -> 434
     //
     // **The three clamped biomes score roughly three times their own unclamped
     // sources** - 404, 404 and 408 against 135, 114 and 134 - and they are the
@@ -4235,21 +4242,21 @@ fn reproduces_the_vulcanus_biome_layer_at_every_captured_position() {
             434usize,
             &(|f: &B| f.mountain_volcano_spots) as &dyn Fn(&B) -> f64,
         ),
-        ("vulcanus_mountains_raw_volcano", 343, &|f| {
+        ("vulcanus_mountains_raw_volcano", 434, &|f| {
             f.mountains_raw_volcano
         }),
-        ("vulcanus_mountains_biome_full", 354, &|f| {
+        ("vulcanus_mountains_biome_full", 434, &|f| {
             f.mountains_biome_full
         }),
-        ("vulcanus_ashlands_biome_full", 365, &|f| {
+        ("vulcanus_ashlands_biome_full", 434, &|f| {
             f.ashlands_biome_full
         }),
-        ("vulcanus_basalts_biome_full", 343, &|f| {
+        ("vulcanus_basalts_biome_full", 434, &|f| {
             f.basalts_biome_full
         }),
-        ("vulcanus_mountains_biome", 428, &|f| f.mountains_biome),
-        ("vulcanus_ashlands_biome", 429, &|f| f.ashlands_biome),
-        ("vulcanus_basalts_biome", 426, &|f| f.basalts_biome),
+        ("vulcanus_mountains_biome", 434, &|f| f.mountains_biome),
+        ("vulcanus_ashlands_biome", 434, &|f| f.ashlands_biome),
+        ("vulcanus_basalts_biome", 434, &|f| f.basalts_biome),
     ] {
         let got: Vec<f64> = fields.iter().map(select).collect();
         assert_eq!(
@@ -4338,14 +4345,18 @@ fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_biome_layer() {
         )
     };
 
+    // #531: unsnapped (424, 325, 336, 347, 325, 426, 424, 425) ->
+    // (424, 416, 416, 416, 416, 432, 429, 433); snapped (434, 343, 354, 365,
+    // 343, 428, 429, 426) -> all 434. The snap stays load-bearing: every column
+    // but the first is lower unsnapped.
     assert_eq!(
         scored(false),
-        (424, 325, 336, 347, 325, 426, 424, 425),
+        (424, 416, 416, 416, 416, 432, 429, 433),
         "unsnapped - points the game never saw"
     );
     assert_eq!(
         scored(true),
-        (434, 343, 354, 365, 343, 428, 429, 426),
+        (434, 434, 434, 434, 434, 434, 434, 434),
         "snapped - where the game evaluated"
     );
 }
@@ -4403,7 +4414,13 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     // layer at a time (elev): helpers 171 -> 180, cracks 180 -> 213,
     // elevation 213 -> 327.
     //
-    // **The 107 positions still short are all ones that read a FRACTIONAL
+    // **#531: 327 -> 434 of 434 (all of them), unsnapped 321 -> 416.** The 107
+    // positions short here were all ones that read a fractional biome or
+    // volcano input, and the basalts bearing's one-ULP sine was what those
+    // inputs were missing. The game's own sin/cos polynomial closed every one.
+    // The note that follows describes the state before #531.
+    //
+    // **The 107 positions that were still short all read a FRACTIONAL
     // biome or volcano input.** Every miss has `mountain_volcano_spots > 0`,
     // or a `mountains_biome` or `ashlands_biome` strictly between 0 and 1.
     // None has all three at their bounds. Those fields belong to the spawn and
@@ -4459,8 +4476,8 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     // for scale alone, which is the third argument for counting matches.
     type E = ElevationFields;
     for (key, want_exact, select) in [
-        ("elev", 423usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
-        ("elevation", 423, &|f| f.elevation),
+        ("elev", 434usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
+        ("elevation", 434, &|f| f.elevation),
     ] {
         let got: Vec<f64> = fields.iter().map(select).collect();
         assert_eq!(
@@ -4484,11 +4501,13 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
 ///
 /// | field | unsnapped | snapped |
 /// | --- | ---: | ---: |
-/// | `elev` (and `elevation`, which equals it here) | 405 | **423** |
-/// | `temperature` | 411 | **429** |
+/// | `elev` (and `elevation`, which equals it here) | 416 | **434** |
+/// | `temperature` | 416 | **434** |
 ///
 /// (The table above was 169 / 171 and 244 / 252 when this was measured
-/// 2026-08-21. #521 rounded every Vulcanus layer to f32 and moved all four.)
+/// 2026-08-21. #521 rounded every Vulcanus layer to f32 and moved all four to
+/// 405 / 423 and 411 / 429; #531's game sin/cos polynomial moved them to the
+/// numbers shown.)
 ///
 /// Both move UP, which is the direction that says the snap is recovering the
 /// point the game evaluated rather than perturbing a good answer. It is a small
@@ -4545,10 +4564,10 @@ fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_elevation_surface() {
         )
     };
 
-    assert_eq!(score_elev(false), 405, "elev unsnapped");
-    assert_eq!(score_elev(true), 423, "elev snapped");
-    assert_eq!(score_temp(false), 411, "temperature unsnapped");
-    assert_eq!(score_temp(true), 429, "temperature snapped");
+    assert_eq!(score_elev(false), 416, "elev unsnapped");
+    assert_eq!(score_elev(true), 434, "elev snapped");
+    assert_eq!(score_temp(false), 416, "temperature unsnapped");
+    assert_eq!(score_temp(true), 434, "temperature snapped");
 }
 
 /// `vulcanus_temperature`, which the climate layer deferred until `elev` existed.
@@ -4594,6 +4613,9 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
     // positions (#186, #294). Unsnapped it scores 411; the sibling anti-vacuity
     // test pins both numbers.
     //
+    // #531: 429 -> 434 (all of them), unsnapped 411 -> 416, with `elev` 423 ->
+    // 434; the game's sin/cos polynomial replaced libm.
+    //
     // #521: 252 -> 429, with `elev` 171 -> 423. `vulcanus_temperature` is
     // rounded one f32 step at a time as well, left to right as the Lua sums it,
     // and every layer it reads (helpers, cracks, climate, spawn, biomes and
@@ -4610,7 +4632,7 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
     // Lua is byte-identical across that range (#295).
     assert_eq!(
         score_vulcanus(&got, fixture.get("temperature").as_array(), "temperature"),
-        429,
+        434,
         "temperature exact f32 matches out of {}",
         positions.len()
     );
@@ -7594,6 +7616,9 @@ use crate::rocks::vulcanus_field::{vulcanus_decorative_knockout, VulcanusRockFie
 /// this module alone gave 287, 284 and 417; with the upstream layers rounded
 /// too the composites rose further and the clamped density reached 421.
 ///
+/// **#531: huge 433 -> 434, big 432 -> 434 and density 432 -> 434**, all of them,
+/// from the game's own sin/cos polynomial in the bearings the rock fields read.
+///
 /// **#521, follow-up: 303 -> 433 (huge), 297 -> 432 (big) and 421 -> 432
 /// (density)** by narrowing `persistence` and `output_scale` to f32 inside
 /// `octave_terms`. The game stores both as f32 fields and computes `1/P` with
@@ -7632,8 +7657,8 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     let values = fixture.get("values");
     for (key, want_exact, got) in [
         ("vulcanus_decorative_knockout", 434usize, &knockout_out),
-        ("vulcanus_rock_huge", 433, &huge),
-        ("vulcanus_rock_big", 432, &big),
+        ("vulcanus_rock_huge", 434, &huge),
+        ("vulcanus_rock_big", 434, &big),
     ] {
         assert_eq!(
             score_vulcanus(got, values.get(key).as_array(), key),
@@ -7649,7 +7674,9 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     // Scored against the game's values so it cannot pass by agreeing with our
     // own two fields.
     //
-    // **432 of 434 is mostly the CLAMP, not the arithmetic.** 399 of these
+    // **(Before #531 this was 432 of 434; it is 434 now, and the paragraph
+    // below describes that earlier state.) 432 of 434 was mostly the CLAMP, not
+    // the arithmetic.** 399 of these
     // positions clamp to exactly 0 - both rock expressions are negative over
     // most of the map - and a saturated position is exact for free, because
     // both ports and the game all return the bound itself. So 399 of the 432
@@ -7676,7 +7703,7 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
             density_exact += 1;
         }
     }
-    assert_eq!(density_exact, 432, "density exact f32 matches out of 434");
+    assert_eq!(density_exact, 434, "density exact f32 matches out of 434");
     assert_eq!(clamped_to_zero, 399, "positions the clamp saturates at 0");
 
     // Both expressions cap at `0.2 * (1 - k * ashlands_biome)`, so the overlay
@@ -12449,4 +12476,85 @@ fn zz_probe_last_pixel_parts() {
         );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// #531: the game's own sin/cos polynomial.
+// ---------------------------------------------------------------------------
+
+/// `vm_sin` and `vm_cos` against the four trig rows of `oracle-native-ops.json`:
+/// 4 x 1,024 values, all exact.
+///
+/// The control matters as much as the match. Libm's correctly rounded f32 trig
+/// takes 964 to 987 of each row's 1,024, so a fixture that libm also passed
+/// would grade nothing. The row's argument is built the way the game builds it:
+/// `x / 64` is exact, and `x * 13.37` multiplies by the f32 constant and rounds.
+#[test]
+fn the_games_sin_and_cos_polynomial_reproduces_every_trig_row() {
+    use crate::eval::math::{f32r, vm_cos, vm_sin};
+
+    let fixture = load_captured_at("test/fixtures/oracle-native-ops.json", "2.1.23");
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 1024, "fixture size");
+    let expressions = fixture.get("expressions").as_array();
+
+    type Arg = fn(f64, f64) -> f64;
+    type Fun = fn(f64) -> f64;
+    let libm_sin: Fun = |a| f64::from(a.sin() as f32);
+    let libm_cos: Fun = |a| f64::from(a.cos() as f32);
+    let rows: [(&str, Fun, Fun, Arg); 4] = [
+        ("sin(x / 64)", vm_sin, libm_sin, |x, _| f32r(x / 64.0)),
+        ("cos(x / 64)", vm_cos, libm_cos, |x, _| f32r(x / 64.0)),
+        ("sin(x * 13.37)", vm_sin, libm_sin, |x, _| {
+            f32r(x * f32r(13.37))
+        }),
+        ("cos(y * 0.731)", vm_cos, libm_cos, |_, y| {
+            f32r(y * f32r(0.731))
+        }),
+    ];
+
+    let mut total = 0usize;
+    for (expression, vm, libm, arg) in rows {
+        let row = expressions
+            .iter()
+            .find(|r| r.get("expression").as_str() == expression)
+            .unwrap_or_else(|| panic!("fixture has no row {expression}"));
+        let bits: Vec<u32> = row
+            .get("bits")
+            .as_array()
+            .iter()
+            .map(|b| u32::from_str_radix(b.as_str(), 16).expect("hex bits"))
+            .collect();
+        assert_eq!(bits.len(), 1024, "{expression} length");
+        let (mut exact, mut libm_exact) = (0usize, 0usize);
+        for (p, want) in positions.iter().zip(&bits) {
+            let xy = p.as_array();
+            let a = arg(xy[0].as_f64(), xy[1].as_f64());
+            exact += usize::from((vm(a) as f32).to_bits() == *want);
+            libm_exact += usize::from((libm(a) as f32).to_bits() == *want);
+        }
+        assert_eq!(exact, 1024, "{expression}: game polynomial");
+        assert!(
+            libm_exact < 1024 && libm_exact > 900,
+            "{expression}: libm control matched {libm_exact} of 1024; it must fail"
+        );
+        total += exact;
+    }
+    assert_eq!(total, 4096, "all four trig rows");
+}
+
+/// The basalts bearing at seed 123456, through `AngleTrig::from_degrees`: the
+/// game's sine is `0x3f5d7890`, one ULP below the libm-rounded `0x3f5d7891`.
+#[test]
+fn the_basalts_bearing_at_seed_123456_has_the_games_sine() {
+    use crate::eval::math::f32r;
+    use crate::expressions::starting_spot_at_angle::AngleTrig;
+    use crate::expressions::vulcanus_seed::{seed_normalized, seed_small};
+
+    let seed0 = 123_456u32;
+    let direction = -1.0 + 2.0 * f64::from(seed_small(seed0) & 1);
+    let ashlands = f32r(f64::from(seed_normalized(seed0)) * 3600.0);
+    let basalts = f32r(ashlands + f32r(240.0 * direction));
+    let trig = AngleTrig::from_degrees(basalts);
+    assert_eq!((trig.sin as f32).to_bits(), 0x3f5d_7890);
 }

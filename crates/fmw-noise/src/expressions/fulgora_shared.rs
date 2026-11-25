@@ -117,8 +117,8 @@ impl FulgoraShared {
     /// policy forbids, and the angle is a per-render constant so nothing is
     /// lost by lifting it out.
     ///
-    /// [`FulgoraShared::with_host_trig`] computes them with Rust's own libm,
-    /// for tests.
+    /// [`FulgoraShared::with_host_trig`] computes them with the game's own
+    /// sin/cos polynomial (#531), for tests.
     #[must_use]
     pub fn new(ctx: &FulgoraCtx, starting_trig: AngleTrig, vault_trig: AngleTrig) -> Self {
         let seed0 = ctx.seed0;
@@ -178,7 +178,8 @@ impl FulgoraShared {
         }
     }
 
-    /// As [`FulgoraShared::new`], but computing both bearings with Rust's libm.
+    /// As [`FulgoraShared::new`], but computing both bearings with the game's own
+    /// sin/cos polynomial (#531).
     ///
     /// For tier-1 tests and for anything that is not the shipped engine. The
     /// bearing is `seed0 / 360` degrees, and the vault sits opposite it.

@@ -1116,8 +1116,8 @@ than regenerated from the encoder.
 Two lessons from that checker, and both generalise past it:
 
 - **A property check is not a structural check.** The checker cannot reproduce
-  the Fulgora and Vulcanus trig values, since those are V8's `Math.sin` after an
-  f32 narrowing, so it checked each pair for `sin^2 + cos^2 = 1` instead. That
+  the Fulgora and Vulcanus trig values, since those are the game's own sin/cos
+  polynomial (`src/noise/gameTrig.ts`, #531) computed in V8, so it checked each pair for `sin^2 + cos^2 = 1` instead. That
   property **passed a planted swap of two bearings** - rendering a plausible
   planet with its biomes rotated - because a property is invariant under
   permutation. It now also recovers each angle with `atan2` and checks it
