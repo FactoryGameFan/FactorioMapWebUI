@@ -47,13 +47,14 @@ use std::collections::BTreeMap;
 
 use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::PI;
+use crate::eval::math::{f32r, PI};
 use crate::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
 use crate::fast_approx::fast_cbrt;
 use crate::spot_candidates::SpotRegionKey;
 use crate::spot_selection::{select_spots, SelectedSpot, SpotSelectParams};
 
 use super::nauvis_catalog::ResourceParams;
+use super::regular_patches::scaled;
 use super::resource_math::{
     basement_value, starting_area_spot_quantity, starting_blob_amplitude, starting_density_at,
     starting_favorability_base_at, ResourceControlLevers, ResourceControls,
@@ -127,8 +128,9 @@ pub struct StartingPatches {
     seed0: u32,
     /// `starting_area_spot_quantity` - a constant, the same for every spot.
     quantity: f64,
-    /// `maximum_spot_basement_radius = 2 * rq * saq^(1/3)`. f64 and NOT
-    /// narrowed: it is only a cull threshold.
+    /// `maximum_spot_basement_radius = 2 * rq * saq^(1/3)`, each step in f32
+    /// (#521) as the Lua writes it. It is only a cull threshold, so this is
+    /// ungraded: no tier-1 value moved with it.
     max_basement_radius: f64,
     /// `starting_rq_factor * saq^(1/3)`, narrowed.
     ///
@@ -166,9 +168,9 @@ impl StartingPatches {
             skip_offset: ctx.skip_offset,
             seed0: ctx.seed0,
             quantity,
-            max_basement_radius: 2.0
-                * params.starting_rq_factor
-                * f64::from(fast_cbrt(quantity as f32)),
+            max_basement_radius: f32r(
+                f32r(2.0 * params.starting_rq_factor) * f64::from(fast_cbrt(quantity as f32)),
+            ),
             cone_radius_base: f64::from(
                 (params.starting_rq_factor * f64::from(fast_cbrt(quantity as f32))) as f32,
             ),
@@ -275,9 +277,19 @@ impl StartingPatches {
     /// regular-set-only.
     #[must_use]
     pub(crate) fn blob_term_at(&self, x: f64, y: f64) -> f64 {
-        let blobs0 = f64::from(basis_noise(x / 8.0, y / 8.0, &self.tables))
-            + f64::from(basis_noise(x / 24.0, y / 24.0, &self.tables));
-        (blobs0 - 1.0 / 4.0) * starting_blob_amplitude(&self.params, &self.controls)
+        // Every step in f32, in the Lua's order (#521).
+        let blobs0 = f32r(
+            f64::from(basis_noise(
+                scaled(x, 1.0 / 8.0),
+                scaled(y, 1.0 / 8.0),
+                &self.tables,
+            )) + f64::from(basis_noise(
+                scaled(x, 1.0 / 24.0),
+                scaled(y, 1.0 / 24.0),
+                &self.tables,
+            )),
+        );
+        f32r(f32r(blobs0 - f32r(1.0 / 4.0)) * starting_blob_amplitude(&self.params, &self.controls))
     }
 
     /// The raw `starting_patches` field value.
@@ -287,7 +299,7 @@ impl StartingPatches {
     /// [`super::resource_patches`], which owns both wrappers.
     #[must_use]
     pub fn field(&self, x: f64, y: f64) -> f64 {
-        self.spot_field_at(x, y) + self.blob_term_at(x, y)
+        f32r(self.spot_field_at(x, y) + self.blob_term_at(x, y))
     }
 
     /// The constant floor this field is built over. Test-only, as on
@@ -354,9 +366,11 @@ mod tests {
             "cone {at_cull} is already below basement {} at the cull",
             p.basement()
         );
-        // And the cull really is about 2.8x the cone radius, so the drop is
-        // from a small positive value rather than from the peak.
-        assert!(p.max_basement_radius > radius * 2.0);
+        // And the cull is the Lua's own `2 *` the cone radius, so the drop is
+        // from a small positive value rather than from the peak. Equal to
+        // twice the radius now that both are f32 (it was a hair above while
+        // the cull stayed f64).
+        assert!(p.max_basement_radius >= radius * 2.0);
     }
 
     #[test]
@@ -422,11 +436,17 @@ mod tests {
         // patch by a few hundred units.
         let p = built(123_456);
         let (x, y) = (77.5, -122.25);
-        let blobs0 = f64::from(basis_noise(x / 8.0, y / 8.0, &p.tables))
-            + f64::from(basis_noise(x / 24.0, y / 24.0, &p.tables));
+        let blobs0 = f32r(
+            f64::from(basis_noise(scaled(x, 0.125), scaled(y, 0.125), &p.tables))
+                + f64::from(basis_noise(
+                    scaled(x, 1.0 / 24.0),
+                    scaled(y, 1.0 / 24.0),
+                    &p.tables,
+                )),
+        );
         assert_eq!(
             p.blob_term_at(x, y),
-            (blobs0 - 0.25) * starting_blob_amplitude(iron(), &p.controls)
+            f32r(f32r(blobs0 - 0.25) * starting_blob_amplitude(iron(), &p.controls))
         );
         // And the octave the regular set has really would move it.
         assert_ne!(basis_noise(x / 64.0, y / 64.0, &p.tables), 0.0);
@@ -436,7 +456,10 @@ mod tests {
     fn the_field_is_the_spot_field_plus_the_blob_term() {
         let p = built(123_456);
         for &(x, y) in &[(0.5, 0.25), (60.5, 60.25), (-140.5, 88.75)] {
-            assert_eq!(p.field(x, y), p.spot_field_at(x, y) + p.blob_term_at(x, y));
+            assert_eq!(
+                p.field(x, y),
+                f32r(p.spot_field_at(x, y) + p.blob_term_at(x, y))
+            );
         }
     }
 

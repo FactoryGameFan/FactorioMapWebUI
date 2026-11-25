@@ -11,16 +11,22 @@
 //! `sign` is 1 (iron/copper/coal/stone) or 0 (oil/uranium) - the `sign == -1`
 //! branches never fire for them, but are kept for fidelity.
 //!
-//! ## This module narrows NOTHING, and that asymmetry is deliberate
+//! ## Every step is rounded to f32 (#521)
 //!
-//! `resourceMath.ts` contains no `f32` call at all. Its arithmetic is f64 and
-//! the only narrowing anywhere in it happens inside `fast_cbrt`, which takes an
-//! `f32` argument. Every other file in this layer is dense in per-operation
-//! narrowing. Do not harmonise the two: the cone in `regular_patches` is
-//! rendered by the game's f32 noise machine per tile, and these scalars are
-//! local_expressions the machine folds once.
+//! The game evaluates these local_expressions in its f32 noise machine, one
+//! operation at a time, in the order the Lua writes them. So each `*`, `/`, `+`
+//! and `-` below goes through [`f32r`], the literals are narrowed before they
+//! meet a value, and the products keep the Lua's grouping rather than the
+//! TypeScript's (`pi/3 * rq ^ 2` is `(pi/3) * (rq*rq)`, not `((pi/3)*rq)*rq`).
+//!
+//! The catalog's own constants are already f32 (`nauvis_catalog::f32c`). The
+//! control levers are not, so `frequency` and `size` are narrowed where they
+//! are read. `min` and `max` pick one of their inputs and need no rounding.
+//! Before #521 this module said it narrowed NOTHING, on the grounds that the
+//! machine folds these scalars once. Folding does not change the precision the
+//! machine folds them at.
 
-use crate::eval::math::{max2, min2, PI};
+use crate::eval::math::{f32r, max2, min2, PI};
 use crate::fast_approx::fast_cbrt;
 
 use super::nauvis_catalog::ResourceParams;
@@ -112,7 +118,7 @@ pub fn size_effective_distance_at(distance: f64, params: &ResourceParams) -> f64
     if starting_sign(params) == -1 {
         distance
     } else {
-        distance - REGULAR_PATCH_FADE_IN_DISTANCE
+        f32r(distance - REGULAR_PATCH_FADE_IN_DISTANCE)
     }
 }
 
@@ -128,19 +134,26 @@ pub fn regular_density_at(
         1.0
     } else {
         clamp(
-            (distance - STARTING_RESOURCE_PLACEMENT_RADIUS) / REGULAR_PATCH_FADE_IN_DISTANCE,
+            f32r(
+                f32r(distance - STARTING_RESOURCE_PLACEMENT_RADIUS)
+                    / REGULAR_PATCH_FADE_IN_DISTANCE,
+            ),
             0.0,
             1.0,
         )
     };
-    let double_up = 1.0
-        + clamp(
-            size_effective_distance_at(distance, params) / DOUBLE_DENSITY_DISTANCE,
+    let double_up = f32r(
+        1.0 + clamp(
+            f32r(size_effective_distance_at(distance, params) / DOUBLE_DENSITY_DISTANCE),
             0.0,
             1.0,
-        );
-    // Left to right, exactly as the TypeScript writes the product.
-    params.base_density * controls.frequency * controls.size * fade_in * double_up
+        ),
+    );
+    // Left to right, exactly as the Lua writes the product.
+    let mut v = f32r(params.base_density * f32r(controls.frequency));
+    v = f32r(v * f32r(controls.size));
+    v = f32r(v * fade_in);
+    f32r(v * double_up)
 }
 
 /// `regular_spot_quantity_base_at(distance)`: stuff per spot before the
@@ -157,8 +170,9 @@ pub fn regular_spot_quantity_base_at(
     params: &ResourceParams,
     controls: &ResourceControls,
 ) -> f64 {
-    (1_000_000.0 / params.base_spots_per_km2 / controls.frequency)
-        * regular_density_at(distance, params, controls)
+    let per_spot = f32r(1_000_000.0 / params.base_spots_per_km2);
+    let per_spot = f32r(per_spot / f32r(controls.frequency));
+    f32r(per_spot * regular_density_at(distance, params, controls))
 }
 
 /// `regular_spot_height_typical_at(distance)`: the typical cone peak there.
@@ -173,10 +187,16 @@ pub fn regular_spot_height_typical_at(
     params: &ResourceParams,
     controls: &ResourceControls,
 ) -> f64 {
-    let mean_size = (params.random_spot_size_min + params.random_spot_size_max) / 2.0;
-    let q = mean_size * regular_spot_quantity_base_at(distance, params, controls);
-    f64::from(fast_cbrt(q as f32))
-        / ((PI / 3.0) * params.regular_rq_factor * params.regular_rq_factor)
+    let mean_size = f32r(f32r(params.random_spot_size_min + params.random_spot_size_max) / 2.0);
+    let q = f32r(mean_size * regular_spot_quantity_base_at(distance, params, controls));
+    f32r(f64::from(fast_cbrt(q as f32)) / rq_disc_area(params.regular_rq_factor))
+}
+
+/// `pi/3 * rq ^ 2`, the Lua's grouping: `(pi/3) * (rq * rq)`.
+///
+/// `^ 2` is the machine's exact squaring, so it is a plain f32 product.
+fn rq_disc_area(rq: f64) -> f64 {
+    f32r(f32r(PI / 3.0) * f32r(rq * rq))
 }
 
 /// `regular_blob_amplitude_maximum_distance`.
@@ -203,21 +223,24 @@ pub fn regular_blob_amplitude_at(
     );
     let at_d = regular_spot_height_typical_at(distance, params, controls);
     // Max-distance value first, as the TypeScript writes it.
-    REGULAR_BLOB_AMPLITUDE_MULTIPLIER * min2(at_max, at_d)
+    f32r(REGULAR_BLOB_AMPLITUDE_MULTIPLIER * min2(at_max, at_d))
 }
 
 /// `starting_amount`: total resource "stuff" allotted to the starting area,
 /// before the split.
 #[must_use]
 pub fn starting_amount(params: &ResourceParams, controls: &ResourceControls) -> f64 {
-    20000.0 * params.base_density * (controls.frequency + 1.0) * controls.size
+    let v = f32r(20000.0 * params.base_density);
+    let v = f32r(v * f32r(f32r(controls.frequency) + 1.0));
+    f32r(v * f32r(controls.size))
 }
 
 /// `starting_area_spot_quantity`: `starting_amount` spread across the
 /// starting-area spots. Two sequential divides, as written.
 #[must_use]
 pub fn starting_area_spot_quantity(params: &ResourceParams, controls: &ResourceControls) -> f64 {
-    starting_amount(params, controls) / STARTING_PATCHES_SPLIT / controls.frequency
+    let v = f32r(starting_amount(params, controls) / STARTING_PATCHES_SPLIT);
+    f32r(v / f32r(controls.frequency))
 }
 
 /// `starting_modulation(distance)`: 1 inside the starting-area placement
@@ -239,9 +262,10 @@ pub fn starting_density_at(
     params: &ResourceParams,
     controls: &ResourceControls,
 ) -> f64 {
-    (starting_amount(params, controls)
-        / (PI * STARTING_RESOURCE_PLACEMENT_RADIUS * STARTING_RESOURCE_PLACEMENT_RADIUS))
-        * starting_modulation(distance)
+    // `pi * r * r` is `(pi * r) * r`.
+    let disc =
+        f32r(f32r(PI * STARTING_RESOURCE_PLACEMENT_RADIUS) * STARTING_RESOURCE_PLACEMENT_RADIUS);
+    f32r(f32r(starting_amount(params, controls) / disc) * starting_modulation(distance))
 }
 
 /// `starting_spot_radius`: the typical starting-area spot radius.
@@ -252,10 +276,12 @@ pub fn starting_density_at(
 /// it and `test/resourceMath.spec.ts` grades it.
 #[must_use]
 pub fn starting_spot_radius(params: &ResourceParams, controls: &ResourceControls) -> f64 {
-    params.starting_rq_factor
-        * f64::from(fast_cbrt(
-            starting_area_spot_quantity(params, controls) as f32
-        ))
+    f32r(
+        params.starting_rq_factor
+            * f64::from(fast_cbrt(
+                starting_area_spot_quantity(params, controls) as f32
+            )),
+    )
 }
 
 /// `starting_favorability_base_at(distance, elevation)`.
@@ -281,21 +307,24 @@ pub fn starting_favorability_base_at(
     _controls: &ResourceControls,
 ) -> f64 {
     let origin_excluder = if distance > 40.0 { 1.0 } else { 0.0 };
-    clamp((elevation - 1.0) / 10.0, 0.0, 1.0) * starting_modulation(distance) * origin_excluder
-        * 2.0
-        // Literal first, as the TypeScript writes it.
-        - min2(1.0, distance / STARTING_RESOURCE_PLACEMENT_RADIUS)
+    let lake_mask = clamp(f32r(f32r(elevation - 1.0) / 10.0), 0.0, 1.0);
+    // `lake_mask * modulation * origin_excluder * 2`, left to right. The
+    // booleans are exactly 0 or 1, so those two products are exact.
+    let mask = f32r(f32r(f32r(lake_mask * starting_modulation(distance)) * origin_excluder) * 2.0);
+    // Literal first, as the TypeScript writes it.
+    f32r(mask - min2(1.0, f32r(distance / STARTING_RESOURCE_PLACEMENT_RADIUS)))
 }
 
 /// `starting_blob_amplitude` - a scalar, referenced by `basement_value` even
 /// for a regular-only resource.
 #[must_use]
 pub fn starting_blob_amplitude(params: &ResourceParams, controls: &ResourceControls) -> f64 {
-    (STARTING_BLOB_AMPLITUDE_MULTIPLIER
-        / ((PI / 3.0) * params.starting_rq_factor * params.starting_rq_factor))
-        * f64::from(fast_cbrt(
-            starting_area_spot_quantity(params, controls) as f32
-        ))
+    f32r(
+        f32r(STARTING_BLOB_AMPLITUDE_MULTIPLIER / rq_disc_area(params.starting_rq_factor))
+            * f64::from(fast_cbrt(
+                starting_area_spot_quantity(params, controls) as f32
+            )),
+    )
 }
 
 /// `basement_value = -6 * max(regular_blob_amplitude_at(max_distance), starting_blob_amplitude)`.
@@ -319,7 +348,7 @@ pub fn basement_value(params: &ResourceParams, controls: &ResourceControls) -> f
         controls,
     );
     // Regular first, as the TypeScript writes it.
-    -6.0 * max2(regular, starting_blob_amplitude(params, controls))
+    f32r(-6.0 * max2(regular, starting_blob_amplitude(params, controls)))
 }
 
 #[cfg(test)]
@@ -346,7 +375,8 @@ mod tests {
         // Fully faded in at 150 + 300, still before the double-density ramp.
         assert_eq!(
             regular_density_at(450.0, p, &DEFAULTS),
-            10.0 * 1.0 * (1.0 + 150.0 / 1300.0)
+            // Each step rounded to f32, as the game's noise machine does.
+            f32r(10.0 * f32r(1.0 + f32r(150.0 / 1300.0)))
         );
         // The ramp saturates at fade-in + double-density distance.
         assert_eq!(regular_density_at(1600.0, p, &DEFAULTS), 20.0);
@@ -393,7 +423,7 @@ mod tests {
         );
         assert_eq!(
             starting_favorability_base_at(40.0, high_elevation, p, &DEFAULTS),
-            -40.0 / 150.0
+            f32r(-f32r(40.0 / 150.0))
         );
     }
 
@@ -403,7 +433,7 @@ mod tests {
         // Below water the mask is 0, so favorability is just the distance term.
         assert_eq!(
             starting_favorability_base_at(100.0, 0.5, p, &DEFAULTS),
-            -100.0 / 150.0
+            f32r(-f32r(100.0 / 150.0))
         );
         // The distance term is `min(1, d / 150)`, clamped - a 2.1.9 change.
         // Beyond the radius the modulation zeroes the mask too, so it is -1 flat.
@@ -426,7 +456,7 @@ mod tests {
         let regular = regular_blob_amplitude_at(1600.0, p, &DEFAULTS);
         let starting = starting_blob_amplitude(p, &DEFAULTS);
         assert!(regular > starting, "{regular} vs {starting}");
-        assert_eq!(basement_value(p, &DEFAULTS), -6.0 * regular);
+        assert_eq!(basement_value(p, &DEFAULTS), f32r(-6.0 * regular));
     }
 
     #[test]
@@ -493,13 +523,14 @@ mod tests {
         // which is the knob's whole meaning - and it also means this scalar is
         // a poor place to look for a dropped frequency lever.
         //
-        // It cancels EXACTLY at 2, and does not at 0.3. That is the two
-        // sequential divides showing: the algebra is exact, the arithmetic is
-        // not, and which one you get depends on the value. Worth knowing before
-        // reading an unchanged number here as a dropped control.
+        // It cancels EXACTLY at the powers of two, and does not at 0.3 or 3.
+        // That is the f32 rounding of each step showing: the algebra is exact,
+        // the arithmetic is not, and which one you get depends on the value.
+        // Worth knowing before reading an unchanged number here as a dropped
+        // control.
         let p = iron();
         let base = regular_spot_quantity_base_at(1000.0, p, &DEFAULTS);
-        for f in [0.5, 2.0, 3.0] {
+        for f in [0.5, 2.0, 4.0] {
             let c = ResourceControls {
                 frequency: f,
                 size: 1.0,
@@ -515,6 +546,13 @@ mod tests {
             size: 1.0,
         };
         assert_ne!(regular_spot_quantity_base_at(1000.0, p, &awkward), base);
+        let three = ResourceControls {
+            frequency: 3.0,
+            size: 1.0,
+        };
+        let off = regular_spot_quantity_base_at(1000.0, p, &three);
+        assert_ne!(off, base);
+        assert!((off - base).abs() / base < 1e-6, "an f32 step, not a lever");
     }
 
     #[test]
@@ -527,12 +565,13 @@ mod tests {
             frequency: 0.3,
             size: 1.0,
         };
-        let two = 1_000_000.0 / p.base_spots_per_km2 / c.frequency;
-        let one = 1_000_000.0 / (p.base_spots_per_km2 * c.frequency);
+        // Each divide rounds to f32, so the two forms differ in the last bit.
+        let two = f32r(f32r(1_000_000.0 / p.base_spots_per_km2) / f32r(c.frequency));
+        let one = f32r(1_000_000.0 / f32r(p.base_spots_per_km2 * f32r(c.frequency)));
         assert_ne!(two, one);
         assert_eq!(
             regular_spot_quantity_base_at(1000.0, p, &c),
-            two * regular_density_at(1000.0, p, &c)
+            f32r(two * regular_density_at(1000.0, p, &c))
         );
     }
 
