@@ -328,10 +328,14 @@ impl Temperature {
     }
 
     /// Evaluate at an [`At`]; on a tile the noise op takes the grid path.
+    ///
+    /// One f32 step at a time, left to right as the Lua writes it (#521).
+    /// `15 + bias` is a constant, so the game folds it first.
     #[must_use]
     pub fn eval_at(&self, at: At) -> f64 {
+        let base = f32r(SEA_LEVEL_TEMPERATURE + f32r(self.bias));
         clamp(
-            SEA_LEVEL_TEMPERATURE + self.bias + f64::from(quick_sum_octaves_at(at, &self.noise)),
+            f32r(base + f64::from(quick_sum_octaves_at(at, &self.noise))),
             -20.0,
             50.0,
         )
@@ -436,7 +440,13 @@ mod tests {
                         (biased_aux.eval(x, y) - (a + 0.1)).abs() < f64::from(f32::EPSILON),
                         "aux bias shift at ({x}, {y})"
                     );
-                    assert!((biased_t.eval(x, y) - (t + 5.0)).abs() < 1e-9);
+                    // Temperature is f32 per step too (#521), so the shift is
+                    // 5 to within one f32 step at the field's scale (up to
+                    // 50, where a step is 2^-18).
+                    assert!(
+                        (biased_t.eval(x, y) - (t + 5.0)).abs() <= 64.0 * f64::from(f32::EPSILON),
+                        "temperature bias shift at ({x}, {y})"
+                    );
                 } else {
                     saturated += 1;
                 }

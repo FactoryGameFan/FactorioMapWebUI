@@ -83,17 +83,24 @@ pub struct OctaveTerms {
 #[must_use]
 pub fn octave_terms(params: &MultioctaveParams) -> OctaveTerms {
     let n = params.octaves.ceil();
-    let inv_p = (1.0 / params.persistence) as f32;
+    // The game stores persistence and output_scale as f32 fields (read off
+    // `NoiseOperations::MultioctaveNoise::run`, 2.1.23) and computes `1/P`
+    // with `divss`, so both are narrowed BEFORE use: `1/P` is an f32 divide
+    // of the narrowed persistence, and the output scale multiplies as the
+    // widened f32. Matters for values with no f32 form (0.55, 0.6, 0.85).
+    let persistence = params.persistence as f32;
+    let output_scale = f64::from(params.output_scale as f32);
+    let inv_p = 1.0f32 / persistence;
 
     let mut amp: f32 = if inv_p == 1.0 {
-        (params.output_scale / n.sqrt()) as f32
+        (output_scale / n.sqrt()) as f32
     } else if inv_p != 0.0 {
         let inv_p2 = inv_p * inv_p;
         let pow = fast_pow2(fast_log2(inv_p2) * (n as f32));
         let ratio = (inv_p2 - 1.0) / (pow - 1.0);
-        (f64::from(ratio).sqrt() * params.output_scale) as f32
+        (f64::from(ratio).sqrt() * output_scale) as f32
     } else {
-        params.output_scale as f32
+        output_scale as f32
     };
 
     let mut scale = (params.input_scale as f32) * frac_boost(params);

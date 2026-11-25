@@ -4709,6 +4709,15 @@ fn reproduces_the_vulcanus_resource_layer_at_every_captured_position() {
     // stop short of a full house because the spot cone is still the
     // TypeScript's arithmetic (#491).
     //
+    // **#521 follow-up: the starting-spot distances now start from the f32
+    // starting-area radius** (`0.7 * 0.75` folded, then rounded), as the biome
+    // layer already did. Starting coal 974 -> 1085, starting calcite 969 ->
+    // 1085, starting sulfur 1050 -> 1085, coal region 1043 -> 1063, sulfuric
+    // acid region 1039 -> 1053, patchy 1040 -> 1054; the four favorabilities,
+    // starting tungsten, tungsten and calcite region, patches and `metalTile`
+    // did not move. All four starting spots are full houses now. The
+    // multioctave persistence/output_scale narrowing moved none of these.
+    //
     // Graded against a **2.1.12** capture while the binary is 2.1.16 (#295).
     // That used to leave "the game changed" as an open candidate for a count
     // short of a full house. It is now a narrow one: every Lua file behind the
@@ -4729,15 +4738,15 @@ fn reproduces_the_vulcanus_resource_layer_at_every_captured_position() {
         }),
         ("ashlandsFavorability", 1085, &|f| f.ashlands_favorability),
         ("startingTungsten", 1085, &|f| f.starting_tungsten),
-        ("startingCoal", 974, &|f| f.starting_coal),
-        ("startingCalcite", 969, &|f| f.starting_calcite),
-        ("startingSulfur", 1050, &|f| f.starting_sulfur),
+        ("startingCoal", 1085, &|f| f.starting_coal),
+        ("startingCalcite", 1085, &|f| f.starting_calcite),
+        ("startingSulfur", 1085, &|f| f.starting_sulfur),
         ("tungstenRegion", 1059, &|f| f.tungsten_region),
-        ("coalRegion", 1043, &|f| f.coal_region),
+        ("coalRegion", 1063, &|f| f.coal_region),
         ("calciteRegion", 1028, &|f| f.calcite_region),
-        ("sulfuricAcidRegion", 1039, &|f| f.sulfuric_acid_region),
+        ("sulfuricAcidRegion", 1053, &|f| f.sulfuric_acid_region),
         ("sulfuricAcidPatches", 1085, &|f| f.sulfuric_acid_patches),
-        ("sulfuricAcidRegionPatchy", 1040, &|f| {
+        ("sulfuricAcidRegionPatchy", 1054, &|f| {
             f.sulfuric_acid_region_patchy
         }),
         ("metalTile", 1077, &|f| f.metal_tile),
@@ -7584,6 +7593,14 @@ use crate::rocks::vulcanus_field::{vulcanus_decorative_knockout, VulcanusRockFie
 /// These are no longer the TypeScript's counts, which stays in f64. Rounding
 /// this module alone gave 287, 284 and 417; with the upstream layers rounded
 /// too the composites rose further and the clamped density reached 421.
+///
+/// **#521, follow-up: 303 -> 433 (huge), 297 -> 432 (big) and 421 -> 432
+/// (density)** by narrowing `persistence` and `output_scale` to f32 inside
+/// `octave_terms`. The game stores both as f32 fields and computes `1/P` with
+/// `divss`; Vulcanus aux uses persistence 0.6 and output_scale 0.6, neither of
+/// which has an f32 form, so the f64 values fed an amplitude chain that was
+/// off by an ulp. Of the 35 nonzero density positions 33 are exact now (22
+/// before); the 399 clamped ones are free as before.
 #[test]
 fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     let fixture = load_captured_at(
@@ -7615,8 +7632,8 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     let values = fixture.get("values");
     for (key, want_exact, got) in [
         ("vulcanus_decorative_knockout", 434usize, &knockout_out),
-        ("vulcanus_rock_huge", 303, &huge),
-        ("vulcanus_rock_big", 297, &big),
+        ("vulcanus_rock_huge", 433, &huge),
+        ("vulcanus_rock_big", 432, &big),
     ] {
         assert_eq!(
             score_vulcanus(got, values.get(key).as_array(), key),
@@ -7632,12 +7649,12 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     // Scored against the game's values so it cannot pass by agreeing with our
     // own two fields.
     //
-    // **421 of 434 is mostly the CLAMP, not the arithmetic.** 399 of these
+    // **432 of 434 is mostly the CLAMP, not the arithmetic.** 399 of these
     // positions clamp to exactly 0 - both rock expressions are negative over
     // most of the map - and a saturated position is exact for free, because
-    // both ports and the game all return the bound itself. So 399 of the 421
-    // are free and 22 of the 35 nonzero positions are exact (13 of 35 at 412
-    // before #521). Read `vulcanus_rock_big` (297 of 434) as the port's score
+    // both ports and the game all return the bound itself. So 399 of the 432
+    // are free and 33 of the 35 nonzero positions are exact (13 of 35 at 412
+    // before #521, 22 at 421). Read `vulcanus_rock_big` (432 of 434) as the port's score
     // and this as what the consumer needs, the same way `*_biome_full` and
     // `*_biome` are read in the biome layer. The TypeScript, still in f64,
     // measures 412 and 399.
@@ -7659,7 +7676,7 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
             density_exact += 1;
         }
     }
-    assert_eq!(density_exact, 421, "density exact f32 matches out of 434");
+    assert_eq!(density_exact, 432, "density exact f32 matches out of 434");
     assert_eq!(clamped_to_zero, 399, "positions the clamp saturates at 0");
 
     // Both expressions cap at `0.2 * (1 - k * ashlands_biome)`, so the overlay
