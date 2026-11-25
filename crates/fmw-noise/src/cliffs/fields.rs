@@ -19,7 +19,8 @@
 //!
 //! How near it comes was measured on 2026-08-26 over all 1024 fixture positions
 //! at both seeds, rather than assumed. The closest any position sits to the
-//! cutoff is **2.344133e-4** (seed 777771) and **3.402456e-3** (seed 123456);
+//! cutoff is **2.343776e-4** (seed 777771) and **3.402424e-3** (seed 123456), re-measured
+//! after #521 rounded the sub-terms to f32 (they were 2.344133e-4 and 3.402456e-3);
 //! nothing at either seed is within 1e-5. One f32 ULP at the cutoff's 0.707 is
 //! about 6e-8, so a single bent leaf is some 3,900 ULPs short of flipping the
 //! gate. See [`crate::poison`] and `scripts/verify-rust.sh` for what
@@ -28,7 +29,7 @@
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::cliffs::placement::CliffFields;
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{min, min2, slider_to_linear};
+use crate::eval::math::{f32r, min, min2, slider_to_linear};
 use crate::eval::primitives::{basis_noise_expr, BasisExprParams};
 use crate::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
 use crate::expressions::nauvis_shared::{NauvisShared, NauvisSharedParams};
@@ -161,7 +162,10 @@ impl NauvisCliffFields {
     /// `cliff_elevation_nauvis(x, y) = 10 + 30 * (hills - cliff_level)`.
     #[must_use]
     pub fn cliff_elevation(&self, x: f64, y: f64) -> f64 {
-        10.0 + 30.0 * (self.shared.hills(x, y) - self.shared.cliff_level(x, y))
+        // One f32 step at a time, in the Lua's order (#521):
+        // `10 + 30 * (hills - cliff_level)`.
+        let diff = f32r(self.shared.hills(x, y) - self.shared.cliff_level(x, y));
+        f32r(10.0 + f32r(30.0 * diff))
     }
 
     /// `main_cliffiness`, the `min` of the six sub-terms.
@@ -173,10 +177,12 @@ impl NauvisCliffFields {
     /// `pub` would put a method on the crate's surface for one test's sake.
     #[must_use]
     pub(crate) fn main_cliffiness(&self, x: f64, y: f64) -> f64 {
-        let base = (self.shared.cliff_ringbreak(x, y) - 0.01) * 60.0;
-        let forest = (self.shared.forest_path_billows(x, y) - 0.03) * 12.0;
-        let bridge = (self.shared.bridge_billows(x, y) - 0.05) * 15.0;
-        let elev = (self.no_cliff_elevation.eval(x, y) - 4.0) / 2.0;
+        // Every step is an f32 operation in the Lua's order, literals included
+        // (#521). The sub-terms are each `(field - c) * k`.
+        let base = f32r(f32r(f32r(self.shared.cliff_ringbreak(x, y)) - f32r(0.01)) * 60.0);
+        let forest = f32r(f32r(self.shared.forest_path_billows(x, y) - f32r(0.03)) * 12.0);
+        let bridge = f32r(f32r(self.shared.bridge_billows(x, y) - f32r(0.05)) * 15.0);
+        let elev = f32r(f32r(self.no_cliff_elevation.eval(x, y) - 4.0) / 2.0);
 
         // The PLAIN segmentation multiplier, not `nauvis_seg`, and an UNCAPPED
         // distance: the game's expression carries no `maximum_distance`, which
@@ -187,19 +193,23 @@ impl NauvisCliffFields {
             &self.starting_positions,
             f64::INFINITY,
         ));
-        let start_area = -2.0 + distance * self.segmentation_multiplier / 120.0;
+        // `-2 + distance * segmentation_multiplier / 120`: the product and the
+        // quotient first, the `-2` last.
+        let start_area =
+            f32r(-2.0 + f32r(f32r(distance * f32r(self.segmentation_multiplier)) / 120.0));
 
         // This term reads `nauvis_seg / 500` (baked into `low_freq_params`),
         // where `start_area` above reads the plain multiplier. The two really
         // do disagree on which one they take.
-        let low_freq = 1.5
-            + basis_noise_expr(x, y, &self.low_freq_params, &self.low_freq_tables)
-            + self.low_freq_lever;
+        let low_freq = f32r(
+            f32r(1.5 + basis_noise_expr(x, y, &self.low_freq_params, &self.low_freq_tables))
+                + self.low_freq_lever,
+        );
 
         // The variadic form, because the TypeScript is one six-argument
         // `Math.min` rather than a fold - and `min` carries JavaScript's NaN
         // and signed-zero semantics, which `f64::min` does not.
-        min(&[base, forest, bridge, elev, start_area, 4.0 * low_freq])
+        min(&[base, forest, bridge, elev, start_area, f32r(4.0 * low_freq)])
     }
 
     /// `cliffiness_nauvis(x, y)` - exactly 0 or 10.

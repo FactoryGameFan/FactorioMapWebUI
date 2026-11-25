@@ -9193,12 +9193,14 @@ fn reproduces_the_games_nauvis_cliff_elevation_at_both_seeds() {
     // (seed, exact of 1024). Measured on the TypeScript side first at 355 and
     // 281. #452 moved them to 699 and 648 without touching this field's own
     // code: `nauvis_hills_cliff_level` became f32 per step, and the cliff
-    // elevation reads it. The field's own `10 + 30 * (...)` is still f64.
+    // elevation reads it. #521 then rounded the field's own
+    // `10 + 30 * (hills - cliff_level)` per f32 step: 699 -> 1024 and
+    // 648 -> 1024, every position exact.
     for (case, &(seed, want)) in fixture
         .get("cases")
         .as_array()
         .iter()
-        .zip([(123_456u32, 699usize), (777_771, 648)].iter())
+        .zip([(123_456u32, 1024usize), (777_771, 1024)].iter())
     {
         assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
         let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(seed));
@@ -9323,14 +9325,14 @@ fn the_cliffiness_gate_sits_far_enough_from_its_cutoff_that_a_bent_leaf_cannot_f
     // measured over the same 2,048 positions the tier-1 test grades.
     //
     // The numbers are the reason the hook exists: one f32 ULP at the cutoff's
-    // 0.707 is about 6e-8, and the closest position is 2.344133e-4 away, some
+    // 0.707 is about 6e-8, and the closest position is 2.343776e-4 away (2.344133e-4 before #521's f32 rounding), some
     // 3,900 ULPs. Built without the hook, the gate test stayed green at 0
     // mismatches while `..._cliff_elevation_at_both_seeds` - same seed, same
     // `NauvisShared`, same perturbed chain - fell from 355 exact to 227.
     let fixture = load_captured_at("test/fixtures/oracle-cliffiness.seed123456.json", "2.1.11");
     let positions = fixture_positions(&fixture, "positions");
 
-    for &(seed, closest) in &[(123_456u32, 3.402_456e-3f64), (777_771, 2.344_133e-4)] {
+    for &(seed, closest) in &[(123_456u32, 3.402_424e-3f64), (777_771, 2.343_776e-4)] {
         let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(seed));
         let cutoff = fields.cliff_cutoff();
         let mut nearest = f64::INFINITY;
