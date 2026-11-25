@@ -573,7 +573,7 @@ mod tests {
         let oil = resource_by_name("crude-oil").expect("oil");
         let p = RegularPatches::new(oil, &RegularPatchesCtx::defaults(123_456));
         let (x, y) = (1500.5, 220.25);
-        let expected = (p.field(x, y) / (1.0 / 48.0) + 220_000.0)
+        let expected = (p.field(x, y) / oil.random_probability + 220_000.0)
             * richness_distance_factor(p.distance_at(x, y));
         assert_eq!(p.richness(x, y), expected);
     }

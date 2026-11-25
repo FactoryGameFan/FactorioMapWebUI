@@ -8588,34 +8588,40 @@ fn reproduces_the_games_regular_resource_patches_at_every_captured_position() {
     // Two seeds and two resources, so a constant that happened to suit one
     // cannot pass. Every number below was measured on the TypeScript side
     // against this same fixture with the same snap.
+    //
+    // #521, step 1 (the catalog constants and the `resource_math` scalars
+    // rounded to f32): `worst` 0.6665 / 0.4459 / 0.6811 / 0.4725 ->
+    // 0.6477 / 0.4410 / 0.6482 / 0.4409. The basement is now an f32 value, so
+    // the constant ~0.61 offset (#261) is the same for every position instead
+    // of smeared over three neighbouring ULPs. `exact` stays 0.
     let expected = [
         // iron-ore, 123456
         ResourceScore {
             exact: 0,
-            worst: 0.666_528_246_956_659_1,
+            worst: 0.647_723_398_835_296_4,
             at_basement: 4055,
-            fold: 0xc893_1246_0cee_1b0d,
+            fold: 0xb66b_885f_7688_707b,
         },
         // uranium-ore, 123456
         ResourceScore {
             exact: 0,
-            worst: 0.445_921_758_266_194_96,
+            worst: 0.441_021_500_564_602_3,
             at_basement: 4096,
-            fold: 0x6d3a_2d7b_802e_9923,
+            fold: 0x9e13_e3e0_8b18_7c08,
         },
         // iron-ore, 777771
         ResourceScore {
             exact: 0,
-            worst: 0.681_140_442_920_877_8,
+            worst: 0.648_163_748_814_113_2,
             at_basement: 4048,
-            fold: 0x0784_10da_87ea_e2af,
+            fold: 0x6a90_23bd_17a3_f784,
         },
         // uranium-ore, 777771
         ResourceScore {
             exact: 0,
-            worst: 0.472_515_691_264_561_6,
+            worst: 0.440_913_092_461_414_64,
             at_basement: 4096,
-            fold: 0x0f10_8499_43bc_9ae9,
+            fold: 0x6626_c38d_81bd_2cfd,
         },
     ];
 
@@ -8657,34 +8663,38 @@ fn reproduces_the_games_combined_resource_patches_at_every_captured_position() {
     // `max(starting_patches, regular_patches)`. Routed onto MOISTURE rather
     // than elevation - overriding elevation with this expression makes the
     // engine's spawn-lake resolution recurse into itself and SIGSEGV headless.
+    //
+    // #521, step 1: `worst` 0.6211 / 0.3752 / 0.6386 / 0.3760 ->
+    // 0.6202 / 0.3755 / 0.6220 / 0.3762. Copper moves up by 0.0003 and 0.0002:
+    // the starting cone still reads f64 glue there (step 2).
     let expected = [
         // iron-ore, 123456
         ResourceScore {
             exact: 0,
-            worst: 0.621_077_909_003_361_1,
+            worst: 0.620_248_472_599_996_6,
             at_basement: 3623,
-            fold: 0xf550_becd_fc47_aba7,
+            fold: 0x98dc_1fea_b9f7_963b,
         },
         // copper-ore, 123456
         ResourceScore {
             exact: 0,
-            worst: 0.375_161_180_856_594,
+            worst: 0.375_494_729_320_053,
             at_basement: 3663,
-            fold: 0x9f38_6fee_fdbf_008c,
+            fold: 0xf081_cb44_a1bc_0af6,
         },
         // iron-ore, 777771
         ResourceScore {
             exact: 0,
-            worst: 0.638_610_429_770_778_9,
+            worst: 0.622_041_125_037_867_5,
             at_basement: 3664,
-            fold: 0x5cdb_e9af_0fd2_e80d,
+            fold: 0xbc37_d4bd_e821_8be9,
         },
         // copper-ore, 777771
         ResourceScore {
             exact: 0,
-            worst: 0.375_982_763_795_036_6,
+            worst: 0.376_166_839_676_443_5,
             at_basement: 3700,
-            fold: 0x7562_f666_5fd8_36d9,
+            fold: 0x694a_a075_3552_c764,
         },
     ];
 
@@ -8748,13 +8758,13 @@ fn the_capture_grid_snap_is_load_bearing_on_the_starting_fixture_and_inert_on_th
     let starting = "test/fixtures/oracle-resource-starting.seed123456.json";
     let snapped = raw_worst(starting, "2.1.11", 0, true);
     let unsnapped = raw_worst(starting, "2.1.11", 0, false);
-    assert_eq!(snapped, 0.621_077_909_003_361_1, "snapped");
+    assert_eq!(snapped, 0.620_248_472_599_996_6, "snapped");
     // The TypeScript records this one to three decimals (`test/captureGrid.ts`
     // and `test/resourcePatches.spec.ts` both say 4.899), so the exact value
     // below is measured here rather than there. It agrees to every digit they
     // print, and `fold` in the test above is what establishes that the two
     // ports produce the same values at these positions in the first place.
-    assert_eq!(unsnapped, 4.899_269_704_827_02, "unsnapped");
+    assert_eq!(unsnapped, 4.898_542_370_325_231, "unsnapped");
     assert!(
         unsnapped > snapped * 7.0,
         "the snap is worth 7.6x here, not a rounding difference"
