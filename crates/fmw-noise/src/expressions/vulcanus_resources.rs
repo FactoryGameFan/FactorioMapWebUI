@@ -94,7 +94,7 @@ use crate::expressions::vulcanus_biomes::VulcanusBiomes;
 use crate::expressions::vulcanus_cracks::VulcanusCracks;
 use crate::expressions::vulcanus_helpers::VulcanusHelpers;
 use crate::expressions::vulcanus_spawn::{
-    VulcanusSpawn, WobbleSums, VULCANUS_STARTING_AREA_RADIUS,
+    VulcanusSpawn, WobbleSums, VULCANUS_STARTING_AREA_RADIUS_F32,
 };
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::spot_candidates::SpotRegionKey;
@@ -283,7 +283,7 @@ impl<'a> VulcanusResources<'a> {
         cracks: &'a VulcanusCracks,
         trig: [AngleTrig; 5],
     ) -> Self {
-        let r = VULCANUS_STARTING_AREA_RADIUS;
+        let r = VULCANUS_STARTING_AREA_RADIUS_F32;
         let levers = ctx.vulcanus_resource_controls;
 
         // `slider_rescale(control:<x>:size, 2)`. `tungsten_size` is deliberately
@@ -822,8 +822,11 @@ mod tests {
     // Re-frozen for #521: the region arithmetic, and the helper, spawn and
     // biome layers it reads, now round every step to f32, so every bit pattern
     // moved on purpose. Before it the value was `0x41c3_2b2d_06e8_89ed`, frozen
-    // before the spot query was shared.
-    const FROZEN_FOLD: u64 = 0x1c20_7347_5e99_2d98;
+    // before the spot query was shared. Re-frozen again in the #521 follow-up,
+    // from `0x1c20_7347_5e99_2d98`: the spots now sit at distances built from
+    // the f32 starting-area radius. (The multioctave narrowing moved nothing
+    // here.)
+    const FROZEN_FOLD: u64 = 0xfc11_2710_cf6d_c98e;
 
     fn layer_at(seed0: u32) -> (EvalCtx, VulcanusHelpers) {
         let ctx = EvalCtx::new(seed0);

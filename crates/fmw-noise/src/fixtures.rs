@@ -4709,6 +4709,15 @@ fn reproduces_the_vulcanus_resource_layer_at_every_captured_position() {
     // stop short of a full house because the spot cone is still the
     // TypeScript's arithmetic (#491).
     //
+    // **#521 follow-up: the starting-spot distances now start from the f32
+    // starting-area radius** (`0.7 * 0.75` folded, then rounded), as the biome
+    // layer already did. Starting coal 974 -> 1085, starting calcite 969 ->
+    // 1085, starting sulfur 1050 -> 1085, coal region 1043 -> 1063, sulfuric
+    // acid region 1039 -> 1053, patchy 1040 -> 1054; the four favorabilities,
+    // starting tungsten, tungsten and calcite region, patches and `metalTile`
+    // did not move. All four starting spots are full houses now. The
+    // multioctave persistence/output_scale narrowing moved none of these.
+    //
     // Graded against a **2.1.12** capture while the binary is 2.1.16 (#295).
     // That used to leave "the game changed" as an open candidate for a count
     // short of a full house. It is now a narrow one: every Lua file behind the
@@ -4729,15 +4738,15 @@ fn reproduces_the_vulcanus_resource_layer_at_every_captured_position() {
         }),
         ("ashlandsFavorability", 1085, &|f| f.ashlands_favorability),
         ("startingTungsten", 1085, &|f| f.starting_tungsten),
-        ("startingCoal", 974, &|f| f.starting_coal),
-        ("startingCalcite", 969, &|f| f.starting_calcite),
-        ("startingSulfur", 1050, &|f| f.starting_sulfur),
+        ("startingCoal", 1085, &|f| f.starting_coal),
+        ("startingCalcite", 1085, &|f| f.starting_calcite),
+        ("startingSulfur", 1085, &|f| f.starting_sulfur),
         ("tungstenRegion", 1059, &|f| f.tungsten_region),
-        ("coalRegion", 1043, &|f| f.coal_region),
+        ("coalRegion", 1063, &|f| f.coal_region),
         ("calciteRegion", 1028, &|f| f.calcite_region),
-        ("sulfuricAcidRegion", 1039, &|f| f.sulfuric_acid_region),
+        ("sulfuricAcidRegion", 1053, &|f| f.sulfuric_acid_region),
         ("sulfuricAcidPatches", 1085, &|f| f.sulfuric_acid_patches),
-        ("sulfuricAcidRegionPatchy", 1040, &|f| {
+        ("sulfuricAcidRegionPatchy", 1054, &|f| {
             f.sulfuric_acid_region_patchy
         }),
         ("metalTile", 1077, &|f| f.metal_tile),
