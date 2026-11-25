@@ -95,7 +95,9 @@ const SEED0 = 123456;
  * coordinates are f32-exact and a narrowing difference is invisible there by
  * construction.
  */
-const OFF_GRID_POSITIONS = 2841;
+// 2841 over the first six cases; the starting-area-radius case reuses the first
+// case's window, which adds its 481.
+const OFF_GRID_POSITIONS = 3322;
 
 interface Case {
   readonly label: string;
@@ -552,7 +554,7 @@ describe("The Nauvis expression core folds to its frozen checksums", () => {
     // do at once. Those cannot discriminate a narrowing, which is exactly why
     // the count is frozen rather than asserted as "all".
     const total = CASES.reduce((n, c) => n + c.n * c.n, 0);
-    expect(total).toBe(6 * 22 * 22);
+    expect(total).toBe(7 * 22 * 22);
     expect(CASES.reduce((n, c) => n + offGrid(c), 0)).toBe(OFF_GRID_POSITIONS);
 
     // The control, and the whole point: a tier-3-shaped window - binary origin,
