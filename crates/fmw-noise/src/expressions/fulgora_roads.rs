@@ -32,7 +32,7 @@
 //! These are the port's worked examples of the same rule needing opposite
 //! fixes. `crates/fmw-noise/src/eval/mod.rs` carries the general form.
 
-use crate::eval::math::lerp;
+use crate::eval::math::{f32r, lerp_f32, max2, min2};
 use crate::expressions::fulgora_cells::CellFields;
 use crate::expressions::fulgora_shared::{FulgoraCtx, SharedFields};
 use crate::multioctave_noise::MultioctaveParams;
@@ -144,34 +144,53 @@ impl FulgoraRoads {
         let subnoise_x = x + f64::from((10_000.0 * structure_cells) as f32);
         let structure_subnoise = f64::from(self.subnoise.eval(subnoise_x, y));
 
+        // Every step below is one f32 operation, in the Lua's order, literals
+        // narrowed before they meet a value (#521). Comparisons read the f32
+        // literal too: `road_cells < 0.6` tests against f32(0.6), which is
+        // 2.4e-8 above the f64 `0.6`.
+        //
         // `%` is a truncated remainder in both languages and both take the sign
-        // of the dividend, so this needs no adjustment.
-        let pyramids_banding = (cells.pyramids * 8.0) % 1.0;
-        let spots_prebanding =
-            cells.spots.min((1.0 - shared.starting_vault_cone) / 2.0) * 9.0 + 0.5;
+        // of the dividend, so this needs no adjustment. It is exact in f32, so
+        // only the operand needs rounding.
+        let pyramids_banding = f32r(cells.pyramids * 8.0) % 1.0;
+        let spots_prebanding = f32r(
+            f32r(
+                min2(
+                    cells.spots,
+                    f32r(f32r(1.0 - shared.starting_vault_cone) / 2.0),
+                ) * 9.0,
+            ) + 0.5,
+        );
         let spots_banding = spots_prebanding % 1.0;
 
-        let road_paving_thin =
-            (lt(road_pyramids, 0.03) * 0.9).max(lt(structure_facets, 0.06) * 0.5);
+        let thin_road = lt(road_pyramids, f32r(0.03)) * f32r(0.9);
+        let thin_facets = lt(structure_facets, f32r(0.06)) * 0.5;
+        let road_paving_thin = max2(thin_road, thin_facets);
 
+        // `a * 0.85 * b * c` is left to right, one f32 operation each. The
+        // comparison results are 0 or 1, so every product after the first is
+        // exact and only `0.85` needs narrowing.
         let road_paving_2 = crate::eval::math::max(&[
-            lt(road_pyramids, 0.05) * 0.9,
-            lt(pyramids_banding, 0.1) * 0.85 * lt(road_cells, 0.6) * gt(road_cells, 0.25),
-            lt(spots_banding, 0.1) * 0.85 * lt(road_cells, 0.25),
-            lt(structure_facets, 0.1) * 0.85 * gt(road_cells, 0.6),
+            lt(road_pyramids, f32r(0.05)) * f32r(0.9),
+            lt(pyramids_banding, f32r(0.1))
+                * f32r(0.85)
+                * lt(road_cells, f32r(0.6))
+                * gt(road_cells, 0.25),
+            lt(spots_banding, f32r(0.1)) * f32r(0.85) * lt(road_cells, 0.25),
+            lt(structure_facets, f32r(0.1)) * f32r(0.85) * gt(road_cells, f32r(0.6)),
         ]);
 
-        let road_paving_2b = lerp(
+        let road_paving_2b = lerp_f32(
             road_paving_2,
-            lt(structure_facets, 0.2) * 0.9,
-            gt(structure_cells, 0.8),
+            lt(structure_facets, f32r(0.2)) * f32r(0.9),
+            gt(structure_cells, f32r(0.8)),
         );
-        let road_paving_2c = lerp(
+        let road_paving_2c = lerp_f32(
             road_paving_2b,
-            gt(spots_prebanding, 1.0) * 0.9,
-            lt(spots_prebanding, 1.3),
+            gt(spots_prebanding, 1.0) * f32r(0.9),
+            lt(spots_prebanding, f32r(1.3)),
         );
-        let road_dust = lt(road_pyramids, 0.08) * 0.9 - road_paving_2c;
+        let road_dust = f32r(lt(road_pyramids, f32r(0.08)) * f32r(0.9) - road_paving_2c);
 
         RoadFields {
             road_cells,
