@@ -17,7 +17,7 @@
 //! the mask product - so they go negative on open ground rather than to zero.
 
 use crate::at::At;
-use crate::eval::math::max2;
+use crate::eval::math::{f32r, max2};
 use crate::expressions::fulgora_cells::CellFields;
 use crate::expressions::fulgora_masks::MaskFields;
 use crate::expressions::fulgora_roads::RoadFields;
@@ -66,11 +66,7 @@ impl FulgoraRuins {
 
     /// Evaluate every field of this layer at one position.
     ///
-    /// **`0.66` is an f64 literal here, matching the TypeScript**, and it is one
-    /// of the constants #273 is about - `fulgora_dunes` has the identical shape
-    /// and scores 26/101 because of it. Left as it is for the same reason: the
-    /// port reproduces the TypeScript, and fixing this is a behaviour change to
-    /// shipped terrain that needs its own measurement.
+    /// Every step is one f32 operation, as the game evaluates it (#521).
     #[must_use]
     pub fn eval(
         &self,
@@ -99,66 +95,73 @@ impl FulgoraRuins {
         // **101/101** with it typed, residual exactly 0. Two fields with one
         // shape failing identically is what turned #273 from three edits into a
         // sweep of the whole chain.
-        let ruins_walls = f64::from(0.66f32) - f64::from(self.walls.eval_at(at)).abs();
+        //
+        // The subtraction is its own f32 operation, so its result is rounded
+        // before anything reads it (#521). `f32` minus `f32` needs more than 24
+        // bits, so an unrounded f64 here would carry bits the game has dropped.
+        let ruins_walls = f32r(f64::from(0.66f32) - f64::from(self.walls.eval_at(at)).abs());
         let ruins_paving = f64::from(self.paving.eval_at(at)).abs();
 
-        let tile_ruin_paving = max2(
-            masks.natural_and_mesa * (3.0 * ruins_paving * roads.road_paving_thin - 0.5),
-            masks.artificial * (4.0 * roads.road_paving_2c + ruins_paving - 1.0),
+        // Every step is one f32 operation, in the Lua's order, and every
+        // non-exact literal is narrowed before it meets a value (#521). The
+        // intermediates of `3 * ruins_paving * thin - 0.5` are left to right.
+        let paving_natural = f32r(
+            masks.natural_and_mesa
+                * f32r(f32r(f32r(3.0 * ruins_paving) * roads.road_paving_thin) - 0.5),
         );
+        let paving_artificial = f32r(
+            masks.artificial * f32r(f32r(f32r(4.0 * roads.road_paving_2c) + ruins_paving) - 1.0),
+        );
+        let tile_ruin_paving = max2(paving_natural, paving_artificial);
 
         // Per-operation narrowing throughout, matching the engine's evaluation
         // order: 88/101 -> **101/101**, residual exactly 0 (#273). Every literal
-        // here (0.5, 0.25, 4, 2, 2.5) is already exact at f32, so this is case 1
-        // only - the rounding of the intermediates, not of any constant.
+        // in this arm (0.5, 0.25, 4, 2, 2.5) is already exact at f32.
         //
-        // `max2` keeps the TypeScript's argument order, which is load-bearing:
+        // `max2` keeps the Lua's argument order, which is load-bearing:
         // `f64::max` follows IEEE 754-2019 `maximumNumber` and may return either
         // input when both compare equal, so a swapped pair can diverge on signed
         // zero and no tolerance would show it.
-        //
-        // **Narrow at the TypeScript's narrowing points, not earlier.** A first
-        // draft bound `let rw = ruins_walls as f32` and reused it, which reads
-        // as tidier and is a different computation: the fields in this chain are
-        // held as f64 that have NOT been rounded to f32 (`ruins_walls` is an f64
-        // subtraction of two f32 values, which needs more than 24 bits), so
-        // rounding one before use discards bits the TypeScript still has. Tier 1
-        // scored 101/101 either way and only tier 2's fold over 676 grid points
-        // caught it - the two ports agreed at every fixture position and
-        // disagreed off them.
-        let a = f64::from((2.0 * ruins_walls) as f32);
-        let arm_natural = f64::from(
-            (masks.natural_and_mesa
-                * f64::from((f64::from((a + ruins_paving) as f32) - 0.5) as f32))
-                as f32,
-        );
+        let a = f32r(2.0 * ruins_walls);
+        let arm_natural = f32r(masks.natural_and_mesa * f32r(f32r(a + ruins_paving) - 0.5));
 
-        let t3 = f64::from(
-            (f64::from((0.25 * ruins_walls) as f32)
-                + f64::from((0.25 * roads.structure_subnoise) as f32)) as f32,
-        );
-        let t5 = f64::from((t3 - f64::from((4.0 * roads.structure_facets) as f32)) as f32);
-        let t7 = f64::from((f64::from((t5 - roads.road_paving_2c) as f32) + 2.5) as f32);
-        let arm_artificial = f64::from((masks.artificial * t7) as f32);
+        let t3 = f32r(f32r(0.25 * ruins_walls) + f32r(0.25 * roads.structure_subnoise));
+        let t5 = f32r(t3 - f32r(4.0 * roads.structure_facets));
+        let t7 = f32r(f32r(t5 - roads.road_paving_2c) + 2.5);
+        let arm_artificial = f32r(masks.artificial * t7);
 
         let tile_ruin_walls = max2(arm_natural, arm_artificial);
 
         // The second `- road_paving_2c` sits OUTSIDE the mask product, which is
         // what lets these two go negative on open ground rather than to zero.
-        let tile_ruin_conduit = masks.artificial
-            * (ruins_walls + roads.structure_subnoise + 2.0 * roads.structure_facets
-                - roads.road_paving_2c
-                + 0.2
-                + 0.3 * cells.vaults_and_starting_vault)
-            - roads.road_paving_2c;
+        // The Lua sums left to right: `((((w + s) + 2f) - c) + 0.2) + 0.3v`.
+        let conduit_sum = f32r(
+            f32r(
+                f32r(
+                    f32r(
+                        f32r(ruins_walls + roads.structure_subnoise)
+                            + f32r(2.0 * roads.structure_facets),
+                    ) - roads.road_paving_2c,
+                ) + f32r(0.2),
+            ) + f32r(f32r(0.3) * cells.vaults_and_starting_vault),
+        );
+        let tile_ruin_conduit = f32r(f32r(masks.artificial * conduit_sum) - roads.road_paving_2c);
 
-        let tile_ruin_machinery = masks.artificial
-            * (-ruins_walls + 1.25 * roads.structure_subnoise + 2.5 * roads.structure_facets
-                - roads.road_paving_2c
-                - 0.2
-                + 0.3 * cells.vaults_and_starting_vault
-                + 2.0 * f64::from(u8::from(roads.spots_prebanding < 1.0)))
-            - roads.road_paving_2c;
+        // `((((-w + 1.25s) + 2.5f) - c) - 0.2) + 0.3v) + 2 * (prebanding < 1)`.
+        let machinery_sum = f32r(
+            f32r(
+                f32r(
+                    f32r(
+                        f32r(-ruins_walls + f32r(1.25 * roads.structure_subnoise))
+                            + f32r(2.5 * roads.structure_facets),
+                    ) - roads.road_paving_2c,
+                ) - f32r(0.2),
+            ) + f32r(f32r(0.3) * cells.vaults_and_starting_vault),
+        );
+        let machinery_sum =
+            f32r(machinery_sum + 2.0 * f64::from(u8::from(roads.spots_prebanding < 1.0)));
+        let tile_ruin_machinery =
+            f32r(f32r(masks.artificial * machinery_sum) - roads.road_paving_2c);
 
         RuinFields {
             ruins_walls,
@@ -192,14 +195,15 @@ mod tests {
             artificial: 0.0,
         };
         let roads = RoadFields {
-            road_paving_2c: 0.9,
+            // An f32 value, as the game holds it: the fields now round to f32.
+            road_paving_2c: f64::from(0.9f32),
             spots_prebanding: 2.0,
             ..RoadFields::default()
         };
         let f = ruins.eval(10.0, 20.0, &cells, &masks, &roads);
         assert_eq!(f.tile_ruin_paving, 0.0);
         assert_eq!(f.tile_ruin_walls, 0.0);
-        assert_eq!(f.tile_ruin_conduit, -0.9);
-        assert_eq!(f.tile_ruin_machinery, -0.9);
+        assert_eq!(f.tile_ruin_conduit, -f64::from(0.9f32));
+        assert_eq!(f.tile_ruin_machinery, -f64::from(0.9f32));
     }
 }

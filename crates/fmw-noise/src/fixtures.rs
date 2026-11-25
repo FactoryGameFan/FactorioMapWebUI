@@ -3378,6 +3378,12 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
     assert_eq!(positions.len(), 101, "fixture size");
     let f = fulgora_stack_sweep(fixture.get("seed0").as_f64() as u32, positions);
 
+    // #521: the road and ruins layers now round every step to f32 and read
+    // their comparison literals as f32, as the game does. `spots_prebanding`
+    // 98 -> 101, `spots_banding` 50 -> 101 (the `% 1` exposes any last-bit
+    // error in its operand), `tile_ruin_paving` 97 -> 101, `tile_ruin_conduit`
+    // 96 -> 101, `tile_ruin_machinery` 94 -> 101, and `fulgoran_dust_probability`
+    // 45 -> 46 from the ruins fields it reads. Nothing went down.
     type S = StackFields;
     for (key, want_exact, select) in [
         (
@@ -3394,10 +3400,10 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
         ("fulgora_pyramids_banding", 101, &|f: &S| {
             f.roads.pyramids_banding
         }),
-        ("fulgora_spots_prebanding", 98, &|f: &S| {
+        ("fulgora_spots_prebanding", 101, &|f: &S| {
             f.roads.spots_prebanding
         }),
-        ("fulgora_spots_banding", 50, &|f: &S| f.roads.spots_banding),
+        ("fulgora_spots_banding", 101, &|f: &S| f.roads.spots_banding),
         ("fulgora_structure_cells", 101, &|f: &S| {
             f.roads.structure_cells
         }),
@@ -3420,19 +3426,19 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
         ("fulgora_road_dust", 101, &|f: &S| f.roads.road_dust),
         ("fulgora_ruins_walls", 101, &|f: &S| f.ruins.ruins_walls),
         ("fulgora_ruins_paving", 101, &|f: &S| f.ruins.ruins_paving),
-        ("fulgora_tile_ruin_paving", 97, &|f: &S| {
+        ("fulgora_tile_ruin_paving", 101, &|f: &S| {
             f.ruins.tile_ruin_paving
         }),
         ("fulgora_tile_ruin_walls", 101, &|f: &S| {
             f.ruins.tile_ruin_walls
         }),
-        ("fulgora_tile_ruin_conduit", 96, &|f: &S| {
+        ("fulgora_tile_ruin_conduit", 101, &|f: &S| {
             f.ruins.tile_ruin_conduit
         }),
-        ("fulgora_tile_ruin_machinery", 94, &|f: &S| {
+        ("fulgora_tile_ruin_machinery", 101, &|f: &S| {
             f.ruins.tile_ruin_machinery
         }),
-        ("fulgoran_dust_probability", 45, &|f: &S| {
+        ("fulgoran_dust_probability", 46, &|f: &S| {
             f.land_probabilities()[0]
         }),
         ("fulgoran_dunes_probability", 98, &|f: &S| {
