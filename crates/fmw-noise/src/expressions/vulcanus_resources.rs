@@ -12,7 +12,7 @@
 //!
 //! 1. `random_penalty_between(0.9, 1, 1)` is taken as `1` HERE. It appears in
 //!    every `*_probability` expression, and at `rp = 1` the probability
-//!    collapses to `1000 * region`, which is what this layer hands up. The roll
+//!    is `1000 * ((1 + region) - 1)` in f32, which is what this layer hands up. The roll
 //!    itself is applied above it, by
 //!    [`VulcanusOreRoll`](crate::resources::vulcanus_ore_roll::VulcanusOreRoll):
 //!    its batch turned out to be the tile's chunk, so a per-pixel renderer CAN
@@ -88,7 +88,7 @@
 use crate::at::At;
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
 use crate::eval::ctx::EvalCtx;
-use crate::eval::math::{clamp, max2, min2, slider_rescale};
+use crate::eval::math::{clamp, f32r, max2, min2, slider_rescale};
 use crate::expressions::starting_spot_at_angle::{starting_spot_at_angle, AngleTrig, StartingSpot};
 use crate::expressions::vulcanus_biomes::VulcanusBiomes;
 use crate::expressions::vulcanus_cracks::VulcanusCracks;
@@ -425,9 +425,11 @@ impl<'a> VulcanusResources<'a> {
     /// A DIFFERENT combination from `vulcanus_spawn`'s three-wobble sum:
     /// resources use two wobbles, the larger one quarter-weighted.
     fn resource_wobble_at(&self, at: At) -> (f64, f64) {
+        // `wobble + 0.25 * wobble_large`, one f32 step each (#521).
+        let quarter = f32r(0.25);
         (
-            self.helpers.wobble_x_at(at) + 0.25 * self.helpers.wobble_large_x_at(at),
-            self.helpers.wobble_y_at(at) + 0.25 * self.helpers.wobble_large_y_at(at),
+            f32r(self.helpers.wobble_x_at(at) + f32r(quarter * self.helpers.wobble_large_x_at(at))),
+            f32r(self.helpers.wobble_y_at(at) + f32r(quarter * self.helpers.wobble_large_y_at(at))),
         )
     }
 
@@ -437,8 +439,12 @@ impl<'a> VulcanusResources<'a> {
     /// `contrast` is 2 at all four sites; only `buffer` and the calcite volcano
     /// term differ.
     fn favorability(biome_full: f64, starting_area: f64, buffer: f64) -> f64 {
-        let outside_start = if starting_area < 0.01 { 1.0 } else { 0.0 };
-        clamp((biome_full * outside_start - buffer) * CONTRAST, 0.0, 1.0)
+        // One f32 step each, with `0.01`, the buffer and the contrast narrowed
+        // as the Lua's literals are (#521). `biome_full * (a < b)` multiplies by
+        // exactly 0 or 1, so it needs no rounding of its own.
+        let outside_start = if starting_area < f32r(0.01) { 1.0 } else { 0.0 };
+        let shifted = f32r(f32r(biome_full) * outside_start - f32r(buffer));
+        clamp(f32r(shifted * f32r(CONTRAST)), 0.0, 1.0)
     }
 
     /// One of the four favorabilities.
@@ -468,12 +474,12 @@ impl<'a> VulcanusResources<'a> {
             }
             Favor::MountainsCalcite => {
                 let main = Self::favorability(b.mountains_biome_full, starting_area, 0.4);
-                let peak = if b.mountain_volcano_spots > 0.78 {
+                let peak = if f32r(b.mountain_volcano_spots) > f32r(0.78) {
                     1.0
                 } else {
                     0.0
                 };
-                clamp(main - peak, 0.0, 1.0)
+                clamp(f32r(f32r(main) - peak), 0.0, 1.0)
             }
         }
     }
@@ -492,7 +498,7 @@ impl<'a> VulcanusResources<'a> {
             &self.starting_positions,
             f64::INFINITY,
         ));
-        max2(1.0, d / 4000.0)
+        max2(1.0, f32r(d / 4000.0))
     }
 
     /// The shared `size` expression:
@@ -504,7 +510,10 @@ impl<'a> VulcanusResources<'a> {
     /// [`Self::size_expr`] at an [`At`] (#451).
     fn size_expr_at(&self, spec: SpotSpec, at: At) -> f64 {
         let (x, y) = (at.x(), at.y());
-        spec.size_rescaled * min2(1.2, self.ore_dist(x, y)) * 25.0
+        // `size * min(1.2, ore_dist) * 25`, left to right, one f32 step each
+        // (#521).
+        let scaled = f32r(spec.size_rescaled * min2(f32r(1.2), self.ore_dist(x, y)));
+        f32r(scaled * 25.0)
     }
 
     /// The selected spots of one region of one stream, computed once and cached.
@@ -528,10 +537,10 @@ impl<'a> VulcanusResources<'a> {
             region_x,
             region_y,
         };
-        let density = |x: f64, y: f64| self.favor(spec.favor, x, y) * 4.0;
+        let density = |x: f64, y: f64| f32r(self.favor(spec.favor, x, y) * 4.0);
         let quantity = |x: f64, y: f64| {
             let s = self.size_expr(spec, x, y);
-            s * s
+            f32r(s * s)
         };
         // No `spot_radius_expression` here on purpose. `select_spots` only needs
         // one when `hard_region_target_quantity` is set, and it is not at any of
@@ -539,7 +548,7 @@ impl<'a> VulcanusResources<'a> {
         // in `spot_noise` instead. The TypeScript omits it from the same call
         // for the same reason.
         let favorability = |x: f64, y: f64| {
-            if self.favor(spec.favor, x, y) > 0.9 {
+            if self.favor(spec.favor, x, y) > f32r(0.9) {
                 1.0
             } else {
                 0.0
@@ -577,8 +586,8 @@ impl<'a> VulcanusResources<'a> {
         let (wx, wy) = self.resource_wobble_at(at);
         spot_cone_max(
             &spec.geometry(),
-            x + wx,
-            y + wy,
+            f32r(x + wx),
+            f32r(y + wy),
             |region_x, region_y| self.region_spots(spec, region_x, region_y),
             |s| self.size_expr(spec, s.x as f64, s.y as f64),
         )
@@ -591,10 +600,9 @@ impl<'a> VulcanusResources<'a> {
     fn place_metal_spots_at(&self, at: At) -> f64 {
         let spec = self.tungsten_spots;
         let favor = self.favor_at(spec.favor, at);
-        min2(
-            clamp(-1.0 + 4.0 * favor, -1.0, 1.0),
-            self.spot_noise_at(spec, at) - self.cracks.eval_at(at).hairline_cracks / 30_000.0,
-        )
+        let ceiling = clamp(f32r(-1.0 + f32r(4.0 * favor)), -1.0, 1.0);
+        let crack_term = f32r(f32r(self.cracks.eval_at(at).hairline_cracks) / 30_000.0);
+        min2(ceiling, f32r(self.spot_noise_at(spec, at) - crack_term))
     }
 
     /// `vulcanus_place_sulfur_spots` and `vulcanus_place_non_metal_spots`.
@@ -602,14 +610,14 @@ impl<'a> VulcanusResources<'a> {
     /// The two differ only in their `region_size` base, which lives on the spec.
     fn place_capped_spots_at(&self, spec: SpotSpec, at: At) -> f64 {
         min2(
-            2.0 * self.favor_at(spec.favor, at) - 1.0,
+            f32r(f32r(2.0 * self.favor_at(spec.favor, at)) - 1.0),
             self.spot_noise_at(spec, at),
         )
     }
 
     /// `max(starting_<ore>, min(1 - starting_circle, place_*(...)))`.
     fn region(starting: f64, starting_circle: f64, placed: f64) -> f64 {
-        max2(starting, min2(1.0 - starting_circle, placed))
+        max2(starting, min2(f32r(1.0 - f32r(starting_circle)), placed))
     }
 
     /// The three SOLID ores' region fields, and nothing else.
@@ -640,7 +648,9 @@ impl<'a> VulcanusResources<'a> {
         let wobble = WobbleSums::at_pos(self.helpers, at);
         let starting_circle = self.spawn.eval_at(at, wobble).starting_circle;
         let (wx, wy) = self.resource_wobble_at(at);
-        let cone = |spot: &StartingSpot| starting_spot_at_angle(spot, x, y, 0.5 * wx, 0.5 * wy);
+        let cone = |spot: &StartingSpot| {
+            starting_spot_at_angle(spot, x, y, f32r(0.5 * wx), f32r(0.5 * wy))
+        };
         OreRegions {
             tungsten: Self::region(
                 cone(&self.spot_tungsten),
@@ -678,7 +688,7 @@ impl<'a> VulcanusResources<'a> {
         // pair which take three quarters. Written out per spot rather than
         // looped, because a swapped distortion weight is a plausible map.
         let cone = |spot: &StartingSpot, weight: f64| {
-            starting_spot_at_angle(spot, x, y, weight * wx, weight * wy)
+            starting_spot_at_angle(spot, x, y, f32r(weight * wx), f32r(weight * wy))
         };
         let starting_tungsten = cone(&self.spot_tungsten, 0.5);
         let starting_coal = cone(&self.spot_coal, 0.5);
@@ -709,16 +719,24 @@ impl<'a> VulcanusResources<'a> {
             self.place_capped_spots_at(self.sulfur_spots, at),
         );
 
-        let sulfuric_acid_patches = 0.8 * f64::from(self.patch_noise.eval_at(at)).abs();
-        let sulfuric_acid_region_patchy =
-            (1.0 + sulfuric_acid_region) * (0.5 + 0.5 * sulfuric_acid_patches) - 1.0;
+        let sulfuric_acid_patches = f32r(f32r(0.8) * f64::from(self.patch_noise.eval_at(at)).abs());
+        let sulfuric_acid_region_patchy = f32r(
+            f32r(f32r(1.0 + sulfuric_acid_region) * f32r(0.5 + f32r(0.5 * sulfuric_acid_patches)))
+                - 1.0,
+        );
 
         // `vulcanus_metal_tile = max(0, vulcanus_tungsten_ore_probability)`,
         // where the probability is
         // `(control:tungsten_ore:size > 0) * 1000 * ((1 + region) * rp - 1)`
-        // and `rp -> 1` by approximation 1, so it collapses to `1000 * region`.
+        // and `rp -> 1` by approximation 1. That is NOT `1000 * region`: the
+        // game rounds `1 + region` to f32 before subtracting the 1 again, which
+        // costs low bits when the region is small (#521). `ore_probability` is
+        // the same f32 chain the overlay's roll uses, so one function owns it.
         let metal_tile = if self.tungsten_size_positive {
-            max2(0.0, 1000.0 * tungsten_region)
+            max2(
+                0.0,
+                crate::resources::vulcanus_ore_roll::ore_probability(tungsten_region, 1.0),
+            )
         } else {
             0.0
         };
@@ -801,7 +819,10 @@ mod tests {
         );
     }
 
-    const FROZEN_FOLD: u64 = 0x41c3_2b2d_06e8_89ed;
+    // Re-frozen for #521: the region arithmetic now rounds every step to f32, so
+    // every bit pattern moved on purpose. Before it the value was
+    // `0x41c3_2b2d_06e8_89ed`, frozen before the spot query was shared.
+    const FROZEN_FOLD: u64 = 0x1ace_b06b_36c7_4b34;
 
     fn layer_at(seed0: u32) -> (EvalCtx, VulcanusHelpers) {
         let ctx = EvalCtx::new(seed0);
@@ -862,10 +883,10 @@ mod tests {
         // Outside it, `(1.0 - 0.3) * 2 = 1.4`, clamped to 1.
         assert_eq!(VulcanusResources::favorability(1.0, 0.0, 0.3), 1.0);
         // And the buffer really does subtract. `(0.4 - 0.3) * 2` is not exactly
-        // 0.2 in binary, so this compares within an epsilon - the shape is what
-        // is under test here, and the exact bits are what the oracle fixture
-        // grades.
-        assert!((VulcanusResources::favorability(0.4, 0.0, 0.3) - 0.2).abs() < 1e-12);
+        // 0.2, and each step now rounds to f32, so this compares within a few
+        // f32 steps - the shape is what is under test here, and the exact bits
+        // are what the oracle fixture grades.
+        assert!((VulcanusResources::favorability(0.4, 0.0, 0.3) - 0.2).abs() < 1e-6);
         // A biome fully under the buffer clamps to zero rather than going
         // negative, which is what keeps a spot density non-negative.
         assert_eq!(VulcanusResources::favorability(0.1, 0.0, 0.3), 0.0);
