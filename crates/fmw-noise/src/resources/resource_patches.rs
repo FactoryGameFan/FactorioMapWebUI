@@ -19,7 +19,7 @@
 //! being re-derived here. A trait object would hide which of the two is running.
 
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{max2, min2};
+use crate::eval::math::{f32r, max2, min2};
 
 use super::nauvis_catalog::ResourceParams;
 use super::regular_patches::{richness_distance_factor, RegularPatches, RegularPatchesCtx};
@@ -175,10 +175,10 @@ impl ResourcePatches {
                     return 0.0;
                 }
                 let distance = f64::from(distance_from_nearest_point(x, y, spawn, f64::INFINITY));
-                params.richness_post_multiplier
-                    * levers.richness
-                    * self.field(x, y)
-                    * richness_distance_factor(distance)
+                // `post * var(richness) * field * distance_factor`, left to
+                // right, every product in f32.
+                let multiplier = f32r(params.richness_post_multiplier * f32r(levers.richness));
+                f32r(f32r(multiplier * self.field(x, y)) * richness_distance_factor(distance))
             }
         }
     }

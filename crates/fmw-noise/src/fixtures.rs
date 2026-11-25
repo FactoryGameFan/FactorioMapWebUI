@@ -8589,39 +8589,43 @@ fn reproduces_the_games_regular_resource_patches_at_every_captured_position() {
     // cannot pass. Every number below was measured on the TypeScript side
     // against this same fixture with the same snap.
     //
-    // #521, step 1 (the catalog constants and the `resource_math` scalars
-    // rounded to f32): `worst` 0.6665 / 0.4459 / 0.6811 / 0.4725 ->
-    // 0.6477 / 0.4410 / 0.6482 / 0.4409. The basement is now an f32 value, so
-    // the constant ~0.61 offset (#261) is the same for every position instead
-    // of smeared over three neighbouring ULPs. `exact` stays 0.
+    // #521 (every step of the catalog, the scalars, the blob term and the
+    // field sum rounded to f32; the blob noise sampled at `f32(x) * f32(scale)`
+    // rather than `x / 24`): `worst` 0.6665 / 0.4459 / 0.6811 / 0.4725 ->
+    // 0.6133 / 0.4102 / 0.6133 / 0.4102. Those are now exactly the basement's
+    // constant offset (#261), 628 and 420 ULPs, and the REAL measure of the
+    // change is the mode of the residual: the share of positions sitting at
+    // that one constant went from 486 / 537 / 504 / 546 of 4105 to 4055 / 4059
+    // / 4048 / 4041. Past the offset the blob term is bit-exact. `exact` stays
+    // 0 (1 on iron 777771), because the offset itself is still there.
     let expected = [
         // iron-ore, 123456
         ResourceScore {
             exact: 0,
-            worst: 0.647_723_398_835_296_4,
+            worst: 0.613_281_25,
             at_basement: 4055,
-            fold: 0xb66b_885f_7688_707b,
+            fold: 0x45ec_4357_7ce9_fc9a,
         },
         // uranium-ore, 123456
         ResourceScore {
             exact: 0,
-            worst: 0.441_021_500_564_602_3,
+            worst: 0.410_156_25,
             at_basement: 4096,
-            fold: 0x9e13_e3e0_8b18_7c08,
+            fold: 0x5220_0193_d44f_5527,
         },
         // iron-ore, 777771
         ResourceScore {
-            exact: 0,
-            worst: 0.648_163_748_814_113_2,
+            exact: 1,
+            worst: 0.613_281_25,
             at_basement: 4048,
-            fold: 0x6a90_23bd_17a3_f784,
+            fold: 0x8a25_09a0_9227_4358,
         },
         // uranium-ore, 777771
         ResourceScore {
             exact: 0,
-            worst: 0.440_913_092_461_414_64,
+            worst: 0.410_156_25,
             at_basement: 4096,
-            fold: 0x6626_c38d_81bd_2cfd,
+            fold: 0x4431_3984_2739_88fa,
         },
     ];
 
@@ -8664,37 +8668,39 @@ fn reproduces_the_games_combined_resource_patches_at_every_captured_position() {
     // than elevation - overriding elevation with this expression makes the
     // engine's spawn-lake resolution recurse into itself and SIGSEGV headless.
     //
-    // #521, step 1: `worst` 0.6211 / 0.3752 / 0.6386 / 0.3760 ->
-    // 0.6202 / 0.3755 / 0.6220 / 0.3762. Copper moves up by 0.0003 and 0.0002:
-    // the starting cone still reads f64 glue there (step 2).
+    // #521: `worst` 0.6211 / 0.3752 / 0.6386 / 0.3760 -> 0.6172 / 0.3750 /
+    // 0.6172 / 0.3750, all on the f32 grid now. The starting blob amplitude
+    // still carries #261's `fast_cbrt` gap, so the residual here is spread
+    // over three neighbouring ULPs instead of one constant (modal share 2176 /
+    // 1945 / 2124 / 1863 of 3745, from 1583 / 1319 / 1568 / 1314).
     let expected = [
         // iron-ore, 123456
         ResourceScore {
             exact: 0,
-            worst: 0.620_248_472_599_996_6,
+            worst: 0.617_187_5,
             at_basement: 3623,
-            fold: 0x98dc_1fea_b9f7_963b,
+            fold: 0xc7f3_a1bf_4a1e_658c,
         },
         // copper-ore, 123456
         ResourceScore {
-            exact: 0,
-            worst: 0.375_494_729_320_053,
+            exact: 1,
+            worst: 0.375,
             at_basement: 3663,
-            fold: 0xf081_cb44_a1bc_0af6,
+            fold: 0x1b4f_8cfd_2635_f9e1,
         },
         // iron-ore, 777771
         ResourceScore {
             exact: 0,
-            worst: 0.622_041_125_037_867_5,
+            worst: 0.617_187_5,
             at_basement: 3664,
-            fold: 0xbc37_d4bd_e821_8be9,
+            fold: 0x2440_5f5b_8736_28e3,
         },
         // copper-ore, 777771
         ResourceScore {
             exact: 0,
-            worst: 0.376_166_839_676_443_5,
+            worst: 0.375,
             at_basement: 3700,
-            fold: 0x694a_a075_3552_c764,
+            fold: 0xd6a0_592f_8aa0_1abb,
         },
     ];
 
@@ -8758,16 +8764,16 @@ fn the_capture_grid_snap_is_load_bearing_on_the_starting_fixture_and_inert_on_th
     let starting = "test/fixtures/oracle-resource-starting.seed123456.json";
     let snapped = raw_worst(starting, "2.1.11", 0, true);
     let unsnapped = raw_worst(starting, "2.1.11", 0, false);
-    assert_eq!(snapped, 0.620_248_472_599_996_6, "snapped");
+    assert_eq!(snapped, 0.617_187_5, "snapped");
     // The TypeScript records this one to three decimals (`test/captureGrid.ts`
     // and `test/resourcePatches.spec.ts` both say 4.899), so the exact value
     // below is measured here rather than there. It agrees to every digit they
     // print, and `fold` in the test above is what establishes that the two
     // ports produce the same values at these positions in the first place.
-    assert_eq!(unsnapped, 4.898_542_370_325_231, "unsnapped");
+    assert_eq!(unsnapped, 4.875, "unsnapped");
     assert!(
         unsnapped > snapped * 7.0,
-        "the snap is worth 7.6x here, not a rounding difference"
+        "the snap is worth 7.9x here, not a rounding difference"
     );
 
     // And the other way on the regular fixture, whose positions are all on the

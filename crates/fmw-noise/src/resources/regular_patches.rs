@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 
 use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{max2, min2, PI};
+use crate::eval::math::{f32r, max2, min2, PI};
 use crate::fast_approx::fast_cbrt;
 use crate::random_penalty::{random_penalty_batch, RandomPenaltyParams, RandomPenaltyPosition};
 use crate::spot_candidates::{SpotPoint, SpotRegionKey};
@@ -139,8 +139,8 @@ impl RegularPatches {
             skip_span: ctx.skip_span,
             skip_offset: ctx.skip_offset,
             seed0: ctx.seed0,
-            penalty_source: params.random_spot_size_max,
-            penalty_amplitude: params.random_spot_size_max - params.random_spot_size_min,
+            penalty_source: f32r(params.random_spot_size_max),
+            penalty_amplitude: f32r(params.random_spot_size_max - params.random_spot_size_min),
             region_cache: RefCell::new(BTreeMap::new()),
         }
     }
@@ -277,17 +277,34 @@ impl RegularPatches {
     /// `(blobs0 + basis_noise{1/64,1.5} - 1/3) * regular_blob_amplitude_at(distance)`.
     #[must_use]
     pub(crate) fn blob_term_at(&self, x: f64, y: f64) -> f64 {
-        let blobs0 = f64::from(basis_noise(x / 8.0, y / 8.0, &self.tables))
-            + f64::from(basis_noise(x / 24.0, y / 24.0, &self.tables));
-        let extra = 1.5 * f64::from(basis_noise(x / 64.0, y / 64.0, &self.tables));
-        (blobs0 + extra - 1.0 / 3.0)
-            * regular_blob_amplitude_at(self.distance_at(x, y), &self.params, &self.controls)
+        // Every step in f32, in the Lua's order (#521):
+        // `(blobs0 + 1.5 * basis{1/64} - 1/3) * amplitude`.
+        let blobs0 = f32r(
+            f64::from(basis_noise(
+                scaled(x, 1.0 / 8.0),
+                scaled(y, 1.0 / 8.0),
+                &self.tables,
+            )) + f64::from(basis_noise(
+                scaled(x, 1.0 / 24.0),
+                scaled(y, 1.0 / 24.0),
+                &self.tables,
+            )),
+        );
+        let extra = f32r(
+            1.5 * f64::from(basis_noise(
+                scaled(x, 1.0 / 64.0),
+                scaled(y, 1.0 / 64.0),
+                &self.tables,
+            )),
+        );
+        let sum = f32r(f32r(blobs0 + extra) - f32r(1.0 / 3.0));
+        f32r(sum * regular_blob_amplitude_at(self.distance_at(x, y), &self.params, &self.controls))
     }
 
     /// The raw `regular_patches` field value.
     #[must_use]
     pub fn field(&self, x: f64, y: f64) -> f64 {
-        self.spot_field_at(x, y) + self.blob_term_at(x, y)
+        f32r(self.spot_field_at(x, y) + self.blob_term_at(x, y))
     }
 
     /// `clamp(field, 0, 1)` - the solid-footprint probability.
@@ -306,15 +323,14 @@ impl RegularPatches {
         if self.levers.size <= 0.0 {
             return 0.0;
         }
-        let mut r = self.field(x, y) / self.params.random_probability;
-        r += self.params.additional_richness;
+        let mut r = f32r(self.field(x, y) / self.params.random_probability);
+        r = f32r(r + self.params.additional_richness);
         if self.params.minimum_richness > 0.0 {
             r = max2(r, self.params.minimum_richness);
         }
-        self.params.richness_post_multiplier
-            * self.levers.richness
-            * r
-            * richness_distance_factor(self.distance_at(x, y))
+        // `post * var(richness) * (expr) * distance_factor`, left to right.
+        let multiplier = f32r(self.params.richness_post_multiplier * f32r(self.levers.richness));
+        f32r(f32r(multiplier * r) * richness_distance_factor(self.distance_at(x, y)))
     }
 
     /// The constant floor this field is built over.
@@ -354,10 +370,21 @@ fn cone_at(peak: f64, radius: f64, d2: f64) -> f64 {
 /// `has_starting = nil`. The expression comes first in the `max`, as written.
 pub(crate) fn richness_distance_factor(distance: f64) -> f64 {
     max2(
-        (DOUBLE_DENSITY_DISTANCE - REGULAR_PATCH_FADE_IN_DISTANCE + distance)
-            / (DOUBLE_DENSITY_DISTANCE * 2.0),
+        f32r(
+            f32r(DOUBLE_DENSITY_DISTANCE - REGULAR_PATCH_FADE_IN_DISTANCE + distance)
+                / (DOUBLE_DENSITY_DISTANCE * 2.0),
+        ),
         1.0,
     )
+}
+
+/// A coordinate times an `input_scale`, both narrowed: the point the game's
+/// `basis_noise{input_scale = s}` actually samples (`f32(x) * f32(s)`).
+///
+/// Exact for the power-of-two scales (1/8, 1/64) and different from `x / 24`
+/// for 1/24, which is not representable in f32 (#521).
+pub(crate) fn scaled(c: f64, input_scale: f64) -> f64 {
+    f32r(f32r(c) * f32r(input_scale))
 }
 
 #[cfg(test)]
@@ -392,7 +419,10 @@ mod tests {
         // else and the frozen numbers beside it are meaningless.
         let p = built(123_456);
         for &(x, y) in &[(0.5, 0.25), (512.0, 512.0), (-1337.5, 880.25)] {
-            assert_eq!(p.field(x, y), p.spot_field_at(x, y) + p.blob_term_at(x, y));
+            assert_eq!(
+                p.field(x, y),
+                f32r(p.spot_field_at(x, y) + p.blob_term_at(x, y))
+            );
         }
     }
 
@@ -573,8 +603,10 @@ mod tests {
         let oil = resource_by_name("crude-oil").expect("oil");
         let p = RegularPatches::new(oil, &RegularPatchesCtx::defaults(123_456));
         let (x, y) = (1500.5, 220.25);
-        let expected = (p.field(x, y) / oil.random_probability + 220_000.0)
-            * richness_distance_factor(p.distance_at(x, y));
+        // Every step in f32, in the order the Lua writes the expression.
+        let divided = f32r(p.field(x, y) / oil.random_probability);
+        let expected =
+            f32r(f32r(divided + 220_000.0) * richness_distance_factor(p.distance_at(x, y)));
         assert_eq!(p.richness(x, y), expected);
     }
 }
