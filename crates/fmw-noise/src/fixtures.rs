@@ -3957,8 +3957,18 @@ fn reproduces_the_vulcanus_climate_layer_at_every_captured_position() {
 
     let (_, climate) = vulcanus_sweep(fixture.get("seed0").as_f64() as u32, positions);
 
-    // Frozen exact counts, measured as above and matched by the TypeScript at
-    // 40 and 20. Worst residuals 4.584e-4 and 1.117e-4.
+    // Frozen exact counts. **#521 rounded every step to f32, literals included
+    // (`0.3`, `0.6`, `0.2`): `aux` 51 -> 56 and `moisture` 35 -> 60.** `aux`
+    // stops at 56 because it reads `flood_paths`, which is itself only 34 of 61
+    // exact until the crack layer is rounded; `moisture` reads the better
+    // `flood_cracks_a` and gets nearly all the way. The TypeScript is still at
+    // 40 and 20, so this is no longer a count both ports share.
+    //
+    // Downstream, reading these two moved `elev` and `elevation` 171 -> 169,
+    // `temperature` 252 -> 250, the Vulcanus tile-channel elevation 786 -> 784,
+    // `rock_big` 205 -> 214, `rock_huge` 178 -> 174 and `density` 412 -> 411.
+    // Those fields' own glue is still f64, so a better input can shift a value
+    // that landed exactly right by luck. Their modules are rounded separately.
     //
     // **#521: moisture 35 -> 37 and aux unchanged at 51.** Neither is rounded
     // here (the climate layer is not part of that change), but both read the
@@ -4056,7 +4066,7 @@ fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_crack_layer() {
         (50, 43),
         "unsnapped - points the game never saw"
     );
-    assert_eq!(scored(true), (61, 51), "snapped - where the game evaluated");
+    assert_eq!(scored(true), (61, 56), "snapped - where the game evaluated");
 }
 
 use crate::expressions::vulcanus_spawn::{SpawnFields, VulcanusSpawn, WobbleSums};
