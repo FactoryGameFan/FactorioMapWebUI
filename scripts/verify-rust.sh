@@ -372,6 +372,8 @@ POISONED_TESTS=(
   # `the_random_penalty_seed_word_matches_the_measured_formula`. See
   # `crates/fmw-noise/src/poison.rs`.
   fixtures::reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position
+  # The same chain on 2.1.23, at the corners where the cliffiness gate flips.
+  fixtures::reproduces_the_nauvis_cliff_offset_chain_and_gate_at_the_flip_corners
 
   # `amplitude_corrected_multioctave_noise`, ported in phase 6 because
   # `elevation_lakes` and `elevation_nauvis` both read it. Like the layer above,

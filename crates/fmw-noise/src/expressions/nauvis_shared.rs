@@ -142,7 +142,8 @@ impl NauvisShared {
             cliff_level_tables: tables_from_seed(seed0, CLIFF_LEVEL_SEED1),
             offset_x_tables: tables_from_seed(seed0, NAUVIS_OFFSET_X_SEED1),
             offset_y_tables: tables_from_seed(seed0, NAUVIS_OFFSET_Y_SEED1),
-            offset_input_scale: nauvis_seg / 500.0,
+            // `nauvis_segmentation_multiplier / 500` is one f32 division in the game.
+            offset_input_scale: f32r(nauvis_seg / 500.0),
         }
     }
 
@@ -218,9 +219,11 @@ impl NauvisShared {
 
     /// `nauvis_hills_offset_raw_x`: bare `basis_noise` at `nauvis_seg / 500`.
     ///
-    /// The coordinate products are f64, matching the TypeScript, which calls
-    /// the raw primitive rather than the expression adapter here - so there is
-    /// no `output_scale` and no narrowing of the products.
+    /// There is no `output_scale` (the game's default of 1). On the point path
+    /// the scale and each coordinate product are narrowed to f32, as the game's
+    /// point kernel does (`addss; mulss`, 0x2519d3a-0x2519d48 in 2.1.23). They
+    /// were f64 here until 2026-11-25, which held four fields at 29 to 36 of 38
+    /// against the game.
     #[must_use]
     pub fn hills_offset_raw_x(&self, x: f64, y: f64) -> f64 {
         self.hills_offset_raw_x_at(At::point(x, y))
@@ -235,11 +238,14 @@ impl NauvisShared {
 
     fn offset_raw_at(&self, at: At, tables: &BasisNoiseTables) -> f64 {
         match at {
-            At::Point { x, y } => f64::from(basis_noise(
-                x * self.offset_input_scale,
-                y * self.offset_input_scale,
-                tables,
-            )),
+            At::Point { x, y } => {
+                let s = self.offset_input_scale as f32;
+                f64::from(basis_noise(
+                    f64::from((x as f32) * s),
+                    f64::from((y as f32) * s),
+                    tables,
+                ))
+            }
             At::Grid { cx, cy, i, r } => f64::from(basis_noise_grid_at(
                 (cx, cy),
                 (i, r),
@@ -284,10 +290,10 @@ impl NauvisShared {
         let raw_y = self.hills_offset_raw_y_at(at);
         let nx = normalize(raw_x, raw_y);
         let ny = normalize(raw_y, raw_x);
-        f64::from(
-            self.hills
-                .eval(at.x() + WARP_DISTANCE * nx, at.y() + WARP_DISTANCE * ny),
-        )
+        f64::from(self.hills.eval(
+            f32r(at.x() + f32r(WARP_DISTANCE * nx)),
+            f32r(at.y() + f32r(WARP_DISTANCE * ny)),
+        ))
         .abs()
     }
 
@@ -315,7 +321,44 @@ impl NauvisShared {
     /// [`Self::cliff_ringbreak`] at an [`At`].
     #[must_use]
     pub fn cliff_ringbreak_at(&self, at: At) -> f64 {
-        poison::f64_result((self.hills_at(at) - self.hills_offset_at(at)).abs())
+        poison::f64_result(f32r(self.hills_at(at) - self.hills_offset_at(at)).abs())
+    }
+}
+
+/// The cliff-offset chain as it shipped before 2026-11-25, kept as a CONTROL.
+///
+/// Every step here is f64, so the tests that grade the f32 chain against the
+/// game can also show that this form misses the corners where the two
+/// disagree. It lives under `cfg(test)`, so none of it reaches `engine.wasm`.
+#[cfg(test)]
+pub(crate) struct F64OffsetChain {
+    pub raw_x: f64,
+    pub raw_y: f64,
+    pub hills_offset: f64,
+    pub ringbreak: f64,
+}
+
+#[cfg(test)]
+impl NauvisShared {
+    pub(crate) fn f64_offset_chain(&self, x: f64, y: f64) -> F64OffsetChain {
+        let scale = self.nauvis_seg / 500.0;
+        let raw = |tables: &BasisNoiseTables| f64::from(basis_noise(x * scale, y * scale, tables));
+        let raw_x = raw(&self.offset_x_tables);
+        let raw_y = raw(&self.offset_y_tables);
+        let norm = |a: f64, b: f64| a / (0.001 + a * a + b * b).sqrt();
+        let (nx, ny) = (norm(raw_x, raw_y), norm(raw_y, raw_x));
+        let hills_offset = f64::from(
+            self.hills
+                .eval(x + WARP_DISTANCE * nx, y + WARP_DISTANCE * ny),
+        )
+        .abs();
+        let ringbreak = (self.hills(x, y) - hills_offset).abs();
+        F64OffsetChain {
+            raw_x,
+            raw_y,
+            hills_offset,
+            ringbreak,
+        }
     }
 }
 
@@ -326,7 +369,7 @@ impl NauvisShared {
 /// finite where both inputs are zero, so it is not a tolerance and must not be
 /// dropped.
 fn normalize(a: f64, b: f64) -> f64 {
-    a / (0.001 + a * a + b * b).sqrt()
+    f32r(a / f32r(f32r(f32r(f32r(0.001) + f32r(a * a)) + f32r(b * b)).sqrt()))
 }
 
 #[cfg(test)]

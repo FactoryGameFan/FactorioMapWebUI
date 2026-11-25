@@ -177,9 +177,15 @@ impl NauvisCliffFields {
     /// `pub` would put a method on the crate's surface for one test's sake.
     #[must_use]
     pub(crate) fn main_cliffiness(&self, x: f64, y: f64) -> f64 {
+        self.main_cliffiness_with_ringbreak(x, y, self.shared.cliff_ringbreak(x, y))
+    }
+
+    /// [`Self::main_cliffiness`] with the ringbreak term supplied. The tests use
+    /// it to put the old f64 offset chain's value through the same gate.
+    pub(crate) fn main_cliffiness_with_ringbreak(&self, x: f64, y: f64, ringbreak: f64) -> f64 {
         // Every step is an f32 operation in the Lua's order, literals included
         // (#521). The sub-terms are each `(field - c) * k`.
-        let base = f32r(f32r(f32r(self.shared.cliff_ringbreak(x, y)) - f32r(0.01)) * 60.0);
+        let base = f32r(f32r(f32r(ringbreak) - f32r(0.01)) * 60.0);
         let forest = f32r(f32r(self.shared.forest_path_billows(x, y) - f32r(0.03)) * 12.0);
         let bridge = f32r(f32r(self.shared.bridge_billows(x, y) - f32r(0.05)) * 15.0);
         let elev = f32r(f32r(self.no_cliff_elevation.eval(x, y) - 4.0) / 2.0);

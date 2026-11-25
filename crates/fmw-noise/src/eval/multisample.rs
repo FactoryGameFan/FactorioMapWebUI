@@ -9,16 +9,13 @@
 //! points on both axes, with no cross term between them. See
 //! `docs/noise/vulcanus-multisample-NOTES.md`.
 //!
-//! ## The offsets are in the CONSUMING PROGRAM's grid units (#83, open)
+//! ## The offsets are in the CONSUMING PROGRAM's grid units (#83, closed)
 //!
 //! The rule above is right **for a 1-tile noise program**, which is what
-//! `LuaSurface.calculate_tile_properties` and the tile renderer use. It was
-//! never checked in any other channel, and the builtin's own documentation says
-//! it evaluates "in a separate noise program with a larger grid".
-//!
-//! `test/fixtures/oracle-multisample-grid.seed123456.json` asks the same
-//! question through the CLIFF generator, whose grid is the 4-tile corner
-//! lattice, and the answer is different:
+//! `LuaSurface.calculate_tile_properties` and the tile renderer use. The
+//! builtin's own documentation says it evaluates "in a separate noise program
+//! with a larger grid", and in the cliff generator, whose grid is the 4-tile
+//! corner lattice, the offset is scaled by the grid step:
 //!
 //! | arm | cliff column | |
 //! | --- | --- | --- |
@@ -27,11 +24,21 @@
 //! | `multisample(x, 4, 0)` | **54** | shifted **16** tiles, not 4 |
 //! | `multisample(x, 0, 4)` | 70 | null control holds |
 //!
-//! A `dx` of 4 moved the field by 4 x the 4-tile grid step. **This port
-//! implements the 1-tile channel only**, exactly as the TypeScript does, and
-//! `the_port_implements_the_one_tile_channel_only` in `fixtures.rs` pins that
-//! limit against the fixture rather than leaving it as a comment. Issue #83
-//! tracks the rest.
+//! (`test/fixtures/oracle-multisample-grid.seed123456.json`.) A `dx` of 4 moves
+//! the field by 4 x the 4-tile grid step.
+//!
+//! **This function stays the plain shift, and the grid is the CALLER's job.**
+//! The consumer that runs in the cliff generator,
+//! `vulcanus_elevation::VulcanusElevation`, passes the grid step as the offset
+//! (`CLIFF_MULTISAMPLE_GRID = 4.0`, against `TILE_MULTISAMPLE_GRID = 1.0`), so
+//! the shift lands 16 tiles away as the game does. A test in `fixtures.rs`
+//! (`the_multisample_port_implements_the_one_tile_channel_only`) pins that this
+//! function alone does not scale, so nothing can lean on it to.
+//!
+//! A 2.1.23 disassembly pass found the game's list branch adds the offset
+//! unscaled, `(x, y) + (dx, dy)` in f32, and only the grid branch scales it.
+//! That agrees with this function whenever the sum is exact in f32, which holds
+//! for every integer or 1/256-grid coordinate below 32,768 tiles.
 //!
 //! `sample_at` stands in for the game's separate noise program - the caller's
 //! inner-expression port, evaluated at the shifted point.
