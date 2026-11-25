@@ -29,7 +29,7 @@
 //! The bytes below are the resolved values, as the TypeScript stores them.
 
 use crate::at::At;
-use crate::eval::math::{clamp, max, max2, min2, range_select_base};
+use crate::eval::math::{clamp, f32r, max, max2, min2};
 use crate::expressions::vulcanus_biomes::BiomeFields;
 use crate::expressions::vulcanus_helpers::{threshold, Plasma, VulcanusHelpers};
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
@@ -290,12 +290,17 @@ impl MountainLavaSpots {
     /// [`Self::eval`] at an [`At`] (#451).
     #[must_use]
     pub fn eval_at(&self, at: At, biomes: &BiomeFields) -> f64 {
+        // Every step is f32, in the order the Lua writes it (#521). `threshold`
+        // itself belongs to `vulcanus_helpers` and is not touched here.
         let inner = threshold(
-            biomes.mountain_volcano_spots * 1.95 - 0.95,
-            0.4 * clamp(threshold(biomes.mountains_biome, 0.5), 0.0, 1.0),
+            f32r(f32r(biomes.mountain_volcano_spots * f32r(1.95)) - f32r(0.95)),
+            f32r(f32r(0.4) * clamp(threshold(biomes.mountains_biome, f32r(0.5)), 0.0, 1.0)),
         );
-        let plasma_term = threshold(clamp(self.plasma.eval_at(at) / 20.0, 0.0, 1.0), 1.8);
-        clamp(inner * plasma_term, 0.0, 1.0)
+        let plasma_term = threshold(
+            clamp(f32r(self.plasma.eval_at(at) / 20.0), 0.0, 1.0),
+            f32r(1.8),
+        );
+        clamp(f32r(inner * plasma_term), 0.0, 1.0)
     }
 }
 
@@ -336,6 +341,18 @@ impl VulcanusTileFields {
     }
 }
 
+/// `range_select_base` (`core/prototypes/noise-functions.lua`) as the game
+/// evaluates it: `clamp(min(input - from, to - input) / slope, lo, hi)`, one f32
+/// step at a time, with the five constants narrowed first (#521).
+///
+/// The shared `eval::math::range_select_base` subtracts and divides in f64. It is
+/// left alone because other modules read it; this copy serves the Vulcanus tile
+/// ranges.
+fn range_select_base_f32(input: f64, from: f64, to: f64, slope: f64, lo: f64, hi: f64) -> f64 {
+    let edge = min2(f32r(input - f32r(from)), f32r(f32r(to) - input));
+    clamp(f32r(edge / f32r(slope)), f32r(lo), f32r(hi))
+}
+
 /// The 19 `probability_expression`s, in [`TILE_ORDER`].
 ///
 /// Returned whole rather than reduced to a winner, for the reason the module
@@ -344,106 +361,144 @@ impl VulcanusTileFields {
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn tile_probabilities(f: &VulcanusTileFields) -> [f64; 19] {
+    // Every step below is one f32 operation, in the order the Lua writes it,
+    // with each non-exact literal narrowed before it meets a field (#521).
+    // `tiles-vulcanus.lua` has no `expression_in_range`: every box is a
+    // `range_select_base`, which is `clamp(min(..) / slope, ..)`, so the
+    // center/half-width form of #523 does not apply here.
     let excluder = f.lava_spawn_excluder();
+    let half = f32r(0.5);
 
     // The three resource-coupling terms are V2 restorations: V1 approximated
     // them away, and they are what puts jagged ground on calcite and cracks on
     // tungsten. `50000 *` and `100 *` are the source's own weights, not tuning.
-    let lava_basalts = 100.0
-        * min2(
-            f.basalts_biome * excluder * range_select_base(f.elev, -5000.0, 0.0, 1.0, -1000.0, 1.0),
-            100.0 * (1.0 - f.metal_tile),
-        );
-    let lava_mountains =
-        1100.0 * range_select_base(f.mountain_lava_spots, 0.2, 10.0, 1.0, 0.0, 1.0);
-
-    let lava_hot_basalts = 200.0
-        * min2(
-            f.basalts_biome
-                * excluder
-                * range_select_base(
-                    f.elev,
-                    -5000.0,
-                    min2(0.0, 5.0 * (-2.0 + 4.0 * f.rock_noise)),
-                    1.0,
-                    -1000.0,
-                    1.0,
+    let one_minus_metal = f32r(100.0 * f32r(1.0 - f.metal_tile));
+    let lava_basalts = f32r(
+        100.0
+            * min2(
+                f32r(
+                    f32r(f.basalts_biome * excluder)
+                        * range_select_base_f32(f.elev, -5000.0, 0.0, 1.0, -1000.0, 1.0),
                 ),
-            100.0 * (1.0 - f.metal_tile),
-        );
+                one_minus_metal,
+            ),
+    );
+    let lava_mountains =
+        f32r(1100.0 * range_select_base_f32(f.mountain_lava_spots, 0.2, 10.0, 1.0, 0.0, 1.0));
+
+    let hot_to = min2(0.0, f32r(5.0 * f32r(-2.0 + f32r(4.0 * f.rock_noise))));
+    let lava_hot_basalts = f32r(
+        200.0
+            * min2(
+                f32r(
+                    f32r(f.basalts_biome * excluder)
+                        * range_select_base_f32(f.elev, -5000.0, hot_to, 1.0, -1000.0, 1.0),
+                ),
+                one_minus_metal,
+            ),
+    );
     let lava_hot_mountains =
-        1000.0 * range_select_base(f.mountain_lava_spots, 0.05, 0.3, 1.0, 0.0, 1.0);
+        f32r(1000.0 * range_select_base_f32(f.mountain_lava_spots, 0.05, 0.3, 1.0, 0.0, 1.0));
 
-    let volcanic_cracks_hot = f.basalts_biome * range_select_base(f.elev, 0.0, 8.0, 1.0, 0.0, 20.0);
+    let volcanic_cracks_hot =
+        f32r(f.basalts_biome * range_select_base_f32(f.elev, 0.0, 8.0, 1.0, 0.0, 20.0));
 
-    let volcanic_cracks_warm = f.basalts_biome
-        * range_select_base(f.elev, 8.0, 22.0, 1.0, 0.0, 5.0)
-        + (f.aux - 0.05)
-        + 50_000.0 * f.metal_tile;
+    let volcanic_cracks_warm = f32r(
+        f32r(
+            f32r(f.basalts_biome * range_select_base_f32(f.elev, 8.0, 22.0, 1.0, 0.0, 5.0))
+                + f32r(f.aux - f32r(0.05)),
+        ) + f32r(50_000.0 * f.metal_tile),
+    );
 
-    let volcanic_cracks_cold = (0.5 - f.ashlands_biome)
-        * range_select_base(f.elev, 20.0, 100.0, 1.0, 0.0, 1.0)
-        + (f.aux - 0.3);
+    let ashlands_rest = f32r(half - f.ashlands_biome);
+    let volcanic_cracks_cold = f32r(
+        f32r(ashlands_rest * range_select_base_f32(f.elev, 20.0, 100.0, 1.0, 0.0, 1.0))
+            + f32r(f.aux - f32r(0.3)),
+    );
 
-    let volcanic_smooth_stone_warm =
-        f.basalts_biome * range_select_base(f.elev, 8.0, 20.0, 1.0, 0.0, 5.0) - (f.aux - 0.05)
-            + 50_000.0 * f.metal_tile;
+    let volcanic_smooth_stone_warm = f32r(
+        f32r(
+            f32r(f.basalts_biome * range_select_base_f32(f.elev, 8.0, 20.0, 1.0, 0.0, 5.0))
+                - f32r(f.aux - f32r(0.05)),
+        ) + f32r(50_000.0 * f.metal_tile),
+    );
 
-    let volcanic_smooth_stone = (0.5 - f.ashlands_biome)
-        * range_select_base(f.elev, 20.0, 100.0, 1.0, 0.0, 1.0)
-        - (f.aux - 0.3);
+    let volcanic_smooth_stone = f32r(
+        f32r(ashlands_rest * range_select_base_f32(f.elev, 20.0, 100.0, 1.0, 0.0, 1.0))
+            - f32r(f.aux - f32r(0.3)),
+    );
 
-    let volcanic_folds_flat = 2.0 * (f.mountains_biome - 0.5) - 0.15 * f.mountain_volcano_spots;
+    // `2 * (mountains_biome - 0.5)` opens all three fold ranges.
+    let folds_base = f32r(2.0 * f32r(f.mountains_biome - half));
 
-    let volcanic_folds =
-        2.0 * (f.mountains_biome - 0.5) + (f.aux - 0.5) + 0.5 * (f.mountain_volcano_spots - 0.1);
+    let volcanic_folds_flat = f32r(folds_base - f32r(f32r(0.15) * f.mountain_volcano_spots));
 
-    let volcanic_folds_warm = 2.0 * (f.mountains_biome - 0.5)
-        + 3.0 * (f.mountain_volcano_spots - 0.85)
-        - 2.0 * (f.aux - 0.5);
+    let volcanic_folds = f32r(
+        f32r(folds_base + f32r(f.aux - half))
+            + f32r(half * f32r(f.mountain_volcano_spots - f32r(0.1))),
+    );
 
-    let volcanic_jagged_ground = 5.0
-        * min2(
+    let volcanic_folds_warm = f32r(
+        f32r(folds_base + f32r(3.0 * f32r(f.mountain_volcano_spots - f32r(0.85))))
+            - f32r(2.0 * f32r(f.aux - half)),
+    );
+
+    let volcanic_jagged_ground = f32r(
+        5.0 * min2(
             10.0,
             max2(
-                f.calcite_region + 0.2,
-                range_select_base(f.elev, 1010.0, 2000.0, 2.0, -10.0, 1.0) + 3.0 * (f.aux - 0.5),
+                f32r(f.calcite_region + f32r(0.2)),
+                f32r(
+                    range_select_base_f32(f.elev, 1010.0, 2000.0, 2.0, -10.0, 1.0)
+                        + f32r(3.0 * f32r(f.aux - half)),
+                ),
             ),
-        );
+        ),
+    );
 
     // The two soil ranges are each a `max` over a mountains arm and an ashlands
     // arm, so the same tile is reachable from two biomes. Light has a THIRD arm
     // on the sulfuric-acid region; dark does not.
-    let soil_light_mountains = min2(0.8, 4.0 * (f.mountains_biome - 0.25))
-        - 0.35 * f.mountain_volcano_spots
-        - 3.0 * (f.aux - 0.2);
-    let soil_dark_mountains = min2(0.8, 4.0 * (f.mountains_biome - 0.25))
-        - 0.35 * f.mountain_volcano_spots
-        - 1.0 * (f.aux - 0.5);
-    let soil_light_ashlands = 2.0 * (f.ashlands_biome - 0.5) + 1.5 * (f.moisture - 0.8);
-    let soil_dark_ashlands =
-        2.0 * (f.ashlands_biome - 0.5) - 1.5 * (f.aux - 0.25) + 1.5 * (f.moisture - 0.8);
+    let soil_mountains_cap = min2(f32r(0.8), f32r(4.0 * f32r(f.mountains_biome - f32r(0.25))));
+    let soil_light_mountains = f32r(
+        f32r(soil_mountains_cap - f32r(f32r(0.35) * f.mountain_volcano_spots))
+            - f32r(3.0 * f32r(f.aux - f32r(0.2))),
+    );
+    let soil_dark_mountains = f32r(
+        f32r(soil_mountains_cap - f32r(f32r(0.35) * f.mountain_volcano_spots))
+            - f32r(1.0 * f32r(f.aux - half)),
+    );
+    // `2 * (ashlands_biome - 0.5)` opens every ashlands range.
+    let ash_base = f32r(2.0 * f32r(f.ashlands_biome - half));
+    let aux_quarter = f32r(1.5 * f32r(f.aux - f32r(0.25)));
+    let moist_08 = f32r(1.5 * f32r(f.moisture - f32r(0.8)));
+    let moist_06 = f32r(1.5 * f32r(f.moisture - f32r(0.6)));
+    let moist_066 = f32r(1.5 * f32r(f.moisture - f32r(0.66)));
+    let aux_half = f32r(1.5 * f32r(f.aux - half));
+    let ash_cap = min2(1.0, f32r(4.0 * f32r(f.ashlands_biome - f32r(0.25))));
+
+    let soil_light_ashlands = f32r(ash_base + moist_08);
+    let soil_dark_ashlands = f32r(f32r(ash_base - aux_quarter) + moist_08);
 
     let volcanic_soil_light = max(&[
         soil_light_mountains,
         soil_light_ashlands,
-        10.0 * (f.sulfuric_acid_region_patchy + 0.2),
+        f32r(10.0 * f32r(f.sulfuric_acid_region_patchy + f32r(0.2))),
     ]);
     let volcanic_soil_dark = max2(soil_dark_mountains, soil_dark_ashlands);
 
-    let volcanic_ash_flats =
-        2.0 * (f.ashlands_biome - 0.5) - 1.5 * (f.aux - 0.25) - 1.5 * (f.moisture - 0.6);
-    let volcanic_ash_light = 2.0 * (f.ashlands_biome - 0.5) - 1.5 * (f.moisture - 0.6);
-    let volcanic_ash_dark = min2(1.0, 4.0 * (f.ashlands_biome - 0.25))
-        + max2(
-            -1.5 * (f.aux - 0.25),
-            0.01 - 1.5 * (f.aux - 0.5).abs() - 1.5 * (f.moisture - 0.66),
-        );
-    let volcanic_pumice_stones =
-        2.0 * (f.ashlands_biome - 0.5) + 1.5 * (f.aux - 0.5) + 1.5 * (f.moisture - 0.66);
-    let volcanic_ash_cracks = min2(1.0, 4.0 * (f.ashlands_biome - 0.25)) + 1.5 * (f.aux - 0.5)
-        - 1.5 * (f.moisture - 0.66);
-    let volcanic_ash_soil = 2.0 * (f.ashlands_biome - 0.5);
+    let volcanic_ash_flats = f32r(f32r(ash_base - aux_quarter) - moist_06);
+    let volcanic_ash_light = f32r(ash_base - moist_06);
+    let volcanic_ash_dark = f32r(
+        ash_cap
+            + max2(
+                -aux_quarter,
+                f32r(f32r(f32r(0.01) - f32r(1.5 * f32r(f.aux - half).abs())) - moist_066),
+            ),
+    );
+    let volcanic_pumice_stones = f32r(f32r(ash_base + aux_half) + moist_066);
+    let volcanic_ash_cracks = f32r(f32r(ash_cap + aux_half) - moist_066);
+    let volcanic_ash_soil = ash_base;
 
     // In `TILE_ORDER`. A reordering here against that constant would be a silent
     // relabelling of every tile, which `the_probability_vector_is_in_tile_order`

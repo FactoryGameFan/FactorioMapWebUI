@@ -32,13 +32,20 @@
 use crate::at::At;
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
 use crate::eval::ctx::EvalCtx;
-use crate::eval::math::{clamp, max};
+use crate::eval::math::{clamp, f32r, max};
 use crate::expressions::starting_spot_at_angle::{starting_spot_at_angle, AngleTrig, StartingSpot};
 use crate::expressions::vulcanus_helpers::VulcanusHelpers;
 use crate::poison;
 
 /// `vulcanus_starting_area_radius = 0.7 * 0.75`.
 pub const VULCANUS_STARTING_AREA_RADIUS: f64 = 0.7 * 0.75;
+
+/// [`VULCANUS_STARTING_AREA_RADIUS`] as the game holds it: the constant folded,
+/// then rounded to f32 (#521). Every product that reads it (`170 * r`,
+/// `0.1 * r`, `r * (300 - distance)`) starts from this value, not from the f64
+/// one. Against the capture, using the f64 radius left `ashlandsStart` at 54 of
+/// 410 and this one takes it to 410 of 410.
+pub const VULCANUS_STARTING_AREA_RADIUS_F32: f64 = VULCANUS_STARTING_AREA_RADIUS as f32 as f64;
 
 /// The summed wobble distortion every `*_start` reads, at one position.
 ///
@@ -64,12 +71,15 @@ impl WobbleSums {
     #[must_use]
     pub fn at_pos(helpers: &VulcanusHelpers, at: At) -> Self {
         Self {
-            x: helpers.wobble_x_at(at)
-                + helpers.wobble_large_x_at(at)
-                + helpers.wobble_huge_x_at(at),
-            y: helpers.wobble_y_at(at)
-                + helpers.wobble_large_y_at(at)
-                + helpers.wobble_huge_y_at(at),
+            // `(wobble + large) + huge`, each addition rounded to f32 (#521).
+            x: f32r(
+                f32r(helpers.wobble_x_at(at) + helpers.wobble_large_x_at(at))
+                    + helpers.wobble_huge_x_at(at),
+            ),
+            y: f32r(
+                f32r(helpers.wobble_y_at(at) + helpers.wobble_large_y_at(at))
+                    + helpers.wobble_huge_y_at(at),
+            ),
         }
     }
 }
@@ -111,7 +121,7 @@ impl VulcanusSpawn {
         mountains_trig: AngleTrig,
         basalts_trig: AngleTrig,
     ) -> Self {
-        let r = VULCANUS_STARTING_AREA_RADIUS;
+        let r = VULCANUS_STARTING_AREA_RADIUS_F32;
         let (ashlands_angle, mountains_angle, basalts_angle) = Self::angles(ctx);
         Self {
             starting_direction: Self::starting_direction(ctx),
@@ -180,13 +190,17 @@ impl VulcanusSpawn {
     #[must_use]
     pub fn eval_at(&self, at: At, wobble: WobbleSums) -> SpawnFields {
         let (x, y) = (at.x(), at.y());
-        let r = VULCANUS_STARTING_AREA_RADIUS;
+        let r = VULCANUS_STARTING_AREA_RADIUS_F32;
 
         // Ashlands and basalts share 0.1 * r; mountains uses half of it.
-        let wide_x = 0.1 * r * wobble.x;
-        let wide_y = 0.1 * r * wobble.y;
-        let tight_x = 0.05 * r * wobble.x;
-        let tight_y = 0.05 * r * wobble.y;
+        // `0.1 * r * sums` is `(0.1 * r) * sums`: the game folds the constant
+        // pair in f32, then rounds the product (#521).
+        let wide = f32r(f32r(0.1) * r);
+        let tight = f32r(f32r(0.05) * r);
+        let wide_x = f32r(wide * wobble.x);
+        let wide_y = f32r(wide * wobble.y);
+        let tight_x = f32r(tight * wobble.x);
+        let tight_y = f32r(tight * wobble.y);
 
         let ashlands_start = 4.0 * starting_spot_at_angle(&self.ashlands, x, y, wide_x, wide_y);
         let basalts_start = 2.0 * starting_spot_at_angle(&self.basalts, x, y, wide_x, wide_y);
@@ -210,7 +224,8 @@ impl VulcanusSpawn {
             &self.starting_positions,
             f64::INFINITY,
         ));
-        let starting_circle = 1.0 + (r * (300.0 - distance)) / 50.0;
+        // `1 + r * (300 - distance) / 50`: four f32 steps, in the Lua's order.
+        let starting_circle = f32r(1.0 + f32r(f32r(r * f32r(300.0 - distance)) / 50.0));
 
         SpawnFields {
             ashlands_start,
@@ -292,16 +307,16 @@ mod tests {
         assert_eq!(spawn.basalts.distance, 250.0);
         assert_ne!(
             spawn.basalts.distance,
-            f64::from((250.0 * VULCANUS_STARTING_AREA_RADIUS) as f32)
+            f64::from((250.0 * VULCANUS_STARTING_AREA_RADIUS_F32) as f32)
         );
         // Its siblings DO scale, which is what makes the exception an exception.
         assert_eq!(
             spawn.mountains.distance,
-            f64::from((250.0 * VULCANUS_STARTING_AREA_RADIUS) as f32)
+            f64::from((250.0 * VULCANUS_STARTING_AREA_RADIUS_F32) as f32)
         );
         assert_eq!(
             spawn.ashlands.distance,
-            f64::from((170.0 * VULCANUS_STARTING_AREA_RADIUS) as f32)
+            f64::from((170.0 * VULCANUS_STARTING_AREA_RADIUS_F32) as f32)
         );
     }
 
@@ -317,7 +332,7 @@ mod tests {
             "need a nonzero wobble for this to say anything"
         );
 
-        let r = VULCANUS_STARTING_AREA_RADIUS;
+        let r = VULCANUS_STARTING_AREA_RADIUS_F32;
         let got = spawn.eval(x, y, wobble);
         // Rebuild mountains with the WIDE coefficient and confirm it differs.
         let wrong = 2.0

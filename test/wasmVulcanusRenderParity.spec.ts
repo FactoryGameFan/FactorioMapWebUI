@@ -128,8 +128,14 @@ const VULCANUS_SURFACE_SEED = 1249936247;
  * each tile through the game's CHUNK-GRID noise path, the one its own preview
  * uses, including the basalt-lakes multisample's same-chunk 33rd column. Six
  * of the seven were the point path's rounding.
+ *
+ * **1 -> 0 on 2026-11-24 (#521)**, when every Vulcanus expression layer was
+ * rounded to f32 one step at a time, as the game evaluates it. The last pixel
+ * was a volcanic-cracks / volcanic-cracks-warm swap; the point-kernel test in
+ * `crates/fmw-noise/src/fixtures.rs` now has cracks equal to the game's score
+ * to the ULP, and the spawn and biome chains are what flipped the winner.
  */
-const DIFFERING_PX = 1;
+const DIFFERING_PX = 0;
 
 /**
  * The count the same comparison reports with the ore levers left at their
@@ -140,8 +146,12 @@ const DIFFERING_PX = 1;
  * 10,610 -> 10,605 on 2026-10-18 with the grid path (#451), five fewer in
  * the same change that took `DIFFERING_PX` from 7 to 1. Which five was not
  * checked pixel by pixel.
+ *
+ * 10,605 -> 10,636 on 2026-11-24 with #521's f32 rounding. This arm compares
+ * a deliberately mismatched render, so the count only has to stay far from
+ * `DIFFERING_PX`; its drift with the arithmetic is not a finding.
  */
-const DIFFERING_PX_AT_DEFAULT_LEVERS = 10605;
+const DIFFERING_PX_AT_DEFAULT_LEVERS = 10636;
 
 /** The capture's own setting: `--map-gen-settings` with each of these at size 0. */
 const ORE_LEVERS_OFF: VulcanusResourceControls = {

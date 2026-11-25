@@ -35,7 +35,7 @@
 use crate::at::At;
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::eval::ctx::EvalCtx;
-use crate::eval::math::{clamp, slider_rescale};
+use crate::eval::math::{clamp, f32r, slider_rescale};
 use crate::eval::primitives::{basis_noise_expr_at, BasisExprParams};
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::poison;
@@ -49,14 +49,18 @@ const PLASMA_SEED1_B_BASE: u32 = 13_423;
 
 /// `vulcanus_threshold(value, threshold) = (value - (1 - threshold)) * (1 / threshold)`.
 ///
-/// Pure arithmetic with no noise and no seed dependency, so there is no oracle
-/// risk and no fixture grades it directly. Written in f64 exactly as the
-/// TypeScript writes it, including the reciprocal-then-multiply rather than a
-/// divide, because those are not the same operation once a narrowing lands
-/// between them and this expression feeds fields that are graded.
+/// Pure arithmetic with no noise and no seed dependency. The noise machine
+/// evaluates it one f32 operation at a time (#521), so each step is rounded in
+/// the Lua's order: `1 - threshold`, the subtraction, `1 / threshold`, then the
+/// product. It is the reciprocal-then-multiply rather than a divide, because
+/// those are not the same operation once a rounding lands between them. Both
+/// arguments are narrowed first: they are f32 values in the game.
 #[must_use]
 pub fn threshold(value: f64, threshold: f64) -> f64 {
-    (value - (1.0 - threshold)) * (1.0 / threshold)
+    let value = f32r(value);
+    let threshold = f32r(threshold);
+    let shifted = f32r(value - f32r(1.0 - threshold));
+    f32r(shifted * f32r(1.0 / threshold))
 }
 
 /// `vulcanus_contrast(value, c) = clamp(value, c, 1) - c`.
@@ -67,17 +71,17 @@ pub fn threshold(value: f64, threshold: f64) -> f64 {
 /// still looked plausible everywhere above the knee.
 #[must_use]
 pub fn contrast(value: f64, c: f64) -> f64 {
-    clamp(value, c, 1.0) - c
+    // f32 knee and f32 subtraction (#521). The clamp itself is exact.
+    let c = f32r(c);
+    f32r(clamp(f32r(value), c, 1.0) - c)
 }
 
 /// `vulcanus_plasma(seed, scale, scale2, magnitude1, magnitude2)`, with both
 /// basis terms' tables derived once.
 ///
-/// `abs(A - B)` of two `basis_noise` calls at different scales and seeds. The
-/// subtraction and the absolute value are f64, matching the TypeScript's
-/// `Math.abs(a - b)` on two `basisNoiseExpr` results - and `basisNoiseExpr`
-/// itself returns an un-narrowed f64 product, which is #269. This port carries
-/// the same approximation deliberately; see
+/// `abs(A - B)` of two `basis_noise` calls at different scales and seeds. Both
+/// terms are f32 values, so their difference is one f32 operation (#521); the
+/// absolute value is exact. See
 /// [`basis_noise_expr`](crate::eval::primitives::basis_noise_expr).
 pub struct Plasma {
     a: BasisExprParams,
@@ -97,7 +101,7 @@ impl Plasma {
     pub fn eval_at(&self, at: At) -> f64 {
         let a = basis_noise_expr_at(at, &self.a, &self.tables_a);
         let b = basis_noise_expr_at(at, &self.b, &self.tables_b);
-        poison::f64_result((a - b).abs())
+        poison::f64_result(f32r(a - b).abs())
     }
 }
 
@@ -369,8 +373,9 @@ mod tests {
     #[test]
     fn threshold_maps_the_knee_to_zero_and_one_to_one() {
         for t in [0.1, 0.25, 0.5, 0.9] {
-            assert!(threshold(1.0 - t, t).abs() < 1e-12);
-            assert!((threshold(1.0, t) - 1.0).abs() < 1e-12);
+            // f32 arithmetic (#521), so f32 precision.
+            assert!(threshold(1.0 - t, t).abs() < 1e-6);
+            assert!((threshold(1.0, t) - 1.0).abs() < 1e-6);
         }
     }
 
@@ -382,7 +387,8 @@ mod tests {
         assert_eq!(contrast(0.0, c), 0.0);
         assert_eq!(contrast(c, c), 0.0);
         assert_eq!(contrast(-5.0, c), 0.0);
-        assert!((contrast(1.0, c) - 0.7).abs() < 1e-12);
+        assert_eq!(contrast(1.0, c), f32r(1.0 - f32r(c)));
+        assert!((contrast(1.0, c) - 0.7).abs() < 1e-6);
         for k in 0..100 {
             assert!(contrast(f64::from(k) * 0.02 - 0.5, c) >= 0.0);
         }

@@ -27,7 +27,7 @@
 //! surface.
 
 use crate::cliffs::placement::{CliffFields, TileCollision};
-use crate::eval::math::{log2, max2, min2};
+use crate::eval::math::{f32r, log2, max2, min2};
 use crate::expressions::vulcanus_stack::VulcanusStack;
 use crate::poison;
 use crate::quick_multioctave_noise::{
@@ -109,7 +109,7 @@ impl CliffinessBasic {
     #[must_use]
     pub fn new(seed0: u32, cliff_richness: f64) -> Self {
         Self {
-            richness_term: 0.5 * log2(cliff_richness),
+            richness_term: f32r(f32r(0.5) * f32r(log2(cliff_richness))),
             octaves: octave_terms(&QuickMultioctaveParams {
                 seed0,
                 seed1: CLIFFINESS_BASIC_SEED1,
@@ -137,7 +137,11 @@ impl CliffinessBasic {
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> f64 {
         let n = f64::from(sum_octaves(x, y, &self.octaves));
-        poison::f64_result(min2(1.0, max2(0.0, self.richness_term + n)) + 0.5)
+        // One f32 operation per step (#521): the sum, then the clamp (exact),
+        // then the `+ 0.5`, which rounds because a value in `[0, 1]` has finer
+        // spacing than one in `[1, 1.5]`.
+        let sum = f32r(self.richness_term + n);
+        poison::f64_result(f32r(min2(1.0, max2(0.0, sum)) + f32r(0.5)))
     }
 }
 

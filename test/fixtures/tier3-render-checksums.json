@@ -138,7 +138,7 @@
     "wide, offset | trees": "0x98d9f0592e35f2af"
   },
   "vulcanus:render": {
-    "coarse, all four entries | resources": "0x0a9aea161767a2c6",
+    "coarse, all four entries | resources": "0x80d8f26bf1af7975",
     "fine, far field | all": "0x8fddaf34cfe294b9",
     "fine, far field | cliffs": "0xb82d2e38be144659",
     "fine, far field | rocks": "0x060e9f2448decb11",
@@ -155,10 +155,10 @@
     "square at origin | terrain": "0x30e6f99f8120a068",
     "square on a coal patch | resources": "0x40caeebce540d8e0",
     "tall, coarse | all": "0xb4d327e39b3d44ff",
-    "tall, coarse | cliffs": "0xe242963a6b99fa0b",
+    "tall, coarse | cliffs": "0x32932e3cf52c7650",
     "tall, coarse | resources": "0x98964251c2d49def",
-    "tall, coarse | rocks": "0x6f6227bf751044da",
-    "tall, coarse | terrain": "0xec7b122399c8e8d3",
+    "tall, coarse | rocks": "0x2bb727c39179598a",
+    "tall, coarse | terrain": "0x4dbf0cd4f6daa80b",
     "wide, offset | all": "0xe0e4f025147ce7e2",
     "wide, offset | cliffs": "0xb6e42d366a8884a0",
     "wide, offset | resources": "0x9470d7166b4e3596",
