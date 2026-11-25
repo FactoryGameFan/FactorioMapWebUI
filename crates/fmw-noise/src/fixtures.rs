@@ -7584,6 +7584,14 @@ use crate::rocks::vulcanus_field::{vulcanus_decorative_knockout, VulcanusRockFie
 /// These are no longer the TypeScript's counts, which stays in f64. Rounding
 /// this module alone gave 287, 284 and 417; with the upstream layers rounded
 /// too the composites rose further and the clamped density reached 421.
+///
+/// **#521, follow-up: 303 -> 433 (huge), 297 -> 432 (big) and 421 -> 432
+/// (density)** by narrowing `persistence` and `output_scale` to f32 inside
+/// `octave_terms`. The game stores both as f32 fields and computes `1/P` with
+/// `divss`; Vulcanus aux uses persistence 0.6 and output_scale 0.6, neither of
+/// which has an f32 form, so the f64 values fed an amplitude chain that was
+/// off by an ulp. Of the 35 nonzero density positions 33 are exact now (22
+/// before); the 399 clamped ones are free as before.
 #[test]
 fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     let fixture = load_captured_at(
@@ -7615,8 +7623,8 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     let values = fixture.get("values");
     for (key, want_exact, got) in [
         ("vulcanus_decorative_knockout", 434usize, &knockout_out),
-        ("vulcanus_rock_huge", 303, &huge),
-        ("vulcanus_rock_big", 297, &big),
+        ("vulcanus_rock_huge", 433, &huge),
+        ("vulcanus_rock_big", 432, &big),
     ] {
         assert_eq!(
             score_vulcanus(got, values.get(key).as_array(), key),
@@ -7632,12 +7640,12 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     // Scored against the game's values so it cannot pass by agreeing with our
     // own two fields.
     //
-    // **421 of 434 is mostly the CLAMP, not the arithmetic.** 399 of these
+    // **432 of 434 is mostly the CLAMP, not the arithmetic.** 399 of these
     // positions clamp to exactly 0 - both rock expressions are negative over
     // most of the map - and a saturated position is exact for free, because
-    // both ports and the game all return the bound itself. So 399 of the 421
-    // are free and 22 of the 35 nonzero positions are exact (13 of 35 at 412
-    // before #521). Read `vulcanus_rock_big` (297 of 434) as the port's score
+    // both ports and the game all return the bound itself. So 399 of the 432
+    // are free and 33 of the 35 nonzero positions are exact (13 of 35 at 412
+    // before #521, 22 at 421). Read `vulcanus_rock_big` (432 of 434) as the port's score
     // and this as what the consumer needs, the same way `*_biome_full` and
     // `*_biome` are read in the biome layer. The TypeScript, still in f64,
     // measures 412 and 399.
@@ -7659,7 +7667,7 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
             density_exact += 1;
         }
     }
-    assert_eq!(density_exact, 421, "density exact f32 matches out of 434");
+    assert_eq!(density_exact, 432, "density exact f32 matches out of 434");
     assert_eq!(clamped_to_zero, 399, "positions the clamp saturates at 0");
 
     // Both expressions cap at `0.2 * (1 - k * ashlands_biome)`, so the overlay
