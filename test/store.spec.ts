@@ -170,6 +170,25 @@ describe("presets store", () => {
     });
   });
 
+  it("rebuilds cliffSettings from the tail when it loads presets saved with the old wrong labels", () => {
+    // Before 2026-11 the codec read smoothing as 0 and put the smoothing float
+    // in the richness slot, so saved presets carry those values.
+    const store = usePresetsStore();
+    const saved = JSON.parse(JSON.stringify(store.activePreset)) as NonNullable<
+      typeof store.activePreset
+    >;
+    saved.cliffSettings = { ...saved.cliffSettings, cliffSmoothing: 0, richness: 3 };
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ version: 1, userPresets: [saved], activeName: saved.name }),
+    );
+
+    setActivePinia(createPinia());
+    const reloaded = usePresetsStore();
+    expect(reloaded.activePreset?.cliffSettings.cliffSmoothing).toBeCloseTo(1, 6);
+    expect(reloaded.activePreset?.cliffSettings.richness).toBeCloseTo(1, 6);
+  });
+
   it("exposes typed map width/height on the active preset and persists edits", () => {
     const store = usePresetsStore();
     expect(store.activePreset?.width).toBe(2000000);
@@ -191,7 +210,7 @@ describe("presets store", () => {
   it("exposes typed nested mapSettings/cliffSettings views, and leaves the byte-exact round-trip untouched", () => {
     const store = usePresetsStore();
     expect(store.activePreset?.mapSettings.pollution.diffusionRatio).toBe(0.02);
-    expect(store.activePreset?.cliffSettings.cliffSmoothing).toBe(0);
+    expect(store.activePreset?.cliffSettings.cliffSmoothing).toBeCloseTo(1, 6);
 
     // Nested views are derived read-only display data; they must not affect
     // the encode bridge, which still rebuilds the tail from opaqueTailB64.

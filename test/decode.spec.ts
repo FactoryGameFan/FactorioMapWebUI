@@ -12,7 +12,6 @@ import {
 } from "../src/codec/mapExchangeString";
 import fixtures from "./fixtures/builtin-presets.json";
 import mapExchangeParsed from "./fixtures/map-exchange-parsed.default-seed123456.dump.json";
-import nauvisDump from "./fixtures/map-gen-settings.default-nauvis.dump.json";
 import mapDefaults from "./fixtures/map-settings.example.json";
 
 const presets = fixtures.presets as Record<string, string>;
@@ -303,9 +302,11 @@ describe("decodeExchangeString", () => {
     const t = decodeExchangeString(presets["Default"] as string).tail;
     expect(t["cliff.cliffElevation0"]).toBeCloseTo(10, 4);
     expect(t["cliff.cliffElevationInterval"]).toBeCloseTo(40, 4);
+    // Bytes 76-79 are cliff_smoothing and 80-83 are richness (game-confirmed,
+    // 2.1.23); byte 84 is the territory_settings.units count.
+    expect(t["cliff.cliffSmoothing"]).toBeCloseTo(1, 6);
     expect(t["cliff.richness"]).toBeCloseTo(1, 6);
-    expect(t["cliff.unknownFloat"]).toBeCloseTo(1, 6);
-    expect(t["cliff.cliffSmoothing"]).toBe(0);
+    expect(t["territory.unitCount"]).toBe(0);
     expect(t["pollution.enabled"]).toBe(true);
     expect(t["pollution.diffusionRatio"]).toBeCloseTo(0.02, 9);
     expect(t["pollution.minToDiffuse"]).toBeCloseTo(15, 9);
@@ -313,10 +314,16 @@ describe("decodeExchangeString", () => {
     expect(t["pollution.enemyAttackPollutionConsumptionModifier"]).toBeCloseTo(1, 9);
   });
 
-  it("cliff_smoothing and richness match the Nauvis dump exactly", () => {
+  // Graded against the game's PARSE of the string, never against a surface's
+  // map_gen_settings: the Nauvis planet overrides cliff_smoothing to 0
+  // (planet-map-gen.lua), so `map-gen-settings.default-nauvis.dump.json` says 0
+  // where the string says 1. This test used to compare with that dump, which is
+  // how the cliff bytes came to carry the wrong names.
+  it("cliff_smoothing and richness match the game's parse of the string exactly", () => {
     const t = decodeExchangeString(presets["Default"] as string).tail;
-    expect(t["cliff.cliffSmoothing"]).toBe(nauvisDump.cliff_settings.cliff_smoothing);
-    expect(t["cliff.richness"]).toBeCloseTo(nauvisDump.cliff_settings.richness, 6);
+    const game = mapExchangeParsed.map_gen_settings.cliff_settings;
+    expect(t["cliff.cliffSmoothing"]).toBeCloseTo(game.cliff_smoothing, 6);
+    expect(t["cliff.richness"]).toBeCloseTo(game.richness, 6);
   });
 
   it("types enemy_evolution and enemy_expansion for Default", () => {

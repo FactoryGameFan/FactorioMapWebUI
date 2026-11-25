@@ -1,0 +1,124 @@
+{
+  "_comment": "The game's OWN parse (helpers.parse_map_exchange_string, Factorio 2.1.23 build 87750, linux64 headless) of the `water-and-cliffs` case of every test/fixtures/map-exchange-2.1.*.strings.json, keyed by the version that fixture was captured on. cliff_settings is the game's reading of the string's cliff bytes: cliff_smoothing 1 and richness 0.5. 2.1.24 and 2.1.25 are refused by a 2.1.23 game (map version higher than the game), so those two entries carry the error and no settings. Probe: scripts/probes/exchange-cliff-bytes/. The values were not edited.",
+  "_factorioVersion": "2.1.23",
+  "parsed": {
+    "2.1.12": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.14": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.15": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.16": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.17": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.19": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.20": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.21": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.22": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.23": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.24": {
+      "ok": false,
+      "err": "Map version 2.1.24-1 cannot be loaded because it is higher than the game version (2.1.23-2)."
+    },
+    "2.1.25": {
+      "ok": false,
+      "err": "Map version 2.1.25-10 cannot be loaded because it is higher than the game version (2.1.23-2)."
+    }
+  }
+}

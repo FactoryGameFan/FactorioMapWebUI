@@ -45,8 +45,10 @@ import {
  * and every one re-encodes byte-for-byte.
  *
  * That byte-exactness is the whole point. A format can be *decodable* while
- * being subtly wrong; only round-tripping proves this decoder read every field
- * where the game put it. **A new version does not go into `SUPPORTED_VERSIONS`
+ * being subtly wrong, and a round-trip catches a wrong LENGTH, order or type. It
+ * is blind to which NAME a byte gets: until 2026-11 the cliff floats carried each
+ * other's names and every round-trip still passed. Names are graded against the
+ * game's own parse instead (`test/cliffBytes.spec.ts`). **A new version does not go into `SUPPORTED_VERSIONS`
  * without a fixture here proving the same.**
  *
  * Regenerate: a probe mod whose `on_init` writes
