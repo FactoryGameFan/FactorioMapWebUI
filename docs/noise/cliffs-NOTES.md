@@ -1192,13 +1192,28 @@ Settings-struct offsets used above, for anyone re-reading the disasm:
 `+0xc8` = `cliff_elevation_0`, `+0xcc` = `cliff_elevation_interval`,
 `+0xd0` = `cliff_smoothing`.
 
-**Open, not chased (2026-07-28):** the codec's `cliff.cliffSmoothing` u8 label is
-unproven. The game's Lua sets `cliff_smoothing = 1` for the Lakes and Island
-presets, but all 9 strings in `builtin-presets.json` decode to `u8 = 0` and
-`unknownFloat = 1.0` - nothing in the tail distinguishes them. The Default preset
-*is* confirmed 0 by the game's own parse dump, so Nauvis rendering is correct
-either way; what is unknown is whether the wire carries smoothing at all. Worth an
-issue if the Nauvis render is ever driven by a Lakes/Island preset.
+**Settled (2026-11-25):** the codec's cliff labels were wrong, and the note that
+used to stand here ("the `cliff.cliffSmoothing` u8 label is unproven") was right
+to doubt them. Game probes on 2.1.23 (byte-patching a string and reading the
+game's own `helpers.parse_map_exchange_string`) give this layout: tail bytes
+76-79 are `cliff_smoothing` (f32), bytes 80-83 are `richness` (f32), and byte 84
+is the count of `territory_settings.units`. Smoothing is the field 2.0 added to
+cliff settings (the game reads it only above map version 1.2.1.2). The codec
+now uses those names (`cliff.cliffSmoothing`, `cliff.richness`,
+`territory.unitCount`) and refuses a non-zero unit count. All 69 committed
+strings carry smoothing = richness = 1, except the `water-and-cliffs` case in
+every version, which carries richness 0.5; `test/cliffBytes.spec.ts` grades it
+against the game's parse (`test/fixtures/map-exchange-parsed.water-and-cliffs.2.1.23-game.dump.json`).
+
+The earlier note said the Default preset's smoothing was "confirmed 0 by the
+game's own parse dump". That dump (`map-gen-settings.default-nauvis.dump.json`)
+is the Nauvis SURFACE's settings, not a parse of the string. The planet sets
+`cliff_smoothing = 0` (`base/prototypes/planet/planet-map-gen.lua:18`), so the
+surface reports 0 whether the string carries 1, 0.5 or 0 (measured). The
+string's smoothing is 1. The string's `richness` does reach the Nauvis surface
+(a string with 0.5 gives a surface with 0.5), so it is the value the cliffs
+preview must use. This note's remaining statements about smoothing 0 on Nauvis
+describe the surface, and stay correct for it.
 
 ## Validation result: NAUVIS exact since 2026-07-30 (historical - Nauvis only)
 

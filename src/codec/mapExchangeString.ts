@@ -353,16 +353,21 @@ export const TAIL_SCHEMA: Schema = [
   { name: "cliff.control", type: "string" },
   { name: "cliff.cliffElevation0", type: "f32" },
   { name: "cliff.cliffElevationInterval", type: "f32" },
+  // Payload bytes 76-79 are cliff_smoothing, and 80-83 are richness. Both were
+  // confirmed against the game itself (2.1.23): patching one slot of a string
+  // and reading it back with helpers.parse_map_exchange_string changes the
+  // field of that name. Slot 76-79 is the field 2.0 added to cliff settings
+  // (the game reads it only above 1.2.1.2). Until 2026-11 these two were
+  // labelled the other way round, and byte 84 was labelled "cliffSmoothing".
+  { name: "cliff.cliffSmoothing", type: "f32" },
   { name: "cliff.richness", type: "f32" },
-  // Unidentified 4th cliff float; both fixtures observed so far carry 1.0.
-  // Kept typed (rather than folded into an opaque span) purely for
-  // byte-exactness until its meaning is confirmed.
-  { name: "cliff.unknownFloat", type: "f32" },
-  // Single byte (u8, not part of a float) - Default-tail offset 23. Matches
-  // the Nauvis dump's cliff_settings.cliff_smoothing (0) exactly.
-  { name: "cliff.cliffSmoothing", type: "u8" },
+  // Byte 84 is the COUNT of territory_settings.units, not a cliff field. At 0
+  // the game reads nothing more for the block. At 1 or more, unit names, two
+  // expression strings and a u32 follow, which this schema does not read, so
+  // decodeExchangeString refuses a non-zero count rather than decode garbage.
+  { name: "territory.unitCount", type: "u8" },
   // Unlike a plain bool, this is presence-flag + value (2 bytes) - the byte
-  // immediately preceding it (cliff.cliffSmoothing) is NOT part of this
+  // immediately preceding it (territory.unitCount) is NOT part of this
   // field; byte-fitting against pollution.diffusionRatio's known offset
   // proved the extra flag byte belongs here, matching every other section's
   // "enabled" convention (see enemyEvolution/enemyExpansion below).
@@ -702,6 +707,15 @@ export function decodeExchangeString(input: string): DecodedExchange {
     }
 
     const tail = readTail(reader, version);
+    // Byte 84 of the tail is the territory_settings.units count. A non-zero
+    // count is followed by territory data the schema does not read, so the
+    // walk above would have decoded the rest of the tail as garbage with no
+    // error (the game itself parses such a string cleanly).
+    if (tail["territory.unitCount"] !== 0) {
+      throw new ExchangeStringError(
+        `unsupported territory_settings (units count ${String(tail["territory.unitCount"])}); the tail schema reads only an empty territory block`,
+      );
+    }
 
     return {
       version,

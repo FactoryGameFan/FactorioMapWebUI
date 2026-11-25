@@ -1,7 +1,13 @@
 import { defineStore } from "pinia";
-import { decodeExchangeString, encodeExchangeString } from "../codec/mapExchangeString";
+import { base64ToBytes } from "../codec/base64";
+import {
+  bytesToTail,
+  decodeExchangeString,
+  encodeExchangeString,
+} from "../codec/mapExchangeString";
 import { getBuiltinPreset } from "../model/builtins";
 import { presetFromDecoded, presetToEncodable } from "../model/convert";
+import { tailToNested } from "../model/mapSettings";
 import { builtinDefaultsFor, presetDiffersFromSource } from "../model/presetDiff";
 import type { Preset } from "../model/types";
 import { randomU32 } from "../util/seed";
@@ -14,13 +20,30 @@ interface PersistedState {
   activeName: string | null;
 }
 
+/**
+ * Before 2026-11 the codec read the cliff bytes under the wrong names, so
+ * presets saved in browser storage carry a wrong `cliffSettings` (smoothing 0
+ * where the game says 1, and the smoothing float in the richness slot).
+ * `cliffSettings` is derived read-only data and `opaqueTailB64` is the source
+ * of truth, so rebuild the view from it on every load. A preset whose tail
+ * cannot be read keeps what it has.
+ */
+function refreshCliffSettings(preset: Preset): Preset {
+  try {
+    const tail = bytesToTail(base64ToBytes(preset.opaqueTailB64), preset.formatVersion);
+    return { ...preset, cliffSettings: tailToNested(tail).cliff };
+  } catch {
+    return preset;
+  }
+}
+
 function loadPersisted(): PersistedState | undefined {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as PersistedState;
     if (parsed.version !== 1 || !Array.isArray(parsed.userPresets)) return undefined;
-    return parsed;
+    return { ...parsed, userPresets: parsed.userPresets.map(refreshCliffSettings) };
   } catch {
     return undefined;
   }

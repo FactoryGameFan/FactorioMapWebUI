@@ -1,0 +1,138 @@
+{
+  "_comment": "Factorio 2.1.25's own helpers.parse_map_exchange_string of the committed water-and-cliffs exchange string from every supported version (2.1.12 to 2.1.25). Same probe as the 2.1.23 dump (scripts/probes/exchange-cliff-bytes/), run with the 2.1.25 headless build so 2.1.24 and 2.1.25 strings, which a 2.1.23 game refuses, are read too. Ground truth for the cliff byte names: cliff_smoothing is tail bytes 76-79, richness 80-83.",
+  "_factorioVersion": "2.1.25 (build 88022, linux64, headless)",
+  "parsed": {
+    "2.1.12": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.14": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.15": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.16": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.17": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.19": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.20": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.21": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.22": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.23": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.24": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    },
+    "2.1.25": {
+      "ok": true,
+      "cliff_settings": {
+        "name": "",
+        "control": "",
+        "cliff_elevation_0": 20,
+        "cliff_elevation_interval": 60,
+        "cliff_smoothing": 1,
+        "richness": 0.5
+      }
+    }
+  }
+}

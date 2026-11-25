@@ -11,7 +11,7 @@ describe("tailToNested", () => {
     const tail = decodeExchangeString(presets["Default"] as string).tail;
     const { cliff, mapSettings } = tailToNested(tail);
 
-    expect(cliff.cliffSmoothing).toBe(0);
+    expect(cliff.cliffSmoothing).toBeCloseTo(1, 6);
     expect(cliff.richness).toBeCloseTo(1, 6);
 
     expect(mapSettings.pollution.enabled).toBe(true);

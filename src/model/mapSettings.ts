@@ -9,7 +9,7 @@ import type { TailBlock } from "../codec/mapExchangeString";
  * (see that function for the exact editable keys). Every other section/field here
  * is derived read-only for JSON export / display; `Preset.opaqueTailB64` (the raw
  * serialized tail) remains the round-trip source of truth for those, so encoding
- * stays byte-exact and independent of these views. `cliff.unknownFloat`,
+ * stays byte-exact and independent of these views. `territory.unitCount`,
  * `pathFinder.trailingA`, and `opaqueTail` are byte-level round-trip artifacts,
  * not JSON fields, and are intentionally excluded here.
  */
@@ -146,7 +146,7 @@ export interface MapSettings {
  * Reshape the flat dotted-key tail into nested, JSON-serializable views for
  * export/display. Reads each known dotted key explicitly (rather than a
  * blind generic split) so byte-level round-trip artifacts -
- * `cliff.unknownFloat`, `pathFinder.trailingA`, and `opaqueTail` - are never
+ * `territory.unitCount`, `pathFinder.trailingA`, and `opaqueTail` - are never
  * dragged into the result.
  */
 export function tailToNested(tail: TailBlock): { cliff: CliffSettings; mapSettings: MapSettings } {
