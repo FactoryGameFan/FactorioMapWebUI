@@ -32,7 +32,7 @@
 //! memo achieves bit-identically. Every read is at the SAME `(x, y)`.
 
 use crate::at::At;
-use crate::eval::math::{clamp, lerp, max2, min2};
+use crate::eval::math::{clamp, f32r, lerp_f32, max2, min2};
 use crate::expressions::vulcanus_helpers::{Plasma, VulcanusHelpers};
 use crate::multioctave_noise::Prepared;
 use crate::poison;
@@ -102,10 +102,10 @@ impl VulcanusCracks {
     pub fn eval_at(&self, at: At) -> CrackFields {
         let hairline_cracks = self.hairline.eval_at(at);
 
-        // `lerp` toward 1, so a high mix value floods the cracks shut. The
-        // un-narrowed `lerp`, matching the TypeScript - this layer is not one
-        // of the per-operation narrowed ones.
-        let flood_cracks_a = lerp(
+        // `lerp` toward 1, so a high mix value floods the cracks shut. Every
+        // step is an f32 operation in the game, so the lerp is `lerp_f32` and
+        // each literal is narrowed first (#521).
+        let flood_cracks_a = lerp_f32(
             min2(self.crack_a1.eval_at(at), self.crack_a2.eval_at(at)),
             1.0,
             clamp(f64::from(self.crack_a_mix.eval_at(at)), 0.0, 1.0),
@@ -113,19 +113,30 @@ impl VulcanusCracks {
 
         // The other way round: `lerp` FROM 1 toward the crack pattern, and the
         // `- 0.5` applies to the min rather than to the lerp's result.
-        let flood_cracks_b = lerp(
+        let flood_cracks_b = lerp_f32(
             1.0,
-            min2(self.crack_b1.eval_at(at), self.crack_b2.eval_at(at)) - 0.5,
-            clamp(0.2 + f64::from(self.crack_b_mix.eval_at(at)), 0.0, 1.0),
+            f32r(min2(self.crack_b1.eval_at(at), self.crack_b2.eval_at(at)) - 0.5),
+            clamp(
+                f32r(f32r(0.2) + f64::from(self.crack_b_mix.eval_at(at))),
+                0.0,
+                1.0,
+            ),
         );
 
         // `min(0, detail)` only ever subtracts, so the detail term deepens the
-        // paths and never fills them.
-        let flood_paths =
-            0.4 - self.path_plasma.eval_at(at) + min2(0.0, f64::from(self.path_detail.eval_at(at)));
+        // paths and never fills them. `0.4 - plasma` rounds before the detail
+        // term is added.
+        let flood_paths = f32r(
+            f32r(f32r(0.4) - self.path_plasma.eval_at(at))
+                + min2(0.0, f64::from(self.path_detail.eval_at(at))),
+        );
 
-        let flood_basalts_func = min2(max2(flood_cracks_a - 0.125, flood_paths), flood_cracks_b)
-            + 0.3 * min2(0.5, hairline_cracks);
+        let flood_basalts_func = f32r(
+            min2(
+                max2(f32r(flood_cracks_a - 0.125), flood_paths),
+                flood_cracks_b,
+            ) + f32r(f32r(0.3) * min2(0.5, hairline_cracks)),
+        );
 
         CrackFields {
             hairline_cracks,
@@ -176,7 +187,8 @@ mod tests {
         for (x, y) in grid() {
             let d = f64::from(detail.eval(x, y));
             let got = cracks.eval(x, y).flood_paths;
-            assert!(got <= 0.4 - plasma.eval(x, y) + 1e-12);
+            // f32 arithmetic (#521), so the slack is f32 rounding.
+            assert!(got <= 0.4 - plasma.eval(x, y) + 1e-6);
             if d < 0.0 {
                 saw_negative_detail += 1;
             }
@@ -221,7 +233,7 @@ mod tests {
                 max2(f.flood_cracks_a - 0.125, f.flood_paths),
                 f.flood_cracks_b,
             );
-            assert!(f.flood_basalts_func - base <= 0.3 * 0.5 + 1e-12);
+            assert!(f.flood_basalts_func - base <= 0.3 * 0.5 + 1e-6);
         }
     }
 }
