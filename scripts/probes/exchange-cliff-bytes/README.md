@@ -11,7 +11,11 @@ python3 scripts/probes/exchange-cliff-bytes/make_probe.py /tmp/w/probe
   --work-dir /tmp/w/work --factorio <2.1.23 headless install> --version 2.1.23
 ```
 
-Check the run's `buildLine` first: it must read
+Run it with the 2.1.25 headless build as well (`--version 2.1.25`): that build
+reads every committed string, and its dump is
+`test/fixtures/map-exchange-parsed.water-and-cliffs.2.1.25-game.dump.json`.
+
+Check the run's `buildLine` first: for the 2.1.23 run it must read
 `Version: 2.1.23 (build 87750, linux64, headless)`. The dump is
 `/tmp/w/work/write/script-output/oracle-dump.json`.
 

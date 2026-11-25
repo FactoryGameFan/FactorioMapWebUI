@@ -19,6 +19,7 @@ import fixture223 from "./fixtures/map-exchange-2.1.23.strings.json";
 import fixture224 from "./fixtures/map-exchange-2.1.24.strings.json";
 import fixture225 from "./fixtures/map-exchange-2.1.25.strings.json";
 import gameParse from "./fixtures/map-exchange-parsed.water-and-cliffs.2.1.23-game.dump.json";
+import gameParse225 from "./fixtures/map-exchange-parsed.water-and-cliffs.2.1.25-game.dump.json";
 
 /**
  * Bytes 76-79 of the tail are `cliff_smoothing`, bytes 80-83 are `richness`, and
@@ -27,8 +28,10 @@ import gameParse from "./fixtures/map-exchange-parsed.water-and-cliffs.2.1.23-ga
  * "cliffSmoothing". A round-trip cannot see a wrong name, so these tests grade
  * the names against the game's own `helpers.parse_map_exchange_string`.
  *
- * Ground truth is `map-exchange-parsed.water-and-cliffs.2.1.23-game.dump.json`
- * (probe: `scripts/probes/exchange-cliff-bytes/`). NEVER grade these fields
+ * Ground truth is the game's parse in
+ * `map-exchange-parsed.water-and-cliffs.2.1.23-game.dump.json` and
+ * `...2.1.25-game.dump.json` (probe: `scripts/probes/exchange-cliff-bytes/`). The
+ * 2.1.25 build reads every version's string; a 2.1.23 game refuses 2.1.24+. NEVER grade these fields
  * against a surface's `map_gen_settings`: the Nauvis planet forces
  * `cliff_smoothing` to 0 whatever the string carries.
  */
@@ -48,10 +51,12 @@ const FIXTURES: Record<string, { strings: Record<string, string> }> = {
   "2.1.25": fixture225,
 };
 
-const GAME = gameParse.parsed as Record<
+type GameParse = Record<
   string,
   { ok: boolean; cliff_settings?: { cliff_smoothing: number; richness: number } }
 >;
+const GAME = gameParse.parsed as GameParse;
+const GAME_225 = gameParse225.parsed as GameParse;
 
 /** Offset of the four cliff-settings floats, found by their known values. */
 function findCliffFloats(payload: Uint8Array, values: number[]): number {
@@ -82,7 +87,17 @@ describe("cliff bytes carry the game's names", () => {
       expect(tail["territory.unitCount"]).toBe(0);
     });
 
-    it("agrees with the game's own parse where the 2.1.23 game could read it", () => {
+    it("agrees with the 2.1.25 game's own parse", () => {
+      const game = GAME_225[version];
+      expect(game?.ok).toBe(true);
+      expect(tail["cliff.richness"]).toBeCloseTo(game?.cliff_settings?.richness as number, 6);
+      expect(tail["cliff.cliffSmoothing"]).toBeCloseTo(
+        game?.cliff_settings?.cliff_smoothing as number,
+        6,
+      );
+    });
+
+    it("agrees with the 2.1.23 game's parse where that build could read it", () => {
       const game = GAME[version];
       if (game?.ok) {
         expect(tail["cliff.richness"]).toBeCloseTo(game.cliff_settings?.richness as number, 6);
@@ -91,10 +106,9 @@ describe("cliff bytes carry the game's names", () => {
           6,
         );
       } else {
-        // A 2.1.23 game refuses a newer map version, so only the entry's
-        // existence and its reason are asserted for 2.1.24 and 2.1.25.
+        // A 2.1.23 game refuses a newer map version; the 2.1.25 parse above
+        // grades 2.1.24 and 2.1.25 instead.
         expect(["2.1.24", "2.1.25"]).toContain(version);
-        expect(game).toBeDefined();
       }
     });
   });

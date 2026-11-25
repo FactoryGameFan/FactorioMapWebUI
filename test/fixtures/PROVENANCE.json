@@ -145,6 +145,10 @@
       "factorioVersion": "2.1.23",
       "evidence": "captured 2026-11-25 against Factorio 2.1.23 (build 87750, linux64, headless, buildLine read off the oracle run) by scripts/probes/exchange-cliff-bytes/make_probe.py. It calls helpers.parse_map_exchange_string on the water-and-cliffs string of each committed map-exchange-2.1.*.strings.json. The 2.1.12 to 2.1.23 strings parse and all read cliff_smoothing 1, richness 0.5; 2.1.24 and 2.1.25 are refused by a 2.1.23 game and carry the error. Not byte-edited"
     },
+    "map-exchange-parsed.water-and-cliffs.2.1.25-game.dump.json": {
+      "factorioVersion": "2.1.25",
+      "evidence": "captured 2026-11-25 against Factorio 2.1.25 (build 88022, linux64, headless, buildLine read off the oracle run) by scripts/probes/exchange-cliff-bytes/make_probe.py, the same probe as the 2.1.23 dump. Every committed water-and-cliffs string from 2.1.12 to 2.1.25 parses and reads cliff_smoothing 1, richness 0.5. Not byte-edited"
+    },
     "map-exchange-parsed.default-seed123456.dump.json": {
       "factorioVersion": "2.1.9",
       "evidence": "stated in decode.spec.ts, its only consumer"
