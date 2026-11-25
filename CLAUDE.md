@@ -1073,7 +1073,7 @@ Consequences that constrain any change here:
 
 - **The exchange format is versioned and it moves.** `SUPPORTED_VERSIONS` is a
   known-good list (`2.1.9.3`, `2.1.12.2`, `2.1.14.1`, `2.1.15.2`, `2.1.16.0`,
-  `2.1.17.0`, `2.1.19.0`, `2.1.20.4`, `2.1.21.11`, `2.1.22.1`, `2.1.23.2`, `2.1.24.1`) and
+  `2.1.17.0`, `2.1.19.0`, `2.1.20.4`, `2.1.21.11`, `2.1.22.1`, `2.1.23.2`, `2.1.24.1`, `2.1.25.10`) and
   never a range, because the schemas here are empirical: accepting an unseen
   format would decode a changed layout into plausible wrong values. A version
   joins the list only with a fixture proving a real string of it round-trips
@@ -1092,7 +1092,7 @@ Consequences that constrain any change here:
   (2.1.14 prints `2.1.14-1`, and `[2,1,14,1]` is what the list carries), which is
   a control rather than a pattern match. The fourth part is **not monotonic and
   does not track the patch**: `.3`, `.2`, `.1`, `.2`, `.0`, `.0`, `.0`, `.4`,
-  `.11`, `.1`, `.2`, `.1` across 2.1.9 to 2.1.24. It fell to zero at 2.1.16, sat
+  `.11`, `.1`, `.2`, `.1`, `.10` across 2.1.9 to 2.1.25. It fell to zero at 2.1.16, sat
   there for three versions, jumped to 4, then to 11. It cannot be guessed, and
   one `--version` answers "has import broken?" in a second.
 

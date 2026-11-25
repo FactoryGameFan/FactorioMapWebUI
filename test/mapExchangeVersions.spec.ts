@@ -11,6 +11,7 @@ import fixture221 from "./fixtures/map-exchange-2.1.21.strings.json";
 import fixture222 from "./fixtures/map-exchange-2.1.22.strings.json";
 import fixture223 from "./fixtures/map-exchange-2.1.23.strings.json";
 import fixture224 from "./fixtures/map-exchange-2.1.24.strings.json";
+import fixture225 from "./fixtures/map-exchange-2.1.25.strings.json";
 import parsed214 from "./fixtures/map-exchange-parsed.2.1.14-default.dump.json";
 import parsed215 from "./fixtures/map-exchange-parsed.2.1.15-default.dump.json";
 import parsed216 from "./fixtures/map-exchange-parsed.2.1.16-default.dump.json";
@@ -21,6 +22,7 @@ import parsed221 from "./fixtures/map-exchange-parsed.2.1.21-default.dump.json";
 import parsed222 from "./fixtures/map-exchange-parsed.2.1.22-default.dump.json";
 import parsed223 from "./fixtures/map-exchange-parsed.2.1.23-default.dump.json";
 import parsed224 from "./fixtures/map-exchange-parsed.2.1.24-default.dump.json";
+import parsed225 from "./fixtures/map-exchange-parsed.2.1.25-default.dump.json";
 import builtins from "./fixtures/builtin-presets.json";
 import {
   SUPPORTED_VERSIONS,
@@ -96,6 +98,7 @@ describe("exchange format versions", () => {
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.22.1");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.23.2");
     expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.24.1");
+    expect(SUPPORTED_VERSIONS_LABEL).toContain("2.1.25.10");
   });
 });
 
@@ -134,6 +137,7 @@ describe("every fixture records the tag it was captured at", () => {
     { version: "2.1.22", fixture: fixture222 },
     { version: "2.1.23", fixture: fixture223 },
     { version: "2.1.24", fixture: fixture224 },
+    { version: "2.1.25", fixture: fixture225 },
   ] as const;
 
   it.each(FIXTURES)("$version", ({ version, fixture: f }) => {
@@ -606,9 +610,9 @@ describe("exchange format 2.1.19", () => {
  * 3. The game's own parse of each new default string equals the previous one on
  *    every leaf field. Asserted below, not described.
  *
- * The fourth part of the tag went `.4`, `.11`, `.1`, `.2`, `.1` across 2.1.20
- * to 2.1.24, so reading it off `factorio --version` (`Map output version:
- * 2.1.24-1`) stays the only way.
+ * The fourth part of the tag went `.4`, `.11`, `.1`, `.2`, `.1`, `.10` across
+ * 2.1.20 to 2.1.25, so reading it off `factorio --version` (`Map output version:
+ * 2.1.25-10`) stays the only way.
  */
 const REMOVAL_HEIRS = [
   {
@@ -655,6 +659,15 @@ const REMOVAL_HEIRS = [
     priorVersion: "2.1.23",
     prior: fixture223.strings as Record<string, string>,
     priorParsed: parsed223,
+  },
+  {
+    version: "2.1.25",
+    tag: "2.1.25.10",
+    strings: fixture225.strings as Record<string, string>,
+    parsed: parsed225,
+    priorVersion: "2.1.24",
+    prior: fixture224.strings as Record<string, string>,
+    priorParsed: parsed224,
   },
 ] as const;
 

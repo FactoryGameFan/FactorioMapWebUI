@@ -93,6 +93,10 @@
       "factorioVersion": "2.1.24",
       "evidence": "CAPTURED 2026-11-24 against Factorio 2.1.24 (build 87808, linux64, headless, EXPERIMENTAL branch, the free headless tarball at /home/eric/factorio-headless/2.1.24 via FACTORIO_BIN) by scripts/probes/exchange-format/capture.ts. A tag-only move: base/prototypes/map-settings.lua is absent from the 2.1.23 -> 2.1.24 data diff, and every case inflates to exactly its 2.1.23 twin's size (702/702/741/702/702). Five cases mirroring map-exchange-2.1.23.strings.json: each case's map-gen settings are the game's OWN parse of that fixture's string for the same case, fed back as --map-gen-settings as a delta against the default case. Format tag 2.1.24.1, read off 'factorio --version' as 'Map output version: 2.1.24-1' rather than inferred."
     },
+    "map-exchange-2.1.25.strings.json": {
+      "factorioVersion": "2.1.25",
+      "evidence": "CAPTURED 2026-11-24 against Factorio 2.1.25 (build 88022, linux64, headless, EXPERIMENTAL branch, the free headless tarball at /home/eric/factorio-headless/2.1.25 via FACTORIO_BIN) by scripts/probes/exchange-format/capture.ts. A tag-only move: base/prototypes/map-settings.lua is byte-identical between the 2.1.24 and 2.1.25 installs, and every case inflates to exactly its 2.1.24 twin's size (702/702/741/702/702). Five cases mirroring map-exchange-2.1.24.strings.json: each case's map-gen settings are the game's OWN parse of that fixture's string for the same case, fed back as --map-gen-settings as a delta against the default case. Format tag 2.1.25.10, read off 'factorio --version' as 'Map output version: 2.1.25-10' rather than inferred."
+    },
     "map-exchange-parsed.2.1.14-default.dump.json": {
       "factorioVersion": "2.1.14",
       "evidence": "captured 2026-08-13 in the same headless 2.1.14 run as map-exchange-2.1.14.strings.json's default-seed123456 case, by calling helpers.parse_map_exchange_string on that exact string"
@@ -132,6 +136,10 @@
     "map-exchange-parsed.2.1.24-default.dump.json": {
       "factorioVersion": "2.1.24",
       "evidence": "captured 2026-11-24 in the same 2.1.24 run as map-exchange-2.1.24.strings.json's default-seed123456 case, by calling helpers.parse_map_exchange_string on that exact string. Byte-identical to the 2.1.23 parse"
+    },
+    "map-exchange-parsed.2.1.25-default.dump.json": {
+      "factorioVersion": "2.1.25",
+      "evidence": "captured 2026-11-24 in the same 2.1.25 run as map-exchange-2.1.25.strings.json's default-seed123456 case, by calling helpers.parse_map_exchange_string on that exact string. Byte-identical to the 2.1.24 parse"
     },
     "map-exchange-parsed.default-seed123456.dump.json": {
       "factorioVersion": "2.1.9",
