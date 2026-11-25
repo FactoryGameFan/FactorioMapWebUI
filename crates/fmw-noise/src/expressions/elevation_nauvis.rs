@@ -65,9 +65,8 @@ use crate::quick_multioctave_noise::{
 };
 use crate::starting_lakes::starting_lake_positions;
 use crate::variable_persistence_multioctave_noise::{
-    eval_at as var_pers_eval_at, terms as var_pers_terms,
-    AmplitudeCorrectedGame, AmplitudeCorrectedParams, VariablePersistenceParams,
-    VariablePersistenceTerms,
+    eval_at as var_pers_eval_at, terms as var_pers_terms, AmplitudeCorrectedGame,
+    AmplitudeCorrectedParams, VariablePersistenceParams, VariablePersistenceTerms,
 };
 
 /// `elevation_magnitude` in the Lua.
@@ -125,6 +124,7 @@ pub struct ElevationNauvis {
     detail_tables: BasisNoiseTables,
     persistance: AmplitudeCorrectedGame,
     /// The persistence field's `input_scale`, kept for the test that pins it.
+    #[cfg(test)]
     persistance_input_scale: f64,
     macro_a: Prepared,
     macro_b: Prepared,
@@ -185,6 +185,7 @@ impl ElevationNauvis {
                 persistence: 0.7,
                 amplitude: 0.5,
             }),
+            #[cfg(test)]
             persistance_input_scale: nauvis_seg / 2.0,
             macro_a: Prepared::new(&MultioctaveParams {
                 seed0,
@@ -217,9 +218,7 @@ impl ElevationNauvis {
     /// `nauvis_persistance`: `clamp(amplitude_corrected + 0.55, 0.5, 0.65)`.
     fn persistence(&self, at: At) -> f64 {
         clamp(
-            f32r(
-                f64::from(self.persistance.eval_at(at)) + f32r(0.55),
-            ),
+            f32r(f64::from(self.persistance.eval_at(at)) + f32r(0.55)),
             f32r(0.5),
             f32r(0.65),
         )
