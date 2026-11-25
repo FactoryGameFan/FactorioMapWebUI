@@ -432,12 +432,17 @@ export function bearingTrig(seed0: number): {
  * - the three SPAWN angles are narrowed by `vulcanusSpawn.ts`, with
  *   `f32(120 * direction)` narrowed separately before the add;
  * - the volcano-spot disc is the mountains angle unchanged, and the protector
- *   is `mountainsAngle + 180 * direction` with **no** narrowing - that is how
- *   `vulcanusBiomes.ts` writes it;
+ *   is `f32(mountainsAngle + 180 * direction)` (#531). It used to be sent
+ *   **un-narrowed**, "as `vulcanusBiomes.ts` writes it", but the game narrows
+ *   the sum like every other step of its noise machine: the un-narrowed form
+ *   matched the game's protector angle on 567 of 606 probed seeds and this form
+ *   on all 606. `180 * direction` is exactly +-180, so only the sum rounds;
  * - the five RESOURCE angles narrow the offset and then the sum, as
  *   `vulcanusResources.ts` writes them.
  *
  * Normalising those three styles into one would change five of the ten values.
+ * (Since #531 the protector has the same shape as the resource angles, with an
+ * offset of 180.)
  */
 export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }[] {
   const direction = -1 + 2 * (seedSmall(seed0) & 1);
@@ -451,9 +456,9 @@ export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }
     trigOf(mountains),
     trigOf(basalts),
     // The volcano disc sits at the mountains bearing; the protector is mirrored
-    // across it, un-narrowed, exactly as `vulcanusBiomes.ts` writes it.
+    // across it and its sum is narrowed to f32 (#531).
     trigOf(mountains),
-    trigOf(mountains + 180 * direction),
+    offsetTrig(mountains, 180),
     offsetTrig(basalts, -10),
     offsetTrig(ashlands, 15),
     offsetTrig(mountains, -20),

@@ -12638,3 +12638,47 @@ fn reproduces_the_games_fulgora_bearing_on_606_seeds() {
     assert_eq!(angle_exact, 606, "f32(f32(seed) / 360)");
     assert_eq!(angle_old, 463, "CONTROL: f32(seed / 360) must fail on 143");
 }
+
+/// The Vulcanus protector bearing against the game on 606 map seeds (#531).
+///
+/// The game narrows `mountains + 180 * direction` to f32. The control, the
+/// un-narrowed sum, matches its angle on only 567 of 606. The sine and cosine go
+/// through the same `AngleTrig::from_degrees` that `VulcanusBiomes::with_host_trig`
+/// feeds the protector cone.
+#[test]
+fn reproduces_the_games_vulcanus_protector_bearing_on_606_seeds() {
+    use crate::eval::math::f32r;
+    use crate::expressions::starting_spot_at_angle::AngleTrig;
+    use crate::expressions::vulcanus_seed::seed_small;
+
+    let fixture = load_captured_at("test/fixtures/oracle-bearing-chain.seeds606.json", "2.1.23");
+    let rows = fixture.get("rows").as_array();
+    assert_eq!(rows.len(), 606, "fixture size");
+
+    let (mut narrowed, mut unnarrowed) = (0usize, 0usize);
+    for row in rows {
+        let seed0 = row.get("seed").as_f64() as u32;
+        let direction = -1.0 + 2.0 * f64::from(seed_small(seed0) & 1);
+        let mountains = row.get("mtn").as_f64();
+        let want = row.get("prot_deg").as_f64();
+        let protector = f32r(mountains + 180.0 * direction);
+        narrowed += usize::from(protector == want);
+        unnarrowed += usize::from(mountains + 180.0 * direction == want);
+        let trig = AngleTrig::from_degrees(protector);
+        assert_eq!(
+            trig.sin,
+            row.get("prot_sin").as_f64(),
+            "prot_sin seed={seed0}"
+        );
+        assert_eq!(
+            trig.cos,
+            row.get("prot_cos").as_f64(),
+            "prot_cos seed={seed0}"
+        );
+    }
+    assert_eq!(narrowed, 606, "f32(mountains + 180 * direction)");
+    assert_eq!(
+        unnarrowed, 567,
+        "CONTROL: the un-narrowed sum must fail on 39"
+    );
+}

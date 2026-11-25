@@ -89,3 +89,26 @@ describe("Fulgora's start bearing is f32(f32(seed) / 360)", () => {
     expect(wrong).toBeGreaterThan(0);
   });
 });
+
+describe("the Vulcanus protector bearing is f32(mountains + 180 * direction)", () => {
+  it("the angle and its sine and cosine match the game on all 606 (index 4 of the ten bearings)", () => {
+    for (const r of rows) {
+      const direction = -1 + 2 * (seedSmall(r.seed) & 1);
+      expect(f32(r.mtn + 180 * direction), `prot_deg seed=${r.seed}`).toBe(r.prot_deg);
+      const protector = vulcanusBearingTrig(r.seed)[4]!;
+      expect(protector.sin, `prot_sin seed=${r.seed}`).toBe(r.prot_sin);
+      expect(protector.cos, `prot_cos seed=${r.seed}`).toBe(r.prot_cos);
+    }
+  });
+
+  it("CONTROL: the old un-narrowed sum matches the game's angle on only 567", () => {
+    expect(count((r) => r.mtn + 180 * (-1 + 2 * (seedSmall(r.seed) & 1)) === r.prot_deg)).toBe(567);
+  });
+
+  it("seed 71182336: the game's protector sine is 0x3f5e72d7, not the old 0x3f5e72d3", () => {
+    const protector = vulcanusBearingTrig(71182336)[4]!;
+    const view = new DataView(new ArrayBuffer(4));
+    view.setFloat32(0, protector.sin);
+    expect(view.getUint32(0).toString(16)).toBe("3f5e72d7");
+  });
+});
