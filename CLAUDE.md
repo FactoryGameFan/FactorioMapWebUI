@@ -1475,6 +1475,12 @@ companion doc.
 - **Trig crosses the boundary as VALUES computed in V8**, never computed in the
   module (#270). Nauvis reaches no transcendental today; if a new field does,
   its value gets passed in.
+- **Every expression step is f32, constants included.** The game evaluates
+  a noise expression one f32 operation at a time, in the order the Lua writes
+  it, so wrap each step in `eval::math::f32r` and narrow every non-exact
+  constant before it meets a coordinate (`offset_x = 10000 / 1.5` is the
+  trap). Combining exact noise ops in f64 held four Nauvis fields at 8 to 21
+  of 26; per-step f32 took all four to 26 (#452).
 - **No `mul_add` and no fast-math.** `clippy::suboptimal_flops` is explicitly
   allowed so turning `nursery` on later cannot push the port toward FMA. No
   `target-cpu=native`. `simd128` is off, `relaxed_simd` never.

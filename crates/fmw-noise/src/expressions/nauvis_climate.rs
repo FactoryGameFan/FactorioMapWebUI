@@ -34,7 +34,7 @@
 
 use crate::at::At;
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{clamp, lerp, max2, min, min2, slider_to_linear};
+use crate::eval::math::{clamp, f32r, lerp_f32, max2, min, min2, slider_to_linear};
 use crate::expressions::nauvis_shared::{NauvisShared, NauvisSharedParams};
 use crate::quick_multioctave_noise::{
     octave_terms as quick_octave_terms, sum_octaves_at as quick_sum_octaves_at,
@@ -113,12 +113,15 @@ impl Aux {
     }
 
     /// Evaluate at an [`At`]; on a tile every noise op takes the grid path.
+    ///
+    /// One f32 step at a time, left to right as the Lua writes it (#452).
+    /// `0.5 + bias` is a constant, so the game folds it first.
     #[must_use]
     pub fn eval_at(&self, at: At) -> f64 {
+        let base = f32r(0.5 + f32r(self.bias));
+        let plateaus = f32r(f32r(0.06) * f32r(self.shared.plateaus_at(at) - f32r(0.4)));
         clamp(
-            0.5 + self.bias
-                + 0.06 * (self.shared.plateaus_at(at) - 0.4)
-                + f64::from(quick_sum_octaves_at(at, &self.noise)),
+            f32r(f32r(base + plateaus) + f64::from(quick_sum_octaves_at(at, &self.noise))),
             0.0,
             1.0,
         )
@@ -172,7 +175,8 @@ impl MoistureParams {
 pub struct Moisture {
     base_bias: f64,
     starting_bias: f64,
-    starting_area_moisture_frequency: f64,
+    /// `control:starting_area_moisture:frequency / 400`, folded in f32.
+    region_scale: f64,
     starting_positions: Vec<Point>,
     shared: NauvisShared,
     noise: QuickOctaves,
@@ -181,7 +185,8 @@ pub struct Moisture {
 impl Moisture {
     #[must_use]
     pub fn new(params: &MoistureParams) -> Self {
-        let base_bias = params.moisture_bias;
+        // Every step here is a constant the game folds in f32 (#452).
+        let base_bias = f32r(params.moisture_bias);
         // `slider_to_linear` is f32 per operation, so this is narrowed once
         // here and widened - not evaluated in f64 (#186, #270).
         let starting_bias_change = f64::from(slider_to_linear(
@@ -189,14 +194,16 @@ impl Moisture {
             -0.5,
             0.5,
         ));
+        let starting_bias_magnitude = f32r(2.0 * starting_bias_change).abs();
         Self {
             base_bias,
-            starting_bias: lerp(
+            starting_bias: lerp_f32(
                 base_bias,
                 starting_bias_change,
-                (2.0 * starting_bias_change).abs() * 1.1,
+                f32r(starting_bias_magnitude * f32r(1.1)),
             ),
-            starting_area_moisture_frequency: params.starting_area_moisture_frequency,
+            // `var('control:starting_area_moisture:frequency') / 400`.
+            region_scale: f32r(f32r(params.starting_area_moisture_frequency) / 400.0),
             starting_positions: params.starting_positions.clone(),
             shared: NauvisShared::new(&NauvisSharedParams {
                 seed0: params.seed0,
@@ -222,6 +229,8 @@ impl Moisture {
     }
 
     /// Evaluate at an [`At`]; on a tile every noise op takes the grid path.
+    ///
+    /// One f32 step at a time, left to right as the Lua writes it (#452).
     #[must_use]
     pub fn eval_at(&self, at: At) -> f64 {
         let (x, y) = (at.x(), at.y());
@@ -231,16 +240,14 @@ impl Moisture {
             &self.starting_positions,
             f64::INFINITY,
         ));
-        let starting_bias_region = clamp(
-            2.0 - (self.starting_area_moisture_frequency / 400.0) * distance,
-            0.0,
-            1.0,
-        );
-        let moisture_adjusted_bias = lerp(self.base_bias, self.starting_bias, starting_bias_region);
+        let starting_bias_region = clamp(f32r(2.0 - f32r(self.region_scale * distance)), 0.0, 1.0);
+        let moisture_adjusted_bias =
+            lerp_f32(self.base_bias, self.starting_bias, starting_bias_region);
 
+        let noise = f64::from(quick_sum_octaves_at(at, &self.noise));
+        let plateau_term = f32r(f32r(0.08) * f32r(self.shared.plateaus_at(at) - f32r(0.6)));
         let moisture_main = clamp(
-            0.4 + moisture_adjusted_bias + f64::from(quick_sum_octaves_at(at, &self.noise))
-                - 0.08 * (self.shared.plateaus_at(at) - 0.6),
+            f32r(f32r(f32r(f32r(0.4) + moisture_adjusted_bias) + noise) - plateau_term),
             0.0,
             1.0,
         );
@@ -248,14 +255,17 @@ impl Moisture {
         // Three different fields, three different knees and three different
         // gains. The smallest wins, so any one of them can open the cutout.
         let trees_forest_path_cutout = min(&[
-            (self.shared.bridge_billows_at(at) - 0.07) * 5.0,
-            (self.shared.hills_at(at) - 0.1) * 3.0,
-            (self.shared.forest_path_billows_at(at) - 0.07) * 3.0,
+            f32r(f32r(self.shared.bridge_billows_at(at) - f32r(0.07)) * 5.0),
+            f32r(f32r(self.shared.hills_at(at) - f32r(0.1)) * 3.0),
+            f32r(f32r(self.shared.forest_path_billows_at(at) - f32r(0.07)) * 3.0),
         ]);
 
         max2(
-            min2(moisture_main, 0.45),
-            moisture_main - 0.2 * max2(0.0, 1.0 - trees_forest_path_cutout * 1.5),
+            min2(moisture_main, f32r(0.45)),
+            f32r(
+                moisture_main
+                    - f32r(f32r(0.2) * max2(0.0, f32r(1.0 - f32r(trees_forest_path_cutout * 1.5)))),
+            ),
         )
     }
 }
@@ -418,7 +428,14 @@ mod tests {
                 let t = base_t.eval(x, y);
                 if a > 0.0 && a + 0.1 < 1.0 && t > -20.0 && t + 5.0 < 50.0 {
                     interior += 1;
-                    assert!((biased_aux.eval(x, y) - (a + 0.1)).abs() < 1e-9);
+                    // `aux` is rounded to f32 at every step (#452), and so is
+                    // its bias, so the shift is 0.1 to within one f32 step at
+                    // the field's scale of 1, not to 1e-9. Measured worst:
+                    // 0.7 of a step.
+                    assert!(
+                        (biased_aux.eval(x, y) - (a + 0.1)).abs() < f64::from(f32::EPSILON),
+                        "aux bias shift at ({x}, {y})"
+                    );
                     assert!((biased_t.eval(x, y) - (t + 5.0)).abs() < 1e-9);
                 } else {
                     saturated += 1;

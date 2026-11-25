@@ -21,6 +21,19 @@
 //! field only. The shared layer takes none, which its own module says at
 //! length.
 //!
+//! ## Every step is f32, and `offset_x` is rounded BEFORE it meets `x`
+//!
+//! The game evaluates the tree one f32 operation at a time, literals
+//! included, and each step here goes through [`f32r`] in the order the Lua
+//! writes it (#452). One constant needs saying on its own: `offset_x =
+//! 10000 / nauvis_seg` is 6666.67 at the default, which is not an f32. The
+//! game holds it as an f32 constant, so `x + offset_x` adds the ROUNDED
+//! value; adding the f64 value and rounding the sum lands on a different
+//! point. Measured on the 26-point fixture: the offset alone takes the tree
+//! from 8 to 10, the f32 steps alone to 19, and the two together to 26.
+//! `elevation_lakes` uses `10000 / 1`, which is exact, which is why only
+//! Nauvis showed it.
+//!
 //! ## `elevation_nauvis_no_cliff` is a real expression
 //!
 //! `elevation_nauvis_function(0)`, i.e. `added_cliff_elevation` forced to zero.
@@ -30,7 +43,7 @@
 use crate::at::At;
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{clamp, lerp, max2, min2};
+use crate::eval::math::{clamp, f32r, lerp_f32, max2, min2};
 use crate::expressions::nauvis_shared::{NauvisShared, NauvisSharedParams};
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::quick_multioctave_noise::{
@@ -112,7 +125,9 @@ impl ElevationNauvis {
             segmentation_multiplier: seg,
         });
         let nauvis_seg = shared.nauvis_seg;
-        let offset_x = 10_000.0 / nauvis_seg;
+        // Rounded to f32 here, before any coordinate is added to it. See the
+        // module note.
+        let offset_x = f32r(10_000.0 / nauvis_seg);
 
         let starting_positions = params.starting_positions.clone();
         let starting_lake_positions = params
@@ -130,8 +145,8 @@ impl ElevationNauvis {
         };
 
         Self {
-            water_level: params.water_level,
-            seg,
+            water_level: f32r(params.water_level),
+            seg: f32r(seg),
             nauvis_seg,
             with_cliff_elevation: params.with_cliff_elevation,
             starting_positions,
@@ -183,12 +198,14 @@ impl ElevationNauvis {
     /// `nauvis_persistance`: `clamp(amplitude_corrected + 0.55, 0.5, 0.65)`.
     fn persistence(&self, at: At) -> f64 {
         clamp(
-            f64::from(amplitude_corrected_multioctave_noise_at(
-                at,
-                &self.persistance,
-            )) + 0.55,
-            0.5,
-            0.65,
+            f32r(
+                f64::from(amplitude_corrected_multioctave_noise_at(
+                    at,
+                    &self.persistance,
+                )) + f32r(0.55),
+            ),
+            f32r(0.5),
+            f32r(0.65),
         )
     }
 
@@ -214,15 +231,21 @@ impl ElevationNauvis {
 
         // `nauvis_bridges`: a gentle fall, then a much steeper one past 0.1.
         let bb = self.shared.bridge_billows_at(at);
-        let nauvis_bridges = 1.0 - 0.1 * bb - 0.9 * max2(0.0, -0.1 + bb);
+        let nauvis_bridges = f32r(
+            f32r(1.0 - f32r(f32r(0.1) * bb)) - f32r(f32r(0.9) * max2(0.0, f32r(f32r(-0.1) + bb))),
+        );
 
         // `nauvis_macro`. The second factor is half-wave rectified, so the
         // macro term is zero over roughly half the map rather than symmetric.
-        let nauvis_macro =
-            f64::from(self.macro_a.eval_at(at)) * max2(0.0, f64::from(self.macro_b.eval_at(at)));
+        let nauvis_macro = f32r(
+            f64::from(self.macro_a.eval_at(at)) * max2(0.0, f64::from(self.macro_b.eval_at(at))),
+        );
 
         let added_cliff_elevation = if self.with_cliff_elevation {
-            0.1 * self.shared.hills_at(at) + 0.8 * self.shared.plateaus_at(at)
+            f32r(
+                f32r(f32r(0.1) * self.shared.hills_at(at))
+                    + f32r(f32r(0.8) * self.shared.plateaus_at(at)),
+            )
         } else {
             0.0
         };
@@ -233,21 +256,32 @@ impl ElevationNauvis {
             &self.starting_positions,
             f64::INFINITY,
         ));
-        let starting_macro_multiplier = clamp((distance * self.nauvis_seg) / 2000.0, 0.0, 1.0);
+        let starting_macro_multiplier =
+            clamp(f32r(f32r(distance * self.nauvis_seg) / 2000.0), 0.0, 1.0);
 
-        let nauvis_main = ELEVATION_MAGNITUDE
-            * (lerp(
-                0.5 * added_cliff_elevation - 0.6,
-                1.9 * added_cliff_elevation + 1.6,
-                0.1 + 0.5 * nauvis_bridges,
-            ) + 0.25 * nauvis_detail
-                + 3.0 * nauvis_macro * starting_macro_multiplier);
+        let ridge = lerp_f32(
+            f32r(f32r(0.5 * added_cliff_elevation) - f32r(0.6)),
+            f32r(f32r(f32r(1.9) * added_cliff_elevation) + f32r(1.6)),
+            f32r(f32r(0.1) + f32r(0.5 * nauvis_bridges)),
+        );
+        let nauvis_main = f32r(
+            ELEVATION_MAGNITUDE
+                * f32r(
+                    f32r(ridge + f32r(0.25 * nauvis_detail))
+                        + f32r(f32r(3.0 * nauvis_macro) * starting_macro_multiplier),
+                ),
+        );
 
         // The one node that reads the RAW segmentation. See the module note.
-        let starting_island =
-            nauvis_main + ELEVATION_MAGNITUDE * (2.5 - (distance * self.seg) / 200.0);
-        // `wlc_amplitude = 2`.
-        let wlc_elevation = max2(nauvis_main - self.water_level * 2.0, starting_island);
+        let starting_island = f32r(
+            nauvis_main
+                + f32r(ELEVATION_MAGNITUDE * f32r(2.5 - f32r(f32r(distance * self.seg) / 200.0))),
+        );
+        // `wlc_amplitude = 2`; `water_level * 2` is a folded constant.
+        let wlc_elevation = max2(
+            f32r(nauvis_main - f32r(self.water_level * 2.0)),
+            starting_island,
+        );
 
         let sld = f64::from(distance_from_nearest_point(
             x,
@@ -256,7 +290,8 @@ impl ElevationNauvis {
             STARTING_LAKE_DISTANCE_CAP,
         ));
         let sln = f64::from(quick_sum_octaves_at(at, &self.starting_lake_noise));
-        let starting_lake = (ELEVATION_MAGNITUDE * (-3.0 + (sld + sln) / 8.0)) / 8.0;
+        let starting_lake =
+            f32r(f32r(ELEVATION_MAGNITUDE * f32r(-3.0 + f32r(f32r(sld + sln) / 8.0))) / 8.0);
 
         min2(wlc_elevation, starting_lake)
     }
@@ -307,15 +342,20 @@ mod tests {
     #[test]
     fn the_persistence_field_stays_inside_its_clamp() {
         let tree = ElevationNauvis::new(&ElevationNauvisParams::defaults(123_456));
+        // The bounds are the f32 literals the game holds (#452).
+        let (lo_bound, hi_bound) = (f32r(0.5), f32r(0.65));
         let (mut lo, mut hi) = (0usize, 0usize);
         for i in -30i32..30 {
             for j in -30i32..30 {
                 let p = tree.persistence(At::point(f64::from(i) * 23.5, f64::from(j) * 29.25));
-                assert!((0.5..=0.65).contains(&p), "persistence {p} out of range");
-                if p == 0.5 {
+                assert!(
+                    (lo_bound..=hi_bound).contains(&p),
+                    "persistence {p} out of range"
+                );
+                if p == lo_bound {
                     lo += 1;
                 }
-                if p == 0.65 {
+                if p == hi_bound {
                     hi += 1;
                 }
             }

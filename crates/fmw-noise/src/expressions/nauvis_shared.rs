@@ -36,6 +36,13 @@
 //! not be routed in here - the TypeScript says so at the same place, because
 //! adding it would shift five fields that are graded and three that are not.
 //!
+//! ## `cliff_level` and `plateaus` are rounded to f32 at every step
+//!
+//! The game evaluates them one f32 operation at a time, literals included, so
+//! each step goes through [`f32r`] in the order the Lua writes it (#452). The
+//! octave fields underneath were already exact; the f64 arithmetic around
+//! them was not, and it held `aux` at 14 of 26 against the game.
+//!
 //! ## No memo, for the reason the Fulgora and Vulcanus layers record
 //!
 //! The TypeScript hands out closures and its consumers wrap them in `memoXY`,
@@ -52,7 +59,7 @@
 
 use crate::at::At;
 use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
-use crate::eval::math::clamp;
+use crate::eval::math::{clamp, f32r};
 use crate::eval::primitives::{basis_noise_expr_at, basis_noise_grid_at, BasisExprParams};
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::poison;
@@ -97,7 +104,8 @@ impl NauvisShared {
     #[must_use]
     pub fn new(params: &NauvisSharedParams) -> Self {
         let seed0 = params.seed0;
-        let nauvis_seg = 1.5 * params.segmentation_multiplier;
+        // A constant the game folds in f32 (#452). Exact at the default 1.5.
+        let nauvis_seg = f32r(1.5 * f32r(params.segmentation_multiplier));
         Self {
             nauvis_seg,
             hills: Prepared::new(&MultioctaveParams {
@@ -180,13 +188,13 @@ impl NauvisShared {
         self.cliff_level_at(At::point(x, y))
     }
 
-    /// [`Self::cliff_level`] at an [`At`].
+    /// [`Self::cliff_level`] at an [`At`], one f32 step at a time.
     #[must_use]
     pub fn cliff_level_at(&self, at: At) -> f64 {
         clamp(
-            0.65 + basis_noise_expr_at(at, &self.cliff_level, &self.cliff_level_tables),
-            0.15,
-            1.15,
+            f32r(f32r(0.65) + basis_noise_expr_at(at, &self.cliff_level, &self.cliff_level_tables)),
+            f32r(0.15),
+            f32r(1.15),
         )
     }
 
@@ -196,13 +204,15 @@ impl NauvisShared {
         self.plateaus_at(At::point(x, y))
     }
 
-    /// [`Self::plateaus`] at an [`At`].
+    /// [`Self::plateaus`] at an [`At`], one f32 step at a time.
     #[must_use]
     pub fn plateaus_at(&self, at: At) -> f64 {
-        0.5 + clamp(
-            (self.hills_at(at) - self.cliff_level_at(at)) * 10.0,
-            -0.5,
-            0.5,
+        f32r(
+            0.5 + clamp(
+                f32r(f32r(self.hills_at(at) - self.cliff_level_at(at)) * 10.0),
+                -0.5,
+                0.5,
+            ),
         )
     }
 
