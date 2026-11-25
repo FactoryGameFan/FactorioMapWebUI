@@ -6,12 +6,16 @@
 //! registers them (iron, copper, coal, stone, crude-oil, uranium) - which is
 //! also their `regular_patch_set_index`.
 //!
-//! ## The rq factors stay DIVISIONS
+//! ## Every noise constant here is narrowed to f32 once, at the catalog
 //!
-//! They are written `1.1 / 10.0` and `1.5 / 7.0` rather than folded to
-//! decimals, because `1.1 / 10.0` is not bitwise `0.11` in f64. Folding them
-//! changes the number that reaches `fast_cbrt`, and the TypeScript writes them
-//! as divisions for the same reason.
+//! The game reads each of these as a literal in an expression string and the
+//! noise machine holds every literal as an f32 (#521). So the catalog stores
+//! the f32 value, widened back to f64: `f32c(1.1 / 10.0)`, `f32c(8.2)`. Nothing
+//! downstream has to narrow a parameter again before it meets a coordinate.
+//!
+//! The rq factors are still written as divisions (`1.1 / 10.0`, `1.5 / 7.0`),
+//! as the Lua does (`regular_rq_factor_multiplier / 10`), and then narrowed.
+//! Before #521 they stayed f64 divisions and the TypeScript did the same.
 
 /// Autoplace `order`. `"b"` resources are drawn in preference to `"c"`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -77,6 +81,14 @@ pub struct ResourceParams {
     pub placement: ResourcePlacement,
 }
 
+/// Narrow a literal to f32 and widen it back: the value the noise machine holds.
+///
+/// `const` so it can run inside the `static` catalog. A float cast in a `const
+/// fn` rounds to nearest even, the same as at run time.
+const fn f32c(v: f64) -> f64 {
+    (v as f32) as f64
+}
+
 /// `map_color` (0..1) -> 0..255, rounded, matching the game's preview tint.
 ///
 /// `(v * 255.0 + 0.5) as u8` rather than `.round()`, because `f64::round` is
@@ -105,11 +117,11 @@ const fn solid_ore(
         control_name: name,
         order: ResourceOrder::B,
         patch_set_index,
-        base_density,
+        base_density: f32c(base_density),
         base_spots_per_km2: 2.5,
         candidate_spot_count,
-        regular_rq_factor: regular_rq_factor_multiplier / 10.0,
-        starting_rq_factor: starting_rq_factor_multiplier / 7.0,
+        regular_rq_factor: f32c(regular_rq_factor_multiplier / 10.0),
+        starting_rq_factor: f32c(starting_rq_factor_multiplier / 7.0),
         seed1: 100,
         random_probability: 1.0,
         random_spot_size_min: 0.25,
@@ -166,13 +178,13 @@ pub static NAUVIS_RESOURCE_CATALOG: [ResourceParams; 6] = [
         control_name: "crude-oil",
         order: ResourceOrder::C,
         patch_set_index: 4,
-        base_density: 8.2,
-        base_spots_per_km2: 1.8,
+        base_density: f32c(8.2),
+        base_spots_per_km2: f32c(1.8),
         candidate_spot_count: 21,
-        regular_rq_factor: 1.0 / 10.0,
-        starting_rq_factor: 1.0 / 7.0,
+        regular_rq_factor: f32c(1.0 / 10.0),
+        starting_rq_factor: f32c(1.0 / 7.0),
         seed1: 100,
-        random_probability: 1.0 / 48.0,
+        random_probability: f32c(1.0 / 48.0),
         random_spot_size_min: 1.0,
         random_spot_size_max: 1.0,
         additional_richness: 220_000.0,
@@ -190,11 +202,11 @@ pub static NAUVIS_RESOURCE_CATALOG: [ResourceParams; 6] = [
         control_name: "uranium-ore",
         order: ResourceOrder::C,
         patch_set_index: 5,
-        base_density: 0.9,
-        base_spots_per_km2: 1.25,
+        base_density: f32c(0.9),
+        base_spots_per_km2: f32c(1.25),
         candidate_spot_count: 21,
-        regular_rq_factor: 1.0 / 10.0,
-        starting_rq_factor: 1.0 / 7.0,
+        regular_rq_factor: f32c(1.0 / 10.0),
+        starting_rq_factor: f32c(1.0 / 7.0),
         seed1: 100,
         random_probability: 1.0,
         random_spot_size_min: 2.0,
@@ -243,15 +255,33 @@ mod tests {
     }
 
     #[test]
-    fn the_rq_factors_are_divisions_and_not_their_decimal_lookalikes() {
-        // `1.1 / 10.0` is 0.11000000000000001 and the literal `0.11` is
-        // 0.11000000000000000055 - a different f64. The value feeds a
-        // `fast_cbrt` and then a squared divisor, so the difference is not
-        // absorbed. This is the guard that a later tidy-up cannot fold them.
+    fn the_rq_factors_are_the_f32_the_game_holds_and_not_the_f64_division() {
+        // The game reads `1.1 / 10` as the literal 0.11 and holds it as an f32
+        // (#521). So the catalog stores that f32, and the f64 division
+        // 0.11000000000000001 is not what reaches `fast_cbrt` any more.
         let iron = resource_by_name("iron-ore").expect("iron is in the catalog");
-        assert_eq!(iron.regular_rq_factor, 1.1 / 10.0);
-        assert_ne!(iron.regular_rq_factor, 0.11);
-        assert_eq!(iron.starting_rq_factor, 1.5 / 7.0);
+        assert_eq!(iron.regular_rq_factor, f64::from((1.1 / 10.0) as f32));
+        assert_eq!(iron.regular_rq_factor, f64::from(0.11_f32));
+        assert_ne!(iron.regular_rq_factor, 1.1 / 10.0);
+        assert_eq!(iron.starting_rq_factor, f64::from((1.5 / 7.0) as f32));
+    }
+
+    #[test]
+    fn every_noise_constant_in_the_catalog_is_exactly_an_f32() {
+        for r in NAUVIS_RESOURCE_CATALOG.iter() {
+            for (what, v) in [
+                ("base_density", r.base_density),
+                ("base_spots_per_km2", r.base_spots_per_km2),
+                ("regular_rq_factor", r.regular_rq_factor),
+                ("starting_rq_factor", r.starting_rq_factor),
+                ("random_probability", r.random_probability),
+                ("random_spot_size_min", r.random_spot_size_min),
+                ("random_spot_size_max", r.random_spot_size_max),
+                ("additional_richness", r.additional_richness),
+            ] {
+                assert_eq!(v, f64::from(v as f32), "{} {what}", r.name);
+            }
+        }
     }
 
     #[test]
@@ -305,7 +335,7 @@ mod tests {
         let oil = resource_by_name("crude-oil").expect("oil");
         let uranium = resource_by_name("uranium-ore").expect("uranium");
         assert_eq!(oil.order, uranium.order);
-        assert_eq!(oil.random_probability, 1.0 / 48.0);
+        assert_eq!(oil.random_probability, f64::from((1.0 / 48.0) as f32));
         assert_eq!(uranium.random_probability, 1.0);
         assert_eq!(uranium.placement, ResourcePlacement::Threshold);
     }
