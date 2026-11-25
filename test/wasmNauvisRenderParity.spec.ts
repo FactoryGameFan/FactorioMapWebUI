@@ -244,6 +244,7 @@ function directRequest(
     auxBias: 0,
     startingAreaMoistureSize: 1,
     startingAreaMoistureFrequency: 1,
+    startingAreaRadius: 150,
     temperatureFrequency: 1,
     temperatureBias: 0,
     treesFrequency: 1,

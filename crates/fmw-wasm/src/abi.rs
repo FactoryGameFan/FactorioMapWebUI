@@ -108,7 +108,7 @@
 //! +96  f64 x 4   placement_sweep_box: x0, y0, x1, y1 (decoded, NOT read
 //!                since #492; kept so the layout does not move)
 //!
-//! nauvis block (512 bytes, so a Nauvis request is 568 - the largest, so
+//! nauvis block (520 bytes, so a Nauvis request is 576 - the largest, so
 //! `REQUEST_BYTES` is Nauvis's)
 //!  +0  f64  water_level
 //!  +8  f64  segmentation_multiplier
@@ -136,6 +136,14 @@
 //! +232 f64 x 18  resource levers, six resources x (frequency, size, richness)
 //!                in RESOURCE_ORDER: iron-ore, copper-ore, coal, stone,
 //!                crude-oil, uranium-ore
+//! +376 f64  starting_position_count   0..=8, clamped on read
+//! +384 f64 x 16  starting_positions: eight [x, y] pairs
+//! +512 f64  starting_area_radius      the enemy-base field's
+//!                `20 / radius` term. `f32(150 * f32(starting_area))`, or 0
+//!                when starting_area is 0; TypeScript computes it, so the
+//!                module never sees the slider. APPENDED after the starting
+//!                points (the block grew 512 -> 520, no version bump: the
+//!                prefix declares its own length).
 //! ```
 //!
 //! **Three blocks have now grown with no version bump, which is the split
@@ -215,7 +223,15 @@ pub const AQUILO_PARAMS_BYTES: usize = 128;
 /// of the three - see [`REQUEST_BYTES`].
 /// 376 bytes of levers and boxes, then the starting-point block: one count
 /// plus `NAUVIS_MAX_STARTING_POINTS` `[x, y]` pairs.
-pub const NAUVIS_PARAMS_BYTES: usize = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16;
+///
+/// **Grown 512 -> 520 for the starting-area radius** (the enemy-base field's
+/// `20 / starting_area_radius`), appended after the starting points. Still no
+/// version bump, for the reason above.
+pub const NAUVIS_PARAMS_BYTES: usize = NAUVIS_STARTING_AREA_RADIUS_OFFSET + 8;
+
+/// Offset of the `starting_area_radius` slot inside the Nauvis block: just past
+/// the starting-point list.
+pub const NAUVIS_STARTING_AREA_RADIUS_OFFSET: usize = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16;
 
 /// The largest request the module can accept, which is what `request_bytes()`
 /// reports so a caller can size one buffer for every planet.
@@ -561,6 +577,15 @@ pub struct NauvisParams {
     /// sent any moved spawn down the TypeScript path instead - which is why
     /// #227 could not delete that path.
     pub starting_positions: [[f64; 2]; NAUVIS_MAX_STARTING_POINTS],
+    /// `starting_area_radius`: `f32(150 * f32(starting_area))`, or 0 when the
+    /// starting area is 0. Read by the enemy-base overlay only.
+    ///
+    /// **0 is a real answer, not "unset"**, and it makes the field divide by
+    /// zero exactly as the game does. A writer that forgets the slot therefore
+    /// sends 0 rather than the default 150; the TypeScript writer always sends
+    /// it, and `the_nauvis_request_carries_the_starting_area_radius` pins the
+    /// slot.
+    pub starting_area_radius: f64,
 }
 
 /// Capacity of [`NauvisParams::starting_positions`].
@@ -732,6 +757,7 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
                 }
                 points
             },
+            starting_area_radius: f64_at(bytes, p + NAUVIS_STARTING_AREA_RADIUS_OFFSET),
         }),
         PLANET_AQUILO => {
             let mut trig = [(0.0, 0.0); AQUILO_BEARINGS];
@@ -900,6 +926,7 @@ mod tests {
             .chain(n.resource_levers.into_iter().flatten())
             .chain(core::iter::once(n.starting_position_count))
             .chain(n.starting_positions.into_iter().flatten())
+            .chain(core::iter::once(n.starting_area_radius))
             .collect::<Vec<_>>(),
             values
         );
@@ -933,6 +960,30 @@ mod tests {
         // The slots past the count are readable but not "set" - and they are
         // (0, 0), a LEGAL spawn, so nothing but the count can tell them apart.
         assert_eq!(n.starting_positions[3], [0.0, 0.0]);
+    }
+
+    /// The starting-area radius reads back from the last slot of the block,
+    /// 8 bytes past the starting points, and from nowhere else.
+    ///
+    /// A bare number in the last slot has no structure to check, so this puts
+    /// the value in that slot ONLY and asserts the slot before it (the last
+    /// starting-point `y`) did not pick it up.
+    #[test]
+    fn the_nauvis_request_carries_the_starting_area_radius() {
+        let mut b = good_nauvis();
+        let at = COMMON_BYTES + NAUVIS_STARTING_AREA_RADIUS_OFFSET;
+        assert_eq!(at + 8, b.len(), "the radius is the block's last slot");
+        b[at..at + 8].copy_from_slice(&450.0f64.to_le_bytes());
+        let r = decode(&b).expect("should decode");
+        let Params::Nauvis(n) = r.params else {
+            panic!("wrong block")
+        };
+        assert_eq!(n.starting_area_radius, 450.0);
+        assert_eq!(
+            n.starting_positions[NAUVIS_MAX_STARTING_POINTS - 1],
+            [0.0, 0.0],
+            "the radius landed in the starting-point list"
+        );
     }
 
     /// A count outside `0..=8` cannot make the module read past the array.
@@ -969,7 +1020,7 @@ mod tests {
     /// block's own size instead.
     #[test]
     fn the_nauvis_offset_test_covers_the_whole_block() {
-        let named = 3 + 21 + 4 + 4 + 18 + 1 + NAUVIS_MAX_STARTING_POINTS * 2;
+        let named = 3 + 21 + 4 + 4 + 18 + 1 + NAUVIS_MAX_STARTING_POINTS * 2 + 1;
         let slots = (COMMON_BYTES + NAUVIS_PARAMS_BYTES - 32) / 8;
         assert_eq!(
             named, slots,
@@ -1025,10 +1076,11 @@ mod tests {
         // Nauvis past it, so the constant is a `max` and this pins what it
         // must equal: the biggest block, whichever that is.
         // 568 as of #227's starting-point block: 376 bytes of levers and boxes,
-        // then a count and eight `[x, y]` pairs. It grew again with no version
-        // bump, which is the split working - the common prefix is untouched.
-        assert_eq!(COMMON_BYTES + NAUVIS_PARAMS_BYTES, 568);
-        assert_eq!(REQUEST_BYTES, 568);
+        // then a count and eight `[x, y]` pairs. 576 with the starting-area
+        // radius appended. Both growths came with no version bump, which is the
+        // split working - the common prefix is untouched.
+        assert_eq!(COMMON_BYTES + NAUVIS_PARAMS_BYTES, 576);
+        assert_eq!(REQUEST_BYTES, 576);
         // The property, not the number: the capacity is whichever request is
         // largest. Written over a runtime slice so it keeps holding when a
         // fourth planet arrives, and so it says WHICH planet is biggest rather

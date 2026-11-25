@@ -119,6 +119,8 @@ interface Case {
   readonly temperatureBias: number;
   readonly startingAreaMoistureSize: number;
   readonly startingAreaMoistureFrequency: number;
+  /** `f32(150 * f32(starting_area))`: 150 at the default of 1. */
+  readonly startingAreaRadius: number;
   readonly resourceFrequency: number;
   readonly resourceSize: number;
   readonly resourceRichness: number;
@@ -149,6 +151,7 @@ const DEFAULT_CONTROLS = {
   temperatureBias: 0,
   startingAreaMoistureSize: 1,
   startingAreaMoistureFrequency: 1,
+  startingAreaRadius: 150,
   resourceFrequency: 1,
   resourceSize: 1,
   resourceRichness: 1,
@@ -197,6 +200,9 @@ const CASES: readonly Case[] = [
     temperatureBias: 7,
     startingAreaMoistureSize: 4,
     startingAreaMoistureFrequency: 3,
+    // Left at 150 on purpose: the radius moves nothing but the enemy field, and
+    // the row below moves it alone so that attribution stays clean.
+    startingAreaRadius: 150,
     // Every resource lever off its default too. `resourceSize` must stay
     // ABOVE 0: at or below it the Rust resolver drops the resource and the
     // resource fields fold zeros on one side only.
@@ -280,6 +286,22 @@ const CASES: readonly Case[] = [
     x0: 301.7,
     y0: -173.3,
     step: 6.7,
+    n: 22,
+  },
+  {
+    // The ONLY case that moves the starting-area radius, to Ribbon world's 450
+    // (`starting_area` 3). It reaches the enemy field's `20 / radius` term and
+    // nothing else, so it is the one row that grades the wiring from the request
+    // slot through `render::nauvis_ctx` into `EnemyBaseField`. Near spawn, since
+    // the start term is 0 past 450 tiles. The game's own values are graded by
+    // `the_enemy_field_follows_the_games_starting_area_radius` in tier 1; this
+    // row freezes that the request reaches it.
+    label: "starting area 3 (radius 450), near spawn",
+    ...DEFAULT_CONTROLS,
+    startingAreaRadius: 450,
+    x0: -213.3,
+    y0: -147.7,
+    step: 7.3,
     n: 22,
   },
 ];
@@ -417,6 +439,7 @@ function nauvisRequest(c: Case, view: "terrain" = "terrain") {
     auxBias: c.auxBias,
     startingAreaMoistureSize: c.startingAreaMoistureSize,
     startingAreaMoistureFrequency: c.startingAreaMoistureFrequency,
+    startingAreaRadius: c.startingAreaRadius,
     temperatureFrequency: c.temperatureFrequency,
     temperatureBias: c.temperatureBias,
     treesFrequency: c.treesFrequency,

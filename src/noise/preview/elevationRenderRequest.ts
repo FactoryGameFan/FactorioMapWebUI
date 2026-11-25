@@ -1,6 +1,7 @@
 import { CLIFF_MARK_BACK_PX, CLIFF_MARK_SIZE_PX } from "../cliffs/cliffCatalog";
 import type { CliffControls, CliffSettingsInput } from "../cliffs/cliffCatalog";
 import type { Point, VulcanusResourceControls } from "../eval/ctx";
+import { DEFAULT_STARTING_AREA_RADIUS } from "../enemies/enemyCatalog";
 import type { EnemyControls } from "../enemies/enemyCatalog";
 import { PLANET_CAPABILITIES } from "../../model/planetCapabilities";
 import type { Planet } from "../../model/planets";
@@ -74,6 +75,11 @@ export interface ElevationRenderRequest {
   auxBias?: number;
   startingAreaMoistureSize?: number;
   startingAreaMoistureFrequency?: number;
+  /**
+   * `starting_area_radius` (`f32(150 * f32(starting_area))`, 0 for 0). Read only
+   * by the Nauvis enemy overlay. Default 150, the radius at `starting_area` 1.
+   */
+  startingAreaRadius?: number;
   /** Which elevation tree to render. Default "lakes". */
   mapType?: "lakes" | "nauvis" | "island";
   /**
@@ -481,10 +487,9 @@ function renderAquiloThroughWasm(
  * list was always a wrong answer rather than a slow one; once the TypeScript
  * arm goes there is nothing left that could honour it. The app never set it.
  *
- * **`waterLevel` is sent and deliberately ignored by the module** - issue #326.
- * `renderTerrain.ts` resolves every tile at `waterLevel = 0` however the slider
- * is set, and these two renders are asserted byte-identical, so the engine has
- * to reproduce that rather than fix it here.
+ * **`waterLevel` is read by every Nauvis view** since #320 closed issue #326.
+ * It used to be sent and ignored by the terrain view, which resolved every tile
+ * at `waterLevel = 0` however the slider was set.
  *
  * The copy is the same single one Fulgora's path makes and for the same reason;
  * see `renderFulgoraThroughWasm`.
@@ -527,6 +532,7 @@ function renderNauvisThroughWasm(
     auxBias: req.auxBias ?? 0,
     startingAreaMoistureSize: req.startingAreaMoistureSize ?? 1,
     startingAreaMoistureFrequency: req.startingAreaMoistureFrequency ?? 1,
+    startingAreaRadius: req.startingAreaRadius ?? DEFAULT_STARTING_AREA_RADIUS,
     // Trees are the only consumer of temperature, and the only view that reads
     // the two tree levers. Defaulted here to the same values `makeTreeDensity`
     // uses, for the reason the block above states.

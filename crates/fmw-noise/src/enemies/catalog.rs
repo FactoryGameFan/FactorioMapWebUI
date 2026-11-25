@@ -55,8 +55,20 @@ pub const ENEMY_MAX_SPOT_BASEMENT_RADIUS: f64 = 128.0;
 /// collapses to exactly `min(enemy_base_probability, 0.25)`.
 pub const ENEMY_PLACEMENT_CAP: f64 = 0.25;
 
-/// `starting_area_radius`, read by the field's starting-area term.
-pub const STARTING_AREA_RADIUS: f64 = 150.0;
+/// `starting_area_radius` at the default `starting_area` of 1, which is what
+/// [`EnemyFieldParams::defaults`](super::field::EnemyFieldParams::defaults)
+/// uses.
+///
+/// The game computes it as `f32(150 * f32(starting_area))`, or 0 when
+/// `starting_area` is 0 (`createContext`, Factorio 2.1.23, 0x20b017a). The app
+/// sends the real value with each Nauvis request, so a preset's own starting
+/// area reaches the field; this constant is only the default for callers with no
+/// preset - the tier-1 fixtures, which were captured at 1.
+///
+/// **Only the enemy field scales with it.** The resource placement radius is
+/// 150 in the Lua on purpose, and the Vulcanus (0.7 * 0.75) and Gleba (0.7)
+/// radii are constants too.
+pub const DEFAULT_STARTING_AREA_RADIUS: f64 = 150.0;
 
 /// `map_color` for the enemy-base overlay.
 pub const ENEMY_MAP_COLOR: [u8; 3] = [255, 26, 26];

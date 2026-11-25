@@ -126,7 +126,23 @@ export interface ElevationPreviewCtx {
     temperatureBias: number;
     startingAreaMoistureSize: number;
     startingAreaMoistureFrequency: number;
+    /**
+     * The game's `starting_area_radius`: `f32(150 * f32(starting_area))`, or 0
+     * for a starting area of 0 (`createContext`, 2.1.23). The enemy-base field
+     * reads it as `20 / radius`; nothing else on Nauvis scales with it (the
+     * resource radius is a constant 150 in the Lua).
+     *
+     * Three built-in presets are not at 1: both Death worlds carry 0.75 (radius
+     * 112.5) and Ribbon world 3 (radius 450).
+     */
+    startingAreaRadius: number;
   };
+}
+
+/** `starting_area_radius` for a `starting_area` value, as the game computes it. */
+export function startingAreaRadiusFor(startingArea: number): number {
+  // The `=== 0` also turns -0 into +0, as the game's `cmpeqss`/`andnps` does.
+  return startingArea === 0 ? 0 : Math.fround(150 * Math.fround(startingArea));
 }
 
 /**
@@ -193,6 +209,7 @@ export function elevationCtxFromPreset(preset: Preset): ElevationPreviewCtx {
       auxBias: climate.aux.bias,
       startingAreaMoistureSize: climate.startingAreaMoisture.size,
       startingAreaMoistureFrequency: climate.startingAreaMoisture.frequency,
+      startingAreaRadius: startingAreaRadiusFor(preset.startingArea),
     },
   };
 }

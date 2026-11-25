@@ -782,7 +782,7 @@ levers, three bearing pairs of sine and cosine, and one placement sweep box), so
 a request is 184 bytes. Since #492 the sweep box is decoded and not read: each
 pixel reads only its own chunk's entities, so there is no halo. The slot stays
 so the layout does not move. That is smaller than Vulcanus's 368, so
-`REQUEST_BYTES` stays Nauvis's 568. The offered views are terrain, resources,
+`REQUEST_BYTES` stays Nauvis's 576. The offered views are terrain, resources,
 rocks and all. `VIEW_ENTITY_FOOTPRINT = 12` exists for the test that grades
 placement, and the panel never offers it. Elevation, enemies, cliffs, trees and
 the land mask are not served by the module. The app falls back to terrain for
@@ -1035,10 +1035,10 @@ declares `params_bytes`, then a per-planet block follows:
 | -------- | ----- | ------- |
 | Aquilo   | 128   | 184     |
 | Fulgora  | 64    | 120     |
-| Nauvis   | 512   | 568     |
+| Nauvis   | 520   | 576     |
 | Vulcanus | 312   | 368     |
 
-**Nauvis is the largest, so `REQUEST_BYTES` is 568.** Do not quote that table
+**Nauvis is the largest, so `REQUEST_BYTES` is 576.** Do not quote that table
 from here - it has gone stale once already, because a block grows whenever an
 overlay lands. The constants are declared in three places that must agree, and
 reading all three at once is both the current answer and the check that they
@@ -1052,8 +1052,9 @@ grep -n '_BYTES' crates/fmw-wasm/src/abi.rs src/noise/wasm/request.ts \
 **A planet block can grow with NO version bump, and that is the split working.**
 Vulcanus's has grown twice (248 -> 280 for the cliff view, 280 -> 312 for the
 overlays), Fulgora's once (#363, 48 -> 64, for `control:scrap:frequency` and
-`:size`), and Nauvis's six times (64 -> 96 -> 144 -> 160 -> 232 -> 376 -> 512,
-the last of them #339 appending the spawn list).
+`:size`), and Nauvis's seven times (64 -> 96 -> 144 -> 160 -> 232 -> 376 -> 512
+-> 520, #339 appending the spawn list and then the starting-area radius, the
+enemy field's `20 / radius` term).
 `BadParamsLength` refuses a writer whose declared length disagrees. **A version
 bump is for a change to the COMMON prefix**, which every planet reads.
 

@@ -280,6 +280,10 @@ POISONED_TESTS=(
   fixtures::reproduces_the_games_full_enemy_base_probability_at_the_derived_spacing
   fixtures::the_enemy_fixture_is_mostly_basement_so_the_probability_would_grade_nothing
 
+  # The field at the game's starting_area_radius, six starting areas. Same
+  # hooks as the field test above, watched going red under `--features poison`.
+  fixtures::the_enemy_field_follows_the_games_starting_area_radius
+
   # Phase 5's second half (#225), the cliff stack. Three hooks, because three
   # ops here can be wrong independently and one red test would otherwise stand
   # in for all of them:

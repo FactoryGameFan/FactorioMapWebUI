@@ -34,7 +34,7 @@ use std::cell::OnceCell;
 use crate::cliffs::catalog::{CliffControls, CliffSettings};
 use crate::cliffs::fields::{CliffFieldParams, NauvisCliffFields};
 use crate::distance_from_nearest_point::Point;
-use crate::enemies::catalog::EnemyControls;
+use crate::enemies::catalog::{EnemyControls, DEFAULT_STARTING_AREA_RADIUS};
 use crate::enemies::field::{EnemyBaseField, EnemyFieldParams};
 use crate::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
 use crate::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
@@ -129,6 +129,10 @@ pub struct NauvisCtx {
     /// `frequency` as a plain multiplier - and `oracle-enemy-base` was captured
     /// at the defaults, so tier 1 grades neither. A sweep must move them.
     pub enemy_controls: EnemyControls,
+    /// `starting_area_radius`: `f32(150 * f32(starting_area))`, 0 for a starting
+    /// area of 0. Read by the enemy-base field only - the resource placement
+    /// radius (150) and the Vulcanus and Gleba radii are constants in the Lua.
+    pub starting_area_radius: f64,
 }
 
 impl NauvisCtx {
@@ -155,6 +159,7 @@ impl NauvisCtx {
             cliff_settings: CliffSettings::defaults(),
             rock_controls: RockControls::defaults(),
             enemy_controls: EnemyControls::defaults(),
+            starting_area_radius: DEFAULT_STARTING_AREA_RADIUS,
         }
     }
 }
@@ -463,6 +468,7 @@ impl<'a, 'b> NauvisParity<'a, 'b> {
                 seed0: ctx.seed0,
                 controls: ctx.enemy_controls,
                 starting_positions: ctx.starting_positions.clone(),
+                starting_area_radius: ctx.starting_area_radius,
             },
             enemy: OnceCell::new(),
         }

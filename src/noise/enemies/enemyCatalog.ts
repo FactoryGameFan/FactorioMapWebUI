@@ -7,7 +7,12 @@ export const ENEMY_CANDIDATE_SPOT_COUNT = 100;
 export const ENEMY_BASEMENT = -1000;
 export const ENEMY_MAX_SPOT_BASEMENT_RADIUS = 128;
 export const ENEMY_PLACEMENT_CAP = 0.25;
-export const STARTING_AREA_RADIUS = 150;
+/**
+ * `starting_area_radius` at the default `starting_area` of 1: `f32(150 * f32(1))`.
+ * The real value is per preset - see `startingAreaRadiusFor` in
+ * `src/model/elevationPreviewCtx.ts` - and rides in the Nauvis request.
+ */
+export const DEFAULT_STARTING_AREA_RADIUS = 150;
 export const ENEMY_MAP_COLOR = [255, 26, 26] as const;
 
 /**
