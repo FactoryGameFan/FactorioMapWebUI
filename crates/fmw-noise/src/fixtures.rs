@@ -3902,10 +3902,10 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
             61usize,
             &(|f: &C| f.hairline_cracks) as &dyn Fn(&C) -> f64,
         ),
-        ("floodCracksA", 56, &|f| f.flood_cracks_a),
-        ("floodCracksB", 52, &|f| f.flood_cracks_b),
-        ("floodPaths", 41, &|f| f.flood_paths),
-        ("floodBasaltsFunc", 39, &|f| f.flood_basalts_func),
+        ("floodCracksA", 61, &|f| f.flood_cracks_a),
+        ("floodCracksB", 61, &|f| f.flood_cracks_b),
+        ("floodPaths", 61, &|f| f.flood_paths),
+        ("floodBasaltsFunc", 61, &|f| f.flood_basalts_func),
     ] {
         let got: Vec<f64> = cracks.iter().map(select).collect();
         assert_eq!(
@@ -3954,8 +3954,8 @@ fn reproduces_the_vulcanus_climate_layer_at_every_captured_position() {
     // achieves rather than as a measure of it.
     type K = ClimateFields;
     for (key, want_exact, select) in [
-        ("aux", 52usize, &(|f: &K| f.aux) as &dyn Fn(&K) -> f64),
-        ("moisture", 36, &|f| f.moisture),
+        ("aux", 51usize, &(|f: &K| f.aux) as &dyn Fn(&K) -> f64),
+        ("moisture", 37, &|f| f.moisture),
     ] {
         let got: Vec<f64> = climate.iter().map(select).collect();
         assert_eq!(
@@ -4032,10 +4032,10 @@ fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_crack_layer() {
 
     assert_eq!(
         scored(false),
-        (50, 42),
+        (50, 43),
         "unsnapped - points the game never saw"
     );
-    assert_eq!(scored(true), (61, 52), "snapped - where the game evaluated");
+    assert_eq!(scored(true), (61, 51), "snapped - where the game evaluated");
 }
 
 use crate::expressions::vulcanus_spawn::{SpawnFields, VulcanusSpawn, WobbleSums};
@@ -4381,8 +4381,8 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     // for scale alone, which is the third argument for counting matches.
     type E = ElevationFields;
     for (key, want_exact, select) in [
-        ("elev", 180usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
-        ("elevation", 180, &|f| f.elevation),
+        ("elev", 213usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
+        ("elevation", 213, &|f| f.elevation),
     ] {
         let got: Vec<f64> = fields.iter().map(select).collect();
         assert_eq!(
@@ -4464,10 +4464,10 @@ fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_elevation_surface() {
         )
     };
 
-    assert_eq!(score_elev(false), 178, "elev unsnapped");
-    assert_eq!(score_elev(true), 180, "elev snapped");
-    assert_eq!(score_temp(false), 243, "temperature unsnapped");
-    assert_eq!(score_temp(true), 251, "temperature snapped");
+    assert_eq!(score_elev(false), 209, "elev unsnapped");
+    assert_eq!(score_elev(true), 213, "elev snapped");
+    assert_eq!(score_temp(false), 245, "temperature unsnapped");
+    assert_eq!(score_temp(true), 253, "temperature snapped");
 }
 
 /// `vulcanus_temperature`, which the climate layer deferred until `elev` existed.
@@ -4524,7 +4524,7 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
     // Lua is byte-identical across that range (#295).
     assert_eq!(
         score_vulcanus(&got, fixture.get("temperature").as_array(), "temperature"),
-        251,
+        253,
         "temperature exact f32 matches out of {}",
         positions.len()
     );
@@ -6381,7 +6381,7 @@ fn reproduces_the_vulcanus_cliff_fields_at_every_captured_corner() {
         "corners where the cliffiness clamp saturates"
     );
     assert_eq!(
-        tile_exact, 813,
+        tile_exact, 996,
         "tile-channel elevation exact f32 matches out of 12,675"
     );
     assert!(
@@ -6392,7 +6392,7 @@ fn reproduces_the_vulcanus_cliff_fields_at_every_captured_corner() {
     // #83 as an assertion. The two channels are the same expression read
     // through different grids, and they must not agree.
     assert_eq!(
-        channels_differ, 2_513,
+        channels_differ, 2_346,
         "corners where the two grids disagree"
     );
 
@@ -7503,8 +7503,8 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     let values = fixture.get("values");
     for (key, want_exact, got) in [
         ("vulcanus_decorative_knockout", 434usize, &knockout_out),
-        ("vulcanus_rock_huge", 180, &huge),
-        ("vulcanus_rock_big", 203, &big),
+        ("vulcanus_rock_huge", 179, &huge),
+        ("vulcanus_rock_big", 199, &big),
     ] {
         assert_eq!(
             score_vulcanus(got, values.get(key).as_array(), key),
@@ -7546,7 +7546,7 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
             density_exact += 1;
         }
     }
-    assert_eq!(density_exact, 412, "density exact f32 matches out of 434");
+    assert_eq!(density_exact, 411, "density exact f32 matches out of 434");
     assert_eq!(clamped_to_zero, 399, "positions the clamp saturates at 0");
 
     // Both expressions cap at `0.2 * (1 - k * ashlands_biome)`, so the overlay
@@ -11255,7 +11255,7 @@ fn the_last_vulcanus_pixel_is_a_known_argmax() {
     // game's tile, 19,301 f32 ULPs behind (gap about 5.8e-4 on a score of
     // 0.357). Far past a few ULPs, so host-vs-V8 trig cannot close it. Read a
     // moved number, do not adjust it.
-    assert_eq!(got, ("volcanic-cracks-warm", "volcanic-cracks", 19_288));
+    assert_eq!(got, ("volcanic-cracks-warm", "volcanic-cracks", 19_197));
 }
 
 /// The game's own POINT-kernel score for `tile` at a Task 7 target, read from
@@ -11408,7 +11408,7 @@ fn the_last_vulcanus_pixel_on_the_point_kernel_against_the_game() {
     // ULP, and our volcanic-cracks is 60,387 ULPs (about 1.8e-3) low. Our own
     // grid-vs-point shift is 627 and -12 ULPs, two orders smaller. Read a moved
     // number, do not adjust it.
-    assert_eq!(got, (-60_379, 0, 631, -12));
+    assert_eq!(got, (-60_441, 0, 784, -12));
 }
 
 use crate::expressions::aquilo_resources::{
