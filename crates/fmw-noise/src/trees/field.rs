@@ -25,9 +25,10 @@
 //! [`f32r`] in the Lua's order every species is 26 of 26. Three details that
 //! each cost matches before they were found:
 //!
-//! - `temperature` reaches the species as an f64, so it is rounded to f32
-//!   where they read it. Subtracting a constant from the unrounded value
-//!   rounds differently from subtracting it from the f32 the game holds.
+//! - `temperature` reaches the species as an f32 (the game holds it as one),
+//!   so [`Temperature`] rounds each of its own steps. Subtracting a constant
+//!   from an unrounded value rounds differently from subtracting it from the
+//!   f32 the game holds. This layer used to round it where it read it.
 //! - `output_scale` is narrowed to f32 before it reaches the noise. The three
 //!   species at 0.7 were the last misses: 0.7 is the one scale in the table
 //!   that f32 and f64 round differently.
@@ -288,11 +289,11 @@ impl<'a> TreeFields<'a> {
 
     /// `temperature_basic` as the game hands it to the species: an f32.
     ///
-    /// [`Temperature`] leaves its result in f64, and the species' ramps then
-    /// subtract constants from it - a step that rounds differently on the
-    /// unrounded value than on the f32 the game holds (#521).
+    /// [`Temperature`] rounds every step to f32 itself (#521), so its result
+    /// already is the f32 the species' ramps subtract constants from. This
+    /// layer used to round it here, which matters for a value left in f64.
     fn temperature(&self, x: f64, y: f64) -> f64 {
-        f32r(self.base.temperature.eval(x, y))
+        self.base.temperature.eval(x, y)
     }
 
     fn distance_term(&self, x: f64, y: f64) -> f64 {
