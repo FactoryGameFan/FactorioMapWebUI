@@ -193,16 +193,16 @@ pub fn bool_result(value: bool) -> bool {
 /// to any of the eight probabilities changes the winner essentially never - the
 /// same reason a numeric hook cannot reach the ocean test.
 ///
-/// **It needs its own hook even though the tile test already goes red**, and
-/// that distinction is the doctrine this module exists for: under poison the
-/// ocean hook flips every position's land-versus-ocean answer, so
-/// `puts_every_fulgora_tile_where_the_game_puts_it` would be red whether or not
-/// the argmax had a control. A gate satisfiable by an unrelated part of the
-/// system is not a gate for the new part.
+/// Fulgora's tile choice is one twelve-way argmax over the four ocean and eight
+/// land scores, and `resolve_tile` passes its winner through this hook, so
+/// `puts_every_fulgora_tile_where_the_game_puts_it` goes red under poison
+/// through the twelve-way index alone. The ocean-only test
+/// (`ocean_tile`) keeps its own `bool_result` hook, and the land-only argmax
+/// (`land_argmax`) keeps this one on eight candidates.
 ///
 /// `tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order`
-/// is the test that sees THIS hook and not the ocean one, because it calls
-/// `land_argmax` directly.
+/// is the test that sees the eight-way use, because it calls `land_argmax`
+/// directly.
 #[inline]
 #[must_use]
 pub fn index_result(index: usize, len: usize) -> usize {

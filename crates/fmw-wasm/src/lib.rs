@@ -796,7 +796,7 @@ pub extern "C" fn checksum_eval_pipeline(
 
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::{fulgora_cells, fulgora_scrap, fulgora_shared, fulgora_stack};
-use fmw_noise::tiles::{fulgora_catalog, fulgora_ocean};
+use fmw_noise::tiles::fulgora_catalog;
 
 /// The named field a [`checksum_fulgora`] call folds.
 ///
@@ -907,11 +907,14 @@ pub extern "C" fn checksum_fulgora(
                 38 => e.sand_basins,
                 39 => e.pre_elevation,
                 40 => e.elevation,
-                // The landmask's own answer: 0 land, 1 shallow, 2 deep.
-                41 => match fulgora_ocean::ocean_tile(e) {
-                    None => 0.0,
-                    Some(fulgora_ocean::Ocean::Shallow) => 1.0,
-                    Some(fulgora_ocean::Ocean::Deep) => 2.0,
+                // The landmask's own answer: 0 land, 1 shallow, 2 deep. It is
+                // the winner of the single twelve-way tile argmax, so it agrees
+                // with the resolved tile (field 75) rather than with an
+                // ocean-first test.
+                41 => match f.tile() {
+                    fulgora_catalog::FulgoraTile::Shallow => 1.0,
+                    fulgora_catalog::FulgoraTile::Deep => 2.0,
+                    _ => 0.0,
                 },
                 42 => m.natural,
                 43 => m.natural_and_mesa,

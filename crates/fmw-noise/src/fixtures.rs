@@ -3438,7 +3438,10 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
         ("fulgora_tile_ruin_machinery", 101, &|f: &S| {
             f.ruins.tile_ruin_machinery
         }),
-        ("fulgoran_dust_probability", 46, &|f: &S| {
+        // 46 -> 75 with the per-step f32 rounding of `land_probabilities`
+        // (2026-11-25): the dust sum is five f32 operations the game rounds one
+        // by one.
+        ("fulgoran_dust_probability", 75, &|f: &S| {
             f.land_probabilities()[0]
         }),
         ("fulgoran_dunes_probability", 98, &|f: &S| {
@@ -3447,26 +3450,13 @@ fn reproduces_the_fulgora_ruins_layer_at_every_captured_position() {
         ("fulgoran_sand_probability", 96, &|f: &S| {
             f.land_probabilities()[2]
         }),
-        // **The one count that keeps going DOWN: 80 -> 79 with #279, then
-        // 79 -> 78 with the elevation-chain narrowings.** Recorded rather than
-        // smoothed, the same way #273 recorded `fulgora_pre_elevation` 44 -> 43
-        // and `fulgora_tile_ruin_machinery` 95 -> 94.
-        //
-        // Two rounds in the same direction is worth naming, but it is still not
-        // evidence against either change, and the company it keeps is the
-        // argument: in the same two commits, `starting_spot_at_angle` went
-        // 88 -> 152 of 152 against the game's own captured values, both starting
-        // cones and `fulgora_moats` and `fulgora_vault_spots` reached 101/101 at
-        // a residual of exactly 0, and `fulgora_elevation` went 47 -> 100.
-        // Against that, one position on one still-inexact composite crossed a
-        // rounding boundary the unlucky way, twice.
-        //
-        // What WOULD make it a signal: this field reaching a full 101 elsewhere
-        // in the chain and then dropping, or the drop appearing on a field that
-        // is already exact. Neither has happened. If it goes down a third time,
-        // score this field on its own the way #273 scored its candidates rather
-        // than reading it out of a cumulative sweep.
-        ("fulgoran_rock_probability", 78, &|f: &S| {
+        // **Was the one count that kept going DOWN (80 -> 79 -> 78).** The
+        // per-step f32 rounding of `land_probabilities` (2026-11-25) took it
+        // 78 -> 100 of 101: `0.8 + rock * 2 - max(0, mix_oil) * 6` is four f32
+        // operations, and the f64 sum was the residual, not the elevation
+        // chain. The lost position was a rounding boundary, as the earlier
+        // comment guessed.
+        ("fulgoran_rock_probability", 100, &|f: &S| {
             f.land_probabilities()[3]
         }),
     ] {

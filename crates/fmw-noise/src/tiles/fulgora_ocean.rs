@@ -1,17 +1,20 @@
-//! Fulgora's ocean test, ported from the `oceanTileFrom` half of
+//! Fulgora's ocean probabilities, ported from the `oceanTileFrom` half of
 //! `src/noise/tiles/fulgoraCatalog.ts`.
 //!
-//! **This is the land mask's whole question.** `view: "landmask"` paints one
-//! colour where this returns an ocean tile and another where it does not, and
-//! the island finder is built on it.
+//! [`ocean_probabilities`] is the four oil-ocean `probability_expression`s, and
+//! it is the ONLY place their formulas are written. The game does not test the
+//! ocean before the land: `generateBasicTiles` runs one argmax over all twelve
+//! candidate tiles, so
+//! [`resolve_tile`](crate::tiles::fulgora_catalog::resolve_tile) feeds these four
+//! numbers into that argmax beside the eight land scores. [`ocean_tile`] is the
+//! ocean-only question on its own - "is the best ocean score positive, and which
+//! ocean is it" - and it is NOT what picks a rendered tile any more. A position
+//! where an ocean score is positive but a land score is higher is land.
 //!
-//! It costs an elevation-chain evaluation and nothing more. Measured at radius
+//! Costs an elevation-chain evaluation and nothing more. Measured at radius
 //! 1024 over 40 real candidate windows, `chain.elevation` alone is 81% of a full
-//! tile pixel (16.41 of 20.14 us at 8 tiles/px), so skipping the eight-way land
-//! argmax is the remaining ~18% at most; end to end through the renderer it is
-//! 15.7% at 8 tiles/px and 13.8% at 2.
-//!
-//! The eight land formulas and the argmax between them are phase 4 (#224).
+//! tile pixel (16.41 of 20.14 us at 8 tiles/px), so the eight land formulas are
+//! the remaining ~18% at most.
 
 use crate::eval::math::f32r;
 use crate::expressions::fulgora_elevation::{ElevationFields, COASTLINE};
@@ -30,27 +33,24 @@ pub enum Ocean {
     Shallow,
 }
 
-/// The ocean test.
+/// The four oil-ocean probabilities, in the game's tile order: `oil-ocean-shallow`,
+/// `oil-ocean-shallow-2`, `oil-ocean-deep`, `oil-ocean-deep-2`.
 ///
-/// `None` means "not ocean" - the position falls through to the land argmax,
-/// which phase 4 will supply.
+/// `-inf` (above the tile's water level) and 0 (the mask is off) both mean "this
+/// tile is not placed here"; the argmax treats a `-inf` as losing and a 0 as a
+/// score like any other, which a land tile beats whenever it is higher.
 ///
-/// **`> 0` rather than `>= 0` on the early-out, and that is not a nicety.** A
-/// probability of exactly 0 does not place a tile, and `-inf` (above the tile's
-/// water level) fails it too. Both are reachable - the mask being off makes
-/// every term exactly 0 - so an ocean probability of exactly 0 correctly falls
-/// through to land rather than taking this branch.
+/// `s`'s SIGN is what picks between the two shallow variants: `shallow` takes
+/// `max(-s, 0)` and `shallow2` takes `max(s, 0)`, so exactly one of them is
+/// non-zero away from `s == 0`.
+///
+/// Every step is f32, left to right as `tiles-fulgora.lua` writes it (#521):
+/// `50 * mask * water_base(...) * max(...)` is three products.
 #[must_use]
-pub fn ocean_tile(fields: &ElevationFields) -> Option<Ocean> {
+pub fn ocean_probabilities(fields: &ElevationFields) -> [f64; 4] {
     let e = fields.elevation;
     let mask = fields.oil_mask;
 
-    // `s`'s SIGN is what picks between the two shallow variants: `shallow`
-    // takes `max(-s, 0)` and `shallow2` takes `max(s, 0)`, so exactly one of
-    // them is non-zero away from `s == 0`.
-    //
-    // Every step is f32, left to right as `tiles-fulgora.lua` writes it
-    // (#521): `50 * mask * water_base(...) * max(...)` is three products.
     let s = f32r(fields.scrap_medium + fields.dunes);
 
     let shallow_base = f32r(f32r(50.0 * mask) * water_base(e, COASTLINE, 1000.0));
@@ -63,6 +63,27 @@ pub fn ocean_tile(fields: &ElevationFields) -> Option<Ocean> {
             + (f32r(fields.dunes - f32r(e / 100.0).max(0.0))).max(0.0),
     );
     let deep2 = f32r(deep2_scale * deep_base);
+
+    [shallow, shallow2, deep_base, deep2]
+}
+
+/// The ocean-only test: which ocean tile has the best score, if that score is
+/// positive.
+///
+/// **This is not the game's tile choice.** `None` means "no ocean tile scores
+/// above 0", and `Some` means only that an ocean tile scores above 0 - a land
+/// tile can still score higher and win the single twelve-way argmax in
+/// [`resolve_tile`](crate::tiles::fulgora_catalog::resolve_tile). It stays for
+/// the `get_tile` fixture's land-versus-ocean grading, where it measures the
+/// ocean formulas on their own.
+///
+/// **`> 0` rather than `>= 0`, and that is not a nicety.** A probability of
+/// exactly 0 is not a placed tile, and `-inf` (above the tile's water level)
+/// fails it too. Both are reachable - the mask being off makes every term
+/// exactly 0.
+#[must_use]
+pub fn ocean_tile(fields: &ElevationFields) -> Option<Ocean> {
+    let [shallow, shallow2, deep_base, deep2] = ocean_probabilities(fields);
 
     let best_shallow = best_probability(&[shallow, shallow2]);
     let best_deep = best_probability(&[deep_base, deep2]);
