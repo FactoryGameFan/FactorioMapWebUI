@@ -42,7 +42,7 @@
 use crate::at::At;
 use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::eval::ctx::EvalCtx;
-use crate::eval::math::{clamp, lerp, max2, min, min2};
+use crate::eval::math::{clamp, f32r, lerp_f32, max2, min, min2};
 use crate::eval::multisample::multisample;
 use crate::eval::primitives::{basis_noise_expr_at, BasisExprParams};
 use crate::expressions::vulcanus_biomes::VulcanusBiomes;
@@ -73,7 +73,11 @@ pub const CLIFF_MULTISAMPLE_GRID: f64 = 4.0;
 /// per-render state.
 #[must_use]
 pub fn volcano_inverted_peak(spot: f64, inversion_point: f64) -> f64 {
-    (inversion_point - (spot - inversion_point).abs()) / inversion_point
+    // One f32 operation per step, in the Lua's order (#521).
+    let spot = f32r(spot);
+    let inversion_point = f32r(inversion_point);
+    let offset = f32r(spot - inversion_point).abs();
+    f32r(f32r(inversion_point - offset) / inversion_point)
 }
 
 /// A `basis_noise{...}` leaf with its tables derived once.
@@ -156,7 +160,8 @@ impl<'a> VulcanusElevation<'a> {
             ashlands_basis: BasisLeaf::new(
                 seed0,
                 12_643,
-                helpers.scale_multiplier / 50.0 / ASHLANDS_SCALE,
+                // `scale_multiplier / 50 / scale`, one f32 division at a time (#521).
+                f32r(f32r(helpers.scale_multiplier / 50.0) / ASHLANDS_SCALE),
                 150.0,
             ),
             mountain_plasma: helpers.plasma(102, 2.5, 10.0, 125.0, 625.0),
@@ -180,12 +185,16 @@ impl<'a> VulcanusElevation<'a> {
         let mbn = self.mountain_basis.eval_at(at);
         // The clamp's upper bound of 10000 is far above anything the plasma
         // reaches; it is the Lua's, kept as written.
-        let base = lerp(
+        //
+        // Every step is one f32 operation in the Lua's order (#521); `mp` and
+        // `mbn` are already f32 values.
+        let base = lerp_f32(
             max2(clamp(mp, -100.0, 10_000.0), mbn),
             mp,
-            clamp(0.7 * mbn, 0.0, 1.0),
+            clamp(f32r(f32r(0.7) * mbn), 0.0, 1.0),
         );
-        base * (1.0 - clamp(self.mountain_elev_plasma.eval_at(at), 0.0, 1.0))
+        let flatten = f32r(1.0 - clamp(self.mountain_elev_plasma.eval_at(at), 0.0, 1.0));
+        f32r(base * flatten)
     }
 
     /// `vulcanus_mountains_func`.
@@ -197,11 +206,18 @@ impl<'a> VulcanusElevation<'a> {
     /// [`Self::mountains_func`] at an [`At`] (#451).
     #[must_use]
     pub fn mountains_func_at(&self, at: At, volcano_spots: f64, aux: f64) -> f64 {
-        lerp(
+        // One f32 operation per step (#521). `volcano_spots` and `aux` are f32
+        // fields in the game, so they are narrowed before they meet a literal.
+        let volcano_spots = f32r(volcano_spots);
+        let aux = f32r(aux);
+        let blend = lerp_f32(
             self.mountain_elevation_at(at),
-            700.0 * volcano_inverted_peak(volcano_spots, 0.65),
-            clamp(volcano_spots * 3.0, 0.0, 1.0),
-        ) + 200.0 * (aux - 0.5) * (volcano_spots + 0.5)
+            f32r(700.0 * volcano_inverted_peak(volcano_spots, 0.65)),
+            clamp(f32r(volcano_spots * 3.0), 0.0, 1.0),
+        );
+        // `200 * (aux - 0.5) * (spots + 0.5)` associates to the left.
+        let rockiness = f32r(f32r(200.0 * f32r(aux - 0.5)) * f32r(volcano_spots + 0.5));
+        f32r(blend + rockiness)
     }
 
     /// `vulcanus_ashlands_func`. See the module docs on `min(a, a)`.
@@ -213,12 +229,11 @@ impl<'a> VulcanusElevation<'a> {
     /// [`Self::ashlands_func`] at an [`At`] (#451).
     #[must_use]
     pub fn ashlands_func_at(&self, at: At) -> f64 {
-        300.0
-            + 0.001
-                * min2(
-                    self.ashlands_basis.eval_at(at),
-                    self.ashlands_basis.eval_at(at),
-                )
+        let lowest = min2(
+            self.ashlands_basis.eval_at(at),
+            self.ashlands_basis.eval_at(at),
+        );
+        f32r(300.0 + f32r(f32r(0.001) * lowest))
     }
 
     /// `vulcanus_basalt_lakes`.
@@ -234,12 +249,18 @@ impl<'a> VulcanusElevation<'a> {
     /// [`Self::basalt_lakes`] at an [`At`] (#451).
     #[must_use]
     pub fn basalt_lakes_at(&self, at: At) -> f64 {
-        let carve = contrast(f64::from(self.lakes_837.eval_at(at)), 0.95)
-            * contrast(f64::from(self.lakes_234.eval_at(at)), 0.95)
-            * f64::from(self.lakes_643.eval_at(at));
+        // One f32 operation per step (#521). The Lua is
+        // `-0.2 + flood - 0.35 * clamp(...)`, which associates to the left.
+        let carve = f32r(
+            f32r(
+                contrast(f64::from(self.lakes_837.eval_at(at)), 0.95)
+                    * contrast(f64::from(self.lakes_234.eval_at(at)), 0.95),
+            ) * f64::from(self.lakes_643.eval_at(at)),
+        );
+        let shifted = f32r(f32r(-0.2) + self.cracks.eval_at(at).flood_basalts_func);
         min2(
             1.0,
-            -0.2 + self.cracks.eval_at(at).flood_basalts_func - 0.35 * clamp(carve, 0.0, 3.0),
+            f32r(shifted - f32r(f32r(0.35) * clamp(carve, 0.0, 3.0))),
         )
     }
 
@@ -292,18 +313,25 @@ impl<'a> VulcanusElevation<'a> {
         let biome = self.biomes.eval_at(at);
         let climate = self.climate.eval_at(at, &self.cracks.eval_at(at));
 
-        let mountains_blend = lerp(
-            120.0 * self.basalt_lakes_multisample_at(at, grid),
-            20.0 + self.mountains_func_at(at, biome.mountain_volcano_spots, climate.aux)
-                * VULCANUS_MOUNTAINS_ELEVATION_MULTIPLIER,
-            biome.mountains_biome,
+        // One f32 operation per step (#521).
+        let mountains_blend = lerp_f32(
+            f32r(120.0 * self.basalt_lakes_multisample_at(at, grid)),
+            f32r(
+                20.0 + f32r(
+                    self.mountains_func_at(at, biome.mountain_volcano_spots, climate.aux)
+                        * VULCANUS_MOUNTAINS_ELEVATION_MULTIPLIER,
+                ),
+            ),
+            f32r(biome.mountains_biome),
         );
-        let elev = VULCANUS_ELEVATION_OFFSET
-            + lerp(
-                mountains_blend,
-                self.ashlands_func_at(at),
-                biome.ashlands_biome,
-            );
+        let elev = f32r(
+            VULCANUS_ELEVATION_OFFSET
+                + lerp_f32(
+                    mountains_blend,
+                    self.ashlands_func_at(at),
+                    f32r(biome.ashlands_biome),
+                ),
+        );
 
         ElevationFields {
             elev: poison::f64_result(elev),
@@ -352,12 +380,14 @@ impl<'a> VulcanusElevation<'a> {
         let e = self.eval_at(at).elev;
         let biome = self.biomes.eval_at(at);
         let climate = self.climate.eval_at(at, &self.cracks.eval_at(at));
-        100.0 + 100.0 * temperature_bias
-            - min2(e, e / 100.0)
-            - 2.0 * climate.moisture
-            - 1.0 * climate.aux
-            - 20.0 * biome.ashlands_biome
-            + 200.0 * max2(0.0, biome.mountain_volcano_spots - 0.6)
+        // One f32 operation per step, left to right as the Lua writes it (#521).
+        let base = f32r(100.0 + f32r(100.0 * f32r(temperature_bias)));
+        let cooled = f32r(base - min2(e, f32r(e / 100.0)));
+        let moist = f32r(cooled - f32r(2.0 * f32r(climate.moisture)));
+        let rocky = f32r(moist - f32r(1.0 * f32r(climate.aux)));
+        let ashen = f32r(rocky - f32r(20.0 * f32r(biome.ashlands_biome)));
+        let volcanic = max2(0.0, f32r(f32r(biome.mountain_volcano_spots) - f32r(0.6)));
+        f32r(ashen + f32r(200.0 * volcanic))
     }
 }
 
@@ -368,14 +398,17 @@ mod tests {
 
     /// The tent peaks at exactly 1 on the inversion point and reaches 0 at both
     /// 0 and twice the inversion point. A sign error inverts the volcano.
+    ///
+    /// The tent is f32 arithmetic (#521), so the symmetry checks hold to f32
+    /// precision, not f64. The peak and both zeros stay exact.
     #[test]
     fn the_inverted_peak_is_a_tent_centred_on_its_inversion_point() {
         assert_eq!(volcano_inverted_peak(0.65, 0.65), 1.0);
         assert_eq!(volcano_inverted_peak(0.0, 0.65), 0.0);
-        assert!((volcano_inverted_peak(1.3, 0.65) - 0.0).abs() < 1e-12);
+        assert_eq!(volcano_inverted_peak(1.3, 0.65), 0.0);
         // Symmetric about the peak.
         assert!(
-            (volcano_inverted_peak(0.45, 0.65) - volcano_inverted_peak(0.85, 0.65)).abs() < 1e-12
+            (volcano_inverted_peak(0.45, 0.65) - volcano_inverted_peak(0.85, 0.65)).abs() < 1e-6
         );
         // And it goes NEGATIVE outside, which the caller's clamp relies on.
         assert!(volcano_inverted_peak(2.0, 0.65) < 0.0);
@@ -445,7 +478,10 @@ mod tests {
         for k in 0..20 {
             let (x, y) = (f64::from(k) * 51.5, f64::from(k) * -33.25);
             let single = elevation.ashlands_basis.eval_at(At::point(x, y));
-            assert_eq!(elevation.ashlands_func(x, y), 300.0 + 0.001 * single);
+            assert_eq!(
+                elevation.ashlands_func(x, y),
+                f32r(300.0 + f32r(f32r(0.001) * single))
+            );
         }
     }
 }

@@ -32,7 +32,7 @@
 //! `--["rocks"] = {}, -- can't add the rocks control otherwise nauvis rocks spawn`
 //! (`planet-map-gen.lua:43`).
 
-use crate::eval::math::{clamp, max2, min2};
+use crate::eval::math::{clamp, f32r, max2, min2};
 use crate::expressions::vulcanus_stack::VulcanusStack;
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 
@@ -113,15 +113,29 @@ impl<'a, 'b> VulcanusRockFields<'a, 'b> {
         let rock_noise = self.stack.rock_noise(x, y);
         let knockout = f64::from(self.knockout.eval(x, y));
 
-        let shared =
-            1.2 * min2(climate.aux, -0.1 + 1.1 * climate.moisture) + rock_noise + 0.5 * knockout;
+        // Every step is one f32 operation, in the Lua's order (#521). The game
+        // reads `- 1.2 + 1.2 * min(...) + rock_noise + 0.5 * knockout` left to
+        // right, so each rock adds its own offset BEFORE the noise terms; the
+        // old shared sum added them after, which is a different f32 rounding.
+        let inner = min2(
+            f32r(climate.aux),
+            f32r(f32r(-0.1) + f32r(f32r(1.1) * f32r(climate.moisture))),
+        );
+        let scaled = f32r(f32r(1.2) * inner);
+        let noise = f32r(rock_noise);
+        let knock = f32r(f32r(0.5) * knockout);
+        let sum_huge = f32r(f32r(f32r(f32r(-1.2) + scaled) + noise) + knock);
+        let sum_big = f32r(f32r(f32r(f32r(-1.0) + scaled) + noise) + knock);
 
         // `min2` / `max2` rather than `f64::min` / `f64::max`, and in the
         // TypeScript's argument order. The two differ on NaN and on signed
         // zero, where IEEE 754-2019 `maximumNumber` may return EITHER operand,
         // and only an order-sensitive fold over raw bits can see it.
-        let rock_huge = min2(0.2 * (1.0 - 0.75 * ashlands), -1.2 + shared);
-        let rock_big = min2(0.2 * (1.0 - 0.5 * ashlands), -1.0 + shared);
+        let ash = f32r(ashlands);
+        let cap_huge = f32r(f32r(0.2) * f32r(f32r(1.0) - f32r(f32r(0.75) * ash)));
+        let cap_big = f32r(f32r(0.2) * f32r(f32r(1.0) - f32r(f32r(0.5) * ash)));
+        let rock_huge = min2(cap_huge, sum_huge);
+        let rock_big = min2(cap_big, sum_big);
         RockFields {
             rock_huge,
             rock_big,

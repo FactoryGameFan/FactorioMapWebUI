@@ -20,7 +20,7 @@
 //! Vulcanus chain a single pass per point.
 
 use crate::at::At;
-use crate::eval::math::{clamp, min2};
+use crate::eval::math::{clamp, f32r, min2};
 use crate::expressions::vulcanus_cracks::CrackFields;
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 use crate::poison;
@@ -87,7 +87,10 @@ impl VulcanusClimate {
         let aux = clamp(
             min2(
                 f64::from(self.aux.eval_at(at)).abs(),
-                0.3 - 0.6 * cracks.flood_paths,
+                // The game rounds every operation to f32 and every literal
+                // too (#521): `0.6 * flood_paths` is one rounding, and the
+                // subtraction from `0.3` is a second.
+                f32r(f32r(0.3) - f32r(f32r(0.6) * cracks.flood_paths)),
             ),
             0.0,
             1.0,
@@ -95,10 +98,11 @@ impl VulcanusClimate {
 
         // Three subtractions from 1, left to right, then clamped. Each `abs`
         // applies to its own noise term rather than to the running total.
+        // Every step is rounded to f32, `0.2` included (#521).
+        let after_a = f32r(1.0 - f64::from(self.moisture_a.eval_at(at)).abs());
+        let after_b = f32r(after_a - f64::from(self.moisture_b.eval_at(at)).abs());
         let moisture = clamp(
-            1.0 - f64::from(self.moisture_a.eval_at(at)).abs()
-                - f64::from(self.moisture_b.eval_at(at)).abs()
-                - 0.2 * cracks.flood_cracks_a,
+            f32r(after_b - f32r(f32r(0.2) * cracks.flood_cracks_a)),
             0.0,
             1.0,
         );

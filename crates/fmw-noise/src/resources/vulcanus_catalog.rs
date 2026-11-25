@@ -34,6 +34,7 @@
 //! roll marks FIRST and the three thresholded ores over the top.
 
 use crate::eval::ctx::{ResourceLevers, VulcanusResourceControls};
+use crate::eval::math::f32r;
 use crate::expressions::vulcanus_resources::ResourceFields;
 use crate::expressions::vulcanus_stack::VulcanusStack;
 use crate::resources::vulcanus_ore_roll::{ore_probability, VulcanusOreRoll};
@@ -306,7 +307,11 @@ impl VulcanusResource {
 /// roll.
 #[must_use]
 pub fn sulfuric_acid_geyser_probability(patchy: f64) -> f64 {
-    crate::poison::f64_result(0.025 * (f64::from(u8::from(patchy > 0.0)) + 2.0 * patchy))
+    // One f32 operation per step, in the Lua's order (#521). `patchy > 0` is an
+    // exact 0 or 1, so only the product, the sum and the outer product round.
+    let step = f64::from(u8::from(patchy > 0.0));
+    let doubled = f32r(f32r(2.0) * f32r(patchy));
+    crate::poison::f64_result(f32r(f32r(0.025) * f32r(step + doubled)))
 }
 
 #[cfg(test)]
@@ -426,7 +431,9 @@ mod tests {
     #[test]
     fn the_measured_peak_is_far_below_a_solid_ores() {
         let peak = sulfuric_acid_geyser_probability(1.217_289_334_385_441_2);
-        assert!((peak - 0.085_864_466_7).abs() < 1e-9, "peak {peak}");
+        // The expression is f32 per step (#521), so the f64 value 0.0858644667
+        // moved by 2.7e-9, half an f32 step at this magnitude.
+        assert!((peak - 0.085_864_469_4).abs() < 1e-9, "peak {peak}");
         // The whole of the catalog-ordering argument: calcite saturates to ~1
         // inside its footprint, so it out-bids the geyser by more than 10x
         // wherever the two are both eligible.
