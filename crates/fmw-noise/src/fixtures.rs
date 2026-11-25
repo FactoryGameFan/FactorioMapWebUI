@@ -4707,6 +4707,22 @@ fn reproduces_the_vulcanus_resource_layer_at_every_captured_position() {
     //   counting matches rather than bounding error, stated in one number, and
     //   it is why this test freezes counts.
     //
+    // **#521: every step of this layer now rounds to f32, in the Lua's order,
+    // and the counts above are no longer the TypeScript's** (which stays in
+    // f64). Before -> after, out of 1,085: basalts favorability 994 -> 1029,
+    // mountains 1004 -> 1016, mountains sulfur 989 -> 1007, ashlands 997 ->
+    // 1036, starting tungsten 1082 -> 1085, starting sulfur 1049 -> 1050,
+    // tungsten region 1033 -> 1036, coal 1026 -> 1030, calcite 999 -> 1000,
+    // sulfuric acid region 1020 -> 1022, patches 867 -> 1085, patchy 1020 ->
+    // 1025. Starting coal (974), starting calcite (969) and `metalTile` (1077)
+    // did not move. The favorabilities gained most, and only once the upstream
+    // `biome_full` was rounded to f32 on the way IN: its producer still returns
+    // off-grid f64, and subtracting the buffer from that first moved basalts
+    // the wrong way (994 -> 993). Position 981 still reads the wrong way for
+    // the same reason, so the biome layer is the next place to look. The region
+    // counts stop short of a full house because the spot cone is still the
+    // TypeScript's arithmetic (#491).
+    //
     // Graded against a **2.1.12** capture while the binary is 2.1.16 (#295).
     // That used to leave "the game changed" as an open candidate for a count
     // short of a full house. It is now a narrow one: every Lua file behind the
