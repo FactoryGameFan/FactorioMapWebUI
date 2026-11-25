@@ -10,7 +10,30 @@ Arg order per the game docs (and confirmed by the probes): `peak_multiplier`,
 `peak_maximum`, then ALL exprs, then ALL froms, then ALL tos. So the 2-D probe is
 `expression_in_range(pm, pmax, expr1, expr2, from1, from2, to1, to2)`.
 
-## Derived formula
+## The game's form (read from the binary, #521)
+
+The formula below was derived from oracle sweeps and is right in exact math.
+**In f32 it is not the game's.** `NoiseExpressions::expressionInRange` in the
+2.1.23 binary (file 0x1542990, read with Ghidra) builds each dimension from two
+folded constants:
+
+```
+half_i   = (to_i - from_i) * 0.5          folded in f64, held as f32
+center_i = (from_i + to_i) * 0.5          folded in f64, held as f32
+d_i      = half_i - |value_i - center_i|   every step f32
+d_i      = d_i * peak_multiplier           (skipped when it is 1)
+d_i      = min(d_i, peak_maximum)          (skipped when it is +inf)
+result   = min over dims of d_i, starting from +inf
+```
+
+`value - center` subtracts a far-away center, so it rounds differently from
+`value - from`. At the last differing Nauvis pixel, (229, -19), this form
+reproduced the game's grass scores at all 36 values in a 3x3 around it, and
+the edge form below matched 11. It took the Nauvis terrain count from 1 to 0.
+The sweeps below could not see it: their ranges are centred on 0 or have
+exact f32 bounds, where the two forms agree.
+
+## Derived formula (exact-math form)
 
 ```
 m      = min over all dims i of min(value_i - from_i, to_i - value_i)

@@ -29,7 +29,7 @@
 //! formulas live here once and are never copied into a test.
 
 use crate::at::At;
-use crate::eval::math::max2;
+use crate::eval::math::{f32r, max2};
 use crate::multioctave_noise::Prepared;
 use crate::tiles::expression_in_range::expression_in_range;
 use crate::tiles::helpers::{expression_in_range_base, noise_layer_noise, water_base};
@@ -343,28 +343,32 @@ impl NauvisTileCatalog {
         let red_desert_3 = expression_in_range_base(a, m, 0.8, -10.0, 11.0, 0.2)
             + f64::from(self.layer33.eval_at(at));
 
+        // Each land score is `box + noise_layer_noise(N)`, one f32 add in the
+        // game; the sums above are f64, so round them here (#521). The two
+        // water tiles are `water_base` alone.
+        let land = |v: f64| f32r(v);
         [
             deepwater,
             water,
-            grass_1,
-            grass_2,
-            grass_3,
-            grass_4,
-            dry_dirt,
-            dirt_1,
-            dirt_2,
-            dirt_3,
-            dirt_4,
-            dirt_5,
-            dirt_6,
-            dirt_7,
-            sand_1,
-            sand_2,
-            sand_3,
-            red_desert_0,
-            red_desert_1,
-            red_desert_2,
-            red_desert_3,
+            land(grass_1),
+            land(grass_2),
+            land(grass_3),
+            land(grass_4),
+            land(dry_dirt),
+            land(dirt_1),
+            land(dirt_2),
+            land(dirt_3),
+            land(dirt_4),
+            land(dirt_5),
+            land(dirt_6),
+            land(dirt_7),
+            land(sand_1),
+            land(sand_2),
+            land(sand_3),
+            land(red_desert_0),
+            land(red_desert_1),
+            land(red_desert_2),
+            land(red_desert_3),
         ]
     }
 

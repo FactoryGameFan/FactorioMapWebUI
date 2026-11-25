@@ -414,6 +414,13 @@ to `TileCorrectionMapGenerationTask` or `correctAndSelectTileTransitions`.
   grass-1 is 60 ULPs low (was 50) and grass-3 80 high (was 90). So the inputs
   were not the cause, as far as the fixtures can show; the tile scores'
   own arithmetic, which is still f64, is the next suspect.
+
+  **Solved, #521 (2026-11-24):** a probe read the game's aux, moisture,
+  elevation and noise layers at this tile, and all matched ours. The gap was
+  `expression_in_range`: the game computes `half - |value - center|`, not
+  `min(value - from, to - value)` (see `expression-in-range-NOTES.md`). With
+  that form our point-kernel scores match the game's and the pixel draws
+  grass-1. The Nauvis terrain count is 0.
 - **Vulcanus.** The game's own scores put volcanic-cracks first by 40,448 ULPs.
   Our volcanic-cracks-warm matches the game's to the ULP, but our
   volcanic-cracks is 60,387 ULPs (1.8e-3) low. Our own grid-vs-point shift is

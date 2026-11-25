@@ -130,8 +130,17 @@ const ENEMY_RGB = [255, 25, 25] as const;
  * uses - instead of the point path every fixture had been captured through.
  * frankh/factorio-mapgen's engine predicted exactly this: its grid path fixed
  * 7 of the same 8 pixels and left one.
+ *
+ * **1 -> 0 on 2026-11-24 (#521)**, at (229, -19), grass-3 against the game's
+ * grass-1. Its inputs (aux, moisture, elevation, the noise layers) matched the
+ * game exactly once #452 landed, and the gap stayed; the cause was
+ * `expression_in_range` itself. The game builds it from a center and a
+ * half-width, `half - |value - center|`, not from `min(value - from, to - value)`,
+ * which is equal in exact math and rounds differently in f32. Read off the
+ * 2.1.23 binary with Ghidra and confirmed at all 36 grass scores in a 3x3
+ * around the pixel.
  */
-const DIFFERING_PX = 1;
+const DIFFERING_PX = 0;
 
 interface Window {
   readonly label: string;
