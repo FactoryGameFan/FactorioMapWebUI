@@ -9419,24 +9419,36 @@ use crate::eval::math::min2;
 
 #[test]
 fn reproduces_the_games_enemy_base_field_at_both_seeds() {
-    // **The exact-match count on this field measures MAGNITUDE, not accuracy**,
-    // which is why this test freezes three buckets rather than one number.
+    // **The exact-match count on this field measures MAGNITUDE as well as
+    // accuracy, which is why this test freezes three buckets rather than one
+    // number.**
     //
     // `enemy_base_probability` has a basement of -1000, so a position no cone
     // reaches sits near -1007 - where one f32 ULP is about 6e-5, larger than the
-    // whole residual. Those positions are exact for free. Measured on the
-    // TypeScript side first, split by the magnitude of the GAME's own value:
+    // whole residual. Those positions are exact for free. Split by the
+    // magnitude of the GAME's own value, the counts were (measured on the
+    // TypeScript side first, and unchanged through #452):
     //
     //   basement (|v| >= 100)   209/239 and 126/159   worst 4.29e-5
     //   mid      (1 <= |v| < 100)  0/602 and   0/658  worst 9.76e-6
     //   live     (|v| < 1)         1/191 and   1/215  worst 4.17e-6
     //
-    // Almost the entire headline count of 210 and 127 is the basement. Where the
-    // field is doing something, the port matches 2 positions of 406 across both
-    // seeds. A single frozen 210 would go green on a port whose cone arithmetic
-    // was badly wrong, and would MOVE for reasons that have nothing to do with
-    // the cones - a recapture that shifted the basement/live split changes it on
-    // its own. This is CLAUDE.md's "a clamp flatters it" rule in a new costume.
+    // Almost the entire headline count of 210 and 127 was the basement. #521
+    // then evaluated the field the way the game does, and every bucket is now
+    // exact at both seeds with worst error 0:
+    //
+    // - the cone uses the game's own arithmetic, shared with Aquilo
+    //   (`ConeArithmetic::GameBinary`): the game's pi `3.1416`, an f32
+    //   distance, the peak narrowed once. Alone it took mid 0 -> 303 and 253
+    //   and live 1 -> 101 and 97;
+    // - the spot quantity (`pi / 90 * radius ^ 3`) and radius are f32 steps,
+    //   the cube a product of two f32 multiplies (a `powf` narrowed once
+    //   misses 11 and 142 positions of the mid bucket);
+    // - the blob term and the sum are f32 steps in the Lua's order, and the
+    //   blob term reads that same f32 radius.
+    //
+    // So the three buckets are all-or-nothing now, and the live and mid ones
+    // are what grade the cone, where the basement grades nothing.
     let fixture = load_captured_at("test/fixtures/oracle-enemy-base.seed123456.json", "2.1.11");
     let positions = fixture_positions(&fixture, "positions");
     assert_eq!(positions.len(), 1032, "a regen cannot empty the loop");
@@ -9448,8 +9460,8 @@ fn reproduces_the_games_enemy_base_field_at_both_seeds() {
     /// (exact matches, positions) for one magnitude bucket.
     type Bucket = (usize, usize);
     let expected: [(u32, Bucket, Bucket, Bucket); 2] = [
-        (123_456, (209, 239), (0, 602), (1, 191)),
-        (777_771, (126, 159), (0, 658), (1, 215)),
+        (123_456, (239, 239), (602, 602), (191, 191)),
+        (777_771, (159, 159), (658, 658), (215, 215)),
     ];
     for (case, &(seed, basement, mid, live)) in
         fixture.get("cases").as_array().iter().zip(expected.iter())
@@ -9499,12 +9511,11 @@ fn reproduces_the_games_enemy_base_field_at_both_seeds() {
             "seed {seed} headline exact"
         );
 
-        // And the residual ordering is the whole point of the split: the
-        // basement's worst is the LARGEST of the three even though it scores
-        // best. If that ever inverts, the reading above is stale.
+        // Every bucket is exact, so no residual is left to order. A bucket
+        // that stops being exact fails its own count above first.
         assert!(
-            worst[0] > worst[1] && worst[1] > worst[2],
-            "seed {seed}: residual no longer grows with magnitude - {:e} {:e} {:e}",
+            worst.iter().all(|&w| w == 0.0),
+            "seed {seed}: residuals {:e} {:e} {:e}",
             worst[0],
             worst[1],
             worst[2]

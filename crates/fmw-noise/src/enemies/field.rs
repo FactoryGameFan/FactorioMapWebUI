@@ -26,16 +26,18 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use crate::basis_noise::{basis_noise, tables_from_seed, BasisNoiseTables};
+use crate::basis_noise::{tables_from_seed, BasisNoiseTables};
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{clamp, min2};
+use crate::eval::math::{clamp, f32r, max2, min2};
+use crate::eval::primitives::{basis_noise_expr, BasisExprParams};
 use crate::spot_candidates::SpotRegionKey;
+use crate::spot_field::{spot_cone_max, ConeArithmetic, SpotGeometry};
 use crate::spot_selection::{select_spots, SelectedSpot, SpotSelectParams};
 
 use super::catalog::{
-    enemy_density, enemy_spot_quantity, enemy_spot_radius, EnemyControls, ENEMY_BASEMENT,
-    ENEMY_CANDIDATE_SPOT_COUNT, ENEMY_MAX_SPOT_BASEMENT_RADIUS, ENEMY_PLACEMENT_CAP,
-    ENEMY_REGION_SIZE, ENEMY_SEED1, ENEMY_SPACING, STARTING_AREA_RADIUS,
+    enemy_density, EnemyControls, ENEMY_BASEMENT, ENEMY_CANDIDATE_SPOT_COUNT,
+    ENEMY_MAX_SPOT_BASEMENT_RADIUS, ENEMY_PLACEMENT_CAP, ENEMY_REGION_SIZE, ENEMY_SEED1,
+    ENEMY_SPACING, STARTING_AREA_RADIUS,
 };
 
 /// Free variables of the enemy-base field.
@@ -67,29 +69,6 @@ pub struct EnemyBaseField {
     starting_positions: Vec<Point>,
     tables: BasisNoiseTables,
     region_cache: RefCell<BTreeMap<(i64, i64), Vec<SelectedSpot>>>,
-}
-
-/// Region index for a coordinate - regions are centred on multiples of
-/// [`ENEMY_REGION_SIZE`].
-///
-/// `floor((c + size/2) / size)`, written exactly as the TypeScript writes it.
-fn region_index(c: f64) -> i64 {
-    #[allow(clippy::cast_precision_loss)]
-    let size = ENEMY_REGION_SIZE as f64;
-    #[allow(clippy::cast_possible_truncation)]
-    let index = ((c + size / 2.0) / size).floor() as i64;
-    index
-}
-
-/// One f32 narrowing, kept as a named function so the cone below reads
-/// token-for-token against the `f32(...)` calls in the TypeScript.
-///
-/// The alternative - typing the whole chain `f32` - is NOT the same
-/// computation, and CLAUDE.md records the case where writing it that way made a
-/// count worse. Narrow where the reference narrows, nowhere else.
-#[inline]
-fn n(v: f64) -> f64 {
-    f64::from(v as f32)
 }
 
 impl EnemyBaseField {
@@ -126,7 +105,7 @@ impl EnemyBaseField {
             region_y,
         };
         let density = |x: f64, y: f64| enemy_density(self.distance_at(x, y), &self.controls);
-        let quantity = |x: f64, y: f64| enemy_spot_quantity(self.distance_at(x, y), &self.controls);
+        let quantity = |x: f64, y: f64| self.quantity_f32(self.distance_at(x, y));
         // Constant 1 - every candidate is equally favoured, so the trim runs in
         // acceptance order. That is a legitimate expression, not a stub.
         let favorability = |_x: f64, _y: f64| 1.0;
@@ -154,79 +133,99 @@ impl EnemyBaseField {
 
     /// The spot field: `max(basement, max over nearby spots of the cone)`.
     ///
-    /// **There is no `min(32, ...)` radius cap here.** That clamp is
-    /// resource-only, and the TypeScript says so at this line. `cone_scale` is
-    /// always 1 because `hard_region_target_quantity` is `false`.
+    /// **There is no resource-style `min(32, ...)` radius cap here.** The game's
+    /// `min(maximum_spot_basement_radius, radius)` is applied by the shared
+    /// cone walk and is inert: the largest enemy radius is about 44.5, under
+    /// the 128 cull. `cone_scale` is always 1 because
+    /// `hard_region_target_quantity` is `false`.
     ///
-    /// The cone arithmetic is f32 per operation, exactly where the TypeScript
-    /// narrows it.
+    /// The cone is the GAME's arithmetic, read from the 2.1.23 binary and
+    /// shared with Aquilo ([`ConeArithmetic::GameBinary`]): the game's pi
+    /// `3.1416`, an f32 distance, and the peak narrowed once (#521). The port's
+    /// own per-step f32 chain it replaces used the f64 pi and an f64 distance.
     #[must_use]
     pub fn spot_field(&self, x: f64, y: f64) -> f64 {
-        let mut best = ENEMY_BASEMENT;
-        let r = ENEMY_MAX_SPOT_BASEMENT_RADIUS;
-        let rx_lo = region_index(x - r);
-        let rx_hi = region_index(x + r);
-        let ry_lo = region_index(y - r);
-        let ry_hi = region_index(y + r);
-        for region_x in rx_lo..=rx_hi {
-            for region_y in ry_lo..=ry_hi {
-                for s in self.region_spots(region_x, region_y) {
-                    #[allow(clippy::cast_precision_loss)]
-                    let (sx, sy) = (s.x as f64, s.y as f64);
-                    let dx = x - sx;
-                    let dy = y - sy;
-                    let d2 = dx * dx + dy * dy;
-                    if d2 > r * r {
-                        continue;
-                    }
-                    let radius =
-                        n(enemy_spot_radius(self.distance_at(sx, sy), &self.controls)
-                            * s.cone_scale);
-                    if radius <= 0.0 {
-                        continue;
-                    }
-                    let q = s.quantity;
-                    let peak = n(n(3.0 * q) / n(n(std::f64::consts::PI * radius) * radius));
-                    let cone = n(peak - n(n(d2.sqrt()) * n(peak / radius)));
-                    if cone > best {
-                        best = cone;
-                    }
-                }
-            }
-        }
-        best
+        spot_cone_max(
+            &SpotGeometry {
+                region_size: ENEMY_REGION_SIZE as f64,
+                max_basement_radius: ENEMY_MAX_SPOT_BASEMENT_RADIUS,
+                basement_value: ENEMY_BASEMENT,
+                cone: ConeArithmetic::GameBinary,
+            },
+            x,
+            y,
+            |region_x, region_y| self.region_spots(region_x, region_y),
+            |s| self.radius_f32(self.distance_at(s.x as f64, s.y as f64)),
+        )
     }
 
-    /// The blob term.
+    /// `pi / 90 * spot_radius ^ 3`, one f32 step at a time. The cube is two f32
+    /// multiplies: a `powf` narrowed once misses 11 and 142 mid-bucket
+    /// positions of the tier-1 fixture.
+    fn quantity_f32(&self, d: f64) -> f64 {
+        let r = self.radius_f32(d);
+        f32r(f32r(std::f64::consts::PI / 90.0) * f32r(f32r(r * r) * r))
+    }
+
+    /// `max(0, sqrt(size) * (15 + 4 * intensity))` one f32 step at a time.
+    fn radius_f32(&self, d: f64) -> f64 {
+        let intensity = f32r(clamp(d, 0.0, 2400.0) / 325.0);
+        max2(
+            0.0,
+            f32r(f32r(self.controls.size.sqrt()) * f32r(15.0 + f32r(4.0 * intensity))),
+        )
+    }
+
+    /// The Lua's `blob(input_scale, output_scale)`, a `basis_noise` at
+    /// `seed1 = 123`, through the expression adapter so the coordinates are
+    /// narrowed and scaled in f32 as the game does (#521).
+    fn blob(&self, x: f64, y: f64, input_scale: f64, output_scale: f64) -> f64 {
+        basis_noise_expr(
+            x,
+            y,
+            &BasisExprParams {
+                seed0: self.seed0,
+                seed1: ENEMY_SEED1,
+                input_scale,
+                output_scale,
+                offset_x: 0.0,
+            },
+            &self.tables,
+        )
+    }
+
+    /// The blob term, one f32 step at a time in the Lua's order (#521):
     ///
-    /// Three `basis_noise` calls at plain divided coordinates, through the
-    /// low-level op rather than through `basis_noise_expr`. The `2 *` on the
-    /// third is an `output_scale` of 2 written at the call site.
+    /// `(blob(1/8, 1) + blob(1/24, 1) + blob(1/64, 2) - 0.5)
+    ///   * spot_radius / 150 * (0.1 + 0.9 * clamp(distance / 3000, 0, 1))`
     ///
-    /// **The coordinates are NOT narrowed on the way in, deliberately.**
-    /// `basis_noise` is the op #191 left alone, and its remaining direct callers
-    /// are exactly these un-narrowed Nauvis chains. Ported as written; narrowing
-    /// it here would be a unilateral change with no fixture to grade it.
+    /// The sum adds left to right, then `- 0.5`, then `* radius`, then `/ 150`,
+    /// then `* (...)`.
     #[must_use]
     pub fn blob_term(&self, x: f64, y: f64) -> f64 {
-        // Each `basis_noise` returns f32; the TypeScript sums them as JavaScript
-        // numbers, so the additions and the `2 *` happen in f64 on f32-valued
-        // operands. Widen at each term rather than summing in f32.
-        let b = f64::from(basis_noise(x / 8.0, y / 8.0, &self.tables))
-            + f64::from(basis_noise(x / 24.0, y / 24.0, &self.tables))
-            + 2.0 * f64::from(basis_noise(x / 64.0, y / 64.0, &self.tables));
+        let b = f32r(
+            f32r(
+                f32r(self.blob(x, y, 1.0 / 8.0, 1.0) + self.blob(x, y, 1.0 / 24.0, 1.0))
+                    + self.blob(x, y, 1.0 / 64.0, 2.0),
+            ) - 0.5,
+        );
         let d = self.distance_at(x, y);
-        (b - 0.5)
-            * (enemy_spot_radius(d, &self.controls) / 150.0)
-            * (0.1 + 0.9 * clamp(d / 3000.0, 0.0, 1.0))
+        let radius = self.radius_f32(d);
+        let ramp = f32r(f32r(0.1) + f32r(f32r(0.9) * clamp(f32r(d / 3000.0), 0.0, 1.0)));
+        f32r(f32r(f32r(b * radius) / 150.0) * ramp)
     }
 
     /// `enemy_base_probability` - the raw field.
     #[must_use]
     pub fn field(&self, x: f64, y: f64) -> f64 {
         let d = self.distance_at(x, y);
-        self.spot_field(x, y) + self.blob_term(x, y) - 0.3
-            + min2(0.0, (20.0 / STARTING_AREA_RADIUS) * d - 20.0)
+        // `20 / starting_area_radius * distance - 20`, with the constant
+        // quotient folded to f32 first.
+        let start = f32r(f32r(f32r(20.0 / STARTING_AREA_RADIUS) * d) - 20.0);
+        // `spot + blob - 0.3 + min(0, ...)`, left to right.
+        f32r(
+            f32r(f32r(self.spot_field(x, y) + self.blob_term(x, y)) - f32r(0.3)) + min2(0.0, start),
+        )
     }
 
     /// `clamp(min(field, cap), 0, 1)` - what the deterministic spawner reads.
