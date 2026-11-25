@@ -344,6 +344,10 @@ POISONED_TESTS=(
   # records for the capture-grid snap test. Adding it here would fail the gate
   # for being correct.
   resources::fulgora_catalog::tests::places_a_strict_nonempty_subset_of_the_footprint
+  # The ocean gate (#201) asks `tiles::fulgora_ocean::ocean_tile`, whose
+  # `poison::bool_result` flips every answer, so both gate tests go red.
+  resources::fulgora_catalog::tests::chunk_zero_four_places_no_scrap_on_the_ocean
+  resources::fulgora_catalog::tests::the_ocean_gate_brings_scrap_density_to_the_games_counts
 
   # The only grading of `cliffs::connections` against anything - that module is
   # on no render path, so without this it would be a 631-line port with unit

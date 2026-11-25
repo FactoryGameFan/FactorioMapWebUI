@@ -1358,6 +1358,19 @@ fixture's seed, the renderer's phantom scrap. If a future port of the real
 mechanism adds a gate that zeroes that count, this test fails. That is the
 intended signal to update or remove the exclusion.
 
+### Resolved 2026-11-25: the mechanism is the tile collision mask (#201)
+
+The suppression is not a scripted vault footprint. `generateEntities` skips a
+tile whose collision mask overlaps the prototype's before it arbitrates or
+draws (Factorio 2.1.23, 0x1989a3d-0x1989a77). Scrap's mask is `[resource]` and
+every oil-ocean tile carries `resource`, so no ocean tile is a scrap candidate.
+All 140.2 of the expectation in chunk (0, 4) sits on the ocean. The game's own
+map preview runs the same code and draws 0 scrap pixels in that chunk.
+`FulgoraScrapPlacement::tile_allowed` now rejects the ocean tiles, and the
+Rust tests in `crates/fmw-noise/src/resources/fulgora_catalog.rs` grade it
+against `oracle-fulgora-scrap-entities`: total 706.15 -> 565.95 against the
+game's 562. The test files named in this section no longer exist.
+
 Left for a follow-up RE task: identify the suppression mechanism itself. The
 unstripped Factorio binary's symbols and a runtime probe are the tools this
 repo normally reaches for - see the `factorio-data-version-hazard` and
