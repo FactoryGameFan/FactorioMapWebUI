@@ -23,7 +23,7 @@
 //! `docs/nauvis-cliff-rock-fields-port-survey.md`.
 
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{clamp, max, min2, range_select_base, slider_rescale};
+use crate::eval::math::{clamp, f32r, max, min2, slider_rescale};
 use crate::expressions::nauvis_climate::{Aux, AuxParams, Moisture, MoistureParams};
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 
@@ -96,9 +96,11 @@ pub struct NauvisRockFields {
     starting_positions: Vec<Point>,
     /// `control:rocks:size`, the OUTER multiplier.
     size: f64,
-    /// `0.25 + 0.75 * (slider_rescale(size, 1.5) - 1)` - the size-dependent,
+    /// `0.75 * (slider_rescale(size, 1.5) - 1)` - the size-dependent,
     /// position-independent tail of `rock_noise`, hoisted out of the per-pixel
-    /// loop exactly as the TypeScript hoists it.
+    /// loop. The `0.25` is NOT folded into it: the Lua is
+    /// `multioctave + 0.25 + 0.75 * (...)`, which adds left to right, so the
+    /// `0.25` meets the noise first (#521).
     size_term: f64,
 }
 
@@ -117,7 +119,7 @@ impl NauvisRockFields {
                 seed1: ROCK_SEED1,
                 octaves: 4.0,
                 persistence: 0.9,
-                input_scale: 0.15 * freq,
+                input_scale: f32r(f32r(0.15) * f32r(freq)),
                 output_scale: 1.0,
             }),
             moisture: Moisture::new(&MoistureParams {
@@ -137,7 +139,7 @@ impl NauvisRockFields {
             }),
             starting_positions: params.starting_positions.clone(),
             size,
-            size_term: 0.25 + 0.75 * (f64::from(slider_rescale(size, 1.5)) - 1.0),
+            size_term: f32r(0.75 * f32r(f64::from(slider_rescale(size, 1.5)) - 1.0)),
         }
     }
 
@@ -148,14 +150,15 @@ impl NauvisRockFields {
     /// [`Self::density`].
     #[must_use]
     pub fn rock_density(&self, x: f64, y: f64) -> f64 {
-        let rock_noise = f64::from(self.noise.eval(x, y)) + self.size_term;
+        // One f32 step at a time, in the Lua's order (#521).
+        let rock_noise = f32r(f32r(f64::from(self.noise.eval(x, y)) + 0.25) + self.size_term);
         let distance = f64::from(distance_from_nearest_point(
             x,
             y,
             &self.starting_positions,
             f64::INFINITY,
         ));
-        rock_noise - max(&[0.0, 1.1 - distance / 32.0])
+        f32r(rock_noise - max(&[0.0, f32r(f32r(1.1) - f32r(distance / 32.0))]))
     }
 
     /// The three probabilities at one tile, unclamped.
@@ -165,18 +168,26 @@ impl NauvisRockFields {
         let size = self.size;
 
         let m = self.moisture.eval(x, y);
-        let moist_band = range_select_base(m, 0.35, 1.0, 0.2, -10.0, 0.0);
+        let moist_band = range_select_base_f32(m, 0.35, 1.0, 0.2, -10.0, 0.0);
 
         let a = self.aux.eval(x, y);
         let sand_band = min2(
-            range_select_base(a, 0.3, 1.0, 0.3, -10.0, 0.0),
-            range_select_base(m, 0.0, 0.3, 0.2, -10.0, 0.0),
+            range_select_base_f32(a, 0.3, 1.0, 0.3, -10.0, 0.0),
+            range_select_base_f32(m, 0.0, 0.3, 0.2, -10.0, 0.0),
         );
 
+        // `multiplier * control * (region_box + rock_density - penalty)`, each
+        // operation an f32 step: the two multipliers first, then the sum.
+        let probability = |multiplier: f64, band: f64, penalty: f64| {
+            f32r(
+                f32r(f32r(multiplier) * f32r(size))
+                    * f32r(f32r(band + rock_density) - f32r(penalty)),
+            )
+        };
         RockProbabilities {
-            huge: 0.07 * size * (moist_band + rock_density - 1.7),
-            big: 0.17 * size * (moist_band + rock_density - 1.6),
-            sand: 0.1 * size * (sand_band + rock_density - 1.6),
+            huge: probability(0.07, moist_band, 1.7),
+            big: probability(0.17, moist_band, 1.6),
+            sand: probability(0.1, sand_band, 1.6),
         }
     }
 
@@ -189,4 +200,19 @@ impl NauvisRockFields {
         // reason `eval::math::max` records.
         clamp(max(&[p.huge, p.big, p.sand]), 0.0, 1.0)
     }
+}
+
+/// `range_select_base(input, from, to, slope, min, max)` one f32 step at a
+/// time: `clamp(min(input - from, to - input) / slope, min, max)`.
+///
+/// The shared [`crate::eval::math::range_select_base`] rounds nothing between
+/// steps; Vulcanus owns its callers, so the f32 form lives here (#521).
+fn range_select_base_f32(input: f64, from: f64, to: f64, slope: f64, lo: f64, hi: f64) -> f64 {
+    let rising = f32r(input - f32r(from));
+    let falling = f32r(f32r(to) - input);
+    clamp(
+        f32r(min2(rising, falling) / f32r(slope)),
+        f32r(lo),
+        f32r(hi),
+    )
 }

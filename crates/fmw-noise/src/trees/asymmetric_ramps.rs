@@ -1,6 +1,6 @@
 //! `asymmetric_ramps`, ported from `src/noise/trees/asymmetricRamps.ts`.
 
-use crate::eval::math::min2;
+use crate::eval::math::{f32r, min2};
 
 /// `asymmetric_ramps` (`core/prototypes/noise-functions.lua:114-124`).
 ///
@@ -22,10 +22,14 @@ pub fn asymmetric_ramps(
     to_top: f64,
     to_bottom: f64,
 ) -> f64 {
-    // The `from` ramp first, as the TypeScript writes it.
+    // The `from` ramp first, as the TypeScript writes it. Every step is an f32
+    // operation, as the game evaluates it (#521): the four literals are f32
+    // constants, and the two denominators are folded from them in f32.
+    let (from_bottom, from_top) = (f32r(from_bottom), f32r(from_top));
+    let (to_top, to_bottom) = (f32r(to_top), f32r(to_bottom));
     min2(
-        (input - from_top) / (from_top - from_bottom),
-        (to_top - input) / (to_bottom - to_top),
+        f32r(f32r(input - from_top) / f32r(from_top - from_bottom)),
+        f32r(f32r(to_top - input) / f32r(to_bottom - to_top)),
     )
 }
 
@@ -81,8 +85,9 @@ mod tests {
         // `docs/nauvis-trees-port-survey.md` lists it, and swapping it in a
         // version that later meets a NaN would differ.
         let input = 12.0;
-        let from_ramp = (input - T.1) / (T.1 - T.0);
-        let to_ramp = (T.2 - input) / (T.3 - T.2);
+        // Each ramp is one f32 division, as the game evaluates it.
+        let from_ramp = f32r((input - T.1) / (T.1 - T.0));
+        let to_ramp = f32r((T.2 - input) / (T.3 - T.2));
         assert_eq!(ramp(input), min2(from_ramp, to_ramp));
     }
 }

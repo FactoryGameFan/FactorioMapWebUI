@@ -7821,20 +7821,24 @@ fn reproduces_the_games_elevation_nauvis_no_cliff_variant_at_both_seeds() {
 
     // Measured on the TypeScript side: (seed, exact) pairs 6 and 4, worst
     // 3.833771e-4 and 3.089905e-4. #452's f32 steps took them to 25 and 26.
+    // #521 took the last miss, so both seeds are now 26.
     //
-    // **The one miss is open.** Seed 123456, position 10, snapped to
-    // (1556.1328125, 1555.8828125): ours 4.3539667, the game 4.353967, one f32
-    // step low. The full tree is exact at the same point, and this variant
-    // differs only in `added_cliff_elevation` being the constant 0, which
-    // makes both ends of the `lerp` constants. Rounding `-0.6 + 2.2 * t` once
-    // instead of twice was tried and is WORSE (9 misses), so it is not a fused
-    // step. How the game compiles a `lerp` with constant ends is the next
-    // thing to read, in the binary.
+    // **The miss was the persistence field, not the `lerp`.** Seed 123456,
+    // position 10, snapped to (1556.1328125, 1555.8828125): ours 4.3539667, the
+    // game 4.353967. Read from the game itself (2.1.23, which gives the same
+    // 4.353967189788818 as the 2.1.11 fixture): `nauvis_persistance`'s
+    // amplitude-corrected noise is 0.0905596986 there, and the shipped f64
+    // `amplitude_corrected_multioctave_noise` gave 0.090559684, two f32 steps
+    // low. That moved `nauvis_detail` by 6e-8, which `20 * 0.25 *` turns into
+    // 3e-7 - below a step at 22 (the full tree, still exact) but not at 4.35.
+    // Given the game's own `t` and `nauvis_detail`, our `lerp` and `nauvis_main`
+    // already matched the game bit for bit. Nauvis now reads
+    // `AmplitudeCorrectedGame` (#254's form, 152 of 152).
     for (case, &(seed, want)) in fixture
         .get("cases")
         .as_array()
         .iter()
-        .zip([(123_456u32, 25usize), (777_771, 26)].iter())
+        .zip([(123_456u32, 26usize), (777_771, 26)].iter())
     {
         assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
         let mut params = ElevationNauvisParams::defaults(seed);
@@ -8839,34 +8843,53 @@ fn reproduces_the_games_tree_layer_at_every_captured_position() {
         values.get("trees_forest_path_cutout_faded").as_array(),
         |x, y| fields.shared().forest_path_cutout_faded(x, y),
     );
+    // 9 of 26 until every step of the cutout went through f32 (#521); the
+    // worst error is now exactly 0.
     assert_eq!(
-        faded, 9,
+        faded, 26,
         "trees_forest_path_cutout_faded exact, worst {worst_faded:e}"
+    );
+    assert_eq!(
+        worst_faded, 0.0,
+        "trees_forest_path_cutout_faded is bit-exact"
     );
 
     // (species name, exact of 26). The order is the catalog's.
     //
-    // #452 made `moisture` exact, which every species reads: the total went
-    // 120 -> 144, and eight species rose. `tree_04` FELL, 11 -> 10. The
-    // species' own arithmetic is still f64, so some of its exact matches were
-    // coincidences that a correct input can undo; read the total, and the
-    // species' own f32 pass is the fix for the rest.
+    // Every species is 26 of 26, worst error exactly 0 (#521). #452 made
+    // `moisture` exact, which took the total 120 -> 144 with the species' own
+    // arithmetic still in f64 (`tree_04` fell 11 -> 10 for that reason). Rounding
+    // that arithmetic to f32 one step at a time took it 144 -> 442. Three
+    // things carried it, each found by the species that still missed:
+    //
+    // - the shared cutout and the species sum, one f32 step each in the Lua's
+    //   order (`trees_forest_path_cutout_faded` 9 -> 26 alone);
+    // - `temperature` rounded to f32 where the species read it, since it
+    //   reaches them as an f64 and the ramps subtract from it (moved eight
+    //   species to 26 at once);
+    // - `output_scale` narrowed to f32 before it reaches the noise: the three
+    //   species at 0.7 were the last misses, and 0.7 is the one scale in the
+    //   table that f32 and f64 round differently.
+    //
+    // Before -> after per species, in the order below: 1 -> 26, 10 -> 26,
+    // 2 -> 26, 9 -> 26, 7 -> 26, 8 -> 26, 1 -> 26, 2 -> 26, 13 -> 26, 7 -> 26,
+    // 9 -> 26, 8 -> 26, 8 -> 26, 13 -> 26, 11 -> 26.
     let expected: [(&str, usize); 15] = [
-        ("tree_01", 1),
-        ("tree_04", 10),
-        ("tree_05", 2),
-        ("tree_02", 9),
-        ("tree_03", 7),
-        ("tree_07", 8),
-        ("tree_02_red", 1),
-        ("tree_08", 2),
-        ("tree_09", 13),
-        ("tree_06", 7),
-        ("tree_08_brown", 9),
-        ("tree_09_brown", 8),
-        ("tree_06_brown", 8),
-        ("tree_08_red", 13),
-        ("tree_09_red", 11),
+        ("tree_01", 26),
+        ("tree_04", 26),
+        ("tree_05", 26),
+        ("tree_02", 26),
+        ("tree_03", 26),
+        ("tree_07", 26),
+        ("tree_02_red", 26),
+        ("tree_08", 26),
+        ("tree_09", 26),
+        ("tree_06", 26),
+        ("tree_08_brown", 26),
+        ("tree_09_brown", 26),
+        ("tree_06_brown", 26),
+        ("tree_08_red", 26),
+        ("tree_09_red", 26),
     ];
     let mut total = small + faded;
     for (index, (name, want)) in expected.iter().enumerate() {
@@ -8883,7 +8906,7 @@ fn reproduces_the_games_tree_layer_at_every_captured_position() {
     // The total is frozen too, so a species silently dropped from the loop
     // above - which would leave every remaining assertion passing - moves a
     // number.
-    assert_eq!(total, 144, "total exact of 442");
+    assert_eq!(total, 442, "total exact of 442");
 }
 
 #[test]
@@ -8916,7 +8939,11 @@ fn reproduces_the_games_tree_layer_at_moved_control_levers() {
     let fields = TreeFields::new(&base);
     let values = fixture.get("values");
 
-    let expected: [(&str, usize); 3] = [("tree_01", 3), ("tree_08", 2), ("tree_09_red", 4)];
+    // 3, 2 and 4 of 17 before the species' arithmetic went through f32 (#521).
+    // All 17 now, worst error exactly 0: the frequency scaling of `input_scale`
+    // (`f32(1/div) * f32(frequency)`) and the flat `0.2 * size` term are both
+    // graded exactly.
+    let expected: [(&str, usize); 3] = [("tree_01", 17), ("tree_08", 17), ("tree_09_red", 17)];
     let mut total = 0;
     for (name, want) in expected {
         let index = TREE_SPECIES
@@ -8929,7 +8956,7 @@ fn reproduces_the_games_tree_layer_at_moved_control_levers() {
         assert_eq!(exact, want, "{name} exact, worst {worst:e}");
         total += exact;
     }
-    assert_eq!(total, 9, "total exact of 51");
+    assert_eq!(total, 51, "total exact of 51");
 }
 
 /// The recorded counts in `test/captureGrid.ts` have DRIFTED, and this is where
@@ -8944,6 +8971,10 @@ fn reproduces_the_games_tree_layer_at_moved_control_levers() {
 /// #279, #290, #293, #309).
 ///
 /// Nothing asserted those numbers, so they drifted quietly. These do.
+///
+/// Once the species were exact on the grid (#521: 442 and 51 snapped), the
+/// unsnapped figures became the measure of the snap alone: 272 of 442 and 36 of
+/// 51, so grading off the grid costs 38 and 29 percent of the agreement.
 #[test]
 fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
     let unsnapped_total = |path: &str, params: &TreeFieldParams, names: &[&str]| -> usize {
@@ -8980,8 +9011,9 @@ fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
             &defaults,
             &all
         ),
-        // 85 until #452 made `moisture` exact.
-        99,
+        // 85 until #452 made `moisture` exact, 99 until the species' own
+        // arithmetic went through f32 (#521).
+        272,
         "unsnapped total of 442"
     );
 
@@ -8994,7 +9026,8 @@ fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
             &params,
             &["tree_01", "tree_08", "tree_09_red"],
         ),
-        8,
+        // 8 until the species' own arithmetic went through f32 (#521).
+        36,
         "unsnapped total of 51"
     );
 }
@@ -9189,12 +9222,14 @@ fn reproduces_the_games_nauvis_cliff_elevation_at_both_seeds() {
     // (seed, exact of 1024). Measured on the TypeScript side first at 355 and
     // 281. #452 moved them to 699 and 648 without touching this field's own
     // code: `nauvis_hills_cliff_level` became f32 per step, and the cliff
-    // elevation reads it. The field's own `10 + 30 * (...)` is still f64.
+    // elevation reads it. #521 then rounded the field's own
+    // `10 + 30 * (hills - cliff_level)` per f32 step: 699 -> 1024 and
+    // 648 -> 1024, every position exact.
     for (case, &(seed, want)) in fixture
         .get("cases")
         .as_array()
         .iter()
-        .zip([(123_456u32, 699usize), (777_771, 648)].iter())
+        .zip([(123_456u32, 1024usize), (777_771, 1024)].iter())
     {
         assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
         let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(seed));
@@ -9295,12 +9330,18 @@ fn reproduces_the_games_nauvis_rock_density_at_every_captured_position() {
     // Measured on the TypeScript side first. The snap is worth 10 of the 26 and
     // takes the residual down by four orders of magnitude.
     let (exact, worst) = score_nauvis(&positions, values, |x, y| fields.rock_density(x, y));
-    assert_eq!(exact, 17, "snapped exact f32 matches, worst {worst:e}");
-    assert!(worst < 9e-8, "snapped worst absolute error {worst:e}");
+    // #521 rounded `rock_noise` and `rock_density` to f32 per step, the `0.25`
+    // meeting the noise before the size term (the Lua adds left to right):
+    // 17 -> 26 of 26, worst error exactly 0, so the old `< 9e-8` bound is now
+    // an equality.
+    assert_eq!(exact, 26, "snapped exact f32 matches, worst {worst:e}");
+    assert_eq!(worst, 0.0, "snapped worst absolute error {worst:e}");
 
+    // The raw arm (off-grid positions unsnapped) was 7 before #521; the snap
+    // is still what separates it from 26.
     let (raw_exact, raw_worst) =
         score_nauvis_raw(&positions, values, |x, y| fields.rock_density(x, y));
-    assert_eq!(raw_exact, 7, "raw exact f32 matches, worst {raw_worst:e}");
+    assert_eq!(raw_exact, 16, "raw exact f32 matches, worst {raw_worst:e}");
     assert!(
         raw_worst > 1.5e-3,
         "the raw arm must stay far worse, or the snap is doing nothing: {raw_worst:e}"
@@ -9319,14 +9360,14 @@ fn the_cliffiness_gate_sits_far_enough_from_its_cutoff_that_a_bent_leaf_cannot_f
     // measured over the same 2,048 positions the tier-1 test grades.
     //
     // The numbers are the reason the hook exists: one f32 ULP at the cutoff's
-    // 0.707 is about 6e-8, and the closest position is 2.344133e-4 away, some
+    // 0.707 is about 6e-8, and the closest position is 2.343776e-4 away (2.344133e-4 before #521's f32 rounding), some
     // 3,900 ULPs. Built without the hook, the gate test stayed green at 0
     // mismatches while `..._cliff_elevation_at_both_seeds` - same seed, same
     // `NauvisShared`, same perturbed chain - fell from 355 exact to 227.
     let fixture = load_captured_at("test/fixtures/oracle-cliffiness.seed123456.json", "2.1.11");
     let positions = fixture_positions(&fixture, "positions");
 
-    for &(seed, closest) in &[(123_456u32, 3.402_456e-3f64), (777_771, 2.344_133e-4)] {
+    for &(seed, closest) in &[(123_456u32, 3.402_424e-3f64), (777_771, 2.343_776e-4)] {
         let fields = NauvisCliffFields::new(&CliffFieldParams::defaults(seed));
         let cutoff = fields.cliff_cutoff();
         let mut nearest = f64::INFINITY;
@@ -9407,24 +9448,36 @@ use crate::eval::math::min2;
 
 #[test]
 fn reproduces_the_games_enemy_base_field_at_both_seeds() {
-    // **The exact-match count on this field measures MAGNITUDE, not accuracy**,
-    // which is why this test freezes three buckets rather than one number.
+    // **The exact-match count on this field measures MAGNITUDE as well as
+    // accuracy, which is why this test freezes three buckets rather than one
+    // number.**
     //
     // `enemy_base_probability` has a basement of -1000, so a position no cone
     // reaches sits near -1007 - where one f32 ULP is about 6e-5, larger than the
-    // whole residual. Those positions are exact for free. Measured on the
-    // TypeScript side first, split by the magnitude of the GAME's own value:
+    // whole residual. Those positions are exact for free. Split by the
+    // magnitude of the GAME's own value, the counts were (measured on the
+    // TypeScript side first, and unchanged through #452):
     //
     //   basement (|v| >= 100)   209/239 and 126/159   worst 4.29e-5
     //   mid      (1 <= |v| < 100)  0/602 and   0/658  worst 9.76e-6
     //   live     (|v| < 1)         1/191 and   1/215  worst 4.17e-6
     //
-    // Almost the entire headline count of 210 and 127 is the basement. Where the
-    // field is doing something, the port matches 2 positions of 406 across both
-    // seeds. A single frozen 210 would go green on a port whose cone arithmetic
-    // was badly wrong, and would MOVE for reasons that have nothing to do with
-    // the cones - a recapture that shifted the basement/live split changes it on
-    // its own. This is CLAUDE.md's "a clamp flatters it" rule in a new costume.
+    // Almost the entire headline count of 210 and 127 was the basement. #521
+    // then evaluated the field the way the game does, and every bucket is now
+    // exact at both seeds with worst error 0:
+    //
+    // - the cone uses the game's own arithmetic, shared with Aquilo
+    //   (`ConeArithmetic::GameBinary`): the game's pi `3.1416`, an f32
+    //   distance, the peak narrowed once. Alone it took mid 0 -> 303 and 253
+    //   and live 1 -> 101 and 97;
+    // - the spot quantity (`pi / 90 * radius ^ 3`) and radius are f32 steps,
+    //   the cube a product of two f32 multiplies (a `powf` narrowed once
+    //   misses 11 and 142 positions of the mid bucket);
+    // - the blob term and the sum are f32 steps in the Lua's order, and the
+    //   blob term reads that same f32 radius.
+    //
+    // So the three buckets are all-or-nothing now, and the live and mid ones
+    // are what grade the cone, where the basement grades nothing.
     let fixture = load_captured_at("test/fixtures/oracle-enemy-base.seed123456.json", "2.1.11");
     let positions = fixture_positions(&fixture, "positions");
     assert_eq!(positions.len(), 1032, "a regen cannot empty the loop");
@@ -9436,8 +9489,8 @@ fn reproduces_the_games_enemy_base_field_at_both_seeds() {
     /// (exact matches, positions) for one magnitude bucket.
     type Bucket = (usize, usize);
     let expected: [(u32, Bucket, Bucket, Bucket); 2] = [
-        (123_456, (209, 239), (0, 602), (1, 191)),
-        (777_771, (126, 159), (0, 658), (1, 215)),
+        (123_456, (239, 239), (602, 602), (191, 191)),
+        (777_771, (159, 159), (658, 658), (215, 215)),
     ];
     for (case, &(seed, basement, mid, live)) in
         fixture.get("cases").as_array().iter().zip(expected.iter())
@@ -9487,12 +9540,11 @@ fn reproduces_the_games_enemy_base_field_at_both_seeds() {
             "seed {seed} headline exact"
         );
 
-        // And the residual ordering is the whole point of the split: the
-        // basement's worst is the LARGEST of the three even though it scores
-        // best. If that ever inverts, the reading above is stale.
+        // Every bucket is exact, so no residual is left to order. A bucket
+        // that stops being exact fails its own count above first.
         assert!(
-            worst[0] > worst[1] && worst[1] > worst[2],
-            "seed {seed}: residual no longer grows with magnitude - {:e} {:e} {:e}",
+            worst.iter().all(|&w| w == 0.0),
+            "seed {seed}: residuals {:e} {:e} {:e}",
             worst[0],
             worst[1],
             worst[2]
