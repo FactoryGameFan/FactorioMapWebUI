@@ -3793,10 +3793,22 @@ fn reproduces_the_vulcanus_crack_layer_at_every_captured_position() {
     assert_eq!(positions.len(), 61, "fixture size");
     let (cracks, _) = vulcanus_sweep(fixture.get("seed0").as_f64() as u32, positions);
 
-    // Frozen exact counts, measured with the positions SNAPPED - 61, 55, 51, 34
-    // and 37. They are the distance BOTH ports sit from the game, not a gap
-    // between them: the same five numbers come out of a TypeScript harness
-    // running this side's own comparison.
+    // **#521: every one of the five is now 61 of 61.** They were 61, 55, 51, 34
+    // and 37 before this. The noise machine evaluates each expression one f32
+    // operation at a time, and this layer joined its exact plasma terms in f64.
+    // Two changes took it to a full house, each measured on its own:
+    //
+    //   `vulcanus_plasma`'s `abs(A - B)` is one f32 subtraction:
+    //     floodCracksA 55 -> 56, floodCracksB 51 -> 52, floodPaths 34 -> 41,
+    //     floodBasaltsFunc 37 -> 39
+    //   the lerps, `- 0.5`, `0.4 - plasma + min(0, detail)` and the final sum
+    //   rounded step by step (literals narrowed first):
+    //     all four to 61 of 61
+    //
+    // `hairlineCracks` is a bare plasma and was already exact. The comparison
+    // that follows was written when the counts were 61, 55, 51, 34 and 37 and
+    // "the same five numbers come out of a TypeScript harness"; the TypeScript
+    // port has no per-step rounding, so it no longer matches these.
     //
     // **All five moved when the snap landed, and `hairlineCracks` closed.**
     // This sweep used to read `p.x` raw, and 21 of these 61 positions are
@@ -3948,6 +3960,13 @@ fn reproduces_the_vulcanus_climate_layer_at_every_captured_position() {
     // Frozen exact counts, measured as above and matched by the TypeScript at
     // 40 and 20. Worst residuals 4.584e-4 and 1.117e-4.
     //
+    // **#521: moisture 35 -> 37 and aux unchanged at 51.** Neither is rounded
+    // here (the climate layer is not part of that change), but both read the
+    // crack fields, which went to 61 of 61. The helpers commit alone moved aux
+    // 51 -> 52 and moisture 35 -> 36; with the cracks exact aux is back at 51.
+    // Aux is clamped and still short of the game, so its own arithmetic is the
+    // next thing to round, not the cracks.
+    //
     // Both are CLAMPED to [0, 1], which flatters them: every position the clamp
     // saturates is exact for free, because both ports and the game all return
     // the bound itself. Read 40 of 61 as an upper bound on what the arithmetic
@@ -4030,6 +4049,8 @@ fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_crack_layer() {
         )
     };
 
+    // #521: hairline 50 -> 50 and aux 41 -> 43 unsnapped, 61 and 51 snapped
+    // (both unchanged at the top of the series). The snap stays load-bearing.
     assert_eq!(
         scored(false),
         (50, 43),
@@ -4333,11 +4354,29 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
         })
         .collect();
 
+    // **#521: elev and elevation 171 -> 327 of 434** (unsnapped 169 -> 321). The
+    // game evaluates `vulcanus_elev` one f32 operation at a time, in the Lua's
+    // order, and this chain joined its exact noise values in f64. Every step is
+    // now rounded: the mountain lerp and its flattening factor, the volcano
+    // tent, the ashlands input scale (`scale_multiplier / 50 / 3` as two f32
+    // divisions) and `300 + 0.001 * min(...)`, `vulcanus_basalt_lakes`, the
+    // two outer lerps, and the helpers' plasma and contrast. Measured one
+    // layer at a time (elev): helpers 171 -> 180, cracks 180 -> 213,
+    // elevation 213 -> 327.
+    //
+    // **The 107 positions still short are all ones that read a FRACTIONAL
+    // biome or volcano input.** Every miss has `mountain_volcano_spots > 0`,
+    // or a `mountains_biome` or `ashlands_biome` strictly between 0 and 1.
+    // None has all three at their bounds. Those fields belong to the spawn and
+    // biome layers, which are not rounded in this change, so this count is the
+    // floor for whatever they bring. The misses run from 1 to 1,806 f32 ULPs:
+    // the median is 23, 96 of the 107 are within 60 and 39 within 5.
+    //
     // Frozen exact counts, graded at coordinates SNAPPED onto the game's 1/256
     // MapPosition grid. 22 of these 434 positions were captured off that grid,
     // so for those the game evaluated a different point than the fixture
     // records (#186). Scoring them raw is what #294 was filed over: it reads as
-    // a port gap and is a harness gap. Unsnapped these score 169 and 169, and
+    // a port gap and is a harness gap. Unsnapped these score 321 and 321, and
     // `the_capture_grid_snap_is_load_bearing_on_the_vulcanus_elevation_surface`
     // pins both pairs so the snap cannot quietly become decoration.
     //
@@ -4364,8 +4403,8 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     // `max(-500, elev)`, and the captured `elev` never goes below -500: its
     // minimum over all 434 positions is -58.77. So `elev` equals `elevation` at
     // every position, the clamp is never exercised, and a port that dropped the
-    // `max` entirely would score 171 here too. Checked rather than assumed -
-    // 0 of 434 positions differ between the two columns.
+    // `max` entirely would score 327 here too (171 before #521). Checked
+    // rather than assumed - 0 of 434 positions differ between the two columns.
     //
     // Grading both anyway, because the cost is nothing and the day a capture
     // reaches a deep enough lake the two counts separate on their own. The
@@ -4381,8 +4420,8 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
     // for scale alone, which is the third argument for counting matches.
     type E = ElevationFields;
     for (key, want_exact, select) in [
-        ("elev", 213usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
-        ("elevation", 213, &|f| f.elevation),
+        ("elev", 327usize, &(|f: &E| f.elev) as &dyn Fn(&E) -> f64),
+        ("elevation", 327, &|f| f.elevation),
     ] {
         let got: Vec<f64> = fields.iter().map(select).collect();
         assert_eq!(
@@ -4406,8 +4445,11 @@ fn reproduces_the_vulcanus_elevation_surface_at_every_captured_position() {
 ///
 /// | field | unsnapped | snapped |
 /// | --- | ---: | ---: |
-/// | `elev` (and `elevation`, which equals it here) | 169 | **171** |
-/// | `temperature` | 244 | **252** |
+/// | `elev` (and `elevation`, which equals it here) | 321 | **327** |
+/// | `temperature` | 346 | **355** |
+///
+/// (The table above was 169 / 171 and 244 / 252 when this was measured
+/// 2026-08-21. #521 rounded the chain to f32 and moved all four.)
 ///
 /// Both move UP, which is the direction that says the snap is recovering the
 /// point the game evaluated rather than perturbing a good answer. It is a small
@@ -4464,10 +4506,10 @@ fn the_capture_grid_snap_is_load_bearing_on_the_vulcanus_elevation_surface() {
         )
     };
 
-    assert_eq!(score_elev(false), 209, "elev unsnapped");
-    assert_eq!(score_elev(true), 213, "elev snapped");
-    assert_eq!(score_temp(false), 245, "temperature unsnapped");
-    assert_eq!(score_temp(true), 253, "temperature snapped");
+    assert_eq!(score_elev(false), 321, "elev unsnapped");
+    assert_eq!(score_elev(true), 327, "elev snapped");
+    assert_eq!(score_temp(false), 346, "temperature unsnapped");
+    assert_eq!(score_temp(true), 355, "temperature snapped");
 }
 
 /// `vulcanus_temperature`, which the climate layer deferred until `elev` existed.
@@ -4513,9 +4555,14 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
     // positions (#186, #294). Unsnapped it scores 244; the sibling anti-vacuity
     // test pins both numbers.
     //
-    // Higher than `elev`'s 171 despite reading it, because temperature scales
-    // it by 1/100 above zero - `min(e, e / 100)` - so most of `elev`'s residual
-    // is divided away before it lands here.
+    // #521: 252 -> 355, with `elev` 171 -> 327. `vulcanus_temperature` is
+    // rounded one f32 step at a time as well, left to right as the Lua sums it.
+    // The helpers commit alone moved it 252 -> 251 and the cracks 251 -> 253,
+    // so both of those are the elevation's doing.
+    //
+    // Higher than `elev`'s count was despite reading it, because temperature
+    // scales it by 1/100 above zero - `min(e, e / 100)` - so most of `elev`'s
+    // residual is divided away before it lands here.
     //
     // As with the elevation surface, the TypeScript counterpart grades this
     // with residual bounds rather than a count, so the "matched by the
@@ -4524,7 +4571,7 @@ fn reproduces_the_vulcanus_temperature_at_every_captured_position() {
     // Lua is byte-identical across that range (#295).
     assert_eq!(
         score_vulcanus(&got, fixture.get("temperature").as_array(), "temperature"),
-        253,
+        355,
         "temperature exact f32 matches out of {}",
         positions.len()
     );
@@ -6291,17 +6338,21 @@ fn the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half() {
 /// agreed.
 ///
 /// The gap is **sparse and large**, not a uniform offset: the grids disagree at
-/// 2,519 of the 12,675 corners and agree at the other 10,156, because the 2x2
+/// 2,649 of the 12,675 corners and agree at the other 10,026, because the 2x2
 /// min-filter only bites where a neighbour is lower. Where it bites it is worth
 /// up to 60.6 tiles. That shape is why the wrong channel cost seven points of
 /// recall rather than being obvious.
 ///
-/// **The tile-channel elevation itself is 786 of 12,675**, worst residual
-/// 4.393e-2 - about 1.3e-4 relative on a field spanning roughly -58 to +1024,
+/// **The tile-channel elevation itself is 1,392 of 12,675**, worst residual
+/// 4.391e-2 - about 1.3e-4 relative on a field spanning roughly -58 to +1024,
 /// the same order every layer above it carries. That is the standing Vulcanus
 /// elevation gap (#293 took it from 115 to 169 of 434 on its own fixture), not
-/// anything the cliff stack introduced, and the TypeScript scores the identical
-/// 786 and the identical 4.3931e-2.
+/// anything the cliff stack introduced. It was 786 and 4.3931e-2 before #521
+/// rounded the elevation chain to f32 (786 -> 813 with the helpers, 813 -> 996
+/// with the cracks, 996 -> 1,392 with the elevation itself, so the TypeScript,
+/// which has no per-step rounding, no longer scores the same). The worst
+/// residual hardly moves because it sits at a position whose volcano input is
+/// still inexact.
 ///
 /// **`cliffiness` is exact at every corner - 12,675 of 12,675.** It has no
 /// `multisample` in it, so it is channel-independent and this fixture grades it
@@ -6381,7 +6432,7 @@ fn reproduces_the_vulcanus_cliff_fields_at_every_captured_corner() {
         "corners where the cliffiness clamp saturates"
     );
     assert_eq!(
-        tile_exact, 996,
+        tile_exact, 1_392,
         "tile-channel elevation exact f32 matches out of 12,675"
     );
     assert!(
@@ -6392,7 +6443,7 @@ fn reproduces_the_vulcanus_cliff_fields_at_every_captured_corner() {
     // #83 as an assertion. The two channels are the same expression read
     // through different grids, and they must not agree.
     assert_eq!(
-        channels_differ, 2_346,
+        channels_differ, 2_649,
         "corners where the two grids disagree"
     );
 
@@ -7513,6 +7564,13 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
         );
     }
 
+    // #521: huge 178 -> 179, big 205 -> 199 and density 412 -> 411. The rock
+    // fields are not rounded in this change. They read the Vulcanus elevation
+    // and crack layers, and those got MORE exact, so a field that falls here
+    // (big, by 6) is one whose own unrounded arithmetic was meeting an
+    // exactly-wrong input by luck. Read it with the rock layer's own rounding,
+    // not by reverting anything here.
+    //
     // The density is `clamp(max(huge, big), 0, 1)` of the GAME's own two
     // columns, which is a statement about the arbitration rather than about the
     // port: per-tile arbitration among competing autoplacers is by maximum
@@ -11254,8 +11312,10 @@ fn the_last_vulcanus_pixel_is_a_known_argmax() {
     // Measured 2026-10-22 with host trig: the runner-up is volcanic-cracks, the
     // game's tile, 19,301 f32 ULPs behind (gap about 5.8e-4 on a score of
     // 0.357). Far past a few ULPs, so host-vs-V8 trig cannot close it. Read a
-    // moved number, do not adjust it.
-    assert_eq!(got, ("volcanic-cracks-warm", "volcanic-cracks", 19_197));
+    // moved number, do not adjust it. #521: 19,301 -> 19,200 once the crack and
+    // elevation layers were rounded to f32; the tile scores are still f64
+    // arithmetic, so this is the next thing to read.
+    assert_eq!(got, ("volcanic-cracks-warm", "volcanic-cracks", 19_200));
 }
 
 /// The game's own POINT-kernel score for `tile` at a Task 7 target, read from
@@ -11407,8 +11467,11 @@ fn the_last_vulcanus_pixel_on_the_point_kernel_against_the_game() {
     // Measured 2026-10-22: our volcanic-cracks-warm equals the game's to the
     // ULP, and our volcanic-cracks is 60,387 ULPs (about 1.8e-3) low. Our own
     // grid-vs-point shift is 627 and -12 ULPs, two orders smaller. Read a moved
-    // number, do not adjust it.
-    assert_eq!(got, (-60_441, 0, 784, -12));
+    // number, do not adjust it. #521: now 60,544 low with a shift of 884 and
+    // -12, after the crack and elevation layers were rounded to f32. The gap
+    // widened by 157 ULPs while the inputs got more exact, so the tile scores'
+    // own f64 arithmetic is where it lives.
+    assert_eq!(got, (-60_544, 0, 884, -12));
 }
 
 use crate::expressions::aquilo_resources::{
