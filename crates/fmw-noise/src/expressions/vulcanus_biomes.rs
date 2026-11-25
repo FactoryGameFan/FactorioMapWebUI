@@ -59,11 +59,11 @@ use std::collections::BTreeMap;
 
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
 use crate::eval::ctx::EvalCtx;
-use crate::eval::math::{clamp, lerp, max2, slider_rescale};
+use crate::eval::math::{clamp, f32r, lerp_f32, max2, slider_rescale};
 use crate::expressions::starting_spot_at_angle::{starting_spot_at_angle, AngleTrig, StartingSpot};
 use crate::expressions::vulcanus_helpers::VulcanusHelpers;
 use crate::expressions::vulcanus_spawn::{
-    VulcanusSpawn, WobbleSums, VULCANUS_STARTING_AREA_RADIUS,
+    VulcanusSpawn, WobbleSums, VULCANUS_STARTING_AREA_RADIUS_F32,
 };
 use crate::multioctave_noise::Prepared;
 use crate::poison;
@@ -136,10 +136,6 @@ pub struct VulcanusBiomes<'a> {
     radius: f64,
     /// `f32(radius * radius)` - the spot QUANTITY, narrowed.
     quantity: f64,
-    /// `radius * radius` WITHOUT the narrowing, which is what the TypeScript
-    /// computes for the cull test. Not a typo for `quantity`: one is narrowed
-    /// and the other is not, and they are used for different things.
-    cull_sq: f64,
     spacing: f64,
 
     protector: StartingSpot,
@@ -158,7 +154,7 @@ impl<'a> VulcanusBiomes<'a> {
         volcano_spot_trig: AngleTrig,
         protector_trig: AngleTrig,
     ) -> Self {
-        let r = VULCANUS_STARTING_AREA_RADIUS;
+        let r = VULCANUS_STARTING_AREA_RADIUS_F32;
         let seed0 = ctx.seed0;
 
         // The near scale is `seed1` at `scale * 0.5`; the far scale is
@@ -166,9 +162,14 @@ impl<'a> VulcanusBiomes<'a> {
         // a wrong seed offset is visible rather than hidden in a loop.
         let biome = |seed1: u32, scale: f64| helpers.biome_noise(seed1, scale);
 
-        let volcanism = 0.3
-            + (0.7 * f64::from(slider_rescale(ctx.vulcanus_volcanism_size, 3.0)))
-                / f64::from(slider_rescale(helpers.scale_multiplier, 3.0));
+        // `0.3 + 0.7 * a / b` is `0.3 + ((0.7 * a) / b)`, one f32 step each (#521).
+        let volcanism = f32r(
+            f32r(0.3)
+                + f32r(
+                    f32r(f32r(0.7) * f64::from(slider_rescale(ctx.vulcanus_volcanism_size, 3.0)))
+                        / f64::from(slider_rescale(helpers.scale_multiplier, 3.0)),
+                ),
+        );
         let radius = f64::from((200.0 * volcanism) as f32);
 
         Self {
@@ -185,22 +186,21 @@ impl<'a> VulcanusBiomes<'a> {
             basalts_far: biome(42_416 + 1000, 80.0),
 
             volcanism,
-            volcanism_sq: volcanism * volcanism,
+            volcanism_sq: f32r(volcanism * volcanism),
             radius,
             quantity: f64::from((radius * radius) as f32),
-            cull_sq: radius * radius,
-            spacing: 1500.0 * volcanism,
+            spacing: f32r(1500.0 * volcanism),
 
-            // Neither disc narrows its distance or radius, unlike the three in
-            // `vulcanus_spawn`. Transcribed as written.
+            // Both discs round their distance and radius to f32, like the three
+            // in `vulcanus_spawn` (#521): `(400 * r) / 2` is two steps.
             protector: StartingSpot {
                 trig: protector_trig,
-                distance: (400.0 * r) / 2.0,
-                radius: 800.0 * r,
+                distance: f32r(f32r(400.0 * r) / 2.0),
+                radius: f32r(800.0 * r),
             },
             volcano_spot: StartingSpot {
                 trig: volcano_spot_trig,
-                distance: 400.0 * r,
+                distance: f32r(400.0 * r),
                 radius: 200.0,
             },
 
@@ -248,10 +248,12 @@ impl<'a> VulcanusBiomes<'a> {
     /// sites: the near and far noise blended by `clamp(distance / 10000, 0, 1)`.
     fn multiscale_at(&self, near: &Prepared, far: &Prepared, at: At, bias: f64) -> f64 {
         let (x, y) = (at.x(), at.y());
-        bias + lerp(
-            f64::from(near.eval_at(at)),
-            f64::from(far.eval_at(at)),
-            clamp(self.distance(x, y) / 10_000.0, 0.0, 1.0),
+        f32r(
+            bias + lerp_f32(
+                f64::from(near.eval_at(at)),
+                f64::from(far.eval_at(at)),
+                clamp(f32r(self.distance(x, y) / 10_000.0), 0.0, 1.0),
+            ),
         )
     }
 
@@ -278,19 +280,22 @@ impl<'a> VulcanusBiomes<'a> {
         // blobs: its own positive, the other two negative. Written out per
         // biome rather than generated, because a sign error here is a plausible
         // map rather than a broken one.
-        let ashlands_raw = lerp(
+        //
+        // Left to right with a rounding after each sign-folded step: `-m + a - b`
+        // is `((-m) + a) - b` (#521).
+        let ashlands_raw = lerp_f32(
             ashlands_noise,
-            -spawn.mountains_start + spawn.ashlands_start - spawn.basalts_start,
+            f32r(f32r(-spawn.mountains_start + spawn.ashlands_start) - spawn.basalts_start),
             blend,
         );
-        let basalts_raw = lerp(
+        let basalts_raw = lerp_f32(
             basalts_noise,
-            -spawn.mountains_start - spawn.ashlands_start + spawn.basalts_start,
+            f32r(f32r(-spawn.mountains_start - spawn.ashlands_start) + spawn.basalts_start),
             blend,
         );
-        let mountains_raw_pre_volcano = lerp(
+        let mountains_raw_pre_volcano = lerp_f32(
             mountains_noise,
-            spawn.mountains_start - spawn.ashlands_start - spawn.basalts_start,
+            f32r(f32r(spawn.mountains_start - spawn.ashlands_start) - spawn.basalts_start),
             blend,
         );
 
@@ -298,8 +303,9 @@ impl<'a> VulcanusBiomes<'a> {
             ashlands_raw,
             basalts_raw,
             mountains_raw_pre_volcano,
-            mountains_biome_full_pre_volcano: mountains_raw_pre_volcano
-                - max2(ashlands_raw, basalts_raw),
+            mountains_biome_full_pre_volcano: f32r(
+                mountains_raw_pre_volcano - max2(ashlands_raw, basalts_raw),
+            ),
             starting_area: spawn.starting_area,
         }
     }
@@ -317,20 +323,54 @@ impl<'a> VulcanusBiomes<'a> {
     #[must_use]
     pub fn volcano_area_at(&self, at: At) -> f64 {
         let pre = self.pre_volcano_at(at);
-        lerp(pre.mountains_biome_full_pre_volcano, 0.0, pre.starting_area)
+        lerp_f32(pre.mountains_biome_full_pre_volcano, 0.0, pre.starting_area)
     }
 
     /// The spot-noise query offset. The SAME offset is used as the
     /// `x_distortion` of both volcano discs below.
+    ///
+    /// Each division and each sum is its own f32 step (#521).
     fn query_offset_at(&self, at: At) -> (f64, f64) {
         let h = self.helpers;
+        let sum =
+            |a: f64, b: f64, c: f64| f32r(f32r(f32r(a / 2.0) + f32r(b / 12.0)) + f32r(c / 80.0));
         (
-            h.wobble_x_at(at) / 2.0
-                + h.wobble_large_x_at(at) / 12.0
-                + h.wobble_huge_x_at(at) / 80.0,
-            h.wobble_y_at(at) / 2.0
-                + h.wobble_large_y_at(at) / 12.0
-                + h.wobble_huge_y_at(at) / 80.0,
+            sum(
+                h.wobble_x_at(at),
+                h.wobble_large_x_at(at),
+                h.wobble_huge_x_at(at),
+            ),
+            sum(
+                h.wobble_y_at(at),
+                h.wobble_large_y_at(at),
+                h.wobble_huge_y_at(at),
+            ),
+        )
+    }
+
+    /// The spot-noise query POSITION, `x + wobble_x/2 + large_x/12 + huge_x/80`.
+    ///
+    /// **Not `x + query_offset`.** The Lua adds the three terms to `x` one at a
+    /// time, so each partial sum is rounded with `x` in it; the distortion
+    /// above sums the three terms first. The two differ in the last place (#521).
+    fn query_position_at(&self, at: At) -> (f64, f64) {
+        let h = self.helpers;
+        let walk = |c: f64, a: f64, b: f64, d: f64| {
+            f32r(f32r(f32r(c + f32r(a / 2.0)) + f32r(b / 12.0)) + f32r(d / 80.0))
+        };
+        (
+            walk(
+                at.x(),
+                h.wobble_x_at(at),
+                h.wobble_large_x_at(at),
+                h.wobble_huge_x_at(at),
+            ),
+            walk(
+                at.y(),
+                h.wobble_y_at(at),
+                h.wobble_large_y_at(at),
+                h.wobble_huge_y_at(at),
+            ),
         )
     }
 
@@ -345,7 +385,7 @@ impl<'a> VulcanusBiomes<'a> {
             region_x,
             region_y,
         };
-        let density = |x: f64, y: f64| self.volcano_area(x, y) / self.volcanism_sq;
+        let density = |x: f64, y: f64| f32r(self.volcano_area(x, y) / self.volcanism_sq);
         let quantity = |_x: f64, _y: f64| self.quantity;
         let favorability = |x: f64, y: f64| self.volcano_area(x, y);
         let spots = select_spots(
@@ -369,6 +409,35 @@ impl<'a> VulcanusBiomes<'a> {
         spots
     }
 
+    /// One spot's cone at `(qx, qy)`, or `None` when the spot does not reach.
+    ///
+    /// The game's own arithmetic, read from the 2.1.23 binary and shared with
+    /// Aquilo's spot fields (`spot_field::ConeArithmetic::GameBinary`): the
+    /// distance is an f32 `sqrtss` of an f32 sum of f32 squares, the cull is
+    /// `max_r < d` on that f32 distance, the peak is computed once in f64 with
+    /// the game's pi (the double `3.1416`, not `PI`) and narrowed, and the cone
+    /// is `peak - d * slope` in f32. This layer carries its own copy of the
+    /// region walk, so it carries its own copy of this too (#521).
+    fn cone_at(&self, qx: f64, qy: f64, s: &SelectedSpot) -> Option<f64> {
+        const GAME_SPOT_PI: f64 = f64::from_bits(0x4009_21ff_2e48_e8a7);
+        let radius = self.radius as f32;
+        // `hard_region_target_quantity = 0`, so `cone_scale` is 1; a spot at or
+        // below zero is never emitted.
+        if radius <= 0.0 || s.quantity <= 0.0 {
+            return None;
+        }
+        let dx = qx as f32 - s.x as f32;
+        let dy = qy as f32 - s.y as f32;
+        let d = (dx * dx + dy * dy).sqrt();
+        if radius < d {
+            return None;
+        }
+        let r = f64::from(radius);
+        let peak = ((f64::from(s.quantity as f32) * 3.0) / ((r * GAME_SPOT_PI) * r)) as f32;
+        let slope = peak / radius;
+        Some(f64::from(peak - d * slope))
+    }
+
     /// `raw_spots` - the spot-noise field, a max of cones over a basement of 0.
     ///
     /// With `quantity = radius^2` the cone peak `3q / (pi r^2)` collapses to the
@@ -384,30 +453,14 @@ impl<'a> VulcanusBiomes<'a> {
     /// [`Self::raw_spots`] at an [`At`] (#451).
     #[must_use]
     pub fn raw_spots_at(&self, at: At) -> f64 {
-        let (x, y) = (at.x(), at.y());
-        let (off_x, off_y) = self.query_offset_at(at);
-        let (qx, qy) = (x + off_x, y + off_y);
+        let (qx, qy) = self.query_position_at(at);
 
         let mut best = 0.0; // basement_value = 0
         for region_x in region_index(qx - self.radius)..=region_index(qx + self.radius) {
             for region_y in region_index(qy - self.radius)..=region_index(qy + self.radius) {
                 for s in self.region_spots(region_x, region_y) {
-                    let dx = qx - s.x as f64;
-                    let dy = qy - s.y as f64;
-                    let d2 = dx * dx + dy * dy;
-                    if d2 > self.cull_sq {
-                        continue;
-                    }
-                    let numerator = f64::from((3.0 * s.quantity) as f32);
-                    let area = f64::from(
-                        (f64::from((std::f64::consts::PI * self.radius) as f32) * self.radius)
-                            as f32,
-                    );
-                    let peak = f64::from((numerator / area) as f32);
-                    let slope = f64::from((peak / self.radius) as f32);
-                    let cone = f64::from(
-                        (peak - f64::from((f64::from(d2.sqrt() as f32) * slope) as f32)) as f32,
-                    );
+                    let cone = self.cone_at(qx, qy, &s);
+                    let Some(cone) = cone else { continue };
                     if cone > best {
                         best = cone;
                     }
@@ -438,7 +491,7 @@ impl<'a> VulcanusBiomes<'a> {
             0.0,
             1.0,
         );
-        max2(volcano_spot, self.raw_spots_at(at) - protector)
+        max2(volcano_spot, f32r(self.raw_spots_at(at) - protector))
     }
 
     /// Evaluate every graded field of this layer at one position.
@@ -456,14 +509,22 @@ impl<'a> VulcanusBiomes<'a> {
         // The volcano field re-enters the mountains raw here, and this is the
         // only place it does. The 0.5 halves the pre-volcano contribution; the
         // max picks between a gentle ramp and a hard step at 0.33.
-        let mountains_raw_volcano = 0.5 * pre.mountains_raw_pre_volcano
-            + max2(2.0 * spots, 10.0 * clamp((spots - 0.33) * 3.0, 0.0, 1.0));
+        let mountains_raw_volcano = f32r(
+            f32r(0.5 * pre.mountains_raw_pre_volcano)
+                + max2(
+                    f32r(2.0 * spots),
+                    f32r(10.0 * clamp(f32r(f32r(spots - f32r(0.33)) * 3.0), 0.0, 1.0)),
+                ),
+        );
 
         // Each `*_full` subtracts the max of the OTHER two raws, and mountains
         // contributes its POST-volcano raw to its siblings.
-        let mountains_biome_full = mountains_raw_volcano - max2(pre.ashlands_raw, pre.basalts_raw);
-        let ashlands_biome_full = pre.ashlands_raw - max2(mountains_raw_volcano, pre.basalts_raw);
-        let basalts_biome_full = pre.basalts_raw - max2(mountains_raw_volcano, pre.ashlands_raw);
+        let mountains_biome_full =
+            f32r(mountains_raw_volcano - max2(pre.ashlands_raw, pre.basalts_raw));
+        let ashlands_biome_full =
+            f32r(pre.ashlands_raw - max2(mountains_raw_volcano, pre.basalts_raw));
+        let basalts_biome_full =
+            f32r(pre.basalts_raw - max2(mountains_raw_volcano, pre.ashlands_raw));
 
         BiomeFields {
             mountain_volcano_spots: poison::f64_result(spots),
@@ -581,7 +642,7 @@ mod tests {
         let biomes = VulcanusBiomes::with_host_trig(&c, &helpers, &spawn);
         let (x, y) = (612.5, -318.25);
         let pre = biomes.pre_volcano(x, y);
-        let want = lerp(pre.mountains_biome_full_pre_volcano, 0.0, pre.starting_area);
+        let want = lerp_f32(pre.mountains_biome_full_pre_volcano, 0.0, pre.starting_area);
         assert_eq!(biomes.volcano_area(x, y), want);
         // And the post-volcano value really is different, so the distinction is
         // not academic at this point.
@@ -591,10 +652,10 @@ mod tests {
         );
     }
 
-    /// The cull radius and the quantity are both built from `radius` but only
-    /// one of them is narrowed. Pinned because they look interchangeable.
+    /// The spot quantity is the radius squared rounded to f32, not the f64
+    /// square. Pinned at a slider setting where the two can differ.
     #[test]
-    fn the_cull_radius_is_not_the_narrowed_quantity() {
+    fn the_quantity_is_the_narrowed_square_of_the_radius() {
         let mut c = ctx();
         // A slider setting where 200 * volcanism is not exact in f32, so the
         // two forms can differ at all.
@@ -602,7 +663,6 @@ mod tests {
         let helpers = VulcanusHelpers::new(&c);
         let spawn = VulcanusSpawn::with_host_trig(&c);
         let b = VulcanusBiomes::with_host_trig(&c, &helpers, &spawn);
-        assert_eq!(b.cull_sq, b.radius * b.radius);
         assert_eq!(b.quantity, f64::from((b.radius * b.radius) as f32));
     }
 }
