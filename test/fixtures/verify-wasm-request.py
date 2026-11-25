@@ -12,17 +12,20 @@ What it can and cannot check:
   Vulcanus scalars and both world boxes' edges against the request that produced
   them.
 - It CANNOT reproduce the Fulgora and Vulcanus trig VALUES, because those are
-  V8's `Math.sin` after an `f32` narrowing and Python's libm is a different
-  implementation - which is the whole point of #270 and the reason the trig
-  crosses the boundary as values in the first place. So it checks that trig
+  the game's own sin/cos polynomial (#531) computed in V8 from a seed-derived
+  angle, which this script does not recompute for those two planets - and V8
+  rather than the module computes them, which is the whole point of #270 and
+  the reason the trig crosses the boundary as values in the first place. So it
+  checks that trig
   block by a property instead: `sin^2 + cos^2 == 1` to within an f32 epsilon
   for each of the ten pairs, which a mis-offset or half-shifted block fails.
-- For Aquilo it DOES reproduce them. The Aquilo arm's trig bytes are Python's
-  own `f32(sin)` and `f32(cos)` of the three bearings, and they equal what V8
-  gives after the same narrowing for these three angles: the TypeScript writer
-  produces exactly these bytes (`wasmFulgoraRenderParity.spec.ts`). That is a
-  fact about these three angles, not a guarantee. A libm can differ by one ULP
-  somewhere else, so `decode_aquilo` still compares with a 2e-7 tolerance.
+- For Aquilo it DOES reproduce them. The Aquilo arm's trig bytes are this
+  script's own copy of the game's sin and cos polynomial (`game_poly`, #531) of
+  the three bearings, and they equal what V8 gives: the TypeScript writer
+  produces exactly these bytes (`wasmFulgoraRenderParity.spec.ts`). Before #531
+  they were Python's libm `f32(sin)` and `f32(cos)`, which agreed with V8 only
+  by luck at those three angles and sit one ULP from the game on about 5% of
+  inputs. `decode_aquilo` still compares with a 2e-7 tolerance.
 
 Usage: python3 verify-wasm-request.py <encoder-output.json> <fixture-output.json>
 """
@@ -524,21 +527,41 @@ AQUILO_REQUEST = {
 
 def aquilo_angles(seed0):
     """The three bearings in degrees, from aquilo's map-gen Lua: the seed
-    normalised, times 3600, then + 120 and + 240, each step narrowed to f32."""
-    base = f32(f32(seed0 / 4294967296) * 3600)
+    normalised, times 3600, then + 120 and + 240, each step narrowed to f32.
+
+    The seed is normalised by 2^32 - 1, not 2^32 (#531): the game maps the whole
+    u32 range onto the closed interval [0, 1]."""
+    base = f32(f32(seed0 / 4294967295) * 3600)
     return [base, f32(base + 120), f32(base + 240)]
+
+
+def game_poly(t):
+    """The game's own sin/cos polynomial (#531), written here from the steps in
+    the issue rather than copied from gameTrig.ts: t is the argument already
+    scaled by 1 / 2pi (and shifted by -0.25 for sine). Python's round() is
+    round-half-even, which is what the game's cvtpd2dq does."""
+    f = abs(t - round(t))
+    u = 0.25 - f
+    u2 = u * u
+    u4 = u2 * u2
+    lo = u2 * -41.34167506665737 + 6.283185269630412
+    hi = u2 * -76.56887678023256 + 81.60201529595571
+    p = hi * u4 + lo
+    return f32((u4 * u4 * 39.65735524898863 + p) * u)
 
 
 def aquilo_trig(angle):
     """(sin, cos) of an angle through the same f32 lattice request.ts names:
-    radians = f32(f32(a / 180) * f32(pi)), then f32 sin and cos.
+    radians = f32(f32(a / 180) * f32(pi)), then the GAME's sin and cos.
 
-    Python's libm is not V8's, so decode_aquilo compares these with a tolerance
-    rather than exactly - see the module docstring on why trig crosses the
-    boundary as values at all.
+    Before #531 this was Python's libm, which is correctly rounded and so one
+    ULP off the game on about 5% of inputs. decode_aquilo still compares with a
+    tolerance rather than exactly.
     """
     radians = f32(f32(angle / 180) * f32(math.pi))
-    return f32(math.sin(radians)), f32(math.cos(radians))
+    x = f32(radians)
+    t = x * 0.15915494309189535
+    return game_poly(t + -0.25), game_poly(t)
 
 
 def encode_aquilo(req):
@@ -610,7 +633,7 @@ def decode_aquilo(b, req):
                 f"{names[i]}: bearing is {degrees[i]:.4f} degrees, expected "
                 f"{want_deg % 360.0:.4f}"
             )
-        # And the pair itself matches Python's own f32 trig to a few f32 ULPs.
+        # And the pair itself matches this script's game polynomial to a few f32 ULPs.
         es, ec = aquilo_trig(want_deg)
         if abs(pairs[i][0] - es) > 2e-7 or abs(pairs[i][1] - ec) > 2e-7:
             raise AssertionError(f"{names[i]}: trig {pairs[i]} is not ({es}, {ec})")
@@ -675,8 +698,9 @@ def main():
             "These bytes were checked by an INDEPENDENT Python decoder - a "
             "third implementation written from the layout table, not the TypeScript writer under "
             "test and not the Rust reader - which agreed on every offset and every scalar field. "
-            "It deliberately does NOT check the trig VALUES: those are V8's Math.sin after an f32 "
-            "narrowing, and Python's libm is a different implementation, which is the whole point "
+            "It deliberately does NOT check the Fulgora and Vulcanus trig VALUES: those are the "
+            "game's own sin/cos polynomial (#531) computed in V8 from a seed-derived angle, and "
+            "V8 rather than the module computes them, which is the whole point "
             "of #270. It checks the trig block three other ways instead: sin^2+cos^2 = 1 for each "
             "pair; exactly one legitimate duplicate pair (the volcano-spot disc sits at the "
             "mountains bearing); and - the one that matters - each bearing's angle recovered with "
@@ -703,7 +727,7 @@ def main():
             "The Aquilo arm (184 bytes, six levers, three bearings and a placement sweep box) "
             "is built and decoded by this script from the layout table, so its bytes did not "
             "come from request.ts at all; the trig pairs are checked by unit norm, by each "
-            "angle's offset from the first bearing, and against Python's own f32 sin and cos to "
+            "angle's offset from the first bearing, and against this script's own copy of the game's sin and cos polynomial to "
             "2e-7. "
             "Regenerating "
             "these bytes from the encoder would make the fixture agree with itself and prove "

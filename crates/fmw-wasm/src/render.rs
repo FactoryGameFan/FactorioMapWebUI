@@ -1906,9 +1906,10 @@ mod tests {
     /// A Vulcanus terrain request at the real surface seed for map seed 123456,
     /// with the ten bearings computed on the host the way a tier-1 test does.
     ///
-    /// The trig is host libm here rather than V8's, which is fine for a shape
-    /// test - the point of sending it as values is that the SHIPPED path uses
-    /// V8's, and tier 3 is where that is checked against the TypeScript.
+    /// The trig is the Rust copy of the game's polynomial here rather than
+    /// V8's copy, which is fine for a shape test - the point of sending it as
+    /// values is that the SHIPPED path uses V8's, and tier 3 is where that is
+    /// checked against the TypeScript.
     fn vulcanus_request(width: u32, height: u32) -> Vec<u8> {
         let mut b = prefix(
             PLANET_VULCANUS,
@@ -1932,7 +1933,7 @@ mod tests {
             spawn.mountains_angle,
             spawn.basalts_angle,
             spawn.mountains_angle,
-            spawn.mountains_angle + 180.0 * dir,
+            narrowed(spawn.mountains_angle, 180.0),
             narrowed(spawn.basalts_angle, -10.0),
             narrowed(spawn.ashlands_angle, 15.0),
             narrowed(spawn.mountains_angle, -20.0),

@@ -208,7 +208,8 @@ impl<'a> VulcanusBiomes<'a> {
         }
     }
 
-    /// As [`VulcanusBiomes::new`], but computing both bearings with Rust's libm.
+    /// As [`VulcanusBiomes::new`], but computing both bearings with the game's own
+    /// sin/cos polynomial (#531).
     ///
     /// The volcano disc sits at the mountains bearing; the protector is mirrored
     /// by `180 * starting_direction`, so the two swap sides with the seed.
@@ -218,7 +219,10 @@ impl<'a> VulcanusBiomes<'a> {
         helpers: &'a VulcanusHelpers,
         spawn: &'a VulcanusSpawn,
     ) -> Self {
-        let protector_angle = spawn.mountains_angle + 180.0 * spawn.starting_direction;
+        // The game narrows the sum to f32 (#531): `180 * direction` is exactly
+        // +-180, so only the add rounds. Un-narrowed, it matched the game's
+        // protector angle on 567 of 606 probed seeds.
+        let protector_angle = f32r(spawn.mountains_angle + 180.0 * spawn.starting_direction);
         Self::new(
             ctx,
             helpers,

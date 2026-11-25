@@ -10,11 +10,15 @@ describe("seedNormalized reproduces the game's map_seed_normalized", () => {
     }
   });
 
-  it("is bit-exact via Math.fround(seed0 / 2^32), not plain double division", () => {
-    // seed0 = 0xFFFFFFFF is the discriminating row: plain double division gives
-    // 0.9999999997671694 (!= 1), only the f32-rounded value matches the oracle.
+  it("is Math.fround(seed0 / (2^32 - 1)), and a seed that can tell the divisors apart agrees with the game", () => {
+    // The old test used seed0 = 0xFFFFFFFF, where 2^32 and 2^32 - 1 both give
+    // exactly 1, so it could not fail (#531). 3,526,822,528 is a seed the game
+    // was read on (test/bearingChain.spec.ts has all 606): the game says
+    // 0.82115238904953, and dividing by 2^32 gives 0.8211523294448853.
+    expect(seedNormalized(3526822528)).toBe(0.82115238904953);
+    expect(Math.fround(3526822528 / 2 ** 32)).not.toBe(0.82115238904953);
+    // The closed top of the range.
     expect(seedNormalized(0xffffffff)).toBe(1);
-    expect(0xffffffff / 2 ** 32).not.toBe(1);
   });
 });
 

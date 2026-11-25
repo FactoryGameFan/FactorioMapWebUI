@@ -27,6 +27,7 @@
 
 import { f32 } from "../eval/f32";
 import { seedNormalized, seedSmall } from "../expressions/vulcanusSeed";
+import { gameCos, gameSin } from "../gameTrig";
 
 /** `'FMWR'` little-endian. Must equal `fmw_wasm::abi::MAGIC`. */
 export const MAGIC = 0x52574d46;
@@ -360,15 +361,20 @@ export type WasmRenderRequest =
   | AquiloRenderRequest;
 
 /**
- * `f32(f32(a / 180) * f32(PI))`, then f32 `sin`/`cos` - the narrowing lattice
- * `startingSpotAtAngle` needs (#279).
+ * `f32(f32(a / 180) * f32(PI))`, then the GAME's `sin`/`cos` - the narrowing
+ * lattice `startingSpotAtAngle` needs (#279).
  *
  * `(a / 180) * PI32` is in that order on purpose: `a * (PI32 / 180)` is a
  * different number, because `PI32 / 180` is not exact.
+ *
+ * The sine and cosine are the game's own polynomial from `../gameTrig`, not
+ * `Math.sin`: the two differ by one ULP on about 5% of inputs (#531). They use
+ * no libm, so V8 and the WASM module agree, and the #270 rule still holds -
+ * the values are computed here and cross the boundary as numbers.
  */
 function trigOf(angleDegrees: number): { sin: number; cos: number } {
   const radians = f32(f32(angleDegrees / 180) * f32(Math.PI));
-  return { sin: f32(Math.sin(radians)), cos: f32(Math.cos(radians)) };
+  return { sin: gameSin(radians), cos: gameCos(radians) };
 }
 
 /**
@@ -388,8 +394,11 @@ function trigOf(angleDegrees: number): { sin: number; cos: number } {
  * precisely what tier 3's byte-identical RGBA comparison exists to catch, and it
  * would be a real divergence rather than a test problem.
  *
- * The bearing is `f32(seed0 / 360)` degrees and the vault sits at
- * `f32(angle + 180)`.
+ * The bearing is `f32(f32(seed0) / 360)` degrees and the vault sits at
+ * `f32(angle + 180)`. **The game holds `map_seed` as an f32 before it divides**
+ * (#531): `f32(seed0 / 360)` rounds once and matched the game on 463 of 606
+ * probed seeds, `f32(f32(seed0) / 360)` on all 606. The two differ whenever the
+ * seed is above 2^24 and does not fit an f32.
  */
 export function bearingTrig(seed0: number): {
   sinStart: number;
@@ -397,7 +406,7 @@ export function bearingTrig(seed0: number): {
   sinVault: number;
   cosVault: number;
 } {
-  const angle = f32(seed0 / 360);
+  const angle = f32(f32(seed0) / 360);
   const start = trigOf(angle);
   const vault = trigOf(f32(angle + 180));
   return {
@@ -423,12 +432,17 @@ export function bearingTrig(seed0: number): {
  * - the three SPAWN angles are narrowed by `vulcanusSpawn.ts`, with
  *   `f32(120 * direction)` narrowed separately before the add;
  * - the volcano-spot disc is the mountains angle unchanged, and the protector
- *   is `mountainsAngle + 180 * direction` with **no** narrowing - that is how
- *   `vulcanusBiomes.ts` writes it;
+ *   is `f32(mountainsAngle + 180 * direction)` (#531). It used to be sent
+ *   **un-narrowed**, "as `vulcanusBiomes.ts` writes it", but the game narrows
+ *   the sum like every other step of its noise machine: the un-narrowed form
+ *   matched the game's protector angle on 567 of 606 probed seeds and this form
+ *   on all 606. `180 * direction` is exactly +-180, so only the sum rounds;
  * - the five RESOURCE angles narrow the offset and then the sum, as
  *   `vulcanusResources.ts` writes them.
  *
  * Normalising those three styles into one would change five of the ten values.
+ * (Since #531 the protector has the same shape as the resource angles, with an
+ * offset of 180.)
  */
 export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }[] {
   const direction = -1 + 2 * (seedSmall(seed0) & 1);
@@ -442,9 +456,9 @@ export function vulcanusBearingTrig(seed0: number): { sin: number; cos: number }
     trigOf(mountains),
     trigOf(basalts),
     // The volcano disc sits at the mountains bearing; the protector is mirrored
-    // across it, un-narrowed, exactly as `vulcanusBiomes.ts` writes it.
+    // across it and its sum is narrowed to f32 (#531).
     trigOf(mountains),
-    trigOf(mountains + 180 * direction),
+    offsetTrig(mountains, 180),
     offsetTrig(basalts, -10),
     offsetTrig(ashlands, 15),
     offsetTrig(mountains, -20),

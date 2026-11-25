@@ -5,20 +5,19 @@
 //! idiom at the same time as it is ported. A port that also refactors is two
 //! changes graded by one fixture.
 //!
-//! ## `sin` and `cos` are NOT ported here, and that is deliberate
+//! ## `sin` and `cos` are the GAME's polynomial, not libm (#531)
 //!
-//! The TypeScript exports them as plain `Math.sin`/`Math.cos`. They are read by
-//! `starting_spot_at_angle`, `spot_at_angle` and `rotate_x`/`rotate_y`, none of
-//! which land before phase 5 (#225). Porting them now would mean shipping a
-//! transcendental with **no fixture in this phase's gate to grade it against**,
-//! and the determinism policy (spec section 5) says trig must be committed
-//! constants or a compiled polynomial, never a runtime `sin`/`cos` - WebAssembly
-//! has neither, and V8 and libm disagree in the last bit.
+//! [`vm_sin`] and [`vm_cos`] are the noise machine's own `sin` and `cos`: a short
+//! f64 polynomial transcribed from the 2.1.23 binary, which touches no libm. It
+//! differs from a correctly rounded f32 sine on about 5.2% of inputs, by one ULP
+//! each time, so `f64::sin` narrowed to f32 is a different function. The
+//! TypeScript copy is `src/noise/gameTrig.ts` and the two must stay token for
+//! token alike. Only f64 add, multiply and abs, an exact round-half-even and
+//! the f32 narrowing are used, so a host and `wasm32` return the same bits. No
+//! `mul_add`.
 //!
-//! `starting_lakes` already carries the shape that answer takes: a minimax
-//! polynomial transcribed from the game's own inlined approximation, with the
-//! coefficients written as `f64::from_bits` so a decimal round-trip cannot move
-//! them. Do the same when the consumer arrives, against that consumer's fixture.
+//! The shipped engine still takes its bearings as values computed in V8 (#270),
+//! and the TypeScript side calls the polynomial too. This copy serves tier 1.
 //!
 //! ## `log2` and `2^x` ARE ported, and the residual risk is stated
 //!
@@ -198,9 +197,9 @@ pub fn range_select_base(input: f64, from: f64, to: f64, slope: f64, lo: f64, hi
 
 /// Base-2 log (the DSL's `log2`).
 ///
-/// Exact math, not `fast_approx::fast_log2`. The noise machine's own `log2` IS
-/// the fastapprox one, but nothing that reaches this function is evaluated by
-/// the noise machine - see the module docs.
+/// Exact math, not `fast_approx::fast_log2`. The game's `log2` op is a
+/// double-precision log2 narrowed to f32, not fastapprox (#531, read from the
+/// 2.1.23 binary), so exact math is the right function, not a compromise.
 #[must_use]
 pub fn log2(x: f64) -> f64 {
     x.log2()
@@ -343,6 +342,46 @@ pub(crate) fn slider_rescale_rounded_once(v: f64, n: f64) -> f64 {
 #[must_use]
 pub fn f32r(v: f64) -> f64 {
     f64::from(v as f32)
+}
+
+const ONE_OVER_TAU: f64 = 0.159_154_943_091_895_35;
+const K5: f64 = -41.341_675_066_657_37;
+const K6: f64 = 6.283_185_269_630_412;
+const K7: f64 = -76.568_876_780_232_56;
+const K8: f64 = 81.602_015_295_955_71;
+const K11: f64 = 39.657_355_248_988_63;
+
+/// The shared half of the game's `sin` and `cos`: `t` is the argument already
+/// scaled by `1 / 2pi` (and shifted by `-0.25` for sine).
+///
+/// Written one operation per line in the game's order, with no fused
+/// multiply-add, because the order is what the bits depend on.
+fn vm_polynomial(t: f64) -> f64 {
+    let f = (t - t.round_ties_even()).abs();
+    let u = 0.25 - f;
+    let u2 = u * u;
+    let u4 = u2 * u2;
+    let lo = u2 * K5 + K6;
+    let hi = u2 * K7 + K8;
+    let p = hi * u4 + lo;
+    let u8 = u4 * u4;
+    f64::from(((u8 * K11 + p) * u) as f32)
+}
+
+/// The game's `sin(x)` for an f32-valued `x`, returned as an f32-valued f64.
+///
+/// See the module docs. Mirrors `gameSin` in `src/noise/gameTrig.ts`.
+#[must_use]
+pub fn vm_sin(x: f64) -> f64 {
+    vm_polynomial(f64::from(x as f32) * ONE_OVER_TAU + -0.25)
+}
+
+/// The game's `cos(x)` for an f32-valued `x`, returned as an f32-valued f64.
+///
+/// See the module docs. Mirrors `gameCos` in `src/noise/gameTrig.ts`.
+#[must_use]
+pub fn vm_cos(x: f64) -> f64 {
+    vm_polynomial(f64::from(x as f32) * ONE_OVER_TAU)
 }
 
 #[cfg(test)]
