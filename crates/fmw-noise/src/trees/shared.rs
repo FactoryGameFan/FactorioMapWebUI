@@ -18,7 +18,7 @@
 //! `control:trees:frequency`, unlike every species' own noise term. That
 //! asymmetry is easy to "tidy" away and would move every forest.
 
-use crate::eval::math::min;
+use crate::eval::math::{f32r, min};
 use crate::expressions::nauvis_shared::NauvisShared;
 use crate::multioctave_noise::{MultioctaveParams, Prepared};
 
@@ -66,16 +66,19 @@ impl<'a> TreeShared<'a> {
     #[must_use]
     pub fn forest_path_cutout(&self, x: f64, y: f64) -> f64 {
         min(&[
-            (self.shared.bridge_billows(x, y) - 0.07) * 5.0,
-            (self.shared.hills(x, y) - 0.1) * 3.0,
-            (self.shared.forest_path_billows(x, y) - 0.07) * 3.0,
+            f32r(f32r(self.shared.bridge_billows(x, y) - f32r(0.07)) * 5.0),
+            f32r(f32r(self.shared.hills(x, y) - f32r(0.1)) * 3.0),
+            f32r(f32r(self.shared.forest_path_billows(x, y) - f32r(0.07)) * 3.0),
         ])
     }
 
     /// `trees_forest_path_cutout_faded`.
     #[must_use]
     pub fn forest_path_cutout_faded(&self, x: f64, y: f64) -> f64 {
-        self.forest_path_cutout(x, y) * 0.3 + self.small_noise(x, y) * 0.1
+        f32r(
+            f32r(self.forest_path_cutout(x, y) * f32r(0.3))
+                + f32r(self.small_noise(x, y) * f32r(0.1)),
+        )
     }
 }
 
@@ -98,7 +101,10 @@ mod tests {
         for &(x, y) in &[(0.5, 0.25), (137.5, -211.25), (-1024.5, 880.75)] {
             assert_eq!(
                 t.forest_path_cutout_faded(x, y),
-                t.forest_path_cutout(x, y) * 0.3 + t.small_noise(x, y) * 0.1
+                f32r(
+                    f32r(t.forest_path_cutout(x, y) * f32r(0.3))
+                        + f32r(t.small_noise(x, y) * f32r(0.1))
+                )
             );
         }
     }
@@ -115,9 +121,9 @@ mod tests {
             let x = f64::from(i) * 7.5 - 800.0;
             let y = f64::from(i) * 3.25 - 300.0;
             let arms = [
-                (nz.bridge_billows(x, y) - 0.07) * 5.0,
-                (nz.hills(x, y) - 0.1) * 3.0,
-                (nz.forest_path_billows(x, y) - 0.07) * 3.0,
+                f32r(f32r(nz.bridge_billows(x, y) - f32r(0.07)) * 5.0),
+                f32r(f32r(nz.hills(x, y) - f32r(0.1)) * 3.0),
+                f32r(f32r(nz.forest_path_billows(x, y) - f32r(0.07)) * 3.0),
             ];
             let got = t.forest_path_cutout(x, y);
             let best = arms.iter().copied().fold(f64::INFINITY, f64::min);

@@ -17,16 +17,27 @@
 //! let density = fields.density(0.5, 0.25);
 //! ```
 //!
-//! ## This layer narrows nothing
+//! ## Every step is rounded to f32, as the game evaluates it
 //!
-//! `src/noise/trees/` contains no `f32` call at all. Every narrowing happens
-//! inside the primitives it calls - `multioctave_noise`, `moisture`,
-//! `temperature`, `distance_from_nearest_point` and `fast_pow` - and the
-//! layer's own arithmetic is f64. Same asymmetry as `resources::resource_math`,
-//! and the same rule: preserve it, do not harmonise it.
+//! The game runs a noise expression one f32 operation at a time, literals
+//! included (#521). This layer used to join its exact primitives with f64
+//! arithmetic and scored 1 to 13 of 26 per species; with each step through
+//! [`f32r`] in the Lua's order every species is 26 of 26. Three details that
+//! each cost matches before they were found:
+//!
+//! - `temperature` reaches the species as an f64, so it is rounded to f32
+//!   where they read it. Subtracting a constant from the unrounded value
+//!   rounds differently from subtracting it from the f32 the game holds.
+//! - `output_scale` is narrowed to f32 before it reaches the noise. The three
+//!   species at 0.7 were the last misses: 0.7 is the one scale in the table
+//!   that f32 and f64 round differently.
+//! - The species sum is `climate + distance - size_offset + 0.2 * size +
+//!   small * 0.1`, left to right. Folding `- size_offset + 0.2 * size` into
+//!   one constant first (the old shape) measured worse: 315 against 344 of 442
+//!   at the step where it was tried.
 
 use crate::distance_from_nearest_point::{distance_from_nearest_point, Point};
-use crate::eval::math::{clamp, min, min2};
+use crate::eval::math::{clamp, f32r, min, min2};
 use crate::expressions::nauvis_climate::{
     Moisture, MoistureParams, Temperature, TemperatureParams,
 };
@@ -143,9 +154,14 @@ impl TreeBase {
 pub struct SpeciesField {
     pub species: &'static TreeSpecies,
     noise: Prepared,
-    /// `-size_offset + 0.2 * control:trees:size`, hoisted per species because
-    /// it is constant per render - the TypeScript hoists it in the same place.
-    size_term: f64,
+    /// `size_offset`, narrowed to the f32 literal the game holds. The game
+    /// SUBTRACTS it from the running sum, in the Lua's order.
+    size_offset: f64,
+    /// `0.2 * control:trees:size`, folded in f32: both operands are constants,
+    /// so the game folds the product before it meets a per-pixel value.
+    size_gain: f64,
+    /// The species' `cap`, narrowed to the f32 literal the game holds.
+    cap: f64,
     /// The largest magnitude this species' noise term can reach.
     pub max_noise: f64,
 }
@@ -165,7 +181,7 @@ impl SpeciesField {
         small_term: f64,
     ) -> f64 {
         // Three-argument min, the literal 0 first and temperature before
-        // moisture, as the TypeScript writes it.
+        // moisture, as the Lua writes it.
         let climate = min(&[
             0.0,
             asymmetric_ramps(
@@ -183,7 +199,12 @@ impl SpeciesField {
                 self.species.moist_ramp[3],
             ),
         ]);
-        climate + distance_term + self.size_term + small_term
+        // `min(...) + min(0, d/20 - 3) - size_offset + 0.2 * size
+        //  + tree_small_noise * 0.1`, left to right, one f32 step each.
+        let sum = f32r(climate + distance_term);
+        let sum = f32r(sum - self.size_offset);
+        let sum = f32r(sum + self.size_gain);
+        f32r(sum + small_term)
     }
 
     /// This species' own noise term.
@@ -218,6 +239,11 @@ pub fn max_noise_for(species: &TreeSpecies) -> f64 {
     species.output_scale * amps * BASIS_ABS_MAX
 }
 
+/// `tree_small_noise * 0.1`, one f32 multiply by the f32 literal.
+fn small_term(small_noise: f64) -> f64 {
+    f32r(small_noise * f32r(0.1))
+}
+
 /// The 15 compiled species plus the shared fields they read.
 pub struct TreeFields<'a> {
     base: &'a TreeBase,
@@ -237,10 +263,12 @@ impl<'a> TreeFields<'a> {
                     seed1: s.seed1,
                     octaves: TREE_OCTAVES,
                     persistence: TREE_PERSISTENCE,
-                    input_scale: (1.0 / s.input_scale_div) * base.trees_frequency,
-                    output_scale: s.output_scale,
+                    input_scale: f32r(f32r(1.0 / s.input_scale_div) * f32r(base.trees_frequency)),
+                    output_scale: f32r(s.output_scale),
                 }),
-                size_term: -s.size_offset + 0.2 * base.trees_size,
+                size_offset: f32r(s.size_offset),
+                size_gain: f32r(f32r(0.2) * f32r(base.trees_size)),
+                cap: f32r(s.cap),
                 max_noise: max_noise_for(s),
             })
             .collect();
@@ -258,17 +286,29 @@ impl<'a> TreeFields<'a> {
         &self.tree_shared
     }
 
+    /// `temperature_basic` as the game hands it to the species: an f32.
+    ///
+    /// [`Temperature`] leaves its result in f64, and the species' ramps then
+    /// subtract constants from it - a step that rounds differently on the
+    /// unrounded value than on the f32 the game holds (#521).
+    fn temperature(&self, x: f64, y: f64) -> f64 {
+        f32r(self.base.temperature.eval(x, y))
+    }
+
     fn distance_term(&self, x: f64, y: f64) -> f64 {
         // The literal 0 first, as written.
         min2(
             0.0,
-            f64::from(distance_from_nearest_point(
-                x,
-                y,
-                &self.base.starting_positions,
-                f64::INFINITY,
-            )) / 20.0
-                - 3.0,
+            f32r(
+                f32r(
+                    f64::from(distance_from_nearest_point(
+                        x,
+                        y,
+                        &self.base.starting_positions,
+                        f64::INFINITY,
+                    )) / 20.0,
+                ) - 3.0,
+            ),
         )
     }
 
@@ -277,17 +317,17 @@ impl<'a> TreeFields<'a> {
     pub fn eval_at(&self, index: usize, x: f64, y: f64) -> f64 {
         let f = &self.species[index];
         let cheap = f.cheap_from(
-            self.base.temperature.eval(x, y),
+            self.temperature(x, y),
             self.base.moisture.eval(x, y),
             self.distance_term(x, y),
-            self.tree_shared.small_noise(x, y) * 0.1,
+            small_term(self.tree_shared.small_noise(x, y)),
         );
         // Three-argument min, cap first - written as one `min` rather than
         // nested `min2`, matching the TypeScript's `Math.min(a, b, c)`.
         min(&[
-            f.species.cap,
+            f.cap,
             self.tree_shared.forest_path_cutout_faded(x, y),
-            cheap + f.noise_at(x, y),
+            f32r(cheap + f.noise_at(x, y)),
         ])
     }
 
@@ -314,10 +354,10 @@ impl<'a> TreeFields<'a> {
     ///    [`SpeciesField::cheap_from`] is fixed.
     #[must_use]
     pub fn density(&self, x: f64, y: f64) -> f64 {
-        let t = self.base.temperature.eval(x, y);
+        let t = self.temperature(x, y);
         let m = self.base.moisture.eval(x, y);
         let distance_term = self.distance_term(x, y);
-        let small_term = self.tree_shared.small_noise(x, y) * 0.1;
+        let small_term = small_term(self.tree_shared.small_noise(x, y));
 
         let mut cutout_faded = 0.0;
         let mut have_cutout = false;
@@ -328,7 +368,7 @@ impl<'a> TreeFields<'a> {
             // `cheap + max_noise`. If none can beat `best`, the three-octave
             // noise cannot change the answer. Catalog order - descending cap -
             // raises `best` early, which is what makes this fire often.
-            if f.species.cap <= best {
+            if f.cap <= best {
                 continue;
             }
             let cheap = f.cheap_from(t, m, distance_term, small_term);
@@ -336,10 +376,11 @@ impl<'a> TreeFields<'a> {
                 continue;
             }
             if !have_cutout {
-                cutout_faded = self.tree_shared.forest_path_cutout(x, y) * 0.3 + small_term;
+                cutout_faded =
+                    f32r(f32r(self.tree_shared.forest_path_cutout(x, y) * f32r(0.3)) + small_term);
                 have_cutout = true;
             }
-            let v = min(&[f.species.cap, cutout_faded, cheap + f.noise_at(x, y)]);
+            let v = min(&[f.cap, cutout_faded, f32r(cheap + f.noise_at(x, y))]);
             // NOT `max2`: the strict `>` keeps `best` on a NaN or a tie.
             if v > best {
                 best = v;
@@ -468,13 +509,20 @@ mod tests {
                 f.species.moist_ramp[3],
             ),
         ]);
-        assert_eq!(f.cheap_from(t, m, d, s), climate + d + f.size_term + s);
+        let chain = |climate: f64, d: f64, s: f64| {
+            let sum = f32r(climate + d);
+            let sum = f32r(sum - f.size_offset);
+            let sum = f32r(sum + f.size_gain);
+            f32r(sum + s)
+        };
+        assert_eq!(f.cheap_from(t, m, d, s), chain(climate, d, s));
         // A different association really does differ somewhere - swept, because
         // any single point may agree by luck.
         let differs = (0..500).any(|i| {
             let dd = f64::from(i) * -0.007_3;
             let ss = f64::from(i) * 0.001_1;
-            f.cheap_from(t, m, dd, ss) != climate + (dd + (f.size_term + ss))
+            f.cheap_from(t, m, dd, ss)
+                != f32r(climate + f32r(dd + f32r(f32r(f.size_gain - f.size_offset) + ss)))
         });
         assert!(
             differs,
@@ -562,9 +610,14 @@ mod tests {
         let f1 = TreeFields::new(&b1);
         for (k, species) in TREE_SPECIES.iter().enumerate() {
             assert_eq!(
-                f1.species[k].size_term - f0.species[k].size_term,
-                0.2,
+                f1.species[k].size_gain - f0.species[k].size_gain,
+                f32r(0.2),
                 "{}",
+                species.name
+            );
+            assert_eq!(
+                f1.species[k].size_offset, f0.species[k].size_offset,
+                "{} offset",
                 species.name
             );
             // The noise term is untouched by the size lever.
@@ -612,7 +665,7 @@ mod tests {
                 let x = f64::from(i) * 11.5 - 400.0;
                 let v = fields.eval_at(k, x, 63.25);
                 assert!(
-                    v <= fields.species[k].species.cap,
+                    v <= fields.species[k].cap,
                     "{} exceeded its cap: {v}",
                     fields.species[k].species.name
                 );

@@ -8843,34 +8843,53 @@ fn reproduces_the_games_tree_layer_at_every_captured_position() {
         values.get("trees_forest_path_cutout_faded").as_array(),
         |x, y| fields.shared().forest_path_cutout_faded(x, y),
     );
+    // 9 of 26 until every step of the cutout went through f32 (#521); the
+    // worst error is now exactly 0.
     assert_eq!(
-        faded, 9,
+        faded, 26,
         "trees_forest_path_cutout_faded exact, worst {worst_faded:e}"
+    );
+    assert_eq!(
+        worst_faded, 0.0,
+        "trees_forest_path_cutout_faded is bit-exact"
     );
 
     // (species name, exact of 26). The order is the catalog's.
     //
-    // #452 made `moisture` exact, which every species reads: the total went
-    // 120 -> 144, and eight species rose. `tree_04` FELL, 11 -> 10. The
-    // species' own arithmetic is still f64, so some of its exact matches were
-    // coincidences that a correct input can undo; read the total, and the
-    // species' own f32 pass is the fix for the rest.
+    // Every species is 26 of 26, worst error exactly 0 (#521). #452 made
+    // `moisture` exact, which took the total 120 -> 144 with the species' own
+    // arithmetic still in f64 (`tree_04` fell 11 -> 10 for that reason). Rounding
+    // that arithmetic to f32 one step at a time took it 144 -> 442. Three
+    // things carried it, each found by the species that still missed:
+    //
+    // - the shared cutout and the species sum, one f32 step each in the Lua's
+    //   order (`trees_forest_path_cutout_faded` 9 -> 26 alone);
+    // - `temperature` rounded to f32 where the species read it, since it
+    //   reaches them as an f64 and the ramps subtract from it (moved eight
+    //   species to 26 at once);
+    // - `output_scale` narrowed to f32 before it reaches the noise: the three
+    //   species at 0.7 were the last misses, and 0.7 is the one scale in the
+    //   table that f32 and f64 round differently.
+    //
+    // Before -> after per species, in the order below: 1 -> 26, 10 -> 26,
+    // 2 -> 26, 9 -> 26, 7 -> 26, 8 -> 26, 1 -> 26, 2 -> 26, 13 -> 26, 7 -> 26,
+    // 9 -> 26, 8 -> 26, 8 -> 26, 13 -> 26, 11 -> 26.
     let expected: [(&str, usize); 15] = [
-        ("tree_01", 1),
-        ("tree_04", 10),
-        ("tree_05", 2),
-        ("tree_02", 9),
-        ("tree_03", 7),
-        ("tree_07", 8),
-        ("tree_02_red", 1),
-        ("tree_08", 2),
-        ("tree_09", 13),
-        ("tree_06", 7),
-        ("tree_08_brown", 9),
-        ("tree_09_brown", 8),
-        ("tree_06_brown", 8),
-        ("tree_08_red", 13),
-        ("tree_09_red", 11),
+        ("tree_01", 26),
+        ("tree_04", 26),
+        ("tree_05", 26),
+        ("tree_02", 26),
+        ("tree_03", 26),
+        ("tree_07", 26),
+        ("tree_02_red", 26),
+        ("tree_08", 26),
+        ("tree_09", 26),
+        ("tree_06", 26),
+        ("tree_08_brown", 26),
+        ("tree_09_brown", 26),
+        ("tree_06_brown", 26),
+        ("tree_08_red", 26),
+        ("tree_09_red", 26),
     ];
     let mut total = small + faded;
     for (index, (name, want)) in expected.iter().enumerate() {
@@ -8887,7 +8906,7 @@ fn reproduces_the_games_tree_layer_at_every_captured_position() {
     // The total is frozen too, so a species silently dropped from the loop
     // above - which would leave every remaining assertion passing - moves a
     // number.
-    assert_eq!(total, 144, "total exact of 442");
+    assert_eq!(total, 442, "total exact of 442");
 }
 
 #[test]
@@ -8920,7 +8939,11 @@ fn reproduces_the_games_tree_layer_at_moved_control_levers() {
     let fields = TreeFields::new(&base);
     let values = fixture.get("values");
 
-    let expected: [(&str, usize); 3] = [("tree_01", 3), ("tree_08", 2), ("tree_09_red", 4)];
+    // 3, 2 and 4 of 17 before the species' arithmetic went through f32 (#521).
+    // All 17 now, worst error exactly 0: the frequency scaling of `input_scale`
+    // (`f32(1/div) * f32(frequency)`) and the flat `0.2 * size` term are both
+    // graded exactly.
+    let expected: [(&str, usize); 3] = [("tree_01", 17), ("tree_08", 17), ("tree_09_red", 17)];
     let mut total = 0;
     for (name, want) in expected {
         let index = TREE_SPECIES
@@ -8933,7 +8956,7 @@ fn reproduces_the_games_tree_layer_at_moved_control_levers() {
         assert_eq!(exact, want, "{name} exact, worst {worst:e}");
         total += exact;
     }
-    assert_eq!(total, 9, "total exact of 51");
+    assert_eq!(total, 51, "total exact of 51");
 }
 
 /// The recorded counts in `test/captureGrid.ts` have DRIFTED, and this is where
@@ -8948,6 +8971,10 @@ fn reproduces_the_games_tree_layer_at_moved_control_levers() {
 /// #279, #290, #293, #309).
 ///
 /// Nothing asserted those numbers, so they drifted quietly. These do.
+///
+/// Once the species were exact on the grid (#521: 442 and 51 snapped), the
+/// unsnapped figures became the measure of the snap alone: 272 of 442 and 36 of
+/// 51, so grading off the grid costs 38 and 29 percent of the agreement.
 #[test]
 fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
     let unsnapped_total = |path: &str, params: &TreeFieldParams, names: &[&str]| -> usize {
@@ -8984,8 +9011,9 @@ fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
             &defaults,
             &all
         ),
-        // 85 until #452 made `moisture` exact.
-        99,
+        // 85 until #452 made `moisture` exact, 99 until the species' own
+        // arithmetic went through f32 (#521).
+        272,
         "unsnapped total of 442"
     );
 
@@ -8998,7 +9026,8 @@ fn the_capture_grid_snap_is_worth_a_third_of_the_tree_agreement() {
             &params,
             &["tree_01", "tree_08", "tree_09_red"],
         ),
-        8,
+        // 8 until the species' own arithmetic went through f32 (#521).
+        36,
         "unsnapped total of 51"
     );
 }
