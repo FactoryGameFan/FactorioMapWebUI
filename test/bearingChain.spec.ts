@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import chain from "./fixtures/oracle-bearing-chain.seeds606.json";
+import { gameSin } from "../src/noise/gameTrig";
 import { seedNormalized, seedSmall } from "../src/noise/expressions/vulcanusSeed";
-import { vulcanusBearingTrig } from "../src/noise/wasm/request";
+import { bearingTrig, vulcanusBearingTrig } from "../src/noise/wasm/request";
 
 /**
  * The seed-derived bearing chain against the game itself (#531).
@@ -61,5 +62,30 @@ describe("the Vulcanus angle chain", () => {
       expect(basalts.sin, `bas_sin seed=${r.seed}`).toBe(r.bas_sin);
       expect(basalts.cos, `bas_cos seed=${r.seed}`).toBe(r.bas_cos);
     }
+  });
+});
+
+describe("Fulgora's start bearing is f32(f32(seed) / 360)", () => {
+  it("the angle and its sine match the game on all 606", () => {
+    for (const r of rows) {
+      expect(f32(f32(r.seed) / 360), `fg_deg seed=${r.seed}`).toBe(r.fg_deg);
+      expect(bearingTrig(r.seed).sinStart, `fg_sin seed=${r.seed}`).toBe(r.fg_sin);
+    }
+  });
+
+  it("CONTROL: the old f32(seed / 360) matches the angle on only 463", () => {
+    // 463 of 606 (measured 2026-11-25). The seeds below 2^24 are exact in f32 and
+    // agree either way; above it the seed rounds before the division.
+    expect(count((r) => f32(r.seed / 360) === r.fg_deg)).toBe(463);
+  });
+
+  it("CONTROL: the old angle gives the wrong sine on some seeds", () => {
+    const oldSine = (seed: number): number => {
+      // The old bearingTrig: angle = f32(seed / 360), then the same trig.
+      const radians = f32(f32(f32(seed / 360) / 180) * f32(Math.PI));
+      return gameSin(radians);
+    };
+    const wrong = count((r) => oldSine(r.seed) !== r.fg_sin);
+    expect(wrong).toBeGreaterThan(0);
   });
 });

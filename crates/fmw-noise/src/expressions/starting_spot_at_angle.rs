@@ -26,7 +26,7 @@
 //!
 //! The way out is structural rather than numerical. **At every one of the 13
 //! call sites in the TypeScript, `angle` and `distance` are per-render
-//! constants** - `fulgora_shared` computes `angle = seed0 / 360`, Vulcanus reads
+//! constants** - `fulgora_shared` computes `angle = f32(f32(seed0) / 360)`, Vulcanus reads
 //! its three angles off the seed vars, and the distances are grid or radius
 //! multiples. None of them varies with position. Checked by reading all 13, not
 //! assumed.

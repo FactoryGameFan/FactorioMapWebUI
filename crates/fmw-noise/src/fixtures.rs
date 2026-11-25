@@ -12606,3 +12606,35 @@ fn reproduces_the_games_bearing_chain_on_606_seeds() {
     assert_eq!(msn_new, 606, "map_seed_normalized, f32(seed / (2^32 - 1))");
     assert_eq!(msn_old, 601, "CONTROL: the old 2^32 divisor must fail on 5");
 }
+
+/// Fulgora's start bearing against the game on 606 map seeds (#531).
+///
+/// The game holds `map_seed` as an f32 before dividing by 360, so the bearing is
+/// `f32(f32(seed) / 360)`. The control, `f32(seed / 360)`, matches 463 of 606.
+/// The sine goes through `AngleTrig::from_degrees`, so this also grades the
+/// angle-to-radians step against the game on all 606 seeds.
+#[test]
+fn reproduces_the_games_fulgora_bearing_on_606_seeds() {
+    use crate::expressions::fulgora_shared::fulgora_bearing_angles;
+    use crate::expressions::starting_spot_at_angle::AngleTrig;
+
+    let fixture = load_captured_at("test/fixtures/oracle-bearing-chain.seeds606.json", "2.1.23");
+    let rows = fixture.get("rows").as_array();
+    assert_eq!(rows.len(), 606, "fixture size");
+
+    let (mut angle_exact, mut angle_old) = (0usize, 0usize);
+    for row in rows {
+        let seed0 = row.get("seed").as_f64() as u32;
+        let want = row.get("fg_deg").as_f64();
+        let (angle, _vault) = fulgora_bearing_angles(seed0);
+        angle_exact += usize::from(angle == want);
+        angle_old += usize::from(f64::from((f64::from(seed0) / 360.0) as f32) == want);
+        assert_eq!(
+            AngleTrig::from_degrees(angle).sin,
+            row.get("fg_sin").as_f64(),
+            "fg_sin seed={seed0}"
+        );
+    }
+    assert_eq!(angle_exact, 606, "f32(f32(seed) / 360)");
+    assert_eq!(angle_old, 463, "CONTROL: f32(seed / 360) must fail on 143");
+}

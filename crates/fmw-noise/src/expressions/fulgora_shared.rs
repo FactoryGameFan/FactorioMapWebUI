@@ -106,6 +106,21 @@ pub struct FulgoraShared {
     starting_vault: StartingSpot,
 }
 
+/// Fulgora's two bearings in DEGREES: the start bearing `f32(f32(seed0) / 360)`
+/// and the vault's `f32(angle + 180)`.
+///
+/// **The game holds `map_seed` as an f32 before it divides** (#531), so the seed
+/// is narrowed first. `f32(seed0 / 360)` rounds once and matched the game on 463
+/// of 606 probed seeds; this form matches all 606. They differ whenever the seed
+/// is above 2^24 and does not fit an f32. Mirrors `bearingTrig` in
+/// `src/noise/wasm/request.ts`.
+#[must_use]
+pub fn fulgora_bearing_angles(seed0: u32) -> (f64, f64) {
+    let seed = f64::from(seed0 as f32);
+    let angle = f64::from((seed / 360.0) as f32);
+    (angle, f64::from((angle + 180.0) as f32))
+}
+
 impl FulgoraShared {
     /// Build the layer, taking the two bearings' trig from the caller.
     ///
@@ -182,16 +197,15 @@ impl FulgoraShared {
     /// sin/cos polynomial (#531).
     ///
     /// For tier-1 tests and for anything that is not the shipped engine. The
-    /// bearing is `seed0 / 360` degrees, and the vault sits opposite it.
+    /// bearing is `f32(f32(seed0) / 360)` degrees ([`fulgora_bearing_angles`]),
+    /// and the vault sits opposite it.
     #[must_use]
     pub fn with_host_trig(ctx: &FulgoraCtx) -> Self {
-        // f32 at both points, mirroring `const angle = f32(seed0 / 360)` and
-        // `angle: f32(angle + 180)` in `fulgoraShared.ts` (#279).
-        let angle = f64::from((f64::from(ctx.seed0) / 360.0) as f32);
+        let (angle, vault_angle) = fulgora_bearing_angles(ctx.seed0);
         Self::new(
             ctx,
             AngleTrig::from_degrees(angle),
-            AngleTrig::from_degrees(f64::from((angle + 180.0) as f32)),
+            AngleTrig::from_degrees(vault_angle),
         )
     }
 

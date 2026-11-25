@@ -23,7 +23,9 @@ use crate::expressions::fulgora_masks::{self, MaskFields};
 use crate::expressions::fulgora_roads::{FulgoraRoads, RoadFields};
 use crate::expressions::fulgora_ruins::{FulgoraRuins, RuinFields};
 use crate::expressions::fulgora_scrap::{FulgoraScrap, ScrapControls, ScrapFields};
-use crate::expressions::fulgora_shared::{FulgoraCtx, FulgoraShared, SharedFields};
+use crate::expressions::fulgora_shared::{
+    fulgora_bearing_angles, FulgoraCtx, FulgoraShared, SharedFields,
+};
 use crate::expressions::starting_spot_at_angle::AngleTrig;
 use crate::tiles::fulgora_catalog::{land_probabilities, resolve_tile, FulgoraTile};
 
@@ -91,17 +93,21 @@ impl FulgoraStack {
         }
     }
 
-    /// As [`FulgoraStack::new`], with both bearings computed from Rust's libm.
+    /// As [`FulgoraStack::new`], with both bearings computed from the game's own
+    /// sin/cos polynomial (#531).
     ///
     /// For tier-1 tests and anything that is not the shipped engine.
     #[must_use]
     pub fn with_host_trig(ctx: &FulgoraCtx, scrap_controls: &ScrapControls) -> Self {
-        let angle = f64::from(ctx.seed0) / 360.0;
+        // The same two bearings `FulgoraShared::with_host_trig` uses. This site
+        // used to leave both un-narrowed (`seed0 / 360` and `angle + 180`),
+        // which is not the game's `f32(f32(seed) / 360)` (#531).
+        let (angle, vault_angle) = fulgora_bearing_angles(ctx.seed0);
         Self::new(
             ctx,
             scrap_controls,
             AngleTrig::from_degrees(angle),
-            AngleTrig::from_degrees(angle + 180.0),
+            AngleTrig::from_degrees(vault_angle),
         )
     }
 

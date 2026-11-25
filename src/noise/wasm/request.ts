@@ -394,8 +394,11 @@ function trigOf(angleDegrees: number): { sin: number; cos: number } {
  * precisely what tier 3's byte-identical RGBA comparison exists to catch, and it
  * would be a real divergence rather than a test problem.
  *
- * The bearing is `f32(seed0 / 360)` degrees and the vault sits at
- * `f32(angle + 180)`.
+ * The bearing is `f32(f32(seed0) / 360)` degrees and the vault sits at
+ * `f32(angle + 180)`. **The game holds `map_seed` as an f32 before it divides**
+ * (#531): `f32(seed0 / 360)` rounds once and matched the game on 463 of 606
+ * probed seeds, `f32(f32(seed0) / 360)` on all 606. The two differ whenever the
+ * seed is above 2^24 and does not fit an f32.
  */
 export function bearingTrig(seed0: number): {
   sinStart: number;
@@ -403,7 +406,7 @@ export function bearingTrig(seed0: number): {
   sinVault: number;
   cosVault: number;
 } {
-  const angle = f32(seed0 / 360);
+  const angle = f32(f32(seed0) / 360);
   const start = trigOf(angle);
   const vault = trigOf(f32(angle + 180));
   return {
