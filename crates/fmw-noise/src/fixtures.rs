@@ -7574,6 +7574,15 @@ use crate::rocks::vulcanus_field::{vulcanus_decorative_knockout, VulcanusRockFie
 /// All three counts were measured on the TypeScript side too and agree exactly,
 /// so they describe the distance BOTH ports sit from the game rather than a gap
 /// between them.
+///
+/// **#521: the two composites went 178 -> 287 and 205 -> 284 of 434, and the
+/// density 412 -> 417, by rounding every step to f32 in the Lua's order.** The
+/// larger part was the ORDER, not the rounding: the game reads
+/// `-1.2 + 1.2 * min(..) + rock_noise + 0.5 * knockout` left to right, so each
+/// rock adds its own offset before the noise terms, and the port had summed the
+/// three shared terms first and added the offset last. The knockout stays 434.
+/// These are no longer the TypeScript's counts, which stays in f64. The
+/// remainder is upstream of this module (climate, biomes and `rock_noise`).
 #[test]
 fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     let fixture = load_captured_at(
@@ -7629,14 +7638,15 @@ fn reproduces_the_vulcanus_rock_fields_at_every_captured_position() {
     // Scored against the game's values so it cannot pass by agreeing with our
     // own two fields.
     //
-    // **412 of 434 is the CLAMP, not the arithmetic.** 399 of these positions
-    // clamp to exactly 0 - both rock expressions are negative over most of the
-    // map - and a saturated position is exact for free, because both ports and
-    // the game all return the bound itself. Of the 35 positions where the
-    // density is nonzero, 13 are exact. Read `vulcanus_rock_big` (205 of 434)
-    // as the port's score and this as what the consumer needs, the same way
-    // `*_biome_full` and `*_biome` are read in the biome layer. The TypeScript
-    // measures 412 and 399 here too.
+    // **417 of 434 is mostly the CLAMP, not the arithmetic.** 399 of these
+    // positions clamp to exactly 0 - both rock expressions are negative over
+    // most of the map - and a saturated position is exact for free, because
+    // both ports and the game all return the bound itself. So 399 of the 417
+    // are free and 18 of the 35 nonzero positions are exact (13 of 35 at 412
+    // before #521). Read `vulcanus_rock_big` (284 of 434) as the port's score
+    // and this as what the consumer needs, the same way `*_biome_full` and
+    // `*_biome` are read in the biome layer. The TypeScript, still in f64,
+    // measures 412 and 399.
     let want_huge = values.get("vulcanus_rock_huge").as_array();
     let want_big = values.get("vulcanus_rock_big").as_array();
     let mut density_exact = 0usize;
