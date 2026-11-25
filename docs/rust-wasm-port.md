@@ -1104,6 +1104,11 @@ renders successfully through the same instance.
 
 **Trig crosses as VALUES computed in V8**, never computed in the module (#270).
 Nauvis carries none, because it is the one planet free of transcendentals.
+Since #531 those values are the GAME's own sin/cos polynomial
+(`src/noise/gameTrig.ts`, and `vm_sin`/`vm_cos` in `eval/math.rs` for tier 1),
+not `Math.sin`: the game's `sin` is not libm, and a correctly rounded f32 sine
+is one ULP away from it on about 5% of inputs. The bearings feeding it are
+graded against the game on 606 seeds (`test/bearingChain.spec.ts`).
 
 `test/fixtures/wasm-request.v2.json` pins the encoding for all four planets
 (Aquilo, 128 bytes, request 184, added in #454). It is declared under
@@ -1117,15 +1122,17 @@ Two lessons from that checker, and both generalise past it:
 
 - **A property check is not a structural check.** The checker cannot reproduce
   the Fulgora and Vulcanus trig values, since those are the game's own sin/cos
-  polynomial (`src/noise/gameTrig.ts`, #531) computed in V8, so it checked each pair for `sin^2 + cos^2 = 1` instead. That
+  polynomial (`src/noise/gameTrig.ts`, #531) computed in V8, so it checked each
+  pair for `sin^2 + cos^2 = 1` instead. That
   property **passed a planted swap of two bearings** - rendering a plausible
   planet with its biomes rotated - because a property is invariant under
   permutation. It now also recovers each angle with `atan2` and checks it
   against the offset the game's Lua gives it. **Ask what your property is
   invariant under, and plant that.** Aquilo is the exception: its arm's trig
-  bytes ARE Python's own f32 sine and cosine, and they equal V8's after the
-  narrowing for those three angles, so the checker also compares them to 2e-7.
-  That is a fact about three angles, not a guarantee for every angle.
+  bytes ARE the script's own copy of the game's sin/cos polynomial (`game_poly`;
+  they were Python's libm sine and cosine until #531, which sit one ULP from the
+  game on about 5% of inputs), and they equal V8's, so the checker also compares
+  them to 2e-7.
 - **Check that a structural claim's DATA instantiates it.** Nauvis's check is
   "distinct scalars at distinct offsets", which was sound - and the committed
   request carried only two distinct values across its eight fields, five `1.0`
