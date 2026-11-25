@@ -9301,12 +9301,18 @@ fn reproduces_the_games_nauvis_rock_density_at_every_captured_position() {
     // Measured on the TypeScript side first. The snap is worth 10 of the 26 and
     // takes the residual down by four orders of magnitude.
     let (exact, worst) = score_nauvis(&positions, values, |x, y| fields.rock_density(x, y));
-    assert_eq!(exact, 17, "snapped exact f32 matches, worst {worst:e}");
-    assert!(worst < 9e-8, "snapped worst absolute error {worst:e}");
+    // #521 rounded `rock_noise` and `rock_density` to f32 per step, the `0.25`
+    // meeting the noise before the size term (the Lua adds left to right):
+    // 17 -> 26 of 26, worst error exactly 0, so the old `< 9e-8` bound is now
+    // an equality.
+    assert_eq!(exact, 26, "snapped exact f32 matches, worst {worst:e}");
+    assert_eq!(worst, 0.0, "snapped worst absolute error {worst:e}");
 
+    // The raw arm (off-grid positions unsnapped) was 7 before #521; the snap
+    // is still what separates it from 26.
     let (raw_exact, raw_worst) =
         score_nauvis_raw(&positions, values, |x, y| fields.rock_density(x, y));
-    assert_eq!(raw_exact, 7, "raw exact f32 matches, worst {raw_worst:e}");
+    assert_eq!(raw_exact, 16, "raw exact f32 matches, worst {raw_worst:e}");
     assert!(
         raw_worst > 1.5e-3,
         "the raw arm must stay far worse, or the snap is doing nothing: {raw_worst:e}"
