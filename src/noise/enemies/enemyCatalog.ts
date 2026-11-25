@@ -4,7 +4,6 @@ export const ENEMY_CONTROL_NAME = "enemy-base";
 export const ENEMY_SEED1 = 123;
 export const ENEMY_REGION_SIZE = 512;
 export const ENEMY_CANDIDATE_SPOT_COUNT = 100;
-export const ENEMY_SPACING = 45.254833995939045;
 export const ENEMY_BASEMENT = -1000;
 export const ENEMY_MAX_SPOT_BASEMENT_RADIUS = 128;
 export const ENEMY_PLACEMENT_CAP = 0.25;

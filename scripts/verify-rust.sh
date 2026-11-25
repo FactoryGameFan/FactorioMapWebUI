@@ -277,6 +277,7 @@ POISONED_TESTS=(
   # does - 42 becomes 43 at seed 123456 - but that is one position, so do not
   # read it as a strong gate. The field test above it is the real one.
   fixtures::reproduces_the_games_enemy_base_field_at_both_seeds
+  fixtures::reproduces_the_games_full_enemy_base_probability_at_the_derived_spacing
   fixtures::the_enemy_fixture_is_mostly_basement_so_the_probability_would_grade_nothing
 
   # Phase 5's second half (#225), the cliff stack. Three hooks, because three
@@ -372,6 +373,8 @@ POISONED_TESTS=(
   # `the_random_penalty_seed_word_matches_the_measured_formula`. See
   # `crates/fmw-noise/src/poison.rs`.
   fixtures::reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position
+  # The same chain on 2.1.23, at the corners where the cliffiness gate flips.
+  fixtures::reproduces_the_nauvis_cliff_offset_chain_and_gate_at_the_flip_corners
 
   # `amplitude_corrected_multioctave_noise`, ported in phase 6 because
   # `elevation_lakes` and `elevation_nauvis` both read it. Like the layer above,

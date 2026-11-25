@@ -35,9 +35,9 @@ use crate::spot_field::{spot_cone_max, ConeArithmetic, SpotGeometry};
 use crate::spot_selection::{select_spots, SelectedSpot, SpotSelectParams};
 
 use super::catalog::{
-    enemy_density, EnemyControls, ENEMY_BASEMENT, ENEMY_CANDIDATE_SPOT_COUNT,
+    enemy_density, enemy_spacing, EnemyControls, ENEMY_BASEMENT, ENEMY_CANDIDATE_SPOT_COUNT,
     ENEMY_MAX_SPOT_BASEMENT_RADIUS, ENEMY_PLACEMENT_CAP, ENEMY_REGION_SIZE, ENEMY_SEED1,
-    ENEMY_SPACING, STARTING_AREA_RADIUS,
+    STARTING_AREA_RADIUS,
 };
 
 /// Free variables of the enemy-base field.
@@ -67,6 +67,8 @@ pub struct EnemyBaseField {
     seed0: u32,
     controls: EnemyControls,
     starting_positions: Vec<Point>,
+    /// The spot-noise candidate spacing. [`enemy_spacing`] unless a test sets it.
+    spacing: f64,
     tables: BasisNoiseTables,
     region_cache: RefCell<BTreeMap<(i64, i64), Vec<SelectedSpot>>>,
 }
@@ -78,9 +80,19 @@ impl EnemyBaseField {
             seed0: params.seed0,
             controls: params.controls,
             starting_positions: params.starting_positions.clone(),
+            spacing: enemy_spacing(),
             tables: tables_from_seed(params.seed0, ENEMY_SEED1),
             region_cache: RefCell::new(BTreeMap::new()),
         }
+    }
+
+    /// The same field with another candidate spacing: the control for the tests
+    /// that grade the game's default, which reproduces the old 45.25.
+    #[cfg(test)]
+    pub(crate) fn with_spacing(mut self, spacing: f64) -> Self {
+        self.spacing = spacing;
+        self.region_cache = RefCell::new(BTreeMap::new());
+        self
     }
 
     /// `distance_from_nearest_point{points = starting_positions}`, uncapped.
@@ -114,7 +126,7 @@ impl EnemyBaseField {
             &SpotSelectParams {
                 region_size: ENEMY_REGION_SIZE,
                 candidate_spot_count: ENEMY_CANDIDATE_SPOT_COUNT,
-                spacing: ENEMY_SPACING,
+                spacing: self.spacing,
                 skip_span: 1,
                 skip_offset: 0,
                 // `false`, so `cone_scale` is always 1 and no spot is shrunk.

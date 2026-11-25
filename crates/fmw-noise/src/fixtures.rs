@@ -2680,8 +2680,9 @@ fn reproduces_the_native_multisample_shift_at_all_150_comparisons() {
     assert_eq!(compared, 150, "fixture size");
 }
 
-/// **The port implements the ONE-TILE channel only, and that limit is measured
-/// rather than asserted in a comment** (#83, open).
+/// **`multisample` itself implements the ONE-TILE channel only, and that limit
+/// is measured rather than asserted in a comment** (#83, closed: the caller
+/// passes the grid step as the offset).
 ///
 /// `oracle-multisample-grid` reads the same builtin through the CLIFF
 /// generator, whose grid is the 4-tile corner lattice, and a `dx` of 4 moves
@@ -2692,8 +2693,8 @@ fn reproduces_the_native_multisample_shift_at_all_150_comparisons() {
 ///
 /// So this test pins three things at once: that the fixture still shows the 4x
 /// scaling, that the port does NOT reproduce it, and that the null control
-/// holds. If a future change makes the port grid-aware, this test is the one
-/// that should be rewritten - not deleted.
+/// holds. If a future change makes the primitive itself grid-aware, this test
+/// is the one that should be rewritten - not deleted.
 #[test]
 fn the_multisample_port_implements_the_one_tile_channel_only() {
     let fixture = load_captured_at(
@@ -7775,13 +7776,17 @@ fn reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position() {
     assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
 
     // Two seeds, so a constant that happened to suit 123456 cannot pass.
-    // Every count below was measured on the TypeScript side against this same
-    // fixture with the same snap, and all eight agree exactly - so they are the
-    // distance BOTH ports sit from the game rather than a gap between them.
+    // Until 2026-11-25 the chain ran in f64 and these read 30/30/29/29 at seed
+    // 123456 and 36/30/31/31 at seed 777771 (the TypeScript sat at the same
+    // eight counts). Rounding every step to f32, as the game's point kernel and
+    // the Lua's f32 operations do, takes all eight to 38. Narrowing the
+    // coordinate products alone gets the raw columns to 38 but leaves
+    // hillsOffset at 30 and 32: the warp, the `normalize` and the ringbreak
+    // difference are f32 steps too. If any of these moves, read it.
     let expected: [(u32, usize, usize, usize, usize); 2] = [
         // (seed, rawX, rawY, hillsOffset, cliffRingbreak) exact f32 matches / 38
-        (123_456, 30, 30, 29, 29),
-        (777_771, 36, 30, 31, 31),
+        (123_456, 38, 38, 38, 38),
+        (777_771, 38, 38, 38, 38),
     ];
 
     for (case, &(seed, want_raw_x, want_raw_y, want_offset, want_ringbreak)) in
@@ -7828,6 +7833,119 @@ fn reproduces_the_nauvis_cliff_offset_chain_at_every_captured_position() {
             "seed {seed} cliffRingbreak exact, worst {worst_ringbreak:e}"
         );
     }
+}
+
+/// How many of the 169 corners the OLD f64 offset chain still matches, per
+/// column (rawX, rawY, hillsOffset, ringbreak). The control for the test below.
+const OLD_F64_CHAIN_EXACT: [usize; 4] = [16, 14, 109, 109];
+
+/// The Nauvis cliff-offset chain and the cliffiness gate, read from 2.1.23 at
+/// the cliff-lattice corners where the old f64 chain and the game's per-step
+/// f32 chain disagree on the gate (`scripts/probes/nauvis-cliff-offset-chain`).
+///
+/// Six cases: seeds 123456, 777771 and 1, at water frequency 1 and 3. Each lists
+/// its flip corners first. The 2.1.11 fixture above cannot show the gate moving,
+/// because at default controls only one corner in 8192 x 8192 tiles flips.
+#[test]
+fn reproduces_the_nauvis_cliff_offset_chain_and_gate_at_the_flip_corners() {
+    use crate::cliffs::fields::{CliffFieldParams, NauvisCliffFields};
+
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-nauvis-cliff-offset-gate.2.1.23.json",
+        "2.1.23",
+    );
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), 6, "a regen cannot empty the loop");
+
+    let (mut points, mut flip_corners) = (0usize, 0usize);
+    // The port: exact f32 matches per column, over every point.
+    let mut port = [0usize; 5];
+    // The control: the old f64 chain, scored the same way.
+    let mut old = [0usize; 4];
+    // The gate at the flip corners only.
+    let (mut port_gate_at_flips, mut old_gate_at_flips) = (0usize, 0usize);
+
+    for case in cases {
+        let seed = case.get("seed").as_f64() as u32;
+        let water = case.get("waterFrequency").as_f64();
+        let flips = case.get("flipCount").as_f64() as usize;
+        let positions = fixture_positions(case, "positions");
+        assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
+        let columns = ["rawX", "rawY", "hillsOffset", "ringbreak", "cliffiness"]
+            .map(|key| case.get(key).as_array());
+
+        let shared = NauvisShared::new(&NauvisSharedParams {
+            seed0: seed,
+            segmentation_multiplier: water,
+        });
+        let mut params = CliffFieldParams::defaults(seed);
+        params.segmentation_multiplier = water;
+        let fields = NauvisCliffFields::new(&params);
+
+        for (k, &(x, y)) in positions.iter().enumerate() {
+            let game: Vec<f64> = columns.iter().map(|c| c[k].as_f64()).collect();
+            let f32_eq = |got: f64, want: f64| f64::from(got as f32) == want;
+
+            let new_chain = [
+                shared.hills_offset_raw_x(x, y),
+                shared.hills_offset_raw_y(x, y),
+                shared.hills_offset(x, y),
+                shared.cliff_ringbreak(x, y),
+            ];
+            for (n, got) in new_chain.iter().enumerate() {
+                port[n] += usize::from(f32_eq(*got, game[n]));
+            }
+            let port_gate_ok = fields.cliffiness(x, y) == game[4];
+            port[4] += usize::from(port_gate_ok);
+
+            let chain = shared.f64_offset_chain(x, y);
+            let old_chain = [
+                chain.raw_x,
+                chain.raw_y,
+                chain.hills_offset,
+                chain.ringbreak,
+            ];
+            for (n, got) in old_chain.iter().enumerate() {
+                old[n] += usize::from(f32_eq(*got, game[n]));
+            }
+            let old_gate = if fields.main_cliffiness_with_ringbreak(x, y, chain.ringbreak)
+                >= fields.cliff_cutoff()
+            {
+                10.0
+            } else {
+                0.0
+            };
+
+            points += 1;
+            if k < flips {
+                flip_corners += 1;
+                port_gate_at_flips += usize::from(port_gate_ok);
+                old_gate_at_flips += usize::from(old_gate == game[4]);
+            }
+        }
+    }
+
+    assert_eq!(points, 169, "points graded");
+    assert_eq!(flip_corners, 19, "flip corners graded");
+
+    // The port reproduces the game everywhere: all four fields and the gate.
+    assert_eq!(port, [points; 5], "port exact matches per column");
+    assert_eq!(
+        port_gate_at_flips, flip_corners,
+        "the gate at the flip corners"
+    );
+
+    // The control. The old f64 chain misses every flip corner, so the fixture
+    // can fail while the hypothesis holds, and it misses raw offsets and the
+    // warped field across the water-frequency-3 cases.
+    assert_eq!(
+        old_gate_at_flips, 0,
+        "the old chain's gate at the flip corners"
+    );
+    assert_eq!(
+        old, OLD_F64_CHAIN_EXACT,
+        "old chain, exact matches per column"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -9614,6 +9732,92 @@ use crate::enemies::catalog::{
 };
 use crate::enemies::field::{EnemyBaseField, EnemyFieldParams};
 use crate::eval::math::min2;
+
+/// The FULL `enemy_base_probability` at the game's default candidate spacing,
+/// 16,384 positions per seed (`scripts/probes/enemy-spot-spacing`).
+///
+/// The 2.1.11 fixture below scores the same at spacing 45.25 and at 25.6, so it
+/// could not tell the two apart. This one can: the port reaches 16,384 of
+/// 16,384 at both seeds with the game's derived spacing, and the old 45.25
+/// reproduces the counts the port had before 2026-11-25.
+///
+/// The control has two halves, because each must be able to fail while the
+/// hypothesis holds. The old spacing misses 579 and 836 positions against the
+/// game's default. And it matches the game's OWN expression redefined with
+/// that 45.25 at every position, so the redefinition is faithful and spacing is
+/// the only difference between the two arms.
+#[test]
+fn reproduces_the_games_full_enemy_base_probability_at_the_derived_spacing() {
+    use crate::enemies::catalog::enemy_spacing;
+
+    // (seed, old spacing's exact matches against `full`), both of 16,384.
+    const OLD_SPACING_EXACT: [(u32, usize); 2] = [(123_456, 15_805), (777_771, 15_548)];
+    const OLD_SPACING: f64 = 45.254_833_995_939_045;
+
+    // What the spacing is, written out: pinned so a change to the formula in
+    // `enemy_spacing` is seen here and not only through the field.
+    assert_eq!(enemy_spacing(), 25.597_850_799_560_547);
+
+    let fixture = load_captured_at("test/fixtures/oracle-enemy-base-full.2.1.23.json", "2.1.23");
+    let grid = fixture.get("grid");
+    let (x0, y0) = (grid.get("x0").as_f64(), grid.get("y0").as_f64());
+    let (pitch, n) = (grid.get("pitch").as_f64(), grid.get("n").as_f64() as usize);
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), 2, "two seeds");
+
+    for (case, &(seed, old_exact)) in cases.iter().zip(OLD_SPACING_EXACT.iter()) {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let full: Vec<f64> = case
+            .get("full")
+            .as_array()
+            .iter()
+            .map(Json::as_f64)
+            .collect();
+        assert_eq!(full.len(), n * n, "a regen cannot empty the loop");
+        // The same expression with the spacing forced to 45.25: `full` everywhere
+        // except the sparse differences the fixture lists.
+        let mut forced = full.clone();
+        for pair in case.get("full45").as_array() {
+            let pair = pair.as_array();
+            forced[pair[0].as_f64() as usize] = pair[1].as_f64();
+        }
+        let differing = case.get("full45").as_array().len();
+        assert!(differing > 0, "the two arms must differ somewhere");
+
+        let at = |i: usize| (x0 + pitch * (i % n) as f64, y0 + pitch * (i / n) as f64);
+        let score = |field: &EnemyBaseField| {
+            let (mut vs_full, mut vs_forced) = (0usize, 0usize);
+            for i in 0..n * n {
+                let (x, y) = at(i);
+                let got = f64::from(field.field(x, y) as f32);
+                vs_full += usize::from(got == full[i]);
+                vs_forced += usize::from(got == forced[i]);
+            }
+            (vs_full, vs_forced)
+        };
+
+        let params = EnemyFieldParams::defaults(seed);
+        let (vs_full, _) = score(&EnemyBaseField::new(&params));
+        assert_eq!(vs_full, n * n, "seed {seed}: derived spacing vs the game");
+
+        let (old_vs_full, old_vs_forced) =
+            score(&EnemyBaseField::new(&params).with_spacing(OLD_SPACING));
+        assert_eq!(
+            old_vs_full, old_exact,
+            "seed {seed}: the old spacing against the game's default"
+        );
+        assert_eq!(
+            old_vs_full + differing,
+            n * n,
+            "seed {seed}: arms differ here only"
+        );
+        assert_eq!(
+            old_vs_forced,
+            n * n,
+            "seed {seed}: the old spacing against the game's expression forced to it"
+        );
+    }
+}
 
 #[test]
 fn reproduces_the_games_enemy_base_field_at_both_seeds() {

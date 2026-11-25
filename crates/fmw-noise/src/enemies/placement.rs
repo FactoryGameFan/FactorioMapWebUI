@@ -158,7 +158,9 @@ mod tests {
         // field is 96% basement on `oracle-enemy-base`. This window is chosen
         // to carry bases, and these two counts are what say so.
         assert!(lowered > 0, "the penalty must actually lower something");
-        assert_eq!(positive, 448, "positive probabilities in the graded window");
+        // 448 until the spot spacing became the game's derived default
+        // (2026-11-25); one more position is positive with it.
+        assert_eq!(positive, 449, "positive probabilities in the graded window");
     }
 
     /// The spawner box is one constant, unlike the rock overlay's argmax.

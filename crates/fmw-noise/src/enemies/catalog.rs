@@ -10,8 +10,32 @@ pub const ENEMY_REGION_SIZE: u64 = 512;
 /// `candidate_spot_count`.
 pub const ENEMY_CANDIDATE_SPOT_COUNT: usize = 100;
 
-/// `suggested_minimum_candidate_point_spacing`.
-pub const ENEMY_SPACING: f64 = 45.254_833_995_939_045;
+/// The candidate spacing `spot_noise` uses for the enemy-base field.
+///
+/// `enemy_base_probability` passes `candidate_point_count = 100` and no
+/// `suggested_minimum_candidate_point_spacing`, so the game derives the spacing
+/// from the count. `SpotNoise::compile` (0x307033d in 2.1.23, the same sequence
+/// in 2.0.77 and 2.1.25) does, in this order: `imul` the region size by itself
+/// as a u32, `div` by the count (an unsigned integer divide), `cvtsi2sd`,
+/// `sqrtsd`, `mulsd` by 0.5, then `cvtsd2ss` and a store to the f32 at
+/// `+0x60`. For this field that is `f32(0.5 * sqrt(u32(512 * 512 / 100)))`,
+/// which is `f32(0.5 * sqrt(2621))` = 25.597850799560547.
+///
+/// Until 2026-11-25 this was 45.254833995939045 (`32 * sqrt 2`), a number the
+/// notes had recorded as the game's default. The binary does the reverse: the
+/// count defaults to 256 and the spacing is derived from it. The 2.1.11 field
+/// fixture is blind to the difference (it scores the same at 45.25 and at
+/// 25.6); `oracle-enemy-base-full.2.1.23.json` is not.
+///
+/// A function, not a `const`, because `f64::sqrt` is not `const`.
+#[must_use]
+pub fn enemy_spacing() -> f64 {
+    // `skip_span` is 1 here, so the count is `candidate_spot_count` as is.
+    let region = ENEMY_REGION_SIZE as u32;
+    let count = ENEMY_CANDIDATE_SPOT_COUNT as u32;
+    let cells = region * region / count;
+    f64::from((0.5 * f64::from(cells).sqrt()) as f32)
+}
 
 /// The spot field's basement - what a position with no cone over it reads.
 ///

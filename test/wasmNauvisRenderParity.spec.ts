@@ -893,8 +893,13 @@ const ENEMY_WINDOWS: readonly Window[] = [
   },
 ];
 
-/** Measured on the TypeScript path before the port. */
-const ENEMY_PIXELS_PER_WINDOW = [150, 44, 116, 84, 208];
+/**
+ * Measured on the TypeScript path before the port, as [150, 44, 116, 84, 208].
+ * 2026-11-25: the spot spacing became the game's derived default (25.5978, not
+ * 32 * sqrt 2), which moved the third and fifth windows to 101 and 187. The
+ * other three did not move.
+ */
+const ENEMY_PIXELS_PER_WINDOW = [150, 44, 101, 84, 187];
 
 /**
  * `ENEMY_MAP_COLOR` in `src/noise/enemies/enemyCatalog.ts`.
