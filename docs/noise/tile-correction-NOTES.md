@@ -316,10 +316,17 @@ Addresses are from the 2.1.14 build (Steam, `pnpm refs:sync --check` in sync at
 capture time, 2026-08-14) and **will move on any update**. Re-derive them from
 the symbol table rather than reusing the numbers above.
 
-## The last differing pixel on Nauvis and Vulcanus
+## The last differing pixel on Nauvis and Vulcanus (history)
 
-Each planet still differs from the game's own preview PNG at exactly one
-pixel. This section records how close the tile scores are at those two tiles,
+**Historical: both planets differed from the game's own preview PNG at exactly
+one pixel when this was measured (2026-10-22). Both are at 0 now** - Nauvis
+since #523 and Vulcanus since #529, once every step was rounded to f32 and
+`expression_in_range` took its real form (#521). Fulgora's last 20 pixels went
+to 0 on 2026-11-25 with the single twelve-way tile argmax, which has no
+ocean-first gate. The two tiles below are kept as a record of how close the
+scores were; the table's "we draw" column is what the port drew THEN, not now.
+
+This section records how close the tile scores were at those two tiles,
 measured on our side only. `the_last_nauvis_pixel_is_a_known_argmax` and
 `the_last_vulcanus_pixel_is_a_known_argmax` in `crates/fmw-noise/src/fixtures.rs`
 freeze the numbers, and both are in `POISONED_TESTS`.

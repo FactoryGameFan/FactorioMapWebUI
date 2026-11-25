@@ -1,15 +1,19 @@
-//! Fulgora's tile catalog: the eight land probabilities and the argmax that
-//! picks between them and the ocean branch. Ported from
+//! Fulgora's tile catalog: the eight land probabilities and the ONE argmax that
+//! picks among them and the four oil-ocean probabilities. Ported from
 //! `src/noise/tiles/fulgoraCatalog.ts`.
 //!
-//! Phase 3 landed the ocean half, because the land mask is all the island
-//! finder needs. This is the rest (#224).
+//! The game has no ocean-first gate. `generateBasicTiles` runs a single argmax
+//! over every candidate tile, ocean included, so a position where an ocean score
+//! is positive but a land score is higher is land (reverse-engineered from 2.1.23,
+//! 2026-11-25). Phase 3 landed the ocean formulas, because the land mask is all
+//! the island finder needs; this is the rest (#224).
 
+use crate::eval::math::f32r;
 use crate::expressions::fulgora_cells::CellFields;
 use crate::expressions::fulgora_elevation::ElevationFields;
 use crate::expressions::fulgora_roads::RoadFields;
 use crate::expressions::fulgora_ruins::RuinFields;
-use crate::tiles::fulgora_ocean::{ocean_tile, Ocean};
+use crate::tiles::fulgora_ocean::ocean_probabilities;
 
 /// Every tile Fulgora can place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +56,11 @@ pub const LAND_ORDER: [FulgoraTile; 8] = [
 /// argmax, so **the argmax alone is not a check on it**. That is why the
 /// probabilities are returned rather than only the winner.
 ///
+/// **Every step is f32**, left to right as the Lua writes it, constants
+/// included (`0.9` and `0.8` are narrowed before they meet a field). The game
+/// compares these against the f32 ocean scores in one argmax, so they have to
+/// be rounded the same way.
+///
 /// Keep this the only place the formulas are written. A copy in a test would be
 /// checking the copy.
 #[must_use]
@@ -62,19 +71,24 @@ pub fn land_probabilities(
     ruins: &RuinFields,
 ) -> [f64; 8] {
     // `fulgoran-dust` reads `max(0, natural, 2 * mesa * pyramids)` - a THREE
-    // argument max, not `max(0, natural)` times something.
-    let dust = elevation.scrap_medium
-        + crate::eval::math::max(&[0.0, elevation.natural, 2.0 * cells.mesa * cells.pyramids])
-            * 2.0
-        - 0.9
-        + elevation.rock
-        + roads.road_dust * cells.sprawl;
+    // argument max, not `max(0, natural)` times something. The whole sum is
+    // `((((scrap_medium + max(..) * 2) - 0.9) + rock) + road_dust * sprawl)`.
+    let mesa_pyramids = f32r(f32r(2.0 * cells.mesa) * cells.pyramids);
+    let peak = crate::eval::math::max(&[0.0, elevation.natural, mesa_pyramids]);
+    let dust = f32r(
+        f32r(f32r(f32r(elevation.scrap_medium + f32r(peak * 2.0)) - f32r(0.9)) + elevation.rock)
+            + f32r(roads.road_dust * cells.sprawl),
+    );
+
+    // `0.8 + rock * 2 - max(0, mix_oil) * 6`.
+    let rock =
+        f32r(f32r(f32r(0.8) + f32r(elevation.rock * 2.0)) - f32r(elevation.mix_oil.max(0.0) * 6.0));
 
     [
         dust,
-        1.0 + elevation.dunes,
-        1.0 - elevation.dunes,
-        0.8 + elevation.rock * 2.0 - elevation.mix_oil.max(0.0) * 6.0,
+        f32r(1.0 + elevation.dunes),
+        f32r(1.0 - elevation.dunes),
+        rock,
         ruins.tile_ruin_paving,
         ruins.tile_ruin_walls,
         ruins.tile_ruin_conduit,
@@ -82,19 +96,37 @@ pub fn land_probabilities(
     ]
 }
 
-/// Resolve a position to a tile: ocean first, then the eight-way land argmax.
+/// Resolve a position to a tile: ONE twelve-way argmax over the four ocean
+/// scores and the eight land scores, as the game's `generateBasicTiles` does.
+///
+/// **There is no ocean-first gate.** An ocean tile wins only when its score is
+/// the largest of the twelve, so a small positive ocean score loses to a larger
+/// land one. At seed 123456 that is the 20 pixels where the old gate painted
+/// shallow ocean over what the game paints as rock; the old rule cost nothing
+/// else at the fixture positions (5,057 of 5,057 agree on land versus ocean).
+///
+/// **Candidate order, and what is NOT settled.** The array is the four ocean
+/// scores (`oil-ocean-shallow`, `-shallow-2`, `-deep`, `-deep-2`) and then
+/// [`LAND_ORDER`], and the first maximum wins, so this order decides only EXACT
+/// f32 ties. The game sorts its candidates by an `autoplace`-side string
+/// comparison that has not been identified, so this order is the one the port
+/// already used, not a measured one. No exact tie between an ocean score and a
+/// land score has been seen in any sweep.
 ///
 /// **A NaN loses rather than poisoning the argmax.** `v > best` is false for a
-/// NaN, so a NaN never becomes the best - matching the engine. The loop is
-/// hand-written rather than a `max` fold because it needs the winning INDEX,
-/// not the winning value.
+/// NaN, so a NaN never becomes the best - matching the engine, which starts the
+/// best at `-inf` and compares with a strict `>`. The loop is hand-written
+/// rather than a `max` fold because it needs the winning INDEX, not the winning
+/// value. The `-inf` scores of a position above the water level lose the same
+/// way.
 ///
-/// The all-NaN case would fall through to `LAND_ORDER[0]`, and it has not been
-/// observed: none of the eight formulas divides, and none multiplies a mask by
-/// `-inf` the way `water_base` does, so none can produce a NaN from `0 * -inf`
-/// the way the ocean branch's `deep`/`deep2` can. Measured at zero NaNs across
-/// all 5,057 `oracle-fulgora-tiles` positions and a dense 169,303-point sweep
-/// of `[-8000, 8000]^2`.
+/// **If all twelve are NaN or `-inf` the fallback is `LAND_ORDER[0]`.** The game
+/// falls back to `getDefaultCandidateTileID`, which is a fixed tile it chose
+/// elsewhere, so this is a stand-in for a case that has not been observed: land
+/// always scores at least 1 on one of `dunes`/`sand` unless `dunes` is NaN, and
+/// none of the eight formulas divides or multiplies a mask by `-inf`. Measured
+/// at zero all-NaN positions across the 5,057 `oracle-fulgora-tiles` positions
+/// and a dense 169,303-point sweep of `[-8000, 8000]^2`.
 #[must_use]
 pub fn resolve_tile(
     cells: &CellFields,
@@ -102,18 +134,45 @@ pub fn resolve_tile(
     roads: &RoadFields,
     ruins: &RuinFields,
 ) -> FulgoraTile {
-    match ocean_tile(elevation) {
-        Some(Ocean::Deep) => return FulgoraTile::Deep,
-        Some(Ocean::Shallow) => return FulgoraTile::Shallow,
-        None => {}
+    let ocean = ocean_probabilities(elevation);
+    let land = land_probabilities(cells, elevation, roads, ruins);
+
+    let mut best_index: Option<usize> = None;
+    let mut best_value = f32::NEG_INFINITY;
+    for (i, v) in ocean.iter().chain(land.iter()).enumerate() {
+        // Both sides are f32 in the game; every score above is already rounded
+        // to f32, so this narrowing is exact.
+        let v = *v as f32;
+        if v > best_value {
+            best_value = v;
+            best_index = Some(i);
+        }
     }
-    land_argmax(&land_probabilities(cells, elevation, roads, ruins))
+    // `None` is the all-NaN-or-`-inf` fallback; the poison hook still rotates
+    // it so the control sees the choice either way.
+    let winner = crate::poison::index_result(best_index.unwrap_or(OCEAN_CANDIDATES), CANDIDATES);
+    candidate_tile(winner)
 }
 
-/// The eight-way argmax on its own, without the ocean branch in front of it.
+/// Four ocean scores in front of the eight land ones.
+const OCEAN_CANDIDATES: usize = 4;
+const CANDIDATES: usize = OCEAN_CANDIDATES + LAND_ORDER.len();
+
+/// Index into `[shallow, shallow-2, deep, deep-2, LAND_ORDER..]` to its tile.
+/// The `-2` variants share a map colour with their base tile and this port does
+/// not model the split.
+fn candidate_tile(index: usize) -> FulgoraTile {
+    match index {
+        0 | 1 => FulgoraTile::Shallow,
+        2 | 3 => FulgoraTile::Deep,
+        i => LAND_ORDER[i - OCEAN_CANDIDATES],
+    }
+}
+
+/// The eight-way land argmax on its own, without the ocean scores beside it.
 ///
-/// Split out so it can be tested - and POISONED - independently. Under the
-/// `poison` feature the ocean test flips every position's answer, so a test that
+/// Split out so it can be tested - and POISONED - independently of the
+/// twelve-way argmax in [`resolve_tile`], which carries its own hook. A test that
 /// went through [`resolve_tile`] would be red whether or not this had a control
 /// of its own.
 #[must_use]
@@ -220,22 +279,73 @@ mod tests {
         );
     }
 
-    /// The ocean branch wins before the land argmax is even evaluated - a land
-    /// probability cannot outbid a placed ocean tile.
+    /// A POSITIVE ocean score does not by itself make a position ocean: the game
+    /// runs one argmax over all twelve tiles, so a larger land score wins. This
+    /// is the test that pins the joint argmax - the old ocean-first rule answered
+    /// shallow ocean here (the 20 pixels of #521's last Fulgora residual).
     #[test]
-    fn ocean_short_circuits_the_land_argmax() {
+    fn a_positive_ocean_score_loses_to_a_larger_land_score() {
+        use crate::tiles::fulgora_ocean::{ocean_probabilities, ocean_tile, Ocean};
+        // Inside the oil mask, just under the coastline, with `s` a hair below 0:
+        // the shallow score is small and positive (about 2.5).
         let elevation = ElevationFields {
             oil_mask: 1.0,
-            elevation: 0.0,
-            dunes: 1000.0,
+            elevation: 79.5,
+            scrap_medium: -1e-4,
+            dunes: 0.0,
+            // Rock scores `0.8 + 5 * 2 = 10.8`, well above the ocean.
+            rock: 5.0,
             ..ElevationFields::default()
         };
-        let tile = resolve_tile(
+        let ocean = ocean_probabilities(&elevation);
+        let best_ocean = ocean.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let land = land_probabilities(
             &CellFields::default(),
             &elevation,
             &RoadFields::default(),
             &RuinFields::default(),
         );
-        assert!(matches!(tile, FulgoraTile::Deep | FulgoraTile::Shallow));
+        assert!(best_ocean > 0.0, "the control needs a positive ocean score");
+        assert!(land[3] > best_ocean, "and a land score that beats it");
+        // The control that can fail: the ocean-only test answers `Some`, which
+        // is what the old ocean-first resolver would have returned.
+        assert_eq!(ocean_tile(&elevation), Some(Ocean::Shallow));
+        assert_eq!(
+            resolve_tile(
+                &CellFields::default(),
+                &elevation,
+                &RoadFields::default(),
+                &RuinFields::default()
+            ),
+            FulgoraTile::FulgoranRock
+        );
+    }
+
+    /// And an ocean score that IS the largest wins, shallow or deep.
+    #[test]
+    fn an_ocean_score_that_beats_every_land_score_wins() {
+        let resolve = |elevation: &ElevationFields| {
+            resolve_tile(
+                &CellFields::default(),
+                elevation,
+                &RoadFields::default(),
+                &RuinFields::default(),
+            )
+        };
+        // `s = -1`: shallow is `50 * 500 * 1 = 25,000`, land is below 2.
+        let shallow = ElevationFields {
+            oil_mask: 1.0,
+            elevation: 79.5,
+            scrap_medium: -1.0,
+            ..ElevationFields::default()
+        };
+        assert_eq!(resolve(&shallow), FulgoraTile::Shallow);
+        // Deep water: `100 * 2000 = 200,000` at elevation 0, with `s = 0`.
+        let deep = ElevationFields {
+            oil_mask: 1.0,
+            elevation: 0.0,
+            ..ElevationFields::default()
+        };
+        assert_eq!(resolve(&deep), FulgoraTile::Deep);
     }
 }

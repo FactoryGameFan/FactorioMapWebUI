@@ -92,8 +92,9 @@ export interface ElevationRenderRequest {
    */
   /**
    * `"landmask"` is the island finder's view and nothing else's: Fulgora land
-   * versus ocean, skipping the eight-way land argmax whose answer the finder
-   * discards. It is deliberately absent from `ElevationPreviewPanel`'s own view
+   * versus ocean, collapsed from the same single twelve-way tile argmax the
+   * terrain view uses (no ocean-first gate, as in the game), so the two agree
+   * pixel for pixel and only the palette differs. It is deliberately absent from `ElevationPreviewPanel`'s own view
    * union, so no dev-mode toggle can select it. On any planet without a port it
    * falls back to that planet's terrain, like every other view here - see
    * `servedView`, which makes that fall-back explicit rather than incidental.

@@ -61,7 +61,6 @@ use fmw_noise::rocks::nauvis_placement::NauvisRockPlacement;
 use fmw_noise::rocks::vulcanus_field::VulcanusRockFields;
 use fmw_noise::rocks::vulcanus_placement::VulcanusRockPlacement;
 use fmw_noise::tiles::fulgora_catalog::FulgoraTile;
-use fmw_noise::tiles::fulgora_ocean::{ocean_tile, Ocean};
 use fmw_noise::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog};
 use fmw_noise::tiles::nauvis_resolve::nauvis_tile;
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
@@ -311,11 +310,16 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
 
 /// Sweep the window and paint one colour per pixel.
 ///
-/// The land mask and the terrain view differ only in the palette: both run the
-/// same chain, because deciding "is this ocean" IS the elevation chain. The
-/// land mask skips the eight-way land argmax, which is measured at 15.7% of a
-/// tile pixel at 8 tiles/px and 13.8% at 2 - real, but far from the "cheap
-/// early-out" it looks like.
+/// The land mask and the terrain view differ only in the palette: both resolve
+/// the same single twelve-way tile argmax, because the game has no ocean-first
+/// gate - an ocean tile wins only when its score beats every land score, so
+/// "is this ocean" cannot be answered from the elevation chain alone. The land
+/// mask used to skip the eight land formulas, and the old comment put that at
+/// 15.7% of a tile pixel at 8 tiles/px and 13.8% at 2. Re-measured on 2026-11-25
+/// against 12 island windows, interleaved, median of 15: the landmask view costs
+/// 0.998x to 1.039x at 8 tiles/px and 1.005x to 1.017x at 2 after the change, in
+/// the noise, because `eval_at` already evaluates every field for both views and
+/// only the eight-formula argmax itself is added.
 fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
     let ctx = FulgoraCtx {
         seed0: req.seed0,
@@ -379,10 +383,12 @@ fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
                         tile_color(fields.tile())
                     }
                 }
-                _ => match ocean_tile(&fields.elevation) {
-                    None => LAND,
-                    Some(Ocean::Shallow) => SHALLOW,
-                    Some(Ocean::Deep) => DEEP,
+                // The land mask follows the game's single twelve-way tile
+                // argmax, so it agrees with the terrain view pixel for pixel.
+                _ => match fields.tile() {
+                    FulgoraTile::Shallow => SHALLOW,
+                    FulgoraTile::Deep => DEEP,
+                    _ => LAND,
                 },
             };
             out[offset] = color[0];

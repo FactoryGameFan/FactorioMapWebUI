@@ -550,6 +550,13 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     //           on the raw coordinates (rock, dunes, scrap, the ruins fields
     //           and the shared wobble); the warped ones stay points, as in the
     //           game. frankh/factorio-mapgen's grid path predicted exactly 2.
+    //        0  on 2026-11-25: ONE twelve-way tile argmax over the four ocean and
+    //           eight land scores, as the game's `generateBasicTiles` runs it.
+    //           The port had an ocean-first gate (a positive ocean score won
+    //           outright), which painted shallow ocean over the 20 pixels where
+    //           rock scores higher. All 20 were that pair, `[74,42,43]` against
+    //           `[131,85,66]`; `land_probabilities` also rounds every step to f32
+    //           now, as the game compares f32 registers.
     //
     // So the lesson #273 recorded still stands - bit-exactness on named fields
     // is not the same thing as a better image - but it is not a rule that this
@@ -568,7 +575,7 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
       },
       () => {
         expect(entityPx, "entities in the reference - was it captured without the mod?").toBe(0);
-        expect(differing).toBe(20);
+        expect(differing).toBe(0);
       },
     );
   }, 300000);
