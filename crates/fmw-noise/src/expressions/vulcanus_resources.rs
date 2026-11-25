@@ -819,10 +819,11 @@ mod tests {
         );
     }
 
-    // Re-frozen for #521: the region arithmetic now rounds every step to f32, so
-    // every bit pattern moved on purpose. Before it the value was
-    // `0x41c3_2b2d_06e8_89ed`, frozen before the spot query was shared.
-    const FROZEN_FOLD: u64 = 0x1ace_b06b_36c7_4b34;
+    // Re-frozen for #521: the region arithmetic, and the helper, spawn and
+    // biome layers it reads, now round every step to f32, so every bit pattern
+    // moved on purpose. Before it the value was `0x41c3_2b2d_06e8_89ed`, frozen
+    // before the spot query was shared.
+    const FROZEN_FOLD: u64 = 0x1c20_7347_5e99_2d98;
 
     fn layer_at(seed0: u32) -> (EvalCtx, VulcanusHelpers) {
         let ctx = EvalCtx::new(seed0);
