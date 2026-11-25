@@ -1468,11 +1468,15 @@ map seed makes the Fulgora terrain comparison collapse from 22 differing pixels
 (0.002%; it was 3% before the terrain-only re-capture, when the count was mostly
 entities) to over 40%, and that is asserted rather than described.
 
-**The composite's paint ORDER is asserted, not described.** On Vulcanus:
-resources, then rocks, then cliffs - so a cliff or a rock crossing an ore patch
-reads as the thing that is in the way. Reordering the three passes changes only
-208 of 16,384 pixels in the window that grades it, which is invisible to a
-whole-image bound, and it is frozen exactly.
+**The composite's paint ORDER is asserted, not described.** Cliffs paint FIRST
+and everything else over them, which is the game's own preview order
+(`MapPreviewGenerator::Worker::computeEntities` draws the cliff list, then every
+other autoplaced entity on top; Factorio 2.1.23). On Vulcanus that is cliffs,
+resources, rocks. It was resources, rocks, cliffs until 2026-11-25, the old
+TypeScript composite's order, which put a cliff over an ore patch where the game
+puts the ore over the cliff. Reordering the passes changes only the pixels where
+two of them land, which is invisible to a whole-image bound, and the counts are
+frozen exactly.
 
 ### Broken rustdoc links are gated, and the PRIVATE view is the one that sees them
 

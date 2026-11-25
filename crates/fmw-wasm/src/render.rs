@@ -107,11 +107,12 @@ pub const VIEW_RESOURCES: u32 = 5;
 
 /// Terrain with every overlay this planet has, in the renderer's own order.
 ///
-/// **The order is resources, then rocks, then cliffs**, which is the
-/// TypeScript's and is not arbitrary: resources paint first so that a cliff or
-/// a rock crossing an ore patch still reads as the thing that is in the way,
-/// and cliffs last matches the Nauvis composite, where the cliff pass is
-/// final.
+/// **Cliffs paint first and every other overlay over them**, which is the
+/// game's own preview order (`MapPreviewGenerator::Worker::computeEntities`
+/// draws the cliff list, then every other autoplaced entity on top). On Vulcanus
+/// that is cliffs, resources, rocks; on Nauvis cliffs, trees, resources, rocks,
+/// enemies. Both used to paint cliffs LAST, which was the old TypeScript
+/// composite's order and not the game's.
 pub const VIEW_ALL: u32 = 6;
 
 /// Terrain with the Nauvis tree overlay blended over it.
@@ -519,17 +520,32 @@ fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
         }
     }
 
-    // Resources first, then rocks, then cliffs - the TypeScript composite's own
-    // order. Resources paint first so that a cliff or a rock crossing an ore
-    // patch still reads as the thing that is in the way.
+    // Cliffs FIRST, then resources, then rocks - the game's own preview order.
+    // `MapPreviewGenerator::Worker::computeEntities` draws the cliff list in one
+    // loop (0x20ab1c0-0x20ab251), then every other autoplaced entity on top of
+    // it (Factorio 2.1.23, `pipeline/REVIEW.md` finding 1). The composite used to
+    // paint cliffs LAST, which was the TypeScript composite's old order and not
+    // the game's: it drew a cliff over an ore patch, where the game draws the
+    // ore over the cliff.
+    //
+    // **Graded by reading the code, not by a pixel count.** No committed preview
+    // PNG shows entities (all four are terrain-only, #400), so nothing in the
+    // gate moves on this change.
+    //
+    // This is a DRAWING order, so it has no real-save counterpart to keep behind
+    // an option: a save has no composite. (The cliffs themselves still model a
+    // real surface's ore removal - #416 - which the preview does not run; that is
+    // a different difference and is left alone.) Inside the entity list the
+    // game's order is queue order, earliest on top; this port keeps its own fixed
+    // layer order there.
+    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
+        paint_vulcanus_cliffs(req, p, &ctx, &stack, out);
+    }
     if matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
         paint_vulcanus_resources(req, p, &ctx, &stack, out);
     }
     if matches!(req.view, VIEW_ROCKS | VIEW_ALL) {
         paint_vulcanus_rocks(req, p, &stack, out);
-    }
-    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
-        paint_vulcanus_cliffs(req, p, &ctx, &stack, out);
     }
 }
 
@@ -859,17 +875,34 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
         }
     }
 
-    // The overlay passes, in the TypeScript's own order - and for `all` that
-    // ORDER IS THE OUTPUT, not a detail. Trees first, under everything: a
-    // forest reads as cleared rather than as an obstacle. Then resources. Then
-    // the three obstructions over the top, so a rock, a spawner or a cliff
-    // crossing an ore patch reads as the thing that is in the way.
+    // The overlay passes - and for `all` that ORDER IS THE OUTPUT, not a detail.
     //
-    // **These five `if`s were in a different order until the composite landed**
+    // **Cliffs first, then everything else on top of them**, which is the game's
+    // preview order: `computeEntities` draws the cliff list in one loop
+    // (0x20ab1c0-0x20ab251) and then every other autoplaced entity over it
+    // (Factorio 2.1.23, `pipeline/REVIEW.md` finding 1). Cliffs used to paint
+    // LAST here - the TypeScript composite's own order, not the game's - so a
+    // cliff covered the ore, rock or spawner mark it should sit under.
+    //
+    // **Graded by reading the code, not by a pixel count.** No committed preview
+    // PNG shows entities (all four are terrain-only, #400), so nothing in the
+    // gate moves on this change.
+    //
+    // It is a DRAWING order, so it has no real-save counterpart to keep behind
+    // an option: a save has no composite. Inside the entity list the game's
+    // order is queue order, earliest on top; this port keeps its own fixed layer
+    // order for the rest: trees first, under everything (a forest reads as
+    // cleared rather than as an obstacle), then resources, then the two
+    // obstructions, rocks and spawners, over the top.
+    //
+    // **These `if`s were in a different order until the composite landed**
     // - resources sat after rocks and enemies - and nothing could tell, because
     // a single-overlay view triggers exactly one of them. `all` is the first
     // request that runs more than one, so it is the first thing that grades the
     // order at all. `paints resources under the obstructions` freezes it.
+    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
+        paint_nauvis_cliffs(req, p, out);
+    }
     if matches!(req.view, VIEW_TREES | VIEW_ALL) {
         paint_nauvis_trees(req, &ctx, out);
     }
@@ -881,9 +914,6 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     }
     if matches!(req.view, VIEW_ENEMIES | VIEW_ALL) {
         paint_nauvis_enemies(req, p, &stack, &catalog, &ctx, out);
-    }
-    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
-        paint_nauvis_cliffs(req, p, out);
     }
 }
 

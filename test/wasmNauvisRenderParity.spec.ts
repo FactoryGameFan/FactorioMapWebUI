@@ -1515,20 +1515,34 @@ describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes
     expect(counts).toEqual(ALL_PIXELS_PER_WINDOW);
   }, 300000);
 
-  it("paints resources under the obstructions, and trees under everything", async () => {
+  it("paints cliffs first, then trees, resources and the other obstructions over them", async () => {
     // The paint ORDER, asserted rather than described.
     //
-    // Trees, then resources, then rocks, enemies and cliffs over the top - so
-    // an obstruction crossing an ore patch reads as the thing that is in the
-    // way, and a forest reads as cleared rather than as an obstacle. Reordering
-    // the passes changes only the pixels where two of them land, which is
-    // invisible to a whole-image count and is exactly what this counts.
+    // Cliffs first, then trees, then resources, then rocks and enemies over the
+    // top. The cliffs-first half is the game's own preview order
+    // (`computeEntities` draws the cliff list, then every other autoplaced
+    // entity on top; Factorio 2.1.23); until 2026-11-25 this composite painted
+    // cliffs LAST, so a cliff covered the ore, rock or spawner it crossed. The
+    // rest is this port's own fixed layer order: a forest reads as cleared
+    // rather than as an obstacle, and a rock or a spawner crossing an ore patch
+    // reads as the thing that is in the way. Reordering the passes changes only
+    // the pixels where two of them land, which is invisible to a whole-image
+    // count and is exactly what this counts.
+    //
+    // **Graded by reading the game's code, not by a pixel count against the
+    // game**: no committed preview PNG shows entities (all four are
+    // terrain-only), so the order is pinned here as frozen overlap counts.
     //
     // **This window is the only one of the four where all THREE obstruction
     // types cover ore.** The near-spawn one has no enemies and no cliffs at
-    // all, so its `byEnemy` and `byCliff` would both be 0 and two thirds of the
-    // assertion would grade nothing. Painting resources LAST would take all
-    // four numbers to zero.
+    // all, so most of the counts would grade nothing. Before the reorder this
+    // read ore 69, covered 30 (1 by a rock, 1 by an enemy, 28 by a cliff).
+    // The same 28 pixels are where a cliff and an ore mark land together, and
+    // now the ore wins 22 of them. The other 6 sit under an enemy mark too, and
+    // the enemy wins those: ore covered by enemies is 7 now, and was 1. Rocks
+    // cover 24 cliff pixels and enemies 86, of 2,584. Painting cliffs LAST puts
+    // `oreCoveredByCliff` back at 28 and zeroes the three `cliffCoveredBy`
+    // counts.
     const e = await engine();
     const w = ALL_WINDOWS[2];
     const all = new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer);
@@ -1536,29 +1550,56 @@ describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes
     const res = new Uint8ClampedArray(
       new Uint8ClampedArray(runRenderRequest({ ...request(w), view: "resources" }, e).buffer),
     );
+    const cliffsView = new Uint8ClampedArray(
+      runRenderRequest({ ...request(w), view: "cliffs" }, e).buffer,
+    );
     const at = (px: Uint8ClampedArray, i: number, c: readonly number[]): boolean =>
       px[i] === c[0] && px[i + 1] === c[1] && px[i + 2] === c[2];
     let ore = 0;
-    let covered = 0;
-    let byRock = 0;
-    let byEnemy = 0;
-    let byCliff = 0;
+    let oreCoveredByRock = 0;
+    let oreCoveredByEnemy = 0;
+    let oreCoveredByCliff = 0;
+    let cliffs = 0;
+    let cliffCoveredByOre = 0;
+    let cliffCoveredByRock = 0;
+    let cliffCoveredByEnemy = 0;
     for (let i = 0; i < all.length; i += 4) {
       const wasOre = ORE_RGB.some((c) => at(res, i, c)) && !ORE_RGB.some((c) => at(terrain, i, c));
-      if (!wasOre) continue;
-      ore++;
-      if (ORE_RGB.some((c) => at(all, i, c))) continue;
-      covered++;
-      if (at(all, i, ROCK_RGB)) byRock++;
-      else if (at(all, i, ENEMY_OVERLAY_RGB)) byEnemy++;
-      else if (at(all, i, CLIFF_RGB)) byCliff++;
+      if (wasOre) {
+        ore++;
+        if (!ORE_RGB.some((c) => at(all, i, c))) {
+          if (at(all, i, ROCK_RGB)) oreCoveredByRock++;
+          else if (at(all, i, ENEMY_OVERLAY_RGB)) oreCoveredByEnemy++;
+          else if (at(all, i, CLIFF_RGB)) oreCoveredByCliff++;
+        }
+      }
+      if (at(cliffsView, i, CLIFF_RGB) && !at(terrain, i, CLIFF_RGB)) {
+        cliffs++;
+        if (!at(all, i, CLIFF_RGB)) {
+          if (ORE_RGB.some((c) => at(all, i, c))) cliffCoveredByOre++;
+          else if (at(all, i, ROCK_RGB)) cliffCoveredByRock++;
+          else if (at(all, i, ENEMY_OVERLAY_RGB)) cliffCoveredByEnemy++;
+        }
+      }
     }
-    expect({ ore, covered, byRock, byEnemy, byCliff }).toEqual({
+    expect({
+      ore,
+      oreCoveredByRock,
+      oreCoveredByEnemy,
+      oreCoveredByCliff,
+      cliffs,
+      cliffCoveredByOre,
+      cliffCoveredByRock,
+      cliffCoveredByEnemy,
+    }).toEqual({
       ore: 69,
-      covered: 30,
-      byRock: 1,
-      byEnemy: 1,
-      byCliff: 28,
+      oreCoveredByRock: 1,
+      oreCoveredByEnemy: 7,
+      oreCoveredByCliff: 0,
+      cliffs: 2584,
+      cliffCoveredByOre: 22,
+      cliffCoveredByRock: 24,
+      cliffCoveredByEnemy: 86,
     });
   }, 300000);
 
