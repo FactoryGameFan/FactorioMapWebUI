@@ -277,6 +277,7 @@ POISONED_TESTS=(
   # does - 42 becomes 43 at seed 123456 - but that is one position, so do not
   # read it as a strong gate. The field test above it is the real one.
   fixtures::reproduces_the_games_enemy_base_field_at_both_seeds
+  fixtures::reproduces_the_games_full_enemy_base_probability_at_the_derived_spacing
   fixtures::the_enemy_fixture_is_mostly_basement_so_the_probability_would_grade_nothing
 
   # Phase 5's second half (#225), the cliff stack. Three hooks, because three

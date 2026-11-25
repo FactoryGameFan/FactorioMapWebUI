@@ -54,9 +54,22 @@ off a heightmap.
   out one-per-region only for origin -512 (with origin 0, some indices appear
   twice and others none). A window of `[0, region_size)` therefore straddles
   **four** regions - which is why it shows two spots when `candidate_spot_count = 1`.
-- **Default candidate point count = `(region_size / spacing)^2`.** The game's own
-  default spacing is `45.254833995939045` = `32 * sqrt(2)`, and with
-  `region_size = 1024` that is `(1024 / (32*sqrt(2)))^2` = **exactly 512**.
+- **The spacing is derived from the count, not the other way round.** Corrected
+  2026-11-25 from the 2.1.23 binary. An earlier version of this note said the
+  game's default spacing is `45.254833995939045` (`32 * sqrt(2)`) and the count
+  follows from it. `SpotNoise::compile` (0x307033d; the same instruction
+  sequence is in 2.0.77 and 2.1.25) does the reverse. The count is
+  `candidate_point_count` if the expression gives one, else
+  `candidate_spot_count * skip_span`, where `candidate_spot_count` defaults to
+  256. The spacing, unless the
+  expression gives `suggested_minimum_candidate_point_spacing`, is
+  `f32(0.5 * sqrt(u32(region_size * region_size) / count))`, with an integer
+  divide. For `region_size = 1024` and the default count of 256 that is exactly
+  32. For the enemy-base field (`region_size = 512`, count 100) it is
+  `f32(0.5 * sqrt(2621))` = `25.597850799560547`. The `45.25` number was never
+  the game's. On the full `enemy_base_probability` it misses the game at 579 and
+  836 of 16,384 positions (seeds 123456 and 777771); the derived spacing hits
+  all of them (`oracle-enemy-base-full.2.1.23.json`).
 - **Candidate points are spaced, not uniform random.** Min nearest-neighbour
   distance 17.03 over 354 points in a 1024^2 region; uniform-random points would
   give ~1.35. Mean NN 33.4 against the 45.25 spacing parameter. Consistent with

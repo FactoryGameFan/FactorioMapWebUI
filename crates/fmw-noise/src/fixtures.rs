@@ -9733,6 +9733,92 @@ use crate::enemies::catalog::{
 use crate::enemies::field::{EnemyBaseField, EnemyFieldParams};
 use crate::eval::math::min2;
 
+/// The FULL `enemy_base_probability` at the game's default candidate spacing,
+/// 16,384 positions per seed (`scripts/probes/enemy-spot-spacing`).
+///
+/// The 2.1.11 fixture below scores the same at spacing 45.25 and at 25.6, so it
+/// could not tell the two apart. This one can: the port reaches 16,384 of
+/// 16,384 at both seeds with the game's derived spacing, and the old 45.25
+/// reproduces the counts the port had before 2026-11-25.
+///
+/// The control has two halves, because each must be able to fail while the
+/// hypothesis holds. The old spacing misses 579 and 836 positions against the
+/// game's default. And it matches the game's OWN expression redefined with
+/// that 45.25 at every position, so the redefinition is faithful and spacing is
+/// the only difference between the two arms.
+#[test]
+fn reproduces_the_games_full_enemy_base_probability_at_the_derived_spacing() {
+    use crate::enemies::catalog::enemy_spacing;
+
+    // (seed, old spacing's exact matches against `full`), both of 16,384.
+    const OLD_SPACING_EXACT: [(u32, usize); 2] = [(123_456, 15_805), (777_771, 15_548)];
+    const OLD_SPACING: f64 = 45.254_833_995_939_045;
+
+    // What the spacing is, written out: pinned so a change to the formula in
+    // `enemy_spacing` is seen here and not only through the field.
+    assert_eq!(enemy_spacing(), 25.597_850_799_560_547);
+
+    let fixture = load_captured_at("test/fixtures/oracle-enemy-base-full.2.1.23.json", "2.1.23");
+    let grid = fixture.get("grid");
+    let (x0, y0) = (grid.get("x0").as_f64(), grid.get("y0").as_f64());
+    let (pitch, n) = (grid.get("pitch").as_f64(), grid.get("n").as_f64() as usize);
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), 2, "two seeds");
+
+    for (case, &(seed, old_exact)) in cases.iter().zip(OLD_SPACING_EXACT.iter()) {
+        assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
+        let full: Vec<f64> = case
+            .get("full")
+            .as_array()
+            .iter()
+            .map(Json::as_f64)
+            .collect();
+        assert_eq!(full.len(), n * n, "a regen cannot empty the loop");
+        // The same expression with the spacing forced to 45.25: `full` everywhere
+        // except the sparse differences the fixture lists.
+        let mut forced = full.clone();
+        for pair in case.get("full45").as_array() {
+            let pair = pair.as_array();
+            forced[pair[0].as_f64() as usize] = pair[1].as_f64();
+        }
+        let differing = case.get("full45").as_array().len();
+        assert!(differing > 0, "the two arms must differ somewhere");
+
+        let at = |i: usize| (x0 + pitch * (i % n) as f64, y0 + pitch * (i / n) as f64);
+        let score = |field: &EnemyBaseField| {
+            let (mut vs_full, mut vs_forced) = (0usize, 0usize);
+            for i in 0..n * n {
+                let (x, y) = at(i);
+                let got = f64::from(field.field(x, y) as f32);
+                vs_full += usize::from(got == full[i]);
+                vs_forced += usize::from(got == forced[i]);
+            }
+            (vs_full, vs_forced)
+        };
+
+        let params = EnemyFieldParams::defaults(seed);
+        let (vs_full, _) = score(&EnemyBaseField::new(&params));
+        assert_eq!(vs_full, n * n, "seed {seed}: derived spacing vs the game");
+
+        let (old_vs_full, old_vs_forced) =
+            score(&EnemyBaseField::new(&params).with_spacing(OLD_SPACING));
+        assert_eq!(
+            old_vs_full, old_exact,
+            "seed {seed}: the old spacing against the game's default"
+        );
+        assert_eq!(
+            old_vs_full + differing,
+            n * n,
+            "seed {seed}: arms differ here only"
+        );
+        assert_eq!(
+            old_vs_forced,
+            n * n,
+            "seed {seed}: the old spacing against the game's expression forced to it"
+        );
+    }
+}
+
 #[test]
 fn reproduces_the_games_enemy_base_field_at_both_seeds() {
     // **The exact-match count on this field measures MAGNITUDE as well as

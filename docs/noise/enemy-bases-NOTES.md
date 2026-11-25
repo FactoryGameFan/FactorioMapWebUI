@@ -103,6 +103,17 @@ the spot, `q = pi/90 r^3`) matches the oracle to `abs < 0.001` at all 7 checked 
 points in the far region around `(1000,1000)`, `ebp` 0.41..0.78). The match is
 **identical for spacing in {32, 45.25, 51.2}**.
 
+**Corrected 2026-11-25: spacing DOES bind, and this spike was too sparse to see
+it.** Seven points could not separate the spacings. The game derives the default
+spacing from the count, `f32(0.5 * sqrt(u32(512 * 512 / 100)))` =
+`25.597850799560547` (`SpotNoise::compile`, 0x307033d), and the field was built
+with 45.25 until then. On the game's own full `enemy_base_probability` over
+16,384 positions per seed, 45.25 misses 579 (seed 123456) and 836 (seed 777771)
+positions, and the derived spacing matches every one
+(`oracle-enemy-base-full.2.1.23.json`, `scripts/probes/enemy-spot-spacing`). The
+2.1.11 fixture is blind to it, which is why the field passed that test with the
+wrong spacing. The spot lists change in about 45% of 512-tile regions.
+
 Why the pool size and spacing do not bind: the regional density target
 (`avg_density * region_area`) is small (frequency `~1e-5`), so only ~5 spots survive
 the trim per 512^2 region - reached with the first few accepted candidates, long before
