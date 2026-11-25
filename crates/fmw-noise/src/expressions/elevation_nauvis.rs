@@ -34,6 +34,19 @@
 //! `elevation_lakes` uses `10000 / 1`, which is exact, which is why only
 //! Nauvis showed it.
 //!
+//! ## `nauvis_persistance` uses the game's amplitude-corrected form (#521)
+//!
+//! The persistence field is `amplitude_corrected_multioctave_noise`, and its
+//! shipped f64 transform is 81 of 152 against the game (#254). Nauvis reads
+//! [`AmplitudeCorrectedGame`], the f32 form that is 152 of 152. At the one point
+//! `elevation_nauvis_no_cliff` used to miss, the shipped form's noise was two
+//! f32 steps off (0.090559684 against the game's 0.0905597). That reached the
+//! detail stack and moved the result by about a third of an f32 step, enough to
+//! flip a rounding where the answer is small (4.35) and invisible where it is
+//! large (the full tree gives 22.1 there). It was not the `lerp`: fed the
+//! game's own `t` and `nauvis_detail`, our `lerp` and `nauvis_main` match the
+//! game bit for bit.
+//!
 //! ## `elevation_nauvis_no_cliff` is a real expression
 //!
 //! `elevation_nauvis_function(0)`, i.e. `added_cliff_elevation` forced to zero.
@@ -52,8 +65,9 @@ use crate::quick_multioctave_noise::{
 };
 use crate::starting_lakes::starting_lake_positions;
 use crate::variable_persistence_multioctave_noise::{
-    amplitude_corrected_multioctave_noise_at, eval_at as var_pers_eval_at, terms as var_pers_terms,
-    AmplitudeCorrectedParams, VariablePersistenceParams, VariablePersistenceTerms,
+    eval_at as var_pers_eval_at, terms as var_pers_terms,
+    AmplitudeCorrectedGame, AmplitudeCorrectedParams, VariablePersistenceParams,
+    VariablePersistenceTerms,
 };
 
 /// `elevation_magnitude` in the Lua.
@@ -109,7 +123,9 @@ pub struct ElevationNauvis {
     shared: NauvisShared,
     detail: VariablePersistenceTerms,
     detail_tables: BasisNoiseTables,
-    persistance: AmplitudeCorrectedParams,
+    persistance: AmplitudeCorrectedGame,
+    /// The persistence field's `input_scale`, kept for the test that pins it.
+    persistance_input_scale: f64,
     macro_a: Prepared,
     macro_b: Prepared,
     starting_lake_noise: QuickOctaves,
@@ -154,7 +170,9 @@ impl ElevationNauvis {
             shared,
             detail: var_pers_terms(&detail),
             detail_tables: tables_from_seed(seed0, 600),
-            persistance: AmplitudeCorrectedParams {
+            // The game's form of `amplitude_corrected_multioctave_noise`, not
+            // the shipped f64 one (see the module note).
+            persistance: AmplitudeCorrectedGame::new(&AmplitudeCorrectedParams {
                 seed0,
                 seed1: 500,
                 octaves: 5,
@@ -166,7 +184,8 @@ impl ElevationNauvis {
                 offset_x,
                 persistence: 0.7,
                 amplitude: 0.5,
-            },
+            }),
+            persistance_input_scale: nauvis_seg / 2.0,
             macro_a: Prepared::new(&MultioctaveParams {
                 seed0,
                 seed1: 1000,
@@ -199,10 +218,7 @@ impl ElevationNauvis {
     fn persistence(&self, at: At) -> f64 {
         clamp(
             f32r(
-                f64::from(amplitude_corrected_multioctave_noise_at(
-                    at,
-                    &self.persistance,
-                )) + f32r(0.55),
+                f64::from(self.persistance.eval_at(at)) + f32r(0.55),
             ),
             f32r(0.5),
             f32r(0.65),
@@ -332,9 +348,9 @@ mod tests {
         // `nauvis_seg / 2` against `nauvis_seg / 14`. Reusing one for the other
         // is a plausible-looking slip that no range check would catch.
         let tree = ElevationNauvis::new(&ElevationNauvisParams::defaults(123_456));
-        assert_eq!(tree.persistance.input_scale, 1.5 / 2.0);
+        assert_eq!(tree.persistance_input_scale, 1.5 / 2.0);
         assert!(
-            tree.persistance.input_scale > 1.5 / 14.0,
+            tree.persistance_input_scale > 1.5 / 14.0,
             "the persistence field must be the coarser of the two"
         );
     }

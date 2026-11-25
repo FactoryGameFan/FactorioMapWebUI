@@ -7821,20 +7821,24 @@ fn reproduces_the_games_elevation_nauvis_no_cliff_variant_at_both_seeds() {
 
     // Measured on the TypeScript side: (seed, exact) pairs 6 and 4, worst
     // 3.833771e-4 and 3.089905e-4. #452's f32 steps took them to 25 and 26.
+    // #521 took the last miss, so both seeds are now 26.
     //
-    // **The one miss is open.** Seed 123456, position 10, snapped to
-    // (1556.1328125, 1555.8828125): ours 4.3539667, the game 4.353967, one f32
-    // step low. The full tree is exact at the same point, and this variant
-    // differs only in `added_cliff_elevation` being the constant 0, which
-    // makes both ends of the `lerp` constants. Rounding `-0.6 + 2.2 * t` once
-    // instead of twice was tried and is WORSE (9 misses), so it is not a fused
-    // step. How the game compiles a `lerp` with constant ends is the next
-    // thing to read, in the binary.
+    // **The miss was the persistence field, not the `lerp`.** Seed 123456,
+    // position 10, snapped to (1556.1328125, 1555.8828125): ours 4.3539667, the
+    // game 4.353967. Read from the game itself (2.1.23, which gives the same
+    // 4.353967189788818 as the 2.1.11 fixture): `nauvis_persistance`'s
+    // amplitude-corrected noise is 0.0905596986 there, and the shipped f64
+    // `amplitude_corrected_multioctave_noise` gave 0.090559684, two f32 steps
+    // low. That moved `nauvis_detail` by 6e-8, which `20 * 0.25 *` turns into
+    // 3e-7 - below a step at 22 (the full tree, still exact) but not at 4.35.
+    // Given the game's own `t` and `nauvis_detail`, our `lerp` and `nauvis_main`
+    // already matched the game bit for bit. Nauvis now reads
+    // `AmplitudeCorrectedGame` (#254's form, 152 of 152).
     for (case, &(seed, want)) in fixture
         .get("cases")
         .as_array()
         .iter()
-        .zip([(123_456u32, 25usize), (777_771, 26)].iter())
+        .zip([(123_456u32, 26usize), (777_771, 26)].iter())
     {
         assert_eq!(case.get("seed").as_f64() as u32, seed, "case order");
         let mut params = ElevationNauvisParams::defaults(seed);
