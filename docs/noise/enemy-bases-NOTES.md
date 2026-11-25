@@ -114,14 +114,13 @@ positions, and the derived spacing matches every one
 2.1.11 fixture is blind to it, which is why the field passed that test with the
 wrong spacing. The spot lists change in about 45% of 512-tile regions.
 
-Why the pool size and spacing do not bind: the regional density target
-(`avg_density * region_area`) is small (frequency `~1e-5`), so only ~5 spots survive
-the trim per 512^2 region - reached with the first few accepted candidates, long before
-the 100-vs-128 pool bound or the Poisson-disk spacing-decay could change the kept set.
-So `candidate_point_count = 100` == `candidateSpotCount = 100` here and **no
-`spotSelection`/`spotCandidates` change is needed**. (This holds for THIS field's low
-density; a spacing/pool-sensitive `spot_noise` would still need the extension. Validate
-with a dense full-region oracle grid, not just these 7 points, to be safe.)
+The pool size still does not bind, and that part of the spike stands. The regional
+density target (`avg_density * region_area`) is small (frequency `~1e-5`), so only ~5
+spots survive the trim per 512^2 region, and the game's `candidate_point_count = 100`
+equals the port's `candidateSpotCount = 100`, so no pool change is needed. The spacing
+is a different matter: it decides WHICH candidates are accepted before the trim, so it
+changes the kept set, as the correction above measured on the dense grid. The seven
+points here could not show either effect, so they are not evidence for this paragraph.
 
 Cone geometry note: with `q = pi/90 r^3`, `peak = 3q/(pi r^2) = r/30` and slope
 `= peak/r = 1/30`, so an enemy cone is `(r - dist)/30` - a shallow cone peaking at

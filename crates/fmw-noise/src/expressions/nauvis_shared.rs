@@ -291,8 +291,8 @@ impl NauvisShared {
         let nx = normalize(raw_x, raw_y);
         let ny = normalize(raw_y, raw_x);
         f64::from(self.hills.eval(
-            f32r(at.x() + f32r(WARP_DISTANCE * nx)),
-            f32r(at.y() + f32r(WARP_DISTANCE * ny)),
+            f32r(f32r(at.x()) + f32r(WARP_DISTANCE * nx)),
+            f32r(f32r(at.y()) + f32r(WARP_DISTANCE * ny)),
         ))
         .abs()
     }

@@ -88,6 +88,10 @@ def run(name, data_lua, seed):
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
+# The identity COMMENT records. Checked on every run, so a different build or
+# platform cannot write a fixture that claims this one.
+EXPECTED_BUILD = "Version: 2.1.23 (build 87750, linux64, headless)"
+
 COMMENT = (
     "Ground truth from Factorio 2.1.23 (build 87750, linux64, headless) for the FULL "
     "enemy_base_probability on Nauvis (the game's own named expression: the spot-noise core "
@@ -109,7 +113,7 @@ def main():
         for arm, name, data in [("full", "enemy_base_probability", None),
                                 ("full_45", "review_enemy_45", DATA_45)]:
             build, vals = run(name, data, seed)
-            assert "Version: 2.1.23 " in build, build
+            assert build == EXPECTED_BUILD, build
             assert vals and len(vals) == len(POS), (arm, seed)
             builds.add(build)
             arms[arm] = vals
