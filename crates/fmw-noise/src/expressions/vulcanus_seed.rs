@@ -26,20 +26,21 @@
 
 use crate::poison;
 
-/// `map_seed_normalized`: `f32(seed0 / 2^32)`.
+/// `map_seed_normalized`: `f32(seed0 / (2^32 - 1))`.
 ///
-/// **The f32 rounding is the noise VM's arithmetic and it matters at the top of
-/// the range.** `seed_normalized(0xFFFF_FFFF)` is exactly `1`, not the
-/// `0.999_999_999_767...` plain f64 division gives - verified against the
-/// oracle, not assumed. So the honest range is the CLOSED `[0, 1]`, not the
-/// half-open `[0, 1)` that "normalize a 32-bit uint" would suggest.
+/// **The divisor is `4_294_967_295`, not `2^32` (#531).** The game maps the whole
+/// `u32` range onto the CLOSED interval `[0, 1]`, so `seed_normalized(u32::MAX)`
+/// is exactly `1`. The old `2^32` divisor also gave `1` there, because the f32
+/// rounding absorbs the difference at the top of the range - which is why the 12
+/// oracle seeds could not tell the two apart. Against the game's own value on 606
+/// probed seeds, `2^32` matched 601 and `2^32 - 1` matches all 606
+/// (`test/fixtures/oracle-bearing-chain.seeds606.json`).
 ///
 /// The division is done in f64 and narrowed once, exactly as
-/// `Math.fround(seed0 / 4294967296)` does. `2^32` is a power of two, so the
-/// quotient is exact in f64 and this is a single rounding.
+/// `Math.fround(seed0 / 4294967295)` does.
 #[must_use]
 pub fn seed_normalized(seed0: u32) -> f32 {
-    poison::f32_result((f64::from(seed0) / 4_294_967_296.0) as f32)
+    poison::f32_result((f64::from(seed0) / 4_294_967_295.0) as f32)
 }
 
 /// `map_seed_small`: the 16 least significant bits of `seed0`.
@@ -55,15 +56,22 @@ pub fn seed_small(seed0: u32) -> u32 {
 mod tests {
     use super::*;
 
-    /// The discriminating row, stated on its own because the fixture sweep
-    /// would pass with plain f64 division at 11 of its 12 seeds.
+    /// The top of the range is exactly one, and a seed that can tell the two
+    /// divisors apart agrees with the game.
     ///
-    /// Plain division gives `0.999_999_999_767_169_4`, which is not 1. Only the
-    /// f32 narrowing reaches the oracle's exact `1`.
+    /// The old test used `0xFFFF_FFFF`, where `2^32` and `2^32 - 1` both give
+    /// exactly `1`, so it could not fail (#531). `3_526_822_528` is a seed the
+    /// game was read on (`reproduces_the_games_bearing_chain_on_606_seeds` has
+    /// all 606): the game says 0.82115238904953, and dividing by `2^32` gives
+    /// 0.8211523294448853.
     #[test]
-    fn the_top_of_the_range_narrows_to_exactly_one() {
+    fn matches_the_game_on_a_seed_that_separates_the_divisors() {
         assert_eq!(seed_normalized(0xffff_ffff), 1.0);
-        assert_ne!(f64::from(0xffff_ffffu32) / 4_294_967_296.0, 1.0);
+        assert_eq!(f64::from(seed_normalized(3_526_822_528)), 0.82115238904953);
+        assert_ne!(
+            f64::from((f64::from(3_526_822_528u32) / 4_294_967_296.0) as f32),
+            0.82115238904953
+        );
     }
 
     /// The 16-bit mask, at the boundary rather than only in the middle.

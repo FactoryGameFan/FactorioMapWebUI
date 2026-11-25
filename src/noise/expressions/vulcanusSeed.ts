@@ -14,15 +14,17 @@
  */
 
 /**
- * `map_seed_normalized`: `Math.fround(seed0 / 2^32)`. The f32 rounding (the
- * noise VM's arithmetic) matters at the top of the range - `seedNormalized(
- * 0xFFFFFFFF)` is exactly `1`, not `0.99999999767...` as plain double division
- * gives; verified against the oracle, not assumed. Because of that, the
- * honest range is the CLOSED `[0, 1]`, not the half-open `[0, 1)` a "normalize
- * a 32-bit uint" description would suggest - see the NOTES file.
+ * `map_seed_normalized`: `Math.fround(seed0 / (2^32 - 1))`. The divisor is
+ * `4294967295`, not `2^32` (#531): the game maps the whole u32 range onto the
+ * CLOSED interval `[0, 1]`, so `seedNormalized(0xFFFFFFFF)` is exactly `1`. The
+ * old `2^32` divisor also gave 1 there, because the f32 rounding absorbs the
+ * difference at the very top of the range, and that is why the 12 oracle seeds
+ * could not tell the two apart; 601 of 606 probed seeds agreed and 5 did not.
+ * The game's own value was read on all 606 (`test/bearingChain.spec.ts`).
+ * See docs/noise/vulcanus-seed-vars-NOTES.md for the first derivation.
  */
 export function seedNormalized(seed0: number): number {
-  return Math.fround(seed0 / 4294967296);
+  return Math.fround(seed0 / 4294967295);
 }
 
 /**

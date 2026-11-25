@@ -2759,9 +2759,10 @@ fn the_multisample_port_implements_the_one_tile_channel_only() {
 /// `map_seed_normalized` and `map_seed_small` across 12 seeds spanning the
 /// 32-bit range, plus the `x_from_start`/`y_from_start` identity.
 ///
-/// `test/vulcanusSeed.spec.ts` asserts the same rows. The discriminating one is
-/// `seed0 = 0xFFFFFFFF`: plain f64 division gives 0.9999999997671694, and only
-/// the f32 narrowing reaches the oracle's exact 1.
+/// `test/vulcanusSeed.spec.ts` asserts the same rows. **These twelve seeds do
+/// not separate the divisors** (#531): `2^32` and `2^32 - 1` agree on all of
+/// them. `reproduces_the_games_bearing_chain_on_606_seeds` is the test that
+/// can fail.
 #[test]
 fn reproduces_every_game_captured_seed_variable() {
     let fixture = load_captured_at("test/fixtures/oracle-seed-vars.multi.json", "2.1.12");
@@ -2789,8 +2790,7 @@ fn reproduces_every_game_captured_seed_variable() {
     }
     assert!(
         saw_the_top_of_the_range,
-        "the fixture no longer carries the one row that discriminates f32 \
-         narrowing from plain division"
+        "the fixture no longer carries the row at the top of the u32 range"
     );
 }
 
@@ -12557,4 +12557,52 @@ fn the_basalts_bearing_at_seed_123456_has_the_games_sine() {
     let basalts = f32r(ashlands + f32r(240.0 * direction));
     let trig = AngleTrig::from_degrees(basalts);
     assert_eq!((trig.sin as f32).to_bits(), 0x3f5d_7890);
+}
+
+/// The seed-derived bearing chain against the game on 606 map seeds (#531).
+///
+/// `map_seed_normalized` is `f32(seed / (2^32 - 1))`: the control, the old `2^32`
+/// divisor, matches 601 and the game's form matches all 606. The direction and
+/// the ashlands, mountains and basalts angles follow from it, and the basalts
+/// sine and cosine go through the game's own polynomial.
+#[test]
+fn reproduces_the_games_bearing_chain_on_606_seeds() {
+    use crate::eval::math::f32r;
+    use crate::expressions::starting_spot_at_angle::AngleTrig;
+    use crate::expressions::vulcanus_seed::{seed_normalized, seed_small};
+
+    let fixture = load_captured_at("test/fixtures/oracle-bearing-chain.seeds606.json", "2.1.23");
+    let rows = fixture.get("rows").as_array();
+    assert_eq!(rows.len(), 606, "fixture size");
+
+    let (mut msn_new, mut msn_old) = (0usize, 0usize);
+    for row in rows {
+        let seed0 = row.get("seed").as_f64() as u32;
+        let msn = row.get("msn").as_f64();
+        msn_new += usize::from(f64::from(seed_normalized(seed0)) == msn);
+        msn_old += usize::from(f64::from((f64::from(seed0) / 4_294_967_296.0) as f32) == msn);
+
+        let direction = -1.0 + 2.0 * f64::from(seed_small(seed0) & 1);
+        assert_eq!(direction, row.get("dir").as_f64(), "dir seed={seed0}");
+        let ashlands = f32r(f64::from(seed_normalized(seed0)) * 3600.0);
+        assert_eq!(ashlands, row.get("ash").as_f64(), "ash seed={seed0}");
+        let mountains = f32r(ashlands + f32r(120.0 * direction));
+        assert_eq!(mountains, row.get("mtn").as_f64(), "mtn seed={seed0}");
+        let basalts = f32r(ashlands + f32r(240.0 * direction));
+        assert_eq!(basalts, row.get("bas").as_f64(), "bas seed={seed0}");
+
+        let trig = AngleTrig::from_degrees(basalts);
+        assert_eq!(
+            trig.sin,
+            row.get("bas_sin").as_f64(),
+            "bas_sin seed={seed0}"
+        );
+        assert_eq!(
+            trig.cos,
+            row.get("bas_cos").as_f64(),
+            "bas_cos seed={seed0}"
+        );
+    }
+    assert_eq!(msn_new, 606, "map_seed_normalized, f32(seed / (2^32 - 1))");
+    assert_eq!(msn_old, 601, "CONTROL: the old 2^32 divisor must fail on 5");
 }
