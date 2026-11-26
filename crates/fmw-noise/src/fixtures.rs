@@ -13006,7 +13006,8 @@ fn gleba_climate_fields_match_the_game() {
     assert_eq!(fixture.get("seed").as_f64(), 123_456.0);
     let fields = gleba_terrain_at(&fixture);
     let climate = fixture.get("climate");
-    let columns: [(&str, fn(&GlebaTerrainFields) -> f64); 4] = [
+    type Column = (&'static str, fn(&GlebaTerrainFields) -> f64);
+    let columns: [Column; 4] = [
         ("elevation", |f| f.elevation),
         ("moisture", |f| f.moisture),
         ("aux", |f| f.aux),
