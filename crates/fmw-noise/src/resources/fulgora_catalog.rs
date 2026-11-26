@@ -29,11 +29,12 @@
 //!
 //! Passing an inert gate looks like an oversight, so it is stated here and
 //! asserted in this module's own test rather than left to be rediscovered. The
-//! TypeScript passes it for the same reason, and
+//! TypeScript passed it for the same reason, and
 //! `test/fulgoraScrapDensity.spec.ts` makes the same assertion on that side.
 
 use crate::expressions::fulgora_stack::FulgoraStack;
 use crate::placement::roll::{salt, PlacementCollisionBox, PlacementSet, PlacementSource};
+use crate::tiles::fulgora_catalog::FulgoraTile;
 use core::cell::RefCell;
 
 /// `map_color = {0.9, 0.9, 0.9}` from the prototype, times 255.
@@ -62,11 +63,37 @@ pub const SCRAP_COLLISION_BOX: PlacementCollisionBox = PlacementCollisionBox {
 
 /// The shipped scrap placement source.
 ///
-/// **No `tile_allowed` gate**, and that is a finding rather than an omission.
-/// The `fulgora_elevation > fulgora_coastline + 10` term inside the probability
-/// already puts expected scrap on ocean at exactly 0.00 over 262,144 tiles, so
-/// a water gate would reject nothing. `test/fulgoraScrap.spec.ts` asserts it on
-/// the TypeScript side.
+/// **The tile gate rejects the oil ocean**, and the comment that stood here
+/// before said the opposite and was wrong (#201).
+///
+/// It claimed the `fulgora_elevation > fulgora_coastline + 10` term already
+/// puts expected scrap on ocean at "exactly 0.00 over 262,144 tiles". That
+/// holds only at the PREVIEW's derived surface seed 2967702466. At the seed the
+/// density fixture forces (123456) the expectation on ocean tiles is 140.20,
+/// all of it in chunk (0, 4). The spec that asserted the 0.00,
+/// `test/fulgoraScrap.spec.ts`, is gone and read the other seed.
+///
+/// The game's rule, read from `generateEntities` (Factorio 2.1.23, 0x1989a3d):
+/// a tile whose collision mask overlaps the prototype's `collision_mask` is
+/// skipped before arbitration. Scrap's mask is `[resource]` (the shared
+/// `resource()` helper's default), and all four oil-ocean tiles carry the
+/// `resource` layer (`tile-collision-masks.lua`), while the land tiles are
+/// `[ground_tile]`. So no ocean tile is ever a scrap candidate.
+///
+/// **That runs inside the game's map PREVIEW as well**, not only on a real
+/// surface: `MapPreviewGenerator::Worker::computeEntities` fills the same task
+/// from the preview's own chunk tiles and calls `computeInternal`. Measured in
+/// the preview at map seed 1327511742 (Fulgora surface seed 123456): chunk
+/// (0, 4) has 0 scrap-coloured pixels, against 17 in (0, 3). So the gate is the
+/// same in both modes and there is no preview/save switch to make.
+///
+/// Effect over the three regions of `oracle-fulgora-scrap-entities`
+/// (expected placements, summed probability): the first region 357.75 -> 217.55 (game
+/// 222), total 706.15 -> 565.95 (game 562). The other two stay
+/// 185.25 (game 191) and 163.15 (game 149, +9.5%, a separate open question).
+///
+/// The gate asks the tile resolver, `StackFields::tile`, rather than
+/// restating the ocean rule, so it follows the resolver if that changes.
 ///
 /// **The controls are already inside the stack.** `FulgoraStack::new` takes the
 /// `ScrapControls` and hands them to `FulgoraScrap`, so this type takes none of
@@ -99,9 +126,24 @@ impl PlacementSource for FulgoraScrapPlacement<'_> {
         self.stack.borrow_mut().eval(x, y).scrap.probability
     }
 
+    /// Scrap cannot stand on the oil ocean: see the type's doc comment.
+    fn tile_allowed(&self, x: f64, y: f64) -> bool {
+        !is_oil_ocean(self.stack.borrow_mut().eval(x, y).tile())
+    }
+
     fn collision_box(&self, _x: f64, _y: f64) -> Option<PlacementCollisionBox> {
         Some(SCRAP_COLLISION_BOX)
     }
+}
+
+/// The oil-ocean tiles, the only Fulgora tiles whose collision mask carries the
+/// `resource` layer that scrap's own mask collides with.
+///
+/// The game has four (`oil-ocean-shallow`, `oil-ocean-shallow-2` and the two
+/// deep ones); this port folds each pair into one variant, so the two variants
+/// cover all four.
+fn is_oil_ocean(tile: FulgoraTile) -> bool {
+    matches!(tile, FulgoraTile::Shallow | FulgoraTile::Deep)
 }
 
 #[cfg(test)]
@@ -156,6 +198,11 @@ mod tests {
         fn probability(&self, x: f64, y: f64) -> f64 {
             self.0.probability(x, y)
         }
+
+        /// Forwarded, so the two arms differ ONLY in the collision box.
+        fn tile_allowed(&self, x: f64, y: f64) -> bool {
+            self.0.tile_allowed(x, y)
+        }
     }
 
     /// The overlay draws something, and draws strictly less than the footprint.
@@ -204,6 +251,133 @@ mod tests {
             "the 0.1953125-tile collision box rejected {} placements, so it is \
              no longer inert and the doc comment above is wrong",
             without_box.saturating_sub(with_box)
+        );
+    }
+
+    /// The game's own scrap, graded against the model with and without the
+    /// ocean gate (#201).
+    ///
+    /// `oracle-fulgora-scrap-entities` holds every scrap entity the game placed
+    /// in three regions at surface seed 123456 (2.1.14; 2.1.23 places the same
+    /// 222 / 191 / 149, probe E4). The model's expectation is the sum of
+    /// `probability` over the region's tiles, counted only where the placement
+    /// source lets a roll stand.
+    ///
+    /// Measured 2026-11-25, gated against ungated against the game:
+    ///
+    /// | region | game | gated  | ungated |
+    /// | ------ | ---- | ------ | ------- |
+    /// | 0      | 222  | 217.55 | 357.75  |
+    /// | 1      | 191  | 185.25 | 185.25  |
+    /// | 2      | 149  | 163.15 | 163.15  |
+    /// | total  | 562  | 565.95 | 706.15  |
+    ///
+    /// (Rows follow the fixture's case order; the 140.20 the gate removes sits
+    /// wholly in chunk (0, 4), inside case 0.) Region 2's +9.5% is a separate,
+    /// open residual and is bounded here, not explained.
+    ///
+    /// **The control is the ungated total**, summed through the same loop with
+    /// the gate switched off. It must miss the game's total by more than 20%,
+    /// so a gate that did nothing would turn this red.
+    #[test]
+    fn the_ocean_gate_brings_scrap_density_to_the_games_counts() {
+        let fixture =
+            crate::test_json::load("test/fixtures/oracle-fulgora-scrap-entities.seed123456.json");
+        assert_eq!(fixture.get("seed0").as_f64(), f64::from(SEED));
+        let cases = fixture.get("cases").as_array();
+        assert_eq!(cases.len(), 3, "the fixture changed shape");
+
+        let cell = stack();
+        let placement = FulgoraScrapPlacement::new(&cell);
+        let (mut game_total, mut gated_total, mut ungated_total) = (0.0f64, 0.0f64, 0.0f64);
+        let mut per_region = Vec::new();
+        for case in cases {
+            let region = case.get("region");
+            let bound = |k: &str| region.get(k).as_f64() as i64;
+            let (x0, y0, x1, y1) = (bound("x0"), bound("y0"), bound("x1"), bound("y1"));
+            let game = case.get("resources").as_array().len() as f64;
+            let (mut gated, mut ungated) = (0.0f64, 0.0f64);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let (fx, fy) = (x as f64, y as f64);
+                    let p = placement.probability(fx, fy);
+                    if p > 0.0 {
+                        ungated += p;
+                        if placement.tile_allowed(fx, fy) {
+                            gated += p;
+                        }
+                    }
+                }
+            }
+            println!(
+                "MEASURED region ({x0},{y0}) game={game} gated={gated:.2} ungated={ungated:.2}"
+            );
+            per_region.push((game, gated, ungated));
+            game_total += game;
+            gated_total += gated;
+            ungated_total += ungated;
+        }
+        println!(
+            "MEASURED total game={game_total} gated={gated_total:.2} ungated={ungated_total:.2}"
+        );
+
+        assert_eq!(game_total, 562.0, "the fixture's own count moved");
+        // Frozen to 0.01: the sums are f64 over f32-exact terms, so a drift of
+        // that size would be a real change, not host noise.
+        assert!(
+            (gated_total - 565.95).abs() < 0.01,
+            "gated expectation {gated_total} is not the frozen 565.95"
+        );
+        assert!(
+            (ungated_total - 706.15).abs() < 0.01,
+            "ungated expectation {ungated_total} is not the frozen 706.15"
+        );
+        // The gate lands within 1% of the game's total.
+        assert!((gated_total / game_total - 1.0).abs() < 0.01);
+        // The control: with the gate off the total is 25.7% over, so a gate
+        // that rejected nothing could not pass the assertion above.
+        assert!(ungated_total / game_total > 1.2);
+        // Region 0 is where the ocean is, and the gate closes its whole gap
+        // (357.75 against 222 -> 217.55).
+        let (game0, gated0, ungated0) = per_region[0];
+        assert!(
+            (gated0 / game0 - 1.0).abs() < 0.03,
+            "region 0 gated {gated0}"
+        );
+        assert!(ungated0 / game0 > 1.5, "region 0 ungated {ungated0}");
+    }
+
+    /// Chunk (0, 4) holds 140.2 of expected scrap on the oil ocean at seed
+    /// 123456, and the game places none of it. Rolled through the real
+    /// placement set, the gate must place nothing there; the ungated source,
+    /// the control, places 162 (the "phantom scrap" `fulgora-elevation-NOTES`
+    /// Task 17 measured).
+    #[test]
+    fn chunk_zero_four_places_no_scrap_on_the_ocean() {
+        struct NoGate<'a>(&'a FulgoraScrapPlacement<'a>);
+        impl PlacementSource for NoGate<'_> {
+            fn probability(&self, x: f64, y: f64) -> f64 {
+                self.0.probability(x, y)
+            }
+        }
+        let cell = stack();
+        let placement = FulgoraScrapPlacement::new(&cell);
+        let ungated_source = NoGate(&placement);
+        let gated = PlacementSet::new(salt::FULGORA_SCRAP, &placement);
+        let ungated = PlacementSet::new(salt::FULGORA_SCRAP, &ungated_source);
+        let (mut with_gate, mut without_gate) = (0usize, 0usize);
+        for y in 128..160 {
+            for x in 0..32 {
+                let (fx, fy) = (f64::from(x), f64::from(y));
+                with_gate += usize::from(gated.placed(fx, fy));
+                without_gate += usize::from(ungated.placed(fx, fy));
+            }
+        }
+        println!("MEASURED chunk (0,4) gated={with_gate} ungated={without_gate}");
+        assert_eq!(with_gate, 0, "scrap stood on the oil ocean");
+        assert!(
+            without_gate > 100,
+            "the control no longer places on the ocean"
         );
     }
 }

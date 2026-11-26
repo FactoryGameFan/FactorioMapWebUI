@@ -648,8 +648,8 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
 });
 
 /**
- * Tier 3 for the `all` composite - terrain, then resources, then rocks, then
- * cliffs, in one request.
+ * Tier 3 for the `all` composite - terrain, then cliffs, then resources, then
+ * rocks, in one request (cliffs first, as the game's own preview draws them).
  *
  * Sent as one request rather than four for the reason `cliffs` is: every
  * overlay shares the whole field DAG below the tile argmax, so splitting them
@@ -673,27 +673,32 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
   /**
    * The paint ORDER, asserted rather than described.
    *
-   * Resources paint first and the two obstruction overlays over the top, so a
-   * cliff or a rock crossing an ore patch reads as the thing that is in the
-   * way. Reordering the three passes changes only the pixels where two of them
-   * land, which is a few hundred out of 16,384 here - invisible to a
-   * whole-image bound, and exactly what this counts.
+   * Cliffs paint FIRST and resources and rocks over them, which is the game's
+   * own preview order (`computeEntities` draws the cliff list, then every other
+   * autoplaced entity on top; Factorio 2.1.23). Until 2026-11-25 this composite
+   * painted cliffs LAST, so a cliff covered the ore it crossed. Reordering the
+   * passes changes only the pixels where two of them land, which is a few
+   * hundred out of 16,384 here - invisible to a whole-image bound, and exactly
+   * what this counts.
    *
-   * The numbers are frozen: 194 ore pixels are covered in this window, 2 by a
-   * rock and 192 by a cliff. They were 208 and 206 before #407, when the raw
-   * rectangle was the cliff collision test, and 201 and 199 before #414, when
-   * the ore removal was the cliff's base box against the ore field at the
-   * overlay's threshold. #414 moved 17 pixels, all in the cliff pass - the
-   * terrain, resource and rock renders did not move. 7 cliffs over calcite are
-   * gone, which is the 7 here; 5 cliff pixels off the ore are gone too; and 5
-   * pixels of one run, at tiles (800..816, 328..336), gained a cliff. Painting
-   * rocks or cliffs FIRST would take all three to zero.
+   * **Graded by reading the game's code, not by a pixel count against the
+   * game**: no committed preview PNG shows entities (all four are
+   * terrain-only), so the order is pinned here as a frozen overlap count, and
+   * this is the only place it is.
    *
-   * 165 now, 1 by a rock and 164 by a cliff, since the ore overlay reads the
-   * game's own `random_penalty` roll (#84): it no longer paints the ring of
-   * tiles the game leaves bare, so there is less ore for anything to cover.
+   * Before the reorder, 165 ore pixels in this window were covered, 1 by a rock
+   * and 164 by a cliff (they were 208 and 206 before #407, 201 and 199 before
+   * #414, and 165 since the ore overlay reads the game's `random_penalty` roll,
+   * #84). The same pixels are where a cliff and an ore mark land together, and
+   * now the ore wins them: 162 cliff pixels show ore, and 0 ore pixels show a
+   * cliff. The other 2 of the old 164 are under a rock too, and the rock wins
+   * both, so rocks now cover 3 ore pixels (1 before) and 492 cliff pixels.
+   *
+   * The control is the old direction. Painting cliffs LAST puts `oreCoveredByCliff`
+   * back at 164 and `cliffCoveredByOre` and `cliffCoveredByRock` at 0, so a
+   * regression to the old order fails all three.
    */
-  it("paints resources first and the obstruction overlays over the top", async () => {
+  it("paints cliffs first and the resource and rock overlays over them", async () => {
     const e = await engine();
     const w: Window = {
       label: "coarse, all four entries",
@@ -710,25 +715,37 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
       originY: w.originY,
       tilesPerPixel: w.tilesPerPixel,
     };
-    const all = new Uint8ClampedArray(
-      runRenderRequest({ ...request(w), ...geometry, view: "all" }, e).buffer,
-    );
-    const resources = new Uint8ClampedArray(
-      runRenderRequest({ ...request(w), ...geometry, view: "resources" }, e).buffer,
-    );
+    const render = (view: "all" | "resources" | "cliffs") =>
+      new Uint8ClampedArray(runRenderRequest({ ...request(w), ...geometry, view }, e).buffer);
+    const all = render("all");
+    const resources = render("resources");
+    const cliffs = render("cliffs");
 
     const oreColors = VULCANUS_RESOURCE_CATALOG.map((p) => p.mapColor);
-    let covered = 0;
-    let byRock = 0;
-    let byCliff = 0;
+    const isOre = (px: Uint8ClampedArray, i: number) => oreColors.some((c) => isColor(px, i, c));
+    let oreCoveredByCliff = 0;
+    let oreCoveredByRock = 0;
+    let cliffCoveredByOre = 0;
+    let cliffCoveredByRock = 0;
     for (let i = 0; i < all.length; i += 4) {
-      if (!oreColors.some((c) => isColor(resources, i, c))) continue;
-      if (oreColors.some((c) => isColor(all, i, c))) continue;
-      covered++;
-      if (isColor(all, i, ROCK_MAP_COLOR)) byRock++;
-      if (isColor(all, i, CLIFF_MAP_COLOR)) byCliff++;
+      // Ore the resources view paints that the composite no longer shows.
+      if (isOre(resources, i) && !isOre(all, i)) {
+        if (isColor(all, i, CLIFF_MAP_COLOR)) oreCoveredByCliff++;
+        if (isColor(all, i, ROCK_MAP_COLOR)) oreCoveredByRock++;
+      }
+      // Cliff pixels the cliffs view paints that the composite shows as
+      // something else.
+      if (isColor(cliffs, i, CLIFF_MAP_COLOR) && !isColor(all, i, CLIFF_MAP_COLOR)) {
+        if (isOre(all, i)) cliffCoveredByOre++;
+        if (isColor(all, i, ROCK_MAP_COLOR)) cliffCoveredByRock++;
+      }
     }
-    expect({ covered, byRock, byCliff }).toEqual({ covered: 165, byRock: 1, byCliff: 164 });
+    expect({ oreCoveredByCliff, oreCoveredByRock, cliffCoveredByOre, cliffCoveredByRock }).toEqual({
+      oreCoveredByCliff: 0,
+      oreCoveredByRock: 3,
+      cliffCoveredByOre: 162,
+      cliffCoveredByRock: 492,
+    });
   }, 300000);
 });
 

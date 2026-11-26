@@ -5,6 +5,10 @@
 //!     spot_field + blob_term - 0.3
 //!     + min(0, (20 / starting_area_radius) * distance - 20)
 //!
+//! starting_area_radius = starting_area == 0 ? 0 : f32(150 * f32(starting_area))
+//! ```
+//!
+//! ```text
 //! spot_field = max(basement, max over nearby spots of (peak - dist*slope))
 //! blob_term  = (basis(1/8) + basis(1/24) + 2*basis(1/64) - 0.5)
 //!                * (spot_radius(distance) / 150)
@@ -35,9 +39,9 @@ use crate::spot_field::{spot_cone_max, ConeArithmetic, SpotGeometry};
 use crate::spot_selection::{select_spots, SelectedSpot, SpotSelectParams};
 
 use super::catalog::{
-    enemy_density, enemy_spacing, EnemyControls, ENEMY_BASEMENT, ENEMY_CANDIDATE_SPOT_COUNT,
-    ENEMY_MAX_SPOT_BASEMENT_RADIUS, ENEMY_PLACEMENT_CAP, ENEMY_REGION_SIZE, ENEMY_SEED1,
-    STARTING_AREA_RADIUS,
+    enemy_density, enemy_spacing, EnemyControls, DEFAULT_STARTING_AREA_RADIUS, ENEMY_BASEMENT,
+    ENEMY_CANDIDATE_SPOT_COUNT, ENEMY_MAX_SPOT_BASEMENT_RADIUS, ENEMY_PLACEMENT_CAP,
+    ENEMY_REGION_SIZE, ENEMY_SEED1,
 };
 
 /// Free variables of the enemy-base field.
@@ -48,6 +52,15 @@ pub struct EnemyFieldParams {
     pub controls: EnemyControls,
     /// Spawn points for `distance`.
     pub starting_positions: Vec<Point>,
+    /// `starting_area_radius`: `f32(150 * f32(starting_area))`, or 0 for a
+    /// starting area of 0. Computed on the TypeScript side and sent in the
+    /// request, so it is already an f32 value.
+    ///
+    /// Enters the field as `20 / radius * distance - 20`, so a bigger radius
+    /// pushes the enemy-free zone further out. A radius of 0 divides by zero
+    /// as the game does (`inf * 0` is NaN at the spawn itself); only an
+    /// imported string can ask for it, since the slider's lowest notch is 1/6.
+    pub starting_area_radius: f64,
 }
 
 impl EnemyFieldParams {
@@ -58,6 +71,7 @@ impl EnemyFieldParams {
             seed0,
             controls: EnemyControls::defaults(),
             starting_positions: vec![Point { x: 0.0, y: 0.0 }],
+            starting_area_radius: DEFAULT_STARTING_AREA_RADIUS,
         }
     }
 }
@@ -69,6 +83,7 @@ pub struct EnemyBaseField {
     starting_positions: Vec<Point>,
     /// The spot-noise candidate spacing. [`enemy_spacing`] unless a test sets it.
     spacing: f64,
+    starting_area_radius: f64,
     tables: BasisNoiseTables,
     region_cache: RefCell<BTreeMap<(i64, i64), Vec<SelectedSpot>>>,
 }
@@ -81,6 +96,7 @@ impl EnemyBaseField {
             controls: params.controls,
             starting_positions: params.starting_positions.clone(),
             spacing: enemy_spacing(),
+            starting_area_radius: params.starting_area_radius,
             tables: tables_from_seed(params.seed0, ENEMY_SEED1),
             region_cache: RefCell::new(BTreeMap::new()),
         }
@@ -233,7 +249,7 @@ impl EnemyBaseField {
         let d = self.distance_at(x, y);
         // `20 / starting_area_radius * distance - 20`, with the constant
         // quotient folded to f32 first.
-        let start = f32r(f32r(f32r(20.0 / STARTING_AREA_RADIUS) * d) - 20.0);
+        let start = f32r(f32r(f32r(20.0 / self.starting_area_radius) * d) - 20.0);
         // `spot + blob - 0.3 + min(0, ...)`, left to right.
         f32r(
             f32r(f32r(self.spot_field(x, y) + self.blob_term(x, y)) - f32r(0.3)) + min2(0.0, start),

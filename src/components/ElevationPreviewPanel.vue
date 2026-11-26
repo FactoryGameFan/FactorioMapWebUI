@@ -219,6 +219,7 @@ async function generate(reroll = false) {
         auxBias: info.ctx.auxBias,
         startingAreaMoistureSize: info.ctx.startingAreaMoistureSize,
         startingAreaMoistureFrequency: info.ctx.startingAreaMoistureFrequency,
+        startingAreaRadius: info.ctx.startingAreaRadius,
         resourceControls: info.resourceControls,
         vulcanusResourceControls: info.vulcanusResourceControls,
         aquiloResourceControls: info.aquiloResourceControls,

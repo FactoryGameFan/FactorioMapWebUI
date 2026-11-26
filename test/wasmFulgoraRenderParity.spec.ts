@@ -310,20 +310,21 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.vulcanus.totalBytes).toBe(COMMON_BYTES + VULCANUS_PARAMS_BYTES);
     expect(fixture.nauvis.totalBytes).toBe(COMMON_BYTES + NAUVIS_PARAMS_BYTES);
     // Aquilo's block is 128 bytes, so its request is 184 - smaller than
-    // Vulcanus's, so `REQUEST_BYTES` stays Nauvis's 568.
+    // Vulcanus's, so `REQUEST_BYTES` stays Nauvis's 576.
     expect(fixture.aquilo.totalBytes).toBe(COMMON_BYTES + AQUILO_PARAMS_BYTES);
     expect(fixture.aquilo.totalBytes).toBe(184);
-    // Nauvis is the LARGEST now, at 568 - the resource overlay's eighteen
+    // Nauvis is the LARGEST now, at 576 - the resource overlay's eighteen
     // per-resource levers took it past Vulcanus's 368, and #227's
     // starting-point block (a count plus eight `[x, y]` pairs) grew it again so
     // a moved spawn no longer falls back to the TypeScript renderer. It has
-    // been 120, 152, 200, 216, 288 and 432 as each overlay grew that block.
+    // been 120, 152, 200, 216, 288 and 432 as each overlay grew that block, and
+    // 8 bytes more (568 -> 576) when the starting-area radius was appended.
     //
     // So `REQUEST_BYTES` is Nauvis's, not Vulcanus's, and this is the first
     // time it has moved since the v2 split. The three assertions below say
     // that in the form that cannot go stale: the capacity is whichever block
     // is biggest, and every planet fits inside it.
-    expect(fixture.nauvis.totalBytes).toBe(568);
+    expect(fixture.nauvis.totalBytes).toBe(576);
     expect(REQUEST_BYTES).toBe(fixture.nauvis.totalBytes);
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.vulcanus.totalBytes);
     expect(REQUEST_BYTES).toBeGreaterThan(fixture.aquilo.totalBytes);

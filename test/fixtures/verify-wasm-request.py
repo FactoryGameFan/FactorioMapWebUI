@@ -77,12 +77,20 @@ AQUILO_PARAMS_BYTES = 128
 NAUVIS_MAX_STARTING_POINTS = 8
 """Must equal fmw_wasm::abi::NAUVIS_MAX_STARTING_POINTS."""
 
-NAUVIS_PARAMS_BYTES = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16
+NAUVIS_STARTING_AREA_RADIUS_OFFSET = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16
+"""Must equal fmw_wasm::abi::NAUVIS_STARTING_AREA_RADIUS_OFFSET.
+
+Just past the starting-point list.
+"""
+
+NAUVIS_PARAMS_BYTES = NAUVIS_STARTING_AREA_RADIUS_OFFSET + 8
 """Must equal fmw_wasm::abi::NAUVIS_PARAMS_BYTES.
 
 376 bytes of levers and boxes, then the starting-point block: one count
 plus NAUVIS_MAX_STARTING_POINTS [x, y] pairs, added by #227 so a moved
-spawn no longer has to fall back to the TypeScript renderer.
+spawn no longer has to fall back to the TypeScript renderer, then one f64
+for the starting-area radius (the enemy-base field's 20 / radius term),
+appended with no version bump: the block grew 512 -> 520.
 """
 
 
@@ -331,6 +339,20 @@ def decode_nauvis(b, req):
             "repeat, a swap of the two that share it reads correct"
         )
 
+    # The starting-area radius, the block's LAST slot (appended after the
+    # starting points). Read from the layout table's offset, and required to be
+    # distinct from every other lever so a swap with one of them reads wrong.
+    want_radius = req["startingAreaRadius"]
+    got_radius = f64(b, p + NAUVIS_STARTING_AREA_RADIUS_OFFSET)
+    check("startingAreaRadius", got_radius, want_radius)
+    if want_radius in flat:
+        raise AssertionError(
+            "startingAreaRadius repeats another lever's value, so a swap "
+            "with it would read back correct"
+        )
+    if p + NAUVIS_STARTING_AREA_RADIUS_OFFSET + 8 != len(b):
+        raise AssertionError("the starting-area radius is not the block's last slot")
+
     # A planted reordering of two levers that happen to hold the SAME value
     # would slip past the loop above, so the fixture's request must not make
     # that possible for more than the defaults it deliberately uses.
@@ -340,6 +362,7 @@ def decode_nauvis(b, req):
         "cellQueryBox": want_cells,
         "resourceLevers": want_res,
         "startingPositions": want_spawn,
+        "startingAreaRadius": want_radius,
     }
 
 
@@ -729,6 +752,10 @@ def main():
             "come from request.ts at all; the trig pairs are checked by unit norm, by each "
             "angle's offset from the first bearing, and against this script's own copy of the game's sin and cos polynomial to "
             "2e-7. "
+            "The Nauvis block grew 512 -> 520 (request 568 -> 576) when the starting-area radius "
+            "was appended as its last slot, after the starting points; the independent decoder "
+            "reads it at the layout table's offset and requires it to be distinct from every other "
+            "lever and to be the block's last 8 bytes. "
             "Regenerating "
             "these bytes from the encoder would make the fixture agree with itself and prove "
             "nothing; if the layout changes, bump ABI_VERSION on both sides and re-verify the "

@@ -51,9 +51,14 @@ export const AQUILO_PARAMS_BYTES = 128;
  * `fmw_wasm::abi::NAUVIS_MAX_STARTING_POINTS`. */
 export const NAUVIS_MAX_STARTING_POINTS = 8;
 
+/** Offset of the starting-area radius inside the Nauvis block: just past the
+ * starting-point list. Mirrors `fmw_wasm::abi::NAUVIS_STARTING_AREA_RADIUS_OFFSET`. */
+export const NAUVIS_STARTING_AREA_RADIUS_OFFSET = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16;
+
 /** Must equal `fmw_wasm::abi::NAUVIS_PARAMS_BYTES`: 376 bytes of levers and
- * boxes, then one count plus `NAUVIS_MAX_STARTING_POINTS` `[x, y]` pairs. */
-export const NAUVIS_PARAMS_BYTES = 376 + 8 + NAUVIS_MAX_STARTING_POINTS * 16;
+ * boxes, one count plus `NAUVIS_MAX_STARTING_POINTS` `[x, y]` pairs, then the
+ * starting-area radius (appended; the block grew 512 -> 520). */
+export const NAUVIS_PARAMS_BYTES = NAUVIS_STARTING_AREA_RADIUS_OFFSET + 8;
 
 /**
  * The LARGEST request either side can produce, which is what `request_bytes()`
@@ -225,12 +230,9 @@ export interface NauvisRenderRequest extends CommonRenderRequest {
   /**
    * `10 * log2(control:water:size)`.
    *
-   * **Carried and NOT read by the terrain view**, which is issue #326. The
-   * shipped `renderTerrain.ts` resolves every tile at `waterLevel = 0` however
-   * the slider is set - `TileResolverParams` has no such field - and tier 3
-   * asserts the two ports are byte-identical, so the module ignores it too. It
-   * is sent because the `elevation`, `resources` and `cliffs` views already
-   * consume it and because fixing #326 should not also need a block growth.
+   * Read by every Nauvis view, the terrain view included, since #320 closed
+   * issue #326. (It used to be carried and ignored by the terrain view, which
+   * resolved every tile at `waterLevel = 0` however the slider was set.)
    */
   readonly waterLevel: number;
   /** `control:water:frequency`, RAW - the `1.5 *` happens inside the layer. */
@@ -241,6 +243,12 @@ export interface NauvisRenderRequest extends CommonRenderRequest {
   readonly auxBias: number;
   readonly startingAreaMoistureSize: number;
   readonly startingAreaMoistureFrequency: number;
+  /**
+   * `starting_area_radius`: `f32(150 * f32(starting_area))`, or 0 for a starting
+   * area of 0. Read by the enemy-base overlay only. Required, not defaulted: a
+   * writer that omitted it would send 0, which divides by zero in the field.
+   */
+  readonly startingAreaRadius: number;
   /**
    * `control:temperature:frequency` / `:bias`.
    *
@@ -629,6 +637,7 @@ function writeNauvisParams(view: DataView, req: NauvisRenderRequest): void {
     view.setFloat64(at, pt ? pt.x : 0, true);
     view.setFloat64(at + 8, pt ? pt.y : 0, true);
   }
+  view.setFloat64(p + NAUVIS_STARTING_AREA_RADIUS_OFFSET, req.startingAreaRadius, true);
 }
 
 /**

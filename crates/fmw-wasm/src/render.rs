@@ -107,11 +107,12 @@ pub const VIEW_RESOURCES: u32 = 5;
 
 /// Terrain with every overlay this planet has, in the renderer's own order.
 ///
-/// **The order is resources, then rocks, then cliffs**, which is the
-/// TypeScript's and is not arbitrary: resources paint first so that a cliff or
-/// a rock crossing an ore patch still reads as the thing that is in the way,
-/// and cliffs last matches the Nauvis composite, where the cliff pass is
-/// final.
+/// **Cliffs paint first and every other overlay over them**, which is the
+/// game's own preview order (`MapPreviewGenerator::Worker::computeEntities`
+/// draws the cliff list, then every other autoplaced entity on top). On Vulcanus
+/// that is cliffs, resources, rocks; on Nauvis cliffs, trees, resources, rocks,
+/// enemies. Both used to paint cliffs LAST, which was the old TypeScript
+/// composite's order and not the game's.
 pub const VIEW_ALL: u32 = 6;
 
 /// Terrain with the Nauvis tree overlay blended over it.
@@ -519,17 +520,32 @@ fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
         }
     }
 
-    // Resources first, then rocks, then cliffs - the TypeScript composite's own
-    // order. Resources paint first so that a cliff or a rock crossing an ore
-    // patch still reads as the thing that is in the way.
+    // Cliffs FIRST, then resources, then rocks - the game's own preview order.
+    // `MapPreviewGenerator::Worker::computeEntities` draws the cliff list in one
+    // loop (0x20ab1c0-0x20ab251), then every other autoplaced entity on top of
+    // it (Factorio 2.1.23, `pipeline/REVIEW.md` finding 1). The composite used to
+    // paint cliffs LAST, which was the TypeScript composite's old order and not
+    // the game's: it drew a cliff over an ore patch, where the game draws the
+    // ore over the cliff.
+    //
+    // **Graded by reading the code, not by a pixel count.** No committed preview
+    // PNG shows entities (all four are terrain-only, #400), so nothing in the
+    // gate moves on this change.
+    //
+    // This is a DRAWING order, so it has no real-save counterpart to keep behind
+    // an option: a save has no composite. (The cliffs themselves still model a
+    // real surface's ore removal - #416 - which the preview does not run; that is
+    // a different difference and is left alone.) Inside the entity list the
+    // game's order is queue order, earliest on top; this port keeps its own fixed
+    // layer order there.
+    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
+        paint_vulcanus_cliffs(req, p, &ctx, &stack, out);
+    }
     if matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
         paint_vulcanus_resources(req, p, &ctx, &stack, out);
     }
     if matches!(req.view, VIEW_ROCKS | VIEW_ALL) {
         paint_vulcanus_rocks(req, p, &stack, out);
-    }
-    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
-        paint_vulcanus_cliffs(req, p, &ctx, &stack, out);
     }
 }
 
@@ -804,6 +820,10 @@ pub fn nauvis_ctx(seed0: u32, p: &NauvisParams) -> NauvisCtx {
             frequency: p.enemy_frequency,
             size: p.enemy_size,
         },
+        // Sent by the writer as `f32(150 * f32(starting_area))`. Only the enemy
+        // field reads it (`20 / radius`): the resource radius, Vulcanus's and
+        // Gleba's are constants in the Lua. See `settings/REVIEW.md` N5.
+        starting_area_radius: p.starting_area_radius,
         resource_controls,
     }
 }
@@ -855,17 +875,34 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
         }
     }
 
-    // The overlay passes, in the TypeScript's own order - and for `all` that
-    // ORDER IS THE OUTPUT, not a detail. Trees first, under everything: a
-    // forest reads as cleared rather than as an obstacle. Then resources. Then
-    // the three obstructions over the top, so a rock, a spawner or a cliff
-    // crossing an ore patch reads as the thing that is in the way.
+    // The overlay passes - and for `all` that ORDER IS THE OUTPUT, not a detail.
     //
-    // **These five `if`s were in a different order until the composite landed**
+    // **Cliffs first, then everything else on top of them**, which is the game's
+    // preview order: `computeEntities` draws the cliff list in one loop
+    // (0x20ab1c0-0x20ab251) and then every other autoplaced entity over it
+    // (Factorio 2.1.23, `pipeline/REVIEW.md` finding 1). Cliffs used to paint
+    // LAST here - the TypeScript composite's own order, not the game's - so a
+    // cliff covered the ore, rock or spawner mark it should sit under.
+    //
+    // **Graded by reading the code, not by a pixel count.** No committed preview
+    // PNG shows entities (all four are terrain-only, #400), so nothing in the
+    // gate moves on this change.
+    //
+    // It is a DRAWING order, so it has no real-save counterpart to keep behind
+    // an option: a save has no composite. Inside the entity list the game's
+    // order is queue order, earliest on top; this port keeps its own fixed layer
+    // order for the rest: trees first, under everything (a forest reads as
+    // cleared rather than as an obstacle), then resources, then the two
+    // obstructions, rocks and spawners, over the top.
+    //
+    // **These `if`s were in a different order until the composite landed**
     // - resources sat after rocks and enemies - and nothing could tell, because
     // a single-overlay view triggers exactly one of them. `all` is the first
     // request that runs more than one, so it is the first thing that grades the
     // order at all. `paints resources under the obstructions` freezes it.
+    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
+        paint_nauvis_cliffs(req, p, out);
+    }
     if matches!(req.view, VIEW_TREES | VIEW_ALL) {
         paint_nauvis_trees(req, &ctx, out);
     }
@@ -877,9 +914,6 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     }
     if matches!(req.view, VIEW_ENEMIES | VIEW_ALL) {
         paint_nauvis_enemies(req, p, &stack, &catalog, &ctx, out);
-    }
-    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
-        paint_nauvis_cliffs(req, p, out);
     }
 }
 
@@ -1333,9 +1367,9 @@ fn paint_nauvis_resources(
     let mut ctx = ResourceResolverCtx::defaults(req.seed0);
     ctx.controls = controls.clone();
     ctx.segmentation_multiplier = p.segmentation_multiplier;
-    // The REAL water level, not the terrain pass's pinned zero. Resources
-    // honour it exactly as the cliff layer does - see #326 for why the terrain
-    // view does not.
+    // The request's water level. Every Nauvis pass reads it now: the terrain
+    // view stopped ignoring it in #320 (issue #326), so resources, cliffs and
+    // terrain all see the same value.
     ctx.water_level = p.water_level;
     ctx.starting_positions = vec![NauvisPoint { x: 0.0, y: 0.0 }];
     ctx.starting_lake_positions = None;
@@ -1420,13 +1454,12 @@ fn paint_nauvis_resources(
 ///
 /// # It builds its own elevation, and that is the point
 ///
-/// Every other Nauvis pass reads the render's shared `NauvisStack`, whose
-/// `water_level` is pinned to 0 to reproduce issue #326. The cliff layer must
-/// NOT: `renderCliffs.ts` threads the real water level into its own
-/// `cliff_elevation_nauvis`, so this pass builds `NauvisCliffFields` from
-/// `p.water_level` instead. One request therefore carries a water level that
-/// the terrain pass ignores and this pass honours, which is what the ABI's own
-/// note on that field says.
+/// The render's shared `NauvisStack` takes the request's `water_level` (since
+/// #320, which closed issue #326: the terrain view used to resolve every tile
+/// at 0). The cliff layer still builds its own `cliff_elevation_nauvis`, because
+/// the cliff fields need an elevation WITHOUT the cliff term, so this pass
+/// builds `NauvisCliffFields` from `p.water_level` instead of borrowing the
+/// stack. Both read the same request value; nothing is pinned or ignored.
 ///
 /// # The mark is an even-sided block, not a radius
 ///
@@ -1533,6 +1566,7 @@ fn paint_nauvis_enemies(
 ) {
     let mut params = EnemyFieldParams::defaults(req.seed0);
     params.controls = ctx.enemy_controls;
+    params.starting_area_radius = ctx.starting_area_radius;
     params
         .starting_positions
         .clone_from(&ctx.starting_positions);
@@ -1871,7 +1905,7 @@ mod tests {
     }
     use crate::abi::{
         ABI_VERSION, COMMON_BYTES, FULGORA_PARAMS_BYTES, MAGIC, NAUVIS_PARAMS_BYTES,
-        VULCANUS_BEARINGS, VULCANUS_PARAMS_BYTES,
+        NAUVIS_STARTING_AREA_RADIUS_OFFSET, VULCANUS_BEARINGS, VULCANUS_PARAMS_BYTES,
     };
     // Both moved to `fmw_noise::tiles::nauvis_resolve` with the resolver; the
     // early-out equivalence test below is the only remaining caller in this
@@ -2024,6 +2058,10 @@ mod tests {
         for at in [64, 72, 88, 104, 112, 120, 136] {
             b[at..at + 8].copy_from_slice(&1.0f64.to_le_bytes());
         }
+        // The game's default starting area (1) is a radius of 150. A zero here
+        // would divide by zero in the enemy field.
+        let at = COMMON_BYTES + NAUVIS_STARTING_AREA_RADIUS_OFFSET;
+        b[at..at + 8].copy_from_slice(&150.0f64.to_le_bytes());
         b
     }
 
@@ -2219,6 +2257,46 @@ mod tests {
         }
     }
 
+    /// The enemy overlay reads the request's starting-area radius.
+    ///
+    /// The game removes enemies out to `starting_area_radius`, so a bigger
+    /// starting area empties a bigger disc. This renders the same 896 x 896 tile
+    /// window around the spawn at the default radius (150) and at the slider's
+    /// largest (starting area 6, radius 900) and counts enemy-coloured pixels.
+    /// (Ribbon world's 450 leaves this window's one
+    /// spawner, 9 pixels, standing.) Which pixels the field puts there
+    /// is graded against the game by tier 1
+    /// (`the_enemy_field_follows_the_games_starting_area_radius`); this pins
+    /// that the REQUEST SLOT reaches the field, which tier 1 cannot see.
+    ///
+    /// The control is the 150 arm: it must paint something, or a request that
+    /// painted nothing at 900 would pass for the wrong reason.
+    #[test]
+    fn the_nauvis_enemy_overlay_reads_the_starting_area_radius() {
+        let (w, h) = (112u32, 112u32);
+        let count_enemies = |radius: f64| -> usize {
+            let mut b = nauvis_overlay_request(w, h, VIEW_ENEMIES, -448.0);
+            let at = COMMON_BYTES + NAUVIS_STARTING_AREA_RADIUS_OFFSET;
+            b[at..at + 8].copy_from_slice(&radius.to_le_bytes());
+            let mut out = vec![0u8; (w * h * 4) as usize];
+            assert_eq!(render(&b, &mut out), Status::Ok);
+            (0..out.len())
+                .step_by(4)
+                .filter(|&i| out[i..i + 3] == ENEMY_MAP_COLOR)
+                .count()
+        };
+        let default_radius = count_enemies(150.0);
+        let largest_radius = count_enemies(900.0);
+        println!(
+            "MEASURED enemy pixels: radius 150 -> {default_radius}, radius 900 -> {largest_radius}"
+        );
+        assert!(default_radius > 0, "the control painted no enemies");
+        assert!(
+            largest_radius < default_radius,
+            "a bigger starting area must paint fewer enemies near spawn"
+        );
+    }
+
     /// Whether a pixel carries the colour, for the mark tests below.
     fn mark_painted(out: &[u8], w: i64, x: i64, y: i64, color: [u8; 3]) -> bool {
         #[allow(clippy::cast_sign_loss)]
@@ -2319,6 +2397,8 @@ mod tests {
         for at in [64usize, 72, 88, 104, 112, 120, 136] {
             b[at..at + 8].copy_from_slice(&1.0f64.to_le_bytes());
         }
+        let at = COMMON_BYTES + NAUVIS_STARTING_AREA_RADIUS_OFFSET;
+        b[at..at + 8].copy_from_slice(&150.0f64.to_le_bytes());
 
         // `placement_sweep_box`, the window grown by the mark radius so a well
         // whose CENTRE lies outside still paints its halo into the window. The
