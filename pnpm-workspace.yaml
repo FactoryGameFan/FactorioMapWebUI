@@ -52,8 +52,21 @@ allowBuilds:
 # because it gates what gets PROPOSED rather than re-judging what is already
 # pinned. This line is the backstop for a hand-run `pnpm add`.
 minimumReleaseAge: 1440
-# There is no `overrides:` block on purpose. Until 2026-10-20 one pinned
-# brace-expansion to a 2.x maintenance backport (2.1.3, then 2.1.4) for its DoS
+# minimatch is pinned up to 11.x for Dependabot alert #10 (GHSA-g3hv-75wg-m249,
+# DoS in glob-part preprocessing, fixed in 11.0.1; no 10.x release has the fix).
+# Both parents declare 10.x - editorconfig 3.0.2 asks for ~10.2.4 and glob 13.0.6
+# for ^10.2.2 - and the newest js-beautify (2.0.3, via @vue/test-utils) still
+# asks for exactly those two, so no parent upgrade reaches 11 yet. Checked
+# 2026-11-25: with the override, glob and editorconfig run brace patterns
+# correctly. Same API; 11.x only raises the Node floor to 20. Remove this when
+# js-beautify moves to glob 14 / editorconfig 4 (both declare minimatch 11).
+# minimatch 11.0.9 still asks for brace-expansion ^5.0.12, the line this file's
+# last note says is safe. This is the rule below applied: every parent of
+# minimatch was read before the pin went in.
+overrides:
+  minimatch: "^11.0.9"
+# The note below is about an older pin in this same block. Until 2026-10-20 one
+# pinned brace-expansion to a 2.x maintenance backport (2.1.3, then 2.1.4) for its DoS
 # advisories. It came out because it had started breaking its only consumer:
 # since @vue/test-utils 2.5.0 (#396) the path is js-beautify 2.0.3 >
 # {editorconfig 3.0.2, glob 13.0.6} > minimatch 10.2.6, which declares
