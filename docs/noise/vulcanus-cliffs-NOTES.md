@@ -1,5 +1,16 @@
 # Vulcanus cliffs - port notes
 
+> **Note, 2026-11-26:** the fixture-only investigation specs named below
+> (`cliffOreLeverTileConfound`, `cliffOreDirection`, `cliffOreMechanismClosure`,
+> `cliffChunkOrder`, `cliffOrientationOracle`, `craterCliffLeverSensitivity`,
+> `craterCliffRngHypothesis`, `vulcanusCliffBands`, `vulcanusCliffFineSweep`,
+> `vulcanusCliffSmoothingSweep`, `vulcanusCliffs`, `cliffRemovalProbability`)
+> were deleted: they read only committed captures, so no product change could
+> fail them. The captures stay in `test/fixtures/` with their provenance, and
+> the shipped port is graded by `crates/fmw-noise/src/fixtures.rs`. Where a
+> section says a spec "pins" or "holds" a result, read it as history; `git log
+> --diff-filter=D -- test/<name>.spec.ts` recovers the spec.
+
 > ## UPDATE 19, 2026-09-08: `Surface::wouldCollide` READ OUT OF THE RUNNING GAME - the tile half is an oriented test and it is now EXACT
 >
 > **Every earlier section graded the port against the cliffs that SURVIVED the

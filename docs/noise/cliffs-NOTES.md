@@ -1,5 +1,16 @@
 # Cliffs (M4) - reverse-engineering notes
 
+> **Note, 2026-11-26:** the fixture-only investigation specs named below
+> (`cliffOreLeverTileConfound`, `cliffOreDirection`, `cliffOreMechanismClosure`,
+> `cliffChunkOrder`, `cliffOrientationOracle`, `craterCliffLeverSensitivity`,
+> `craterCliffRngHypothesis`, `vulcanusCliffBands`, `vulcanusCliffFineSweep`,
+> `vulcanusCliffSmoothingSweep`, `vulcanusCliffs`, `cliffRemovalProbability`)
+> were deleted: they read only committed captures, so no product change could
+> fail them. The captures stay in `test/fixtures/` with their provenance, and
+> the shipped port is graded by `crates/fmw-noise/src/fixtures.rs`. Where a
+> section says a spec "pins" or "holds" a result, read it as history; `git log
+> --diff-filter=D -- test/<name>.spec.ts` recovers the spec.
+
 > ## STATUS, 2026-08-01: both planets validated; issue #18 is CLOSED
 >
 > | | recall | precision | wrong orientation |
@@ -21,7 +32,7 @@
 > 198 cells, **185 of them false positives and 13 true**, so almost the whole
 > excess was a rule the measurement was not applying. Measured 2026-08-01 in
 > `test/vulcanusCliffEntities.spec.ts`; the no-rejection row is kept because
-> `test/cliffOrientationOracle.spec.ts` deliberately scores the larger set.
+> the since-deleted `test/cliffOrientationOracle.spec.ts` deliberately scored the larger set.
 >
 > What is left on Vulcanus: 38 of the game's 1569 missing and 43 of our 1574
 > spurious. **The 13 that used to be a "TILE question" were neither** - not the
@@ -300,8 +311,9 @@ Both cliff fixtures now record each entity's `cliff_orientation`
 - Nauvis 282/52 in the same order, Vulcanus 283/885/409 - so only the new column
 changed, and Nauvis's fixture moved from a 2.1.11 capture to 2.1.12 in the
 process. `placedCells` now returns the crossing `code` alongside the centre, so
-`test/cliffOrientationOracle.spec.ts` scores the SHIPPING path rather than a
-parallel re-derivation.
+the (now deleted) `test/cliffOrientationOracle.spec.ts` scored the SHIPPING path
+rather than a parallel re-derivation; `orientation_agrees` in
+`crates/fmw-noise/src/fixtures.rs` does that comparison for the Rust port.
 
 **`CLIFF_CODE_TO_ORIENTATION` is confirmed against the game.** All 334 Nauvis
 cliffs match exactly. That matters because the table's only previous check was

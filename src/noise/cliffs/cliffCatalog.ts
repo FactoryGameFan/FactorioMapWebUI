@@ -107,10 +107,11 @@ export interface CliffSettingsInput {
 }
 
 // `sliderToLinear` USED TO LIVE HERE, computed entirely in f64. #324 deleted
-// it rather than fixing it: `src/noise/eval/math.ts` exports the one graded
-// implementation, and this copy had no production consumer left after #227
-// removed `cliffFields.ts`. `scripts/probes/cliff-slider-to-linear` scored the
-// f64 form at 5 of 39 against the game, failing a control at `s = 6`.
+// it rather than fixing it: the one graded implementation is
+// `slider_to_linear` in `crates/fmw-noise/src/eval/math.rs`, and this copy had
+// no production consumer left after #227 removed `cliffFields.ts`.
+// `scripts/probes/cliff-slider-to-linear` scored the f64 form at 5 of 39
+// against the game, failing a control at `s = 6`.
 
 /** Higher frequency -> tighter (smaller) elevation bands between cliff lines. */
 export function getModifiedElevationInterval(baseInterval: number, frequency: number): number {

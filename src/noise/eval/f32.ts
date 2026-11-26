@@ -106,8 +106,8 @@
  *
  * @see `docs/noise/fulgora-elevation-NOTES.md` - "Two f32 findings that needed
  * OPPOSITE fixes", where both measurements are recorded in full.
- * @see `src/noise/eval/math.ts` - `sliderToLinear` and `sliderRescale`, two
- * more per-operation f32 chains, and the reason the `^` in them stays exact
+ * @see `src/noise/eval/math.ts` - `sliderRescale`, and `slider_to_linear` in
+ * `crates/fmw-noise/src/eval/math.rs`, two more per-operation f32 chains, and the reason the `^` in them stays exact
  * while `multioctaveNoise`'s is fastapprox.
  */
 export const f32 = Math.fround;

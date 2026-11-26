@@ -27,8 +27,8 @@ things this survey could not know:
   0.25 to 6 moves not one field value of 9600. The tier-2 case sets it to 1/6.
 - **How blind the gate fold is was measured by planting**, not estimated: it
   misses a 6e-4 shift in `main_cliffiness` and catches 6e-3.
-- `cliffCatalog.ts` has its own plain-f64 `sliderToLinear`, separate from the
-  f32-per-operation form in `eval/math.ts`, and `cliffFields.ts` is its only
+- `cliffCatalog.ts` had its own plain-f64 `sliderToLinear`, separate from the
+  f32-per-operation form in `eval/math.ts` (both TypeScript copies are gone now), and `cliffFields.ts` is its only
   consumer. The port reproduces the f64 form and the finding is issue #324.
   Section 2.2 does not mention it because the survey read the call site and not
   the import.

@@ -570,6 +570,14 @@ went in as its own graded change:
   no rounding). Keep the bounds LITERAL - computing `-1.7` as `-1 - 0.7` rounds
   the bound and contaminates the measurement.
 
+  **Where it is graded now.** The 39-cell game comparison, with the two
+  rejected forms as controls, is `reproduces_the_games_slider_to_linear_at_all_39_points`
+  and its companion in `crates/fmw-noise/src/fixtures.rs`. The TypeScript copy
+  of `slider_to_linear` and its spec (`test/sliderToLinearOracle.spec.ts`) were
+  deleted once nothing shipped called them; a test-local copy in
+  `test/dslMathOracle.ts` remains only as the TypeScript side of the 600-point
+  fold in `test/wasmEvalParity.spec.ts`.
+
   It also corrected a comment that appeared in both `eval/math.rs` and
   `eval/math.ts`: `slider_to_linear` does NOT "resolve on the prototype side -
   Lua, not the noise VM". It is declared `type = "noise-function"`, so it is
