@@ -1,9 +1,10 @@
 import { readClimateControls } from "./climateReads";
 import type { Point, VulcanusResourceControls } from "../noise/eval/ctx";
 import { readMapType } from "./mapType";
-import type { AquiloResourceControls } from "../noise/wasm/request";
+import type { AquiloResourceControls, GlebaControls } from "../noise/wasm/request";
 import {
   readAquiloResourceControls,
+  readGlebaControls,
   readResourceControls,
   readVulcanusResourceControls,
 } from "./resourceReads";
@@ -44,6 +45,12 @@ export interface ElevationPreviewCtx {
    * controls read as the neutral 1/1; size 0 is a real setting and is kept.
    */
   aquiloResourceControls: Required<AquiloResourceControls>;
+  /**
+   * Gleba's three terrain levers (`gleba_water` frequency and size,
+   * `gleba_plants` frequency), consumed only when the selected planet is
+   * Gleba. Absent controls read as the neutral 1.
+   */
+  glebaControls: Required<GlebaControls>;
   /**
    * The enemy-base autoplace control's frequency/size (control:enemy-base:*) -
    * consumed only by the `view: "enemies"` overlay (renderEnemies). Absent
@@ -180,6 +187,7 @@ export function elevationCtxFromPreset(preset: Preset): ElevationPreviewCtx {
     resourceControls: readResourceControls(preset),
     vulcanusResourceControls: readVulcanusResourceControls(preset),
     aquiloResourceControls: readAquiloResourceControls(preset),
+    glebaControls: readGlebaControls(preset),
     enemyControls: eb ? { frequency: eb.frequency, size: eb.size } : { frequency: 1, size: 1 },
     cliffControls: cc
       ? { frequency: cc.frequency, continuity: cc.size }

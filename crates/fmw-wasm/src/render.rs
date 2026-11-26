@@ -5,8 +5,8 @@
 //! `runRenderRequest`'s signature does not change.
 
 use crate::abi::{
-    self, AquiloParams, FulgoraParams, NauvisParams, Params, Request, Status, VulcanusBearing,
-    VulcanusParams,
+    self, AquiloParams, FulgoraParams, GlebaParams, NauvisParams, Params, Request, Status,
+    VulcanusBearing, VulcanusParams,
 };
 use core::cell::RefCell;
 use fmw_noise::at::At;
@@ -33,6 +33,8 @@ use fmw_noise::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisP
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::FulgoraStack;
+use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack};
+use fmw_noise::expressions::gleba_terrain::GlebaControls;
 use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack, NAUVIS_RESOURCE_COUNT};
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
@@ -78,6 +80,8 @@ pub const PLANET_VULCANUS: u32 = 1;
 pub const PLANET_NAUVIS: u32 = 2;
 /// Planet code for Aquilo.
 pub const PLANET_AQUILO: u32 = 3;
+/// Planet code for Gleba.
+pub const PLANET_GLEBA: u32 = 4;
 /// `view` code for the land mask - land versus ocean, no land argmax.
 pub const VIEW_LANDMASK: u32 = 0;
 /// `view` code for the full terrain render, all ten tile colours.
@@ -281,7 +285,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         ) | (
             PLANET_AQUILO,
             VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ROCKS | VIEW_ALL | VIEW_ENTITY_FOOTPRINT
-        )
+        ) | (PLANET_GLEBA, VIEW_TERRAIN)
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -304,6 +308,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         (PLANET_VULCANUS, Params::Vulcanus(p)) => render_vulcanus(&req, &p, &mut out[..needed]),
         (PLANET_NAUVIS, Params::Nauvis(p)) => render_nauvis(&req, &p, &mut out[..needed]),
         (PLANET_AQUILO, Params::Aquilo(p)) => render_aquilo(&req, &p, &mut out[..needed]),
+        (PLANET_GLEBA, Params::Gleba(p)) => render_gleba(&req, &p, &mut out[..needed]),
         _ => return Status::UnsupportedPlanetOrView,
     }
     Status::Ok
@@ -625,6 +630,40 @@ fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
     };
     if let Some(view) = view {
         paint_aquilo_entities(req, &stack, view, out);
+    }
+}
+
+/// Build the Gleba graph for one render.
+pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
+    GlebaStack::new(&GlebaCtx {
+        seed0,
+        controls: GlebaControls {
+            water_frequency: p.water_frequency,
+            water_size: p.water_size,
+            plants_frequency: p.plants_frequency,
+        },
+    })
+}
+
+/// Sweep the window and paint each pixel's Gleba tile in its `map_color`.
+///
+/// Terrain only (#454, slice 2). The tile is the raw argmax, with a tie going
+/// to the name that sorts first; a real surface also runs tile correction
+/// (`docs/noise/tile-correction-NOTES.md`), which this does not.
+fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
+    let stack = gleba_stack(req.seed0, p);
+    let mut offset = 0usize;
+    for py in 0..req.height {
+        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+            let color = stack.tile_at(terrain_at(req, wx, wy)).color();
+            out[offset] = color[0];
+            out[offset + 1] = color[1];
+            out[offset + 2] = color[2];
+            out[offset + 3] = 255;
+            offset += 4;
+        }
     }
 }
 

@@ -1881,3 +1881,110 @@ mod aquilo_render_tests {
         }
     }
 }
+
+/// The Gleba render entry, through the real decoder.
+#[cfg(test)]
+mod gleba_render_tests {
+    use crate::abi::{self, Status, COMMON_BYTES, GLEBA_PARAMS_BYTES};
+    use crate::render::{render, PLANET_GLEBA, VIEW_ALL, VIEW_TERRAIN};
+    use fmw_noise::at::At;
+    use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack};
+    use fmw_noise::expressions::gleba_terrain::GlebaControls;
+
+    /// The derived Gleba surface seed for map seed 123456.
+    const SEED0: u32 = 3_215_206_427;
+
+    fn request(view: u32, (w, h): (u32, u32), (ox, oy): (f64, f64), levers: [f64; 3]) -> Vec<u8> {
+        let mut b = vec![0u8; COMMON_BYTES + GLEBA_PARAMS_BYTES];
+        let put_u32 = |b: &mut Vec<u8>, at: usize, v: u32| {
+            b[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        };
+        let put_f64 = |b: &mut Vec<u8>, at: usize, v: f64| {
+            b[at..at + 8].copy_from_slice(&v.to_le_bytes());
+        };
+        put_u32(&mut b, 0, abi::MAGIC);
+        put_u32(&mut b, 4, abi::ABI_VERSION);
+        put_u32(&mut b, 8, PLANET_GLEBA);
+        put_u32(&mut b, 12, view);
+        put_u32(&mut b, 16, SEED0);
+        put_u32(&mut b, 20, w);
+        put_u32(&mut b, 24, h);
+        put_u32(&mut b, 28, GLEBA_PARAMS_BYTES as u32);
+        put_f64(&mut b, 32, ox);
+        put_f64(&mut b, 40, oy);
+        put_f64(&mut b, 48, 1.0);
+        for (i, v) in levers.into_iter().enumerate() {
+            put_f64(&mut b, COMMON_BYTES + i * 8, v);
+        }
+        b
+    }
+
+    fn run(dims: (u32, u32), origin: (f64, f64), levers: [f64; 3]) -> Vec<u8> {
+        let mut out = vec![0u8; dims.0 as usize * dims.1 as usize * 4];
+        let status = render(&request(VIEW_TERRAIN, dims, origin, levers), &mut out);
+        assert_eq!(status, Status::Ok);
+        out
+    }
+
+    /// Each pixel is the stack's own tile at that tile, in its map colour: the
+    /// render adds nothing between the argmax and the palette.
+    #[test]
+    fn terrain_paints_each_tiles_map_colour() {
+        let (dims, origin) = ((24, 16), (-40.0, 7.0));
+        let px = run(dims, origin, [1.0; 3]);
+        let stack = GlebaStack::new(&GlebaCtx {
+            seed0: SEED0,
+            controls: GlebaControls::default(),
+        });
+        let mut seen = std::collections::BTreeSet::new();
+        for (k, p) in px.as_chunks::<4>().0.iter().enumerate() {
+            let (i, j) = (k % dims.0 as usize, k / dims.0 as usize);
+            let tile = stack.tile_at(At::tile(-40 + i as i32, 7 + j as i32));
+            assert_eq!(p[..3], tile.color(), "pixel ({i}, {j})");
+            assert_eq!(p[3], 255);
+            seen.insert(tile.game_name());
+        }
+        assert!(
+            seen.len() > 2,
+            "a near-constant window grades little: {seen:?}"
+        );
+    }
+
+    /// Each of the three levers crosses the boundary and moves the picture.
+    ///
+    /// The window is 600 tiles out: at spawn the starting cones decide most
+    /// tiles, and the water frequency moved none of a 48 x 48 window there.
+    #[test]
+    fn each_lever_changes_the_render() {
+        let (dims, origin) = ((48, 48), (600.0, -600.0));
+        let neutral = run(dims, origin, [1.0; 3]);
+        for i in 0..3 {
+            let mut levers = [1.0; 3];
+            levers[i] = 2.0;
+            let moved = run(dims, origin, levers);
+            let differ = moved
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(neutral.as_chunks::<4>().0)
+                .filter(|(a, b)| a != b)
+                .count();
+            assert!(differ > 0, "lever {i} moved no pixel");
+        }
+    }
+
+    /// Every view but terrain is refused.
+    #[test]
+    fn views_gleba_does_not_serve_are_refused() {
+        for view in (0..14).filter(|v| *v != VIEW_TERRAIN) {
+            let b = request(view, (2, 2), (0.0, 0.0), [1.0; 3]);
+            let mut out = vec![0u8; 16];
+            assert_eq!(
+                render(&b, &mut out),
+                Status::UnsupportedPlanetOrView,
+                "view {view}"
+            );
+        }
+        assert_ne!(VIEW_ALL, VIEW_TERRAIN);
+    }
+}
