@@ -357,8 +357,9 @@ POISONED_TESTS=(
   # cheapest of the apply-stage tests (11 s clean, 42 s poisoned on hammond).
   #
   # Until 2026-11-26 this slot held
-  # `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`,
-  # which still runs in the clean pass. Under poison it cost 97 s, the slowest
+  # `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`
+  # (deleted later on 2026-11-26: it graded the apply stage the app never runs
+  # and repeated rows other tests check). Under poison it cost 97 s, the slowest
   # test in this list, so it set the wall time of the whole poisoned run.
   # Swapping it loses no control, which was measured rather than assumed: with
   # the connections hook (`poison::bool_result` in `is_cliff_connected`)

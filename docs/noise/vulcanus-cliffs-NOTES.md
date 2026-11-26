@@ -3117,7 +3117,17 @@ Running the same lava and ore predicates through the real stage instead of
 | `applyCliffs`, no cascade | 1500 | 25 | 22 | 6 |
 
 Better on three counts, worse on none, and the no-cascade row says the cascade
-rather than the re-staging is doing it. Killing the surviving 22 surplus with the
+rather than the re-staging is doing it.
+
+The test that froze this comparison,
+`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`,
+was deleted on 2026-11-26 because the app runs the crossing stage, not the apply
+stage. Its last frozen rows (after #408 and #416, so they differ from the table
+above) were: crossing stage 1521 / 9 / 11 / 1, `applyCliffs` with lava and ore
+1524 / 6 / 10 / 1, and `applyCliffs` with no cascade 1512 / 18 / 11 / 1
+(matched / wrong / surplus / missing). The apply stage itself is still graded
+against the game's own destruction set by
+`the_games_own_destruction_set_reproduces_the_game_exactly`. Killing the surviving 22 surplus with the
 cascade takes `wrong` from 18 to **5**, so 13 of the 18 are again fallout.
 
 **It is deliberately NOT wired into `renderVulcanusCliffs`.** The renderer paints
@@ -4927,7 +4937,9 @@ region, the same slider, with all four Vulcanus resource controls switched OFF -
 the lever `oracle-vulcanus-cliff-ore-direction` pulls - on both sides. Fixture
 `oracle-vulcanus-cliff-volcanism-ore.seed123456.json` (two runs, 2 seconds
 each; the ON arm reproduces the oos capture cell for cell), test
-`the_concentrated_residual_against_the_ore_lever`.
+`the_concentrated_residual_against_the_ore_lever` (deleted 2026-11-26; its ON
+row is the frequency-0.5 row of `the_volcanism_contrast_out_of_sample`, which
+still grades it).
 
 | arm                              | matched | wrong | surplus | missing | errors |
 | -------------------------------- | ------: | ----: | ------: | ------: | -----: |
