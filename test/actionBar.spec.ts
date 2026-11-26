@@ -70,8 +70,10 @@ describe("ActionBar", () => {
 
     await btn.trigger("click");
     // buildZip -> JSZip.generateAsync resolves across macrotasks/setImmediate,
-    // which flushPromises (microtasks only) does not drain; wait on a real timer.
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // which flushPromises (microtasks only) does not drain. Poll rather than
+    // sleep: a fixed 100 ms wait failed whenever the zip took longer, as on a
+    // loaded runner, with nothing wrong (test-pruning audit, 2026-11-26).
+    await vi.waitFor(() => expect(revokeObjectURL).toHaveBeenCalledTimes(1), { timeout: 5000 });
 
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);

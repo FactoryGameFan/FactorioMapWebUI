@@ -48,6 +48,9 @@ describe("ControlRow enable checkbox", () => {
     await cb.setValue(true);
     expect(store.activePreset!.autoplaceControls["nauvis_cliff"]!.size).toBe(1);
     const sliders = wrapper.findAll('input[type="range"]');
+    // `every` is true on an empty list, so count first (test-pruning audit,
+    // 2026-11-26).
+    expect(sliders.length).toBe(2);
     expect(sliders.every((s) => !(s.element as HTMLInputElement).disabled)).toBe(true);
   });
 
@@ -56,6 +59,9 @@ describe("ControlRow enable checkbox", () => {
     store.activePreset!.autoplaceControls["vulcanus_volcanism"]!.size = 0;
     await wrapper.vm.$nextTick();
     const sliders = wrapper.findAll('input[type="range"]');
+    // `every` is true on an empty list, so a row that dropped its sliders at
+    // size 0 passed (test-pruning audit, 2026-11-26).
+    expect(sliders.length).toBeGreaterThan(0);
     expect(sliders.every((s) => !(s.element as HTMLInputElement).disabled)).toBe(true);
   });
 
