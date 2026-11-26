@@ -14,11 +14,13 @@
 # 0.7s cold, because `--no-deps` rustdoc on a zero-dependency crate compiles
 # nothing at all.
 #
-# The poison phase's cost is the poison, not the test count: filtering to
-# `fixtures::` runs 108 tests instead of 452 and still costs 81.3s, and those
-# same 108 tests cost 20.8s clean against 81.2s poisoned. Perturbing every op
-# drives the code into much slower paths. Narrowing this phase was measured
-# and buys nothing; whether the 3.9x itself is inherent is NOT measured.
+# The poison phase runs only the tests in POISONED_TESTS (since 2026-11-26).
+# Perturbing every op drives the code into much slower paths, so a test costs
+# several times more poisoned than clean. Running the whole crate poisoned
+# spent most of the phase on tests whose poisoned results nothing read; the
+# note after the list has the measurement. An older note here said narrowing
+# bought nothing: it measured a `fixtures::` filter, which kept the expensive
+# unlisted tests.
 #
 # The cost that IS real is the FIRST run on a machine with no Rust: rustup
 # installs the pinned toolchain and its components before anything here runs.
@@ -69,21 +71,10 @@ echo "==> anti-vacuity: the gate must FAIL against a deliberately broken port"
 # A parity test that passes against a broken port is worth nothing, so the gate
 # proves it can fail rather than asserting it can (#220). `--features poison`
 # perturbs every op's returned value; each op's tier-1 fixture test must go red.
+# The list of those tests comes first, because the poisoned run executes ONLY
+# them (see the note after the list).
 #
-# `set -e` is why the run is written with a trailing `|| true`: a non-zero exit
-# is the PASS here, and an unguarded call would abort the script on success.
-POISON_OUT=$(cargo test --locked -p fmw-noise --features poison 2>&1 || true)
-
-if ! grep -q "^test result: FAILED" <<<"$POISON_OUT"; then
-  echo "ERROR: the port's tests PASSED with --features poison." >&2
-  echo "       The gate cannot see a one-ULP error, so it is not a gate." >&2
-  echo "       See crates/fmw-noise/src/poison.rs - an earlier version of this" >&2
-  echo "       control perturbed a gradient-table slot instead, and the" >&2
-  echo "       fixtures could not resolve it." >&2
-  exit 1
-fi
-
-# And it must be red for the RIGHT reason, per op.
+# It must be red for the RIGHT reason, per op.
 #
 # "the suite went red" is too weak a check, which is measured rather than
 # assumed: until #220's second batch, `basis_noise` carried the only poison
@@ -353,21 +344,21 @@ POISONED_TESTS=(
   resources::fulgora_catalog::tests::chunk_zero_four_places_no_scrap_on_the_ocean
   resources::fulgora_catalog::tests::the_ocean_gate_brings_scrap_density_to_the_games_counts
 
-  # The only grading of `cliffs::connections` against anything - that module is
-  # on no render path, so without this it would be a 631-line port with unit
-  # tests and no measurement.
+  # A game-graded test of `cliffs::connections`, which is on no render path.
+  # It runs the cascade over the game's own destruction set, so it is the
+  # cheapest of the apply-stage tests (11 s clean, 42 s poisoned on hammond).
   #
-  # It is also the most expensive test in the crate by a wide margin, and that
-  # is worth knowing before anyone adds a second like it. Measured: 33s in the
-  # normal arm and 93s under poison, which took this whole script from a few
-  # seconds to **1m50s** wall. Poisoning is the expensive half because
-  # `crossing_result` turns every lattice edge into a crossing, so far more
-  # cells place and the onDestroy cascade recurses over a dense set.
-  #
-  # `verify:rust` is therefore NO LONGER the cheapest job in the workflow. It is
-  # still far under the test shards (300s+), so it does not move the gate wall -
-  # but the line in CLAUDE.md calling it 19s and the cheapest job expired here.
-  fixtures::the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none
+  # Until 2026-11-26 this slot held
+  # `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`,
+  # which still runs in the clean pass. Under poison it cost 97 s, the slowest
+  # test in this list, so it set the wall time of the whole poisoned run.
+  # Swapping it loses no control, which was measured rather than assumed: with
+  # the connections hook (`poison::bool_result` in `is_cliff_connected`)
+  # switched off, BOTH apply-stage tests still fail, because the crossing and
+  # sweep hooks redden them first. The hook's own control is the unit test
+  # `connection_is_a_parity_test_and_not_a_do_they_touch_test` listed above,
+  # which goes green with the hook off and red with it on.
+  fixtures::the_games_own_destruction_set_reproduces_the_game_exactly
 
   # Phase 6 (#226), Nauvis. The shared sub-tree's own hook is
   # `poison::f64_result` on `cliff_ringbreak` - the layer's own arithmetic on
@@ -422,14 +413,58 @@ POISONED_TESTS=(
   fixtures::the_vulcanus_ore_roll_is_the_chunk_batch
   resources::vulcanus_ore_roll::tests::every_tile_of_a_chunk_reads_its_own_draw_of_the_chunk_batch
 )
+
+# The poisoned run executes ONLY the listed tests (`--exact` with every name as
+# a filter). Nothing reads the poisoned result of any other test: the check
+# below asks about these names and nothing else. Running the whole crate
+# poisoned, as this script did until 2026-11-26, spent most of the phase on
+# tests whose results were thrown away. Measured on 2026-11-26 at ccb2cfb
+# (hammond, 16 threads): 590 of the 818 poisoned CPU-seconds went to the 440
+# unlisted tests, including the four most expensive tests in the crate.
+#
+# An earlier measurement here said narrowing bought nothing. That filter was
+# `fixtures::`, which kept the expensive unlisted cliff and apply-stage tests,
+# so it was a different cut from this one.
+#
+# `set -e` is why the run is written with a trailing `|| true`: a non-zero exit
+# is the PASS here, and an unguarded call would abort the script on success.
+POISON_OUT=$(cargo test --locked -p fmw-noise --features poison -- --exact \
+  "${POISONED_TESTS[@]}" 2>&1 || true)
+
+if ! grep -q "^test result: FAILED" <<<"$POISON_OUT"; then
+  echo "ERROR: the port's tests PASSED with --features poison." >&2
+  echo "       The gate cannot see a one-ULP error, so it is not a gate." >&2
+  echo "       See crates/fmw-noise/src/poison.rs - an earlier version of this" >&2
+  echo "       control perturbed a gradient-table slot instead, and the" >&2
+  echo "       fixtures could not resolve it." >&2
+  exit 1
+fi
+
+# With a filter, a listed name that no longer exists (renamed, deleted) simply
+# does not run. Say so, rather than reporting it as a test that stayed green.
 for t in "${POISONED_TESTS[@]}"; do
-  if ! grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then
+  if grep -q "^test ${t} \.\.\. FAILED" <<<"$POISON_OUT"; then
+    continue
+  fi
+  if grep -q "^test ${t} \.\.\. " <<<"$POISON_OUT"; then
     echo "ERROR: ${t} stayed GREEN under --features poison." >&2
     echo "       Its op has no live poison hook, so nothing proves that test" >&2
     echo "       can fail. Add one - see crates/fmw-noise/src/poison.rs." >&2
-    exit 1
+  else
+    echo "ERROR: ${t} did not run under --features poison." >&2
+    echo "       No test has that exact path any more. If it was renamed or" >&2
+    echo "       moved, update POISONED_TESTS above." >&2
   fi
+  exit 1
 done
+
+# The filter must not shrink the run below the list: every listed test ran.
+RAN=$(grep -cE "^test [^ ]+ \.\.\. (ok|FAILED|ignored)" <<<"$POISON_OUT" || true)
+if [ "$RAN" -ne "${#POISONED_TESTS[@]}" ]; then
+  echo "ERROR: the poisoned run executed ${RAN} tests; POISONED_TESTS lists ${#POISONED_TESTS[@]}." >&2
+  echo "       A duplicate entry, or a name that matches no test, causes this." >&2
+  exit 1
+fi
 
 echo "==> zero dependencies in anything that ships"
 # `--edges normal` excludes dev- and build-dependencies, so this is a statement
