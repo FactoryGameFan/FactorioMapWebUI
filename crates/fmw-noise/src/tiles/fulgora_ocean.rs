@@ -143,6 +143,18 @@ mod tests {
                 ..ElevationFields::default()
             };
             assert_eq!(ocean_tile(&fields), Some(Ocean::Shallow), "s = {s}");
+            // `ocean_tile` answers only "shallow", so on its own it passed with
+            // the sign ignored or reversed (test-pruning audit, 2026-11-26).
+            // Read the two variants themselves: a negative `s` feeds
+            // `oil-ocean-shallow`, a positive one `oil-ocean-shallow-2`.
+            let [shallow, shallow2, _, _] = ocean_probabilities(&fields);
+            let (on, off) = if s < 0.0 {
+                (shallow, shallow2)
+            } else {
+                (shallow2, shallow)
+            };
+            assert!(on > 0.0, "s = {s}: the selected variant scores {on}");
+            assert_eq!(off, 0.0, "s = {s}: the other variant scores {off}");
         }
     }
 
