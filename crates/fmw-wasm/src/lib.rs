@@ -1639,10 +1639,7 @@ mod survey_tests {
         let mut n = vec![0u8; abi::COMMON_BYTES + abi::NAUVIS_PARAMS_BYTES];
         n[..abi::COMMON_BYTES].copy_from_slice(&b[..abi::COMMON_BYTES]);
         n[28..32].copy_from_slice(&(abi::NAUVIS_PARAMS_BYTES as u32).to_le_bytes());
-        assert_eq!(
-            run_survey(&n),
-            abi::Status::UnsupportedPlanetOrView as u32
-        );
+        assert_eq!(run_survey(&n), abi::Status::UnsupportedPlanetOrView as u32);
     }
 
     /// The step the module reports is the one the finder was written against.
