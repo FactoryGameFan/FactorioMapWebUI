@@ -1,0 +1,57 @@
+{
+  "_comment": "Ground truth from Factorio 2.1.23 (build 87750, linux64, headless): entity counts in the game's MAP PREVIEW and on a REAL generated surface, in the same origin-centred window, at map seed 123456 and default settings. `preview` is --generate-map-preview --report-quantities (no apply step, so overlapping entities are kept). `real` is count_entities_filtered after force-generating every chunk the window touches (apply included). Nauvis is the save's own surface; Vulcanus and Fulgora are unforced create_surface() surfaces whose game-derived seed is `surfaceSeed` = (map seed + crc32(name)) mod 2^32. Each window is [-side/2, side/2)^2. Regenerate: python3 -I scripts/probes/real-surface-counts/capture.py <2.1.23 headless install>",
+  "mapSeed": 123456,
+  "cases": [
+    {
+      "planet": "nauvis",
+      "side": 1024,
+      "surfaceSeed": 123456,
+      "preview": {
+        "biter-spawner": 253,
+        "spitter-spawner": 280,
+        "huge-rock": 269,
+        "big-rock": 994,
+        "big-sand-rock": 18,
+        "crude-oil": 19
+      },
+      "real": {
+        "biter-spawner": 19,
+        "spitter-spawner": 28,
+        "huge-rock": 213,
+        "big-rock": 582,
+        "big-sand-rock": 15,
+        "crude-oil": 13
+      }
+    },
+    {
+      "planet": "vulcanus",
+      "side": 256,
+      "surfaceSeed": 1249936247,
+      "preview": {
+        "huge-volcanic-rock": 158,
+        "big-volcanic-rock": 441,
+        "huge-volcanic-rock-hot": 3,
+        "big-volcanic-rock-hot": 16,
+        "sulfuric-acid-geyser": 22
+      },
+      "real": {
+        "huge-volcanic-rock": 85,
+        "big-volcanic-rock": 214,
+        "huge-volcanic-rock-hot": 3,
+        "big-volcanic-rock-hot": 15,
+        "sulfuric-acid-geyser": 19
+      }
+    },
+    {
+      "planet": "fulgora",
+      "side": 512,
+      "surfaceSeed": 2967702466,
+      "preview": {
+        "scrap": 1675
+      },
+      "real": {
+        "scrap": 1664
+      }
+    }
+  ]
+}
