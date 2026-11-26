@@ -55,6 +55,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 8 (#363) | Fulgora's `resources` and `all` composites                                                            | done |
 | 9 (#454) | Aquilo end to end - terrain, tiles, wells, icebergs; Rust-first, no TypeScript counterpart            | done |
 | 10 (#492) | Aquilo's wells and icebergs through the game's own per-chunk entity generator (`placement/generate.rs`), replacing the salted roll there | done |
+| 11 (#454) | Gleba slice 1 - the terrain fields and the 41-tile choice at tier 1 (`terrace` op, `gleba_*`); no ABI, render, cliffs or entities yet | tier 1 done |
 
 **Every planet except Gleba, every view the panel offers, renders through the engine.** The
 per-layer landing narrative is in the history doc; what follows is only what is
@@ -776,6 +777,42 @@ construction on exactly the term that differed. Both are f64 now. And
 `p ** octaves` is **`powf`, not `powi`**: `powi` disagrees with V8 by one ULP at
 0.7^4, 0.7^6 and 0.7^8, and one ULP there flips the f32 rounding of the octave
 gain, which moves every point in the case.
+
+### Gleba (#454), slice 1: terrain fields and tiles at tier 1
+
+`expressions/gleba_terrain.rs`, `gleba_starting.rs`, `gleba_stack.rs` and
+`tiles/gleba_catalog.rs` hold the four property fields (`gleba_elevation`,
+`gleba_aux`, `gleba_moisture`, `gleba_temperature`) and the 41 tile
+probabilities. `eval::math::terrace` is the new op, decoded from
+`NoiseOperations::Terrace::run`. Graded against
+`oracle-gleba-fields.seed123456.json` (surface seed FORCED to 123456):
+every field and every tile column is 1,024 of 1,024, and the winner matches the
+game's strict argmax at all 957 positions that have one.
+
+What a reader needs that the code comments do not say:
+
+- **The fixture cannot grade the tile tie-break.** 67 of its 1,024 positions have
+  a tied top score, all between variants of one family (`lowland-olive-blubber`
+  and its `-2` and `-3`, `wetland-green-slime` and `-light-`, and so on). The
+  game keeps the first of its own candidate list at a tie
+  (`generateBasicTiles` uses a strict `>` from `-inf`), and the order of that list
+  is not established. `TILE_ORDER` is the planet's `autoplace_settings` listing
+  order as a stand-in.
+- **`y_distortion` is `gleba_wobble_x * 15` at every starting cone**, not
+  `gleba_wobble_y`. It is the game's own typo and it is kept (see
+  `expressions/gleba_starting.rs`).
+- **Planted breaks the grade sees** (columns that fall below 1,024): `terrace` as
+  the identity (elevation 834), `gleba_select`'s constant folded in f64 (aux
+  1,014), no distortion on the cones (yumako soil 918), no fertile spot field
+  (yumako soil 563), libm `sin` in the spiral bridges (elevation 1,023, four
+  columns). The strict `<` in `terrace` at `frac == strength` is not reached by
+  the fixture and is pinned by a unit test.
+- **Only the point kernel is graded.** Every position is a
+  `calculate_tile_properties` read. The raw-coordinate multioctaves follow the
+  `At` they are given, so the chunk-grid path is available to a render but
+  ungraded.
+- **Only default levers are graded.** The water frequency and size and the plants
+  frequency are wired through `GlebaControls` and untested away from 1.
 
 ### Aquilo (#454)
 

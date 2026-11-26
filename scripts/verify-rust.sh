@@ -180,6 +180,14 @@ POISONED_TESTS=(
   # different set of entities and moves every later draw in the chunk.
   fixtures::aquilo_real_surface_replay_places_every_entity_the_game_did
   fixtures::the_tiny_vent_lands_where_the_game_puts_it
+  # Gleba (#454). The climate fields carry `poison::f64_result` on the
+  # elevation, moisture, aux and temperature, and `terrace` carries its own on
+  # both terrace results (its unit test reds under poison). The tile scores
+  # carry it in `probabilities`, and the winner reds through
+  # `poison::index_result` in `argmax` as well as every field under it.
+  fixtures::gleba_climate_fields_match_the_game
+  fixtures::gleba_tile_scores_match_the_game
+  fixtures::gleba_tile_winner_matches_the_game
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a
