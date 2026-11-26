@@ -1630,9 +1630,16 @@ mod survey_tests {
         let mut b = survey_request(1, 0.0, 0.0, 8.0, 2, 2);
         b[8..12].copy_from_slice(&abi::PLANET_NAUVIS.to_le_bytes());
         // The declared params length still says Fulgora's, so this is refused
-        // as a length error before the planet is ever read - which is the
-        // check doing its job, and why the planet guard needs its own case.
-        assert_ne!(run_survey(&b), 0);
+        // as a length error before the planet is ever read.
+        assert_eq!(run_survey(&b), abi::Status::BadParamsLength as u32);
+
+        // The planet guard needs a well-formed Nauvis request to be reached at
+        // all. This test used to stop at the case above with `assert_ne!(_, 0)`,
+        // which never reached the guard (test-pruning audit, 2026-11-26).
+        let mut n = vec![0u8; abi::COMMON_BYTES + abi::NAUVIS_PARAMS_BYTES];
+        n[..abi::COMMON_BYTES].copy_from_slice(&b[..abi::COMMON_BYTES]);
+        n[28..32].copy_from_slice(&(abi::NAUVIS_PARAMS_BYTES as u32).to_le_bytes());
+        assert_eq!(run_survey(&n), abi::Status::UnsupportedPlanetOrView as u32);
     }
 
     /// The step the module reports is the one the finder was written against.

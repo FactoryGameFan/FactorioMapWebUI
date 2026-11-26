@@ -295,7 +295,11 @@ describe("decodeExchangeString", () => {
   });
 
   it("decodes the cliff control string (empty across the corpus)", () => {
-    expect(decodeExchangeString(presets["Default"] as string).tail["cliff.control"]).toBe("");
+    // Checked only Default while its name claimed the corpus (test-pruning
+    // audit, 2026-11-26).
+    for (const name of NAMES) {
+      expect(decodeExchangeString(presets[name] as string).tail["cliff.control"], name).toBe("");
+    }
   });
 
   it("types the cliff floats and the pollution section for Default", () => {
@@ -339,7 +343,14 @@ describe("decodeExchangeString", () => {
   it("Death world has a higher enemy_evolution time_factor than Default", () => {
     const def = decodeExchangeString(presets["Default"] as string).tail;
     const dw = decodeExchangeString(presets["Death world"] as string).tail;
-    expect(dw["enemyEvolution.timeFactor"]).not.toBe(def["enemyEvolution.timeFactor"]);
+    // `not.toBe(Default)` accepted any wrong value (test-pruning audit,
+    // 2026-11-26). The game's own presets: base/prototypes/map-gen-presets.lua
+    // ["death-world"] sets time_factor = 0.00002; map-settings.lua's default is
+    // 0.000004.
+    expect(dw["enemyEvolution.timeFactor"]).toBeCloseTo(0.00002, 12);
+    expect(dw["enemyEvolution.timeFactor"]).toBeGreaterThan(
+      def["enemyEvolution.timeFactor"] as number,
+    );
   });
 
   it("types the unit_group section for Default, matching every map-settings.example.json default", () => {

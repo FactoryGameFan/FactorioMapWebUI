@@ -207,7 +207,7 @@ describe("presets store", () => {
     expect(decodeExchangeString(encoded).mid.height).toBe(128);
   });
 
-  it("exposes typed nested mapSettings/cliffSettings views, and leaves the byte-exact round-trip untouched", () => {
+  it("exposes typed nested mapSettings/cliffSettings views, and the encoded string still carries diffusionRatio", () => {
     const store = usePresetsStore();
     expect(store.activePreset?.mapSettings.pollution.diffusionRatio).toBe(0.02);
     expect(store.activePreset?.cliffSettings.cliffSmoothing).toBeCloseTo(1, 6);

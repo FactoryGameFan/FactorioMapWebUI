@@ -479,10 +479,11 @@ mod tests {
     /// `(-1.7, 1.7)` is that range, and it is the only one in the whole of
     /// `factorio-data`; `cliffiness_nauvis` reads it
     /// (`noise-programs.lua:358`). The game's own values live in
-    /// `test/fixtures/oracle-slider-to-linear.seed123456.json` and are graded on
-    /// the TypeScript side by `test/sliderToLinearOracle.spec.ts` - this test is
-    /// the Rust half, pinning the two cells that discriminate so a "simplify the
-    /// casts" edit reads as the behaviour change it would be.
+    /// `test/fixtures/oracle-slider-to-linear.seed123456.json` and are graded at
+    /// all 39 points by `reproduces_the_games_slider_to_linear_at_all_39_points`
+    /// in `fixtures.rs` - this test pins the two cells that discriminate beside
+    /// the function, so a "simplify the casts" edit reads as the behaviour
+    /// change it would be.
     #[test]
     fn slider_to_linear_narrows_its_bounds_before_using_them() {
         // s = 1 makes the ratio exactly 0, so the result is the midpoint. With

@@ -12,7 +12,7 @@ import {
 } from "./tier2Frozen";
 
 import { VULCANUS_CLIFF_BLOCKING_TILES } from "../src/noise/cliffs/cliffCatalog";
-import { type EvalCtxInput, withCtxDefaults } from "../src/noise/eval/ctx";
+import type { VulcanusResourceControls } from "../src/noise/eval/ctx";
 import { encodeRenderRequest, type VulcanusRenderRequest } from "../src/noise/wasm/request";
 
 /**
@@ -190,7 +190,10 @@ const FIELD_NAMES = [
 
 interface Sliders {
   readonly label: string;
-  readonly ctx: Omit<EvalCtxInput, "seed0">;
+  readonly volcanismFrequency: number;
+  readonly volcanismSize: number;
+  readonly temperatureBias: number;
+  readonly resources: VulcanusResourceControls;
 }
 
 /**
@@ -199,19 +202,28 @@ interface Sliders {
  * `(frequency, size)` a control wired to the wrong ore would fold identically.
  */
 const SLIDERS: readonly Sliders[] = [
-  { label: "default sliders", ctx: {} },
+  {
+    label: "default sliders",
+    volcanismFrequency: 1,
+    volcanismSize: 1,
+    temperatureBias: 0,
+    resources: {
+      tungstenOre: { frequency: 1, size: 1 },
+      vulcanusCoal: { frequency: 1, size: 1 },
+      calcite: { frequency: 1, size: 1 },
+      sulfuricAcidGeyser: { frequency: 1, size: 1 },
+    },
+  },
   {
     label: "every lever moved",
-    ctx: {
-      vulcanusVolcanismFrequency: 2,
-      vulcanusVolcanismSize: 3,
-      temperatureBias: 0.35,
-      vulcanusResourceControls: {
-        tungstenOre: { frequency: 2, size: 3 },
-        vulcanusCoal: { frequency: 0.5, size: 1.5 },
-        calcite: { frequency: 4, size: 0.25 },
-        sulfuricAcidGeyser: { frequency: 1.5, size: 6 },
-      },
+    volcanismFrequency: 2,
+    volcanismSize: 3,
+    temperatureBias: 0.35,
+    resources: {
+      tungstenOre: { frequency: 2, size: 3 },
+      vulcanusCoal: { frequency: 0.5, size: 1.5 },
+      calcite: { frequency: 4, size: 0.25 },
+      sulfuricAcidGeyser: { frequency: 1.5, size: 6 },
     },
   },
 ];
@@ -275,13 +287,8 @@ const OFF_GRID: Window = {
 /** The issue that WAS the off-grid divergence, now fixed and guarded below. */
 const OFF_GRID_ISSUE = 309;
 
-function ctxInput(s: Sliders): EvalCtxInput {
-  return { seed0: SEED0, ...s.ctx };
-}
-
 /** The request the module reads its parameters and its sweep geometry from. */
 function request(s: Sliders, w: Window): VulcanusRenderRequest {
-  const ctx = withCtxDefaults(ctxInput(s));
   return {
     planet: "vulcanus",
     view: "terrain",
@@ -291,13 +298,13 @@ function request(s: Sliders, w: Window): VulcanusRenderRequest {
     originX: w.originX,
     originY: w.originY,
     tilesPerPixel: w.tilesPerPixel,
-    volcanismFrequency: ctx.vulcanusVolcanismFrequency,
-    volcanismSize: ctx.vulcanusVolcanismSize,
-    temperatureBias: ctx.temperatureBias,
-    tungstenOre: ctx.vulcanusResourceControls.tungstenOre,
-    vulcanusCoal: ctx.vulcanusResourceControls.vulcanusCoal,
-    calcite: ctx.vulcanusResourceControls.calcite,
-    sulfuricAcidGeyser: ctx.vulcanusResourceControls.sulfuricAcidGeyser,
+    volcanismFrequency: s.volcanismFrequency,
+    volcanismSize: s.volcanismSize,
+    temperatureBias: s.temperatureBias,
+    tungstenOre: s.resources.tungstenOre,
+    vulcanusCoal: s.resources.vulcanusCoal,
+    calcite: s.resources.calcite,
+    sulfuricAcidGeyser: s.resources.sulfuricAcidGeyser,
   };
 }
 
