@@ -43,20 +43,6 @@ export interface SearchBox {
 /** Cells below this id become oil ocean - `fulgora_blanks` in the Lua. */
 const OCEAN_BELOW = 0.33;
 
-/**
- * The scan step, in tiles.
- *
- * `grid / 8` rather than a constant. A fixed 48-tile step averages only 2.6
- * samples across a cell at the smallest grid the Islands frequency slider
- * allows (125), and Manhattan Voronoi at jitter 0.6 produces cells noticeably
- * smaller than the grid - so small islands would fall between samples and never
- * be reported. A silent miss is the worst failure this tool can have, and the
- * whole stage costs well under a second, so there is nothing to economize.
- */
-export function surveyStep(grid: number): number {
-  return grid / 8;
-}
-
 function classify(id: number): IslandClass {
   if (id > 0.75) return "mesa";
   if (id > 0.5) return "sprawl";
@@ -82,6 +68,11 @@ interface Acc {
   points: { x: number; y: number }[];
 }
 
+/**
+ * `stepOverride` exists for ONE caller: `test/cellSurvey.spec.ts` sweeps at a
+ * deliberately coarse step to prove the module's own step is what keeps small
+ * islands from falling between samples. The app never passes it.
+ */
 export function surveyIslands(
   ctx: FulgoraCtx,
   box: SearchBox,
@@ -129,10 +120,17 @@ export function surveyIslands(
   };
 
   // The module does the whole sweep, and the step comes from the module too:
-  // `surveyStep` is `grid / 8` and `grid` moves with `islandsFrequency`, so
-  // deriving it here would need the Fulgora stack #371 deleted. Stage 1 is
-  // 96.3% of the finder's cost, measured in Chrome, and this call is that
-  // 96.3%.
+  // it is `grid / 8` and `grid` moves with `islandsFrequency`, so deriving it
+  // here would need the Fulgora stack #371 deleted. Stage 1 is 96.3% of the
+  // finder's cost, measured in Chrome, and this call is that 96.3%.
+  //
+  // Why `grid / 8` rather than a constant: a fixed 48-tile step averages only
+  // 2.6 samples across a cell at the smallest grid the Islands frequency
+  // slider allows (125), and Manhattan Voronoi at jitter 0.6 produces cells
+  // noticeably smaller than the grid - so small islands would fall between
+  // samples and never be reported. A silent miss is the worst failure this
+  // tool can have, and the whole stage costs well under a second, so there is
+  // nothing to economize.
   const trig = bearingTrig(ctx.seed0);
   const step =
     stepOverride ??

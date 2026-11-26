@@ -140,13 +140,25 @@ fn tables_from_fixture(fixture: &Json) -> BasisNoiseTables {
 /// TypeScript exactly - JavaScript numbers are f64, so `p.x * inputScale` is an
 /// f64 product there and narrowing it here would evaluate a different point.
 fn score(fixture: &Json, tables: &BasisNoiseTables) -> (usize, f64) {
+    score_with(fixture, tables, &|_, expected| expected)
+}
+
+/// [`score`], with `expect` free to change each point's expectation (its index
+/// and the fixture's value in, the value to grade against out). The audit
+/// (2026-11-26) split this out so the scorer's own test can move one
+/// expectation and still run THE scorer rather than a copy of its loop.
+fn score_with(
+    fixture: &Json,
+    tables: &BasisNoiseTables,
+    expect: &dyn Fn(usize, f64) -> f64,
+) -> (usize, f64) {
     let input_scale = fixture.get("inputScale").as_f64();
     let mut exact = 0usize;
     let mut worst = 0.0f64;
-    for point in fixture.get("points").as_array() {
+    for (k, point) in fixture.get("points").as_array().iter().enumerate() {
         let x = point.get("x").as_f64() * input_scale;
         let y = point.get("y").as_f64() * input_scale;
-        let expected = point.get("v").as_f64();
+        let expected = expect(k, point.get("v").as_f64());
         let got = basis_noise(x, y, tables);
         worst = worst.max((f64::from(got) - expected).abs());
         if f64::from(got) == expected {
@@ -247,25 +259,25 @@ fn the_scorer_resolves_a_single_wrong_point() {
     // being blind to one bad point among 512 - which is the shape a real
     // regression takes. Here the port is left alone and the EXPECTATION is
     // moved by one ULP, so the assertion under test is the scorer's.
+    //
+    // The audit (2026-11-26) changed this: it used to carry a copy of the
+    // scoring loop and so never ran `score`. It now grades through `score_with`.
     let fixture = load_captured_at("test/fixtures/basis-noise.seed123456.json", "2.1.12");
     let tables = tables_from_fixture(&fixture);
-    let input_scale = fixture.get("inputScale").as_f64();
-
-    let mut exact = 0usize;
-    let mut nudged_one = false;
-    for point in fixture.get("points").as_array() {
-        let x = point.get("x").as_f64() * input_scale;
-        let y = point.get("y").as_f64() * input_scale;
-        let mut expected = point.get("v").as_f64() as f32;
-        // Nudge the first non-zero expectation, once.
-        if !nudged_one && expected != 0.0 {
-            expected = f32::from_bits(expected.to_bits() + 1);
-            nudged_one = true;
+    // Nudge the first non-zero expectation, once, and grade through `score`.
+    let first_nonzero = fixture
+        .get("points")
+        .as_array()
+        .iter()
+        .position(|p| p.get("v").as_f64() as f32 != 0.0);
+    let nudged_one = first_nonzero.is_some();
+    let (exact, _) = score_with(&fixture, &tables, &|k, v| {
+        if Some(k) == first_nonzero {
+            f64::from(f32::from_bits((v as f32).to_bits() + 1))
+        } else {
+            v
         }
-        if basis_noise(x, y, &tables) == expected {
-            exact += 1;
-        }
-    }
+    });
 
     assert!(nudged_one, "no non-zero point to nudge");
     // 511, not 512. If this ever reads 512 the exact-match count has stopped
@@ -2482,7 +2494,7 @@ fn reproduces_the_voronoi_search_range_fixture_and_rejects_the_wrong_ring() {
 // assert an exact count rather than a bound.
 // ---------------------------------------------------------------------------
 
-use crate::eval::math::{slider_rescale, slider_rescale_rounded_once};
+use crate::eval::math::{slider_rescale, slider_rescale_rounded_once, slider_to_linear};
 use crate::eval::multisample::multisample;
 use crate::expressions::vulcanus_seed::{seed_normalized, seed_small};
 use crate::fast_approx::{fast_cbrt, fast_pow, noise_machine_pow};
@@ -2882,6 +2894,144 @@ fn reproduces_the_games_slider_rescale_at_all_seven_probe_points() {
          has been misread or the probe drifted",
         7 - fastapprox_misses
     );
+}
+
+/// `slider_to_linear` against the game's own answers, and what settles #324.
+///
+/// The fixture is `scripts/probes/cliff-slider-to-linear` run against Factorio
+/// 2.1.17: the probe registers `slider_to_linear(x, lo, hi)` as the elevation
+/// property, so the capture positions ARE the slider positions and `y` picks
+/// the range. `slider_to_linear` is a `noise-function`
+/// (`core/prototypes/noise-functions.lua:10`), so these are the noise machine's
+/// own values. Until #324's follow-up this was graded on the TypeScript side
+/// alone (`test/sliderToLinearOracle.spec.ts`, now deleted along with that
+/// copy of the function), and the shipped Rust form was checked at four points.
+///
+/// **Scored by EXACT match.** The game's values are f32 and so are ours, so a
+/// bound would only hide which candidate is right.
+///
+/// **The RANGE is what discriminates, not the slider.** Only `(-1.7, 1.7)` has
+/// bounds f32 cannot hold exactly, and it is the only such range in the whole
+/// of `factorio-data`. On the others, narrowing the bounds is a no-op.
+#[test]
+fn reproduces_the_games_slider_to_linear_at_all_39_points() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-slider-to-linear.seed123456.json",
+        "2.1.17",
+    );
+    let sliders = fixture.get("sliders").as_f64_array();
+    assert_eq!(
+        sliders.len(),
+        13,
+        "the fixture is the shape the probe wrote"
+    );
+
+    // (key, lo, hi, are the bounds exactly representable in f32)
+    let ranges: [(&str, f64, f64, bool); 3] = [
+        ("narrow", -1.0, 1.0, true),
+        ("wide", -1.7, 1.7, false),
+        ("fulgora", -50.0, 50.0, true),
+    ];
+    for (key, lo, hi, dyadic) in ranges {
+        let declared = fixture.get("ranges").get(key).as_f64_array();
+        assert_eq!(declared, vec![lo, hi], "range {key}");
+        assert_eq!(fixture.get(key).as_array().len(), 13, "{key} column size");
+        // The bound claim the whole finding rests on.
+        assert_eq!(
+            f64::from(lo as f32) == lo && f64::from(hi as f32) == hi,
+            dyadic,
+            "range {key}"
+        );
+    }
+
+    let game = |key: &str| fixture.get(key).as_f64_array();
+
+    // The shipped form: EXACT at every cell of every range.
+    let mut exact = 0usize;
+    for (key, lo, hi, _) in ranges {
+        for (s, want) in sliders.iter().zip(game(key)) {
+            let got = f64::from(slider_to_linear(*s, lo, hi));
+            assert_eq!(got, want, "slider_to_linear({s}, {lo}, {hi})");
+            exact += 1;
+        }
+    }
+    assert_eq!(exact, 39, "13 sliders over 3 ranges");
+
+    // Controls: cells where every candidate must agree. If these break, the
+    // capture is not measuring `slider_to_linear` and no count may be read.
+    let at = |key: &str, s: f64| {
+        let i = sliders
+            .iter()
+            .position(|v| *v == s)
+            .expect("slider present");
+        game(key)[i]
+    };
+    assert_eq!(at("narrow", 6.0), 1.0);
+    assert_eq!(at("fulgora", 6.0), 50.0);
+    assert_eq!(at("wide", 6.0), f64::from(1.7f32));
+    assert_eq!(at("narrow", 1.0), 0.0);
+    assert_eq!(at("fulgora", 1.0), 0.0);
+    // The sharpest single point: exactly 0 on (-1.7, 1.7) at s = 1.
+    assert_eq!(at("wide", 1.0), 0.0);
+}
+
+/// The anti-vacuity half of the test above: both forms that used to ship score
+/// strictly worse against the same game values, and only the non-dyadic range
+/// says so. Without it the full-match assertion could be satisfied by a version
+/// that had never been at risk.
+#[test]
+fn the_two_rejected_slider_to_linear_forms_score_worse_against_the_game() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-slider-to-linear.seed123456.json",
+        "2.1.17",
+    );
+    let sliders = fixture.get("sliders").as_f64_array();
+    let ranges: [(&str, f64, f64); 3] = [
+        ("narrow", -1.0, 1.0),
+        ("wide", -1.7, 1.7),
+        ("fulgora", -50.0, 50.0),
+    ];
+
+    let ratio =
+        |s: f64| f64::from((f64::from(s.log2() as f32) / f64::from(6.0f64.log2() as f32)) as f32);
+
+    // What the shipped form did BEFORE #324: every operation narrowed to f32,
+    // the bounds not.
+    let without_bounds_narrowing = |s: f64, lo: f64, hi: f64| -> f64 {
+        let half_span = (0.5 * f64::from((hi - lo) as f32)) as f32;
+        let scaled = (f64::from(half_span) * f64::from((1.0 + ratio(s)) as f32)) as f32;
+        f64::from((lo + f64::from(scaled)) as f32)
+    };
+    // What the cliff catalog did before #324 deleted it: all f64.
+    let plain_f64 = |s: f64, lo: f64, hi: f64| -> f64 {
+        lo + 0.5 * (hi - lo) * (1.0 + s.log2() / 6.0f64.log2())
+    };
+
+    let count = |eval: &dyn Fn(f64, f64, f64) -> f64| -> Vec<usize> {
+        ranges
+            .iter()
+            .map(|(key, lo, hi)| {
+                sliders
+                    .iter()
+                    .zip(fixture.get(key).as_f64_array())
+                    .filter(|(s, want)| eval(**s, *lo, *hi) == *want)
+                    .count()
+            })
+            .collect()
+    };
+
+    // Identical to the shipped form wherever the bounds are f32-exact, and
+    // wrong on 8 of 13 where they are not.
+    assert_eq!(count(&without_bounds_narrowing), vec![13, 5, 13]);
+    assert_eq!(count(&plain_f64), vec![2, 1, 2]);
+    // It fails a control outright: at s = 6 it returns 1.7, the game f32(1.7).
+    let i = sliders.iter().position(|v| *v == 6.0).unwrap();
+    assert_ne!(
+        plain_f64(6.0, -1.7, 1.7),
+        fixture.get("wide").as_f64_array()[i]
+    );
+    // And s = 1 on (-1.7, 1.7) is exactly 0 against 4.77e-8.
+    assert_ne!(without_bounds_narrowing(1.0, -1.7, 1.7), 0.0);
 }
 
 // ---------------------------------------------------------------------------

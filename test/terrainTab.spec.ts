@@ -187,6 +187,8 @@ describe("TerrainTab", () => {
 
   it("shows no info glyph on a control without info (trees)", () => {
     const wrapper = mountTab();
+    // Without the row anchor this passed when the trees row was missing (test-pruning audit, 2026-11-26).
+    expect(wrapper.find('[data-test="control-row-trees"]').exists()).toBe(true);
     const info = wrapper.find('[data-test="control-row-trees"] [data-test="info"]');
     expect(info.exists()).toBe(false);
   });

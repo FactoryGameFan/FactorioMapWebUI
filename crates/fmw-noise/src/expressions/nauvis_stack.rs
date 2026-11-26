@@ -810,14 +810,23 @@ mod parity_tests {
         assert!((0.0..21.0).contains(&argmax), "tile argmax {argmax}");
         // The last index of the block is the resolver's winner, which is also
         // the block's own catch-all - but the index PAST it is now the tree
-        // block, not the fallback, so the two are asserted separately.
+        // block, not the fallback, so the two are asserted separately. (This
+        // used to compare the last index with itself, which cannot fail; the
+        // test-pruning audit of 2026-11-26 replaced it with the two checks
+        // below.)
+        let winner = match parity.resources().resolver.resolve(x, y) {
+            Some(params) => params.patch_set_index as f64,
+            None => NAUVIS_RESOURCE_CATALOG.len() as f64,
+        };
         assert_eq!(
             parity.field(NauvisParity::TREE_BASE - 1, x, y),
-            parity.field(NauvisParity::TREE_BASE - 1, x, y)
-        );
-        assert!(
-            parity.field(NauvisParity::TREE_BASE - 1, x, y) <= 6.0,
+            winner,
             "the last resource index is the resolver winner"
+        );
+        assert_eq!(
+            parity.field(NauvisParity::TREE_BASE, x, y).to_bits(),
+            parity.tree_field(0, x, y).to_bits(),
+            "the index past the resource block is the tree block's first field"
         );
     }
 

@@ -316,30 +316,53 @@ impl ElevationNauvis {
 mod tests {
     use super::*;
 
+    /// A tree with no lake positions, so `starting_lake` sits near its 312 cap
+    /// and never decides the `min` at the points below.
+    fn tree(seg: f64, water_level: f64, spawn: Point) -> ElevationNauvis {
+        ElevationNauvis::new(&ElevationNauvisParams {
+            water_level,
+            segmentation_multiplier: seg,
+            starting_positions: vec![spawn],
+            starting_lake_positions: Some(vec![]),
+            ..ElevationNauvisParams::defaults(123_456)
+        })
+    }
+
+    /// The audit (2026-11-26) changed this: it used to check two fields and a
+    /// loop over its own formula, and never called the starting-island term.
+    /// It now measures the term through `eval`.
+    ///
+    /// At `water_level = -30` the outer `max` is `nauvis_main + 60` (the island
+    /// adds at most 50), and at `water_level = 0` it is
+    /// `nauvis_main + max(0, island)`, so the difference of the two evals is the
+    /// island term itself: `20 * (2.5 - distance * seg / 200)`. The two
+    /// segmentations differ by 1.5, so the raw one (`seg`) and the Nauvis one
+    /// (`nauvis_seg`) give different terms at every point.
     #[test]
     fn the_starting_island_term_reads_the_raw_segmentation_not_the_nauvis_one() {
-        // The two differ by 1.5 at every setting, so this is reachable at the
-        // DEFAULT controls rather than only under an unusual slider. Written as
-        // a comparison against a tree built with `seg` pre-multiplied by 1.5:
-        // if `starting_island` used `nauvis_seg`, that tree would agree with
-        // this one wherever `starting_island` decides the outer `max`.
         let real = ElevationNauvis::new(&ElevationNauvisParams::defaults(123_456));
         assert_eq!(real.seg, 1.0);
         assert_eq!(real.nauvis_seg, 1.5);
-        assert_ne!(real.seg, real.nauvis_seg, "the two must not collapse");
 
-        // Somewhere the island term has to be the one that wins, or the field
-        // it feeds is unreachable and the distinction is untestable.
-        let mut island_wins = 0usize;
-        for i in 0i32..200 {
-            let d = f64::from(i) * 5.0;
-            // `starting_island` beats `nauvis_main - 0` while `2.5 - d/200 > 0`,
-            // i.e. within 500 tiles of spawn at the default segmentation.
-            if 2.5 - (d * real.seg) / 200.0 > 0.0 {
-                island_wins += 1;
-            }
+        let origin = Point { x: 0.0, y: 0.0 };
+        for (seg, x, y) in [
+            (1.0f64, 100.0f64, 0.0f64),
+            (1.0, 60.0, 80.0),
+            (2.0, 50.0, 0.0),
+        ] {
+            let d = x.hypot(y);
+            let with_island = tree(seg, 0.0, origin).eval(x, y);
+            let without = tree(seg, -30.0, origin).eval(x, y) - 60.0;
+            let island = with_island - without;
+            let want = 20.0 * (2.5 - d * seg / 200.0);
+            let nauvis_form = 20.0 * (2.5 - d * seg * 1.5 / 200.0);
+            assert!(
+                (island - want).abs() < 1e-3,
+                "island term {island} at ({x}, {y}) seg {seg}, want {want} \
+                 (the nauvis-seg form would give {nauvis_form})"
+            );
+            assert!((want - nauvis_form).abs() > 4.0, "the forms must differ");
         }
-        assert_eq!(island_wins, 100, "the island term's reach at seg = 1");
     }
 
     #[test]
@@ -382,24 +405,46 @@ mod tests {
         assert_eq!(hi, 1020, "positions clamped to 0.65");
     }
 
+    /// The audit (2026-11-26) changed this: it used to count the zeros of its
+    /// own `max(0, b)` and never evaluated the tree. It now measures the macro
+    /// term's contribution to `eval`.
+    ///
+    /// The macro term enters `nauvis_main` as `3 * nauvis_macro * m`, with `m`
+    /// the starting multiplier `clamp(distance * nauvis_seg / 2000, 0, 1)`.
+    /// Every point here is over 2000 tiles from the origin, so `m = 1`.
+    /// Evaluating the same point once far from spawn (`m = 1`) and once with
+    /// spawn ON the point (`m = 0`) leaves exactly `20 * 3 * nauvis_macro`.
+    /// `water_level = -30` keeps `nauvis_main + 60` the winner of the outer
+    /// `max` in both, and the lake list is empty so the lake cap never wins.
     #[test]
     fn the_macro_term_is_half_wave_rectified_and_therefore_zero_over_much_of_the_map() {
-        // `macro_a * max(0, macro_b)`, not `macro_a * macro_b`. Dropping the
-        // `max` doubles the term's support and changes its sign distribution,
-        // which reads as a plausible macro field rather than a broken one.
-        let tree = ElevationNauvis::new(&ElevationNauvisParams::defaults(123_456));
-        let mut zero = 0usize;
-        for i in -40i32..40 {
-            for j in -40i32..40 {
-                let (x, y) = (f64::from(i) * 311.0, f64::from(j) * 293.0);
-                if max2(0.0, f64::from(tree.macro_b.eval(x, y))) == 0.0 {
-                    zero += 1;
+        let far = tree(1.0, -30.0, Point { x: 0.0, y: 0.0 });
+        let mut negative_b = 0usize;
+        let mut zero_term = 0usize;
+        for i in 0i32..24 {
+            for j in 0i32..24 {
+                let (x, y) = (f64::from(i) * 311.0 + 2000.0, f64::from(j) * 293.0 + 2000.0);
+                let near = tree(1.0, -30.0, Point { x, y });
+                let measured = far.eval(x, y) - near.eval(x, y);
+                let a = f64::from(far.macro_a.eval(x, y));
+                let b = f64::from(far.macro_b.eval(x, y));
+                let want = 60.0 * a * b.max(0.0);
+                assert!(
+                    (measured - want).abs() < 0.02,
+                    "macro contribution {measured} at ({x}, {y}), want {want}"
+                );
+                if b < 0.0 && a.abs() > 0.05 {
+                    negative_b += 1;
+                }
+                if measured.abs() < 0.02 {
+                    zero_term += 1;
                 }
             }
         }
-        assert_eq!(
-            zero, 3192,
-            "positions where the rectifier zeroes the macro term"
+        assert!(
+            negative_b > 20,
+            "only {negative_b} points where b < 0 bites"
         );
+        assert!(zero_term > 100, "only {zero_term} zero terms");
     }
 }

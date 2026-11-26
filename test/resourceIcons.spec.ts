@@ -38,6 +38,8 @@ describe("resource icons in rows", () => {
   it("renders no item icons on the Terrain tab", () => {
     setActivePinia(createPinia());
     const wrapper = mount(TerrainTab);
+    // A count of 0 also passed when the tab rendered nothing (test-pruning audit, 2026-11-26).
+    expect(wrapper.find('[data-test="terrain-coverage-table"]').exists()).toBe(true);
     expect(wrapper.findAll('[data-test="resource-icon"]').length).toBe(0);
   });
 });

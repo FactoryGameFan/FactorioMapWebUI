@@ -9,9 +9,9 @@ import {
 
 describe("cliff catalog math", () => {
   // `sliderToLinear` is no longer part of this catalog - #324 deleted the f64
-  // copy that lived here. Its anchors moved to test/eval/math.spec.ts, and the
-  // game comparison that settled which form is right is
-  // test/sliderToLinearOracle.spec.ts.
+  // copy that lived here. The game comparison that settled which form is right
+  // is `reproduces_the_games_slider_to_linear_at_all_39_points` in
+  // `crates/fmw-noise/src/fixtures.rs`.
   // interval = base/frequency; richness = base*continuity; both identity at slider 1
   it("lever modifiers", () => {
     expect(getModifiedElevationInterval(40, 1)).toBeCloseTo(40, 12);
@@ -44,7 +44,8 @@ describe("cliff orientation predicate", () => {
   });
 });
 
-// #360 deleted the block in cliffOreDirection.spec.ts that pinned this literal.
+// #360 deleted the block in cliffOreDirection.spec.ts that pinned this literal
+// (and that whole spec has since been deleted).
 // The set survives and two specs still read it, so the value is re-pinned here.
 // The Rust holds the same pair inlined twice, at
 // `crates/fmw-noise/src/cliffs/vulcanus_fields.rs:218` and `fixtures.rs`.

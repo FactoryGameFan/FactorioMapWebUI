@@ -232,6 +232,8 @@ describe("IslandFinderPanel", () => {
     const w = setup(async () => [row(), row({ cellX: 9 })]);
     await w.find('[data-test="island-search"]').trigger("click");
     await flushPromises();
+    // Without the row count this passed when no rows rendered (test-pruning audit, 2026-11-26).
+    expect(w.findAll('[data-test="island-row"]').length).toBe(2);
     expect(w.find('[data-test="island-coarse-divider"]').exists()).toBe(false);
   });
 
@@ -264,6 +266,8 @@ describe("IslandFinderPanel", () => {
     const w = setup(async () => [row({ clipped: false })]);
     await w.find('[data-test="island-search"]').trigger("click");
     await flushPromises();
+    // Without the row count this passed when no rows rendered (test-pruning audit, 2026-11-26).
+    expect(w.findAll('[data-test="island-row"]').length).toBe(1);
     expect(w.find('[data-test="island-clipped"]').exists()).toBe(false);
   });
 
