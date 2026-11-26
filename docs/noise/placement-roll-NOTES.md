@@ -743,8 +743,9 @@ warning than the number is as a fact.
 Task 9 was to cut render cost by evaluating the rock probability field on a coarse
 lattice while still rolling every tile - degrading *where* rocks land, never *how
 many*, so the density oracle stays valid. The mechanism is built and tested
-(`ROCK_FIELD_LATTICE` + `latticeSnapped` in `src/noise/rocks/rockCatalog.ts`,
-`test/rockLattice.spec.ts`) but **ships at 1, i.e. disabled.**
+(`ROCK_FIELD_LATTICE` + `lattice_snap` in `crates/fmw-noise/src/rocks/catalog.rs`;
+the TypeScript copy and `test/rockLattice.spec.ts` were deleted on 2026-11-26
+once nothing shipped called them) but **ships at 1, i.e. disabled.**
 
 ### Fidelity: density survives, clumping is the cost
 

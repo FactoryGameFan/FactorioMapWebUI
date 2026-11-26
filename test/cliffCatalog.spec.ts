@@ -44,7 +44,8 @@ describe("cliff orientation predicate", () => {
   });
 });
 
-// #360 deleted the block in cliffOreDirection.spec.ts that pinned this literal.
+// #360 deleted the block in cliffOreDirection.spec.ts that pinned this literal
+// (and that whole spec has since been deleted).
 // The set survives and two specs still read it, so the value is re-pinned here.
 // The Rust holds the same pair inlined twice, at
 // `crates/fmw-noise/src/cliffs/vulcanus_fields.rs:218` and `fixtures.rs`.

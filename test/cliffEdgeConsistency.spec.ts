@@ -106,8 +106,10 @@ const tally = (cases: { readonly cliffs: readonly Cliff[] }[], only?: string): T
  * - **The orientation table**, in the inverse direction.
  *
  * It matters because these three were the last unmeasured links in the Vulcanus
- * orientation residual. `cliffOrientationOracle.spec.ts` shows Nauvis matching
- * 334/334, which argues the table is right; but Nauvis exercises neither
+ * orientation residual. The game's own `cliff_orientation` on Nauvis matched
+ * 334/334 (checked by the since-deleted `cliffOrientationOracle.spec.ts`; the
+ * Rust port is graded on it by `orientation_agrees` in
+ * `crates/fmw-noise/src/fixtures.rs`), which argues the table is right; but Nauvis exercises neither
  * `cliff_smoothing` nor a continuous cliffiness field, so "Nauvis is exact"
  * could not by itself clear the packing for Vulcanus. This does, and it does it
  * from the fixture alone - measured 2026-08-01, both planets agree on **every**
