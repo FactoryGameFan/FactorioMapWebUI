@@ -348,7 +348,9 @@ describe("decodeExchangeString", () => {
     // ["death-world"] sets time_factor = 0.00002; map-settings.lua's default is
     // 0.000004.
     expect(dw["enemyEvolution.timeFactor"]).toBeCloseTo(0.00002, 12);
-    expect(dw["enemyEvolution.timeFactor"]).toBeGreaterThan(def["enemyEvolution.timeFactor"] as number);
+    expect(dw["enemyEvolution.timeFactor"]).toBeGreaterThan(
+      def["enemyEvolution.timeFactor"] as number,
+    );
   });
 
   it("types the unit_group section for Default, matching every map-settings.example.json default", () => {
