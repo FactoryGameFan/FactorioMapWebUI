@@ -175,6 +175,46 @@ pub fn max2(a: f64, b: f64) -> f64 {
     max(&[a, b])
 }
 
+/// The noise machine's `terrace` op: snap `value` onto steps `width` apart,
+/// starting at `offset`, with a smooth ramp of fraction `1 - strength` between
+/// them.
+///
+/// Read from `NoiseOperations::Terrace::run` in the 2.1.23 headless binary
+/// (0x251aa50). Every step is f32, in this order:
+///
+/// ```text
+/// t    = (value - offset) / width
+/// f    = floorf(t)
+/// frac = t - f
+/// up   = strength < frac ? (frac - strength) / (1 - strength) : 0
+/// out  = (up + f) * width + offset
+/// ```
+///
+/// The comparison is strict, so a `frac` exactly at `strength` gives `up = 0`.
+/// A NaN `value` gives a NaN `t` and `f`, so `up` is 0 (the comparison is
+/// false) but the result is still NaN. The binary's SSE path and its scalar
+/// tail compute the same expression, and neither fuses the last multiply and
+/// add, so this does not use `mul_add`.
+///
+/// Gleba's elevation reads it twice (`peaks_terrace` and `ridge_terrace`),
+/// both with `offset = 40`, `width = 20`, `strength = 0.2`.
+///
+/// All four arguments are narrowed to f32 first, as the machine holds them.
+#[must_use]
+pub fn terrace(value: f64, offset: f64, width: f64, strength: f64) -> f64 {
+    let (value, offset, width, strength) =
+        (value as f32, offset as f32, width as f32, strength as f32);
+    let t = (value - offset) / width;
+    let floor = t.floor();
+    let frac = t - floor;
+    let up = if strength < frac {
+        (frac - strength) / (1.0 - strength)
+    } else {
+        0.0
+    };
+    poison::f64_result(f64::from((up + floor) * width + offset))
+}
+
 /// `range_select_base` (`core/prototypes/noise-functions.lua`): select a
 /// `from`-`to` range, at or above 0 inside it and descending outside when `min`
 /// is negative.
@@ -454,6 +494,34 @@ mod tests {
         assert!(min(&[-0.0, 0.0]).is_sign_negative());
         assert!(max(&[0.0, -0.0]).is_sign_positive());
         assert!(max(&[-0.0, 0.0]).is_sign_positive());
+    }
+
+    /// `terrace` against the f32 decode of the binary, evaluated in numpy
+    /// float32 (`(up + floor(t)) * w + off`). The `frac == strength` boundary
+    /// is strict, and the next f32 above it ramps.
+    #[test]
+    fn terrace_snaps_to_steps_and_its_boundary_is_strict() {
+        // Mid-ramp: t = 0.5, up = (0.5 - 0.2) / 0.8.
+        assert_eq!(terrace(50.0, 40.0, 20.0, 0.2), 47.5);
+        // frac == strength exactly (4 / 20 is the f32 nearest 0.2): no ramp.
+        assert_eq!(terrace(44.0, 40.0, 20.0, 0.2), 40.0);
+        // One f32 step above it: the ramp starts.
+        let just_above = f64::from(f32::from_bits(44.0f32.to_bits() + 1));
+        assert_eq!(
+            terrace(just_above, 40.0, 20.0, 0.2),
+            f64::from(40.000_004f32)
+        );
+        // Below the offset the floor is negative.
+        assert_eq!(terrace(-5.0, 40.0, 20.0, 0.2), -6.25);
+        assert_eq!(terrace(30.0, 40.0, 20.0, 0.2), 27.5);
+        assert_eq!(terrace(39.99, 40.0, 20.0, 0.2), f64::from(39.987_503f32));
+    }
+
+    /// A NaN input stays NaN, and the `up` term does not turn it into a
+    /// number: `strength < NaN` is false, so `up` is 0, but the floor is NaN.
+    #[test]
+    fn terrace_of_nan_is_nan() {
+        assert!(terrace(f64::NAN, 40.0, 20.0, 0.2).is_nan());
     }
 
     /// The identities the Lua guarantees, at both ends of the slider.
