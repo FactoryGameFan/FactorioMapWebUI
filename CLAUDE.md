@@ -301,24 +301,35 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   `--features poison`.
   Where the time goes, each phase timed on its own, warm:
 
-  | phase                                                   |      time |
-  | ------------------------------------------------------- | --------: |
-  | `cargo test --features poison`                          | **82.4s** |
-  | `cargo test --locked --workspace`                       |     26.0s |
-  | `cargo build --release --target wasm32-unknown-unknown` |      2.8s |
-  | `cargo deny check`                                      |      0.6s |
-  | `cargo fmt --check` + `cargo clippy`                    |      0.3s |
-  | `cargo doc` (broken intra-doc links, #388)              |     0.03s |
+  | phase                                                           |      time |
+  | --------------------------------------------------------------- | --------: |
+  | `cargo test --features poison` (whole crate, before 2026-11-26) | **82.4s** |
+  | `cargo test --locked --workspace`                               |     26.0s |
+  | `cargo build --release --target wasm32-unknown-unknown`         |      2.8s |
+  | `cargo deny check`                                              |      0.6s |
+  | `cargo fmt --check` + `cargo clippy`                            |      0.3s |
+  | `cargo doc` (broken intra-doc links, #388)                      |     0.03s |
 
-  **The poison phase's cost is the POISON, not the test count**, and narrowing
-  it was measured and REJECTED: filtering to `fixtures::` runs 108 tests
-  instead of 452 and still costs **81.3s against 82.4s**. The tests the gate
-  requires to go red ARE the expensive ones. What makes them expensive is the
-  perturbation itself - those same 108 tests cost **20.8s clean and 81.2s
-  poisoned, a 3.9x blowup** - so poisoning every op's return value drives the
-  code into much slower paths. Whether that is inherent to perturbing a noise
-  graph or a pathology worth fixing has NOT been measured; do not assume
-  either.
+  **The poison phase runs only the tests in `POISONED_TESTS`** (since
+  2026-11-26), with `--exact` and every listed name as a filter. Those are the
+  only tests whose poisoned result the gate reads. Until then it ran the whole
+  crate poisoned and threw the other results away. Measured at ccb2cfb on
+  hammond (16 threads): the whole-crate run cost **818 CPU-s, 133 s wall**, and
+  **590 CPU-s** of that went to the 440 unlisted tests. The filtered run costs
+  **188 CPU-s, 97.5 s wall**. The wall barely moves locally because one listed
+  test, `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`,
+  takes 97 s poisoned by itself. A 4-core runner is bound by total CPU, so CI
+  should gain more; read the `rust` job times before quoting a number.
+
+  An older note here said narrowing was measured and rejected. It measured a
+  `fixtures::` filter, which kept the expensive UNLISTED cliff and apply-stage
+  tests, so it was a different cut. Perturbation does make a test slower
+  (108 tests: 20.8s clean, 81.2s poisoned, 3.9x); whether that is inherent
+  has NOT been measured.
+
+  A listed name that no longer exists now fails the gate as "did not run",
+  separately from "stayed GREEN". Both were planted on 2026-11-26 and each
+  turned the gate red with its own message.
 
   Three things about it that are easy to get wrong:
   - **It probes cargo-deny with `cargo deny --version`, never
