@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { deflateSync, inflateSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vite-plus/test";
@@ -374,13 +374,35 @@ describe("image diff artifacts", () => {
    * written: the throw above is the real assertion.
    */
   it("never calls rmSync when a traversal case name reaches writeDiffArtifacts", () => {
-    expect(() =>
-      writeDiffArtifacts({
-        spec: SPEC,
-        case: "../escaped-via-writeDiffArtifacts",
-        game: twoPixels([1, 2, 3]),
-        ours: twoPixels([1, 2, 3]),
-      }),
-    ).toThrow(/unsafe case/);
+    // The throw alone did not prove rmSync was skipped: it only proved the
+    // guard ran at some point. With rmSync moved above the guard (on the raw
+    // joined path), the throw still came and the test stayed green while the
+    // escaped directory was deleted (planted 2026-11-26, test-pruning audit).
+    // So plant a sentinel exactly where the unguarded path would resolve -
+    // `join(root, SPEC, "../escaped-via-writeDiffArtifacts")` normalises to
+    // `root/escaped-via-writeDiffArtifacts` - and require it to survive.
+    const escaped = join(
+      import.meta.dirname,
+      "..",
+      "test-output",
+      "preview-diffs",
+      "escaped-via-writeDiffArtifacts",
+    );
+    const sentinel = join(escaped, "sentinel.txt");
+    mkdirSync(escaped, { recursive: true });
+    writeFileSync(sentinel, "must survive");
+    try {
+      expect(() =>
+        writeDiffArtifacts({
+          spec: SPEC,
+          case: "../escaped-via-writeDiffArtifacts",
+          game: twoPixels([1, 2, 3]),
+          ours: twoPixels([1, 2, 3]),
+        }),
+      ).toThrow(/unsafe case/);
+      expect(existsSync(sentinel), "rmSync reached the escaped directory").toBe(true);
+    } finally {
+      rmSync(escaped, { recursive: true, force: true });
+    }
   });
 });

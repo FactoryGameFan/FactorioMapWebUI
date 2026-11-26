@@ -1005,9 +1005,11 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
         differing++;
       }
     }
-    // An order of magnitude worse than the frozen count above, so the surface
-    // seed derivation is load-bearing rather than incidental.
-    expect(differing).toBeGreaterThan(DIFFERING_PX * 10);
+    // The surface seed derivation is load-bearing rather than incidental: at
+    // the raw map seed 940,914 of 1,048,576 pixels differ (measured
+    // 2026-11-26). This used to read `> DIFFERING_PX * 10`, which became
+    // `> 0` once DIFFERING_PX reached 0, so it now states the scale directly.
+    expect(differing).toBeGreaterThan((SIZE * SIZE) / 2);
   }, 300000);
 });
 
