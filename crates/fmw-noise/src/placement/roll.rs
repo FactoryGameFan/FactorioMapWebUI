@@ -399,8 +399,8 @@ mod tests {
         assert_eq!(placement_roll_word(0, 0, salt), 341);
     }
 
-    /// Every salt in the table is distinct, and Fulgora
-    /// scrap's matches the TypeScript's literal.
+    /// Every salt in the table is distinct, and each matches the
+    /// TypeScript's literal.
     ///
     /// A salt IS the stream, so a wrong one moves every placed entity while
     /// leaving the probability field bit-exact. No field-level fixture can see
@@ -423,7 +423,29 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), all.len(), "two overlays share a salt");
-        assert_eq!(salt::FULGORA_SCRAP, 0x003b_a58c);
+
+        // The audit (2026-11-26) changed this: only FULGORA_SCRAP was pinned,
+        // so any other salt could change while staying distinct. Every value
+        // is now the literal from `PLACEMENT_SALT` in the deleted
+        // `src/noise/placement/placementRoll.ts` (read at 8516e61^, the last
+        // commit that carried it, before #366 removed the TypeScript).
+        for (name, got, want) in [
+            ("VULCANUS_ROCKS", salt::VULCANUS_ROCKS, 0),
+            ("VULCANUS_GEYSER", salt::VULCANUS_GEYSER, 0x1d_94e5),
+            ("NAUVIS_ROCKS", salt::NAUVIS_ROCKS, 0x5f_1e21),
+            ("ENEMY_BASES", salt::ENEMY_BASES, 0xa3_c07b),
+            ("ENEMY_BITER_PENALTY", salt::ENEMY_BITER_PENALTY, 0x2c_81d3),
+            (
+                "ENEMY_SPITTER_PENALTY",
+                salt::ENEMY_SPITTER_PENALTY,
+                0x4e_0937,
+            ),
+            ("CRUDE_OIL", salt::CRUDE_OIL, 0x76_b3af),
+            ("CRUDE_OIL_PENALTY", salt::CRUDE_OIL_PENALTY, 0x91_c40d),
+            ("FULGORA_SCRAP", salt::FULGORA_SCRAP, 0x3b_a58c),
+        ] {
+            assert_eq!(got, want, "{name} differs from the TypeScript's literal");
+        }
     }
 
     /// Different salts give different streams, which is the whole content of
