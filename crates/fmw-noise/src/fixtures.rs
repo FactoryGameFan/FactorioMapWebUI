@@ -6987,26 +6987,6 @@ fn the_tile_half_of_would_collide_graded_against_the_games_own_calls() {
     );
 }
 
-/// [`LavaAndOre`] plus the entity half read off the fixture: destroy these
-/// cells outright.
-struct OrientedLavaAndOre<'a, 'b> {
-    lava: VulcanusLavaTiles<'a, 'b>,
-    ore: VulcanusOreRejection<'a, 'b>,
-    entity_kills: Option<&'a BTreeSet<(u64, u64)>>,
-}
-
-impl ApplyCollision for OrientedLavaAndOre<'_, '_> {
-    fn collides(&self, orientation: u8, x: f64, y: f64) -> bool {
-        if self
-            .entity_kills
-            .is_some_and(|k| k.contains(&(x.to_bits(), y.to_bits())))
-        {
-            return true;
-        }
-        tile_collides(orientation, x, y, &self.lava) || self.ore.removes(orientation, x, y)
-    }
-}
-
 /// **The game tests every cell with its RAW queued orientation, and the port's
 /// raw queue IS the game's queue: 2088 of 2088 `cliff-vulcanus` calls carry
 /// the orientation `CliffPlacement` computes for that cell, with no cell
@@ -7014,13 +6994,18 @@ impl ApplyCollision for OrientedLavaAndOre<'_, '_> {
 /// established the queue's exactness through the cascade; this is the queue
 /// before anything touches it.
 ///
-/// That settles which orientation the apply pass must hand to `collides`.
-/// `apply_cliff_connections` tests a cell AFTER earlier destructions have
-/// cascaded into it, so a cell whose neighbour died first is tested with a
-/// trimmed box; the game tests the queued box. `(1626, 1602.5)` and
-/// `(1630, 1602.5)` are the two cells that shows on, and the last arm here
-/// hands the pass the raw orientation by position to measure what fixing it
-/// is worth.
+/// What this test asserts: inside the regions, the orientations the game
+/// queued for `cliff-vulcanus` equal the ones `CliffPlacement` computes, cell
+/// for cell, with nothing queued on one side only. It does not run the apply
+/// pass.
+///
+/// Background, from the apply-stage comparison deleted on 2026-11-26: the
+/// game's collision test reads the QUEUED orientation, while a cell tested
+/// after a neighbour's destruction had cascaded into it would see a trimmed
+/// box. `(1626, 1602.5)` and `(1630, 1602.5)` were the two cells where that
+/// showed. `apply_cliff_connections` now hands `collides` the queued
+/// orientation; the ore removal still reads the live one (see
+/// `cliffs/vulcanus_ore_rejection.rs`).
 #[test]
 fn the_game_tests_the_raw_queued_orientation_and_the_raw_queue_is_exact() {
     let fixture = load_captured_at(
@@ -10301,10 +10286,9 @@ fn score_removal_geometries(
     // The reference: the oriented tile test plus the PORT's own ore rule as
     // it ships - the engine geometry at the removal threshold since #414,
     // the base box before.
-    let shipped = OrientedLavaAndOre {
+    let shipped = LavaAndOre {
         lava: VulcanusLavaTiles::new(&stack),
         ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
-        entity_kills: None,
     };
     let mut rows = vec![score_arm(&shipped, None)];
     for &geometry in geometries {
