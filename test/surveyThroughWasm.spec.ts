@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 import { compileEngine, instantiateEngine, type EngineExports } from "../src/noise/wasm/engine";
 import { surveyCellsThroughWasm } from "../src/noise/islands/surveyThroughWasm";
 import { surveyIslands, surveyStep } from "../src/noise/islands/cellSurvey";
-import { sliderToLinear } from "../src/noise/eval/math";
+import { sliderToLinear } from "./dslMathOracle";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 import { bearingTrig } from "../src/noise/wasm/request";
 import {

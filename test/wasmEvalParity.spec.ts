@@ -19,7 +19,8 @@ afterAll(flushRecording);
  */
 expectRecordedRows(PLANET, 16);
 
-import { clamp, lerp, max, min, sliderRescale, sliderToLinear } from "../src/noise/eval/math";
+import { clamp, lerp, max, min, sliderToLinear } from "./dslMathOracle";
+import { sliderRescale } from "../src/noise/eval/math";
 import { seedNormalized, seedSmall } from "../src/noise/expressions/vulcanusSeed";
 
 /**
