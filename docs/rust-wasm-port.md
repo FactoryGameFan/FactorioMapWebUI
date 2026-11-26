@@ -782,7 +782,7 @@ levers, three bearing pairs of sine and cosine, and one placement sweep box), so
 a request is 184 bytes. Since #492 the sweep box is decoded and not read: each
 pixel reads only its own chunk's entities, so there is no halo. The slot stays
 so the layout does not move. That is smaller than Vulcanus's 368, so
-`REQUEST_BYTES` stays Nauvis's 568. The offered views are terrain, resources,
+`REQUEST_BYTES` stays Nauvis's 576. The offered views are terrain, resources,
 rocks and all. `VIEW_ENTITY_FOOTPRINT = 12` exists for the test that grades
 placement, and the panel never offers it. Elevation, enemies, cliffs, trees and
 the land mask are not served by the module. The app falls back to terrain for
@@ -1035,10 +1035,10 @@ declares `params_bytes`, then a per-planet block follows:
 | -------- | ----- | ------- |
 | Aquilo   | 128   | 184     |
 | Fulgora  | 64    | 120     |
-| Nauvis   | 512   | 568     |
+| Nauvis   | 520   | 576     |
 | Vulcanus | 312   | 368     |
 
-**Nauvis is the largest, so `REQUEST_BYTES` is 568.** Do not quote that table
+**Nauvis is the largest, so `REQUEST_BYTES` is 576.** Do not quote that table
 from here - it has gone stale once already, because a block grows whenever an
 overlay lands. The constants are declared in three places that must agree, and
 reading all three at once is both the current answer and the check that they
@@ -1052,8 +1052,9 @@ grep -n '_BYTES' crates/fmw-wasm/src/abi.rs src/noise/wasm/request.ts \
 **A planet block can grow with NO version bump, and that is the split working.**
 Vulcanus's has grown twice (248 -> 280 for the cliff view, 280 -> 312 for the
 overlays), Fulgora's once (#363, 48 -> 64, for `control:scrap:frequency` and
-`:size`), and Nauvis's six times (64 -> 96 -> 144 -> 160 -> 232 -> 376 -> 512,
-the last of them #339 appending the spawn list).
+`:size`), and Nauvis's seven times (64 -> 96 -> 144 -> 160 -> 232 -> 376 -> 512
+-> 520, #339 appending the spawn list and then the starting-area radius, the
+enemy field's `20 / radius` term).
 `BadParamsLength` refuses a writer whose declared length disagrees. **A version
 bump is for a change to the COMMON prefix**, which every planet reads.
 
@@ -1467,11 +1468,15 @@ map seed makes the Fulgora terrain comparison collapse from 22 differing pixels
 (0.002%; it was 3% before the terrain-only re-capture, when the count was mostly
 entities) to over 40%, and that is asserted rather than described.
 
-**The composite's paint ORDER is asserted, not described.** On Vulcanus:
-resources, then rocks, then cliffs - so a cliff or a rock crossing an ore patch
-reads as the thing that is in the way. Reordering the three passes changes only
-208 of 16,384 pixels in the window that grades it, which is invisible to a
-whole-image bound, and it is frozen exactly.
+**The composite's paint ORDER is asserted, not described.** Cliffs paint FIRST
+and everything else over them, which is the game's own preview order
+(`MapPreviewGenerator::Worker::computeEntities` draws the cliff list, then every
+other autoplaced entity on top; Factorio 2.1.23). On Vulcanus that is cliffs,
+resources, rocks. It was resources, rocks, cliffs until 2026-11-25, the old
+TypeScript composite's order, which put a cliff over an ore patch where the game
+puts the ore over the cliff. Reordering the passes changes only the pixels where
+two of them land, which is invisible to a whole-image bound, and the counts are
+frozen exactly.
 
 ### Broken rustdoc links are gated, and the PRIVATE view is the one that sees them
 

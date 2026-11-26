@@ -213,6 +213,11 @@
       "factorioVersion": "2.1.11",
       "evidence": "stated in the fixture's own _comment"
     },
+    "oracle-enemy-base-starting-area.seed123456.json": {
+      "factorioVersion": "2.1.23",
+      "evidence": "captured 2026-11-25 with factorio-oracle (`factorio-oracle run --probe`) from 'Version: 2.1.23 (build 87750, linux64, headless)' by scripts/probes/enemy-starting-area/make_probe.py: one Nauvis save per map_gen_settings.starting_area (0.5, 0.75, 1, 2, 3, 6) at map seed 123456 with every other setting at its default, and one calculate_tile_properties call per save over 241 positions (the origin plus six rays out to 520 tiles, every coordinate a multiple of 1/4) reading starting_area_radius and enemy_base_probability. Values are the exact f32s the game returned (printed with %.17g) and the merged file was not edited. Read by the Rust test the_enemy_field_follows_the_games_starting_area_radius and by test/startingAreaRadius.spec.ts.",
+      "versionDifferences": "2.1.23 only. The older oracle-enemy-base fixture (2.1.11) holds the same field at starting_area 1 only, and the starting_area = 1 arm here is the control that ties the two together."
+    },
     "oracle-entity-counts.seed123456.json": {
       "factorioVersion": "2.1.12",
       "evidence": "stated in the fixture's own _comment; captured 2026-07-27 against the installed binary, with `pnpm refs:sync --check` reporting binary/factorio-data/lua-api all in sync at 2.1.12"

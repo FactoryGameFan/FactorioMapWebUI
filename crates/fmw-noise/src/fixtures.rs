@@ -9963,6 +9963,93 @@ fn the_enemy_fixture_is_mostly_basement_so_the_probability_would_grade_nothing()
     }
 }
 
+/// The enemy field follows the game's `starting_area_radius`.
+///
+/// `enemy_base_probability` carries `min(0, 20 / starting_area_radius * d - 20)`,
+/// and the game computes the radius as `f32(150 * f32(starting_area))`, or 0 for
+/// a starting area of 0. The port used a constant 150 until the radius became a
+/// request lever, so every preset with a starting area other than 1 drew the
+/// field of a default world. Three of the nine built-in presets are such:
+/// both Death worlds carry 0.75 and Ribbon world 3.
+///
+/// The fixture holds the game's own values at 241 positions for six starting
+/// areas (2.1.23, seed 123456, every other setting at its default). Each arm is
+/// graded twice:
+///
+/// - **The radius formula** against the game's own `starting_area_radius`, at
+///   every position, as f32.
+/// - **The field** with that radius against the game's `enemy_base_probability`,
+///   exact to the bit.
+///
+/// **The control is the old behaviour**: the same field at the constant 150.
+/// It must agree with the game at `starting_area` 1 (the arm that ties this to
+/// the older fixture) and MISS at every other arm, or the arms grade nothing.
+#[test]
+fn the_enemy_field_follows_the_games_starting_area_radius() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-enemy-base-starting-area.seed123456.json",
+        "2.1.23",
+    );
+    let positions = fixture_positions(&fixture, "positions");
+    assert_eq!(positions.len(), 241, "a regen cannot empty the loop");
+    assert_eq!(count_off_grid(&positions), 0, "off-grid positions");
+    let seed = fixture.get("seed0").as_f64() as u32;
+    assert_eq!(seed, 123_456);
+
+    // (starting_area, positions where the field with the right radius is exact,
+    // positions where the same field at the constant 150 is exact).
+    //
+    // Measured 2026-11-25. The right radius is exact at all 241 in every arm.
+    // The old constant matches only the positions OUTSIDE the arm's radius
+    // (where the start term is 0 either way), so it falls as the radius grows:
+    // 241 at 1, 174 at 0.5 and 0.75, 102 at 2, 36 at 3, 0 at 6. 0.5 and 0.75 tie
+    // because both radii are under 150: either way the old constant is wrong at
+    // every one of the 67 positions inside 150 tiles, and right outside them.
+    let expected: [(f64, usize, usize); 6] = [
+        (0.5, 241, 174),
+        (0.75, 241, 174),
+        (1.0, 241, 241),
+        (2.0, 241, 102),
+        (3.0, 241, 36),
+        (6.0, 241, 0),
+    ];
+    let cases = fixture.get("cases").as_array();
+    assert_eq!(cases.len(), expected.len(), "case count");
+
+    let exact_with = |radius: f64, values: &[f64]| -> usize {
+        let field = EnemyBaseField::new(&EnemyFieldParams {
+            starting_area_radius: radius,
+            ..EnemyFieldParams::defaults(seed)
+        });
+        positions
+            .iter()
+            .enumerate()
+            .filter(|(i, (x, y))| f64::from(field.field(*x, *y) as f32) == values[*i])
+            .count()
+    };
+
+    for (case, &(sa, want_exact, want_old)) in cases.iter().zip(expected.iter()) {
+        assert_eq!(case.get("startingArea").as_f64(), sa, "case order");
+        // `f32(150 * f32(sa))`; every starting area here is exactly an f32.
+        let radius = f64::from(150.0f32 * (sa as f32));
+        let game_radius = case.get("startingAreaRadius").as_f64_array();
+        assert!(
+            game_radius.iter().all(|&r| r == radius),
+            "starting_area {sa}: the game's radius is not {radius}"
+        );
+
+        let values = case.get("enemyBaseProbability").as_f64_array();
+        let exact = exact_with(radius, &values);
+        let old = exact_with(150.0, &values);
+        println!(
+            "MEASURED sa={sa} exact={exact} old={old} of {}",
+            values.len()
+        );
+        assert_eq!(exact, want_exact, "starting_area {sa}: field exact");
+        assert_eq!(old, want_old, "starting_area {sa}: constant-150 control");
+    }
+}
+
 #[test]
 fn the_port_and_the_game_never_straddle_the_footprint_cut() {
     // The half of `test/enemyBaseField.spec.ts` that `worstAbs`/`worstRel` could

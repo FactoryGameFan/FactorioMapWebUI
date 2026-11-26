@@ -280,6 +280,10 @@ POISONED_TESTS=(
   fixtures::reproduces_the_games_full_enemy_base_probability_at_the_derived_spacing
   fixtures::the_enemy_fixture_is_mostly_basement_so_the_probability_would_grade_nothing
 
+  # The field at the game's starting_area_radius, six starting areas. Same
+  # hooks as the field test above, watched going red under `--features poison`.
+  fixtures::the_enemy_field_follows_the_games_starting_area_radius
+
   # Phase 5's second half (#225), the cliff stack. Three hooks, because three
   # ops here can be wrong independently and one red test would otherwise stand
   # in for all of them:
@@ -344,6 +348,10 @@ POISONED_TESTS=(
   # records for the capture-grid snap test. Adding it here would fail the gate
   # for being correct.
   resources::fulgora_catalog::tests::places_a_strict_nonempty_subset_of_the_footprint
+  # The ocean gate (#201) asks `tiles::fulgora_ocean::ocean_tile`, whose
+  # `poison::bool_result` flips every answer, so both gate tests go red.
+  resources::fulgora_catalog::tests::chunk_zero_four_places_no_scrap_on_the_ocean
+  resources::fulgora_catalog::tests::the_ocean_gate_brings_scrap_density_to_the_games_counts
 
   # The only grading of `cliffs::connections` against anything - that module is
   # on no render path, so without this it would be a 631-line port with unit
