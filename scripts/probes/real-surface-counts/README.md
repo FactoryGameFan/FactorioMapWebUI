@@ -22,7 +22,10 @@ names the same build.
 - **A real surface** is what a player finds after the game starts. After the
   roll, `apply` drops any entity whose box hits one already placed, including
   trees and rocks. The script force-generates every chunk the window touches
-  and counts with `count_entities_filtered`.
+  and counts the entities whose tile, `floor(position)`, lies in the window.
+  That is the rule the app's count uses. `count_entities_filtered{area}` would
+  also count an entity whose box only touches the window from outside. At
+  these windows both rules give the same counts.
 
 The overlays target the real surface. That was decided on 2026-11-25, and
 `crates/fmw-noise/src/placement/real_surface_counts.rs` keeps it that way.

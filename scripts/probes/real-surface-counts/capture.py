@@ -11,8 +11,9 @@ For each case (a planet and an origin-centred square window):
             preview queued. The preview never runs the game's `apply` step,
             so it keeps entities that overlap.
   real    - `factorio --create` with a small mod that force-generates every
-            chunk the window touches and runs `count_entities_filtered` over
-            the window. That is a real surface, `apply` included.
+            chunk the window touches, then counts the entities whose tile
+            (floor of position) lies in the window, the same rule the app's
+            count uses. That is a real surface, `apply` included.
 Both use map seed 123456 and default settings. Nauvis is the save's own
 surface. Vulcanus and Fulgora are `create_surface()` surfaces with NO seed
 forced, so the game derives the surface seed itself; the mod records it and
@@ -58,8 +59,8 @@ COMMENT = (
     "game's MAP PREVIEW and on a REAL generated surface, in the same origin-centred window, at "
     "map seed 123456 and default settings. `preview` is --generate-map-preview "
     "--report-quantities (no apply step, so overlapping entities are kept). `real` is "
-    "count_entities_filtered after force-generating every chunk the window touches (apply "
-    "included). Nauvis is the save's own surface; Vulcanus and Fulgora are unforced "
+    "the entities whose tile (floor of position) lies in the window, after force-generating "
+    "every chunk the window touches (apply included). Nauvis is the save's own surface; Vulcanus and Fulgora are unforced "
     "create_surface() surfaces whose game-derived seed is `surfaceSeed` = (map seed + "
     "crc32(name)) mod 2^32. Each window is [-side/2, side/2)^2. Regenerate: python3 -I "
     "scripts/probes/real-surface-counts/capture.py <2.1.23 headless install>"
@@ -118,9 +119,18 @@ def control_lua(planet: str, side: int, names: list[str]) -> str:
     end
   end
   s.force_generate_chunk_requests()
+  -- `count_entities_filtered{{area}}` counts every entity whose BOX touches
+  -- the area, so one centred just outside the edge would count. The app counts
+  -- tiles inside the half-open window, so count the same way: the entity's
+  -- tile, floor(position), must lie in [-h, h) on both axes.
   local counts = {{}}
   for _, name in pairs({{ {names_lua} }}) do
-    counts[name] = s.count_entities_filtered{{area = {{{{-{h}, -{h}}}, {{{h}, {h}}}}}, name = name}}
+    local n = 0
+    for _, e in pairs(s.find_entities_filtered{{area = {{{{-{h} - 8, -{h} - 8}}, {{{h} + 8, {h} + 8}}}}, name = name}}) do
+      local tx, ty = math.floor(e.position.x), math.floor(e.position.y)
+      if tx >= -{h} and tx < {h} and ty >= -{h} and ty < {h} then n = n + 1 end
+    end
+    counts[name] = n
   end
   helpers.write_file("counts.json", helpers.table_to_json({{
     surfaceSeed = s.map_gen_settings.seed, counts = counts }}), false)
