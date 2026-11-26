@@ -12838,5 +12838,10 @@ fn gleba_raw_tiles_against_the_real_surface() {
     );
     // Non-vacuity: the window spans many tiles, so a constant answer cannot pass.
     assert!(ours_kinds.len() > 30, "{} kinds", ours_kinds.len());
-    assert_eq!((names_differ, colours_differ), (2470, 1499));
+    // 2,470 and 1,499 under the listing-order tie-break; name order took them
+    // here. The 698 colour differences equal the count by which the game's own
+    // preview PNG (raw argmax) differs from this real surface in this window,
+    // and this argmax matches that PNG at every pixel of the window, so all
+    // 698 are the tile-correction pass.
+    assert_eq!((names_differ, colours_differ), (1680, 698));
 }
