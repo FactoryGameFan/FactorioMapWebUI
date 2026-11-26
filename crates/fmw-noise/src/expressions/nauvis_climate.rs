@@ -369,22 +369,46 @@ mod tests {
         assert_eq!(moved.eval(50_000.0, 0.0), default.eval(50_000.0, 0.0));
     }
 
+    /// The cutout is a `min` of three terms with three different knees, so a
+    /// port that dropped one would still produce a plausible moisture map.
+    /// Each must be the winner somewhere on this grid, and `Moisture::eval`
+    /// must follow it there.
+    ///
+    /// The audit (2026-11-26) changed this: it used to recompute the three
+    /// terms with its own constants and count the winners, and never evaluated
+    /// the moisture field. It now reads the cutout BACK OUT of `Moisture::eval`.
+    /// A moisture bias of 5 pins `moisture_main` at its clamp of 1, so the
+    /// output is `max(0.45, 1 - 0.2 * max(0, 1 - 1.5 * cutout))` and the
+    /// cutout is `(1 - (1 - out) / 0.2) / 1.5` wherever it is below 2/3. That
+    /// recovered value is compared with the smallest of the three terms read
+    /// from the shared layer.
     #[test]
     fn the_moisture_cutout_reads_all_three_fields() {
-        // The cutout is a `min` of three terms with three different knees, so a
-        // port that dropped one would still produce a plausible moisture map.
-        // Each must be the winner somewhere on this grid.
-        let m = Moisture::new(&MoistureParams::defaults(123_456));
+        let m = Moisture::new(&MoistureParams {
+            moisture_bias: 5.0,
+            ..MoistureParams::defaults(123_456)
+        });
+        // How often each term is the winner AND the cutout is open (below 2/3).
         let (mut a, mut b, mut c) = (0usize, 0usize, 0usize);
         for i in -25i32..25 {
             for j in -25i32..25 {
                 let (x, y) = (f64::from(i) * 53.5, f64::from(j) * 61.25);
                 let terms = [
-                    (m.shared.bridge_billows(x, y) - 0.07) * 5.0,
-                    (m.shared.hills(x, y) - 0.1) * 3.0,
-                    (m.shared.forest_path_billows(x, y) - 0.07) * 3.0,
+                    f32r(f32r(m.shared.bridge_billows(x, y) - f32r(0.07)) * 5.0),
+                    f32r(f32r(m.shared.hills(x, y) - f32r(0.1)) * 3.0),
+                    f32r(f32r(m.shared.forest_path_billows(x, y) - f32r(0.07)) * 3.0),
                 ];
                 let lowest = min(&terms);
+                if lowest >= 0.66 {
+                    continue;
+                }
+                let out = m.eval(x, y);
+                let recovered = (1.0 - (1.0 - out) / 0.2) / 1.5;
+                assert!(
+                    (recovered - lowest).abs() < 1e-5,
+                    "cutout read back as {recovered} at ({x}, {y}), the three terms \
+                     give {lowest} from {terms:?}"
+                );
                 if terms[0] == lowest {
                     a += 1;
                 }
@@ -396,11 +420,9 @@ mod tests {
                 }
             }
         }
-        // Frozen at the measured split. All three win a substantial share, so
-        // dropping any one of them would move the field - which is the point:
-        // a `min` of three terms is indistinguishable from a `min` of two
-        // wherever the third never wins.
-        assert_eq!((a, b, c), (541, 993, 966), "which cutout term wins");
+        // Each wins a substantial share of the open points, so dropping any
+        // one of them would move the field.
+        assert!(a > 100 && b > 100 && c > 100, "winners {a} {b} {c}");
     }
 
     #[test]

@@ -1793,21 +1793,57 @@ mod aquilo_render_tests {
         assert_eq!(count(&off, FLUORINE_COLOR), 0);
     }
 
+    /// The audit (2026-11-26) changed this: it only checked the pixels where
+    /// both overlays equal terrain, so an `all` view that dropped one overlay
+    /// still passed. It now requires every `all` pixel to be terrain, the wells
+    /// pixel or the icebergs pixel, and to take the overlay wherever exactly
+    /// one overlay differs from terrain.
     #[test]
     fn the_all_view_is_terrain_plus_both_overlays() {
-        let (dims, origin) = vent_window();
+        // The vent window holds no icebergs, so the pixel check runs on a
+        // 160 tile window at (-160, -160) that holds both kinds (278 iceberg
+        // pixels, 42 well pixels, measured 2026-11-26).
+        let (dims, origin) = ((160, 160), (-160.0, -160.0));
         let all = run(VIEW_ALL, dims, origin, 1.0);
         let wells = run(VIEW_RESOURCES, dims, origin, 1.0);
         let rocks = run(VIEW_ROCKS, dims, origin, 1.0);
         let terrain = run(VIEW_TERRAIN, dims, origin, 1.0);
-        // Every pixel `all` shares with neither overlay is terrain.
+        let (mut only_wells, mut only_rocks, mut both) = (0usize, 0usize, 0usize);
         for i in (0..all.len()).step_by(4) {
-            if wells[i..i + 4] == terrain[i..i + 4] && rocks[i..i + 4] == terrain[i..i + 4] {
-                assert_eq!(all[i..i + 4], terrain[i..i + 4]);
+            let px = i..i + 4;
+            let (w, r) = (
+                wells[px.clone()] != terrain[px.clone()],
+                rocks[px.clone()] != terrain[px.clone()],
+            );
+            match (w, r) {
+                (false, false) => assert_eq!(all[px.clone()], terrain[px], "pixel {}", i / 4),
+                (true, false) => {
+                    assert_eq!(all[px.clone()], wells[px], "wells pixel {}", i / 4);
+                    only_wells += 1;
+                }
+                (false, true) => {
+                    assert_eq!(all[px.clone()], rocks[px], "iceberg pixel {}", i / 4);
+                    only_rocks += 1;
+                }
+                (true, true) => {
+                    assert!(
+                        all[px.clone()] == wells[px.clone()] || all[px.clone()] == rocks[px],
+                        "pixel {} is neither overlay",
+                        i / 4
+                    );
+                    both += 1;
+                }
             }
         }
-        assert!(count(&all, FLUORINE_COLOR) > 0);
+        assert!(
+            only_wells > 0 && only_rocks > 0,
+            "this window must show each overlay alone: wells {only_wells}, \
+             icebergs {only_rocks}, both {both}"
+        );
         assert_ne!(all, terrain);
+        // And the guaranteed vent still shows in `all` at the spawn cone.
+        let (vdims, vorigin) = vent_window();
+        assert!(count(&run(VIEW_ALL, vdims, vorigin, 1.0), FLUORINE_COLOR) > 0);
     }
 
     #[test]

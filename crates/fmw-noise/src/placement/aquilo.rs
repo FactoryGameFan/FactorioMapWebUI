@@ -355,19 +355,47 @@ mod tests {
         RefCell::new(AquiloStack::new(&ctx, AquiloBearings::from_host(seed0)))
     }
 
+    /// The audit (2026-11-26) changed this: it used to sort a local literal
+    /// against itself and never read the product's table. It now pairs each
+    /// `AQUILO_ENTITIES` slot with the game's autoplace `order` string
+    /// (`space-age/prototypes/entity/resources.lua`, `base/.../resources.lua`
+    /// and `decoratives-aquilo.lua`, read at 2.1.14) and requires the strings
+    /// to be strictly increasing in table order, then ties the autoplacer
+    /// table's positioning to the entity kind.
     #[test]
     fn the_autoplacer_table_is_in_the_games_sorted_order() {
-        let order = [
-            "a[resources]-a[fluorine]",
-            "a[resources]-b[lithium]",
-            "a[rock]-a[huge]",
-            "a[rock]-b[big]",
-            "c",
-        ];
-        let mut sorted = order;
+        let game_order = |e: AquiloEntity| match e {
+            AquiloEntity::FluorineVent => "a[resources]-a[fluorine]",
+            AquiloEntity::LithiumBrine => "a[resources]-b[lithium]",
+            AquiloEntity::IcebergHuge => "a[rock]-a[huge]",
+            AquiloEntity::IcebergBig => "a[rock]-b[big]",
+            AquiloEntity::CrudeOil => "c",
+        };
+        let names: Vec<&str> = AQUILO_ENTITIES.iter().map(|e| e.game_name()).collect();
+        assert_eq!(
+            names,
+            [
+                "fluorine-vent",
+                "lithium-brine",
+                "lithium-iceberg-huge",
+                "lithium-iceberg-big",
+                "crude-oil"
+            ]
+        );
+        let orders: Vec<&str> = AQUILO_ENTITIES.iter().map(|&e| game_order(e)).collect();
+        let mut sorted = orders.clone();
         sorted.sort_unstable();
-        assert_eq!(sorted, order);
+        sorted.dedup();
+        assert_eq!(sorted, orders, "AQUILO_ENTITIES is not in sorted order");
         assert_eq!(AQUILO_ENTITIES.len(), AQUILO_AUTOPLACERS.len());
+        for (e, placer) in AQUILO_ENTITIES.iter().zip(&AQUILO_AUTOPLACERS) {
+            let want = if e.well().is_some() {
+                Positioning::Resource
+            } else {
+                Positioning::OffGrid
+            };
+            assert_eq!(placer.positioning, want, "{}", e.game_name());
+        }
     }
 
     /// A few wells the game's real surface and its preview agree on, at the

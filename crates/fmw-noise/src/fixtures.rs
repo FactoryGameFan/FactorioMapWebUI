@@ -140,13 +140,25 @@ fn tables_from_fixture(fixture: &Json) -> BasisNoiseTables {
 /// TypeScript exactly - JavaScript numbers are f64, so `p.x * inputScale` is an
 /// f64 product there and narrowing it here would evaluate a different point.
 fn score(fixture: &Json, tables: &BasisNoiseTables) -> (usize, f64) {
+    score_with(fixture, tables, &|_, expected| expected)
+}
+
+/// [`score`], with `expect` free to change each point's expectation (its index
+/// and the fixture's value in, the value to grade against out). The audit
+/// (2026-11-26) split this out so the scorer's own test can move one
+/// expectation and still run THE scorer rather than a copy of its loop.
+fn score_with(
+    fixture: &Json,
+    tables: &BasisNoiseTables,
+    expect: &dyn Fn(usize, f64) -> f64,
+) -> (usize, f64) {
     let input_scale = fixture.get("inputScale").as_f64();
     let mut exact = 0usize;
     let mut worst = 0.0f64;
-    for point in fixture.get("points").as_array() {
+    for (k, point) in fixture.get("points").as_array().iter().enumerate() {
         let x = point.get("x").as_f64() * input_scale;
         let y = point.get("y").as_f64() * input_scale;
-        let expected = point.get("v").as_f64();
+        let expected = expect(k, point.get("v").as_f64());
         let got = basis_noise(x, y, tables);
         worst = worst.max((f64::from(got) - expected).abs());
         if f64::from(got) == expected {
@@ -247,25 +259,25 @@ fn the_scorer_resolves_a_single_wrong_point() {
     // being blind to one bad point among 512 - which is the shape a real
     // regression takes. Here the port is left alone and the EXPECTATION is
     // moved by one ULP, so the assertion under test is the scorer's.
+    //
+    // The audit (2026-11-26) changed this: it used to carry a copy of the
+    // scoring loop and so never ran `score`. It now grades through `score_with`.
     let fixture = load_captured_at("test/fixtures/basis-noise.seed123456.json", "2.1.12");
     let tables = tables_from_fixture(&fixture);
-    let input_scale = fixture.get("inputScale").as_f64();
-
-    let mut exact = 0usize;
-    let mut nudged_one = false;
-    for point in fixture.get("points").as_array() {
-        let x = point.get("x").as_f64() * input_scale;
-        let y = point.get("y").as_f64() * input_scale;
-        let mut expected = point.get("v").as_f64() as f32;
-        // Nudge the first non-zero expectation, once.
-        if !nudged_one && expected != 0.0 {
-            expected = f32::from_bits(expected.to_bits() + 1);
-            nudged_one = true;
+    // Nudge the first non-zero expectation, once, and grade through `score`.
+    let first_nonzero = fixture
+        .get("points")
+        .as_array()
+        .iter()
+        .position(|p| p.get("v").as_f64() as f32 != 0.0);
+    let nudged_one = first_nonzero.is_some();
+    let (exact, _) = score_with(&fixture, &tables, &|k, v| {
+        if Some(k) == first_nonzero {
+            f64::from(f32::from_bits((v as f32).to_bits() + 1))
+        } else {
+            v
         }
-        if basis_noise(x, y, &tables) == expected {
-            exact += 1;
-        }
-    }
+    });
 
     assert!(nudged_one, "no non-zero point to nudge");
     // 511, not 512. If this ever reads 512 the exact-match count has stopped
