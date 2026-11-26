@@ -423,6 +423,59 @@ impl GlebaTile {
             Self::PitRock => "pit-rock",
         }
     }
+
+    /// The tile's `map_color`, as the game reports it at runtime
+    /// (`prototypes.tile[name].map_color`, read by
+    /// `scripts/probes/gleba-real-surface/capture.ts` and stored in
+    /// `oracle-gleba-real-surface.seed123456.json`). Several tiles share a
+    /// colour, so a picture cannot tell those apart; the fixture test
+    /// `gleba_map_colours_match_the_game` compares all 41.
+    #[must_use]
+    pub fn color(self) -> [u8; 3] {
+        match self {
+            Self::NaturalYumakoSoil => [185, 166, 5],
+            Self::NaturalJellynutSoil => [185, 5, 166],
+            Self::WetlandYumako => [132, 119, 7],
+            Self::WetlandJellynut => [132, 7, 119],
+            Self::WetlandBlueSlime => [25, 49, 58],
+            Self::WetlandLightGreenSlime => [35, 63, 35],
+            Self::WetlandGreenSlime => [25, 53, 25],
+            Self::WetlandLightDeadSkin => [51, 50, 56],
+            Self::WetlandDeadSkin => [46, 45, 51],
+            Self::WetlandPinkTentacle => [64, 19, 34],
+            Self::WetlandRedTentacle => [54, 15, 24],
+            Self::GlebaDeepLake => [18, 37, 51],
+            Self::LowlandBrownBlubber => [66, 82, 11],
+            Self::LowlandOliveBlubber => [66, 82, 11],
+            Self::LowlandOliveBlubber2 => [66, 82, 11],
+            Self::LowlandOliveBlubber3 => [66, 82, 11],
+            Self::LowlandPaleGreen => [66, 82, 11],
+            Self::LowlandCreamCauliflower => [95, 93, 88],
+            Self::LowlandCreamCauliflower2 => [95, 93, 88],
+            Self::LowlandDeadSkin => [95, 93, 88],
+            Self::LowlandDeadSkin2 => [95, 93, 88],
+            Self::LowlandCreamRed => [95, 83, 78],
+            Self::LowlandRedVein => [115, 53, 66],
+            Self::LowlandRedVein2 => [115, 53, 66],
+            Self::LowlandRedVein3 => [115, 53, 66],
+            Self::LowlandRedVein4 => [115, 53, 66],
+            Self::LowlandRedVeinDead => [115, 53, 66],
+            Self::LowlandRedInfection => [115, 53, 66],
+            Self::MidlandTurquoiseBark => [46, 68, 48],
+            Self::MidlandTurquoiseBark2 => [46, 68, 48],
+            Self::MidlandCrackedLichen => [81, 77, 44],
+            Self::MidlandCrackedLichenDull => [71, 67, 40],
+            Self::MidlandCrackedLichenDark => [61, 57, 30],
+            Self::MidlandYellowCrust => [114, 86, 40],
+            Self::MidlandYellowCrust2 => [114, 86, 40],
+            Self::MidlandYellowCrust3 => [114, 86, 40],
+            Self::MidlandYellowCrust4 => [114, 86, 40],
+            Self::HighlandDarkRock => [52, 55, 48],
+            Self::HighlandDarkRock2 => [52, 55, 48],
+            Self::HighlandYellowRock => [52, 55, 48],
+            Self::PitRock => [50, 50, 58],
+        }
+    }
 }
 
 #[cfg(test)]

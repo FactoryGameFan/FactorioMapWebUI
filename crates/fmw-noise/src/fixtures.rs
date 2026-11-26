@@ -12731,3 +12731,112 @@ fn gleba_tile_winner_matches_the_game() {
     // Non-vacuity: all 41 tiles win somewhere.
     assert_eq!(wins.len(), GLEBA_TILE_COUNT);
 }
+
+// ---------------------------------------------------------------------------
+// Gleba (#454), slice 2: the raw tile choice against a REAL surface.
+// ---------------------------------------------------------------------------
+
+/// `get_tile` over -128..127 on a real Gleba surface at map seed 123456 (the
+/// derived surface seed), written by `scripts/probes/gleba-real-surface`.
+const GLEBA_REAL_SURFACE: &str = "test/fixtures/oracle-gleba-real-surface.seed123456.json";
+
+/// The derived Gleba surface seed for map seed 123456: `123456 + crc32("gleba")`.
+const GLEBA_SURFACE_SEED_123456: u32 = 3_215_206_427;
+
+/// The real-surface fixture as a grid of tile names, row-major from (x0, y0).
+fn gleba_real_surface_grid(fixture: &Json) -> (i32, i32, usize, Vec<String>) {
+    let names: Vec<&str> = fixture
+        .get("names")
+        .as_array()
+        .iter()
+        .map(Json::as_str)
+        .collect();
+    let alphabet: Vec<char> = fixture.get("alphabet").as_str().chars().collect();
+    let window = fixture.get("window");
+    let side = window.get("width").as_f64() as usize;
+    assert_eq!(window.get("height").as_f64() as usize, side);
+    let mut grid = Vec::with_capacity(side * side);
+    for row in fixture.get("rows").as_array() {
+        let row = row.as_str();
+        assert_eq!(row.chars().count(), side);
+        for c in row.chars() {
+            let i = alphabet
+                .iter()
+                .position(|a| *a == c)
+                .expect("a known symbol");
+            grid.push(names[i].to_string());
+        }
+    }
+    assert_eq!(grid.len(), side * side);
+    (
+        window.get("x0").as_f64() as i32,
+        window.get("y0").as_f64() as i32,
+        side,
+        grid,
+    )
+}
+
+/// Every Gleba tile's `map_color` is the one the game reports.
+#[test]
+fn gleba_map_colours_match_the_game() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE, "2.1.23");
+    let tiles = fixture.get("tiles");
+    for tile in GLEBA_TILE_ORDER {
+        let want: Vec<u8> = tiles
+            .get(tile.game_name())
+            .get("mapColor")
+            .as_array()
+            .iter()
+            .map(|v| v.as_f64() as u8)
+            .collect();
+        assert_eq!(tile.color().to_vec(), want, "{}", tile.game_name());
+    }
+}
+
+/// Our raw tile choice, through the chunk-grid kernel the game's map generation
+/// uses (`At::tile`), against `get_tile` on a real surface.
+///
+/// **This grades the argmax only, and the real surface runs one more pass.**
+/// A real surface runs `TileCorrectionMapGenerationTask` after the argmax
+/// (`docs/noise/tile-correction-NOTES.md`), which this does not port, so the
+/// frozen counts are the correction's footprint plus anything else we get
+/// wrong. Both are counted, by tile name and by map colour (several tiles
+/// share a colour, so a picture can only see the second).
+#[test]
+fn gleba_raw_tiles_against_the_real_surface() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE, "2.1.23");
+    assert_eq!(
+        fixture.get("surfaceSeed").as_f64(),
+        f64::from(GLEBA_SURFACE_SEED_123456)
+    );
+    let (x0, y0, side, real) = gleba_real_surface_grid(&fixture);
+    let stack = GlebaStack::new(&GlebaCtx {
+        seed0: GLEBA_SURFACE_SEED_123456,
+        controls: GlebaControls::default(),
+    });
+    let (mut names_differ, mut colours_differ) = (0usize, 0usize);
+    let mut ours_kinds = std::collections::BTreeSet::new();
+    for j in 0..side {
+        for i in 0..side {
+            let ours = stack.tile_at(At::tile(x0 + i as i32, y0 + j as i32));
+            ours_kinds.insert(ours.game_name());
+            let want = &real[j * side + i];
+            if ours.game_name() != want {
+                names_differ += 1;
+                let want_tile = GLEBA_TILE_ORDER
+                    .iter()
+                    .find(|t| t.game_name() == want)
+                    .expect("a Gleba tile");
+                colours_differ += usize::from(want_tile.color() != ours.color());
+            }
+        }
+    }
+    eprintln!(
+        "gleba raw vs real surface: {names_differ} tiles differ by name, {colours_differ} by colour, of {}; {} kinds",
+        side * side,
+        ours_kinds.len()
+    );
+    // Non-vacuity: the window spans many tiles, so a constant answer cannot pass.
+    assert!(ours_kinds.len() > 30, "{} kinds", ours_kinds.len());
+    assert_eq!((names_differ, colours_differ), (2470, 1499));
+}
