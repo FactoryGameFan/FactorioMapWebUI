@@ -52,9 +52,9 @@ export interface ElevationRenderRequest {
    */
   planet?: Planet;
   /**
-   * **Refused.** Kept on the interface only because `eval/ctx.ts` and
-   * `expressions/elevationIsland.ts` still carry the field, so the type outlives
-   * every module that acted on it. Passing one - including `[]`, which used to
+   * **Refused.** Kept on the interface only so the type still names what a
+   * caller might pass, long after every module that acted on it was deleted.
+   * Passing one - including `[]`, which used to
    * mean "far-field only" - throws
    * `STARTING_LAKE_POSITIONS_UNSUPPORTED`. The lake positions are derived inside
    * the render from the seed and the starting positions, which is the game's own
@@ -686,8 +686,8 @@ export function runRenderRequest(
   // documented "Pass `[]` for the old far-field-only behavior".
   //
   // An error rather than a silent no-op because the TYPE outlives every
-  // consumer: `eval/ctx.ts` and `expressions/elevationIsland.ts` survive #227
-  // while every module that acted on the override does not. Accepting and
+  // consumer: the field is still on the request while every module that acted
+  // on the override is gone (#227). Accepting and
   // ignoring it would render a different planet than the caller asked for and
   // say nothing.
   if (req.startingLakePositions !== undefined) {

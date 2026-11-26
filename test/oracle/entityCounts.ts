@@ -26,7 +26,7 @@
  *    reason.
  * 2. **The Space-Age path FORCES the surface seed** (`mgs.seed = seed`,
  *    the same read-modify-write {@link buildSpaceAgeTileControlLua} uses), so
- *    the sampled surface is the one `withCtxDefaults({ seed0: seed })` describes
+ *    the sampled surface is the one with `seed0 = seed` that the tier-2 specs render
  *    rather than the one a real save at `--map-gen-seed <seed>` would produce
  *    (that would be `seed + crc32(planet)`; see `src/model/planetSurfaceSeed.ts`).
  *    This matches every other committed Vulcanus oracle fixture, and it is what
