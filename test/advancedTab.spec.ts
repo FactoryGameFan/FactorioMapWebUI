@@ -116,7 +116,9 @@ describe("AdvancedTab map settings", () => {
   it("keeps the property-expression dump available in a collapsed details", () => {
     setActivePinia(createPinia());
     const wrapper = mount(AdvancedTab);
-    expect(wrapper.find('[data-test="expr-dump"]').exists()).toBe(true);
-    expect(wrapper.find("details").exists()).toBe(true);
+    // Checked only that both existed, so a dump moved out of the details, or
+    // a details that starts open, passed (test-pruning audit, 2026-11-26).
+    expect(wrapper.find('details [data-test="expr-dump"]').exists()).toBe(true);
+    expect(wrapper.find("details").attributes("open")).toBeUndefined();
   });
 });

@@ -643,7 +643,7 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
  * with its own gate.
  */
 describe("the WASM engine's scrap footprint contains the game's scrap", () => {
-  it("covers all but a handful of the pixels the game drew", async () => {
+  it("covers every pixel the game drew scrap on", async () => {
     const SIZE = 1024;
     const load = (name: string) =>
       decodePng(
