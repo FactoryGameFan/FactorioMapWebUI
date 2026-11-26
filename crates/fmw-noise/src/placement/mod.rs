@@ -12,3 +12,6 @@
 pub mod aquilo;
 pub mod generate;
 pub mod roll;
+
+#[cfg(test)]
+mod real_surface_counts;
