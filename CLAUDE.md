@@ -318,7 +318,9 @@ pnpm vp dev --port 5199 --strictPort   # expect a Local: URL, not a picker or ex
   **590 CPU-s** of that went to the 440 unlisted tests. The filtered run cost
   **188 CPU-s, 97.5 s wall**, held up by one listed test,
   `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`,
-  at 97 s poisoned. Its slot now holds the cheaper
+  at 97 s poisoned (that test was deleted later the same day, with three other
+  Rust tests from the Vulcanus cliff and Nauvis pixel investigations). Its slot
+  now holds the cheaper
   `the_games_own_destruction_set_reproduces_the_game_exactly`, which loses no
   control (the list comment has the hook-off measurement), and the run costs
   **112 CPU-s, 68 s wall**. The slowest listed test is now the Aquilo

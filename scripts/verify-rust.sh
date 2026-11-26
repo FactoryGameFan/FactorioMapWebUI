@@ -357,13 +357,14 @@ POISONED_TESTS=(
   # cheapest of the apply-stage tests (11 s clean, 42 s poisoned on hammond).
   #
   # Until 2026-11-26 this slot held
-  # `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`,
-  # which still runs in the clean pass. Under poison it cost 97 s, the slowest
-  # test in this list, so it set the wall time of the whole poisoned run.
-  # Swapping it loses no control, which was measured rather than assumed: with
-  # the connections hook (`poison::bool_result` in `is_cliff_connected`)
-  # switched off, BOTH apply-stage tests still fail, because the crossing and
-  # sweep hooks redden them first. The hook's own control is the unit test
+  # `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`
+  # (deleted later on 2026-11-26, because it graded the apply stage the app
+  # never runs). Under poison it cost 97 s, the slowest test in this list, so it
+  # set the wall time of the whole poisoned run. The swap lost no control, which
+  # was measured before that deletion: with the connections hook
+  # (`poison::bool_result` in `is_cliff_connected`) switched off, both
+  # apply-stage tests still failed, because the crossing and sweep hooks redden
+  # them first. Only this one is listed now. The hook's own control is the unit test
   # `connection_is_a_parity_test_and_not_a_do_they_touch_test` listed above,
   # which goes green with the hook off and red with it on.
   fixtures::the_games_own_destruction_set_reproduces_the_game_exactly
