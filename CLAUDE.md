@@ -655,14 +655,27 @@ byte-exactness invariant, `wrangler` + `@cloudflare/vitest-plugin` are
 grouped because the plugin hard-pins wrangler, and the `engines.node` floor is
 marked as deliberate rather than stale.
 
-**The worker's `vitest` is coupled to `vite-plus`, and Renovate does NOT know
-it** (measured 2026-08-25). Renovate lists "Update dependency vitest to v4.1.11"
-as its own item, and taking it alone leaves `pnpm peers check` reporting an
-unmet `@vitest/browser-preview`: vite-plus pins the whole `@vitest/*` family at
-its own version (0.2.9 carries 4.1.10, 0.3.0 carries 4.1.11, 1.3.0 carries 5.0.5), so the worker's
-`vitest` has to move **with** vite-plus rather than ahead of it. The gate cannot
-see this - `pnpm run verify` passed with the split - so check `pnpm peers check`
-after any bump that touches either.
+**The worker's `vitest` is coupled to `vite-plus`.** vite-plus pins the whole
+`@vitest/*` family at its own version (0.2.9 carries 4.1.10, 0.3.0 carries
+4.1.11, 1.3.0 carries 5.0.5, 1.8.0 carries 5.1.1), so the worker's `vitest` has
+to move **with** vite-plus rather than ahead of it. Taking a vitest bump alone
+leaves `pnpm peers check` reporting an unmet `@vitest/browser-preview`, and
+`pnpm run verify` does not catch the split (measured 2026-08-25).
+
+Since the Vite+ 1.8.0 update (2026-11-25) all three sit in one place, but that
+does not enforce the match. `vp migrate` put `vite-plus`, the `vite` alias and
+`vitest` in the `pnpm-workspace.yaml` catalog, the worker's `vitest` is now
+`catalog:`, and a `vitest@*` override holds every copy to the catalog value.
+That keeps one `vitest` in the tree. It does not keep that value equal to the
+`@vitest/*` version vite-plus bundles: a catalog bump to `vitest` alone still
+merges and splits the two. Renovate extends `group:vitePlus`, which groups
+vite-plus, the core and vitest into one PR, but it can still propose a vitest
+release that vite-plus does not bundle yet. So before merging any bot update
+that touches these pins, check the proposed `vitest` and `vite` alias against
+what the target vite-plus release carries, and run `pnpm peers check` after it,
+because `pnpm run verify` misses the split. To update by hand, upgrade the
+global `vp` and run `pnpm vp migrate`, then delete any
+`minimumReleaseAgeExclude:` block it writes (see below).
 
 **`pnpm outdated`'s "latest" is a trap for `wrangler`.** `@cloudflare/vitest-plugin`
 pins it EXACTLY (`1.1.7` -> `wrangler = 4.131.0`, `1.1.8` -> `4.131.1`), so taking

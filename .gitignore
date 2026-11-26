@@ -73,3 +73,4 @@ lerna-debug.log*
 # Rust build output. The one artifact that IS committed is
 # src/noise/wasm/engine.wasm, written by scripts/build-wasm.sh.
 target/
+.vitest/

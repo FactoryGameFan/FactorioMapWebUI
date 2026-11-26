@@ -60,7 +60,7 @@
   // preset it has no access to, so FactoryGameFan/.github must stay ticked in the
   // app installation. A preset that fails to resolve reads as "no updates
   // available", silently, which is the same failure mode as a broken config file.
-  extends: ["local>FactoryGameFan/.github:renovate-config"],
+  extends: ["local>FactoryGameFan/.github:renovate-config", "group:vitePlus"],
 
   // See the pnpm interaction above. This is a floor, not a preference.
   minimumReleaseAge: "3 days",

@@ -65,7 +65,29 @@ minimumReleaseAge: 1440
 # minimatch was read before the pin went in.
 overrides:
   minimatch: "^11.0.9"
-# The note below is about an older pin in this same block. Until 2026-10-20 one
+  vite@*: "catalog:"
+  vitest@*: "catalog:"
+# The catalog, the vite and vitest overrides above and the vitest peer rule
+# below were written by `vp migrate` (Vite+ 1.8.0, 2026-11-25). They keep a
+# single vitest in the tree, but they do not tie its version to the @vitest/*
+# that vite-plus bundles, so a vitest bump alone can still split the two
+# families. Check a bot update's pins against the target vite-plus release and
+# run `pnpm peers check` after it (see "The worker's `vitest` is coupled" in
+# CLAUDE.md). To move them, run `pnpm vp migrate` after upgrading the global
+# vp, not `pnpm add`. Migrate also wrote a `minimumReleaseAgeExclude:` list; it
+# was removed on purpose, as 1.8.0 was already past the 1440 floor. Remove it
+# again if a later migrate writes one, and wait for the release to age instead.
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@8.3.8001
+  vitest: 5.1.1
+  vite-plus: 1.8.0
+peerDependencyRules:
+  allowAny:
+    - vitest
+  allowedVersions:
+    vitest: "*"
+
+# The note below is about an older pin in the `overrides:` block. Until 2026-10-20 one
 # pinned brace-expansion to a 2.x maintenance backport (2.1.3, then 2.1.4) for its DoS
 # advisories. It came out because it had started breaking its only consumer:
 # since @vue/test-utils 2.5.0 (#396) the path is js-beautify 2.0.3 >
