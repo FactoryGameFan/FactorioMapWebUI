@@ -430,19 +430,44 @@ mod amplitude_corrected_tests {
         }
     }
 
+    /// At `p == 1` the closed form is 0/0. The branch returns `1 / octaves`,
+    /// which is what the series converges to.
+    ///
+    /// The audit (2026-11-26) changed this: it used to check the limit in the
+    /// test's own copy of the formula and never reached the product's `p == 1`
+    /// branch. It now runs `amplitude_corrected_multioctave_noise` at `p == 1`
+    /// and at `p` a hair below 1 (where the closed form is well defined) and
+    /// requires the two outputs to agree, so a branch returning some other
+    /// constant cannot pass.
     #[test]
     fn the_persistence_one_branch_is_the_series_limit_and_not_a_guess() {
-        // At `p == 1` the closed form is 0/0. The branch returns `1 / octaves`,
-        // which is what the series converges to - checked by approaching it,
-        // so a branch returning some other constant could not pass.
+        use super::{amplitude_corrected_multioctave_noise, AmplitudeCorrectedParams};
+        let params = |octaves: u32, persistence: f64| AmplitudeCorrectedParams {
+            seed0: 123_456,
+            seed1: 77,
+            octaves,
+            input_scale: 1.0 / 7.0,
+            offset_x: 1000.0,
+            persistence,
+            amplitude: 0.5,
+        };
         for octaves in [2u32, 5, 8] {
-            let n = f64::from(octaves);
-            let near = |p: f64| (1.0 - p) / (1.0 - p.powf(f64::from(octaves)));
-            let limit = 1.0 / n;
-            assert!(
-                (near(1.0 - 1e-9) - limit).abs() < 1e-6,
-                "the series does not approach 1/{n} at {octaves} octaves"
-            );
+            let mut nonzero = 0;
+            for k in 0..40 {
+                let (x, y) = (f64::from(k) * 13.5 - 250.0, f64::from(k) * -9.25 + 90.0);
+                let at_one = amplitude_corrected_multioctave_noise(x, y, &params(octaves, 1.0));
+                let near_one =
+                    amplitude_corrected_multioctave_noise(x, y, &params(octaves, 1.0 - 1e-7));
+                assert!(
+                    (at_one - near_one).abs() <= 1e-5 * at_one.abs().max(1e-3),
+                    "p == 1 gives {at_one}, p just below 1 gives {near_one} at \
+                     {octaves} octaves, ({x}, {y})"
+                );
+                if at_one.abs() > 1e-3 {
+                    nonzero += 1;
+                }
+            }
+            assert!(nonzero > 10, "only {nonzero} nonzero samples at {octaves}");
         }
     }
 }
