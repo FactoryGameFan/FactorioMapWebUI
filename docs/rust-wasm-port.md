@@ -159,13 +159,12 @@ identical text: `NauvisParams` and `VulcanusParams` both end
 compiler; the second was not - it type-checked and rendered zero enemies, which
 looked exactly like a broken port.
 
-**One TypeScript file in a ported directory was kept for a reason that is not
-obvious.** `cliffConnections.ts` has zero consumers of any kind since #360
-deleted the 23 investigation specs that imported it. It is the human-readable
-reference `crates/fmw-noise/src/cliffs/connections.rs` cites as its source, so
-that #84's cliff investigation can still be run against the engine. The
-type-checker still covers it, because `tsconfig.json` includes `src/**/*` by
-glob rather than by reachability.
+**`cliffConnections.ts` was kept after the port, and is now deleted.** It had
+zero consumers of any kind since #360 deleted the 23 investigation specs that
+imported it, and was kept only as the human-readable reference
+`crates/fmw-noise/src/cliffs/connections.rs` cites as its source. It was deleted
+on 2026-11-26; read it at `dc6bccd`. The Rust port's module comment points
+there.
 
 ### A window must CONTAIN the thing it grades
 

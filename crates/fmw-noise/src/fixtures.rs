@@ -5102,8 +5102,8 @@ use crate::cliffs::collision::{
     box_tile_collides, get_aabb, placed_box, rotation_word, tile_collides,
 };
 use crate::cliffs::connections::{
-    apply_cliff_connections, connected_sides, on_chunk_border, opposite_side, ApplyCollision,
-    CliffConnectionOptions, CliffRemoval, CLIFF_ORIENTATION_ENDS,
+    apply_cliff_connections, cell_index, connected_sides, is_cliff_connected, on_chunk_border,
+    opposite_side, ApplyCollision, CliffConnectionOptions, CliffRemoval, CLIFF_ORIENTATION_ENDS,
 };
 use crate::cliffs::placement::{
     CellRejection, CliffBands, CliffFields, CliffPlacement, PlacedCliffCell, TileCollision,
@@ -6671,6 +6671,166 @@ fn the_games_own_destruction_set_reproduces_the_game_exactly() {
         "the halo does not decide it: our own lava + ore predicate out there \
          gives the identical answer"
     );
+}
+
+/// Count the facing-end pairs in a cell set, and how many of them fail
+/// `isCliffConnected`. A facing pair is two adjacent cells that each carry an
+/// end on the shared side; it fails when the two ends run the wrong way, two
+/// `to` ends or two `from` ends meeting.
+fn facing_pairs(cells: &BTreeMap<(i64, i64), u8>) -> (usize, usize) {
+    const STEP: [(i64, i64); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+    let (mut facing, mut mismatched) = (0, 0);
+    for (&(cx, cy), &o) in cells {
+        for side in connected_sides(o) {
+            let (dx, dy) = STEP[side as usize];
+            let Some(&theirs) = cells.get(&(cx + dx, cy + dy)) else {
+                continue;
+            };
+            if !has_end(theirs, opposite_side(side)) {
+                continue;
+            }
+            facing += 1;
+            if !is_cliff_connected(side, o, theirs) {
+                mismatched += 1;
+            }
+        }
+    }
+    (facing, mismatched)
+}
+
+/// **No two facing cliff ends ever run the wrong way, in the port's queue or
+/// in the game's own cliffs.** This invariant is the reason the cascade that
+/// `updateConnections` starts cannot change a result.
+///
+/// The update pass destroys an end only when the neighbour on that side is
+/// missing or not connected. The cascade then asks that neighbour to drop its
+/// facing end. If the neighbour is missing, or has no facing end, that does
+/// nothing. If its facing end runs the right way the two are connected and
+/// the end is never destroyed. So the cascade acts only on a facing pair that
+/// runs the wrong way, and `destroyEnd` only ever turns an end into `none`, so
+/// a set with no such pair never gains one.
+///
+/// Measured 2026-11-26: switching that cascade off
+/// (`do_destroy_end(.., true)` at the update-pass call site) left all 614
+/// workspace tests green, and running the pass both ways over the 39 regions
+/// below, with no collision and with the lava + ore predicate, gave 0
+/// differing cells. This test is what makes that "cannot" rather than
+/// "did not". If it ever goes red, the update-pass cascade has inputs it can
+/// act on, and nothing else grades it.
+///
+/// Counts are frozen, so a placement change that moves the queue shows here.
+/// `crater-cliff` is skipped: craters are outside the connection system.
+#[test]
+fn no_facing_cliff_ends_run_the_wrong_way_in_the_queue_or_the_games_cliffs() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-entities.seed123456.json",
+        "2.1.12",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = fixture.get("seed").as_f64() as u32;
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        ..CliffBands::default()
+    };
+
+    // The port's raw queue: the fixture's three regions plus a 6x6 sweep of
+    // 256-tile regions around spawn, each with the 64-tile halo the apply
+    // pass is handed.
+    let mut regions: Vec<(f64, f64, f64, f64)> = Vec::new();
+    for case in fixture.get("cases").as_array() {
+        let r = case.get("region");
+        regions.push((
+            r.get("x0").as_f64(),
+            r.get("y0").as_f64(),
+            r.get("x1").as_f64(),
+            r.get("y1").as_f64(),
+        ));
+    }
+    for i in -3..3 {
+        for j in -3..3 {
+            let (x0, y0) = (f64::from(i) * 320.0, f64::from(j) * 320.0);
+            regions.push((x0, y0, x0 + 256.0, y0 + 256.0));
+        }
+    }
+    let (mut queued, mut facing, mut mismatched) = (0, 0, 0);
+    for (x0, y0, x1, y1) in regions {
+        let cells: BTreeMap<(i64, i64), u8> = CliffPlacement::new(&fields, bands)
+            .placed_cells(x0 - 64.0, y0 - 64.0, x1 + 64.0, y1 + 64.0)
+            .iter()
+            .filter_map(|c| cliff_orientation_for_code(c.code).map(|o| (cell_index(c.x, c.y), o)))
+            .collect();
+        queued += cells.len();
+        let (f, m) = facing_pairs(&cells);
+        facing += f;
+        mismatched += m;
+    }
+    assert_eq!(
+        (queued, facing, mismatched),
+        (50_592, 91_722, 0),
+        "the port's queue: (cells, facing pairs, pairs running the wrong way)"
+    );
+
+    // The game's own cliffs, every case of every captured cliff-entity set.
+    for (path, want_cells, want_facing) in [
+        (
+            "oracle-vulcanus-cliff-entities.seed123456.json",
+            1_569,
+            2_852,
+        ),
+        (
+            "oracle-vulcanus-cliff-entities-more-regions.seed123456.json",
+            5_395,
+            9_520,
+        ),
+        (
+            "oracle-vulcanus-cliff-entities-west-oos.seed123456.json",
+            10_100,
+            17_976,
+        ),
+        (
+            "oracle-vulcanus-cliff-entities-border-batch.seed123456.json",
+            10_729,
+            19_320,
+        ),
+        ("oracle-cliff-entities.seed123456.json", 334, 620),
+    ] {
+        let fx = load_captured_at(&format!("test/fixtures/{path}"), "2.1.12");
+        let (mut cells_n, mut facing, mut mismatched) = (0, 0, 0);
+        for case in fx.get("cases").as_array() {
+            let mut cells: BTreeMap<(i64, i64), u8> = BTreeMap::new();
+            for e in case.get("cliffs").as_array() {
+                if e.get("name").as_str() == "crater-cliff" {
+                    continue;
+                }
+                let want = e.get("orientation").as_str();
+                let id = CLIFF_ORIENTATION_NAMES
+                    .iter()
+                    .position(|n| *n == want)
+                    .unwrap_or_else(|| panic!("{path}: unknown orientation {want}"));
+                #[allow(clippy::cast_possible_truncation)]
+                cells.insert(
+                    cell_index(e.get("x").as_f64(), e.get("y").as_f64()),
+                    id as u8,
+                );
+            }
+            cells_n += cells.len();
+            let (f, m) = facing_pairs(&cells);
+            facing += f;
+            mismatched += m;
+        }
+        assert_eq!(
+            (cells_n, facing, mismatched),
+            (want_cells, want_facing, 0),
+            "{path}: (cells, facing pairs, pairs running the wrong way)"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
