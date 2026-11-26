@@ -49,6 +49,16 @@ describe("the starting-area radius sent with a Nauvis request", () => {
     expect(startingAreaRadiusFor(small)).toBe(Math.fround(150 * small));
     // 106.066: the value the 2.1.23 review measured for "small".
     expect(startingAreaRadiusFor(small)).toBeCloseTo(106.066, 3);
+
+    // `small` is already an f32, so the lines above pass without the INNER
+    // rounding. This input is not: it sits under half an f32 step above 1, so
+    // the inner rounding takes it to 1 and the radius to exactly 150. Skip
+    // that step and 150 * x lands over half a step above 150, which the outer
+    // rounding takes UP to 150 + 2^-16.
+    const unrounded = 1 + 2 ** -24 - 2 ** -28;
+    expect(Math.fround(unrounded)).toBe(1);
+    expect(startingAreaRadiusFor(unrounded)).toBe(150);
+    expect(Math.fround(150 * unrounded)).toBe(150 + 2 ** -16);
   });
 
   it("reaches the ctx from the three built-ins whose starting area is not 1", () => {
