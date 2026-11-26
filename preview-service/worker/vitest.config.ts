@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig } from "vite-plus";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 
 // `@cloudflare/vitest-plugin` is `@cloudflare/vitest-pool-workers` renamed at
