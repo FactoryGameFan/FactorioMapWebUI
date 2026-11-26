@@ -12963,3 +12963,139 @@ fn reproduces_the_games_vulcanus_protector_bearing_on_606_seeds() {
         "CONTROL: the un-narrowed sum must fail on 39"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Gleba (#454), tier 1: the terrain fields and the 41-tile choice.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack};
+use crate::expressions::gleba_terrain::{GlebaControls, GlebaTerrainFields};
+use crate::tiles::gleba_catalog::{
+    argmax as gleba_argmax, probabilities as gleba_probabilities, TILE_COUNT as GLEBA_TILE_COUNT,
+    TILE_ORDER as GLEBA_TILE_ORDER,
+};
+
+/// Gleba's planet-field capture, written by `scripts/probes/planet-fields`: 1,024
+/// positions on the 1/256 grid with `elevation`, `moisture`, `aux` and
+/// `temperature` under `climate` and the 41 tile scores under `tiles`. The surface
+/// seed is FORCED to 123456, not the derived one the preview PNGs use.
+const GLEBA_FIELDS: &str = "test/fixtures/oracle-gleba-fields.seed123456.json";
+
+/// Evaluate our terrain fields at every position of the fixture, as points (the
+/// capture is a `calculate_tile_properties` read).
+fn gleba_terrain_at(fixture: &Json) -> Vec<GlebaTerrainFields> {
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 1024);
+    let stack = GlebaStack::new(&GlebaCtx {
+        seed0: 123_456,
+        controls: GlebaControls::default(),
+    });
+    positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            stack.eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+        })
+        .collect()
+}
+
+/// The four property fields against the game: an exact f32 count each.
+#[test]
+fn gleba_climate_fields_match_the_game() {
+    let fixture = load_captured_at(GLEBA_FIELDS, "2.1.23");
+    assert_eq!(fixture.get("seed").as_f64(), 123_456.0);
+    let fields = gleba_terrain_at(&fixture);
+    let climate = fixture.get("climate");
+    let columns: [(&str, fn(&GlebaTerrainFields) -> f64); 4] = [
+        ("elevation", |f| f.elevation),
+        ("moisture", |f| f.moisture),
+        ("aux", |f| f.aux),
+        ("temperature", |f| f.temperature),
+    ];
+    let mut counts = Vec::new();
+    for (name, select) in columns {
+        let got: Vec<f64> = fields.iter().map(select).collect();
+        let n = count_exact_bits(&got, climate.get(name).as_array());
+        eprintln!("gleba {name}: {n}");
+        counts.push(n);
+    }
+    assert_eq!(counts, vec![1024; 4]);
+}
+
+/// The 41 tile scores against the game: an exact count per tile.
+#[test]
+fn gleba_tile_scores_match_the_game() {
+    let fixture = load_captured_at(GLEBA_FIELDS, "2.1.23");
+    let fields = gleba_terrain_at(&fixture);
+    let scores: Vec<[f64; GLEBA_TILE_COUNT]> = fields.iter().map(gleba_probabilities).collect();
+    let mut counts = Vec::new();
+    for (t, tile) in GLEBA_TILE_ORDER.iter().enumerate() {
+        let got: Vec<f64> = scores.iter().map(|s| s[t]).collect();
+        let n = count_exact_bits(&got, fixture.get("tiles").get(tile.game_name()).as_array());
+        eprintln!("gleba tile {}: {n}", tile.game_name());
+        counts.push(n);
+    }
+    assert_eq!(counts, vec![1024; GLEBA_TILE_COUNT]);
+}
+
+/// Our winner against the strict argmax of the GAME's own 41 scores, and our
+/// per-tile win counts against the fixture's `winCounts`.
+///
+/// The fixture was built so every tile wins at least once, and it records 67
+/// positions where the top score is tied (mostly at the clamp values 1.0 and
+/// 1.1). The game's strict argmax gives no winner there from this data, and the
+/// game's own candidate order, which would decide it, is not established. So
+/// those 67 are counted and not graded: at each one we only check that our
+/// winner is one of the tied tiles.
+#[test]
+fn gleba_tile_winner_matches_the_game() {
+    let fixture = load_captured_at(GLEBA_FIELDS, "2.1.23");
+    let fields = gleba_terrain_at(&fixture);
+    let per_tile: Vec<&[Json]> = GLEBA_TILE_ORDER
+        .iter()
+        .map(|t| fixture.get("tiles").get(t.game_name()).as_array())
+        .collect();
+    let game_scores = |i: usize| -> [f64; GLEBA_TILE_COUNT] {
+        let mut out = [0.0; GLEBA_TILE_COUNT];
+        for (t, scores) in per_tile.iter().enumerate() {
+            let bits = u32::from_str_radix(scores[i].as_str(), 16).expect("hex f32 bits");
+            out[t] = f64::from(f32::from_bits(bits));
+        }
+        out
+    };
+    let (mut same, mut graded, mut ties, mut tie_member) = (0usize, 0usize, 0usize, 0usize);
+    let mut wins = std::collections::BTreeMap::new();
+    for (i, f) in fields.iter().enumerate() {
+        let want = game_scores(i);
+        let best = want.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let top: Vec<usize> = (0..GLEBA_TILE_COUNT).filter(|t| want[*t] == best).collect();
+        let ours = gleba_argmax(&gleba_probabilities(f));
+        if let [only] = top[..] {
+            graded += 1;
+            same += usize::from(ours == GLEBA_TILE_ORDER[only]);
+            *wins
+                .entry(GLEBA_TILE_ORDER[only].game_name())
+                .or_insert(0usize) += 1;
+        } else {
+            ties += 1;
+            tie_member += usize::from(top.iter().any(|t| GLEBA_TILE_ORDER[*t] == ours));
+        }
+    }
+    eprintln!(
+        "gleba winner: {same} of {graded} graded, {ties} ties ({tie_member} of ours in the tie)"
+    );
+    assert_eq!((same, graded, ties, tie_member), (957, 957, 67, 67));
+    // The fixture's own win counts, tile by tile.
+    let counts = fixture.get("winCounts");
+    for tile in GLEBA_TILE_ORDER {
+        let want = counts.get(tile.game_name()).as_f64() as usize;
+        assert_eq!(
+            wins.get(tile.game_name()).copied(),
+            Some(want),
+            "{}",
+            tile.game_name()
+        );
+    }
+    // Non-vacuity: all 41 tiles win somewhere.
+    assert_eq!(wins.len(), GLEBA_TILE_COUNT);
+}

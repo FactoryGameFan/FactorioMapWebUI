@@ -11,6 +11,7 @@ pub mod aquilo_catalog;
 pub mod expression_in_range;
 pub mod fulgora_catalog;
 pub mod fulgora_ocean;
+pub mod gleba_catalog;
 pub mod helpers;
 pub mod nauvis_catalog;
 pub mod nauvis_resolve;
