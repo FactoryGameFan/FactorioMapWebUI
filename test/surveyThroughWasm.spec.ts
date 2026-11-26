@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { compileEngine, instantiateEngine, type EngineExports } from "../src/noise/wasm/engine";
 import { surveyCellsThroughWasm } from "../src/noise/islands/surveyThroughWasm";
-import { surveyIslands, surveyStep } from "../src/noise/islands/cellSurvey";
+import { surveyIslands } from "../src/noise/islands/cellSurvey";
 import { sliderToLinear } from "./dslMathOracle";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 import { bearingTrig } from "../src/noise/wasm/request";
@@ -77,6 +77,15 @@ function wasmSweep(
   return out;
 }
 
+/**
+ * The survey step: `grid / 8`, so a cell gets many samples across even at the
+ * smallest grid the Islands frequency slider allows. Written out here as the
+ * independent derivation the module's `fulgora_survey_step` is checked against
+ * (`crates/fmw-wasm/src/lib.rs`); the TypeScript copy that used to hold it was
+ * dead code once the engine took over the sweep.
+ */
+const surveyStep = (grid: number): number => grid / 8;
+
 describe("the WASM cell survey reproduces its frozen sweeps", () => {
   const STEP = surveyStep(175);
 
@@ -134,8 +143,8 @@ describe("the WASM cell survey reproduces its frozen sweeps", () => {
   }, 300000);
 
   it("derives the step from the grid the same way the TypeScript formula does", async () => {
-    // The engine path cannot call `surveyStep(stack.shared.grid)` without
-    // building a stack that no longer exists, so it asks the module. The
+    // The engine path cannot read `stack.shared.grid` without building a
+    // stack that no longer exists, so it asks the module. The
     // module's answer is checked against the formula written out here -
     // `grid = f32(175 - sliderToLinear(frequency, -50, 50))`, from
     // `fulgoraShared.ts` before #371 and `expressions/fulgora_shared.rs`
