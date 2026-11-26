@@ -344,21 +344,21 @@ POISONED_TESTS=(
   resources::fulgora_catalog::tests::chunk_zero_four_places_no_scrap_on_the_ocean
   resources::fulgora_catalog::tests::the_ocean_gate_brings_scrap_density_to_the_games_counts
 
-  # The only grading of `cliffs::connections` against anything - that module is
-  # on no render path, so without this it would be a 631-line port with unit
-  # tests and no measurement.
+  # A game-graded test of `cliffs::connections`, which is on no render path.
+  # It runs the cascade over the game's own destruction set, so it is the
+  # cheapest of the apply-stage tests (11 s clean, 42 s poisoned on hammond).
   #
-  # It is also the most expensive test in the crate by a wide margin, and that
-  # is worth knowing before anyone adds a second like it. Measured: 33s in the
-  # normal arm and 93s under poison, which took this whole script from a few
-  # seconds to **1m50s** wall. Poisoning is the expensive half because
-  # `crossing_result` turns every lattice edge into a crossing, so far more
-  # cells place and the onDestroy cascade recurses over a dense set.
-  #
-  # `verify:rust` is therefore NO LONGER the cheapest job in the workflow. It is
-  # still far under the test shards (300s+), so it does not move the gate wall -
-  # but the line in CLAUDE.md calling it 19s and the cheapest job expired here.
-  fixtures::the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none
+  # Until 2026-11-26 this slot held
+  # `the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`,
+  # which still runs in the clean pass. Under poison it cost 97 s, the slowest
+  # test in this list, so it set the wall time of the whole poisoned run.
+  # Swapping it loses no control, which was measured rather than assumed: with
+  # the connections hook (`poison::bool_result` in `is_cliff_connected`)
+  # switched off, BOTH apply-stage tests still fail, because the crossing and
+  # sweep hooks redden them first. The hook's own control is the unit test
+  # `connection_is_a_parity_test_and_not_a_do_they_touch_test` listed above,
+  # which goes green with the hook off and red with it on.
+  fixtures::the_games_own_destruction_set_reproduces_the_game_exactly
 
   # Phase 6 (#226), Nauvis. The shared sub-tree's own hook is
   # `poison::f64_result` on `cliff_ringbreak` - the layer's own arithmetic on
