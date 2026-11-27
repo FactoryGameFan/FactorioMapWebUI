@@ -769,6 +769,41 @@ pub fn correct_window(
     (width, height): (u32, u32),
     margin_chunks: i32,
 ) -> Vec<u8> {
+    correct_window_reading_out(
+        raw,
+        layers,
+        neighbours,
+        (x0, y0),
+        (width, height),
+        margin_chunks,
+        ((x0, y0), (width, height)),
+    )
+}
+
+/// [`correct_window`], reading the result out over `out` (an origin and a
+/// size, in world tiles) rather than over the window itself.
+///
+/// The correction is the window's, unchanged: the same chunks, the same
+/// margin, the same order. Only the rectangle copied out differs, so the
+/// window's own tiles come out exactly as [`correct_window`] gives them. It
+/// exists for a renderer that also needs a few tiles just past the window (the
+/// Nauvis rock pass's one-pixel sweep halo, #566): those sit in the margin
+/// chunks this pass has already corrected, so reading them costs nothing,
+/// where widening the window itself would correct a whole extra ring of
+/// chunks.
+///
+/// `out` must lie inside the corrected chunks (the window's plus the margin),
+/// which the assert checks. A tile there that no walk read is resolved through
+/// `raw`, as a window tile is.
+pub fn correct_window_reading_out(
+    raw: &mut dyn FnMut(i32, i32) -> u8,
+    layers: &[u16],
+    neighbours: Option<&Neighbours>,
+    (x0, y0): (i32, i32),
+    (width, height): (u32, u32),
+    margin_chunks: i32,
+    ((ox, oy), (ow, oh)): ((i32, i32), (u32, u32)),
+) -> Vec<u8> {
     let chunk = |v: i32| v.div_euclid(32);
     let (cx0, cx1) = (
         chunk(x0) - margin_chunks,
@@ -787,9 +822,18 @@ pub fn correct_window(
     };
     world.tiles = vec![UNKNOWN; world.width() * (world.chunks_high * 32) as usize];
     correct_chunks_reading(&mut world, raw, layers, neighbours, (cx0, cx1), (cy0, cy1));
-    let mut out = Vec::with_capacity(width as usize * height as usize);
-    for y in y0..y0 + height as i32 {
-        for x in x0..x0 + width as i32 {
+    if ow > 0 && oh > 0 {
+        assert!(
+            chunk(ox) >= cx0
+                && chunk(ox + ow as i32 - 1) <= cx1
+                && chunk(oy) >= cy0
+                && chunk(oy + oh as i32 - 1) <= cy1,
+            "the read-out rectangle must lie inside the corrected chunks"
+        );
+    }
+    let mut out = Vec::with_capacity(ow as usize * oh as usize);
+    for y in oy..oy + oh as i32 {
+        for x in ox..ox + ow as i32 {
             let k = world.index(x, y);
             if world.tiles[k] == UNKNOWN {
                 world.tiles[k] = raw(x, y);

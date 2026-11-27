@@ -25,7 +25,7 @@
 
 use crate::at::At;
 use crate::expressions::nauvis_stack::NauvisStack;
-use crate::tiles::correction::{correct_window, Neighbours, TileWorld};
+use crate::tiles::correction::{correct_window_reading_out, Neighbours, TileWorld};
 use crate::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog, TILE_ORDER};
 use crate::tiles::nauvis_resolve::{is_water_tile, nauvis_tile};
 
@@ -129,8 +129,35 @@ pub fn nauvis_corrected_tiles(
         (x0, y0),
         (width, height),
         margin_chunks,
+        ((x0, y0), (width, height)),
         true,
     )
+}
+
+/// [`nauvis_corrected_tiles`] for the window, read out over `out` (an origin
+/// and a size in world tiles) instead, which may reach into the margin chunks.
+///
+/// For the rock pass's sweep halo (#566). The window's own tiles come out
+/// exactly as [`nauvis_corrected_tiles`] gives them, and the halo tiles are
+/// read from margin chunks the same pass already corrected, so they cost
+/// nothing extra. Correcting a window widened by the halo instead would
+/// correct a whole extra ring of chunks (measured +16% on the `all` view at
+/// 256-pixel worker tiles, +27% on `rocks`).
+///
+/// A margin tile one chunk from the raw ring is not exact by construction,
+/// any more than a window tile is: both rest on the margin being wide enough.
+/// `halo_tiles_read_from_the_margin_match_a_window_that_holds_them` grades
+/// the halo tiles, with a raw-argmax control that shows the check can fail.
+#[must_use]
+pub fn nauvis_corrected_tiles_reading_out(
+    stack: &NauvisStack,
+    catalog: &NauvisTileCatalog,
+    origin: (i32, i32),
+    size: (u32, u32),
+    margin_chunks: i32,
+    out: ((i32, i32), (u32, u32)),
+) -> Vec<NauvisTile> {
+    corrected(stack, catalog, origin, size, margin_chunks, out, true)
 }
 
 /// [`nauvis_corrected_tiles`] letting every pair touch: the control that shows
@@ -143,7 +170,15 @@ pub(crate) fn nauvis_corrected_tiles_ignoring_neighbours(
     size: (u32, u32),
     margin_chunks: i32,
 ) -> Vec<NauvisTile> {
-    corrected(stack, catalog, origin, size, margin_chunks, false)
+    corrected(
+        stack,
+        catalog,
+        origin,
+        size,
+        margin_chunks,
+        (origin, size),
+        false,
+    )
 }
 
 fn corrected(
@@ -152,18 +187,20 @@ fn corrected(
     origin: (i32, i32),
     size: (u32, u32),
     margin_chunks: i32,
+    out: ((i32, i32), (u32, u32)),
     obey_neighbours: bool,
 ) -> Vec<NauvisTile> {
     let neighbours = nauvis_neighbours();
     let rules = obey_neighbours.then_some(&neighbours);
     let mut raw = |x: i32, y: i32| tile_id(nauvis_tile(stack, catalog, At::tile(x, y)));
-    correct_window(
+    correct_window_reading_out(
         &mut raw,
         &nauvis_layers(),
         rules,
         origin,
         size,
         margin_chunks,
+        out,
     )
     .into_iter()
     .map(|id| TILE_ORDER[usize::from(id) - 1])

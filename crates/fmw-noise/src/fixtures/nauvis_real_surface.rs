@@ -14,8 +14,8 @@ use crate::test_json::Json;
 use crate::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog, NauvisTileFields, TILE_ORDER};
 use crate::tiles::nauvis_correction::{
     deepwater_land_contacts, may_touch, nauvis_corrected_tiles, nauvis_corrected_tiles_eager,
-    nauvis_corrected_tiles_ignoring_neighbours, nauvis_raw_world_tiles,
-    NAUVIS_CORRECTION_MARGIN_CHUNKS,
+    nauvis_corrected_tiles_ignoring_neighbours, nauvis_corrected_tiles_reading_out,
+    nauvis_raw_world_tiles, NAUVIS_CORRECTION_MARGIN_CHUNKS,
 };
 use crate::tiles::nauvis_resolve::nauvis_tile;
 
@@ -318,4 +318,79 @@ fn nauvis_corrected_tiles_against_the_real_coast() {
     // Control: the same pass with every pair allowed is 73 tiles off, so the
     // deepwater rule is what closes this window, not the layer checks.
     assert_eq!(differ_ignoring, (73, 73));
+}
+
+/// Tiles one past a worker tile's edge, read out of the margin chunks of that
+/// tile's own correction (`nauvis_corrected_tiles_reading_out`), against a
+/// wider window that holds them as ordinary window tiles. The renderer's rock
+/// pass reads exactly these for its sweep halo (#566), so a worker tile and
+/// the whole image must agree on them.
+///
+/// The coast window (384, -320), 256 square, cut into four 128 tiles, so its
+/// inner seams fall on 128-pixel seams and the deepwater rule has work to do
+/// near them. At the shipped margin every halo tile matches the wider window.
+/// The control reads the same halo tiles from the RAW argmax instead: it
+/// misses, which shows the comparison can fail and that a halo tile has to
+/// come out of a correction pass, not straight from the noise.
+///
+/// Over the whole 1024 app window (seeds 123456, 7, 8, 11, 1 to 6, 9 and 10;
+/// water levels 0, 20 and -15; 128 and 256 pixel tiles), the margin read had
+/// 0 halo tiles off. A window corrected with no margin at all, its halo read
+/// from the uncorrected ring beyond it, had 14 to 44 off per render.
+#[test]
+fn halo_tiles_read_from_the_margin_match_a_window_that_holds_them() {
+    let (stack, catalog) = stack();
+    let (wx0, wy0, side) = (384, -320, 256);
+    let whole = nauvis_corrected_tiles(
+        &stack,
+        &catalog,
+        (wx0, wy0),
+        (side, side),
+        NAUVIS_CORRECTION_MARGIN_CHUNKS,
+    );
+    let at = |x: i32, y: i32| whole[((y - wy0) * side as i32 + (x - wx0)) as usize];
+    let (mut halo, mut halo_off, mut inside_off, mut raw_off) = (0, 0, 0, 0);
+    for (tx, ty) in [
+        (wx0, wy0),
+        (wx0 + 128, wy0),
+        (wx0, wy0 + 128),
+        (wx0 + 128, wy0 + 128),
+    ] {
+        // One tile of halo, clamped to the wider window, as
+        // `placementMarkSweepBox` clamps it to the full image.
+        let (hx0, hy0) = ((tx - 1).max(wx0), (ty - 1).max(wy0));
+        let (hx1, hy1) = (
+            (tx + 129).min(wx0 + side as i32),
+            (ty + 129).min(wy0 + side as i32),
+        );
+        let w = (hx1 - hx0) as u32;
+        let read = nauvis_corrected_tiles_reading_out(
+            &stack,
+            &catalog,
+            (tx, ty),
+            (128, 128),
+            NAUVIS_CORRECTION_MARGIN_CHUNKS,
+            ((hx0, hy0), (w, (hy1 - hy0) as u32)),
+        );
+        for y in hy0..hy1 {
+            for x in hx0..hx1 {
+                let got = read[((y - hy0) * w as i32 + (x - hx0)) as usize];
+                let off = usize::from(got != at(x, y));
+                if x >= tx && x < tx + 128 && y >= ty && y < ty + 128 {
+                    inside_off += off;
+                } else {
+                    halo += 1;
+                    halo_off += off;
+                    let raw = nauvis_tile(&stack, &catalog, At::tile(x, y));
+                    raw_off += usize::from(raw != at(x, y));
+                }
+            }
+        }
+    }
+    eprintln!("halo read-out: {halo} halo tiles, {halo_off} off, {inside_off} window tiles off, raw control {raw_off} off");
+    // Each tile owes the halo only on its two inner sides: 2 * 128 + 1.
+    assert_eq!(halo, 4 * (2 * 128 + 1));
+    assert_eq!((halo_off, inside_off), (0, 0));
+    // Frozen: 5 of the 1,028 halo tiles are ones correction changes.
+    assert_eq!(raw_off, 5, "the raw control must miss halo tiles");
 }

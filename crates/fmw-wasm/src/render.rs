@@ -69,9 +69,9 @@ use fmw_noise::rocks::vulcanus_placement::VulcanusRockPlacement;
 use fmw_noise::tiles::fulgora_catalog::FulgoraTile;
 use fmw_noise::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog};
 use fmw_noise::tiles::nauvis_correction::{
-    nauvis_corrected_tiles, NAUVIS_CORRECTION_MARGIN_CHUNKS,
+    nauvis_corrected_tiles, nauvis_corrected_tiles_reading_out, NAUVIS_CORRECTION_MARGIN_CHUNKS,
 };
-use fmw_noise::tiles::nauvis_resolve::nauvis_tile;
+use fmw_noise::tiles::nauvis_resolve::{is_water_tile, nauvis_tile};
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
 use fmw_noise::tiles::vulcanus_correction;
 use fmw_noise::trees::catalog::{TREE_MAP_COLOR, TREE_MAX_ALPHA};
@@ -741,7 +741,7 @@ fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
 }
 
 /// The most chunks an Aquilo render keeps fields for (about 160 KB each). The
-/// app's 128-pixel tiles touch 16 at one tile per pixel.
+/// app's worker tiles touch 16 at 128 pixels and 64 (the cap) at 256.
 const KEPT_CHUNKS_MAX: i32 = 64;
 
 /// Build the Gleba graph for one render.
@@ -1017,6 +1017,133 @@ fn terrain_at(req: &Request, wx: f64, wy: f64) -> At {
     }
 }
 
+/// Nauvis's terrain tiles over a pixel rectangle that may reach past the
+/// window, in the window's own pixel coordinates (so `x0` and `y0` can be
+/// negative).
+///
+/// At one tile per pixel on a whole-tile origin the tiles are the ones a REAL
+/// surface holds: the raw argmax, then tile correction over the window's
+/// chunks plus a margin (`fmw_noise::tiles::nauvis_correction`), as Gleba
+/// does. At any other zoom a pixel is the raw argmax at a point, as the game's
+/// own preview draws it.
+///
+/// # Why it can be wider than the window (#566)
+///
+/// The rock pass sweeps one pixel past the window, because a rock there still
+/// owes the window part of its 3x3 mark, and it tests that rock's own tile for
+/// water before rolling. That test used to read the PAINTED buffer at
+/// `py * width + px`, which for `px = -1` is the last pixel of the previous
+/// row: the far edge of the same tile, not the tile being tested. A seam rock
+/// then depended on the tile width, and 256 px worker tiles lost a 3 px rock
+/// column on 4 of 12 seeds where the whole render had it.
+///
+/// So the grid takes the sweep box and holds those tiles too, and the test
+/// reads the terrain at the rock's own world position, which is what the whole
+/// render reads there.
+///
+/// # The halo is read from the margin, not corrected again
+///
+/// At one tile per pixel a halo tile sits in the margin chunks the window's own
+/// correction has already corrected, so it is read out of that same pass
+/// (`nauvis_corrected_tiles_reading_out`) at no extra cost. Correcting a
+/// window widened by the halo instead pulls in a whole extra ring of chunks:
+/// measured +16% on the `all` view and +27% on `rocks` at 256-pixel worker
+/// tiles, which would have spent most of what 256-pixel tiles save. The
+/// margin read matched the whole image's tiles at every halo tile of the 1024
+/// app window (seeds 123456, 7, 8, 11, 1 to 6, 9 and 10; water levels 0, 20
+/// and -15; 128 and 256 pixel tiles), where a margin of 0 missed 14 to 44 per
+/// render; `halo_tiles_read_from_the_margin_match_a_window_that_holds_them`
+/// keeps a case of it. A sweep box that reaches past the margin (no caller
+/// sends one) falls back to correcting the widened window.
+struct NauvisTerrainGrid {
+    x0: i64,
+    y0: i64,
+    width: i64,
+    tiles: Vec<NauvisTile>,
+}
+
+impl NauvisTerrainGrid {
+    /// The window's tiles, widened to cover `sweep_box` (a world box, as the
+    /// ABI carries it) when one is given.
+    fn new(
+        req: &Request,
+        stack: &NauvisStack,
+        catalog: &NauvisTileCatalog,
+        sweep_box: Option<[f64; 4]>,
+    ) -> Self {
+        let (w, h) = (i64::from(req.width), i64::from(req.height));
+        let (mut x0, mut x1, mut y0, mut y1) = (0, w, 0, h);
+        // An empty window paints nothing, so it needs no halo either.
+        if let (Some(b), true) = (sweep_box, w > 0 && h > 0) {
+            let (px0, px1, py0, py1) = sweep_pixel_range(req, b);
+            x0 = x0.min(px0);
+            x1 = x1.max(px1);
+            y0 = y0.min(py0);
+            y1 = y1.max(py1);
+        }
+        let (gw, gh) = (x1 - x0, y1 - y0);
+        let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let tiles = if req.tiles_per_pixel == 1.0
+            && w > 0
+            && h > 0
+            && whole(req.origin_x)
+            && whole(req.origin_y)
+        {
+            // One tile per pixel, so a pixel offset is a tile offset.
+            let (wx0, wy0) = (req.origin_x as i32, req.origin_y as i32);
+            let rect = ((wx0 + x0 as i32, wy0 + y0 as i32), (gw as u32, gh as u32));
+            let chunk = |v: i32| v.div_euclid(32);
+            let m = NAUVIS_CORRECTION_MARGIN_CHUNKS;
+            let inside_margin = chunk(rect.0 .0) >= chunk(wx0) - m
+                && chunk(rect.0 .0 + gw as i32 - 1) <= chunk(wx0 + w as i32 - 1) + m
+                && chunk(rect.0 .1) >= chunk(wy0) - m
+                && chunk(rect.0 .1 + gh as i32 - 1) <= chunk(wy0 + h as i32 - 1) + m;
+            if inside_margin {
+                nauvis_corrected_tiles_reading_out(
+                    stack,
+                    catalog,
+                    (wx0, wy0),
+                    (req.width, req.height),
+                    m,
+                    rect,
+                )
+            } else {
+                nauvis_corrected_tiles(stack, catalog, rect.0, rect.1, m)
+            }
+        } else {
+            let mut t = Vec::with_capacity((gw.max(0) * gh.max(0)) as usize);
+            for py in y0..y1 {
+                #[allow(clippy::cast_precision_loss)]
+                let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+                for px in x0..x1 {
+                    #[allow(clippy::cast_precision_loss)]
+                    let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+                    t.push(nauvis_tile(stack, catalog, terrain_at(req, wx, wy)));
+                }
+            }
+            t
+        };
+        Self {
+            x0,
+            y0,
+            width: gw,
+            tiles,
+        }
+    }
+
+    /// The tile at window pixel `(px, py)`, which must lie inside the grid.
+    fn at(&self, px: i64, py: i64) -> NauvisTile {
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        self.tiles[((py - self.y0) * self.width + (px - self.x0)) as usize]
+    }
+
+    /// Whether window pixel `(px, py)` is a water tile.
+    fn water(&self, px: i64, py: i64) -> bool {
+        is_water_tile(self.at(px, py))
+    }
+}
+
 /// Sweep the window and paint each pixel's winning tile, then the overlays.
 fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     // The elevation views share the planet code and nothing else: they paint a
@@ -1033,36 +1160,21 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     let stack = NauvisStack::new(&ctx);
     let catalog = NauvisTileCatalog::new(req.seed0);
 
-    // At one tile per pixel on a whole-tile origin the pixels are the tiles a
-    // REAL surface holds: the raw argmax, then tile correction over the
-    // window's chunks plus a margin (`fmw_noise::tiles::nauvis_correction`),
-    // as Gleba does. At any other zoom a pixel is the raw argmax at a point,
-    // as the game's own preview draws it.
-    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
-    let corrected = (req.tiles_per_pixel == 1.0
-        && req.width > 0
-        && req.height > 0
-        && whole(req.origin_x)
-        && whole(req.origin_y))
-    .then(|| {
-        nauvis_corrected_tiles(
-            &stack,
-            &catalog,
-            (req.origin_x as i32, req.origin_y as i32),
-            (req.width, req.height),
-            NAUVIS_CORRECTION_MARGIN_CHUNKS,
-        )
-    });
+    // The terrain grid is the window, plus the rock pass's sweep halo when that
+    // pass runs: its pre-roll water test reads the terrain one pixel past the
+    // window's edge (#566), so those tiles are resolved here too.
+    let rocks = matches!(req.view, VIEW_ROCKS | VIEW_ALL);
+    let terrain = NauvisTerrainGrid::new(
+        req,
+        &stack,
+        &catalog,
+        rocks.then_some(p.placement_sweep_box),
+    );
 
     let mut offset = 0usize;
     for py in 0..req.height {
-        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
-            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let tile = match &corrected {
-                Some(t) => t[(py * req.width + px) as usize],
-                None => nauvis_tile(&stack, &catalog, terrain_at(req, wx, wy)),
-            };
+            let tile = terrain.at(i64::from(px), i64::from(py));
             let color = nauvis_tile_color(tile);
             out[offset] = color[0];
             out[offset + 1] = color[1];
@@ -1107,7 +1219,7 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
         paint_nauvis_resources(req, p, &stack, &catalog, out);
     }
     if matches!(req.view, VIEW_ROCKS | VIEW_ALL) {
-        paint_nauvis_rocks(req, p, &stack, &catalog, &ctx, out);
+        paint_nauvis_rocks(req, p, &stack, &catalog, &ctx, &terrain, out);
     }
     if matches!(req.view, VIEW_ENEMIES | VIEW_ALL) {
         paint_nauvis_enemies(req, p, &stack, &catalog, &ctx, out);
@@ -1379,37 +1491,6 @@ fn paint_mark_skipping(
     }
 }
 
-/// The water test `renderRocks.ts` applies BEFORE rolling, reproduced including
-/// the part of it that is a quirk.
-///
-/// The sweep runs over the halo-widened box, so `px` can be negative or past
-/// the width - and the TypeScript indexes `base.data[(py * width + px) * 4]`
-/// with it anyway. For `px < 0` and `py > 0` that is a VALID index into the
-/// previous row, so the skip consults a pixel that is not the one being tested.
-/// It is not harmless: a rock at `px = -1` still owes pixel 0 part of its 3x3
-/// mark, so the wrong read decides whether a real pixel is painted.
-///
-/// Out of the buffer entirely, JavaScript yields `undefined`, which compares
-/// equal to no colour - so an out-of-range read is "not water". All three
-/// channels have to be in range for the same reason: at `o = len - 2` the blue
-/// channel is `undefined` and the comparison fails.
-///
-/// Reproduced rather than fixed, for the reason the whole port reproduces
-/// #326: tier 3 asserts the two renders are byte-identical, so a unilateral
-/// correction here would read as a port bug.
-fn water_at_wrapping_offset(out: &[u8], width: i64, px: i64, py: i64) -> bool {
-    let o = (py * width + px) * 4;
-    if o < 0 {
-        return false;
-    }
-    #[allow(clippy::cast_sign_loss)]
-    let o = o as usize;
-    if o + 2 >= out.len() {
-        return false;
-    }
-    is_nauvis_water(out[o], out[o + 1], out[o + 2])
-}
-
 /// Composite the Nauvis rock overlay over terrain that is already painted.
 ///
 /// Rolls rather than thresholds, like the Vulcanus pass below: it draws the
@@ -1417,11 +1498,20 @@ fn water_at_wrapping_offset(out: &[u8], width: i64, px: i64, py: i64) -> bool {
 /// the water restriction and collision gates pass.
 ///
 /// Two things Vulcanus's pass does not have. The water gate is real here, and
-/// it appears TWICE for different reasons - once before the roll, where it is
-/// an optimisation reading painted pixels, and once inside the mark, where it
-/// keeps a 3x3 from spilling onto the sea. The gate that matters for
-/// correctness is neither: it is `tile_allowed` inside the placement set, which
-/// reads the tile resolver and is therefore a pure function of world position.
+/// it appears TWICE for different reasons - once before the roll, and once
+/// inside the mark, where it keeps a 3x3 from spilling onto the sea.
+///
+/// The pre-roll test reads the rendered TERRAIN at the rock's own pixel
+/// (`terrain`), not the painted buffer. At one tile per pixel that is the
+/// tile-corrected tile, so it also refuses a rock on land that correction
+/// turned to water beside deepwater, which the raw-argmax `tile_allowed` in
+/// the placement set cannot see. It used to read the painted buffer at a
+/// wrapped offset, reproducing `renderRocks.ts` byte for byte, and that made a
+/// seam rock depend on the worker tile's width (#566);
+/// [`NauvisTerrainGrid`] has the story. Reading terrain rather than the buffer
+/// also keeps an earlier overlay out of the answer: in the `all` view crude
+/// oil paints first and its mark may spill onto water, which used to turn
+/// those water pixels into "not water" here.
 ///
 /// The 3x3 mark can straddle a tile seam, hence the halo-widened
 /// `placement_sweep_box` rather than the request's own pixel box.
@@ -1431,6 +1521,7 @@ fn paint_nauvis_rocks(
     stack: &NauvisStack,
     catalog: &NauvisTileCatalog,
     ctx: &NauvisCtx,
+    terrain: &NauvisTerrainGrid,
     out: &mut [u8],
 ) {
     let mut params = RockFieldParams::defaults(req.seed0);
@@ -1455,7 +1546,7 @@ fn paint_nauvis_rocks(
     for py in py0..py1 {
         let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
         for px in px0..px1 {
-            if water_at_wrapping_offset(out, width, px, py) {
+            if terrain.water(px, py) {
                 continue;
             }
             let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
@@ -1745,11 +1836,11 @@ fn paint_nauvis_cliffs(req: &Request, p: &NauvisParams, out: &mut [u8]) {
 
 /// Composite the Nauvis enemy-base overlay over terrain that is already painted.
 ///
-/// Simpler than the rock pass in one way that matters: there is no pre-roll
-/// water skip, so none of `water_at_wrapping_offset`'s row-wrap quirk arises
-/// here. The water test happens only inside the mark, where it stops a 3x3 from
-/// spilling onto the sea, and inside `tile_allowed`, which is the gate that
-/// matters.
+/// Simpler than the rock pass in one way: there is no pre-roll water skip, so
+/// it needs no terrain past the window. The water test happens only inside the
+/// mark, where it stops a 3x3 from spilling onto the sea and reads only the
+/// window's own pixels, and inside `tile_allowed`, which is a pure function of
+/// world position.
 ///
 /// The mark is the same symmetric 3x3 the rocks paint, which is why this reads
 /// the same `placement_sweep_box` rather than needing one of its own.
