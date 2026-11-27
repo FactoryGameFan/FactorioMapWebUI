@@ -3,6 +3,7 @@ import type {
   ElevationRenderRequest,
   ElevationRenderResult,
 } from "../noise/preview/elevationRenderRequest";
+import { planForPool, type ImageBox, type TileBox } from "../noise/preview/tiling";
 import { loadEngineModule } from "../noise/wasm/load";
 import { createRenderPool, type RenderPool, type TilePaint } from "./renderPool";
 
@@ -25,18 +26,23 @@ export interface ElevationRenderer {
 }
 
 /**
- * Square tile edge in pixels. 256 gives 16 tiles at the fixed 1024px preview.
+ * How the preview is cut into worker tiles: `planForPool`, one tile per worker
+ * (at least four tiles), all about the same size and cut on chunk boundaries.
  *
- * It was 128 (64 tiles). At one tile per pixel every worker tile corrects its
- * terrain over its own chunks plus a one-chunk margin, and neighbouring tiles
- * redo each other's margins, so fewer, larger tiles repeat less of that work:
- * 256 measured a tie to 11% faster than 128 at 15 workers, 10-20% faster at 7
- * and 24-31% faster at 4, on all five planets (headless Chrome, default view,
- * medians). The switch waited on #566, a Nauvis rock seam that only 256-pixel
- * tiles showed; `test/tiledEqualityAppGeometry.spec.ts` renders this geometry
- * at both sizes.
+ * It was a fixed 256-pixel grid, 16 tiles at the 1024-pixel preview, and
+ * before that 128 pixels (64 tiles). Every tile of the preview costs about the
+ * same, so the grid only fit pools whose size divides 16. On a 16-thread
+ * machine the pool is 15 workers, and the 16th tile ran alone at the end while
+ * 14 workers sat idle: Vulcanus took 10.3 s where the same work cut one tile
+ * per worker took 8.1 s (headless Chrome, no DevTools, medians). At 7 workers,
+ * 16 tiles is three waves, and one tile per worker took Vulcanus from 9.6 s to
+ * 7.4 s. The measurements are in `docs/rust-wasm-port.md`, "The tile plan
+ * follows the pool". `test/tiledEqualityAppGeometry.spec.ts` and its Vulcanus
+ * twin render the plans this produces on all five planets.
  */
-export const DEFAULT_TILE_SIZE = 256;
+export function defaultPlan(size: number): (full: ImageBox) => readonly TileBox[] {
+  return (full) => planForPool(full, size);
+}
 
 /**
  * One worker per core, less one so the main thread stays free to blit tiles and
@@ -225,12 +231,12 @@ export function createElevationRenderer(
   size: number = defaultPoolSize(
     typeof navigator === "undefined" ? undefined : navigator.hardwareConcurrency,
   ),
-  tileSize: number = DEFAULT_TILE_SIZE,
+  plan: (full: ImageBox) => readonly TileBox[] = defaultPlan(size),
 ): ElevationRenderer {
   const host = createWorkerHost(createWorker, size);
   const pool: RenderPool = createRenderPool({
     size,
-    tileSize,
+    plan,
     execute: (req, slot) => host.execute(req, slot),
   });
 

@@ -7,7 +7,7 @@
  * `slot` argument says which); in tests it calls `runRenderRequest` in-process,
  * which is what lets the tiled-equals-untiled gate run in Node with no Workers.
  */
-import { planTiles, type ImageBox } from "../noise/preview/tiling";
+import type { ImageBox, TileBox } from "../noise/preview/tiling";
 import type {
   ElevationRenderRequest,
   ElevationRenderResult,
@@ -25,8 +25,12 @@ export interface TilePaint {
 export interface RenderPoolOptions {
   /** Maximum tiles in flight at once. */
   readonly size: number;
-  /** Square tile edge, in pixels. */
-  readonly tileSize: number;
+  /**
+   * Cut the full image into the tiles this pool dispatches, in the order they
+   * are handed out. `planTiles` (square tiles) and `planTileGrid` (a grid
+   * sized to the pool) both fit; the app picks with `planForPool`.
+   */
+  readonly plan: (full: ImageBox) => readonly TileBox[];
   readonly execute: (req: ElevationRenderRequest, slot: number) => Promise<ElevationRenderResult>;
 }
 
@@ -67,7 +71,7 @@ export function createRenderPool(opts: RenderPoolOptions): RenderPool {
         width: full.width,
         height: full.height,
       };
-      const queue = planTiles(full, opts.tileSize);
+      const queue = opts.plan(full);
 
       let next = 0;
       let painted = 0;

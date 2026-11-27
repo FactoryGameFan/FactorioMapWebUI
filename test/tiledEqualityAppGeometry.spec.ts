@@ -9,6 +9,13 @@ import {
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
 import { compileEngine, instantiateEngine, type EngineExports } from "../src/noise/wasm/engine";
+import {
+  appPreviewReq,
+  gradePlanInWindow,
+  PLAN_WINDOW,
+  POOLS,
+  renderWindowWhole,
+} from "./appPlanSeams";
 
 // Tiled equality at the app's OWN geometry (#566): the 1024 x 1024 preview at
 // one tile per pixel, centred on the spawn, cut into the worker tiles the app
@@ -25,6 +32,13 @@ import { compileEngine, instantiateEngine, type EngineExports } from "../src/noi
 //
 // `rocks` rather than `all`, because rocks are the overlay that broke and the
 // `all` composite costs about twice as much for no more seam coverage here.
+//
+// Since 2026-11-26 the app cuts the preview by its pool size instead
+// (`planForPool`: one tile per worker, cut on chunk boundaries). The last block
+// grades those plans' seams on four planets, in a window of the preview (see
+// `appPlanSeams.ts` for why a window grades them exactly). Vulcanus, which
+// costs five times any other planet, has its own file,
+// `tiledEqualityAppGeometryVulcanus.spec.ts`, so the two run side by side.
 
 const PREVIEW_PX = 1024;
 const SEEDS = [123456, 7] as const;
@@ -142,6 +156,25 @@ describe("tiled render equals untiled render at the app's 1024 geometry (#566)",
       expect(differingPixels(whole, terrain).length).toBeGreaterThan(0);
       for (const size of TILE_SIZES) {
         expect(differingPixels(renderTiled(req, size), whole), `${size} px tiles`).toEqual([]);
+      }
+    }, 300_000);
+  }
+});
+
+describe("the pool's own tile plans stitch at the app's 1024 geometry", () => {
+  // Each planet at its derived surface seed for map seed 123456, in `all`, the
+  // view the app shows: the corrected terrain and every overlay, each with its
+  // own seam handling.
+  for (const planet of ["nauvis", "gleba", "fulgora", "aquilo"] as const) {
+    it(`${planet} all, at the plans of ${POOLS.join(" and ")} workers`, () => {
+      const req = appPreviewReq(planet, surfaceSeedForPlanet(planet, 123456));
+      const whole = renderWindowWhole(engine, req);
+      for (const pool of POOLS) {
+        const graded = gradePlanInWindow(engine, req, whole, pool);
+        // Not vacuous: the window holds several of this plan's cuts each way.
+        expect(graded.cuts.x.length, `pool of ${pool}, column cuts`).toBeGreaterThanOrEqual(3);
+        expect(graded.cuts.y.length, `pool of ${pool}, row cuts`).toBe(2);
+        expect(graded.differing, `pool of ${pool} in ${JSON.stringify(PLAN_WINDOW)}`).toEqual([]);
       }
     }, 300_000);
   }

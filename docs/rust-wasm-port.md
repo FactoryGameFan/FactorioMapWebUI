@@ -1650,8 +1650,9 @@ in Chrome with no DevTools attached, on hammond (6 performance cores with two
 threads each, plus 4 efficiency cores): a 256-pixel Vulcanus tile that takes
 4.4 s alone takes about 7 s while 14 others run beside it, so 15 or 16 workers
 run about 9 times faster than one thread at best, not 15 times. The 256-pixel
-grid also gives 16 tiles to 15 workers, so the 16th tile runs alone at the end:
-10.3 s against 7.6 s with 16 workers.
+grid also gave 16 tiles to 15 workers, so the 16th tile ran alone at the end:
+10.3 s against 7.6 s with 16 workers. The app now picks its tiles from the pool
+size; see "The tile plan follows the pool" below.
 
 **Do not time a render through a browser that has DevTools attached.** Under
 chrome-devtools-mcp the same tile took 8.5 s instead of 4.2 s, because V8 runs
@@ -1708,6 +1709,78 @@ layer does, and each has a raw-bits twin test against it in
   placements over a 512 x 512 window go from 56 to 29,567: the projection
   reaches the same `basis_noise`, spot and `f64_result` hooks the full layer
   does.
+
+### The tile plan follows the pool (2026-11-26)
+
+The app used to cut the 1024 x 1024 preview into a fixed grid of 256-pixel
+tiles, 16 of them, and before that 128-pixel tiles, 64. Every tile of the
+preview costs about the same (Vulcanus's 16 took 4.10 to 4.50 s each on one
+thread, its 64 took 1.29 to 1.61 s), so a grid only fits a pool whose size
+divides the tile count. On a 16-thread machine the pool was 15 workers and the
+16th tile ran alone while 14 workers idled; on 8 threads it was 7 workers and
+three waves of 7, 7 and 2.
+
+`planForPool` (`src/noise/preview/tiling.ts`) now makes one tile per worker, at
+least four, of about the same area: rows as tall as their share of the tiles,
+the row count chosen so the largest tile plus its correction margin is
+smallest, and every cut moved to the nearest chunk boundary. The order of
+dispatch does not matter once the count fits (longest-first on the 128-pixel
+grid was within 1% of row order). The pool itself is unchanged: one worker
+per core less one (`defaultPoolSize`).
+
+**Candidates**, Vulcanus `all` with the projected ore overlay, headless Chrome
+with no DevTools attached, hammond, medians of 3 interleaved runs:
+
+| workers | 256-pixel grid (16 tiles) | one tile per worker | two tiles per worker |
+| ---: | ---: | ---: | ---: |
+| 16 | 5.12 s (the same plan) | 5.12 s | |
+| 15 | 7.11 s | 5.57 s | 6.28 s |
+| 7 | 9.60 s | 7.42 s | 8.40 s |
+| 4 | 13.25 s | 11.12 s | 12.27 s |
+
+Nauvis gave the same order: 1.07 to 0.89 s at 15 workers, 1.55 to 1.31 s at 7,
+2.20 to 1.94 s at 4. A pool of one worker per core (16 here) was about 7%
+faster again on both planets, with the main thread's worst timer delay during
+a render at 1 to 3 ms either way, but the pool size was left alone: it also
+sizes the Island Finder's pool, and the main thread keeps its core.
+
+**Two caches had to grow with the tiles.** Aquilo and Gleba keep the terrain
+fields correction evaluated for their entity passes, capped so a large window
+does not hold hundreds of megabytes. The caps were sized to 256-pixel tiles
+(Aquilo 64 chunks, Gleba 100 with its ring), so the larger tiles of a smaller
+pool fell back to evaluating the terrain twice: at 15 workers Aquilo drew in
+0.36 s against 0.29 s on the old grid, and Gleba in 1.16 s against 1.01 s. The
+caps now cover the largest tile any pool gets, a 512-pixel quarter (Aquilo 256
+chunks, about 41 MB; Gleba 324, about 13 MB). The output does not change.
+
+**Before and after**, all five planets, `all`, the same method, on Rust
+1.100.0 builds. "main" is main's engine on the 256-pixel grid, "ore" adds the
+projected ore overlay (the commit before), "now" is this engine on one tile per
+worker. 15 workers is the app's pool on a 16-thread machine:
+
+| planet | workers | main | ore | now | hash, all three |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Nauvis | 15 | 1.20 s | 1.21 s | 0.97 s | `76dd8071` |
+| Nauvis | 4 | 2.21 s | 2.21 s | 1.93 s | `76dd8071` |
+| Vulcanus | 15 | 10.62 s | 7.14 s | 5.62 s | `5cddf4cd` |
+| Vulcanus | 4 | 19.36 s | 13.31 s | 11.09 s | `5cddf4cd` |
+| Gleba | 15 | 1.02 s | 0.98 s | 0.81 s | `ff754c4a` |
+| Gleba | 4 | 1.95 s | 1.94 s | 1.36 s | `ff754c4a` |
+| Fulgora | 15 | 1.01 s | 0.94 s | 0.80 s | `31c75a4d` |
+| Fulgora | 4 | 1.93 s | 1.92 s | 1.69 s | `31c75a4d` |
+| Aquilo | 15 | 0.30 s | 0.29 s | 0.26 s | `ae420297` |
+| Aquilo | 4 | 0.57 s | 0.57 s | 0.48 s | `ae420297` |
+
+The hash is FNV-1a over the stitched 1024 x 1024 RGBA image, from the bench
+page, so equal hashes mean the same bytes in every arm.
+
+**Graded by** `test/tiledEqualityAppGeometry.spec.ts` (Nauvis, Gleba, Fulgora,
+Aquilo) and `test/tiledEqualityAppGeometryVulcanus.spec.ts`: the plans of 15
+and 7 workers, the two irregular layouts, in a window of the preview that holds
+most of their cuts (`test/appPlanSeams.ts` says why a window grades them
+exactly). Two planted breaks each turned it red: the overlay sweep halo left
+off (Nauvis, 15 pixels at the x = 192 seam), and Vulcanus's correction margin
+set to 0 (266 pixels).
 
 ### Current tier-1 counts
 
