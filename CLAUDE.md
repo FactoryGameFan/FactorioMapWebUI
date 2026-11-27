@@ -1410,8 +1410,9 @@ gate was proven green on `main` before any port code depended on it. Two crates:
 boundary. The design record is
 `docs/superpowers/specs/2026-08-16-rust-wasm-noise-engine-design.md`.
 
-**Every planet except Gleba (#454), every view the panel offers, renders
-through the engine, and there is no TypeScript fallback left.** #227 deleted the Nauvis and Vulcanus
+**Every planet, every view the panel offers, renders through the engine (Gleba,
+#454, terrain only and in dev mode only), and there is no TypeScript fallback
+left.** #227 deleted the Nauvis and Vulcanus
 arms and #371 the Fulgora one.
 
 #### Read `docs/rust-wasm-port.md` before editing the port

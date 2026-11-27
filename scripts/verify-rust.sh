@@ -191,6 +191,9 @@ POISONED_TESTS=(
   # The real-surface grade (slice 2): the same argmax hook over 65,536 tiles,
   # through the chunk-grid kernel rather than the point kernel.
   fixtures::gleba_raw_tiles_against_the_real_surface
+  # The same tiles after tile correction (`tiles::correction`), which reads
+  # nothing but the argmax, so the argmax hook is what reaches it.
+  fixtures::gleba_corrected_tiles_against_the_real_surface
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

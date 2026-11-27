@@ -5,13 +5,16 @@ be graded against what a player's map shows (#454).
 
 ```bash
 node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+FMW_CHUNK_ORDER=columns \
+  FMW_OUT=test/fixtures/oracle-gleba-real-surface-columns.seed123456.json \
+  node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
 ```
 
-Run it from the repository root. It runs Factorio 2.1.23 once, through
-`factorio-oracle`, in about 2 seconds, and writes
-`test/fixtures/oracle-gleba-real-surface.seed123456.json`. Set
-`FMW_FACTORIO_2_1_23` to the install's root folder if it is not at
-`/home/eric/factorio-headless/2.1.23/factorio`.
+Run it from the repository root. Each run starts Factorio 2.1.23 once, through
+`factorio-oracle`, and takes about 2 seconds. The first command writes
+`test/fixtures/oracle-gleba-real-surface.seed123456.json`, the second the
+columns arm beside it. Set `FMW_FACTORIO_2_1_23` to the install's root folder if
+it is not at `/home/eric/factorio-headless/2.1.23/factorio`.
 
 ## What it reads
 
@@ -20,9 +23,10 @@ derived one, 3215206427. The same terrain-only data-stage mod and the same
 disabled controls as the terrain preview PNG. None of those controls reaches a
 terrain field. The script refuses to write if any entity is left in the window.
 
-It generates every chunk of the window -128..127, plus two chunks of margin, and
-then reads `get_tile(x, y).name` at every tile. It also reads each tile's
-`map_color` and `layer` from the prototypes at runtime.
+It generates the window -128..127 and a margin of at least two chunks, then
+reads `get_tile(x, y).name` at every tile. It also reads each tile's
+`map_color` and effective `layer` from the prototypes at runtime. The surface
+holds no chunk before the first request (`pregenerated` is empty).
 
 ## Why a real surface
 
@@ -30,6 +34,32 @@ A real surface runs `TileCorrectionMapGenerationTask` after the tile argmax
 (`docs/noise/tile-correction-NOTES.md`). The game's map preview PNG does not.
 Eric chose the real surface as the target on 2026-11-26: the engine should show
 what the map will actually look like.
+
+## The order chunks are made in changes the map
+
+Tile correction reads and writes the chunks around the one it corrects, so the
+result depends on the order the chunks are corrected in. `FMW_CHUNK_ORDER`
+picks how the chunks are requested. Tiles that differ in the 65,536-tile window,
+measured 2026-11-26:
+
+| arm (`FMW_CHUNK_ORDER`)                       | vs `radius` | vs `rows` |
+| --------------------------------------------- | ----------: | --------: |
+| `radius`: one request, radius 6 (the fixture) |           0 |        16 |
+| `columns`: chunk by chunk, x outer, y inner   |           0 |        16 |
+| `rows`: chunk by chunk, y outer, x inner      |          16 |         0 |
+| `each`: `rows`, forcing each chunk at once    |          16 |         0 |
+| `reverse`: `rows` backwards                   |         450 |       446 |
+
+So a game start, which asks for its spawn area with one radius request, gives
+the columns result. The engine corrects in columns order and matches the
+`radius` and `columns` captures at every tile. It does not reproduce `rows`
+(16 tiles off, near two chunk corners): a row-by-row request does not correct
+in strict row order, and the order it does use was not decoded. A probe that
+stopped a row-by-row run part way found chunks generated well beyond the
+neighbours of the ones requested.
+
+A player who explores in some other order can get a slightly different map, by
+up to a few hundred tiles in this window. No preview can know that order.
 
 The fixture is compact: each row is a string with one character per tile,
 indexing `names` through `alphabet`.

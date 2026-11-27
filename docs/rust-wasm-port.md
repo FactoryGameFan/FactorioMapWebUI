@@ -56,8 +56,10 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 9 (#454) | Aquilo end to end - terrain, tiles, wells, icebergs; Rust-first, no TypeScript counterpart            | done |
 | 10 (#492) | Aquilo's wells and icebergs through the game's own per-chunk entity generator (`placement/generate.rs`), replacing the salted roll there | done |
 | 11 (#454) | Gleba slice 1 - the terrain fields and the 41-tile choice at tier 1 (`terrace` op, `gleba_*`); no ABI, render, cliffs or entities yet | tier 1 done |
+| 12 (#454) | Gleba slice 2 - the terrain view through the engine, name-order tie-break, and tile correction (`tiles/correction.rs`), graded against a REAL surface; dev mode only in the app | terrain done |
 
-**Every planet except Gleba, every view the panel offers, renders through the engine.** The
+**Every planet, every view the panel offers, renders through the engine.** Gleba
+offers terrain only, and only in dev mode. The
 per-layer landing narrative is in the history doc; what follows is only what is
 still a rule.
 
@@ -794,9 +796,8 @@ What a reader needs that the code comments do not say:
   a tied top score, all between variants of one family (`lowland-olive-blubber`
   and its `-2` and `-3`, `wetland-green-slime` and `-light-`, and so on). The
   game keeps the first of its own candidate list at a tie
-  (`generateBasicTiles` uses a strict `>` from `-inf`), and the order of that list
-  is not established. `TILE_ORDER` is the planet's `autoplace_settings` listing
-  order as a stand-in.
+  (`generateBasicTiles` uses a strict `>` from `-inf`). Slice 2 settled the
+  order from data: name byte order (`TIE_ORDER`), see below.
 - **`y_distortion` is `gleba_wobble_x * 15` at every starting cone**, not
   `gleba_wobble_y`. It is the game's own typo and it is kept (see
   `expressions/gleba_starting.rs`).
@@ -812,6 +813,87 @@ What a reader needs that the code comments do not say:
   ungraded.
 - **Only default levers are graded.** The water frequency and size and the plants
   frequency are wired through `GlebaControls` and untested away from 1.
+
+### Gleba (#454), slice 2: the terrain view, graded against a real surface
+
+The terrain view renders through the engine, and at one tile per pixel it
+matches `get_tile` on a REAL Gleba surface at every one of 65,536 tiles. Eric
+chose the real surface over the preview PNG as the target on 2026-11-26: the
+preview skips a pass a real map runs, so matching it would mean matching a
+picture no player sees.
+
+**The ABI block.** `PLANET_GLEBA = 4`, a 24-byte block (`gleba_water`
+frequency and size, `gleba_plants` frequency), so a request is 80 bytes.
+`writeGlebaParams` is the one place an absent lever becomes 1. **No trig
+crosses the boundary**, which is a deliberate exception to "trig crosses as
+values": Gleba's spiral bridges take a sine per POSITION, so the module
+computes every sine with the game's own polynomial (`vm_sin`, #531). That
+polynomial is plain f64 arithmetic with no libm, so it gives the same bits in
+V8, in WASM and natively; the starting cones use it too.
+
+**Three steps took the render from 2,470 wrong tiles to 0** (by name, 256 x 256
+window around spawn, map seed 123456, derived surface seed 3215206427):
+
+| step | tiles wrong (by name) | pixels wrong (map colour) |
+| --- | ---: | ---: |
+| raw argmax, listing-order ties (row-by-row capture) | 2,470 | 1,499 |
+| ties to the name that sorts first | 1,680 | 698 |
+| same, against the radius capture | 1,682 | 697 |
+| tile correction ported | **0** | **0** |
+
+- **Ties: name byte order** (`TIE_ORDER` in `tiles/gleba_catalog.rs`). Against
+  the game's own terrain preview PNG, which shows the raw argmax, the listing
+  order differed at 831 pixels of the 256 window and 20,535 of the full 1024,
+  every one a tie; name order differs at 0 of 1,048,576. The comparator in
+  `CompiledMapGenSettings::compile` was not decoded, so the rule is inferred.
+  The tie-break agent's real-surface reading agrees (94.9% of 7,209 tied cells,
+  the rest near correction).
+- **Tile correction** (`tiles/correction.rs`, and
+  `docs/noise/tile-correction-NOTES.md` for how it was read). The 697 pixels the
+  raw argmax still had wrong were exactly the pixels where the preview PNG and
+  the real surface disagree, so all of them were this pass.
+- **The chunk order matters, and is part of the port.** Correction writes into
+  neighbouring chunks, so the order chunks are corrected in changes the map:
+  requesting the same chunks one by one in reverse moved 450 tiles. One radius
+  request, the way a game start makes its spawn area, corrects in columns order
+  (x outer, y inner), and the port does the same. It matches the radius capture
+  and a chunk-by-chunk columns capture at every tile; a row-by-row capture is 16
+  tiles off, because that request does not correct in plain row order and its
+  real order was not decoded. A player who explores in another order can get a
+  slightly different map, which no preview can know.
+- **The margin.** Each render corrects the chunks its pixels touch plus one
+  chunk on each side (`CORRECTION_MARGIN_CHUNKS`), reading raw tiles one chunk
+  further. With no margin, 33 tiles of the window are wrong; one and two give
+  the same 0. A tiled render (100-pixel tiles, not chunk aligned) stitches to
+  the whole render byte for byte, because every tile corrects the same chunks
+  in the same global order around itself.
+- **Only at one tile per pixel on a whole-tile origin.** Correction is defined
+  on tiles. At any other zoom a pixel is the raw argmax at a point, which is
+  what the game's preview draws.
+
+**What it costs.** A 256 x 256 Gleba render takes about 380 ms in WASM against
+150 ms for the raw argmax (2 tiles per pixel) and 63 ms for an Aquilo terrain
+render, measured once on hammond under load from other sessions. The extra is
+the raw tiles of the margin and about 1.7 ms of correction per chunk.
+
+**Tier 3** is `test/wasmGlebaRenderParity.spec.ts`: 0 pixels against both
+real-surface captures, the preview PNG differing from the render exactly where
+it differs from the real surface (697 in the window, 9,736 of the full 1024),
+the seed trap, the plants lever (8,544), and the tiling check. Tier 1 grades the
+same windows by tile name in `fixtures.rs` (`gleba_raw_tiles_against_the_real_surface`,
+`gleba_corrected_tiles_against_the_real_surface`,
+`gleba_corrected_tiles_against_a_columns_request`).
+
+**Planted breaks, each turning a frozen count red:** listing-order ties (real
+surface 698 to 1,499 before correction; preview 0 to 20,535); counting the
+candidate's id in `countFixedNeighborsOfKind` (0 to 840 tiles); writing back
+every second-pass change (0 to 2 on each capture); rows order (0 to 44);
+skipping correction in the render (5 of 8 tier-3 tests red, 697 pixels).
+
+**In the app** Gleba is `devOnly` in `PLANET_CAPABILITIES`: with dev mode off
+the panel still says "Client preview is not available for Gleba yet." In dev
+mode it renders terrain, and every other view, `all` included, shows the
+terrain. Plants, stone, stromatolites, cliffs and enemies are not drawn.
 
 ### Aquilo (#454)
 
@@ -1078,6 +1160,7 @@ declares `params_bytes`, then a per-planet block follows:
 | planet   | block | request |
 | -------- | ----- | ------- |
 | Aquilo   | 128   | 184     |
+| Gleba    | 24    | 80      |
 | Fulgora  | 64    | 120     |
 | Nauvis   | 520   | 576     |
 | Vulcanus | 312   | 368     |
@@ -1155,8 +1238,8 @@ not `Math.sin`: the game's `sin` is not libm, and a correctly rounded f32 sine
 is one ULP away from it on about 5% of inputs. The bearings feeding it are
 graded against the game on 606 seeds (`test/bearingChain.spec.ts`).
 
-`test/fixtures/wasm-request.v2.json` pins the encoding for all four planets
-(Aquilo, 128 bytes, request 184, added in #454). It is declared under
+`test/fixtures/wasm-request.v2.json` pins the encoding for all five planets
+(Aquilo, 128 bytes, request 184, and Gleba, 24 bytes, request 80, both added in #454). It is declared under
 `notFixtures` because it is our own ABI rather than Factorio
 ground truth, and its bytes are checked by
 `test/fixtures/verify-wasm-request.py` - **a third implementation, not the

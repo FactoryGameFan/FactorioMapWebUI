@@ -1888,7 +1888,7 @@ mod gleba_render_tests {
     use crate::abi::{self, Status, COMMON_BYTES, GLEBA_PARAMS_BYTES};
     use crate::render::{render, PLANET_GLEBA, VIEW_ALL, VIEW_TERRAIN};
     use fmw_noise::at::At;
-    use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack};
+    use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
     use fmw_noise::expressions::gleba_terrain::GlebaControls;
 
     /// The derived Gleba surface seed for map seed 123456.
@@ -1926,28 +1926,53 @@ mod gleba_render_tests {
         out
     }
 
-    /// Each pixel is the stack's own tile at that tile, in its map colour: the
-    /// render adds nothing between the argmax and the palette.
+    /// At one tile per pixel each pixel is the corrected tile, in its map
+    /// colour: the render adds nothing between `corrected_tiles` and the
+    /// palette. The window is one where correction changes something, so a
+    /// render that skipped it would fail.
     #[test]
-    fn terrain_paints_each_tiles_map_colour() {
-        let (dims, origin) = ((24, 16), (-40.0, 7.0));
+    fn terrain_paints_each_corrected_tiles_map_colour() {
+        let (dims, origin) = ((48, 48), (-120.0, -128.0));
         let px = run(dims, origin, [1.0; 3]);
         let stack = GlebaStack::new(&GlebaCtx {
             seed0: SEED0,
             controls: GlebaControls::default(),
         });
+        let corrected = stack.corrected_tiles((-120, -128), (48, 48), CORRECTION_MARGIN_CHUNKS);
         let mut seen = std::collections::BTreeSet::new();
+        let mut moved = 0;
         for (k, p) in px.as_chunks::<4>().0.iter().enumerate() {
             let (i, j) = (k % dims.0 as usize, k / dims.0 as usize);
-            let tile = stack.tile_at(At::tile(-40 + i as i32, 7 + j as i32));
+            let tile = corrected[k];
             assert_eq!(p[..3], tile.color(), "pixel ({i}, {j})");
             assert_eq!(p[3], 255);
             seen.insert(tile.game_name());
+            moved += usize::from(stack.tile_at(At::tile(-120 + i as i32, -128 + j as i32)) != tile);
         }
         assert!(
             seen.len() > 2,
             "a near-constant window grades little: {seen:?}"
         );
+        assert!(moved > 0, "correction changed no tile in the window");
+    }
+
+    /// Off one tile per pixel there is no tile grid to correct, so each pixel
+    /// is the raw argmax at its point.
+    #[test]
+    fn a_zoomed_render_paints_the_raw_argmax() {
+        let mut out = vec![0u8; 16 * 16 * 4];
+        let mut b = request(VIEW_TERRAIN, (16, 16), (-120.0, -128.0), [1.0; 3]);
+        b[48..56].copy_from_slice(&2.0f64.to_le_bytes());
+        assert_eq!(render(&b, &mut out), Status::Ok);
+        let stack = GlebaStack::new(&GlebaCtx {
+            seed0: SEED0,
+            controls: GlebaControls::default(),
+        });
+        for (k, p) in out.as_chunks::<4>().0.iter().enumerate() {
+            let (i, j) = ((k % 16) as f64, (k / 16) as f64);
+            let tile = stack.tile_at(At::point(-120.0 + 2.0 * i, -128.0 + 2.0 * j));
+            assert_eq!(p[..3], tile.color(), "pixel {k}");
+        }
     }
 
     /// Each of the three levers crosses the boundary and moves the picture.

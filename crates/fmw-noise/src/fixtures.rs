@@ -12599,11 +12599,11 @@ fn reproduces_the_games_vulcanus_protector_bearing_on_606_seeds() {
 // Gleba (#454), tier 1: the terrain fields and the 41-tile choice.
 // ---------------------------------------------------------------------------
 
-use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack};
+use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
 use crate::expressions::gleba_terrain::{GlebaControls, GlebaTerrainFields};
 use crate::tiles::gleba_catalog::{
-    argmax as gleba_argmax, probabilities as gleba_probabilities, TILE_COUNT as GLEBA_TILE_COUNT,
-    TILE_ORDER as GLEBA_TILE_ORDER,
+    argmax as gleba_argmax, probabilities as gleba_probabilities, GlebaTile,
+    TILE_COUNT as GLEBA_TILE_COUNT, TILE_ORDER as GLEBA_TILE_ORDER,
 };
 
 /// Gleba's planet-field capture, written by `scripts/probes/planet-fields`: 1,024
@@ -12740,6 +12740,11 @@ fn gleba_tile_winner_matches_the_game() {
 /// derived surface seed), written by `scripts/probes/gleba-real-surface`.
 const GLEBA_REAL_SURFACE: &str = "test/fixtures/oracle-gleba-real-surface.seed123456.json";
 
+/// The same window from a surface whose chunks were requested one by one in
+/// columns order (`FMW_CHUNK_ORDER=columns`).
+const GLEBA_REAL_SURFACE_COLUMNS: &str =
+    "test/fixtures/oracle-gleba-real-surface-columns.seed123456.json";
+
 /// The derived Gleba surface seed for map seed 123456: `123456 + crc32("gleba")`.
 const GLEBA_SURFACE_SEED_123456: u32 = 3_215_206_427;
 
@@ -12793,55 +12798,118 @@ fn gleba_map_colours_match_the_game() {
     }
 }
 
-/// Our raw tile choice, through the chunk-grid kernel the game's map generation
-/// uses (`At::tile`), against `get_tile` on a real surface.
-///
-/// **This grades the argmax only, and the real surface runs one more pass.**
-/// A real surface runs `TileCorrectionMapGenerationTask` after the argmax
-/// (`docs/noise/tile-correction-NOTES.md`), which this does not port, so the
-/// frozen counts are the correction's footprint plus anything else we get
-/// wrong. Both are counted, by tile name and by map colour (several tiles
-/// share a colour, so a picture can only see the second).
+/// Every Gleba tile's effective layer is the one the game reports. Tile
+/// correction compares nothing else about a tile.
 #[test]
-fn gleba_raw_tiles_against_the_real_surface() {
+fn gleba_layers_match_the_game() {
     let fixture = load_captured_at(GLEBA_REAL_SURFACE, "2.1.23");
+    let tiles = fixture.get("tiles");
+    for tile in GLEBA_TILE_ORDER {
+        let want = tiles.get(tile.game_name()).get("layer").as_f64();
+        assert_eq!(f64::from(tile.layer()), want, "{}", tile.game_name());
+    }
+}
+
+/// Count where `ours` (row-major over the fixture window) differs from the real
+/// surface, by tile name and by map colour.
+fn gleba_differences(ours: &[GlebaTile], real: &[String]) -> (usize, usize) {
+    let (mut names, mut colours) = (0usize, 0usize);
+    for (tile, want) in ours.iter().zip(real) {
+        if tile.game_name() != want {
+            names += 1;
+            let want_tile = GLEBA_TILE_ORDER
+                .iter()
+                .find(|t| t.game_name() == want)
+                .expect("a Gleba tile");
+            colours += usize::from(want_tile.color() != tile.color());
+        }
+    }
+    (names, colours)
+}
+
+fn gleba_surface_stack(fixture: &Json) -> GlebaStack {
     assert_eq!(
         fixture.get("surfaceSeed").as_f64(),
         f64::from(GLEBA_SURFACE_SEED_123456)
     );
-    let (x0, y0, side, real) = gleba_real_surface_grid(&fixture);
-    let stack = GlebaStack::new(&GlebaCtx {
+    GlebaStack::new(&GlebaCtx {
         seed0: GLEBA_SURFACE_SEED_123456,
         controls: GlebaControls::default(),
-    });
-    let (mut names_differ, mut colours_differ) = (0usize, 0usize);
-    let mut ours_kinds = std::collections::BTreeSet::new();
+    })
+}
+
+/// Our raw tile choice, through the chunk-grid kernel the game's map generation
+/// uses (`At::tile`), against `get_tile` on a real surface.
+///
+/// **This grades the argmax alone, and the real surface runs one more pass.**
+/// The gap is the tile-correction pass, which
+/// `gleba_corrected_tiles_against_the_real_surface` closes. Both counts are by
+/// tile name and by map colour (several tiles share a colour, so a picture
+/// sees only the second).
+#[test]
+fn gleba_raw_tiles_against_the_real_surface() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE, "2.1.23");
+    let (x0, y0, side, real) = gleba_real_surface_grid(&fixture);
+    let stack = gleba_surface_stack(&fixture);
+    let mut ours = Vec::with_capacity(side * side);
     for j in 0..side {
         for i in 0..side {
-            let ours = stack.tile_at(At::tile(x0 + i as i32, y0 + j as i32));
-            ours_kinds.insert(ours.game_name());
-            let want = &real[j * side + i];
-            if ours.game_name() != want {
-                names_differ += 1;
-                let want_tile = GLEBA_TILE_ORDER
-                    .iter()
-                    .find(|t| t.game_name() == want)
-                    .expect("a Gleba tile");
-                colours_differ += usize::from(want_tile.color() != ours.color());
-            }
+            ours.push(stack.tile_at(At::tile(x0 + i as i32, y0 + j as i32)));
         }
     }
-    eprintln!(
-        "gleba raw vs real surface: {names_differ} tiles differ by name, {colours_differ} by colour, of {}; {} kinds",
-        side * side,
-        ours_kinds.len()
-    );
+    let kinds: std::collections::BTreeSet<_> = ours.iter().map(|t| t.game_name()).collect();
+    let (names_differ, colours_differ) = gleba_differences(&ours, &real);
+    eprintln!("gleba raw vs real surface: {names_differ} by name, {colours_differ} by colour");
     // Non-vacuity: the window spans many tiles, so a constant answer cannot pass.
-    assert!(ours_kinds.len() > 30, "{} kinds", ours_kinds.len());
-    // 2,470 and 1,499 under the listing-order tie-break; name order took them
-    // here. The 698 colour differences equal the count by which the game's own
-    // preview PNG (raw argmax) differs from this real surface in this window,
-    // and this argmax matches that PNG at every pixel of the window, so all
-    // 698 are the tile-correction pass.
-    assert_eq!((names_differ, colours_differ), (1680, 698));
+    assert!(kinds.len() > 30, "{} kinds", kinds.len());
+    // Against the row-by-row capture this was 2,470 and 1,499 under the
+    // listing-order tie-break and 1,680 and 698 under name order. The fixture
+    // is the radius capture now. The colour count equals the gap between the
+    // game's own preview PNG (which shows the raw argmax and matches this one at
+    // every pixel) and the real surface, so it is all tile correction.
+    assert_eq!((names_differ, colours_differ), (1682, 697));
+}
+
+/// Our tiles after tile correction (`tiles::correction`) against the real
+/// surface: **0 of 65,536 differ**, by name and so by colour.
+///
+/// The fixture is one radius request, which corrects chunks in columns order;
+/// the port uses the same order. The margin control below shows the result
+/// depends on correcting the chunks around the window: with none, 33 tiles
+/// (8 by colour) differ.
+#[test]
+fn gleba_corrected_tiles_against_the_real_surface() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE, "2.1.23");
+    assert_eq!(fixture.get("chunkOrder").as_str(), "radius");
+    let (x0, y0, side, real) = gleba_real_surface_grid(&fixture);
+    let stack = gleba_surface_stack(&fixture);
+    let window = |margin| stack.corrected_tiles((x0, y0), (side as u32, side as u32), margin);
+    let shipped = window(CORRECTION_MARGIN_CHUNKS);
+    let differ = gleba_differences(&shipped, &real);
+    eprintln!("gleba corrected vs real surface: {differ:?}");
+    assert_eq!(differ, (0, 0));
+    // Control: correcting only the window's own chunks leaves its border wrong,
+    // so the margin is load-bearing. A wider margin changes nothing here.
+    assert_eq!(gleba_differences(&window(0), &real), (33, 8));
+    assert_eq!(window(CORRECTION_MARGIN_CHUNKS + 1), shipped);
+}
+
+/// The same window from a second real surface, whose chunks were requested one
+/// at a time in columns (x outer, y inner) over -6..5, which is the window and
+/// two chunks of margin. Correcting exactly those chunks reproduces it: 0 of
+/// 65,536.
+///
+/// Both captures see the second pass's shared queue (see `tiles::correction`):
+/// writing back every tile the second pass changes, as a reading of the code
+/// without the shared vector would, leaves 2 tiles wrong in each (measured).
+/// And correcting in rows order instead of columns leaves 44 wrong in the
+/// radius capture.
+#[test]
+fn gleba_corrected_tiles_against_a_columns_request() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE_COLUMNS, "2.1.23");
+    assert_eq!(fixture.get("chunkOrder").as_str(), "columns");
+    let (x0, y0, side, real) = gleba_real_surface_grid(&fixture);
+    let stack = gleba_surface_stack(&fixture);
+    let ours = stack.corrected_tiles((x0, y0), (side as u32, side as u32), 2);
+    assert_eq!(gleba_differences(&ours, &real), (0, 0));
 }

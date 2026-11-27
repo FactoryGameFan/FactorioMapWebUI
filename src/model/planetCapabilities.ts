@@ -53,8 +53,8 @@ export const PLANET_CAPABILITIES: Readonly<Record<Planet, PlanetCapability>> = {
     views: ["terrain", "all"],
     fallToTerrain: ["enemies", "cliffs", "trees", "rocks"],
   },
-  // Terrain only, and dev mode only (#454, slice 2): the raw tile argmax, with
-  // no tile correction, no plants, cliffs, stone or enemies. Every other view
+  // Terrain only, and dev mode only (#454, slice 2): the tiles a real surface
+  // holds (argmax plus tile correction), but no plants, cliffs, stone or enemies. Every other view
   // renders the terrain, so the default `all` composite shows terrain alone.
   gleba: {
     rendered: true,

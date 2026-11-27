@@ -449,6 +449,57 @@ impl GlebaTile {
         }
     }
 
+    /// The tile's effective layer (layer group plus offset), as the game
+    /// reports it at runtime (`prototypes.tile[name].layer`), stored in
+    /// `oracle-gleba-real-surface.seed123456.json`. Tile correction compares
+    /// it; `gleba_layers_match_the_game` checks all 41.
+    #[must_use]
+    pub fn layer(self) -> u16 {
+        match self {
+            Self::NaturalYumakoSoil => 229,
+            Self::NaturalJellynutSoil => 230,
+            Self::WetlandYumako => 83,
+            Self::WetlandJellynut => 67,
+            Self::WetlandBlueSlime => 81,
+            Self::WetlandLightGreenSlime => 86,
+            Self::WetlandGreenSlime => 86,
+            Self::WetlandLightDeadSkin => 87,
+            Self::WetlandDeadSkin => 87,
+            Self::WetlandPinkTentacle => 85,
+            Self::WetlandRedTentacle => 85,
+            Self::GlebaDeepLake => 81,
+            Self::LowlandBrownBlubber => 113,
+            Self::LowlandOliveBlubber => 116,
+            Self::LowlandOliveBlubber2 => 115,
+            Self::LowlandOliveBlubber3 => 120,
+            Self::LowlandPaleGreen => 114,
+            Self::LowlandCreamCauliflower => 120,
+            Self::LowlandCreamCauliflower2 => 119,
+            Self::LowlandDeadSkin => 117,
+            Self::LowlandDeadSkin2 => 118,
+            Self::LowlandCreamRed => 123,
+            Self::LowlandRedVein => 125,
+            Self::LowlandRedVein2 => 124,
+            Self::LowlandRedVein3 => 126,
+            Self::LowlandRedVein4 => 127,
+            Self::LowlandRedVeinDead => 119,
+            Self::LowlandRedInfection => 128,
+            Self::MidlandTurquoiseBark => 220,
+            Self::MidlandTurquoiseBark2 => 219,
+            Self::MidlandCrackedLichen => 217,
+            Self::MidlandCrackedLichenDull => 218,
+            Self::MidlandCrackedLichenDark => 209,
+            Self::MidlandYellowCrust => 223,
+            Self::MidlandYellowCrust2 => 222,
+            Self::MidlandYellowCrust3 => 221,
+            Self::MidlandYellowCrust4 => 224,
+            Self::HighlandDarkRock => 225,
+            Self::HighlandDarkRock2 => 226,
+            Self::HighlandYellowRock => 227,
+            Self::PitRock => 208,
+        }
+    }
+
     /// The tile's `map_color`, as the game reports it at runtime
     /// (`prototypes.tile[name].map_color`, read by
     /// `scripts/probes/gleba-real-surface/capture.ts` and stored in

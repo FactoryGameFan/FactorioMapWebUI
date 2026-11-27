@@ -8,6 +8,7 @@
 //! every one of its land tiles composes (#226).
 
 pub mod aquilo_catalog;
+pub mod correction;
 pub mod expression_in_range;
 pub mod fulgora_catalog;
 pub mod fulgora_ocean;

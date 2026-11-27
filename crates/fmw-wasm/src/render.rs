@@ -33,7 +33,7 @@ use fmw_noise::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisP
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::FulgoraStack;
-use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack};
+use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
 use fmw_noise::expressions::gleba_terrain::GlebaControls;
 use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack, NAUVIS_RESOURCE_COUNT};
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
@@ -647,17 +647,35 @@ pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
 
 /// Sweep the window and paint each pixel's Gleba tile in its `map_color`.
 ///
-/// Terrain only (#454, slice 2). The tile is the raw argmax, with a tie going
-/// to the name that sorts first; a real surface also runs tile correction
-/// (`docs/noise/tile-correction-NOTES.md`), which this does not.
+/// Terrain only (#454, slice 2). At one tile per pixel on a whole-tile origin
+/// the pixels are the tiles a REAL surface holds: the raw argmax (a tie going
+/// to the name that sorts first), then tile correction over the window's
+/// chunks plus [`CORRECTION_MARGIN_CHUNKS`] (`fmw_noise::tiles::correction`).
+/// Correction is defined on tiles, so at any other zoom a pixel is the raw
+/// argmax at a point, as the game's own preview draws it.
 fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
     let stack = gleba_stack(req.seed0, p);
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+    let tiles =
+        (req.tiles_per_pixel == 1.0 && whole(req.origin_x) && whole(req.origin_y)).then(|| {
+            stack.corrected_tiles(
+                (req.origin_x as i32, req.origin_y as i32),
+                (req.width, req.height),
+                CORRECTION_MARGIN_CHUNKS,
+            )
+        });
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
-            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let color = stack.tile_at(terrain_at(req, wx, wy)).color();
+            let tile = match &tiles {
+                Some(t) => t[(py * req.width + px) as usize],
+                None => {
+                    let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+                    stack.tile_at(terrain_at(req, wx, wy))
+                }
+            };
+            let color = tile.color();
             out[offset] = color[0];
             out[offset + 1] = color[1];
             out[offset + 2] = color[2];

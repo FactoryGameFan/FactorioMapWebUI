@@ -446,8 +446,8 @@ function renderFulgoraThroughWasm(
 
 /**
  * The Rust engine's Gleba path: terrain only (#454, slice 2). Each pixel is the
- * raw tile argmax in its `map_color`; tile correction, which a real surface
- * runs, is not ported (`test/wasmGlebaRenderParity.spec.ts` grades the gap).
+ * tile a real surface holds (the raw argmax, then tile correction at one tile
+ * per pixel), in its `map_color`. Graded by `test/wasmGlebaRenderParity.spec.ts`.
  */
 function renderGlebaThroughWasm(
   req: ElevationRenderRequest,
