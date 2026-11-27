@@ -13,15 +13,30 @@
 //! (`gleba_lowland`, `gleba_midland`, ...) are `gleba_select` calls on the
 //! elevation, and each tile mixes them with an aux or temperature band.
 //!
-//! ## The tie-break is ours, not the game's
+//! ## The tie-break: the name that sorts first wins
 //!
 //! The game runs ONE argmax over every candidate tile, strict `>` from a start
 //! of `-inf`, so the first candidate in its own list wins an exact tie
-//! (`BasicTilesMapGenerationTask::generateBasicTiles`). The order of that list
-//! is not established. The fixture's strict-argmax scout found 67 of its 1,024
-//! positions tied (mostly at the clamp values 1.0 and 1.1), so the order is
-//! reachable in the preview, and this one is a stand-in: the planet's
-//! `autoplace_settings` listing order. A NaN loses, as in the game.
+//! (`BasicTilesMapGenerationTask::generateBasicTiles`). Ties are common here:
+//! the scores clamp at 1.0 and 1.1, and 2,108 of the 65,536 tiles around spawn
+//! at map seed 123456 have a tied top score.
+//!
+//! The list is sorted before map generation (`CompiledMapGenSettings::compile`,
+//! through `prepareAutoplacers<TilePrototype>`). Its comparator was NOT decoded;
+//! the rule here, **tile NAME in byte order**, is inferred from data, and
+//! [`TIE_ORDER`] holds it:
+//!
+//! - Against the game's own terrain-only preview PNG (which shows the raw
+//!   argmax), the 256 x 256 window around spawn goes from 831 differing pixels
+//!   under the listing order to 0 under name order. Every one of the 831 was a
+//!   tie whose PNG colour was another member of our tie set.
+//! - On a real surface (seed forced to 123456), name order explains 94.9% of
+//!   7,209 tied cells, against 68.3% for the listing order. Most of the rest sit
+//!   near tile-correction changes (gleba.local/tiebreak-FINDINGS.md).
+//!
+//! [`TILE_ORDER`] stays the planet's `autoplace_settings` listing order: it is
+//! the index order of [`probabilities`], and nothing else reads it as a
+//! tie-break. A NaN loses, as in the game.
 
 use crate::eval::math::{f32r, max2, min2};
 use crate::expressions::gleba_terrain::{select, GlebaTerrainFields};
@@ -120,6 +135,15 @@ pub const TILE_ORDER: [GlebaTile; TILE_COUNT] = [
     GlebaTile::HighlandDarkRock2,
     GlebaTile::HighlandYellowRock,
     GlebaTile::PitRock,
+];
+
+/// The order the argmax visits the tiles: indices into [`TILE_ORDER`] (and so
+/// into [`probabilities`]), sorted by tile name in byte order. The first tile
+/// visited wins a tie (see the module docs). `the_tie_order_is_name_order`
+/// checks it against the names.
+pub const TIE_ORDER: [usize; TILE_COUNT] = [
+    11, 37, 38, 39, 12, 17, 18, 21, 19, 20, 13, 14, 15, 16, 27, 22, 23, 24, 25, 26, 30, 32, 31, 28,
+    29, 33, 34, 35, 36, 1, 0, 40, 4, 8, 6, 3, 7, 5, 9, 10, 2,
 ];
 
 fn mul(a: f64, b: f64) -> f64 {
@@ -351,18 +375,19 @@ pub fn probabilities(f: &GlebaTerrainFields) -> [f64; TILE_COUNT] {
     p.map(poison::f64_result)
 }
 
-/// The argmax over the 41 probabilities.
+/// The argmax over the 41 probabilities, visiting them in [`TIE_ORDER`] with a
+/// strict `>`, so the tile whose name sorts first wins a tie.
 ///
 /// **A NaN loses rather than poisoning the argmax**: `v > best` is false for a
 /// NaN. The best starts at `-inf`, as the game's does, so an all-NaN input
-/// falls back to the first tile.
+/// falls back to the first tile visited.
 #[must_use]
 pub fn argmax(p: &[f64; TILE_COUNT]) -> GlebaTile {
-    let mut best_index = 0usize;
+    let mut best_index = TIE_ORDER[0];
     let mut best_value = f64::NEG_INFINITY;
-    for (i, v) in p.iter().enumerate() {
-        if *v > best_value {
-            best_value = *v;
+    for i in TIE_ORDER {
+        if p[i] > best_value {
+            best_value = p[i];
             best_index = i;
         }
     }
@@ -423,21 +448,145 @@ impl GlebaTile {
             Self::PitRock => "pit-rock",
         }
     }
+
+    /// The tile's effective layer (layer group plus offset), as the game
+    /// reports it at runtime (`prototypes.tile[name].layer`), stored in
+    /// `oracle-gleba-real-surface.seed123456.json`. Tile correction compares
+    /// it; `gleba_layers_match_the_game` checks all 41.
+    #[must_use]
+    pub fn layer(self) -> u16 {
+        match self {
+            Self::NaturalYumakoSoil => 229,
+            Self::NaturalJellynutSoil => 230,
+            Self::WetlandYumako => 83,
+            Self::WetlandJellynut => 67,
+            Self::WetlandBlueSlime => 81,
+            Self::WetlandLightGreenSlime => 86,
+            Self::WetlandGreenSlime => 86,
+            Self::WetlandLightDeadSkin => 87,
+            Self::WetlandDeadSkin => 87,
+            Self::WetlandPinkTentacle => 85,
+            Self::WetlandRedTentacle => 85,
+            Self::GlebaDeepLake => 81,
+            Self::LowlandBrownBlubber => 113,
+            Self::LowlandOliveBlubber => 116,
+            Self::LowlandOliveBlubber2 => 115,
+            Self::LowlandOliveBlubber3 => 120,
+            Self::LowlandPaleGreen => 114,
+            Self::LowlandCreamCauliflower => 120,
+            Self::LowlandCreamCauliflower2 => 119,
+            Self::LowlandDeadSkin => 117,
+            Self::LowlandDeadSkin2 => 118,
+            Self::LowlandCreamRed => 123,
+            Self::LowlandRedVein => 125,
+            Self::LowlandRedVein2 => 124,
+            Self::LowlandRedVein3 => 126,
+            Self::LowlandRedVein4 => 127,
+            Self::LowlandRedVeinDead => 119,
+            Self::LowlandRedInfection => 128,
+            Self::MidlandTurquoiseBark => 220,
+            Self::MidlandTurquoiseBark2 => 219,
+            Self::MidlandCrackedLichen => 217,
+            Self::MidlandCrackedLichenDull => 218,
+            Self::MidlandCrackedLichenDark => 209,
+            Self::MidlandYellowCrust => 223,
+            Self::MidlandYellowCrust2 => 222,
+            Self::MidlandYellowCrust3 => 221,
+            Self::MidlandYellowCrust4 => 224,
+            Self::HighlandDarkRock => 225,
+            Self::HighlandDarkRock2 => 226,
+            Self::HighlandYellowRock => 227,
+            Self::PitRock => 208,
+        }
+    }
+
+    /// The tile's `map_color`, as the game reports it at runtime
+    /// (`prototypes.tile[name].map_color`, read by
+    /// `scripts/probes/gleba-real-surface/capture.ts` and stored in
+    /// `oracle-gleba-real-surface.seed123456.json`). Several tiles share a
+    /// colour, so a picture cannot tell those apart; the fixture test
+    /// `gleba_map_colours_match_the_game` compares all 41.
+    #[must_use]
+    pub fn color(self) -> [u8; 3] {
+        match self {
+            Self::NaturalYumakoSoil => [185, 166, 5],
+            Self::NaturalJellynutSoil => [185, 5, 166],
+            Self::WetlandYumako => [132, 119, 7],
+            Self::WetlandJellynut => [132, 7, 119],
+            Self::WetlandBlueSlime => [25, 49, 58],
+            Self::WetlandLightGreenSlime => [35, 63, 35],
+            Self::WetlandGreenSlime => [25, 53, 25],
+            Self::WetlandLightDeadSkin => [51, 50, 56],
+            Self::WetlandDeadSkin => [46, 45, 51],
+            Self::WetlandPinkTentacle => [64, 19, 34],
+            Self::WetlandRedTentacle => [54, 15, 24],
+            Self::GlebaDeepLake => [18, 37, 51],
+            Self::LowlandBrownBlubber => [66, 82, 11],
+            Self::LowlandOliveBlubber => [66, 82, 11],
+            Self::LowlandOliveBlubber2 => [66, 82, 11],
+            Self::LowlandOliveBlubber3 => [66, 82, 11],
+            Self::LowlandPaleGreen => [66, 82, 11],
+            Self::LowlandCreamCauliflower => [95, 93, 88],
+            Self::LowlandCreamCauliflower2 => [95, 93, 88],
+            Self::LowlandDeadSkin => [95, 93, 88],
+            Self::LowlandDeadSkin2 => [95, 93, 88],
+            Self::LowlandCreamRed => [95, 83, 78],
+            Self::LowlandRedVein => [115, 53, 66],
+            Self::LowlandRedVein2 => [115, 53, 66],
+            Self::LowlandRedVein3 => [115, 53, 66],
+            Self::LowlandRedVein4 => [115, 53, 66],
+            Self::LowlandRedVeinDead => [115, 53, 66],
+            Self::LowlandRedInfection => [115, 53, 66],
+            Self::MidlandTurquoiseBark => [46, 68, 48],
+            Self::MidlandTurquoiseBark2 => [46, 68, 48],
+            Self::MidlandCrackedLichen => [81, 77, 44],
+            Self::MidlandCrackedLichenDull => [71, 67, 40],
+            Self::MidlandCrackedLichenDark => [61, 57, 30],
+            Self::MidlandYellowCrust => [114, 86, 40],
+            Self::MidlandYellowCrust2 => [114, 86, 40],
+            Self::MidlandYellowCrust3 => [114, 86, 40],
+            Self::MidlandYellowCrust4 => [114, 86, 40],
+            Self::HighlandDarkRock => [52, 55, 48],
+            Self::HighlandDarkRock2 => [52, 55, 48],
+            Self::HighlandYellowRock => [52, 55, 48],
+            Self::PitRock => [50, 50, 58],
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// First maximum wins; NaN loses. The tie is ours, not the game's.
+    /// A tie goes to the name that sorts first, not to the listing order; a
+    /// NaN loses.
+    ///
+    /// The pair is chosen so the two orders disagree: `natural-yumako-soil`
+    /// is listed first (index 0), `gleba-deep-lake` sorts first by name.
     #[test]
-    fn argmax_keeps_the_first_maximum_and_a_nan_loses() {
+    fn a_tie_goes_to_the_first_name_and_a_nan_loses() {
         let mut p = [0.0; TILE_COUNT];
-        p[3] = 1.0;
-        p[9] = 1.0;
-        assert_eq!(argmax(&p), TILE_ORDER[3]);
-        p[3] = f64::NAN;
-        assert_eq!(argmax(&p), TILE_ORDER[9]);
+        p[0] = 1.0;
+        p[11] = 1.0;
+        assert_eq!(TILE_ORDER[0], GlebaTile::NaturalYumakoSoil);
+        assert_eq!(argmax(&p), GlebaTile::GlebaDeepLake);
+        p[11] = f64::NAN;
+        assert_eq!(argmax(&p), GlebaTile::NaturalYumakoSoil);
+    }
+
+    /// [`TIE_ORDER`] is a permutation of the 41 indices, in name byte order.
+    #[test]
+    fn the_tie_order_is_name_order() {
+        let mut seen = TIE_ORDER.to_vec();
+        seen.sort_unstable();
+        assert_eq!(seen, (0..TILE_COUNT).collect::<Vec<_>>());
+        for pair in TIE_ORDER.windows(2) {
+            let (a, b) = (
+                TILE_ORDER[pair[0]].game_name(),
+                TILE_ORDER[pair[1]].game_name(),
+            );
+            assert!(a.as_bytes() < b.as_bytes(), "{a} before {b}");
+        }
     }
 
     /// The names are the 41 distinct tile names, and no two variants share one.

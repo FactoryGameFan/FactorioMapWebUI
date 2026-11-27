@@ -8,7 +8,7 @@ import type { Planet } from "../../model/planets";
 import type { ResourceControlLevers } from "../resources/resourceCatalog";
 import type { RockControls } from "../rocks/rockCatalog";
 import { renderThroughWasm, type EngineExports } from "../wasm/engine";
-import type { AquiloResourceControls } from "../wasm/request";
+import type { AquiloResourceControls, GlebaControls } from "../wasm/request";
 import { RESOURCE_CATALOG } from "../resources/resourceCatalog";
 
 /** A render job posted to the worker. `id` tags the response for staleness. */
@@ -132,6 +132,13 @@ export interface ElevationRenderRequest {
    * becomes the neutral 1.
    */
   aquiloResourceControls?: AquiloResourceControls;
+  /**
+   * Gleba's three terrain levers (`gleba_water` frequency and size,
+   * `gleba_plants` frequency) - consumed only when `planet: "gleba"`. Left
+   * undefaulted here: `writeGlebaParams` is the one place an absent slider
+   * becomes the neutral 1.
+   */
+  glebaControls?: GlebaControls;
   /**
    * The `fulgora_islands` autoplace control's frequency/size
    * (`control:fulgora_islands:*`) - consumed only when `planet: "fulgora"`.
@@ -438,6 +445,30 @@ function renderFulgoraThroughWasm(
 }
 
 /**
+ * The Rust engine's Gleba path: terrain only (#454, slice 2). Each pixel is the
+ * tile a real surface holds (the raw argmax, then tile correction at one tile
+ * per pixel), in its `map_color`. Graded by `test/wasmGlebaRenderParity.spec.ts`.
+ */
+function renderGlebaThroughWasm(
+  req: ElevationRenderRequest,
+  engine: EngineExports,
+): ElevationRenderResult {
+  const pixels = renderThroughWasm(engine, {
+    planet: "gleba",
+    view: "terrain",
+    seed0: req.seed0,
+    width: req.width,
+    height: req.height,
+    originX: req.originX,
+    originY: req.originY,
+    tilesPerPixel: req.tilesPerPixel,
+    glebaControls: req.glebaControls,
+  });
+  const owned = new Uint8ClampedArray(pixels);
+  return { id: req.id, buffer: owned.buffer, width: req.width, height: req.height };
+}
+
+/**
  * The Rust engine's Aquilo path: terrain, resources, rocks and the composite.
  *
  * Wells and icebergs are placement marks, so the request carries the same
@@ -735,6 +766,13 @@ export function runRenderRequest(
       if (view === "terrain" || view === "resources" || view === "rocks" || view === "all") {
         return renderAquiloThroughWasm(req, requireEngine(engine), view);
       }
+      throw new Error(unsupportedPair(planet, view));
+    }
+    if (planet === "gleba") {
+      // Terrain only. Every other tile-family view is in Gleba's
+      // `fallToTerrain`, so `servedView` has already turned it into
+      // `"terrain"` and the throw is a type obligation.
+      if (view === "terrain") return renderGlebaThroughWasm(req, requireEngine(engine));
       throw new Error(unsupportedPair(planet, view));
     }
     if (planet === "fulgora") {

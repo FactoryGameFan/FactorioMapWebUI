@@ -1,8 +1,59 @@
 # Tile correction - the map-gen pass that rewrites tile boundaries
 
-**Status: reverse-engineered, NOT ported.** This file records what the pass is,
-what it reads, and how it is scoped. It does not claim a complete algorithm -
-the section at the end lists exactly what is still unknown.
+**Status: ported for Gleba (#454, 2026-11-26), and exact there.**
+`crates/fmw-noise/src/tiles/correction.rs` is the port, and its module docs are
+the algorithm. The sections below this one are the earlier arm64 reading
+(2.1.14) and the preview probe, kept as history; where they say "not decoded",
+the 2026-11-26 section answers.
+
+## Ported for Gleba (2026-11-26)
+
+Read from the 2.1.23 linux64 headless binary (build 87750) with Ghidra
+(`decompiling-with-ghidra`), whose DWARF build has every function the arm64
+notes below call "not decoded" as its own symbol:
+`TileCorrectionMapGenerationTask::isTileConsistentWithFixedTiles` (0x1ca5260),
+`correctFromTile` (0x1ca4890), `checkForWeakDiagonalSupport` (0x1ca6030),
+`countFixedNeighborsOfKind` (0x1ca5e60) and `apply` (0x1983310), which holds the
+inlined `computeInternal` and `trySecondPass`. The decompiled C is not
+committed.
+
+What settled the open points:
+
+- **Grid orientation.** `area[a][b]`, `a` is x and `b` is y: `apply` copies a
+  chunk's tiles in x-major runs and writes back `TilePosition{x = a - off,
+  y = b - off}`. The scan is `a` outer, `b` inner. The other orientation was
+  tried and left 1,531 of 65,536 tiles wrong.
+- **`countFixedNeighborsOfKind(pos, id)`** counts the NEIGHBOUR tile's id
+  around the tile and around the one beyond the neighbour. Counting the
+  candidate's id instead left 829 wrong.
+- **The decision.** `isTileConsistentWithFixedTiles` returns the last examined
+  neighbour as the replacement, and `correctFromTile` keeps taking it until the
+  tile is consistent or it comes back to a tile it already tried.
+- **Weak against strong.** "Weak" support treats a not-yet-fixed neighbour as
+  support; the strong check inside the higher-neighbour arm needs it fixed.
+  Reading 1 below was right.
+- **The second pass** pushes its changes into the walk's own queue, which the
+  next walk clears, so only the last walk's changes are written back. Writing
+  them all back leaves 2 tiles wrong on each capture.
+- **Write-back** covers every changed tile in the 3 x 3 chunks, and the next
+  task reads it. So **the result depends on the order chunks are corrected
+  in**: a reversed chunk-by-chunk request moved 450 of 65,536 tiles. One radius
+  request (how a game start asks for its spawn area) corrects in columns order,
+  x outer, y inner; correcting in rows order instead leaves 44 wrong.
+- **The neighbour ring** the walk visits is `(0,-1), (1,-1), (1,0), (1,1),
+  (0,1), (-1,1), (-1,0), (-1,-1)` (`.rodata 0xede450`).
+
+Result: against `get_tile` on a real Gleba surface, 0 of 65,536 tiles differ by
+name, on the radius capture and on a chunk-by-chunk columns capture
+(`gleba_corrected_tiles_against_the_real_surface`,
+`gleba_corrected_tiles_against_a_columns_request`). Before the port it was 1,682
+(697 by map colour). A row-by-row request is 16 tiles off; its real order was
+not decoded (`scripts/probes/gleba-real-surface/README.md`).
+
+Not ported, because no Gleba tile reaches it: the per-prototype table of which
+tiles may touch (`TilePrototype +0x1b28`) and its replacement table (`+0x1b48`),
+the out-of-map tile, and the list-driven re-run at `+0x48a0`. Nauvis, Vulcanus
+and Fulgora still render the raw argmax, which is what their preview PNGs show.
 
 Every claim below is graded. "Decoded" means read out of the disassembly
 instruction by instruction. "Structural" means the shape is clear from the call

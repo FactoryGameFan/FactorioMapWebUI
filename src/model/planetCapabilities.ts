@@ -15,6 +15,13 @@ export interface PlanetCapability {
   /** false = "Client preview is not available for <label> yet." */
   readonly rendered: boolean;
   /**
+   * true = the preview panel renders this planet only in dev mode
+   * (`useUiStore().devMode`); with dev mode off it shows the "not available
+   * yet" message, as if `rendered` were false. `runRenderRequest` ignores it,
+   * since the worker has no dev mode. Absent means false.
+   */
+  readonly devOnly?: boolean;
+  /**
    * The views the preview panel offers as toggles for this planet, in toggle
    * order. A view in neither `views` nor `fallToTerrain` gets no toggle, and
    * the render path may refuse it. It may also still serve it: Fulgora renders
@@ -46,7 +53,15 @@ export const PLANET_CAPABILITIES: Readonly<Record<Planet, PlanetCapability>> = {
     views: ["terrain", "all"],
     fallToTerrain: ["enemies", "cliffs", "trees", "rocks"],
   },
-  gleba: { rendered: false, views: [], fallToTerrain: [] },
+  // Terrain only, and dev mode only (#454, slice 2): the tiles a real surface
+  // holds (argmax plus tile correction), but no plants, cliffs, stone or enemies. Every other view
+  // renders the terrain, so the default `all` composite shows terrain alone.
+  gleba: {
+    rendered: true,
+    devOnly: true,
+    views: ["terrain"],
+    fallToTerrain: ["resources", "enemies", "cliffs", "trees", "rocks", "all", "landmask"],
+  },
   aquilo: {
     rendered: true,
     views: ["terrain", "resources", "rocks", "all"],

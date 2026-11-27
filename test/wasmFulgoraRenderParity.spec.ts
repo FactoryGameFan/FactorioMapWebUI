@@ -21,6 +21,7 @@ import {
   encodeRenderRequest,
   AQUILO_PARAMS_BYTES,
   FULGORA_PARAMS_BYTES,
+  GLEBA_PARAMS_BYTES,
   MAGIC,
   REQUEST_BYTES,
   NAUVIS_PARAMS_BYTES,
@@ -282,12 +283,12 @@ describe("the request encoding is pinned on both sides", () => {
     expect(fixture.abiVersion).toBe(ABI_VERSION);
     expect(fixture.commonBytes).toBe(COMMON_BYTES);
 
-    // All FOUR planets (Aquilo joined in #454; Nauvis in #226). A block added
-    // without a version bump is exactly the change this fixture exists to
-    // notice: the prefix declares its own length, so a wrong Nauvis block would
-    // decode as a length error rather than as garbage - but only if something
-    // writes it and compares.
-    for (const planet of ["fulgora", "vulcanus", "nauvis", "aquilo"] as const) {
+    // All FIVE planets (Aquilo and Gleba joined in #454; Nauvis in #226). A
+    // block added without a version bump is exactly the change this fixture
+    // exists to notice: the prefix declares its own length, so a wrong Nauvis
+    // block would decode as a length error rather than as garbage - but only if
+    // something writes it and compares.
+    for (const planet of ["fulgora", "vulcanus", "nauvis", "aquilo", "gleba"] as const) {
       const arm = fixture[planet];
       const target = new Uint8Array(REQUEST_BYTES);
       const written = encodeRenderRequest(target, arm.request as WasmRenderRequest);
@@ -313,6 +314,9 @@ describe("the request encoding is pinned on both sides", () => {
     // Vulcanus's, so `REQUEST_BYTES` stays Nauvis's 576.
     expect(fixture.aquilo.totalBytes).toBe(COMMON_BYTES + AQUILO_PARAMS_BYTES);
     expect(fixture.aquilo.totalBytes).toBe(184);
+    // Gleba's block is three levers, 24 bytes, so its request is 80.
+    expect(fixture.gleba.totalBytes).toBe(COMMON_BYTES + GLEBA_PARAMS_BYTES);
+    expect(fixture.gleba.totalBytes).toBe(80);
     // Nauvis is the LARGEST now, at 576 - the resource overlay's eighteen
     // per-resource levers took it past Vulcanus's 368, and #227's
     // starting-point block (a count plus eight `[x, y]` pairs) grew it again so
@@ -350,8 +354,8 @@ describe("the request encoding is pinned on both sides", () => {
     const buf = new Uint8Array(REQUEST_BYTES);
     // Control: the same request with a known planet encodes.
     expect(encodeRenderRequest(buf, fulgoraReq)).toBe(120);
-    expect(() => encodeRenderRequest(buf, { ...fulgoraReq, planet: "gleba" } as never)).toThrow(
-      /unknown planet gleba/,
+    expect(() => encodeRenderRequest(buf, { ...fulgoraReq, planet: "venus" } as never)).toThrow(
+      /unknown planet venus/,
     );
     // A missing planet is no longer read as Fulgora either.
     const { planet: _omitted, ...noPlanet } = fulgoraReq;
@@ -363,11 +367,11 @@ describe("the request encoding is pinned on both sides", () => {
     // a code by hand for this one test: the encoder must throw, not fall back
     // to Fulgora's 64-byte layout. Restored in `finally`.
     const codes = PLANET as Record<string, number>;
-    codes.gleba = 4;
+    codes.venus = 5;
     try {
       const buf = new Uint8Array(REQUEST_BYTES);
       const req = {
-        planet: "gleba",
+        planet: "venus",
         seed0: 1,
         width: 1,
         height: 1,
@@ -378,12 +382,12 @@ describe("the request encoding is pinned on both sides", () => {
         islandsSize: 1,
       };
       expect(() => encodeRenderRequest(buf, req as never)).toThrow(
-        /no params layout for planet gleba/,
+        /no params layout for planet venus/,
       );
     } finally {
-      delete codes.gleba;
+      delete codes.venus;
     }
-    expect(Object.keys(PLANET)).toEqual(["fulgora", "vulcanus", "nauvis", "aquilo"]);
+    expect(Object.keys(PLANET)).toEqual(["fulgora", "vulcanus", "nauvis", "aquilo", "gleba"]);
   });
 
   it("refuses a target buffer too small to hold the request", () => {

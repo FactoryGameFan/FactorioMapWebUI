@@ -1881,3 +1881,135 @@ mod aquilo_render_tests {
         }
     }
 }
+
+/// The Gleba render entry, through the real decoder.
+#[cfg(test)]
+mod gleba_render_tests {
+    use crate::abi::{self, Status, COMMON_BYTES, GLEBA_PARAMS_BYTES};
+    use crate::render::{render, PLANET_GLEBA, VIEW_ALL, VIEW_TERRAIN};
+    use fmw_noise::at::At;
+    use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
+    use fmw_noise::expressions::gleba_terrain::GlebaControls;
+
+    /// The derived Gleba surface seed for map seed 123456.
+    const SEED0: u32 = 3_215_206_427;
+
+    fn request(view: u32, (w, h): (u32, u32), (ox, oy): (f64, f64), levers: [f64; 3]) -> Vec<u8> {
+        let mut b = vec![0u8; COMMON_BYTES + GLEBA_PARAMS_BYTES];
+        let put_u32 = |b: &mut Vec<u8>, at: usize, v: u32| {
+            b[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        };
+        let put_f64 = |b: &mut Vec<u8>, at: usize, v: f64| {
+            b[at..at + 8].copy_from_slice(&v.to_le_bytes());
+        };
+        put_u32(&mut b, 0, abi::MAGIC);
+        put_u32(&mut b, 4, abi::ABI_VERSION);
+        put_u32(&mut b, 8, PLANET_GLEBA);
+        put_u32(&mut b, 12, view);
+        put_u32(&mut b, 16, SEED0);
+        put_u32(&mut b, 20, w);
+        put_u32(&mut b, 24, h);
+        put_u32(&mut b, 28, GLEBA_PARAMS_BYTES as u32);
+        put_f64(&mut b, 32, ox);
+        put_f64(&mut b, 40, oy);
+        put_f64(&mut b, 48, 1.0);
+        for (i, v) in levers.into_iter().enumerate() {
+            put_f64(&mut b, COMMON_BYTES + i * 8, v);
+        }
+        b
+    }
+
+    fn run(dims: (u32, u32), origin: (f64, f64), levers: [f64; 3]) -> Vec<u8> {
+        let mut out = vec![0u8; dims.0 as usize * dims.1 as usize * 4];
+        let status = render(&request(VIEW_TERRAIN, dims, origin, levers), &mut out);
+        assert_eq!(status, Status::Ok);
+        out
+    }
+
+    /// At one tile per pixel each pixel is the corrected tile, in its map
+    /// colour: the render adds nothing between `corrected_tiles` and the
+    /// palette. The window is one where correction changes something, so a
+    /// render that skipped it would fail.
+    #[test]
+    fn terrain_paints_each_corrected_tiles_map_colour() {
+        let (dims, origin) = ((48, 48), (-120.0, -128.0));
+        let px = run(dims, origin, [1.0; 3]);
+        let stack = GlebaStack::new(&GlebaCtx {
+            seed0: SEED0,
+            controls: GlebaControls::default(),
+        });
+        let corrected = stack.corrected_tiles((-120, -128), (48, 48), CORRECTION_MARGIN_CHUNKS);
+        let mut seen = std::collections::BTreeSet::new();
+        let mut moved = 0;
+        for (k, p) in px.as_chunks::<4>().0.iter().enumerate() {
+            let (i, j) = (k % dims.0 as usize, k / dims.0 as usize);
+            let tile = corrected[k];
+            assert_eq!(p[..3], tile.color(), "pixel ({i}, {j})");
+            assert_eq!(p[3], 255);
+            seen.insert(tile.game_name());
+            moved += usize::from(stack.tile_at(At::tile(-120 + i as i32, -128 + j as i32)) != tile);
+        }
+        assert!(
+            seen.len() > 2,
+            "a near-constant window grades little: {seen:?}"
+        );
+        assert!(moved > 0, "correction changed no tile in the window");
+    }
+
+    /// Off one tile per pixel there is no tile grid to correct, so each pixel
+    /// is the raw argmax at its point.
+    #[test]
+    fn a_zoomed_render_paints_the_raw_argmax() {
+        let mut out = vec![0u8; 16 * 16 * 4];
+        let mut b = request(VIEW_TERRAIN, (16, 16), (-120.0, -128.0), [1.0; 3]);
+        b[48..56].copy_from_slice(&2.0f64.to_le_bytes());
+        assert_eq!(render(&b, &mut out), Status::Ok);
+        let stack = GlebaStack::new(&GlebaCtx {
+            seed0: SEED0,
+            controls: GlebaControls::default(),
+        });
+        for (k, p) in out.as_chunks::<4>().0.iter().enumerate() {
+            let (i, j) = ((k % 16) as f64, (k / 16) as f64);
+            let tile = stack.tile_at(At::point(-120.0 + 2.0 * i, -128.0 + 2.0 * j));
+            assert_eq!(p[..3], tile.color(), "pixel {k}");
+        }
+    }
+
+    /// Each of the three levers crosses the boundary and moves the picture.
+    ///
+    /// The window is 600 tiles out: at spawn the starting cones decide most
+    /// tiles, and the water frequency moved none of a 48 x 48 window there.
+    #[test]
+    fn each_lever_changes_the_render() {
+        let (dims, origin) = ((48, 48), (600.0, -600.0));
+        let neutral = run(dims, origin, [1.0; 3]);
+        for i in 0..3 {
+            let mut levers = [1.0; 3];
+            levers[i] = 2.0;
+            let moved = run(dims, origin, levers);
+            let differ = moved
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(neutral.as_chunks::<4>().0)
+                .filter(|(a, b)| a != b)
+                .count();
+            assert!(differ > 0, "lever {i} moved no pixel");
+        }
+    }
+
+    /// Every view but terrain is refused.
+    #[test]
+    fn views_gleba_does_not_serve_are_refused() {
+        for view in (0..14).filter(|v| *v != VIEW_TERRAIN) {
+            let b = request(view, (2, 2), (0.0, 0.0), [1.0; 3]);
+            let mut out = vec![0u8; 16];
+            assert_eq!(
+                render(&b, &mut out),
+                Status::UnsupportedPlanetOrView,
+                "view {view}"
+            );
+        }
+        assert_ne!(VIEW_ALL, VIEW_TERRAIN);
+    }
+}
