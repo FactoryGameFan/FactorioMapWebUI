@@ -12918,3 +12918,6 @@ fn gleba_corrected_tiles_against_a_columns_request() {
     let ours = stack.corrected_tiles((x0, y0), (side as u32, side as u32), 2);
     assert_eq!(gleba_differences(&ours, &real), (0, 0));
 }
+
+// Aquilo (#454): the terrain against a real surface, in its own file.
+mod aquilo_real_surface;

@@ -2,11 +2,14 @@
  * The tiles a REAL Gleba surface places, for the tier-3 terrain grade (#454).
  *
  *   node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+ *   FMW_PLANET=aquilo node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
  *
  * Run from the repository root. It needs the 2.1.23 headless install named in
  * `INSTALL` below (override with `FMW_FACTORIO_2_1_23=<root>`) and writes
  * `test/fixtures/oracle-gleba-real-surface.seed123456.json`. Read `README.md`
- * beside this file for what it found.
+ * beside this file for what it found. `FMW_PLANET` picks another planet that
+ * makes its own surface (see `EXTRA_DISABLED`); the default output is then
+ * `oracle-<planet>-real-surface.seed123456.json`.
  *
  * ## Why the real surface and not the preview PNG
  *
@@ -47,12 +50,26 @@ const run = promisify(execFile);
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 /**
+ * The planet, and the controls its terrain PNG disabled beyond `DISABLEABLE`
+ * (`previewCompare.ts`). Aquilo's three resource controls reshape its islands,
+ * so they must match the PNG's, not only keep entities out.
+ */
+const EXTRA_DISABLED: Record<string, string[]> = {
+  gleba: ["gleba_stone", "gleba_cliff"],
+  aquilo: ["lithium_brine", "fluorine_vent", "aquilo_crude_oil"],
+};
+const PLANET = process.env.FMW_PLANET ?? "gleba";
+const EXTRA = EXTRA_DISABLED[PLANET];
+if (!EXTRA) {
+  throw new Error(`FMW_PLANET must be one of ${Object.keys(EXTRA_DISABLED).join(", ")}`);
+}
+/**
  * Where to write. `FMW_OUT` overrides it, for the chunk-order arms below,
  * which are measurements and not fixtures.
  */
 const OUT =
   process.env.FMW_OUT ??
-  join(REPO, "test", "fixtures", "oracle-gleba-real-surface.seed123456.json");
+  join(REPO, "test", "fixtures", `oracle-${PLANET}-real-surface.seed123456.json`);
 
 /**
  * How the chunks are requested. The committed fixture uses `radius`: ONE
@@ -81,8 +98,8 @@ const X0 = -128;
 const SIDE = 256;
 /** Extra chunks generated around the window, so correction has neighbours. */
 const MARGIN_CHUNKS = 2;
-/** The controls the terrain PNG disabled (`previewCompare.ts`, Gleba arm). */
-const DISABLED = [...DISABLEABLE, "gleba_stone", "gleba_cliff"];
+/** The controls the terrain PNG disabled (`previewCompare.ts`, this planet's arm). */
+const DISABLED = [...DISABLEABLE, ...EXTRA];
 
 /** One character per tile, indexing `names`. 64 symbols covers 41 tiles. */
 const ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+/";
@@ -93,7 +110,7 @@ local X0, SIDE, MARGIN = ${String(X0)}, ${String(SIDE)}, ${String(MARGIN_CHUNKS)
 local ORDER = "${ORDER}"
 local DISABLED = helpers.json_to_table([==[${JSON.stringify(DISABLED)}]==])
 script.on_init(function()
-  local s = game.planets["gleba"].create_surface()
+  local s = game.planets["${PLANET}"].create_surface()
   local mgs = s.map_gen_settings
   for _, n in ipairs(DISABLED) do
     mgs.autoplace_controls[n] = { frequency = 1, size = 0, richness = 1 }
@@ -261,7 +278,7 @@ if (dump.rows.length !== SIDE) throw new Error(`read ${String(dump.rows.length)}
 if (dump.entitiesInWindow !== 0) {
   throw new Error(`${String(dump.entitiesInWindow)} entities in the window; the mod did not hold`);
 }
-for (const n of ["gleba_stone", "gleba_cliff"]) {
+for (const n of EXTRA) {
   if (dump.controls[n] !== 0) throw new Error(`control ${n} read back ${String(dump.controls[n])}`);
 }
 const names = [...dump.candidates];
@@ -280,8 +297,7 @@ const counts: Record<string, number> = {};
 for (const row of dump.rows) for (const n of row.split(" ")) counts[n] = (counts[n] ?? 0) + 1;
 
 const fixture = {
-  about:
-    "get_tile on a real Gleba surface (game.planets.gleba.create_surface()), the window and a margin of at least 2 chunks force-generated (see chunkOrder), terrain-only data-stage mod. Written by scripts/probes/gleba-real-surface/capture.ts.",
+  about: `get_tile on a real ${PLANET.charAt(0).toUpperCase()}${PLANET.slice(1)} surface (game.planets.${PLANET}.create_surface()), the window and a margin of at least 2 chunks force-generated (see chunkOrder), terrain-only data-stage mod. Written by scripts/probes/gleba-real-surface/capture.ts.`,
   buildLine,
   mapSeed: MAP_SEED,
   surfaceSeed: dump.surfaceSeed,

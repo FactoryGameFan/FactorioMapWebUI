@@ -27,7 +27,9 @@ use fmw_noise::eval::ctx::{EvalCtx, ResourceLevers, VulcanusResourceControls};
 use fmw_noise::expressions::aquilo_resources::{
     AquiloBearings, AquiloLevers, AquiloResourceControls,
 };
-use fmw_noise::expressions::aquilo_stack::{tile_at, AquiloCtx, AquiloStack};
+use fmw_noise::expressions::aquilo_stack::{
+    tile_at, AquiloCtx, AquiloStack, AQUILO_CORRECTION_MARGIN_CHUNKS,
+};
 use fmw_noise::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
 use fmw_noise::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
@@ -590,6 +592,12 @@ pub(crate) fn aquilo_stack(seed0: u32, p: &AquiloParams) -> AquiloStack {
 
 /// Sweep the window and paint Aquilo: terrain, then wells, then icebergs.
 ///
+/// At one tile per pixel on a whole-tile origin the terrain is what a REAL
+/// surface holds (#454): the raw argmax, then tile correction over the
+/// window's chunks plus [`AQUILO_CORRECTION_MARGIN_CHUNKS`], as Gleba does. At
+/// any other zoom a pixel is the raw argmax at a point, as the game's preview
+/// draws it. The wells and icebergs are still the preview's (#553).
+///
 /// The stack sits behind a `RefCell` because the two placement sources and the
 /// terrain pass all evaluate it and `eval_at` needs `&mut self`. Every borrow
 /// is taken and dropped inside one statement.
@@ -601,16 +609,29 @@ fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
         return;
     }
 
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+    let corrected = (req.width > 0
+        && req.height > 0
+        && req.tiles_per_pixel == 1.0
+        && whole(req.origin_x)
+        && whole(req.origin_y))
+    .then(|| {
+        stack.borrow_mut().corrected_tiles(
+            (req.origin_x as i32, req.origin_y as i32),
+            (req.width, req.height),
+            AQUILO_CORRECTION_MARGIN_CHUNKS,
+        )
+    });
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let color = stack
-                .borrow_mut()
-                .eval_at(terrain_at(req, wx, wy))
-                .tile()
-                .color();
+            let tile = match &corrected {
+                Some(t) => t[(py * req.width + px) as usize],
+                None => stack.borrow_mut().eval_at(terrain_at(req, wx, wy)).tile(),
+            };
+            let color = tile.color();
             out[offset] = color[0];
             out[offset + 1] = color[1];
             out[offset + 2] = color[2];

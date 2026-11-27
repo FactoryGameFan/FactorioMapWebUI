@@ -8,7 +8,12 @@ node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
 FMW_CHUNK_ORDER=columns \
   FMW_OUT=test/fixtures/oracle-gleba-real-surface-columns.seed123456.json \
   node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+FMW_PLANET=aquilo node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
 ```
+
+`FMW_PLANET` picks the planet (`gleba` by default, or `aquilo`); the fixture is
+then `test/fixtures/oracle-<planet>-real-surface.seed123456.json`. Each planet
+disables the controls its own terrain PNG disabled.
 
 Run it from the repository root. Each run starts Factorio 2.1.23 once, through
 `factorio-oracle`, and takes about 2 seconds. The first command writes

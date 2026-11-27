@@ -13,7 +13,8 @@ use crate::expressions::aquilo_resources::{
     AquiloBearings, AquiloResourceControls, AquiloResourceFields, AquiloResources,
 };
 use crate::expressions::aquilo_terrain::{AquiloTerrain, AquiloTerrainFields};
-use crate::tiles::aquilo_catalog::{resolve_tile, AquiloTile};
+use crate::tiles::aquilo_catalog::{resolve_tile, AquiloTile, TILE_ORDER};
+use crate::tiles::correction::{correct_chunks, TileWorld};
 
 /// What a render fixes: the map seed (the Aquilo surface seed, which a preview
 /// derives and a tier-1 capture forces) and the three resource controls.
@@ -82,6 +83,78 @@ impl AquiloStack {
         let terrain = self.terrain.eval_at(at, &resources);
         AquiloFields { resources, terrain }
     }
+}
+
+impl AquiloStack {
+    /// The tile at one position: the argmax of the nine probabilities.
+    pub fn tile_at(&mut self, at: At) -> AquiloTile {
+        self.eval_at(at).tile()
+    }
+
+    /// The tiles of a window as a real surface holds them: the raw argmax at
+    /// every whole tile (the chunk-grid kernel), then tile correction over
+    /// every chunk the window touches plus `margin_chunks` on each side, in
+    /// columns order (see `tiles::correction`). Row-major, `y` outer.
+    ///
+    /// The same shape as `GlebaStack::corrected_tiles`; the margin stands in
+    /// for the chunks a real map has generated around the window, and
+    /// [`AQUILO_CORRECTION_MARGIN_CHUNKS`] is the one measured to reproduce
+    /// the real surface.
+    pub fn corrected_tiles(
+        &mut self,
+        (x0, y0): (i32, i32),
+        (width, height): (u32, u32),
+        margin_chunks: i32,
+    ) -> Vec<AquiloTile> {
+        let chunk = |v: i32| v.div_euclid(32);
+        let (cx0, cx1) = (
+            chunk(x0) - margin_chunks,
+            chunk(x0 + width as i32 - 1) + margin_chunks,
+        );
+        let (cy0, cy1) = (
+            chunk(y0) - margin_chunks,
+            chunk(y0 + height as i32 - 1) + margin_chunks,
+        );
+        let mut world = TileWorld {
+            chunk_x0: cx0 - 1,
+            chunk_y0: cy0 - 1,
+            chunks_wide: cx1 - cx0 + 3,
+            chunks_high: cy1 - cy0 + 3,
+            tiles: Vec::new(),
+        };
+        let (wx0, wy0) = (world.chunk_x0 * 32, world.chunk_y0 * 32);
+        let (w, h) = (world.width(), (world.chunks_high * 32) as usize);
+        world.tiles.reserve(w * h);
+        for j in 0..h {
+            for i in 0..w {
+                let t = self.tile_at(At::tile(wx0 + i as i32, wy0 + j as i32));
+                world.tiles.push(aquilo_tile_id(t));
+            }
+        }
+        let layers: Vec<u16> = std::iter::once(0)
+            .chain(TILE_ORDER.iter().map(|t| t.layer()))
+            .collect();
+        correct_chunks(&mut world, &layers, (cx0, cx1), (cy0, cy1));
+        let mut out = Vec::with_capacity(width as usize * height as usize);
+        for y in y0..y0 + height as i32 {
+            for x in x0..x0 + width as i32 {
+                out.push(TILE_ORDER[usize::from(world.at(x, y)) - 1]);
+            }
+        }
+        out
+    }
+}
+
+/// The margin, in chunks, [`AquiloStack::corrected_tiles`] corrects around a
+/// window for the renderer. See `aquilo_corrected_tiles_against_the_real_surface`
+/// for the measurement behind it.
+pub const AQUILO_CORRECTION_MARGIN_CHUNKS: i32 = 1;
+
+/// A tile's id for `tiles::correction`: its index in `TILE_ORDER`, plus one (0
+/// is the game's empty id).
+fn aquilo_tile_id(t: AquiloTile) -> u8 {
+    let i = TILE_ORDER.iter().position(|o| *o == t).unwrap_or(0);
+    (i + 1) as u8
 }
 
 /// Tier 2's field selector for the Aquilo graph: one named expression, by index.
