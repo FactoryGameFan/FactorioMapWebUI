@@ -34,7 +34,9 @@ use fmw_noise::expressions::elevation_lakes::{ElevationLakes, ElevationLakesPara
 use fmw_noise::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
-use fmw_noise::expressions::fulgora_stack::FulgoraStack;
+use fmw_noise::expressions::fulgora_stack::{
+    FulgoraStack, CORRECTION_MARGIN_CHUNKS as FULGORA_CORRECTION_MARGIN_CHUNKS,
+};
 use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
 use fmw_noise::expressions::gleba_terrain::GlebaControls;
 use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack, NAUVIS_RESOURCE_COUNT};
@@ -238,8 +240,8 @@ fn tile_color(tile: FulgoraTile) -> [u8; 3] {
         FulgoraTile::FulgoranWalls => [114, 75, 65],
         FulgoraTile::FulgoranConduit => [100, 79, 68],
         FulgoraTile::FulgoranMachinery => [89, 79, 68],
-        FulgoraTile::Shallow => SHALLOW,
-        FulgoraTile::Deep => DEEP,
+        FulgoraTile::Shallow | FulgoraTile::Shallow2 => SHALLOW,
+        FulgoraTile::Deep | FulgoraTile::Deep2 => DEEP,
     }
 }
 
@@ -331,6 +333,13 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
 /// 0.998x to 1.039x at 8 tiles/px and 1.005x to 1.017x at 2 after the change, in
 /// the noise, because `eval_at` already evaluates every field for both views and
 /// only the eight-formula argmax itself is added.
+///
+/// At one tile per pixel on a whole-tile origin, every view that paints a
+/// tile paints the tile a REAL surface holds: the raw argmax, then tile
+/// correction (`FulgoraStack::corrected_tiles`, over the window's chunks plus
+/// one, in columns order). The game's preview PNG shows the raw argmax,
+/// which is what any other zoom draws, since correction is defined on
+/// tiles.
 fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
     let ctx = FulgoraCtx {
         seed0: req.seed0,
@@ -369,16 +378,42 @@ fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
     // provably identical.
     let overlay = matches!(req.view, VIEW_RESOURCES | VIEW_ALL);
 
+    // An empty window paints nothing, and correction would still generate and
+    // correct the chunks around it.
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+    let corrected = (req.width > 0
+        && req.height > 0
+        && req.view != VIEW_SCRAP_FOOTPRINT
+        && req.tiles_per_pixel == 1.0
+        && whole(req.origin_x)
+        && whole(req.origin_y))
+    .then(|| {
+        stack.borrow_mut().corrected_tiles(
+            (req.origin_x as i32, req.origin_y as i32),
+            (req.width, req.height),
+            FULGORA_CORRECTION_MARGIN_CHUNKS,
+        )
+    });
+
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let fields = stack.borrow_mut().eval_at(terrain_at(req, wx, wy));
+            // A corrected render has every tile already, so it evaluates
+            // nothing per pixel; the scrap footprint view is never corrected.
+            let fields = corrected
+                .is_none()
+                .then(|| stack.borrow_mut().eval_at(terrain_at(req, wx, wy)));
+            let tile = || match (&corrected, &fields) {
+                (Some(t), _) => t[(py * req.width + px) as usize],
+                (None, Some(f)) => f.tile(),
+                (None, None) => unreachable!("fields are evaluated when not corrected"),
+            };
             let color = match req.view {
-                VIEW_TERRAIN => tile_color(fields.tile()),
+                VIEW_TERRAIN => tile_color(tile()),
                 VIEW_SCRAP_FOOTPRINT => {
-                    if fields.scrap.probability > 0.0 {
+                    if fields.is_some_and(|f| f.scrap.probability > 0.0) {
                         SCRAP_FOOTPRINT
                     } else {
                         [0, 0, 0]
@@ -391,12 +426,12 @@ fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
                     if placed.placed(wx, wy) {
                         SCRAP_MAP_COLOR
                     } else {
-                        tile_color(fields.tile())
+                        tile_color(tile())
                     }
                 }
                 // The land mask follows the game's single twelve-way tile
                 // argmax, so it agrees with the terrain view pixel for pixel.
-                _ => match fields.tile() {
+                _ => match tile().folded() {
                     FulgoraTile::Shallow => SHALLOW,
                     FulgoraTile::Deep => DEEP,
                     _ => LAND,

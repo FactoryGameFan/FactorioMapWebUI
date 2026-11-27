@@ -139,11 +139,10 @@ impl PlacementSource for FulgoraScrapPlacement<'_> {
 /// The oil-ocean tiles, the only Fulgora tiles whose collision mask carries the
 /// `resource` layer that scrap's own mask collides with.
 ///
-/// The game has four (`oil-ocean-shallow`, `oil-ocean-shallow-2` and the two
-/// deep ones); this port folds each pair into one variant, so the two variants
-/// cover all four.
+/// The game has four: `oil-ocean-shallow`, `oil-ocean-shallow-2` and the two
+/// deep ones.
 fn is_oil_ocean(tile: FulgoraTile) -> bool {
-    matches!(tile, FulgoraTile::Shallow | FulgoraTile::Deep)
+    tile.is_ocean()
 }
 
 #[cfg(test)]

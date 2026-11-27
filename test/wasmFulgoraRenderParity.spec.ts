@@ -4,7 +4,8 @@ import { inflateSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { withDiffArtifacts } from "./diffArtifacts";
-import { decodePng } from "./oracle/decodePng";
+import { decodePng, type DecodedImage } from "./oracle/decodePng";
+import realSurface from "./fixtures/oracle-fulgora-real-surface-radius10.seed123456.json";
 import {
   consultedCount,
   expectFrozen,
@@ -14,6 +15,7 @@ import {
   frozenCount,
   RECORDING,
 } from "./tier3Frozen";
+import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
 import { compileEngine, instantiateEngine, renderThroughWasm } from "../src/noise/wasm/engine";
 import {
   ABI_VERSION,
@@ -461,6 +463,169 @@ describe("the request encoding is pinned on both sides", () => {
 });
 
 /**
+ * **Tier 3 against a REAL Fulgora surface** (Eric's ruling on 2026-11-26, the
+ * one Gleba follows: match what the map will actually look like).
+ *
+ * The reference is `oracle-fulgora-real-surface-radius10.seed123456.json`:
+ * `get_tile` at every tile of -128..127 on a generated Fulgora surface at map
+ * seed 123456, terrain-only, its chunks made by one radius request of 10
+ * chunks (`FMW_PLANET=fulgora FMW_MARGIN_CHUNKS=6
+ * scripts/probes/gleba-real-surface/capture.ts`), each tile drawn in the
+ * `map_color` the game reported for it. Radius 7 and 18 give the same window;
+ * radius 6, whose edge is two chunks from the window, differs at 5 tiles, and
+ * the Rust tests show why (`fulgora_corrected_tiles_near_the_edge_of_a_request`).
+ *
+ * A real surface runs tile correction after the tile argmax and the preview
+ * PNG does not. At one tile per pixel on a whole-tile origin the engine runs
+ * it (`FulgoraStack::corrected_tiles`) over the window's chunks plus one, in
+ * columns order, as Gleba does. By tile name the Rust tests grade the same
+ * window exactly as well (`crates/fmw-noise/src/fixtures/fulgora_real_surface.rs`).
+ */
+describe("the WASM engine against the real Fulgora surface", () => {
+  const SIDE = realSurface.window.width;
+  const WINDOW = {
+    planet: "fulgora",
+    view: "terrain",
+    seed0: SEED0,
+    width: SIDE,
+    height: SIDE,
+    originX: realSurface.window.x0,
+    originY: realSurface.window.y0,
+    tilesPerPixel: 1,
+    islandsFrequency: 1,
+    islandsSize: 1,
+  } as const satisfies WasmRenderRequest;
+
+  const key = (r: number, g: number, b: number): number => (r << 16) | (g << 8) | b;
+  const oursKey = (px: ArrayLike<number>, i: number): number =>
+    key(px[i * 4] as number, px[i * 4 + 1] as number, px[i * 4 + 2] as number);
+  const imageKey = (img: DecodedImage, i: number): number =>
+    key(img.rgb[i * 3] as number, img.rgb[i * 3 + 1] as number, img.rgb[i * 3 + 2] as number);
+
+  type Surface = typeof realSurface;
+  function surfaceImage(s: Surface): DecodedImage {
+    const rgb = new Uint8Array(SIDE * SIDE * 3);
+    let i = 0;
+    for (const row of s.rows) {
+      for (const c of row.split("")) {
+        const name = s.names[s.alphabet.indexOf(c)] as keyof Surface["tiles"];
+        rgb.set(s.tiles[name].mapColor, i * 3);
+        i++;
+      }
+    }
+    expect(i).toBe(SIDE * SIDE);
+    return { width: SIDE, height: SIDE, rgb };
+  }
+  const realImage = surfaceImage(realSurface);
+
+  function differing(img: DecodedImage, ours: ArrayLike<number>): number {
+    let n = 0;
+    for (let i = 0; i < img.width * img.height; i++) if (imageKey(img, i) !== oursKey(ours, i)) n++;
+    return n;
+  }
+
+  let cached: Uint8ClampedArray | undefined;
+  async function windowRender(): Promise<Uint8ClampedArray> {
+    cached ??= renderThroughWasm(await engine(), WINDOW).slice();
+    return cached;
+  }
+
+  it("is the derived seed's surface, terrain-only, with all twelve tiles in the window", () => {
+    expect(realSurface.surfaceSeed).toBe(SEED0);
+    expect(realSurface.buildLine).toContain("Version: 2.1.23 ");
+    expect(realSurface.chunkOrder).toBe("radius");
+    expect(realSurface.marginChunks).toBe(6);
+    expect(Object.keys(realSurface.counts)).toHaveLength(12);
+  });
+
+  /**
+   * **0 of 65,536 pixels.** Exact, not a bound. Before tile correction it was
+   * 1,003, which is how far the preview PNG is from this surface.
+   */
+  const DIFFERING_PX = 0;
+
+  it("matches the real surface at every pixel", async () => {
+    const ours = await windowRender();
+    const n = differing(realImage, ours);
+    withDiffArtifacts(
+      {
+        spec: "wasmFulgoraRenderParity",
+        case: "fulgora-terrain-vs-real-surface",
+        game: realImage,
+        ours: { width: SIDE, height: SIDE, rgba: ours },
+      },
+      () => {
+        expect(n).toBe(DIFFERING_PX);
+      },
+    );
+  }, 300000);
+
+  /**
+   * The control that the correction is in the render: the preview PNG, which
+   * shows the raw argmax, differs from our render in this window at exactly
+   * the 1,003 pixels where it differs from the real surface.
+   */
+  it("differs from the preview PNG exactly where the real surface does", async () => {
+    const png = decodePng(
+      new Uint8Array(
+        readFileSync(
+          join(import.meta.dirname, "fixtures", "oracle-preview-fulgora-terrain.seed123456.png"),
+        ),
+      ),
+      (b) => new Uint8Array(inflateSync(b)),
+    );
+    const off = (png.width - SIDE) / 2;
+    const rgb = new Uint8Array(SIDE * SIDE * 3);
+    for (let y = 0; y < SIDE; y++) {
+      rgb.set(
+        png.rgb.subarray(
+          ((y + off) * png.width + off) * 3,
+          ((y + off) * png.width + off + SIDE) * 3,
+        ),
+        y * SIDE * 3,
+      );
+    }
+    const cut: DecodedImage = { width: SIDE, height: SIDE, rgb };
+    const ours = await windowRender();
+    let onlyOne = 0;
+    for (let i = 0; i < SIDE * SIDE; i++) {
+      const p = imageKey(cut, i);
+      if ((p !== oursKey(ours, i)) !== (p !== imageKey(realImage, i))) onlyOne++;
+    }
+    expect(differing(cut, ours)).toBe(1003);
+    expect(onlyOne, "pixels where the PNG differs from one of the two only").toBe(0);
+  }, 300000);
+
+  /**
+   * Correction reads neighbouring chunks, so each worker tile corrects its own
+   * margin. Cut into 100-pixel tiles (not chunk aligned), the render must still
+   * stitch back to the whole render byte for byte.
+   */
+  it("a tiled render stitches to the whole render", async () => {
+    const e = await engine();
+    const FULL: ImageBox = {
+      originX: WINDOW.originX,
+      originY: WINDOW.originY,
+      width: SIDE,
+      height: SIDE,
+      tilesPerPixel: 1,
+    };
+    const whole = (await windowRender()).slice();
+    const tiles = planTiles(FULL, 100).map((t) => ({
+      ...t,
+      data: renderThroughWasm(e, {
+        ...WINDOW,
+        originX: t.originX,
+        originY: t.originY,
+        width: t.width,
+        height: t.height,
+      }).slice(),
+    }));
+    expect(stitchTiles(FULL, tiles)).toEqual(whole);
+  }, 300000);
+});
+
+/**
  * **Tier 3 against the GAME, not against the other port.**
  *
  * The block above proves the two renderers agree pixel for pixel. This asks a
@@ -478,8 +643,8 @@ describe("the request encoding is pinned on both sides", () => {
  * overlap where the derived seed scored 99.9%. Nothing about the 0.5% run
  * announced itself as a seed problem.
  */
-describe("the WASM engine agrees with the game's own preview PNG", () => {
-  it("differs from the game's PNG on exactly the frozen pixel count", async () => {
+describe("the game's own preview PNG, for reference only", () => {
+  it("differs from the game's PNG by the tile-correction footprint", async () => {
     const png = readFileSync(
       join(import.meta.dirname, "fixtures", "oracle-preview-fulgora-terrain.seed123456.png"),
     );
@@ -562,6 +727,14 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
     //           rock scores higher. All 20 were that pair, `[74,42,43]` against
     //           `[131,85,66]`; `land_probabilities` also rounds every step to f32
     //           now, as the game compares f32 registers.
+    //   22,288  on 2026-11-26: the render now runs tile correction at 1 tile
+    //           per pixel and matches a REAL surface (the block above), which
+    //           the PNG is not: the PNG shows the raw argmax. So this is no
+    //           longer the target and nothing may be tuned to it. 22,288 is the
+    //           correction's footprint by map colour over the whole 1024 x 1024;
+    //           in the centre 256 x 256 it is exactly the 1,003 pixels where the
+    //           real surface differs from the PNG. The raw argmax still matches
+    //           the PNG at every pixel (0, the entry above).
     //
     // So the lesson #273 recorded still stands - bit-exactness on named fields
     // is not the same thing as a better image - but it is not a rule that this
@@ -580,7 +753,7 @@ describe("the WASM engine agrees with the game's own preview PNG", () => {
       },
       () => {
         expect(entityPx, "entities in the reference - was it captured without the mod?").toBe(0);
-        expect(differing).toBe(0);
+        expect(differing).toBe(22288);
       },
     );
   }, 300000);

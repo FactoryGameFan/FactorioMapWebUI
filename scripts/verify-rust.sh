@@ -199,6 +199,11 @@ POISONED_TESTS=(
   fixtures::nauvis_real_surface::nauvis_raw_tiles_against_the_real_surface
   fixtures::nauvis_real_surface::nauvis_corrected_tiles_against_the_real_surface
   fixtures::nauvis_real_surface::nauvis_corrected_tiles_against_the_real_coast
+  # Fulgora against its real surface: the twelve-way argmax's own
+  # `poison::index_result` reaches the raw grade and, through it, the corrected
+  # one (64,969 and 65,150 of 65,536 wrong under poison, measured).
+  fixtures::fulgora_real_surface::fulgora_raw_tiles_against_the_real_surface
+  fixtures::fulgora_real_surface::fulgora_corrected_tiles_against_the_real_surface
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

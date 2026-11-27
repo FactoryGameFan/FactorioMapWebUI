@@ -3,6 +3,7 @@
  *
  *   node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
  *   FMW_PLANET=aquilo node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+ *   FMW_PLANET=fulgora node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
  *
  * Run from the repository root. It needs the 2.1.23 headless install named in
  * `INSTALL` below (override with `FMW_FACTORIO_2_1_23=<root>`) and writes
@@ -59,6 +60,8 @@ const EXTRA_DISABLED: Record<string, string[]> = {
   gleba: ["gleba_stone", "gleba_cliff"],
   aquilo: ["lithium_brine", "fluorine_vent", "aquilo_crude_oil"],
   nauvis: [],
+  // `fulgora_islands` cannot be disabled and stays at its default.
+  fulgora: ["scrap", "fulgora_cliff"],
 };
 const PLANET = process.env.FMW_PLANET ?? "gleba";
 const EXTRA = EXTRA_DISABLED[PLANET];
@@ -115,8 +118,13 @@ const SIDE = Number(process.env.FMW_SIDE ?? 256);
 if (X0 % 32 !== 0 || Y0 % 32 !== 0 || SIDE % 32 !== 0) {
   throw new Error(`the window must be chunk aligned`);
 }
-/** Extra chunks generated around the window, so correction has neighbours. */
-const MARGIN_CHUNKS = 2;
+/**
+ * Extra chunks requested around the window, so correction has neighbours.
+ * `FMW_MARGIN_CHUNKS` overrides it: tile correction within about two chunks of
+ * the edge of what was requested depends on where that edge is, so a wider
+ * margin reads the window as the inside of a larger generated area.
+ */
+const MARGIN_CHUNKS = Number(process.env.FMW_MARGIN_CHUNKS ?? 2);
 /** The controls the terrain PNG disabled (`previewCompare.ts`, this planet's arm). */
 const DISABLED = [...DISABLEABLE, ...EXTRA];
 
@@ -337,6 +345,9 @@ const fixture = {
   names,
   tiles: Object.fromEntries(names.map((n) => [n, dump.tiles[n]])),
   chunkOrder: ORDER,
+  // Written only when it is not the default 2, so a re-run of an earlier
+  // capture stays byte-identical.
+  ...(MARGIN_CHUNKS === 2 ? {} : { marginChunks: MARGIN_CHUNKS }),
   // Chunks the new surface already held before the first request. Lua sends
   // an empty table as {}, so that case is normalised to [].
   pregenerated: Array.isArray(dump.pregenerated) ? dump.pregenerated : [],
