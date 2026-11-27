@@ -213,6 +213,12 @@ POISONED_TESTS=(
   fixtures::classifies_every_vulcanus_lava_tile_correctly
   fixtures::puts_every_vulcanus_tile_where_the_game_puts_it_at_a_real_saves_surface_seed
   tiles::vulcanus_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_order
+  # Vulcanus against a real surface: the same hook over 65,536 tiles, raw and
+  # after tile correction, which reads nothing but the argmax. Both red under
+  # poison (the corrected grade reads 64,368 by name; 2026-11-26), about 49 s
+  # for the pair, which share one raw grid.
+  tiles::vulcanus_correction::tests::vulcanus_raw_tiles_against_the_real_surface
+  tiles::vulcanus_correction::tests::vulcanus_corrected_tiles_against_the_real_surface
 
   tiles::fulgora_catalog::tests::an_exact_tie_resolves_to_the_earlier_tile_in_land_order
 

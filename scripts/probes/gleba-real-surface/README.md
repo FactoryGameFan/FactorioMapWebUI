@@ -61,6 +61,20 @@ of a request" in `docs/noise/tile-correction-NOTES.md`. Correction within about
 two chunks of the requested area's edge depends on where that edge is, so a
 wider margin reads the window as the inside of a generated area.
 
+**Vulcanus** (`FMW_PLANET=vulcanus`) disables the four ore controls as its
+terrain PNG did. Its fixtures:
+
+```bash
+FMW_PLANET=vulcanus node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+FMW_PLANET=vulcanus FMW_CHUNK_ORDER=each \
+  FMW_OUT=test/fixtures/oracle-vulcanus-real-surface-each.seed123456.json \
+  node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+```
+
+Lava and lava-hot may touch only each other: 34 pairs, both ways round. On Vulcanus
+the `columns` arm equals `radius` at every tile, and `radius` and `each` (chunks
+made strictly one at a time) are each reproduced at every tile in the game's request order.
+
 ## What it reads
 
 Map seed 123456 and Gleba's own `create_surface()`, so the surface seed is the

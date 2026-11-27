@@ -73,6 +73,7 @@ use fmw_noise::tiles::nauvis_correction::{
 };
 use fmw_noise::tiles::nauvis_resolve::nauvis_tile;
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
+use fmw_noise::tiles::vulcanus_correction;
 use fmw_noise::trees::catalog::{TREE_MAP_COLOR, TREE_MAX_ALPHA};
 use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
 use std::cmp::Ordering;
@@ -551,12 +552,36 @@ fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
     let biomes = vulcanus_biomes(&base, p);
     let stack = vulcanus_stack(&base, &biomes, p);
 
+    // At one tile per pixel on a whole-tile origin, the tiles a real surface
+    // holds: the argmax, then tile correction over the window's chunks plus a
+    // margin (`vulcanus_correction`). At any other zoom a pixel is not one
+    // tile, so it draws the raw argmax, as the game's preview does. Every view
+    // draws this terrain under its overlays.
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+    let corrected = (req.width > 0
+        && req.height > 0
+        && req.tiles_per_pixel == 1.0
+        && whole(req.origin_x)
+        && whole(req.origin_y))
+    .then(|| {
+        vulcanus_correction::corrected_tiles(
+            &stack,
+            (req.origin_x as i32, req.origin_y as i32),
+            (req.width, req.height),
+            vulcanus_correction::CORRECTION_MARGIN_CHUNKS,
+        )
+    });
+
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let color = vulcanus_tile_color(stack.tile_at(terrain_at(req, wx, wy)));
+            let tile = match &corrected {
+                Some(t) => t[(py * req.width + px) as usize],
+                None => stack.tile_at(terrain_at(req, wx, wy)),
+            };
+            let color = vulcanus_tile_color(tile);
             out[offset] = color[0];
             out[offset + 1] = color[1];
             out[offset + 2] = color[2];
