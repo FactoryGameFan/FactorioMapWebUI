@@ -15,7 +15,7 @@
 # Refresh the digest for a tag with:
 #   docker pull --platform linux/amd64 factoriotools/factorio:2.1.24
 #   docker inspect --format='{{index .RepoDigests 0}}' factoriotools/factorio:2.1.24
-FROM factoriotools/factorio:2.1.24@sha256:a0c019b7608975a58f1694de54a2326e13a5aa2d123c18f48e5396181e366e28
+FROM factoriotools/factorio:2.1.25@sha256:69d0bb4e0a152c1154e69dbf8bee14cacb0970711e52d7306507bef3526456db
 
 # Node for the HTTP wrapper (base image is Debian-based).
 USER root
