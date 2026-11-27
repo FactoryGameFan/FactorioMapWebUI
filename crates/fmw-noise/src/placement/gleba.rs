@@ -778,6 +778,24 @@ mod tests {
         }
     }
 
+    /// Stone's removal odds fall with the square of the distance from spawn,
+    /// reach 0 at 1,024 tiles, and stay 0 past it, the same in every
+    /// direction. The replay cannot see the falloff (every covered plant in
+    /// its window has odds below one half either way), so it is pinned here.
+    #[test]
+    fn stone_tree_removal_falls_off_with_distance() {
+        let t = |x: f64, y: f64| stone_tree_removal((x * 256.0) as i64, (y * 256.0) as i64);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-12;
+        assert!(close(t(0.0, 0.0), 0.8));
+        assert!(close(t(512.0, 0.0), 0.6));
+        assert!(close(t(0.0, -512.0), 0.6));
+        // 500 tiles out: 0.8 * (1 - 500^2 / 1024^2).
+        assert!(close(t(-300.0, 400.0), 0.609_265_136_718_75));
+        assert!(close(t(1024.0, 0.0), 0.0));
+        assert_eq!(t(1024.5, 0.0), 0.0);
+        assert_eq!(t(-2000.0, -2000.0), 0.0);
+    }
+
     /// Touching boxes collide; boxes a 1/256 tile apart do not.
     #[test]
     fn touching_boxes_collide() {

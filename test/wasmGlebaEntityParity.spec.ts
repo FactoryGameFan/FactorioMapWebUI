@@ -185,6 +185,18 @@ function differing(a: ArrayLike<number>, b: ArrayLike<number>): number {
   return n;
 }
 
+/** The world tiles (x, y) where two window renders differ, row by row. */
+function differingTiles(a: ArrayLike<number>, b: ArrayLike<number>): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < a.length; i += 4) {
+    if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) {
+      const p = i / 4;
+      out.push([X0 + (p % SIDE), X0 + Math.floor(p / SIDE)]);
+    }
+  }
+  return out;
+}
+
 function countColor(px: ArrayLike<number>, c: readonly number[]): number {
   let n = 0;
   for (let i = 0; i < px.length; i += 4) {
@@ -328,7 +340,7 @@ describe("the WASM engine against the real Gleba surface's plants", () => {
     const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
     const all = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "all" }).slice();
     const want = expectedPlants(terrain, () => true);
-    const n = differing(want, all);
+    const n = differingTiles(want, all);
     withDiffArtifacts(
       {
         spec: "wasmGlebaEntityParity",
@@ -337,7 +349,7 @@ describe("the WASM engine against the real Gleba surface's plants", () => {
         ours: { width: SIDE, height: SIDE, rgba: all },
       },
       () => {
-        expect(n).toBe(PLANT_DIFFERING_PX);
+        expect(n).toEqual(PLANT_DIFFERING_TILES);
       },
     );
     // Non-vacuity: the blend and the white are both painted, widely.
@@ -353,7 +365,7 @@ describe("the WASM engine against the real Gleba surface's plants", () => {
     // Each render is a view into the module's memory: copy it before the next.
     const trees = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "trees" }).slice();
     const resources = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "resources" }).slice();
-    expect(differing(expectedPlants(terrain, isPlant), trees)).toBe(TREES_DIFFERING_PX);
+    expect(differingTiles(expectedPlants(terrain, isPlant), trees)).toEqual(TREES_DIFFERING_TILES);
     expect(
       differing(
         expectedPlants(terrain, (n) => !isPlant(n)),
@@ -374,13 +386,24 @@ describe("the WASM engine against the real Gleba surface's plants", () => {
   }, 300000);
 });
 
-/** Frozen. See the `all` view test above for the one footprint it is. */
-const PLANT_DIFFERING_PX = 2;
+/**
+ * Frozen, by position: the one stingfrond the game kept, at (-324.9375,
+ * 451.1875). See the `all` view test above.
+ */
+const PLANT_DIFFERING_TILES: [number, number][] = [
+  [-326, 450],
+  [-326, 451],
+];
 /**
  * The same stingfrond in the `trees` view: all four tiles of its footprint,
  * because no stone paints over two of them there.
  */
-const TREES_DIFFERING_PX = 4;
+const TREES_DIFFERING_TILES: [number, number][] = [
+  [-326, 450],
+  [-325, 450],
+  [-326, 451],
+  [-325, 451],
+];
 
 describe("tiling", () => {
   /**

@@ -1149,8 +1149,8 @@ step, so no stone removing plants either) is what this slice does not copy.
 | `gleba_plants_replay_the_real_surface` | three 128 windows, all 15 entities between them | 741, 567 and 876 of the same |
 | `gleba_plant_replay_controls` | no tree removal / touching boxes / preview | (741, 761) (740, 740) (741, 815) in the spawn window |
 | `gleba_plants_keep_stone_exact` | stone and stromatolites, with and without our plants | 465 stone; copper (74, 75) with plants off |
-| `test/wasmGlebaEntityParity.spec.ts` | the 1024 window, `all` view, through the module | 2 of 1,048,576 pixels |
-| same | `trees` view | 4 pixels (the same stingfrond, all four tiles) |
+| `test/wasmGlebaEntityParity.spec.ts` | the 1024 window, `all` view, through the module | 2 of 1,048,576 pixels, pinned by tile |
+| same | `trees` view | 4 pixels (the same stingfrond, all four tiles), pinned by tile |
 | same | `resources` view against the default map | 0 pixels (was 1) |
 
 The 2 pixels are tiles (-326, 450) and (-326, 451); the stingfrond's other
@@ -1164,12 +1164,13 @@ two tiles hold stone, painted over it either way.
 | stingfrond keeps its overwritten `midland-turquoise-bark` restriction | the facts test, the replay (666, 105, 221 matched), the stone check (copper 73 of 74) |
 | water-cane served before the forest groups | the facts test, the replay (703, 77, 128 matched), the stone check |
 | sunnycomb reads `gleba_plants_noise` instead of `_b` | its field 1,393 of 2,048; the spawn window 664 of 741 |
-| stone's removal odds without the distance falloff | **nothing**: every covered plant in the window has odds below one half either way |
+| stone's removal odds without the distance falloff | only `stone_tree_removal_falls_off_with_distance`: the replay stays green |
 
-The last row is a gap, stated rather than hidden: the falloff changes an
-outcome only past about 627 tiles from spawn, where one stone's odds of
-removal drop below one half, and no covered plant in this capture is that
-far out. It comes from the binary and the Lua, not from a grade.
+The last row is a gap in the GRADE, stated rather than hidden: the falloff
+changes an outcome only past about 627 tiles from spawn, where one stone's
+odds of removal drop below one half, and no covered plant in this capture is
+that far out. The unit test pins the code to the formula read from the
+binary and the Lua, not to the game.
 
 **What it costs** (the app's own preview at its default geometry, Gleba at
 seed 123456, `?dev=1`, the panel's elapsed-ms readout after a warm-up
