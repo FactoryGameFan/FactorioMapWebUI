@@ -11,7 +11,7 @@
 
 use crate::at::At;
 use crate::expressions::gleba_terrain::{GlebaControls, GlebaTerrain, GlebaTerrainFields};
-use crate::tiles::correction::{correct_chunks, TileWorld};
+use crate::tiles::correction::correct_window;
 use crate::tiles::gleba_catalog::{resolve_tile, GlebaTile, TILE_ORDER};
 
 /// What a render fixes: the map seed (the Gleba surface seed, which a preview
@@ -59,44 +59,16 @@ impl GlebaStack {
     #[must_use]
     pub fn corrected_tiles(
         &self,
-        (x0, y0): (i32, i32),
-        (width, height): (u32, u32),
+        origin: (i32, i32),
+        size: (u32, u32),
         margin_chunks: i32,
     ) -> Vec<GlebaTile> {
-        let chunk = |v: i32| v.div_euclid(32);
-        let (cx0, cx1) = (
-            chunk(x0) - margin_chunks,
-            chunk(x0 + width as i32 - 1) + margin_chunks,
-        );
-        let (cy0, cy1) = (
-            chunk(y0) - margin_chunks,
-            chunk(y0 + height as i32 - 1) + margin_chunks,
-        );
-        let mut world = TileWorld {
-            chunk_x0: cx0 - 1,
-            chunk_y0: cy0 - 1,
-            chunks_wide: cx1 - cx0 + 3,
-            chunks_high: cy1 - cy0 + 3,
-            tiles: Vec::new(),
-        };
-        let (wx0, wy0) = (world.chunk_x0 * 32, world.chunk_y0 * 32);
-        let (w, h) = (world.width(), (world.chunks_high * 32) as usize);
-        world.tiles.reserve(w * h);
-        for j in 0..h {
-            for i in 0..w {
-                let t = self.tile_at(At::tile(wx0 + i as i32, wy0 + j as i32));
-                world.tiles.push(tile_id(t));
-            }
-        }
         let layers = gleba_layers();
-        correct_chunks(&mut world, &layers, (cx0, cx1), (cy0, cy1));
-        let mut out = Vec::with_capacity(width as usize * height as usize);
-        for y in y0..y0 + height as i32 {
-            for x in x0..x0 + width as i32 {
-                out.push(TILE_ORDER[usize::from(world.at(x, y)) - 1]);
-            }
-        }
-        out
+        let mut raw = |x: i32, y: i32| tile_id(self.tile_at(At::tile(x, y)));
+        correct_window(&mut raw, &layers, origin, size, margin_chunks)
+            .into_iter()
+            .map(|id| TILE_ORDER[usize::from(id) - 1])
+            .collect()
     }
 }
 

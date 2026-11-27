@@ -21,6 +21,10 @@
 //! as Fulgora's does. The game's own rule for an exact tie is not established.
 //! `oracle-aquilo-fields` reports 0 ties in its 1,024 positions, so the
 //! fixture cannot tell. (The two oceans tie exactly where `aux` is 0.5.)
+//! Gleba's ties go to the name that sorts first; that order differs from this
+//! one only among the land tiles, and the ocean tie goes to `ammoniacal-ocean`
+//! under both. No tie occurs in 1,327,104 tiles around spawn
+//! (`aquilo_has_no_tile_ties_in_the_window`), so this was left as it is.
 
 use crate::expressions::aquilo_terrain::AquiloTerrainFields;
 use crate::poison;
@@ -198,6 +202,26 @@ impl AquiloTile {
             Self::BrashIce => "brash-ice",
             Self::AmmoniacalOcean => "ammoniacal-ocean",
             Self::AmmoniacalOcean2 => "ammoniacal-ocean-2",
+        }
+    }
+
+    /// The tile's effective layer (layer group plus offset), as the game
+    /// reports it at runtime (`prototypes.tile[name].layer`), stored in
+    /// `oracle-aquilo-real-surface.seed123456.json`. Tile correction compares
+    /// nothing else about a tile; `aquilo_layers_match_the_game` checks all
+    /// nine. The two oceans share a layer, so correction never trades one for
+    /// the other.
+    #[must_use]
+    pub fn layer(self) -> u16 {
+        match self {
+            Self::SnowFlat => 196,
+            Self::SnowCrests => 197,
+            Self::SnowLumpy => 198,
+            Self::SnowPatchy => 199,
+            Self::IceRough => 195,
+            Self::IceSmooth => 194,
+            Self::BrashIce => 80,
+            Self::AmmoniacalOcean | Self::AmmoniacalOcean2 => 67,
         }
     }
 

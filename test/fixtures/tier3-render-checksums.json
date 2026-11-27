@@ -1,19 +1,19 @@
 {
   "aquilo:render": {
-    "lithium, north-east | all": "0xa6cf132c9f66cbaf",
-    "lithium, north-east | resources": "0x14b5b3668152edcb",
-    "lithium, north-east | rocks": "0x30a0b857d96dfeef",
-    "lithium, north-east | terrain": "0xe0625562b862593e",
-    "slider crude oil frequency | all": "0xdb2d794f039157a5",
-    "slider crude oil size | all": "0xb1b5115123fc0c66",
+    "lithium, north-east | all": "0xeb4ac040b947522d",
+    "lithium, north-east | resources": "0x508d639f288c027d",
+    "lithium, north-east | rocks": "0xb8fdd5cb7432100f",
+    "lithium, north-east | terrain": "0xe81b6cb9badaea33",
+    "slider crude oil frequency | all": "0x34c36dd9210051fe",
+    "slider crude oil size | all": "0xe9aedbc51bbd91a6",
     "slider fluorine vent frequency | all": "0xf9c28d1af32d2594",
-    "slider fluorine vent size | all": "0x0b4ded97327ae987",
-    "slider lithium brine frequency | all": "0x1c01d52b00766584",
-    "slider lithium brine size | all": "0x8d0852fb68d8aee6",
-    "spawn | all": "0x0edd628a58b67f25",
-    "spawn | resources": "0xe10ac7d740e943b4",
-    "spawn | rocks": "0x8c29f19149aa8f24",
-    "spawn | terrain": "0x3b29969c223e2485"
+    "slider fluorine vent size | all": "0x99f546832d810665",
+    "slider lithium brine frequency | all": "0x96188899e4edda6b",
+    "slider lithium brine size | all": "0xb67953d61d16b6e7",
+    "spawn | all": "0x59937169c2c94e0c",
+    "spawn | resources": "0x352b25f166ea5bac",
+    "spawn | rocks": "0xa07d83ab5a08f724",
+    "spawn | terrain": "0x3300e4e64a6a8018"
   },
   "elevation:render": {
     "island lake 64 @1 | elevation": "0x705be16f42169d2d",

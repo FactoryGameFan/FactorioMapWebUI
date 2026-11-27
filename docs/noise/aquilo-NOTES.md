@@ -58,6 +58,44 @@ in the data stage and records `tileWithoutEffect`, the tile before the rewrite.
 Of 19 census wells, 9 stand on ammoniacal ocean before the rewrite. Read
 `tileWithoutEffect`, never `tile`.
 
+### Tile correction is the whole gap to a real surface (2026-11-26)
+
+Since #454's real-surface change the terrain at one tile per pixel runs the
+game's tile correction (`tiles/correction.rs`, ported for Gleba) with Aquilo's
+nine layers, and it matches real surfaces exactly. Nothing else was needed:
+no tie-break change, no `allowed_neighbors` table (no Aquilo tile has one), no
+second pass of any kind. Measured at 2.1.23, map seed 123456, levers matched:
+
+| real surface | tiles | raw argmax wrong (name / colour) | corrected wrong |
+| --- | ---: | ---: | ---: |
+| `oracle-aquilo-real-surface` (-128..127, levers off), committed | 65,536 | 551 / 531 | 0 |
+| -512..511, levers off, uncommitted | 1,048,576 | 751 / 718 | 0 |
+| -512..511, neutral levers, every entity autoplace removed, uncommitted | 1,048,576 | 1,424 / 1,358 | 0 |
+| `oracle-aquilo-surface` land mask (-320..319, neutral, icebergs in) | 409,600 | 172 (land or water) | 0 |
+
+- **Why only 79% of the differing pixels showed a neighbour's colour.** The
+  2026-11-26 gap measurement read that as a hint of a second cause. The port
+  reproduces every one of those pixels with correction alone, so there is no
+  second cause in these windows. The likely reason for the low share: the walk
+  spreads, and a tile's replacement is the neighbour as it stood DURING the
+  walk, which the walk may rewrite again afterwards.
+- **The layers are 67 (both oceans), 80 (brash ice), 194 (ice-smooth), 195
+  (ice-rough) and 196 to 199 (snow-flat, -crests, -lumpy, -patchy)**, read from
+  `prototypes.tile` at runtime. The oceans share a layer, so correction never
+  trades one for the other.
+- **No ties.** 0 tied top scores in 1,327,104 tiles around spawn, so the
+  argmax's tie order cannot show here (`aquilo_has_no_tile_ties_in_the_window`).
+- **The margin matters only once the window is cut into tiles.** Corrected
+  whole, the windows above are exact with no margin. Cut into the app's
+  128-pixel worker tiles, each with no margin, 45 tiles of the committed window
+  are wrong (46 and 108 on the two 1024 windows); with one chunk of margin, 0.
+- **For #553.** The corrected land reproduces the entity-stream surface's land
+  mask at every tile, where the raw argmax misses 172. So the entity replay,
+  which reads the game's land today because our raw shore was wrong, could read
+  our corrected tiles instead. The wells' `created_effect` rewrite is still not
+  modelled; the levers-off captures have no wells, and the neutral one had every
+  entity removed.
+
 ## The size-0 levers reshape the islands
 
 The terrain PNG was captured with all three resource controls (`crude_oil`,

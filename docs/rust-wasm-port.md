@@ -57,6 +57,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 10 (#492) | Aquilo's wells and icebergs through the game's own per-chunk entity generator (`placement/generate.rs`), replacing the salted roll there | done |
 | 11 (#454) | Gleba slice 1 - the terrain fields and the 41-tile choice at tier 1 (`terrace` op, `gleba_*`); no ABI, render, cliffs or entities yet | tier 1 done |
 | 12 (#454) | Gleba slice 2 - the terrain view through the engine, name-order tie-break, and tile correction (`tiles/correction.rs`), graded against a REAL surface; dev mode only in the app | terrain done |
+| 13 (#454) | Aquilo's terrain through tile correction at one tile per pixel, graded against a REAL surface; the preview PNGs become a reference | terrain done |
 
 **Every planet, every view the panel offers, renders through the engine.** Gleba
 offers terrain only, and only in dev mode. The
@@ -993,19 +994,23 @@ and the extra windows were added beside it rather than accepting the constants.
   rows were written from the WASM run and the native test matched them with no
   copying.
 
-**Tier 3: the terrain gap is 0 of 1,048,576, and since #492 the composite is
-too, inside a 4-pixel border.** The spec is
-`test/wasmAquiloRenderParity.spec.ts` (24 tests since #492, 26 before: the
+**Tier 3: the terrain matches a real surface at every pixel; the preview PNGs
+are now a reference (2026-11-26, see "Aquilo against a real surface" below).**
+Before that the terrain gap to the preview was 0 of 1,048,576, and since #492
+the composite's was too, inside a 4-pixel border. The spec is
+`test/wasmAquiloRenderParity.spec.ts` (27 tests since the real-surface change, 24 since #492, 26 before: the
 per-colour fingerprint and the halo-radius check went. About 17 to 20 seconds on
 tealc, about 1.5 times Fulgora's). All of it uses the derived surface seed 3111923328
 for map seed 123456, and the window is -512 to 511 at one tile per pixel.
 
 | what                                                           | frozen                |
 | -------------------------------------------------------------- | --------------------- |
-| terrain view against the terrain PNG (levers at size 0)        | 0 of 1,048,576        |
-| same, levers left at neutral (control)                         | 13,194                |
+| terrain view against the REAL surface, -128..127 (levers at size 0) | 0 of 65,536      |
+| preview PNG against our render in that window, and against the real surface | 531, at the same pixels |
+| terrain view against the terrain PNG (levers at size 0), a reference | 718 of 1,048,576 (0 before the correction) |
+| same, levers left at neutral (control)                         | 13,707 (13,194 before) |
 | raw map seed instead of the derived one, 256 by 256 at spawn   | 7,376 of 8,843 land pixels differ (83%; measured, asserted > 50%) |
-| composite (wells and icebergs) against the full PNG, every pixel | 3 of 1,048,576; 0 inside a 4-pixel border |
+| composite (wells and icebergs) against the full PNG, every pixel | 1,067 of 1,048,576: 1,064 tile against tile (0 before), 3 entity pixels at the edge, 0 entity pixels inside a 4-pixel border |
 | per-colour pixels in that composite                            | equal to the game's, except iceberg +3 |
 | footprint pixels outside, grown by 1 pixel                     | 7                     |
 | footprint pixels outside, grown by 2 pixels                    | 0                     |
@@ -1016,8 +1021,8 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
 
 - **The terrain PNG was captured with all three resource controls at size 0,
   and those controls reshape the islands.** A render that names no levers
-  renders at size 1 and differs from the PNG in 13,194 pixels. The matched
-  pairing gives 0. The spec freezes both numbers so the levers stay load-bearing.
+  renders at size 1 and differs from the PNG in 13,707 pixels (13,194 before the correction). The matched
+  pairing gives 718, the correction's footprint (0 before). The spec freezes both numbers so the levers stay load-bearing.
   This is the Vulcanus lesson again (see tier 3 above).
 - **The full-PNG test grades the composite, every pixel, nothing masked
   (#492).** Wells and icebergs come from the game's own per-chunk entity
@@ -1105,6 +1110,86 @@ generator, and the 209/209 real-surface replay confirms them.
   the engine; the app's minimum is 1/6, so richness is always above 0, but an
   imported string with an Aquilo richness of 0 would draw wells the game does
   not place.
+
+### Aquilo against a real surface (#454, 2026-11-26)
+
+At one tile per pixel on a whole-tile origin, the Aquilo render now runs tile
+correction after the argmax, the way Gleba's does (`render_aquilo`,
+`AquiloStack::corrected_tiles`), so the terrain is what a real surface holds.
+At any other zoom a pixel is still the raw argmax at a point. The wells and
+icebergs are still drawn by the preview's rule (#553). The app opens Aquilo at
+one tile per pixel in the `all` view, so a user sees the corrected terrain with
+the preview's entities on top. `docs/noise/aquilo-NOTES.md` has the findings.
+
+- **Correction alone closes the gap.** Aquilo's nine layers through the
+  unchanged `tiles/correction.rs` give 0 wrong tiles by name against the
+  committed real surface (551 raw), and against two uncommitted 1024 x 1024
+  real surfaces (levers off, and neutral with every entity autoplace removed).
+  No Aquilo tile has `allowed_neighbors`, and the argmax has no ties in
+  1,327,104 tiles, so neither the neighbour table nor the tie order is
+  reached. `correction.rs` did not change, so Gleba stays at 0.
+- **The fixture** is `oracle-aquilo-real-surface.seed123456.json`, from the
+  Gleba probe with `FMW_PLANET=aquilo` (`scripts/probes/gleba-real-surface`).
+  A columns-order request gave the same window at every tile and is not
+  committed.
+- **The preview tests moved only to the correction's footprint.** The terrain
+  PNG went from 0 to 718, and in the 256 window the PNG differs from the render
+  exactly where it differs from the real surface (531 pixels, asserted). On
+  the full PNG, 1,064 tile pixels moved, and on the 1,042,881 pixels where both
+  images show a tile they are exactly where the neutral 1024 real surface
+  differs from the PNG (measured). The `aquilo:render` digests: 13 of 14 rows
+  moved, and in each one every moved pixel is a tile colour on both sides and
+  equals the corrected terrain view (old and new module compared, render by
+  render). "slider fluorine vent frequency | all" did not move because the
+  correction changes no tile in that window.
+- **The margin is load-bearing for the worker pool.** Cut into the app's
+  128-pixel tiles with no margin, 45 tiles of the committed window are wrong;
+  with one chunk, 0 (`aquilo_corrected_tiles_against_the_real_surface`).
+- **Planted breaks:** no correction in the render (real surface 0 to 531,
+  terrain PNG 718 to 0, full PNG 1,064 to 0, 15 of 27 tests red); brash ice at
+  the oceans' layer 67 (corrected tiles 0 to 160 wrong, and the layer check
+  red); `AQUILO_CORRECTION_MARGIN_CHUNKS` at 0 (tiled 0 to 45 wrong).
+- **What it costs: about 1.3x, after three changes that alter no output
+  byte.** The first wiring cost about 3x, because a 128-pixel tile evaluated
+  8 x 8 chunks of raw tiles to draw its 4 x 4, and the entity pass then
+  evaluated the window again. Now:
+  - `correct_window` (`tiles/correction.rs`) reads raw tiles lazily, so the
+    outer ring of chunks, which is read but never corrected, costs only the
+    band the walks reach. Gleba uses it too.
+  - The scan skips a walk whose seed sits in a 3 x 3 block of one id. Such a
+    walk changes and queues nothing (the module docs give the argument), and
+    open ocean is mostly such seeds.
+  - The Aquilo render keeps the fields correction evaluated for the window's
+    chunks (`KeptFields`, up to 64 chunks) and the entity generator reads them
+    instead of evaluating each tile a second time.
+
+  Measured on hammond with other sessions running, the app's default view
+  (1024 x 1024 `all`, map seed 123456):
+
+  | module | WASM under Node, 64 tiles of 128 summed on one thread | browser, headless Chrome, 15 workers, wall |
+  | --- | ---: | ---: |
+  | raw argmax, before correction | 2,236 ms | 590 ms |
+  | first correction wiring | 6,645 ms | 1,691 ms |
+  | now | 2,920 ms | 750 ms |
+
+  Node is the median of 7 interleaved runs; the browser is the median of 9
+  `Generate` clicks after one warm-up, read off the dev-mode elapsed readout
+  (`pnpm vp dev`, `?dev=1`, seed fixed at 123456). A 256 x 256 terrain render
+  went 63 ms, 187 ms, 118 ms. What is left is mostly the raw tiles of the
+  margin chunks, which correction must read in full. 256-pixel worker tiles
+  instead of 128 measured 727 ms against 738 ms in the browser, inside the
+  noise, so the pool's tile size was left alone.
+
+  The output is the same, byte for byte, as the first wiring's: 52 Aquilo and
+  Gleba requests (every view, levers off and neutral, chunk-aligned and not,
+  1, 2 and 0.5 tiles per pixel) and the whole 1024 `all` view, tiled and
+  whole, compared with the previous module. The unit tests
+  `lazy_and_eager_reads_agree` and `skipping_uniform_seeds_changes_nothing`
+  pin the two correction changes on random grids.
+- **The entity overlays are the next step (#553).** The corrected land matches
+  the land mask of `oracle-aquilo-surface` at all 409,600 tiles, where the raw
+  argmax misses 172 (`aquilo_corrected_land_matches_the_entity_stream_surface`),
+  so the entity replay could read our tiles instead of the game's.
 
 ### Current tier-1 counts
 

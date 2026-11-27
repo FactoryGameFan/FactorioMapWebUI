@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng, type DecodedImage } from "./oracle/decodePng";
+import realSurface from "./fixtures/oracle-aquilo-real-surface.seed123456.json";
 import {
   consultedCount,
   expectFrozen,
@@ -25,21 +26,29 @@ import {
 import type { AquiloRenderRequest, AquiloResourceControls } from "../src/noise/wasm/request";
 
 /**
- * **Tier 3 for Aquilo: the engine's pictures against the game's own preview.**
+ * **Tier 3 for Aquilo: the engine's pictures against a real surface and the
+ * game's own preview.**
  *
  * Tier 1 grades each Aquilo field against game captures and tier 2 freezes
  * native-against-WASM folds. Neither looks at a picture. This file does, in
- * three ways:
+ * four ways:
  *
- * 1. The terrain render against `oracle-preview-aquilo-terrain.seed123456.png`,
- *    every one of the 1,048,576 pixels, frozen as an exact count. This is the
- *    first time the whole Aquilo terrain is graded as an image, so it is the
- *    main result of the port.
- * 2. The composite, wells and icebergs included, against
- *    `oracle-preview-aquilo-full.seed123456.png`, every pixel: 0 differ inside
- *    a 4-pixel border, 3 at the edge (#492). Plus a superset check on the
- *    entity footprint view.
- * 3. Byte-identity of the composites on small windows, frozen in
+ * 1. The terrain render against `oracle-aquilo-real-surface.seed123456.json`,
+ *    `get_tile` at every tile of -128..127 on a REAL generated surface (#454):
+ *    0 of 65,536 pixels differ. This is the target, since Eric's ruling of
+ *    2026-11-26 that the render should show what the map will actually look
+ *    like. At one tile per pixel the engine runs tile correction after the
+ *    argmax (`crates/fmw-noise/src/tiles/correction.rs`), as a real surface
+ *    does and the preview does not.
+ * 2. The terrain render against `oracle-preview-aquilo-terrain.seed123456.png`,
+ *    every one of the 1,048,576 pixels, now as a REFERENCE: it differs exactly
+ *    by the correction's footprint, 718 pixels. Before the correction it was 0.
+ * 3. The composite, wells and icebergs included, against
+ *    `oracle-preview-aquilo-full.seed123456.png`, every pixel (#492). The
+ *    entities still match the preview's (#553 is about the real world's); the
+ *    terrain under them differs by the correction's footprint. Plus a superset
+ *    check on the entity footprint view.
+ * 4. Byte-identity of the composites on small windows, frozen in
  *    `tier3-render-checksums.json` under `aquilo:render`, plus the tiling and
  *    slider checks that keep the worker pool honest.
  *
@@ -236,28 +245,139 @@ describe("the full PNG holds exactly the four entity colours the engine paints",
   });
 });
 
-describe("the WASM engine agrees with the game's Aquilo terrain PNG", () => {
+/** The real surface's window: -128..127 on both axes. */
+const REAL_SIDE = realSurface.window.width;
+const REAL_WINDOW = {
+  ...PNG_WINDOW,
+  view: "terrain",
+  width: REAL_SIDE,
+  height: REAL_SIDE,
+  originX: realSurface.window.x0,
+  originY: realSurface.window.y0,
+  aquiloResourceControls: LEVERS_OFF,
+} as const satisfies AquiloRenderRequest;
+
+/** The real-surface fixture drawn in each tile's `map_color`, as the game reported it. */
+function realSurfaceImage(): DecodedImage {
+  const rgb = new Uint8Array(REAL_SIDE * REAL_SIDE * 3);
+  let i = 0;
+  for (const row of realSurface.rows) {
+    for (const c of row) {
+      const name = realSurface.names[
+        realSurface.alphabet.indexOf(c)
+      ] as keyof typeof realSurface.tiles;
+      rgb.set(realSurface.tiles[name].mapColor, i * 3);
+      i++;
+    }
+  }
+  expect(i).toBe(REAL_SIDE * REAL_SIDE);
+  return { width: REAL_SIDE, height: REAL_SIDE, rgb };
+}
+
+/** The real-surface window cut out of the centre of a 1024 PNG. */
+function centreOf(png: DecodedImage): DecodedImage {
+  const off = (png.width - REAL_SIDE) / 2;
+  const rgb = new Uint8Array(REAL_SIDE * REAL_SIDE * 3);
+  for (let y = 0; y < REAL_SIDE; y++) {
+    const start = ((y + off) * png.width + off) * 3;
+    rgb.set(png.rgb.subarray(start, start + REAL_SIDE * 3), y * REAL_SIDE * 3);
+  }
+  return { width: REAL_SIDE, height: REAL_SIDE, rgb };
+}
+
+let cachedRealWindow: Uint8ClampedArray | undefined;
+async function realWindowRender(): Promise<Uint8ClampedArray> {
+  cachedRealWindow ??= renderThroughWasm(await engine(), REAL_WINDOW).slice();
+  return cachedRealWindow;
+}
+
+describe("the WASM engine against the real Aquilo surface", () => {
+  it("the fixture is the derived seed's surface, terrain-only, levers off, one radius request", () => {
+    expect(realSurface.surfaceSeed).toBe(SEED0);
+    expect(realSurface.buildLine).toContain("Version: 2.1.23 ");
+    expect(realSurface.chunkOrder).toBe("radius");
+    expect(realSurface.pregenerated).toEqual([]);
+    expect(realSurface.disabledControls).toEqual(
+      expect.arrayContaining(["lithium_brine", "fluorine_vent", "aquilo_crude_oil"]),
+    );
+    expect(Object.keys(realSurface.counts)).toHaveLength(9);
+  });
+
   /**
-   * **The terrain gap: 0 of 1,048,576 pixels.** Exact, not a bound. The ship
-   * bar was below 1,048 (0.1%). Measured 2026-10-23 on the first run; nothing
-   * had to be fixed to reach it, which makes the two controls below the part
-   * that says it means something.
+   * **0 of 65,536 pixels.** Exact, not a bound. Before tile correction was
+   * wired into the Aquilo render it was 531, the whole gap between the preview
+   * PNG and the real surface here. By tile NAME the Rust tests grade the same
+   * window exactly too (`crates/fmw-noise/src/fixtures/aquilo_real_surface.rs`:
+   * 551 names differ raw, 0 corrected).
+   */
+  const DIFFERING_PX_REAL = 0;
+
+  it("matches the real surface at every pixel", async () => {
+    const real = realSurfaceImage();
+    const ours = await realWindowRender();
+    const n = countDiffering(real, ours);
+    withDiffArtifacts(
+      {
+        spec: "wasmAquiloRenderParity",
+        case: "aquilo-terrain-vs-real-surface",
+        game: real,
+        ours: { width: REAL_SIDE, height: REAL_SIDE, rgba: ours },
+      },
+      () => {
+        expect(n).toBe(DIFFERING_PX_REAL);
+      },
+    );
+  }, 300000);
+
+  /**
+   * The control that the correction is in the render and that the preview is
+   * the raw argmax: in this window the preview PNG differs from our render at
+   * exactly the 531 pixels where it differs from the real surface.
+   */
+  it("differs from the preview PNG exactly where the real surface does", async () => {
+    const png = centreOf(terrainPng());
+    const real = realSurfaceImage();
+    const ours = await realWindowRender();
+    let onlyOne = 0;
+    for (let i = 0; i < REAL_SIDE * REAL_SIDE; i++) {
+      const p = gameKey(png, i);
+      if ((p !== oursKey(ours, i)) !== (p !== gameKey(real, i))) onlyOne++;
+    }
+    expect(countDiffering(png, ours)).toBe(531);
+    expect(onlyOne, "pixels where the PNG differs from one of the two only").toBe(0);
+  }, 300000);
+});
+
+describe("the game's terrain PNG, for reference only", () => {
+  /**
+   * **718 of 1,048,576 pixels: the tile correction's footprint.** The preview
+   * PNG shows the raw argmax and skips the correction a real surface runs, so
+   * it is not the target and nothing may be tuned to it. Before the correction
+   * was wired in this was 0 (from 2026-10-23 to 2026-11-26): the raw argmax is
+   * the game's at every pixel.
+   *
+   * The 718 are where a real surface differs from the PNG. Against an
+   * uncommitted 1024 x 1024 real surface (the same probe with the window
+   * widened, 2026-11-26) the corrected tiles match `get_tile` at all
+   * 1,048,576, and the raw argmax differs at 751 by name and 718 by colour. The
+   * test above checks the 256 window of that against the committed fixture.
    *
    * Nothing is masked. The capture removed the icebergs with a data-stage mod
    * and switched the three wells off by control, so the reference is terrain
    * alone, and the assertion that it holds no entity colour is what names a
    * capture made without the mod before the count reports a render regression.
    */
-  const DIFFERING_PX = 0;
+  const DIFFERING_PX = 718;
 
   /**
    * The same comparison with the three resource controls left at the neutral
    * 1. The islands then take the shape the full PNG has, not the terrain
    * PNG's. If this ever falls to `DIFFERING_PX`, the levers have stopped
    * reaching the render and a matched pairing can no longer be told from a
-   * mismatched one.
+   * mismatched one. It was 13,194 before the correction, which rewrites the
+   * neutral-lever shores too.
    */
-  const DIFFERING_PX_AT_DEFAULT_LEVERS = 13194;
+  const DIFFERING_PX_AT_DEFAULT_LEVERS = 13707;
 
   it("differs from the game's terrain PNG on exactly the frozen pixel count", async () => {
     const game = terrainPng();
@@ -338,7 +458,7 @@ describe("the WASM engine draws the game's full preview, entities included", () 
    * per-colour counts are asserted beside the total so a failure says which
    * layer moved.
    *
-   * **3 pixels differ, all at the capture's bottom edge, and they are frozen
+   * **3 entity pixels differ, all at the capture's bottom edge, and they are frozen
    * there.** They belong to one huge iceberg at (211.375, 511.6875) whose box
    * reaches tile row 512, one past the 1024-tile capture. The game did not
    * draw it; we do. The leading explanation is that the preview generates
@@ -348,21 +468,42 @@ describe("the WASM engine draws the game's full preview, entities included", () 
    * beside it) are fully covered by neighbours, so they cannot confirm or
    * refute it. The app renders a continuous map, so the engine does not copy
    * an edge that only a fixed-size capture has. Inside a border of
-   * `EDGE_PX` pixels - more than any Aquilo box reaches - the count is 0.
+   * `EDGE_PX` pixels - more than any Aquilo box reaches - no entity pixel
+   * differs.
+   *
+   * **The terrain under the entities is the real surface's, not the
+   * preview's (#454), so it differs from this PNG at `TERRAIN_PX` pixels**,
+   * every one a tile colour on both sides. That is the tile correction's
+   * footprint at neutral levers where no entity covers it. Against an
+   * uncommitted 1024 x 1024 real surface at neutral levers with every entity
+   * autoplace removed (2026-11-26), the corrected terrain matches `get_tile` at
+   * all 1,048,576 tiles and the raw argmax differs at 1,358 by colour. On the
+   * 1,042,881 pixels where both images show a tile, our render differs from
+   * this PNG at exactly the 1,064 where that real surface does. It was 0 before
+   * the correction. The entities are still the preview's (#553).
    */
-  it("matches the full PNG on every pixel", async () => {
+  const TERRAIN_PX = 1064;
+
+  it("matches the full PNG on every entity pixel; the terrain differs by the correction", async () => {
     const game = fullPng();
     const ours = await pngWindowRender("all, levers neutral", { view: "all" });
     const EDGE_PX = 4;
     let differing = 0;
-    let differingInside = 0;
+    let entityInside = 0;
+    let terrainOnly = 0;
     for (let y = 0; y < SIZE; y++) {
       for (let x = 0; x < SIZE; x++) {
         const i = y * SIZE + x;
-        if (gameKey(game, i) === oursKey(ours, i)) continue;
+        const g = gameKey(game, i);
+        const o = oursKey(ours, i);
+        if (g === o) continue;
         differing++;
+        if (TILE_KEYS.has(g) && TILE_KEYS.has(o)) {
+          terrainOnly++;
+          continue;
+        }
         const inside = x >= EDGE_PX && y >= EDGE_PX && x < SIZE - EDGE_PX && y < SIZE - EDGE_PX;
-        if (inside) differingInside++;
+        if (inside) entityInside++;
       }
     }
     let gameEntities = { crudeOil: 0, lithiumBrine: 0, fluorineVent: 0, iceberg: 0 };
@@ -378,8 +519,9 @@ describe("the WASM engine draws the game's full preview, entities included", () 
         ours: { width: SIZE, height: SIZE, rgba: ours },
       },
       () => {
-        expect(differingInside).toBe(0);
-        expect(differing).toBe(3);
+        expect(entityInside).toBe(0);
+        expect(terrainOnly).toBe(TERRAIN_PX);
+        expect(differing).toBe(TERRAIN_PX + 3);
         expect(entityCounts(ours)).toEqual({ ...gameEntities, iceberg: gameEntities.iceberg + 3 });
       },
     );
