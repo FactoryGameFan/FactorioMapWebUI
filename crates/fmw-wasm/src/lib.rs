@@ -1891,11 +1891,11 @@ mod aquilo_render_tests {
 #[cfg(test)]
 mod gleba_render_tests {
     use crate::abi::{self, Status, COMMON_BYTES, GLEBA_PARAMS_BYTES};
-    use crate::render::{render, PLANET_GLEBA, VIEW_ALL, VIEW_RESOURCES, VIEW_TERRAIN};
+    use crate::render::{render, PLANET_GLEBA, VIEW_ALL, VIEW_RESOURCES, VIEW_TERRAIN, VIEW_TREES};
     use fmw_noise::at::At;
     use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
     use fmw_noise::expressions::gleba_terrain::GlebaControls;
-    use fmw_noise::placement::gleba::GlebaEntity;
+    use fmw_noise::placement::gleba::{GlebaEntity, GlebaPaint};
 
     /// The derived Gleba surface seed for map seed 123456.
     const SEED0: u32 = 3_215_206_427;
@@ -1922,8 +1922,9 @@ mod gleba_render_tests {
         for (i, v) in levers.into_iter().enumerate() {
             put_f64(&mut b, COMMON_BYTES + i * 8, v);
         }
-        // The `gleba_stone` control, neutral: only the entity views read it.
-        for i in 3..6 {
+        // The `gleba_stone` control and the plants' size, neutral: only the
+        // entity views read them.
+        for i in 3..7 {
             put_f64(&mut b, COMMON_BYTES + i * 8, 1.0);
         }
         b
@@ -2008,10 +2009,10 @@ mod gleba_render_tests {
         }
     }
 
-    /// Every view but terrain, resources and all is refused.
+    /// Every view but terrain, trees, resources and all is refused.
     #[test]
     fn views_gleba_does_not_serve_are_refused() {
-        let served = [VIEW_TERRAIN, VIEW_RESOURCES, VIEW_ALL];
+        let served = [VIEW_TERRAIN, VIEW_TREES, VIEW_RESOURCES, VIEW_ALL];
         for view in (0..14).filter(|v| !served.contains(v)) {
             let b = request(view, (2, 2), (0.0, 0.0), [1.0; 3]);
             let mut out = vec![0u8; 16];
@@ -2043,9 +2044,13 @@ mod gleba_render_tests {
         };
         let terrain = render_view(VIEW_TERRAIN, 1.0);
         let resources = render_view(VIEW_RESOURCES, 1.0);
+        let solid = |e: GlebaEntity| match e.paint() {
+            GlebaPaint::Solid(c) => c,
+            GlebaPaint::Blend(..) => panic!("{e:?} is blended"),
+        };
         let marks = [
-            GlebaEntity::IronStromatolite.color(),
-            GlebaEntity::Stone.color(),
+            solid(GlebaEntity::IronStromatolite),
+            solid(GlebaEntity::Stone),
         ];
         let mut counts = [0usize; 2];
         for (t, r) in terrain
@@ -2067,5 +2072,36 @@ mod gleba_render_tests {
             render_view(VIEW_RESOURCES, 2.0),
             render_view(VIEW_TERRAIN, 2.0)
         );
+    }
+
+    /// The trees view is the terrain with the plants over it: a window of
+    /// plants changes thousands of pixels, none of them to a resource colour,
+    /// and off one tile per pixel it is the terrain.
+    #[test]
+    fn the_trees_view_is_the_terrain_with_plants() {
+        let (dims, origin) = ((128, 128), (-128.0, -64.0));
+        let render_view = |view, tpp: f64| {
+            let mut b = request(view, dims, origin, [1.0; 3]);
+            b[48..56].copy_from_slice(&tpp.to_le_bytes());
+            let mut out = vec![0u8; 128 * 128 * 4];
+            assert_eq!(render(&b, &mut out), Status::Ok);
+            out
+        };
+        let terrain = render_view(VIEW_TERRAIN, 1.0);
+        let trees = render_view(VIEW_TREES, 1.0);
+        let stone = match GlebaEntity::Stone.paint() {
+            GlebaPaint::Solid(c) => c,
+            GlebaPaint::Blend(..) => panic!("stone is blended"),
+        };
+        let changed = terrain
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(trees.as_chunks::<4>().0)
+            .filter(|(t, r)| t != r)
+            .inspect(|(_, r)| assert_ne!(r[..3], stone))
+            .count();
+        assert!(changed > 1000, "{changed}");
+        assert_eq!(render_view(VIEW_TREES, 2.0), render_view(VIEW_TERRAIN, 2.0));
     }
 }

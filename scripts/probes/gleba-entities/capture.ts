@@ -56,8 +56,8 @@ const INSTALL = {
 };
 
 const ARM = process.env.FMW_ARM ?? "graded";
-if (ARM !== "graded" && ARM !== "default") {
-  throw new Error(`FMW_ARM must be graded or default, not ${ARM}`);
+if (ARM !== "graded" && ARM !== "default" && ARM !== "plants") {
+  throw new Error(`FMW_ARM must be graded, default or plants, not ${ARM}`);
 }
 const OUT =
   process.env.FMW_OUT ??
@@ -65,9 +65,11 @@ const OUT =
     REPO,
     "test",
     "fixtures",
-    ARM === "graded"
-      ? "oracle-gleba-real-surface-entities.seed123456.json"
-      : "oracle-gleba-real-surface-entities-default.seed123456.json",
+    {
+      graded: "oracle-gleba-real-surface-entities.seed123456.json",
+      default: "oracle-gleba-real-surface-entities-default.seed123456.json",
+      plants: "oracle-gleba-real-surface-plants.seed123456.json",
+    }[ARM],
   );
 
 const MAP_SEED = 123456;
@@ -75,13 +77,46 @@ const MAP_SEED = 123456;
 const X0 = Number(process.env.FMW_X0 ?? -512);
 const SIDE = Number(process.env.FMW_SIDE ?? 1024);
 const MARGIN_CHUNKS = 2;
-/** The three entities graded, in the fixture's `names` order. */
-const GRADED = ["copper-stromatolite", "iron-stromatolite", "stone"] as const;
-/** Controls the `graded` arm turns off: everything that places something else. */
-const OFF = ["gleba_plants", "gleba_enemy_base", "gleba_cliff"] as const;
+/** The twelve plants, in the order their autoplace `order` sorts them. */
+const PLANTS = [
+  "yumako-tree",
+  "jellystem",
+  "sunnycomb",
+  "boompuff",
+  "stingfrond",
+  "lickmaw",
+  "teflilly",
+  "funneltrunk",
+  "slipstack",
+  "hairyclubnub",
+  "cuttlepop",
+  "water-cane",
+] as const;
+/** The entities graded, in the fixture's `names` order. */
+const GRADED: readonly string[] =
+  ARM === "plants"
+    ? ["copper-stromatolite", "iron-stromatolite", "stone", ...PLANTS]
+    : ["copper-stromatolite", "iron-stromatolite", "stone"];
+/** Controls an arm turns off: everything that places something it does not grade. */
+const OFF: readonly string[] =
+  ARM === "plants"
+    ? ["gleba_enemy_base", "gleba_cliff"]
+    : ["gleba_plants", "gleba_enemy_base", "gleba_cliff"];
 
-/** The fields read for tier 1, by property name. */
-const FIELDS = [
+/** The fields the `plants` arm reads for tier 1, by property name. */
+const PLANT_FIELDS = [
+  "gleba_plants_noise",
+  "gleba_plants_noise_b",
+  "gleba_decal_noise",
+  "gleba_water_plant_ramp",
+  "gleba_funnel_trunk_region",
+  "gleba_boompuff_region",
+  "gleba_teflilly_region",
+  ...PLANTS.map((n) => `entity:${n}:probability`),
+] as const;
+
+/** The fields the `graded` arm reads for tier 1, by property name. */
+const RESOURCE_FIELDS = [
   "gleba_scrub_noise",
   "gleba_decorative_knockout",
   "gleba_iron_stromatolite",
@@ -94,6 +129,7 @@ const FIELDS = [
   "entity:stone:probability",
   "entity:stone:richness",
 ] as const;
+const FIELDS: readonly string[] = ARM === "plants" ? PLANT_FIELDS : RESOURCE_FIELDS;
 /**
  * Field positions, two pools on the 1/256 grid. The SCOUT pool is fixed,
  * within POOL_RADIUS tiles. Most of Gleba has no stromatolite or stone at all,
@@ -108,10 +144,16 @@ const FIELDS = [
 const POOL = 65536;
 const POOL_RADIUS = 600;
 const QUOTA = 512;
-const QUOTA_FIELDS = [
-  "entity:iron-stromatolite:probability",
-  "entity:copper-stromatolite:probability",
-] as const;
+/**
+ * Per-field quotas after the first QUOTA overall: QUOTA where each
+ * stromatolite probability is above 0 (`graded`), or PLANT_QUOTA where each
+ * plant probability is (`plants`), smaller only to keep the fixture small.
+ */
+const PLANT_QUOTA = 128;
+const QUOTA_FIELDS: readonly string[] =
+  ARM === "plants"
+    ? PLANTS.map((n) => `entity:${n}:probability`)
+    : ["entity:iron-stromatolite:probability", "entity:copper-stromatolite:probability"];
 
 /** A small fixed LCG, so the pool is the same on every run. */
 function pool(): [number, number][] {
@@ -160,7 +202,7 @@ end
 script.on_init(function()
   local s = game.planets["gleba"].create_surface()
   local mgs = s.map_gen_settings
-  if ARM == "graded" then
+  if ARM ~= "default" then
     for _, n in ipairs(OFF) do
       mgs.autoplace_controls[n] = { frequency = 1, size = 0, richness = 1 }
     end
@@ -183,7 +225,7 @@ script.on_init(function()
 
   -- Fields first, before any chunk exists: calculate_tile_properties needs none.
   local fields = {}
-  if ARM == "graded" then
+  if ARM ~= "default" then
     local got = s.calculate_tile_properties(FIELDS, POSITIONS)
     for _, n in ipairs(FIELDS) do
       local v = got[n]
@@ -205,7 +247,8 @@ script.on_init(function()
       census[e.name] = (census[e.name] or 0) + 1
     end
     -- The list takes a one-tile ring too: a stromatolite's box reaches one
-    -- tile past its own, so one just outside can cover a window tile.
+    -- tile past its own, and a plant's less than that, so one just outside
+    -- can cover a window tile.
     if graded[e.name] and tx >= X0 - 1 and tx <= X0 + SIDE and ty >= X0 - 1 and ty <= X0 + SIDE then
       entities[#entities + 1] = { e.name, e.position.x, e.position.y }
     end
@@ -257,6 +300,11 @@ script.on_init(function()
           mapGenBox = { mb.left_top.x, mb.left_top.y, mb.right_bottom.x, mb.right_bottom.y },
           collisionLayers = layers(p.collision_mask),
           tileRestriction = restrictions,
+          maskFlags = ARM == "plants" and {
+            notCollidingWithItself = p.collision_mask.not_colliding_with_itself or false,
+            collidingWithTilesOnly = p.collision_mask.colliding_with_tiles_only or false,
+            considerTileTransitions = p.collision_mask.consider_tile_transitions or false,
+          } or nil,
         }
       end
     end
@@ -392,28 +440,34 @@ const scout = pool();
 const { dump, buildLine } = await capture(scout);
 
 /** The first `quota` indices below `n`, in order, not yet taken, that pass `ok`. */
-function takeFirst(n: number, taken: Set<number>, ok: (i: number) => boolean): number[] {
+function takeFirst(
+  n: number,
+  taken: Set<number>,
+  ok: (i: number) => boolean,
+  quota = QUOTA,
+): number[] {
   const out: number[] = [];
-  for (let i = 0; i < n && out.length < QUOTA; i++) {
+  for (let i = 0; i < n && out.length < quota; i++) {
     if (!taken.has(i) && ok(i)) {
       out.push(i);
       taken.add(i);
     }
   }
-  if (out.length < QUOTA) throw new Error(`only ${String(out.length)} positions for a quota`);
+  if (out.length < quota) throw new Error(`only ${String(out.length)} positions for a quota`);
   return out;
 }
 
 const positive = (v: (number | string)[] | undefined, i: number): boolean =>
   v !== undefined && typeof v[i] === "number" && v[i] > 0;
 
-/** The kept scout indices: QUOTA overall, then QUOTA per stromatolite. */
+/** The kept scout indices: QUOTA overall, then a quota per field in QUOTA_FIELDS. */
 function pickScout(fields: Record<string, (number | string)[]>): number[] {
   const taken = new Set<number>();
   const kept = takeFirst(scout.length, taken, () => true);
+  const quota = ARM === "plants" ? PLANT_QUOTA : QUOTA;
   for (const f of QUOTA_FIELDS) {
     if (fields[f] === undefined) throw new Error(`field ${f} did not come back`);
-    kept.push(...takeFirst(scout.length, taken, (i) => positive(fields[f], i)));
+    kept.push(...takeFirst(scout.length, taken, (i) => positive(fields[f], i), quota));
   }
   return kept;
 }
@@ -429,20 +483,20 @@ function pickStone(fields: Record<string, (number | string)[]>, n: number): numb
 }
 
 if (dump.pregenerated !== 0) throw new Error(`${String(dump.pregenerated)} chunks pregenerated`);
-if (ARM === "graded") {
+if (ARM !== "default") {
   for (const n of OFF) {
     if (dump.controls[n]?.size !== 0) throw new Error(`control ${n} read back non-zero`);
   }
   if (dump.cliffRichness !== 0)
     throw new Error(`cliff richness read back ${String(dump.cliffRichness)}`);
-  const others = Object.keys(dump.census).filter((n) => !(GRADED as readonly string[]).includes(n));
+  const others = Object.keys(dump.census).filter((n) => !GRADED.includes(n));
   if (others.length > 0) throw new Error(`entities left in the window: ${others.join(", ")}`);
 }
 
 const names = [...GRADED];
 const entities = dump.entities
   .map(([n, x, y]) => {
-    const k = names.indexOf(n as (typeof GRADED)[number]);
+    const k = names.indexOf(n);
     const fx = x * 256;
     const fy = y * 256;
     if (!Number.isInteger(fx) || !Number.isInteger(fy))
@@ -465,10 +519,14 @@ for (const n of names) {
 }
 
 const fixture = {
-  about:
-    ARM === "graded"
-      ? "Stone and both stromatolites on a REAL Gleba surface (game.planets.gleba.create_surface(), derived seed) with gleba_plants, gleba_enemy_base and gleba_cliff at size 0 and cliff richness 0, no data-stage mod; one request_to_generate_chunks radius request covering the window and 2 chunks of margin, then force_generate_chunk_requests. Each entity is [name index, x * 256, y * 256], its exact position in 1/256 tile, listed when floor(position) is in the window or the one-tile ring around it (a stromatolite box reaches one tile past its own); counts and census are the window alone. autoplacers and tiles are read from the prototypes at runtime; fields are calculate_tile_properties at positions, as f32 hex bits. Written by scripts/probes/gleba-entities/capture.ts."
-      : "Stone and both stromatolites on a REAL Gleba surface with every control at its default (the map a player gets), otherwise as the graded arm. Written by FMW_ARM=default scripts/probes/gleba-entities/capture.ts.",
+  about: {
+    graded:
+      "Stone and both stromatolites on a REAL Gleba surface (game.planets.gleba.create_surface(), derived seed) with gleba_plants, gleba_enemy_base and gleba_cliff at size 0 and cliff richness 0, no data-stage mod; one request_to_generate_chunks radius request covering the window and 2 chunks of margin, then force_generate_chunk_requests. Each entity is [name index, x * 256, y * 256], its exact position in 1/256 tile, listed when floor(position) is in the window or the one-tile ring around it (a stromatolite box reaches one tile past its own); counts and census are the window alone. autoplacers and tiles are read from the prototypes at runtime; fields are calculate_tile_properties at positions, as f32 hex bits. Written by scripts/probes/gleba-entities/capture.ts.",
+    default:
+      "Stone and both stromatolites on a REAL Gleba surface with every control at its default (the map a player gets), otherwise as the graded arm. Written by FMW_ARM=default scripts/probes/gleba-entities/capture.ts.",
+    plants:
+      "Stone, both stromatolites and the twelve plants on a REAL Gleba surface with gleba_plants and gleba_stone at their defaults, gleba_enemy_base and gleba_cliff at size 0 and cliff richness 0, otherwise as the graded arm. Each entity is [name index, x * 256, y * 256], listed when floor(position) is in the window or the one-tile ring around it. autoplacers (with collision mask flags) and tiles are read from the prototypes at runtime; fields are calculate_tile_properties at positions (512 overall, then 128 where each plant probability is above 0), as f32 hex bits. Written by FMW_ARM=plants scripts/probes/gleba-entities/capture.ts.",
+  }[ARM],
   buildLine,
   mapSeed: MAP_SEED,
   surfaceSeed: dump.surfaceSeed,
@@ -511,7 +569,26 @@ const fixture = {
           };
         })(),
       }
-    : {}),
+    : ARM === "plants"
+      ? {
+          autoplacers: dump.autoplacers,
+          tiles: dump.tiles,
+          ...(() => {
+            const scoutFields = dump.fields as Record<string, (number | string)[]>;
+            const keptScout = pickScout(scoutFields);
+            return {
+              positions: keptScout.map((i) => scout[i]),
+              fields: Object.fromEntries(
+                FIELDS.map((n) => {
+                  const a = scoutFields[n];
+                  if (a === undefined) throw new Error(`field ${n} did not come back`);
+                  return [n, keptScout.map((i) => f32Hex(a[i]))];
+                }),
+              ),
+            };
+          })(),
+        }
+      : {}),
 };
 /**
  * Indented like the other fixtures, except that each short array (an entity,

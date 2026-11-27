@@ -82,10 +82,10 @@ pub struct GlebaResourceFields {
     pub stone_probability: f64,
 }
 
-/// The five terrain fields the resource fields read at a position. Small, so
-/// a render can keep them for every tile tile correction evaluates
-/// (`GlebaStack::corrected_tiles_keeping`) instead of evaluating the terrain
-/// a second time.
+/// The eight terrain fields the resource and plant fields read at a
+/// position. Small, so a render can keep them for every tile tile correction
+/// evaluates (`GlebaStack::corrected_tiles_keeping`) instead of evaluating
+/// the terrain a second time.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ResourceInputs {
     pub elevation: f64,
@@ -93,6 +93,11 @@ pub struct ResourceInputs {
     pub wobble_x: f64,
     pub wobble_small_x: f64,
     pub wobble_small_y: f64,
+    /// `gleba_moisture`, which the plants read.
+    pub moisture: f64,
+    /// `gleba_plants_noise` and `gleba_plants_noise_b`, which the plants read.
+    pub plants_noise: f64,
+    pub plants_noise_b: f64,
 }
 
 impl From<&GlebaTerrainFields> for ResourceInputs {
@@ -103,6 +108,42 @@ impl From<&GlebaTerrainFields> for ResourceInputs {
             wobble_x: t.wobble_x,
             wobble_small_x: t.wobble_small_x,
             wobble_small_y: t.wobble_small_y,
+            moisture: t.moisture,
+            plants_noise: t.plants_noise,
+            plants_noise_b: t.plants_noise_b,
+        }
+    }
+}
+
+impl ResourceInputs {
+    /// The inputs as f32s, which hold them exactly: every one is f32-valued.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn pack(&self) -> [f32; 8] {
+        [
+            self.elevation as f32,
+            self.aux as f32,
+            self.wobble_x as f32,
+            self.wobble_small_x as f32,
+            self.wobble_small_y as f32,
+            self.moisture as f32,
+            self.plants_noise as f32,
+            self.plants_noise_b as f32,
+        ]
+    }
+
+    /// The inverse of [`ResourceInputs::pack`].
+    #[must_use]
+    pub fn unpack(p: &[f32; 8]) -> Self {
+        Self {
+            elevation: f64::from(p[0]),
+            aux: f64::from(p[1]),
+            wobble_x: f64::from(p[2]),
+            wobble_small_x: f64::from(p[3]),
+            wobble_small_y: f64::from(p[4]),
+            moisture: f64::from(p[5]),
+            plants_noise: f64::from(p[6]),
+            plants_noise_b: f64::from(p[7]),
         }
     }
 }

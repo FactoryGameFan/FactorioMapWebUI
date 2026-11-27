@@ -47,7 +47,7 @@ use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::aquilo::{AquiloEntities, AquiloEntityView};
-use fmw_noise::placement::gleba::{place_chunks, rows};
+use fmw_noise::placement::gleba::{place_chunks, rows, GlebaLayer, GlebaPaint};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
 use fmw_noise::resources::aquilo_wells::AquiloWell;
 use fmw_noise::resources::fulgora_catalog::{FulgoraScrapPlacement, SCRAP_MAP_COLOR};
@@ -297,7 +297,10 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         ) | (
             PLANET_AQUILO,
             VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ROCKS | VIEW_ALL | VIEW_ENTITY_FOOTPRINT
-        ) | (PLANET_GLEBA, VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ALL)
+        ) | (
+            PLANET_GLEBA,
+            VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ALL | VIEW_TREES
+        )
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -755,7 +758,7 @@ const KEPT_CHUNKS_MAX: i32 = 256;
 
 /// Build the Gleba graph for one render.
 pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
-    GlebaStack::with_stone(
+    GlebaStack::with_levers(
         &GlebaCtx {
             seed0,
             controls: GlebaControls {
@@ -769,6 +772,7 @@ pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
             size: p.stone_size,
             richness: p.stone_richness,
         },
+        p.plants_size,
     )
 }
 
@@ -791,7 +795,8 @@ const GLEBA_ENTITY_RING_CHUNKS: i64 = 1;
 const GLEBA_KEPT_CHUNKS_MAX: i64 = 324;
 
 /// Sweep the window and paint each pixel's Gleba tile in its `map_color`,
-/// and, for `resources` and `all`, stone and the two stromatolites over it.
+/// and, for `trees`, `resources` and `all`, the entities a real surface
+/// places over it.
 ///
 /// At one tile per pixel on a whole-tile origin the pixels are the tiles a
 /// REAL surface holds: the raw argmax (a tie going to the name that sorts
@@ -809,7 +814,7 @@ fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
     let stack = gleba_stack(req.seed0, p);
     let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
     let on_tiles = req.tiles_per_pixel == 1.0 && whole(req.origin_x) && whole(req.origin_y);
-    if on_tiles && matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
+    if on_tiles && matches!(req.view, VIEW_RESOURCES | VIEW_ALL | VIEW_TREES) {
         render_gleba_entities(req, &stack, out);
         return;
     }
@@ -841,15 +846,19 @@ fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
     }
 }
 
-/// Gleba's `resources` and `all` views at one tile per pixel: the corrected
-/// terrain, then every stone and stromatolite a real surface places (#454,
-/// slice 3), each painted over its footprint in its map colour.
+/// Gleba's `trees`, `resources` and `all` views at one tile per pixel: the
+/// corrected terrain, then the entities a real surface places (#454, slices
+/// 3 and 4), each over its footprint: the plants for `trees`, stone and the
+/// stromatolites for `resources`, all of them for `all`.
 ///
-/// The entities come from the game's per-chunk generator and the apply step's
-/// collision (`fmw_noise::placement::gleba`), run over the window's chunks
-/// and a ring of [`GLEBA_ENTITY_RING_CHUNKS`] in row-major order, on the
-/// corrected tiles of all of them. Stone stands on land and a stromatolite's
-/// whole box on wetland, so no two footprints overlap.
+/// The entities come from the game's per-chunk generator and the apply step
+/// (`fmw_noise::placement::gleba`), run over the window's chunks and a ring
+/// of [`GLEBA_ENTITY_RING_CHUNKS`] in row-major order, on the corrected tiles
+/// of all of them. Every view generates every entity, because a plant can
+/// block a stromatolite and stone can remove a plant. Footprints are whole
+/// tiles, so two entities can share one: they paint in a fixed class order
+/// (`GlebaEntity::paint_pass`), the ten trees blended first, so the pixels do
+/// not depend on the order the entities were placed in.
 fn render_gleba_entities(req: &Request, stack: &GlebaStack, out: &mut [u8]) {
     let (x0, y0) = (req.origin_x as i64, req.origin_y as i64);
     let (w, h) = (i64::from(req.width), i64::from(req.height));
@@ -889,13 +898,37 @@ fn render_gleba_entities(req: &Request, stack: &GlebaStack, out: &mut [u8]) {
     let at = |tx: i64, ty: i64| {
         ((ox..ox + aw).contains(&tx) && (oy..oy + ah).contains(&ty)).then(|| tiles[index(tx, ty)])
     };
-    for e in place_chunks(stack, &at, kept.as_ref(), &rows(cx, cy)) {
+    let drawn = |layer: GlebaLayer| match req.view {
+        VIEW_TREES => layer == GlebaLayer::Plants,
+        VIEW_RESOURCES => layer == GlebaLayer::Resources,
+        _ => true,
+    };
+    let mut placed: Vec<_> = place_chunks(stack, &at, kept.as_ref(), &rows(cx, cy))
+        .into_iter()
+        .filter(|e| drawn(e.entity.layer()))
+        .collect();
+    placed.sort_by_key(|e| e.entity.paint_pass());
+    for e in placed {
         let (fx0, fx1, fy0, fy1) = e.footprint();
-        let color = e.entity.color();
+        let paint = e.entity.paint();
         for ty in fy0.max(y0)..=fy1.min(y0 + h - 1) {
             for tx in fx0.max(x0)..=fx1.min(x0 + w - 1) {
                 let o = (((ty - y0) * w + (tx - x0)) * 4) as usize;
-                out[o..o + 3].copy_from_slice(&color);
+                paint_gleba_pixel(&mut out[o..o + 3], paint);
+            }
+        }
+    }
+}
+
+/// Paint one pixel: a solid colour over it, or a blend toward the colour at
+/// `alpha / 256`, rounded as the Nauvis tree overlay rounds its own blend.
+fn paint_gleba_pixel(px: &mut [u8], paint: GlebaPaint) {
+    match paint {
+        GlebaPaint::Solid(c) => px.copy_from_slice(&c),
+        GlebaPaint::Blend(c, alpha) => {
+            let a = i32::from(alpha);
+            for (p, c) in px.iter_mut().zip(c) {
+                *p = (((256 - a) * i32::from(*p) + a * i32::from(c)) >> 8) as u8;
             }
         }
     }

@@ -41,7 +41,7 @@ COMMON_BYTES = 56
 FULGORA_PARAMS_BYTES = 64
 VULCANUS_PARAMS_BYTES = 312
 PLANET = {"fulgora": 0, "vulcanus": 1, "nauvis": 2, "aquilo": 3, "gleba": 4}
-GLEBA_PARAMS_BYTES = 48
+GLEBA_PARAMS_BYTES = 56
 """Must equal fmw_wasm::abi::GLEBA_PARAMS_BYTES."""
 VIEW = {
     "landmask": 0,
@@ -678,8 +678,9 @@ def decode_aquilo(b, req):
     return trig, {"x0": sweep[0], "y0": sweep[1], "x1": sweep[2], "y1": sweep[3]}
 
 
-# The Gleba arm's request, written here for the same reason as Aquilo's. Six
-# levers (three terrain, then the gleba_stone control) and no trig: the module
+# The Gleba arm's request, written here for the same reason as Aquilo's. Seven
+# levers (three terrain, the gleba_stone control, then the gleba_plants size)
+# and no trig: the module
 # computes Gleba's sines itself, per position, with the game's own polynomial.
 GLEBA_REQUEST = {
     "planet": "gleba",
@@ -698,12 +699,13 @@ GLEBA_REQUEST = {
         "stoneFrequency": 1.25,
         "stoneSize": 0.625,
         "stoneRichness": 3.0,
+        "plantsSize": 2.5,
     },
 }
 
 
 def encode_gleba(req):
-    """Build the 104-byte request from the layout table, with struct."""
+    """Build the 112-byte request from the layout table, with struct."""
     b = bytearray(COMMON_BYTES + GLEBA_PARAMS_BYTES)
     struct.pack_into(
         "<IIIIIII",
@@ -721,7 +723,7 @@ def encode_gleba(req):
     struct.pack_into("<ddd", b, 32, req["originX"], req["originY"], req["tilesPerPixel"])
     c = req["glebaControls"]
     struct.pack_into(
-        "<dddddd",
+        "<ddddddd",
         b,
         COMMON_BYTES,
         c["waterFrequency"],
@@ -730,12 +732,13 @@ def encode_gleba(req):
         c["stoneFrequency"],
         c["stoneSize"],
         c["stoneRichness"],
+        c["plantsSize"],
     )
     return bytes(b)
 
 
 def decode_gleba(b, req):
-    """Gleba's block: six levers at +0, +8, ..., +40."""
+    """Gleba's block: seven levers at +0, +8, ..., +48."""
     want = COMMON_BYTES + GLEBA_PARAMS_BYTES
     if len(b) != want:
         raise AssertionError(f"gleba request is {len(b)} bytes, expected {want}")
@@ -748,6 +751,7 @@ def decode_gleba(b, req):
         "stoneFrequency",
         "stoneSize",
         "stoneRichness",
+        "plantsSize",
     ]
     values = [c[n] for n in names]
     if len(set(values)) != len(values) or 1 in values:
@@ -769,7 +773,7 @@ def main():
     atrig, abox = decode_aquilo(ab, AQUILO_REQUEST)
     gb = encode_gleba(GLEBA_REQUEST)
     decode_gleba(gb, GLEBA_REQUEST)
-    print(f"gleba: all six levers agree and are pairwise distinct, {len(gb)} bytes")
+    print(f"gleba: all seven levers agree and are pairwise distinct, {len(gb)} bytes")
     print("fulgora: all fields agree, both bearings unit-norm")
     print(
         "vulcanus: all fields agree, ten bearings unit-norm, 1 legitimate duplicate, "
@@ -835,11 +839,12 @@ def main():
             "come from request.ts at all; the trig pairs are checked by unit norm, by each "
             "angle's offset from the first bearing, and against this script's own copy of the game's sin and cos polynomial to "
             "2e-7. "
-            "The Gleba arm (104 bytes, six distinct non-neutral levers and no trig, because "
+            "The Gleba arm (112 bytes, seven distinct non-neutral levers and no trig, because "
             "Gleba's sines are per position and the module computes them with the game's own "
             "polynomial) is built and decoded by this script from the layout table too. Its "
             "block grew 24 -> 48 when the gleba_stone control's three levers were appended for "
-            "the stone overlay (#454). "
+            "the stone overlay (#454), and 48 -> 56 when control:gleba_plants:size was appended "
+            "for the plants (#454, slice 4). "
             "The Nauvis block grew 512 -> 520 (request 568 -> 576) when the starting-area radius "
             "was appended as its last slot, after the starting points; the independent decoder "
             "reads it at the layout table's offset and requires it to be distinct from every other "

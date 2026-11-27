@@ -15,14 +15,15 @@ install's root folder if it is not at `/home/eric/factorio-headless/2.1.23/facto
 `FMW_OUT` writes somewhere else; `FMW_X0` and `FMW_SIDE` move and size the
 window (default -512 and 1024, chunk aligned).
 
-## The two arms
+## The three arms
 
 | arm                | controls                                                                         | writes                                                             |
 | ------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `graded` (default) | `gleba_plants`, `gleba_enemy_base` and `gleba_cliff` at size 0, cliff richness 0 | `test/fixtures/oracle-gleba-real-surface-entities.seed123456.json` |
 | `default`          | every control at its default: the map a player gets                              | `...-entities-default.seed123456.json`                             |
+| `plants`           | `gleba_enemy_base` and `gleba_cliff` at size 0, cliff richness 0                 | `test/fixtures/oracle-gleba-real-surface-plants.seed123456.json`   |
 
-Both use map seed 123456, Gleba's own `create_surface()` (so the derived
+All three use map seed 123456, Gleba's own `create_surface()` (so the derived
 surface seed 3215206427), no data-stage mod, and ONE
 `request_to_generate_chunks` at (16, 16) with radius 18: the window -512..511
 and two chunks of margin, the way a game start asks for its spawn area.
@@ -78,3 +79,28 @@ Re-running either arm writes a byte-identical file.
 
 The engine reproduces the graded arm exactly (5,193 of 5,193 at the game's
 positions); see "Gleba (#454), slice 3" in `docs/rust-wasm-port.md`.
+
+## The plants arm (2026-11-27)
+
+```bash
+FMW_ARM=plants node --experimental-strip-types scripts/probes/gleba-entities/capture.ts
+```
+
+It grades the twelve plants (#454, slice 4), so it leaves them on and lists
+them with stone and the stromatolites: 30,451 plants in the window, 18,280 of
+them water-cane, and 1,845 copper stromatolites (the water-cane takes one).
+The census refuses to write if anything else is in the window. It reads the
+autoplacer facts as the graded arm does, plus each one's collision-mask flags
+(none is set), and 19 fields at 2,048 positions: the first 512 of the same
+scout pool, then the first 128 more where each plant's probability is above 0. The quota is smaller than the graded arm's only to keep the file near 1.2
+MB. Re-running it wrote a byte-identical file, and the graded and default
+arms still write their committed fixtures byte for byte.
+
+Two things it showed:
+
+- **Only yumako-tree and jellystem have a `tile_restriction`.** Stingfrond's
+  Lua declares one in an `autoplace` key that its own table overwrites.
+- **Stone removes plants.** The game's plants almost never overlap a stone
+  (1 of 30,451), because `ResourceEntity::postSetup` destroys trees in a new
+  resource's tile with `tree_removal_probability`. See "Gleba (#454), slice
+  4" in `docs/rust-wasm-port.md`.

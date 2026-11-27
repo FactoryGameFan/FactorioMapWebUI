@@ -9,9 +9,11 @@
 //! Slice 1 graded the terrain fields and the 41-tile choice at tier 1; slice 2
 //! adds [`GlebaStack::corrected_tiles`], the terrain view; slice 3 adds the
 //! resource fields ([`GlebaStack::resources_at`]) that stone and the two
-//! stromatolites are placed by (`placement::gleba`).
+//! stromatolites are placed by (`placement::gleba`); slice 4 adds the plant
+//! fields ([`GlebaStack::plants_from`]).
 
 use crate::at::At;
+use crate::expressions::gleba_plants::{GlebaPlantFields, GlebaPlants};
 use crate::expressions::gleba_resources::{
     GlebaResourceFields, GlebaResources, GlebaStoneControls, ResourceInputs,
 };
@@ -31,6 +33,7 @@ pub struct GlebaCtx {
 pub struct GlebaStack {
     terrain: GlebaTerrain,
     resources: GlebaResources,
+    plants: GlebaPlants,
 }
 
 impl GlebaStack {
@@ -40,12 +43,26 @@ impl GlebaStack {
         Self::with_stone(ctx, &GlebaStoneControls::default())
     }
 
-    /// The graph with the given `gleba_stone` control.
+    /// The graph with the given `gleba_stone` control and `gleba_plants` at
+    /// its default size.
     #[must_use]
     pub fn with_stone(ctx: &GlebaCtx, stone: &GlebaStoneControls) -> Self {
+        Self::with_levers(ctx, stone, 1.0)
+    }
+
+    /// The graph with the given `gleba_stone` control and
+    /// `control:gleba_plants:size`. The plants' frequency is a terrain lever,
+    /// in `ctx.controls`, because the plant noises are terrain fields.
+    #[must_use]
+    pub fn with_levers(ctx: &GlebaCtx, stone: &GlebaStoneControls, plants_size: f64) -> Self {
         let terrain = GlebaTerrain::new(ctx.seed0, &ctx.controls);
         let resources = GlebaResources::new(ctx.seed0, &terrain.vars, stone);
-        Self { terrain, resources }
+        let plants = GlebaPlants::new(ctx.seed0, plants_size);
+        Self {
+            terrain,
+            resources,
+            plants,
+        }
     }
 
     /// Every terrain field and every resource field at one position.
@@ -63,6 +80,19 @@ impl GlebaStack {
     #[must_use]
     pub fn resources_from(&self, at: At, t: &ResourceInputs) -> GlebaResourceFields {
         self.resources.eval(at, t, &self.terrain)
+    }
+
+    /// The plant fields at one position, given the terrain fields they read
+    /// there.
+    #[must_use]
+    pub fn plants_from(&self, at: At, t: &ResourceInputs) -> GlebaPlantFields {
+        self.plants.eval(at, t)
+    }
+
+    /// `control:gleba_plants:size`, in its f32 slot.
+    #[must_use]
+    pub fn plants_size(&self) -> f64 {
+        self.plants.size()
     }
 
     /// Evaluate every terrain field at one position.
@@ -125,13 +155,13 @@ impl GlebaStack {
 
 /// The resource inputs of the tiles of a rectangle of chunks, filled as a
 /// correction pass evaluates them ([`GlebaStack::corrected_tiles_keeping`]).
-/// About 40 KB a chunk.
+/// Held as f32s, which is exact: about 36 KB a chunk.
 pub struct KeptInputs {
     x0: i32,
     y0: i32,
     width: i32,
     height: i32,
-    inputs: Vec<Option<ResourceInputs>>,
+    inputs: Vec<Option<[f32; 8]>>,
 }
 
 impl KeptInputs {
@@ -156,14 +186,15 @@ impl KeptInputs {
 
     fn put(&mut self, x: i32, y: i32, f: ResourceInputs) {
         if let Some(i) = self.index(x, y) {
-            self.inputs[i] = Some(f);
+            self.inputs[i] = Some(f.pack());
         }
     }
 
     /// The kept inputs of tile `(x, y)`, if a correction pass evaluated it.
     #[must_use]
     pub fn get(&self, x: i32, y: i32) -> Option<ResourceInputs> {
-        self.index(x, y).and_then(|i| self.inputs[i])
+        self.index(x, y)
+            .and_then(|i| self.inputs[i].as_ref().map(ResourceInputs::unpack))
     }
 }
 

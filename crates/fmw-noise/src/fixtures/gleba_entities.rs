@@ -19,13 +19,13 @@
 
 use super::{count_exact_bits, load_captured_at};
 use crate::at::At;
-use crate::expressions::gleba_resources::GlebaResourceFields;
+use crate::expressions::gleba_resources::{GlebaResourceFields, GlebaStoneControls};
 use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
 use crate::expressions::gleba_terrain::GlebaControls;
 use crate::placement::generate::{Positioning, FIXED_ONE};
 use crate::placement::gleba::{
     apply, layer, queue_chunks, rows, tile_layers, Apply, GLEBA_AUTOPLACERS, GLEBA_ENTITIES,
-    GLEBA_GROUPS,
+    GLEBA_GROUPS, GLEBA_GROUPS_NO_PLANTS,
 };
 use crate::test_json::Json;
 use crate::tiles::gleba_catalog::{GlebaTile, TILE_ORDER};
@@ -38,11 +38,18 @@ const ENTITIES_FIXTURE: &str = "test/fixtures/oracle-gleba-real-surface-entities
 /// `123456 + crc32("gleba")`.
 const SEED: u32 = 3_215_206_427;
 
+/// The graph at this fixture's levers: `gleba_plants` at size 0, as the
+/// graded arm set it, so no plant of ours blocks a stromatolite the game
+/// never had to compete with.
 fn stack() -> GlebaStack {
-    GlebaStack::new(&GlebaCtx {
-        seed0: SEED,
-        controls: GlebaControls::default(),
-    })
+    GlebaStack::with_levers(
+        &GlebaCtx {
+            seed0: SEED,
+            controls: GlebaControls::default(),
+        },
+        &GlebaStoneControls::default(),
+        0.0,
+    )
 }
 
 /// The resource fields against `calculate_tile_properties` on the real
@@ -138,7 +145,25 @@ fn gleba_autoplacer_facts_match_the_game() {
     assert_eq!(first, ["copper-stromatolite", "iron-stromatolite"]);
     assert_eq!((orders[0].0.as_str(), orders[1].0.as_str()), ("", ""));
     assert!(orders[2..].iter().all(|(o, _)| !o.is_empty()));
-    assert_eq!(GLEBA_GROUPS, [&[0usize, 1][..], &[2][..]]);
+    // Every other order is distinct, so each prototype is its own group, and
+    // the groups follow the sort: the plants, then stone, then the nests
+    // (not placed here).
+    assert!(orders.windows(2).skip(1).all(|w| w[0].0 < w[1].0));
+    let sorted: Vec<&str> = orders[2..]
+        .iter()
+        .map(|(_, n)| n.as_str())
+        .filter(|n| !n.starts_with("gleba-spawner"))
+        .collect();
+    let ours: Vec<&str> = GLEBA_GROUPS[1..]
+        .iter()
+        .map(|g| {
+            assert_eq!(g.len(), 1);
+            GLEBA_ENTITIES[g[0]].game_name()
+        })
+        .collect();
+    assert_eq!(sorted, ours);
+    assert_eq!(GLEBA_GROUPS[0], &[0usize, 1][..]);
+    assert_eq!(GLEBA_GROUPS_NO_PLANTS, [&[0usize, 1][..], &[2][..]]);
     // Stone is the only resource on Gleba, so nothing else competes with it.
     let resources: Vec<&str> = autoplacers
         .iter()
@@ -169,8 +194,14 @@ fn gleba_autoplacer_facts_match_the_game() {
         );
         assert_eq!(a.get("mapGenBox"), a.get("collisionBox"), "{e:?}");
         assert_eq!(a.get("placementDensity").as_f64(), 1.0);
-        // Lua writes an empty table as {}; any restriction would be a list.
-        assert_eq!(a.get("tileRestriction"), &Json::Obj(Vec::new()), "{e:?}");
+        // Lua writes an empty table as {}; a restriction is a list of names.
+        let restriction = a.get("tileRestriction");
+        if e.tile_restriction().is_empty() {
+            assert_eq!(restriction, &Json::Obj(Vec::new()), "{e:?}");
+        } else {
+            let names: Vec<&str> = restriction.as_array().iter().map(Json::as_str).collect();
+            assert_eq!(names, e.tile_restriction(), "{e:?}");
+        }
         let layers = a
             .get("collisionLayers")
             .as_array()
@@ -194,7 +225,7 @@ fn gleba_autoplacer_facts_match_the_game() {
 
 /// The game's entities in the fixture whose tile is inside the window, as
 /// (name, x * 256, y * 256).
-fn game_entities(
+pub(super) fn game_entities(
     fixture: &Json,
     x: (i64, i64),
     y: (i64, i64),
@@ -227,17 +258,17 @@ fn game_entities(
         .collect()
 }
 
-fn inside(ex: i64, ey: i64, x: (i64, i64), y: (i64, i64)) -> bool {
+pub(super) fn inside(ex: i64, ey: i64, x: (i64, i64), y: (i64, i64)) -> bool {
     let (tx, ty) = (ex.div_euclid(FIXED_ONE), ey.div_euclid(FIXED_ONE));
     (x.0..x.1).contains(&tx) && (y.0..y.1).contains(&ty)
 }
 
 /// How a replay differs from the game in a window.
 #[derive(Debug, PartialEq, Eq)]
-struct ReplayScore {
-    matched: usize,
-    ours: usize,
-    game: usize,
+pub(super) struct ReplayScore {
+    pub(super) matched: usize,
+    pub(super) ours: usize,
+    pub(super) game: usize,
 }
 
 /// The two graded windows, chosen for density: 384..511 by 256..383 holds 69
@@ -256,7 +287,18 @@ fn replay(
     corrected: bool,
     rules: &[Apply],
 ) -> Vec<ReplayScore> {
-    let stack = stack();
+    replay_with(&stack(), fixture, x, y, corrected, rules)
+}
+
+/// [`replay`] with a given graph.
+pub(super) fn replay_with(
+    stack: &GlebaStack,
+    fixture: &Json,
+    x: (i64, i64),
+    y: (i64, i64),
+    corrected: bool,
+    rules: &[Apply],
+) -> Vec<ReplayScore> {
     let cx = (x.0.div_euclid(32) - 1, (x.1 - 1).div_euclid(32) + 1);
     let cy = (y.0.div_euclid(32) - 1, (y.1 - 1).div_euclid(32) + 1);
     let (ox, oy) = (cx.0 * 32, cy.0 * 32);
@@ -278,7 +320,7 @@ fn replay(
         ((ox..ox + w).contains(&tx) && (oy..oy + h).contains(&ty))
             .then(|| tiles[((ty - oy) * w + (tx - ox)) as usize])
     };
-    let queues = queue_chunks(&stack, &at, None, &rows(cx, cy));
+    let queues = queue_chunks(stack, &at, None, &rows(cx, cy));
     let game = game_entities(fixture, x, y);
     rules
         .iter()
