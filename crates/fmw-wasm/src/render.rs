@@ -744,9 +744,14 @@ fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
     }
 }
 
-/// The most chunks an Aquilo render keeps fields for (about 160 KB each). The
-/// app's worker tiles touch 16 at 128 pixels and 64 (the cap) at 256.
-const KEPT_CHUNKS_MAX: i32 = 64;
+/// The most chunks an Aquilo render keeps fields for (about 160 KB each, so
+/// 41 MB at the cap). Sized to the app's largest worker tile: the plan gives
+/// each worker one tile (`planForPool` in `src/noise/preview/tiling.ts`), and
+/// on a pool of four or fewer that is a 512-pixel quarter of the preview, 256
+/// chunks. Above the cap the entities evaluate their own fields and draw the
+/// same pixels more slowly: at 64, the old cap, the 77-chunk tiles of a
+/// 15-worker pool rendered Aquilo 25% slower than 256-pixel tiles did.
+const KEPT_CHUNKS_MAX: i32 = 256;
 
 /// Build the Gleba graph for one render.
 pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
@@ -779,9 +784,11 @@ pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
 const GLEBA_ENTITY_RING_CHUNKS: i64 = 1;
 
 /// The most chunks a Gleba entity render keeps terrain fields for (about
-/// 40 KB each, so 4 MB at the cap). The app's 128-pixel tiles touch 36 with
-/// the ring and 256-pixel tiles touch 100.
-const GLEBA_KEPT_CHUNKS_MAX: i64 = 100;
+/// 40 KB each, so 13 MB at the cap). Sized, as Aquilo's is, to the app's
+/// largest worker tile: a 512-pixel quarter of the preview touches 18 x 18
+/// chunks with the ring. At 100, the old cap, the tiles of a 15-worker pool
+/// (up to 117 chunks) fell back to evaluating the terrain twice.
+const GLEBA_KEPT_CHUNKS_MAX: i64 = 324;
 
 /// Sweep the window and paint each pixel's Gleba tile in its `map_color`,
 /// and, for `resources` and `all`, stone and the two stromatolites over it.

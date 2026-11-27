@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vite-plus/test";
 import { createRenderPool, type TilePaint } from "../src/components/renderPool";
+import { planTiles } from "../src/noise/preview/tiling";
 import type {
   ElevationRenderRequest,
   ElevationRenderResult,
@@ -52,7 +53,7 @@ describe("createRenderPool", () => {
     const seen: ElevationRenderRequest[] = [];
     const pool = createRenderPool({
       size: 2,
-      tileSize: 2,
+      plan: (f) => planTiles(f, 2),
       execute: (r) => {
         seen.push(r);
         return instant(r);
@@ -62,7 +63,7 @@ describe("createRenderPool", () => {
     const ok = await pool.render(REQ, (t) => painted.push(t));
 
     expect(ok).toBe(true);
-    expect(seen).toHaveLength(4); // 4x4 image at tileSize 2
+    expect(seen).toHaveLength(4); // 4x4 image in 2x2 tiles
     expect(painted).toHaveLength(4);
     for (const r of seen) {
       expect(r.width).toBe(2);
@@ -87,7 +88,7 @@ describe("createRenderPool", () => {
     const seen: number[] = [];
     const pool = createRenderPool({
       size: 4,
-      tileSize: 2,
+      plan: (f) => planTiles(f, 2),
       execute: (r) => {
         seen.push(r.id);
         return instant(r);
@@ -99,7 +100,7 @@ describe("createRenderPool", () => {
 
   it("never runs more than `size` executes at once", async () => {
     const { calls, execute, settle } = controlled();
-    const pool = createRenderPool({ size: 2, tileSize: 2, execute });
+    const pool = createRenderPool({ size: 2, plan: (f) => planTiles(f, 2), execute });
     const done = pool.render(REQ, () => {});
 
     await Promise.resolve();
@@ -119,7 +120,7 @@ describe("createRenderPool", () => {
 
   it("dispatches each tile to the slot index it was given", async () => {
     const { calls, execute, settle } = controlled();
-    const pool = createRenderPool({ size: 2, tileSize: 2, execute });
+    const pool = createRenderPool({ size: 2, plan: (f) => planTiles(f, 2), execute });
     const done = pool.render(REQ, () => {});
     await Promise.resolve();
     expect(calls.map((c) => c.slot).sort((a, b) => a - b)).toEqual([0, 1]);
@@ -133,7 +134,7 @@ describe("createRenderPool", () => {
 
   it("resolves false and stops painting when a newer render supersedes it", async () => {
     const { calls, execute, settle } = controlled();
-    const pool = createRenderPool({ size: 1, tileSize: 2, execute });
+    const pool = createRenderPool({ size: 1, plan: (f) => planTiles(f, 2), execute });
     const painted: TilePaint[] = [];
     const first = pool.render(REQ, (t) => painted.push(t));
     await Promise.resolve();
@@ -149,7 +150,7 @@ describe("createRenderPool", () => {
 
   it("rejects the whole render when a tile fails, and stops dispatching", async () => {
     const { calls, execute } = controlled();
-    const pool = createRenderPool({ size: 1, tileSize: 2, execute });
+    const pool = createRenderPool({ size: 1, plan: (f) => planTiles(f, 2), execute });
     const done = pool.render(REQ, () => {});
     await Promise.resolve();
     calls[0].reject(new Error("worker died"));
@@ -159,7 +160,7 @@ describe("createRenderPool", () => {
 
   it("stops an in-flight render when disposed", async () => {
     const { calls, execute, settle } = controlled();
-    const pool = createRenderPool({ size: 1, tileSize: 2, execute });
+    const pool = createRenderPool({ size: 1, plan: (f) => planTiles(f, 2), execute });
     const painted: TilePaint[] = [];
     const done = pool.render(REQ, (t) => painted.push(t));
     await Promise.resolve();
@@ -174,7 +175,7 @@ describe("createRenderPool", () => {
     const slots = new Set<number>();
     const pool = createRenderPool({
       size: 16,
-      tileSize: 4, // one tile for a 4x4 image
+      plan: (f) => planTiles(f, 4), // one tile for a 4x4 image
       execute: (r, slot) => {
         slots.add(slot);
         return instant(r);
@@ -185,6 +186,8 @@ describe("createRenderPool", () => {
   });
 
   it("rejects a non-positive pool size", () => {
-    expect(() => createRenderPool({ size: 0, tileSize: 2, execute: instant })).toThrow(/size/);
+    expect(() =>
+      createRenderPool({ size: 0, plan: (f) => planTiles(f, 2), execute: instant }),
+    ).toThrow(/size/);
   });
 });

@@ -5,6 +5,7 @@ import {
   type WorkerLike,
 } from "../src/components/useElevationPreview";
 import type { ElevationRenderRequest } from "../src/noise/preview/elevationRenderRequest";
+import { planTiles } from "../src/noise/preview/tiling";
 
 function fakeWorker(): WorkerLike & { posted: ElevationRenderRequest[] } {
   return {
@@ -54,7 +55,7 @@ function setup(size: number, tileSize: number) {
       return w;
     },
     size,
-    tileSize,
+    (full) => planTiles(full, tileSize),
   );
   return { workers, renderer };
 }
