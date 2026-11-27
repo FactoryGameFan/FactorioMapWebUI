@@ -61,7 +61,7 @@ use super::generate::{
     generate_chunk, preview_footprint, Autoplacer, ChunkInputs, MapGenBox, Positioning, Queued,
 };
 use super::roll::{CHUNK, TILES_PER_CHUNK};
-use crate::expressions::aquilo_stack::{tile_at, AquiloFields, AquiloStack};
+use crate::expressions::aquilo_stack::{tile_at, AquiloFields, AquiloStack, KeptFields};
 use crate::resources::aquilo_wells::AquiloWell;
 use crate::rocks::aquilo_icebergs::{iceberg_probabilities, iceberg_tile_allowed, ICEBERG_COLOR};
 use crate::tiles::aquilo_catalog::AquiloTile;
@@ -200,13 +200,31 @@ pub struct AquiloChunkInputs<'a> {
 impl<'a> AquiloChunkInputs<'a> {
     #[must_use]
     pub fn new(stack: &'a RefCell<AquiloStack>, chunk_x: i64, chunk_y: i64) -> Self {
+        Self::reusing(stack, chunk_x, chunk_y, None)
+    }
+
+    /// As [`Self::new`], taking a tile's fields from `kept` where a
+    /// correction pass already evaluated them. They are `eval_at`'s own
+    /// values, so the inputs are the same either way.
+    #[must_use]
+    pub fn reusing(
+        stack: &'a RefCell<AquiloStack>,
+        chunk_x: i64,
+        chunk_y: i64,
+        kept: Option<&KeptFields>,
+    ) -> Self {
         let mut own = Vec::with_capacity(TILES_PER_CHUNK);
         for i in 0..TILES_PER_CHUNK {
             #[allow(clippy::cast_possible_wrap)]
             let (lx, ly) = ((i as i64) & 31, (i as i64) >> 5);
-            #[allow(clippy::cast_precision_loss)]
-            let at = tile_at((chunk_x * CHUNK + lx) as f64, (chunk_y * CHUNK + ly) as f64);
-            own.push(stack.borrow_mut().eval_at(at));
+            let (tx, ty) = (chunk_x * CHUNK + lx, chunk_y * CHUNK + ly);
+            #[allow(clippy::cast_possible_truncation)]
+            let reused = kept.and_then(|k| k.get(tx as i32, ty as i32));
+            own.push(reused.unwrap_or_else(|| {
+                #[allow(clippy::cast_precision_loss)]
+                let at = tile_at(tx as f64, ty as f64);
+                stack.borrow_mut().eval_at(at)
+            }));
         }
         Self {
             stack,
@@ -271,6 +289,7 @@ struct ChunkPaint {
 pub struct AquiloEntities<'a> {
     stack: &'a RefCell<AquiloStack>,
     cache: RefCell<BTreeMap<(i64, i64), Rc<ChunkPaint>>>,
+    kept: Option<KeptFields>,
 }
 
 impl<'a> AquiloEntities<'a> {
@@ -279,6 +298,17 @@ impl<'a> AquiloEntities<'a> {
         Self {
             stack,
             cache: RefCell::new(BTreeMap::new()),
+            kept: None,
+        }
+    }
+
+    /// As [`Self::new`], reading tile fields from `kept` where it has them
+    /// (see [`AquiloChunkInputs::reusing`]).
+    #[must_use]
+    pub fn reusing(stack: &'a RefCell<AquiloStack>, kept: KeptFields) -> Self {
+        Self {
+            kept: Some(kept),
+            ..Self::new(stack)
         }
     }
 
@@ -286,7 +316,8 @@ impl<'a> AquiloEntities<'a> {
         if let Some(c) = self.cache.borrow().get(&(chunk_x, chunk_y)) {
             return Rc::clone(c);
         }
-        let mut inputs = AquiloChunkInputs::new(self.stack, chunk_x, chunk_y);
+        let mut inputs =
+            AquiloChunkInputs::reusing(self.stack, chunk_x, chunk_y, self.kept.as_ref());
         let queue = generate_chunk(
             chunk_x,
             chunk_y,

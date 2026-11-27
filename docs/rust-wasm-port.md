@@ -1149,12 +1149,43 @@ the preview's entities on top. `docs/noise/aquilo-NOTES.md` has the findings.
   terrain PNG 718 to 0, full PNG 1,064 to 0, 15 of 27 tests red); brash ice at
   the oceans' layer 67 (corrected tiles 0 to 160 wrong, and the layer check
   red); `AQUILO_CORRECTION_MARGIN_CHUNKS` at 0 (tiled 0 to 45 wrong).
-- **What it costs: about 3x.** Measured in WASM under Node on hammond, with
-  other sessions loading the machine, median of interleaved runs: a 256 x 256
-  terrain render 64 ms to 189 ms; the app's default view (1024 x 1024 `all`,
-  as 64 tiles of 128 pixels, summed over one thread) 2,249 ms to 6,634 ms. The
-  extra is the raw tiles of the margin: a 128-pixel tile evaluates 8 x 8 chunks
-  for its 4 x 4. The worker pool spreads it over its workers.
+- **What it costs: about 1.3x, after three changes that alter no output
+  byte.** The first wiring cost about 3x, because a 128-pixel tile evaluated
+  8 x 8 chunks of raw tiles to draw its 4 x 4, and the entity pass then
+  evaluated the window again. Now:
+  - `correct_window` (`tiles/correction.rs`) reads raw tiles lazily, so the
+    outer ring of chunks, which is read but never corrected, costs only the
+    band the walks reach. Gleba uses it too.
+  - The scan skips a walk whose seed sits in a 3 x 3 block of one id. Such a
+    walk changes and queues nothing (the module docs give the argument), and
+    open ocean is mostly such seeds.
+  - The Aquilo render keeps the fields correction evaluated for the window's
+    chunks (`KeptFields`, up to 64 chunks) and the entity generator reads them
+    instead of evaluating each tile a second time.
+
+  Measured on hammond with other sessions running, the app's default view
+  (1024 x 1024 `all`, map seed 123456):
+
+  | module | WASM under Node, 64 tiles of 128 summed on one thread | browser, headless Chrome, 15 workers, wall |
+  | --- | ---: | ---: |
+  | raw argmax, before correction | 2,236 ms | 590 ms |
+  | first correction wiring | 6,645 ms | 1,691 ms |
+  | now | 2,920 ms | 750 ms |
+
+  Node is the median of 7 interleaved runs; the browser is the median of 9
+  `Generate` clicks after one warm-up, read off the dev-mode elapsed readout
+  (`pnpm vp dev`, `?dev=1`, seed fixed at 123456). A 256 x 256 terrain render
+  went 63 ms, 187 ms, 118 ms. What is left is mostly the raw tiles of the
+  margin chunks, which correction must read in full. 256-pixel worker tiles
+  instead of 128 measured 727 ms against 738 ms in the browser, inside the
+  noise, so the pool's tile size was left alone.
+
+  The output is the same, byte for byte, as the first wiring's: 52 Aquilo and
+  Gleba requests (every view, levers off and neutral, chunk-aligned and not,
+  1, 2 and 0.5 tiles per pixel) and the whole 1024 `all` view, tiled and
+  whole, compared with the previous module. The unit tests
+  `lazy_and_eager_reads_agree` and `skipping_uniform_seeds_changes_nothing`
+  pin the two correction changes on random grids.
 - **The entity overlays are the next step (#553).** The corrected land matches
   the land mask of `oracle-aquilo-surface` at all 409,600 tiles, where the raw
   argmax misses 172 (`aquilo_corrected_land_matches_the_entity_stream_surface`),

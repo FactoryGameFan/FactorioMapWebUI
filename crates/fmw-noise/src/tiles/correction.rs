@@ -45,9 +45,29 @@
 //! - The out-of-map tile, the list-driven re-run (`+0x48a0`), large tiles and
 //!   variation selection, none of which changes a Gleba tile id.
 //!
-//! Tiles are small integer ids, `1..`, with `0` reserved (the game's empty id);
-//! `layers[id]` is the tile's effective layer (layer group plus offset), the
-//! only property the checks compare.
+//! Tiles are small integer ids, `1..`, with `0` reserved (the game's empty id)
+//! and [`UNKNOWN`] reserved for a tile not yet read; `layers[id]` is the tile's
+//! effective layer (layer group plus offset), the only property the checks
+//! compare.
+//!
+//! ## Reading raw tiles lazily
+//!
+//! [`correct_window`] is the entry point a renderer uses. It asks for a raw
+//! tile only when the pass first reads it, so the outer ring of chunks, which
+//! is read but never corrected, costs only the band the walks reach. The
+//! output is the same as filling every tile first: a tile's value does not
+//! change between the moment an eager copy would have taken it and the moment
+//! the lazy read takes it, because nothing writes the world while an area is
+//! alive. `lazy_and_eager_reads_agree` checks that on random grids.
+//!
+//! The scan also skips a walk whose seed sits in a 3 x 3 block of one id
+//! (`Area::uniform_around`), a walk that can change nothing. The lazy read
+//! holds whatever a walk compares. The skip holds as long as every check
+//! passes over a fixed neighbour holding the candidate's own id, which is the
+//! first thing `is_consistent` does, so a rule added after that test (such as
+//! tiles that may not touch) keeps it exact.
+
+use core::cell::{Cell, RefCell};
 
 /// The side of a correction area: three chunks.
 pub const AREA: usize = 96;
@@ -67,9 +87,18 @@ const RING: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
+/// A tile id that has not been read yet. Real ids are below it.
+pub const UNKNOWN: u8 = u8::MAX;
+
+/// Where an area reads a tile it does not hold yet, by area position `(a, b)`.
+type Source<'s> = RefCell<&'s mut dyn FnMut(usize, usize) -> u8>;
+
 /// One 96 x 96 correction area, `[a][b]`.
 pub struct Area<'a> {
-    tiles: Box<[[u8; AREA]; AREA]>,
+    tiles: Box<[[Cell<u8>; AREA]; AREA]>,
+    /// Fills an [`UNKNOWN`] tile on first read; `None` when every tile was
+    /// given up front.
+    source: Option<Source<'a>>,
     layers: &'a [u16],
     /// The walk's "fixed" map, as generation stamps: a tile is fixed when its
     /// stamp equals `generation`. Bumping the generation clears the map, which
@@ -105,7 +134,22 @@ impl<'a> Area<'a> {
     #[must_use]
     pub fn new(tiles: [[u8; AREA]; AREA], layers: &'a [u16]) -> Self {
         Self {
-            tiles: Box::new(tiles),
+            tiles: Box::new(tiles.map(|column| column.map(Cell::new))),
+            source: None,
+            layers,
+            stamps: Box::new([[0; AREA]; AREA]),
+            generation: 0,
+        }
+    }
+
+    /// An area that reads each tile from `source` the first time the pass
+    /// needs it.
+    pub fn lazy(layers: &'a [u16], source: &'a mut dyn FnMut(usize, usize) -> u8) -> Self {
+        Self {
+            tiles: Box::new(core::array::from_fn(|_| {
+                core::array::from_fn(|_| Cell::new(UNKNOWN))
+            })),
+            source: Some(RefCell::new(source)),
             layers,
             stamps: Box::new([[0; AREA]; AREA]),
             generation: 0,
@@ -115,11 +159,23 @@ impl<'a> Area<'a> {
     /// The tile at `(a, b)`.
     #[must_use]
     pub fn tile(&self, a: usize, b: usize) -> u8 {
-        self.tiles[a][b]
+        let cell = &self.tiles[a][b];
+        let v = cell.get();
+        if v != UNKNOWN {
+            return v;
+        }
+        let source = self
+            .source
+            .as_ref()
+            .expect("an eager area holds every tile");
+        let v = (source.borrow_mut())(a, b);
+        assert!(v != UNKNOWN, "a source returned the UNKNOWN id");
+        cell.set(v);
+        v
     }
 
     fn id(&self, a: i32, b: i32) -> u8 {
-        self.tiles[a as usize][b as usize]
+        self.tile(a as usize, b as usize)
     }
 
     fn layer(&self, a: i32, b: i32) -> u16 {
@@ -347,6 +403,18 @@ impl<'a> Area<'a> {
         v
     }
 
+    /// Whether the seed `(a, b)` and its eight neighbours all hold one id. A
+    /// walk from such a seed changes nothing: each neighbour it checks sees
+    /// only fixed tiles of its own id (the seed and the ring tiles fixed
+    /// before it), which every check skips at `n == c`, so none is changed or
+    /// queued. The scan skips those walks; that is what makes open ocean
+    /// cheap. Testing ids rather than layers keeps it true for tiles that may
+    /// not touch, which fail before any layer test.
+    fn uniform_around(&self, a: i32, b: i32) -> bool {
+        let c = self.id(a, b);
+        RING.iter().all(|&(da, db)| self.id(a + da, b + db) == c)
+    }
+
     /// `correctFromTile`: the breadth-first walk from `(a, b)`.
     ///
     /// Changed tiles go to `changed`, or, with `shared` set, into the walk's
@@ -399,7 +467,7 @@ impl<'a> Area<'a> {
                     } else {
                         changed.push((na, nb));
                     }
-                    self.tiles[na as usize][nb as usize] = current;
+                    self.tiles[na as usize][nb as usize].set(current);
                     queue.push((na, nb));
                 }
                 self.fix(na, nb);
@@ -411,10 +479,18 @@ impl<'a> Area<'a> {
     /// The whole task for the centre chunk: the scan, then the second pass.
     /// Returns the positions the game writes back, possibly with repeats.
     pub fn correct_centre_chunk(&mut self) -> Vec<(usize, usize)> {
+        self.correct_centre_chunk_skipping(true)
+    }
+
+    /// [`Self::correct_centre_chunk`], with the uniform-seed skip switchable
+    /// so a test can show it changes nothing.
+    fn correct_centre_chunk_skipping(&mut self, skip_uniform: bool) -> Vec<(usize, usize)> {
         let mut changed = Vec::new();
         for a in 32..64 {
             for b in 32..64 {
-                self.correct_from(a, b, &mut changed, false);
+                if !(skip_uniform && self.uniform_around(a, b)) {
+                    self.correct_from(a, b, &mut changed, false);
+                }
             }
         }
         let first = changed.clone();
@@ -469,28 +545,250 @@ impl TileWorld {
 /// Run the correction task for every chunk in `cx0..=cx1` by `cy0..=cy1`, in
 /// columns order (x outer, y inner), each reading and writing `world` as the
 /// game's tasks read and write the surface. The world must hold one chunk more
-/// on every side.
+/// on every side, every tile filled.
 pub fn correct_chunks(
     world: &mut TileWorld,
     layers: &[u16],
     (cx0, cx1): (i32, i32),
     (cy0, cy1): (i32, i32),
 ) {
+    assert!(
+        !world.tiles.contains(&UNKNOWN),
+        "an eager world holds every tile"
+    );
+    correct_chunks_reading(
+        world,
+        &mut |_, _| unreachable!("every tile is known"),
+        layers,
+        (cx0, cx1),
+        (cy0, cy1),
+    );
+}
+
+/// [`correct_chunks`] over a world whose [`UNKNOWN`] tiles are read from
+/// `raw(x, y)` (world coordinates) the first time a task needs them.
+fn correct_chunks_reading(
+    world: &mut TileWorld,
+    raw: &mut dyn FnMut(i32, i32) -> u8,
+    layers: &[u16],
+    (cx0, cx1): (i32, i32),
+    (cy0, cy1): (i32, i32),
+) {
     assert!(cx0 > world.chunk_x0 && cx1 < world.chunk_x0 + world.chunks_wide - 1);
     assert!(cy0 > world.chunk_y0 && cy1 < world.chunk_y0 + world.chunks_high - 1);
+    let mut changes: Vec<(usize, u8)> = Vec::new();
     for cx in cx0..=cx1 {
         for cy in cy0..=cy1 {
             let (gx0, gy0) = ((cx - 1) * 32, (cy - 1) * 32);
+            changes.clear();
+            {
+                let mut source = |a: usize, b: usize| {
+                    let (x, y) = (gx0 + a as i32, gy0 + b as i32);
+                    let k = world.index(x, y);
+                    if world.tiles[k] == UNKNOWN {
+                        world.tiles[k] = raw(x, y);
+                    }
+                    world.tiles[k]
+                };
+                let mut area = Area::lazy(layers, &mut source);
+                for (a, b) in area.correct_centre_chunk() {
+                    let v = area.tile(a, b);
+                    changes.push((a * AREA + b, v));
+                }
+            }
+            // Written back after the area is gone, in the order the task
+            // reports them (a repeat writes the same final value).
+            for &(ab, v) in &changes {
+                let (a, b) = ((ab / AREA) as i32, (ab % AREA) as i32);
+                let k = world.index(gx0 + a, gy0 + b);
+                world.tiles[k] = v;
+            }
+        }
+    }
+}
+
+/// The tiles of a window as a real surface holds them, row-major (`y` outer):
+/// `raw(x, y)` is a tile's id before correction (`1..`, below [`UNKNOWN`]),
+/// and correction runs over every chunk the window touches plus
+/// `margin_chunks` on each side, in columns order. Raw tiles are read lazily
+/// (see the module docs), so `raw` is called at most once per tile and only
+/// for tiles the pass reads: every tile of the corrected chunks, and the band
+/// of the ring beyond them that the walks reach.
+///
+/// The margin stands in for the chunks a real map has generated around the
+/// window: correction writes into neighbouring chunks, so a chunk's result
+/// depends on its neighbours' tasks.
+pub fn correct_window(
+    raw: &mut dyn FnMut(i32, i32) -> u8,
+    layers: &[u16],
+    (x0, y0): (i32, i32),
+    (width, height): (u32, u32),
+    margin_chunks: i32,
+) -> Vec<u8> {
+    let chunk = |v: i32| v.div_euclid(32);
+    let (cx0, cx1) = (
+        chunk(x0) - margin_chunks,
+        chunk(x0 + width as i32 - 1) + margin_chunks,
+    );
+    let (cy0, cy1) = (
+        chunk(y0) - margin_chunks,
+        chunk(y0 + height as i32 - 1) + margin_chunks,
+    );
+    let mut world = TileWorld {
+        chunk_x0: cx0 - 1,
+        chunk_y0: cy0 - 1,
+        chunks_wide: cx1 - cx0 + 3,
+        chunks_high: cy1 - cy0 + 3,
+        tiles: Vec::new(),
+    };
+    world.tiles = vec![UNKNOWN; world.width() * (world.chunks_high * 32) as usize];
+    correct_chunks_reading(&mut world, raw, layers, (cx0, cx1), (cy0, cy1));
+    let mut out = Vec::with_capacity(width as usize * height as usize);
+    for y in y0..y0 + height as i32 {
+        for x in x0..x0 + width as i32 {
+            let k = world.index(x, y);
+            if world.tiles[k] == UNKNOWN {
+                world.tiles[k] = raw(x, y);
+            }
+            out.push(world.tiles[k]);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A small deterministic generator, so the grids need no dependency.
+    fn lcg(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        *state >> 33
+    }
+
+    /// Blobby random tiles over a world: ids 1..=4 with distinct layers, in
+    /// patches, so correction has strips and corners to fix.
+    fn raw_tile(seed: u64, x: i32, y: i32) -> u8 {
+        let mut s =
+            seed ^ ((x.div_euclid(3) as u64) << 32) ^ (y.div_euclid(3) as u64 & 0xffff_ffff);
+        lcg(&mut s);
+        let base = (lcg(&mut s) % 4) as u8 + 1;
+        let mut t = seed.wrapping_add(((x as u64) << 20) ^ (y as u64));
+        lcg(&mut t);
+        if lcg(&mut t).is_multiple_of(7) {
+            (lcg(&mut t) % 4) as u8 + 1
+        } else {
+            base
+        }
+    }
+
+    /// Skipping the walks from seeds inside a block of one id changes neither
+    /// the tiles nor the positions written back, on random areas where
+    /// correction has plenty to do.
+    #[test]
+    fn skipping_uniform_seeds_changes_nothing() {
+        let layers = [0, 10, 20, 30, 40];
+        let mut skipped_somewhere = false;
+        for seed in 0..12u64 {
             let mut tiles = [[0u8; AREA]; AREA];
             for (a, column) in tiles.iter_mut().enumerate() {
                 for (b, t) in column.iter_mut().enumerate() {
-                    *t = world.at(gx0 + a as i32, gy0 + b as i32);
+                    *t = raw_tile(seed, a as i32, b as i32);
                 }
             }
-            let mut area = Area::new(tiles, layers);
-            for (a, b) in area.correct_centre_chunk() {
-                let k = world.index(gx0 + a as i32, gy0 + b as i32);
-                world.tiles[k] = area.tile(a, b);
+            let mut with = Area::new(tiles, &layers);
+            let mut without = Area::new(tiles, &layers);
+            for a in 32..64 {
+                for b in 32..64 {
+                    skipped_somewhere |= with.uniform_around(a, b);
+                }
+            }
+            let written = (
+                with.correct_centre_chunk_skipping(true),
+                without.correct_centre_chunk_skipping(false),
+            );
+            assert!(!written.1.is_empty(), "seed {seed}: nothing to correct");
+            assert_eq!(written.0, written.1, "seed {seed}: written positions");
+            for a in 0..AREA {
+                for b in 0..AREA {
+                    assert_eq!(
+                        with.tile(a, b),
+                        without.tile(a, b),
+                        "seed {seed} at ({a}, {b})"
+                    );
+                }
+            }
+        }
+        assert!(
+            skipped_somewhere,
+            "no seed was uniform, so nothing was tested"
+        );
+    }
+
+    /// The lazy window and an eager world corrected over the same chunks give
+    /// the same tiles, and the lazy one reads fewer raw tiles. Over several
+    /// seeds, windows and margins, so a lazy read that went stale would show.
+    #[test]
+    fn lazy_and_eager_reads_agree() {
+        let layers = [0, 10, 20, 30, 40];
+        for seed in 0..6u64 {
+            for &((x0, y0), (w, h), margin) in &[
+                ((-40, 17), (70u32, 50u32), 1),
+                ((0, 0), (64, 64), 0),
+                ((-96, -64), (100, 100), 1),
+            ] {
+                let mut reads = 0usize;
+                let lazy = correct_window(
+                    &mut |x, y| {
+                        reads += 1;
+                        raw_tile(seed, x, y)
+                    },
+                    &layers,
+                    (x0, y0),
+                    (w, h),
+                    margin,
+                );
+
+                let chunk = |v: i32| v.div_euclid(32);
+                let (cx0, cx1) = (chunk(x0) - margin, chunk(x0 + w as i32 - 1) + margin);
+                let (cy0, cy1) = (chunk(y0) - margin, chunk(y0 + h as i32 - 1) + margin);
+                let mut world = TileWorld {
+                    chunk_x0: cx0 - 1,
+                    chunk_y0: cy0 - 1,
+                    chunks_wide: cx1 - cx0 + 3,
+                    chunks_high: cy1 - cy0 + 3,
+                    tiles: Vec::new(),
+                };
+                let (wx0, wy0) = (world.chunk_x0 * 32, world.chunk_y0 * 32);
+                let (ww, wh) = (world.width(), (world.chunks_high * 32) as usize);
+                for j in 0..wh {
+                    for i in 0..ww {
+                        world
+                            .tiles
+                            .push(raw_tile(seed, wx0 + i as i32, wy0 + j as i32));
+                    }
+                }
+                let raw_world = world.tiles.clone();
+                correct_chunks(&mut world, &layers, (cx0, cx1), (cy0, cy1));
+                let mut eager = Vec::new();
+                for y in y0..y0 + h as i32 {
+                    for x in x0..x0 + w as i32 {
+                        eager.push(world.at(x, y));
+                    }
+                }
+                assert_eq!(lazy, eager, "seed {seed}, window ({x0}, {y0})");
+                // Non-vacuity: correction changed something, and the lazy
+                // pass skipped part of the outer ring.
+                let changed = world
+                    .tiles
+                    .iter()
+                    .zip(&raw_world)
+                    .filter(|(a, b)| a != b)
+                    .count();
+                assert!(changed > 0, "seed {seed}: nothing to correct");
+                assert!(reads < ww * wh, "seed {seed}: read {reads} of {}", ww * wh);
             }
         }
     }

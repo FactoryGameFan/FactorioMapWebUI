@@ -14,7 +14,7 @@ use crate::expressions::aquilo_resources::{
 };
 use crate::expressions::aquilo_terrain::{AquiloTerrain, AquiloTerrainFields};
 use crate::tiles::aquilo_catalog::{resolve_tile, AquiloTile, TILE_ORDER};
-use crate::tiles::correction::{correct_chunks, TileWorld};
+use crate::tiles::correction::correct_window;
 
 /// What a render fixes: the map seed (the Aquilo surface seed, which a preview
 /// derives and a tier-1 capture forces) and the three resource controls.
@@ -94,54 +94,89 @@ impl AquiloStack {
     /// The tiles of a window as a real surface holds them: the raw argmax at
     /// every whole tile (the chunk-grid kernel), then tile correction over
     /// every chunk the window touches plus `margin_chunks` on each side, in
-    /// columns order (see `tiles::correction`). Row-major, `y` outer.
+    /// columns order (`tiles::correction::correct_window`). Row-major, `y`
+    /// outer.
     ///
-    /// The same shape as `GlebaStack::corrected_tiles`; the margin stands in
-    /// for the chunks a real map has generated around the window, and
-    /// [`AQUILO_CORRECTION_MARGIN_CHUNKS`] is the one measured to reproduce
-    /// the real surface.
+    /// The margin stands in for the chunks a real map has generated around
+    /// the window, and [`AQUILO_CORRECTION_MARGIN_CHUNKS`] is the one measured
+    /// to reproduce the real surface.
     pub fn corrected_tiles(
         &mut self,
-        (x0, y0): (i32, i32),
-        (width, height): (u32, u32),
+        origin: (i32, i32),
+        size: (u32, u32),
         margin_chunks: i32,
     ) -> Vec<AquiloTile> {
-        let chunk = |v: i32| v.div_euclid(32);
-        let (cx0, cx1) = (
-            chunk(x0) - margin_chunks,
-            chunk(x0 + width as i32 - 1) + margin_chunks,
-        );
-        let (cy0, cy1) = (
-            chunk(y0) - margin_chunks,
-            chunk(y0 + height as i32 - 1) + margin_chunks,
-        );
-        let mut world = TileWorld {
-            chunk_x0: cx0 - 1,
-            chunk_y0: cy0 - 1,
-            chunks_wide: cx1 - cx0 + 3,
-            chunks_high: cy1 - cy0 + 3,
-            tiles: Vec::new(),
-        };
-        let (wx0, wy0) = (world.chunk_x0 * 32, world.chunk_y0 * 32);
-        let (w, h) = (world.width(), (world.chunks_high * 32) as usize);
-        world.tiles.reserve(w * h);
-        for j in 0..h {
-            for i in 0..w {
-                let t = self.tile_at(At::tile(wx0 + i as i32, wy0 + j as i32));
-                world.tiles.push(aquilo_tile_id(t));
-            }
-        }
+        self.corrected_tiles_keeping(origin, size, margin_chunks, None)
+    }
+
+    /// [`Self::corrected_tiles`], also keeping the fields of every tile the
+    /// pass evaluates inside `keep`'s chunks, so a later pass over those
+    /// chunks (the entity generator) need not evaluate them again. The values
+    /// are the ones `eval_at` returns, so keeping them changes no output.
+    pub fn corrected_tiles_keeping(
+        &mut self,
+        origin: (i32, i32),
+        size: (u32, u32),
+        margin_chunks: i32,
+        mut keep: Option<&mut KeptFields>,
+    ) -> Vec<AquiloTile> {
         let layers: Vec<u16> = std::iter::once(0)
             .chain(TILE_ORDER.iter().map(|t| t.layer()))
             .collect();
-        correct_chunks(&mut world, &layers, (cx0, cx1), (cy0, cy1));
-        let mut out = Vec::with_capacity(width as usize * height as usize);
-        for y in y0..y0 + height as i32 {
-            for x in x0..x0 + width as i32 {
-                out.push(TILE_ORDER[usize::from(world.at(x, y)) - 1]);
+        let mut raw = |x: i32, y: i32| {
+            let f = self.eval_at(At::tile(x, y));
+            if let Some(k) = keep.as_deref_mut() {
+                k.put(x, y, f);
             }
+            aquilo_tile_id(f.tile())
+        };
+        correct_window(&mut raw, &layers, origin, size, margin_chunks)
+            .into_iter()
+            .map(|id| TILE_ORDER[usize::from(id) - 1])
+            .collect()
+    }
+}
+
+/// The fields of the tiles of a rectangle of chunks, filled as a correction
+/// pass evaluates them (`AquiloStack::corrected_tiles_keeping`).
+pub struct KeptFields {
+    cx0: i32,
+    cy0: i32,
+    chunks_wide: i32,
+    chunks_high: i32,
+    fields: Vec<Option<AquiloFields>>,
+}
+
+impl KeptFields {
+    /// Room for chunks `cx0..=cx1` by `cy0..=cy1`.
+    #[must_use]
+    pub fn new((cx0, cx1): (i32, i32), (cy0, cy1): (i32, i32)) -> Self {
+        let (chunks_wide, chunks_high) = (cx1 - cx0 + 1, cy1 - cy0 + 1);
+        Self {
+            cx0,
+            cy0,
+            chunks_wide,
+            chunks_high,
+            fields: vec![None; (chunks_wide * chunks_high * 1024) as usize],
         }
-        out
+    }
+
+    fn slot(&self, x: i32, y: i32) -> Option<usize> {
+        let (i, j) = (x - self.cx0 * 32, y - self.cy0 * 32);
+        ((0..self.chunks_wide * 32).contains(&i) && (0..self.chunks_high * 32).contains(&j))
+            .then(|| (j * self.chunks_wide * 32 + i) as usize)
+    }
+
+    fn put(&mut self, x: i32, y: i32, f: AquiloFields) {
+        if let Some(k) = self.slot(x, y) {
+            self.fields[k] = Some(f);
+        }
+    }
+
+    /// The fields at tile `(x, y)`, if the pass evaluated it.
+    #[must_use]
+    pub fn get(&self, x: i32, y: i32) -> Option<AquiloFields> {
+        self.slot(x, y).and_then(|k| self.fields[k])
     }
 }
 
