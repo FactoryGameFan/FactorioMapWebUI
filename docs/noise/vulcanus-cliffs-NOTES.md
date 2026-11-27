@@ -473,7 +473,8 @@
 > `updateConnections` is the only border-only channel left unscored.
 >
 > **`Cliff`'s connection system is now decompiled whole** (seven facts, addresses
-> in `cliffs-NOTES.md` and `cliffConnections.ts`). Three change what to try next:
+> in `cliffs-NOTES.md` and `cliffConnections.ts`, the latter deleted on 2026-11-26
+> and readable at `dc6bccd`). Three change what to try next:
 >
 > - **`onDestroy`'s cascade has FOUR gates**, including `map->[0x240] == 0` and an
 >   entity flag set from the creation parameters. All four are now READ on both
@@ -3040,7 +3041,9 @@ if (collided)          -> destroy list
 else if (!record.bool) -> updateConnections list      // record.bool = !onChunkBorder
 ```
 
-`src/noise/cliffs/cliffConnections.ts`, `test/cliffConnections.spec.ts`.
+`src/noise/cliffs/cliffConnections.ts` (deleted on 2026-11-26, read it at
+`dc6bccd`) and `test/cliffConnections.spec.ts` (deleted in #360, read it at
+`5124d2b^`). The live port is `crates/fmw-noise/src/cliffs/connections.rs`.
 
 ### `tryToAddCliff` does no collision test during map generation
 
@@ -3397,7 +3400,8 @@ It is decidable, and it needed no capture. `test/cliffFarTenProvenance.spec.ts`.
 
 ### The two hypotheses leave different marks on the NEIGHBOURS
 
-Both rules were already ported off the disassembly in `cliffConnections.ts`; the
+Both rules were already ported off the disassembly in `cliffConnections.ts`
+(deleted on 2026-11-26, last present at `dc6bccd`); the
 point is that they differ in exactly one respect:
 
 | hypothesis | what happens to a connected neighbour |

@@ -970,15 +970,18 @@ id*0x48` offset by the position, an early `return false` if the box is
 degenerate, then `constCollideWithTile` and `collideWithEntity`. Same box and
 mask as `EntityMapGenerationTask::wouldCollide` - only the stage differs.
 
-The full port, the four extracted tables and the scoring are in
+The full port, the four extracted tables and the scoring were in
 `src/noise/cliffs/cliffConnections.ts` and `test/cliffConnections.spec.ts`; the
-result is in `vulcanus-cliffs-NOTES.md`.
+result is in `vulcanus-cliffs-NOTES.md`. Both files are deleted now: read the
+`.ts` at `dc6bccd` (deleted 2026-11-26) and the spec at `5124d2b^` (deleted in
+#360). The live port is `crates/fmw-noise/src/cliffs/connections.rs`.
 
 ### The connection system, decompiled whole (2026-08-03)
 
 `updateConnections` was read end to end after #132 made it the lead. Seven facts
 came out, none of which the port had modelled. They are in
-`cliffConnections.ts`' module comment with their addresses; the ones that change
+`cliffConnections.ts`' module comment with their addresses (read it at
+`dc6bccd`; the file was deleted on 2026-11-26); the ones that change
 what anyone should try next:
 
 - **`Cliff` gates its ENTIRE connection system on one byte**, `this+0x83`, which
