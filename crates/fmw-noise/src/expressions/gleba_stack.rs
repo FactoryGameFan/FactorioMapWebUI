@@ -7,9 +7,14 @@
 //! lives in [`GlebaTerrain`].
 //!
 //! Slice 1 graded the terrain fields and the 41-tile choice at tier 1; slice 2
-//! adds [`GlebaStack::corrected_tiles`], the terrain view. No resource or entity layer yet.
+//! adds [`GlebaStack::corrected_tiles`], the terrain view; slice 3 adds the
+//! resource fields ([`GlebaStack::resources_at`]) that stone and the two
+//! stromatolites are placed by (`placement::gleba`).
 
 use crate::at::At;
+use crate::expressions::gleba_resources::{
+    GlebaResourceFields, GlebaResources, GlebaStoneControls, ResourceInputs,
+};
 use crate::expressions::gleba_terrain::{GlebaControls, GlebaTerrain, GlebaTerrainFields};
 use crate::tiles::correction::correct_window;
 use crate::tiles::gleba_catalog::{resolve_tile, GlebaTile, TILE_ORDER};
@@ -25,14 +30,39 @@ pub struct GlebaCtx {
 /// The per-render state of the Gleba graph.
 pub struct GlebaStack {
     terrain: GlebaTerrain,
+    resources: GlebaResources,
 }
 
 impl GlebaStack {
+    /// The graph with the `gleba_stone` control at its default.
     #[must_use]
     pub fn new(ctx: &GlebaCtx) -> Self {
-        Self {
-            terrain: GlebaTerrain::new(ctx.seed0, &ctx.controls),
-        }
+        Self::with_stone(ctx, &GlebaStoneControls::default())
+    }
+
+    /// The graph with the given `gleba_stone` control.
+    #[must_use]
+    pub fn with_stone(ctx: &GlebaCtx, stone: &GlebaStoneControls) -> Self {
+        let terrain = GlebaTerrain::new(ctx.seed0, &ctx.controls);
+        let resources = GlebaResources::new(ctx.seed0, &terrain.vars, stone);
+        Self { terrain, resources }
+    }
+
+    /// Every terrain field and every resource field at one position.
+    #[must_use]
+    pub fn resources_at(&self, at: At) -> (GlebaTerrainFields, GlebaResourceFields) {
+        let t = self.terrain.eval_at(at);
+        let r = self
+            .resources
+            .eval(at, &ResourceInputs::from(&t), &self.terrain);
+        (t, r)
+    }
+
+    /// The resource fields at one position, given the terrain fields they
+    /// read there (kept from an earlier evaluation at the same `at`).
+    #[must_use]
+    pub fn resources_from(&self, at: At, t: &ResourceInputs) -> GlebaResourceFields {
+        self.resources.eval(at, t, &self.terrain)
     }
 
     /// Evaluate every terrain field at one position.
@@ -63,12 +93,77 @@ impl GlebaStack {
         size: (u32, u32),
         margin_chunks: i32,
     ) -> Vec<GlebaTile> {
+        self.corrected_tiles_keeping(origin, size, margin_chunks, None)
+    }
+
+    /// [`GlebaStack::corrected_tiles`], keeping the resource inputs of every
+    /// tile it evaluates inside `keep`'s chunks. Correction evaluates every
+    /// tile of the chunks it corrects, so a window's chunks come back full.
+    /// The output is the same either way.
+    #[must_use]
+    pub fn corrected_tiles_keeping(
+        &self,
+        origin: (i32, i32),
+        size: (u32, u32),
+        margin_chunks: i32,
+        mut keep: Option<&mut KeptInputs>,
+    ) -> Vec<GlebaTile> {
         let layers = gleba_layers();
-        let mut raw = |x: i32, y: i32| tile_id(self.tile_at(At::tile(x, y)));
+        let mut raw = |x: i32, y: i32| {
+            let f = self.eval_at(At::tile(x, y));
+            if let Some(k) = keep.as_deref_mut() {
+                k.put(x, y, ResourceInputs::from(&f));
+            }
+            tile_id(resolve_tile(&f))
+        };
         correct_window(&mut raw, &layers, None, origin, size, margin_chunks)
             .into_iter()
             .map(|id| TILE_ORDER[usize::from(id) - 1])
             .collect()
+    }
+}
+
+/// The resource inputs of the tiles of a rectangle of chunks, filled as a
+/// correction pass evaluates them ([`GlebaStack::corrected_tiles_keeping`]).
+/// About 40 KB a chunk.
+pub struct KeptInputs {
+    x0: i32,
+    y0: i32,
+    width: i32,
+    height: i32,
+    inputs: Vec<Option<ResourceInputs>>,
+}
+
+impl KeptInputs {
+    /// Room for the tiles of chunks `cx0..=cx1` by `cy0..=cy1`.
+    #[must_use]
+    pub fn new((cx0, cx1): (i32, i32), (cy0, cy1): (i32, i32)) -> Self {
+        let (width, height) = ((cx1 - cx0 + 1) * 32, (cy1 - cy0 + 1) * 32);
+        Self {
+            x0: cx0 * 32,
+            y0: cy0 * 32,
+            width,
+            height,
+            inputs: vec![None; (width * height) as usize],
+        }
+    }
+
+    fn index(&self, x: i32, y: i32) -> Option<usize> {
+        let (i, j) = (x - self.x0, y - self.y0);
+        ((0..self.width).contains(&i) && (0..self.height).contains(&j))
+            .then(|| (j * self.width + i) as usize)
+    }
+
+    fn put(&mut self, x: i32, y: i32, f: ResourceInputs) {
+        if let Some(i) = self.index(x, y) {
+            self.inputs[i] = Some(f);
+        }
+    }
+
+    /// The kept inputs of tile `(x, y)`, if a correction pass evaluated it.
+    #[must_use]
+    pub fn get(&self, x: i32, y: i32) -> Option<ResourceInputs> {
+        self.index(x, y).and_then(|i| self.inputs[i])
     }
 }
 

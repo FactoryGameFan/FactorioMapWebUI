@@ -50,10 +50,12 @@
 //!   prototype sets it (only decoratives do), so it is the default 1.
 //! - **Grid snapping** (`buildPosition`) for entities that are neither
 //!   resources nor off-grid. No caller has one.
-//! - **The richness tie-break** inside a group with more than one prototype,
-//!   and **`tile_restriction`**. Every Aquilo group holds one prototype and
-//!   none declares a restriction. [`generate_chunk`] refuses a group of two
-//!   rather than quietly using a rule the game does not.
+//! - **`tile_restriction`**. No entity this module places declares one
+//!   (Gleba's yumako tree and jellystem do, and they are not ported).
+//!
+//! The richness tie-break inside a group of more than one prototype IS ported
+//! (cpp:394): Gleba's two stromatolites share the empty `order` and form one
+//! group, the first that planet rolls (`placement::gleba`).
 //!
 //! ## Measured
 //!
@@ -140,6 +142,14 @@ pub trait ChunkInputs {
     /// a tile that rolled a success.
     fn richness_positive(&mut self, proto: usize, tx: i64, ty: i64) -> bool;
 
+    /// The autoplace richness, an f32 widened to f64: the tie-break when two
+    /// prototypes of one group have the same probability on a tile. Read only
+    /// for groups of more than one prototype. The default is 0, which is what
+    /// an entity whose autoplace sets no `richness_expression` reports.
+    fn richness(&mut self, _proto: usize, _tx: i64, _ty: i64) -> f64 {
+        0.0
+    }
+
     /// Whether this tile's collision mask collides with the prototype's.
     fn tile_blocks(&mut self, proto: usize, tx: i64, ty: i64) -> bool;
 }
@@ -177,12 +187,10 @@ fn uniform(state: &mut Taus88State) -> f64 {
 /// decreasing tile index.
 ///
 /// `groups` lists prototype indices into `protos`, already in the game's
-/// sorted order. Each group must hold exactly one prototype; see the module
-/// docs.
-///
-/// # Panics
-///
-/// On a group that does not hold exactly one prototype.
+/// sorted order: by autoplace `order`, then by name within a group. Within a
+/// group the tile goes to the highest probability, a tie to the higher
+/// richness, and a full tie to the prototype listed first (cpp:394, a strict
+/// `>` both times).
 pub fn generate_chunk(
     chunk_x: i64,
     chunk_y: i64,
@@ -193,33 +201,40 @@ pub fn generate_chunk(
     let mut state = seeded_state(placement_roll_word(chunk_x, chunk_y, 0));
     let mut queue = Vec::new();
     let mut best = [f64::NEG_INFINITY; TILES_PER_CHUNK];
-    let mut has_winner = [false; TILES_PER_CHUNK];
+    let mut winner: [Option<usize>; TILES_PER_CHUNK] = [None; TILES_PER_CHUNK];
+    // Not reset between groups (cpp:469-470 resets only the other two). It
+    // matters only for a -inf tie, which no ported expression produces.
+    let mut best_rich = [0.0f64; TILES_PER_CHUNK];
 
     for group in groups {
-        assert!(
-            group.len() == 1,
-            "a group of {} prototypes needs the richness tie-break, which is not ported",
-            group.len()
-        );
-        let proto = group[0];
-
-        // Arbitration. With one prototype per group, the winner is that
-        // prototype wherever the tile admits it and its value beats -inf.
-        for i in (0..TILES_PER_CHUNK).rev() {
-            let (tx, ty) = tile_of(chunk_x, chunk_y, i);
-            if !inputs.candidate(proto, tx, ty) {
-                continue;
-            }
-            let p = inputs.probability(proto, tx, ty);
-            if p > best[i] {
-                best[i] = p;
-                has_winner[i] = true;
+        let shared = group.len() > 1;
+        // Arbitration, prototype by prototype in sorted order. Any finite
+        // probability beats the -inf an empty tile starts at.
+        for &proto in *group {
+            for i in (0..TILES_PER_CHUNK).rev() {
+                let (tx, ty) = tile_of(chunk_x, chunk_y, i);
+                if !inputs.candidate(proto, tx, ty) {
+                    continue;
+                }
+                let p = inputs.probability(proto, tx, ty);
+                // A lone prototype never meets a tie, so its richness is not
+                // read: an expression nobody ported is not evaluated.
+                let r = if shared {
+                    inputs.richness(proto, tx, ty)
+                } else {
+                    0.0
+                };
+                if p > best[i] || (p == best[i] && r > best_rich[i]) {
+                    best[i] = p;
+                    winner[i] = Some(proto);
+                    best_rich[i] = r;
+                }
             }
         }
 
         // The roll.
         for i in (0..TILES_PER_CHUNK).rev() {
-            if has_winner[i] {
+            if let Some(proto) = winner[i] {
                 let (tx, ty) = tile_of(chunk_x, chunk_y, i);
                 let u = uniform(&mut state);
                 // A classification, so its control is `bool_result`: see the
@@ -233,7 +248,7 @@ pub fn generate_chunk(
                 }
             }
             best[i] = f64::NEG_INFINITY;
-            has_winner[i] = false;
+            winner[i] = None;
         }
     }
     queue
@@ -510,15 +525,59 @@ mod tests {
         assert!(generate_chunk(0, 0, &[&[0]], &[wide], &mut f).is_empty());
     }
 
+    /// A group of two arbitrates each tile: the higher probability wins, and
+    /// one roll is drawn per tile, not one per prototype. A full tie (equal
+    /// probability, equal richness) goes to the prototype listed first.
     #[test]
-    #[should_panic(expected = "richness tie-break")]
-    fn a_group_of_two_is_refused() {
+    fn a_group_of_two_places_one_entity_per_tile_for_the_higher_probability() {
+        // Prototype 1 is higher on tile 1023 only; everywhere else both are 1,
+        // so prototype 0 keeps the tile on the tie.
         let mut f = Fake {
-            p: |_, _, _| 0.0,
+            p: |proto, tx, ty| {
+                if proto == 1 && tx == 31 && ty == 31 {
+                    2.0
+                } else {
+                    1.0
+                }
+            },
             blocks: |_, _, _| false,
             asked: Vec::new(),
         };
-        let _ = generate_chunk(0, 0, &[&[0, 1]], &[RES, RES], &mut f);
+        let q = generate_chunk(0, 0, &[&[0, 1]], &[RES, RES], &mut f);
+        assert_eq!(q.len(), TILES_PER_CHUNK, "one entity per tile, not two");
+        assert_eq!(q[0].proto, 1);
+        assert!(q[1..].iter().all(|e| e.proto == 0));
+    }
+
+    /// The richness breaks a probability tie, and only a strictly higher one.
+    #[test]
+    fn a_probability_tie_goes_to_the_higher_richness() {
+        struct Rich;
+        impl ChunkInputs for Rich {
+            fn probability(&mut self, _: usize, _: i64, _: i64) -> f64 {
+                1.0
+            }
+            fn richness_positive(&mut self, _: usize, _: i64, _: i64) -> bool {
+                true
+            }
+            fn richness(&mut self, proto: usize, tx: i64, _: i64) -> f64 {
+                // Prototype 1 is richer on even columns, equal on odd ones.
+                if proto == 1 && tx % 2 == 0 {
+                    5.0
+                } else {
+                    3.0
+                }
+            }
+            fn tile_blocks(&mut self, _: usize, _: i64, _: i64) -> bool {
+                false
+            }
+        }
+        let q = generate_chunk(0, 0, &[&[0, 1]], &[RES, RES], &mut Rich);
+        assert_eq!(q.len(), TILES_PER_CHUNK);
+        for e in &q {
+            let even = (e.x / 256) % 2 == 0;
+            assert_eq!(e.proto, usize::from(even), "{e:?}");
+        }
     }
 
     #[test]

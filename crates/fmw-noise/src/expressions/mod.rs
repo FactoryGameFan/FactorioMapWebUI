@@ -21,6 +21,7 @@ pub mod fulgora_ruins;
 pub mod fulgora_scrap;
 pub mod fulgora_shared;
 pub mod fulgora_stack;
+pub mod gleba_resources;
 pub mod gleba_stack;
 pub mod gleba_starting;
 pub mod gleba_terrain;

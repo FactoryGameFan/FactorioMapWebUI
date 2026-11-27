@@ -58,9 +58,10 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 11 (#454) | Gleba slice 1 - the terrain fields and the 41-tile choice at tier 1 (`terrace` op, `gleba_*`); no ABI, render, cliffs or entities yet | tier 1 done |
 | 12 (#454) | Gleba slice 2 - the terrain view through the engine, name-order tie-break, and tile correction (`tiles/correction.rs`), graded against a REAL surface; dev mode only in the app | terrain done |
 | 13 (#454) | Aquilo's terrain through tile correction at one tile per pixel, graded against a REAL surface; the preview PNGs become a reference | terrain done |
+| 14 (#454) | Gleba slice 3 - stone and both stromatolites in `resources` and `all`, placed as a REAL surface places them (the per-chunk generator plus apply), 5,193 of 5,193 | stone and stromatolites done |
 
 **Every planet, every view the panel offers, renders through the engine.** Gleba
-offers terrain only, and only in dev mode. The
+offers terrain, resources and all, and only in dev mode. The
 per-layer landing narrative is in the history doc; what follows is only what is
 still a rule.
 
@@ -824,7 +825,9 @@ preview skips a pass a real map runs, so matching it would mean matching a
 picture no player sees.
 
 **The ABI block.** `PLANET_GLEBA = 4`, a 24-byte block (`gleba_water`
-frequency and size, `gleba_plants` frequency), so a request is 80 bytes.
+frequency and size, `gleba_plants` frequency), so a request was 80 bytes.
+Slice 3 appended the `gleba_stone` control's frequency, size and richness, so
+the block is 48 bytes and a request 104; the first three did not move.
 `writeGlebaParams` is the one place an absent lever becomes 1. **No trig
 crosses the boundary**, which is a deliberate exception to "trig crosses as
 values": Gleba's spiral bridges take a sine per POSITION, so the module
@@ -892,9 +895,153 @@ every second-pass change (0 to 2 on each capture); rows order (0 to 44);
 skipping correction in the render (5 of 8 tier-3 tests red, 697 pixels).
 
 **In the app** Gleba is `devOnly` in `PLANET_CAPABILITIES`: with dev mode off
-the panel still says "Client preview is not available for Gleba yet." In dev
-mode it renders terrain, and every other view, `all` included, shows the
-terrain. Plants, stone, stromatolites, cliffs and enemies are not drawn.
+the panel still says "Client preview is not available for Gleba yet." Slice 3
+below adds stone and the stromatolites to the `resources` and `all` views.
+
+### Gleba (#454), slice 3: stone and the stromatolites, against a real surface
+
+The `resources` and `all` views draw every `stone`, `iron-stromatolite` and
+`copper-stromatolite` a REAL Gleba surface places, at one tile per pixel. Over
+the 1024 x 1024 window -512..511 at map seed 123456 the engine places all
+5,193 of them at the game's own position, to the 1/256 tile, and nothing
+else, on its own corrected tiles. That is the real surface, not the game's
+preview. The preview skips the apply step (measured on Aquilo, #492), and
+without that step the generator's queues for this window hold 8,631.
+
+**Why this slice first.** The research census (`gleba.local/`, 1024 window)
+counts about 30,000 plants, 4,330 stromatolites, 863 stone, 2,484 cliffs and
+67 nests. Plants are the most visible, but the game's own data put the
+stromatolites first: they have the empty autoplace `order`, so they are the
+FIRST group each chunk's random stream serves, and nothing another group
+draws can move them. Stone is next in value and needs no stream at all (see
+below). Plants come after the stromatolites in the stream and need
+`tile_restriction`, which the generator does not have yet. So this slice is
+exact without porting anything else, and the plants can build on it.
+
+**The fixtures** are `oracle-gleba-real-surface-entities.seed123456.json`
+(plants, nests and cliffs off, so nothing else can take a graded entity's
+place) and `...-entities-default.seed123456.json` (every control at its
+default), from `scripts/probes/gleba-entities`. The graded fixture also holds
+every autoplacer's facts and every tile's collision layers as the prototypes
+report them at runtime, and eleven fields at 2,560 positions.
+
+**Credit.** FactMapGen (`M45-Science/FactMapGen`, Go, AGPL-3.0, which credits
+this repo) draws Gleba's stone and stromatolites to match the game's preview.
+Its `factorio_gleba_features.go` and `factorio_gleba_placement.go` were read
+alongside the Lua for the two stromatolite expressions, the
+`gleba_simple_spot` call with `skip_offset = 1`, and the stromatolites sharing
+one group ahead of the plants. Each rule here was then graded against the
+game. Its preview rule (no apply step) is what this slice does NOT copy.
+
+**What a real surface does, and the port with it** (`placement/gleba.rs`,
+`expressions/gleba_resources.rs`):
+
+- **The fields.** `gleba_select(gleba_<metal>_stromatolite -
+  clamp(gleba_decorative_knockout, 0, 1), 1.3, 2, 0.2, 0, 1)` for each
+  stromatolite, and `4000 * max(starting, gleba_simple_spot(...) *
+  max(gleba_highland, gleba_midland_aux_2)) * richness / size` for stone, f32
+  per step. All eleven match `calculate_tile_properties` at 2,560 of 2,560
+  positions (`gleba_resource_fields_match_the_game`).
+- **`skip_offset = 1`.** `gleba_simple_spot` drops the first accepted spot of
+  each region. `select_spots` kept nothing at an offset at or past the span
+  (#489); it now keeps `j >= offset && (j - offset) % span == 0`, which is the
+  same set below the span, so no other planet's output moves.
+- **The groups.** Sorted by (`order`, name): copper and iron stromatolites
+  share `""`, then the twelve plants, then `stone` (`b`), then the nests. The
+  two stromatolites are ONE group, so each tile goes to the higher
+  probability and draws once. `generate_chunk` refused a group of two; it now
+  ports the richness tie-break (cpp:394). The facts test
+  (`gleba_autoplacer_facts_match_the_game`) checks the sort, every box, flag
+  and layer, and all 41 tiles' layers against the prototypes.
+- **Stone needs no stream.** Its probability is exactly 0 or 1, and a roll
+  places when `p > U` with `U` in `[0, 1)`. So it places on exactly the tiles
+  where its probability is 1, wherever its draws land. The port runs it
+  straight after the stromatolites and cannot be told apart from the game.
+- **Masks.** Stromatolites stand only on wetland (their mask holds
+  `ground_tile`, which every land tile has, and `player`, which the deep lake
+  has); stone only on land (`resource`, which wetland and the lake carry).
+  So the stream reads the corrected tiles, and the raw argmax is not good
+  enough: on it the whole window matched 3,546 of 5,193.
+- **Apply.** Each chunk's queue in order, chunks row-major, dropping an entity
+  whose box meets (touching included) one already placed on a shared layer.
+  Stromatolites block stromatolites; stone blocks stone; the two never share
+  a layer. Columns order gave the same 5,193, so this capture does not tell
+  the two orders apart; rows is what Aquilo measured.
+- **The render** (`render_gleba_entities`) generates the window's chunks plus
+  one ring, on the corrected tiles of all of them, and paints each entity
+  over the tiles `floor(left)` to `ceil(right) - 1` in its map colour:
+  (129, 105, 78) for both stromatolites, as in the Lua, so a map cannot tell
+  iron from copper, and (175, 155, 108) for stone, as the preview PNG draws
+  it. At any other zoom, or a fractional origin, no entity is drawn, because
+  the entities depend on the corrected tiles.
+
+**Grades.**
+
+| test | what | frozen |
+| --- | --- | --- |
+| `gleba_resource_fields_match_the_game` | 11 fields, 2,560 positions, f32 bits | 2,560 each |
+| `gleba_entities_replay_the_real_surface` | two dense 128 windows, by position | 209 of 209, 158 of 158 |
+| `gleba_entity_replay_controls` | strict overlap / preview / raw tiles | (207, 214) (209, 279) (168, 214); (156, 161) (158, 208) (116, 154) |
+| `test/wasmGlebaEntityParity.spec.ts` | the 1024 window through the module, pixel by pixel | 0 of 1,048,576 |
+| same | against the default map | 1 pixel |
+| same | stone control at size 0 | 863 pixels, no stone left |
+
+The debug-build Rust tests replay two 128-tile windows (one iron and stone,
+one copper and stone) because the whole window takes about 9 seconds even in
+release. The spec grades the whole window through the release module: it
+paints the game's entities onto OUR terrain render by the same footprint rule
+and compares every pixel, so a differing pixel is a misplaced, missing or
+extra entity. The terrain stays 0 in `wasmGlebaRenderParity.spec.ts`.
+
+**The remainder against the map a player gets: 1 of 5,193.** The default map
+lacks one copper stromatolite at (134.5, -479.625). Its box reaches y =
+-480.125, past the chunk edge at -480, where a water-cane at (134.375,
+-480.125) stands; the water-cane is in the chunk above, which is applied
+first. Plants are not ported, so the render shows that stromatolite. Its
+footprint is two pixels and a neighbour covers one, so the spec freezes 1.
+
+**Planted breaks, each run:**
+
+| break | what went red |
+| --- | --- |
+| the old skip filter `j % span == offset` | stone richness 1,577 of 2,560, probability 2,046; the replay loses every stone (71 of 209, 52 of 158) |
+| the two stromatolites as two groups | iron window 140 matched of 206 placed (copper sorts first, so its window holds) |
+| probabilities read at the tile centre | 128 of 203, 105 of 164 |
+| the preview's rule (no apply) in the render | 2,037 pixels |
+| raw tiles in the entity pass | 3,552 pixels |
+| no chunk ring in the render | 5 pixels, all at the window's edge |
+
+Two swaps changed nothing in the two replay windows, so neither rule is
+graded there: the two stromatolites' order inside their group (no tile there
+has both at the same positive probability), and the point kernel at the
+integer corner instead of the chunk grid (no roll there falls between the
+two). The facts test pins the first from the prototypes. Neither was tried
+on the whole window.
+
+**What it costs** (the app's default view, 1024 x 1024 at one tile per pixel,
+map seed 123456, WASM under Node, the 64 tiles of 128 summed on one thread,
+median of 7 interleaved runs on hammond, other sessions running):
+
+| module | `terrain` | `all` | ratio |
+| --- | ---: | ---: | ---: |
+| first wiring | 6,653 ms | 17,242 ms | 2.6x |
+| shipped (kept fields) | 6,906 ms | 13,200 ms | 1.9x |
+
+The shipped module keeps the five terrain values the resource fields read
+(`KeptInputs`, about 40 KB a chunk, for up to 100 chunks, enough for a 256-pixel tile and its ring) as tile correction
+evaluates them, so the entity pass does not evaluate the terrain a second
+time. Its output equals the first wiring's byte for byte over 77 requests
+(every view, the 64 app tiles, whole 1024 windows, chunk-aligned and not, 2
+tiles per pixel, a fractional origin, moved stone levers). What is left is the
+ring: a 128-pixel tile corrects 8 x 8 chunks instead of 6 x 6 and generates 6
+x 6 chunks of entities, and every one of those is needed (see
+`GLEBA_ENTITY_RING_CHUNKS`). The browser with its worker pool was not
+measured.
+
+**What is not drawn yet:** plants, cliffs and pentapod nests. The views that
+would show them (`trees`, `cliffs`, `enemies`, `rocks`) fall back to the
+terrain. Plants are the next slice: they are the next groups in the stream,
+and the yumako tree and jellystem need `tile_restriction`.
 
 ### Nauvis: the terrain graded against a real surface (2026-11-26)
 

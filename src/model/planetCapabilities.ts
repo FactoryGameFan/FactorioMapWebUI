@@ -53,14 +53,15 @@ export const PLANET_CAPABILITIES: Readonly<Record<Planet, PlanetCapability>> = {
     views: ["terrain", "all"],
     fallToTerrain: ["enemies", "cliffs", "trees", "rocks"],
   },
-  // Terrain only, and dev mode only (#454, slice 2): the tiles a real surface
-  // holds (argmax plus tile correction), but no plants, cliffs, stone or enemies. Every other view
-  // renders the terrain, so the default `all` composite shows terrain alone.
+  // Dev mode only (#454): the tiles a real surface holds (argmax plus tile
+  // correction), and in `resources` and `all` the stone and two stromatolites
+  // a real surface places (slice 3). No plants, cliffs or pentapod nests yet,
+  // so the views that would show them render the terrain.
   gleba: {
     rendered: true,
     devOnly: true,
-    views: ["terrain"],
-    fallToTerrain: ["resources", "enemies", "cliffs", "trees", "rocks", "all", "landmask"],
+    views: ["terrain", "resources", "all"],
+    fallToTerrain: ["enemies", "cliffs", "trees", "rocks", "landmask"],
   },
   aquilo: {
     rendered: true,

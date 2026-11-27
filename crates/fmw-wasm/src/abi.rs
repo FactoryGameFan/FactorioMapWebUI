@@ -109,11 +109,16 @@
 //! +96  f64 x 4   placement_sweep_box: x0, y0, x1, y1 (decoded, NOT read
 //!                since #492; kept so the layout does not move)
 //!
-//! gleba block (24 bytes, so a Gleba request is 80)
+//! gleba block (48 bytes, so a Gleba request is 104)
 //!  +0  f64  water_frequency    control:gleba_water:frequency
 //!  +8  f64  water_size         control:gleba_water:size
 //! +16  f64  plants_frequency   control:gleba_plants:frequency (the plants
 //!                              noise the tile scores read)
+//! +24  f64  stone_frequency    control:gleba_stone:frequency
+//! +32  f64  stone_size         control:gleba_stone:size
+//! +40  f64  stone_richness     control:gleba_stone:richness (the stone
+//!                              overlay; the block grew 24 -> 48 for it,
+//!                              appended, so the first three did not move)
 //!                No trig: Gleba's sines are per position (the spiral
 //!                bridges), so the module computes every one with the game's
 //!                own polynomial (`vm_sin`, #531), which touches no libm.
@@ -205,8 +210,9 @@ pub const VULCANUS_PARAMS_BYTES: usize = 312;
 /// placement sweep box.
 pub const AQUILO_PARAMS_BYTES: usize = 128;
 
-/// Size of Gleba's parameter block: the three terrain levers.
-pub const GLEBA_PARAMS_BYTES: usize = 24;
+/// Size of Gleba's parameter block: the three terrain levers, then the
+/// `gleba_stone` control's three.
+pub const GLEBA_PARAMS_BYTES: usize = 48;
 
 /// Nauvis's block: eight climate and elevation levers, the tree overlay's four,
 /// the rock overlay's two, its sweep box, the enemy overlay's two, the cliff
@@ -361,9 +367,9 @@ pub enum Params {
     Gleba(GlebaParams),
 }
 
-/// Gleba's block: the three terrain levers, wire values.
+/// Gleba's block: the three terrain levers and the stone control, wire values.
 ///
-/// Neutral is 1 for all three, and `Default` gives 0 on purpose, as
+/// Neutral is 1 for all six, and `Default` gives 0 on purpose, as
 /// [`FulgoraParams::scrap_frequency`] explains: the writer substitutes the
 /// neutral value once.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -374,6 +380,12 @@ pub struct GlebaParams {
     pub water_size: f64,
     /// `control:gleba_plants:frequency`.
     pub plants_frequency: f64,
+    /// `control:gleba_stone:frequency`.
+    pub stone_frequency: f64,
+    /// `control:gleba_stone:size`.
+    pub stone_size: f64,
+    /// `control:gleba_stone:richness`.
+    pub stone_richness: f64,
 }
 
 /// Fulgora's block.
@@ -818,6 +830,9 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
             water_frequency: f64_at(bytes, p),
             water_size: f64_at(bytes, p + 8),
             plants_frequency: f64_at(bytes, p + 16),
+            stone_frequency: f64_at(bytes, p + 24),
+            stone_size: f64_at(bytes, p + 32),
+            stone_richness: f64_at(bytes, p + 40),
         }),
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
@@ -1135,7 +1150,7 @@ mod tests {
             REQUEST_BYTES,
             sizes.into_iter().max().expect("five planets")
         );
-        assert_eq!(COMMON_BYTES + GLEBA_PARAMS_BYTES, 80);
+        assert_eq!(COMMON_BYTES + GLEBA_PARAMS_BYTES, 104);
     }
 
     /// Each failure mode has its OWN code, so a caller can tell "you sent an
@@ -1316,11 +1331,11 @@ mod tests {
         assert!(decode(&b).is_ok());
     }
 
-    /// A distinct value into each of Gleba's three slots, all read back.
+    /// A distinct value into each of Gleba's six slots, all read back.
     #[test]
     fn no_two_gleba_fields_share_an_offset() {
         let mut b = header(PLANET_GLEBA, GLEBA_PARAMS_BYTES);
-        for i in 0..3 {
+        for i in 0..6 {
             let at = COMMON_BYTES + i * 8;
             b[at..at + 8].copy_from_slice(&(100.0f64 + i as f64).to_le_bytes());
         }
@@ -1328,10 +1343,17 @@ mod tests {
             panic!("wrong block")
         };
         assert_eq!(
-            [g.water_frequency, g.water_size, g.plants_frequency],
-            [100.0, 101.0, 102.0]
+            [
+                g.water_frequency,
+                g.water_size,
+                g.plants_frequency,
+                g.stone_frequency,
+                g.stone_size,
+                g.stone_richness
+            ],
+            [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]
         );
-        assert_eq!(GLEBA_PARAMS_BYTES, 3 * 8);
+        assert_eq!(GLEBA_PARAMS_BYTES, 6 * 8);
     }
 
     /// The committed fixture's Gleba bytes decode to the request it records.
@@ -1359,8 +1381,15 @@ mod tests {
             panic!("wrong block")
         };
         assert_eq!(
-            [g.water_frequency, g.water_size, g.plants_frequency],
-            [1.5, 0.5, 0.75]
+            [
+                g.water_frequency,
+                g.water_size,
+                g.plants_frequency,
+                g.stone_frequency,
+                g.stone_size,
+                g.stone_richness
+            ],
+            [1.5, 0.5, 0.75, 1.25, 0.625, 3.0]
         );
     }
 

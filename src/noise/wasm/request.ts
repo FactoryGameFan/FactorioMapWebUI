@@ -47,8 +47,11 @@ export const VULCANUS_PARAMS_BYTES = 312;
 /** Must equal `fmw_wasm::abi::AQUILO_PARAMS_BYTES`. */
 export const AQUILO_PARAMS_BYTES = 128;
 
-/** Must equal `fmw_wasm::abi::GLEBA_PARAMS_BYTES`: three terrain levers. */
-export const GLEBA_PARAMS_BYTES = 24;
+/**
+ * Must equal `fmw_wasm::abi::GLEBA_PARAMS_BYTES`: three terrain levers, then
+ * the `gleba_stone` control's three.
+ */
+export const GLEBA_PARAMS_BYTES = 48;
 
 /** Capacity of a Nauvis request's starting-point list. Mirrors
  * `fmw_wasm::abi::NAUVIS_MAX_STARTING_POINTS`. */
@@ -371,7 +374,7 @@ export interface AquiloRenderRequest extends CommonRenderRequest {
   };
 }
 
-/** Gleba's three terrain levers, wire values, neutral at 1. */
+/** Gleba's levers, wire values, neutral at 1. */
 export interface GlebaControls {
   /** `control:gleba_water:frequency`. */
   readonly waterFrequency?: number;
@@ -379,6 +382,12 @@ export interface GlebaControls {
   readonly waterSize?: number;
   /** `control:gleba_plants:frequency`, which the tile scores read. */
   readonly plantsFrequency?: number;
+  /** `control:gleba_stone:frequency`, read by the stone overlay. */
+  readonly stoneFrequency?: number;
+  /** `control:gleba_stone:size`. */
+  readonly stoneSize?: number;
+  /** `control:gleba_stone:richness`. */
+  readonly stoneRichness?: number;
 }
 
 export interface GlebaRenderRequest extends CommonRenderRequest {
@@ -702,7 +711,7 @@ function writeAquiloParams(view: DataView, req: AquiloRenderRequest): void {
 }
 
 /**
- * Gleba's block: three levers and no trig. Gleba's sines are per position (the
+ * Gleba's block: six levers and no trig. Gleba's sines are per position (the
  * spiral bridges), so the module computes them itself with the game's own
  * polynomial (#531), which touches no libm. See `fmw_wasm::abi` for the table.
  */
@@ -713,6 +722,9 @@ function writeGlebaParams(view: DataView, req: GlebaRenderRequest): void {
   view.setFloat64(p, c.waterFrequency ?? 1, true);
   view.setFloat64(p + 8, c.waterSize ?? 1, true);
   view.setFloat64(p + 16, c.plantsFrequency ?? 1, true);
+  view.setFloat64(p + 24, c.stoneFrequency ?? 1, true);
+  view.setFloat64(p + 32, c.stoneSize ?? 1, true);
+  view.setFloat64(p + 40, c.stoneRichness ?? 1, true);
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {
