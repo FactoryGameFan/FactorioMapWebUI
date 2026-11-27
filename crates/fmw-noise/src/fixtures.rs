@@ -12813,6 +12813,11 @@ fn gleba_layers_match_the_game() {
 /// Count where `ours` (row-major over the fixture window) differs from the real
 /// surface, by tile name and by map colour.
 fn gleba_differences(ours: &[GlebaTile], real: &[String]) -> (usize, usize) {
+    assert_eq!(
+        ours.len(),
+        real.len(),
+        "our tiles and the real surface's tiles"
+    );
     let (mut names, mut colours) = (0usize, 0usize);
     for (tile, want) in ours.iter().zip(real) {
         if tile.game_name() != want {

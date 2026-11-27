@@ -654,6 +654,11 @@ pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
 /// Correction is defined on tiles, so at any other zoom a pixel is the raw
 /// argmax at a point, as the game's own preview draws it.
 fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
+    // An empty window paints nothing. Without this, tile correction would
+    // still generate and correct the margin chunks around it.
+    if req.width == 0 || req.height == 0 {
+        return;
+    }
     let stack = gleba_stack(req.seed0, p);
     let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
     let tiles =
