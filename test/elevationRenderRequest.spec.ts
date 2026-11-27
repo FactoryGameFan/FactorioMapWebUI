@@ -733,26 +733,45 @@ describe("fulgora scrap is gated on the view", () => {
         {
           ...GL,
           view: "terrain",
-          glebaControls: { waterFrequency: 2, waterSize: 0.5, plantsFrequency: 3 },
+          glebaControls: {
+            waterFrequency: 2,
+            waterSize: 0.5,
+            plantsFrequency: 3,
+            stoneFrequency: 4,
+            stoneSize: 0.25,
+            stoneRichness: 6,
+          },
         },
         stub,
       );
       const v = sent();
-      expect(v.byteLength).toBe(COMMON_BYTES + 24);
+      expect(v.byteLength).toBe(COMMON_BYTES + 48);
       expect(v.getUint32(8, true)).toBe(4);
       expect(v.getUint32(12, true)).toBe(VIEW.terrain);
-      expect([0, 1, 2].map((i) => v.getFloat64(COMMON_BYTES + i * 8, true))).toEqual([2, 0.5, 3]);
+      expect([0, 1, 2, 3, 4, 5].map((i) => v.getFloat64(COMMON_BYTES + i * 8, true))).toEqual([
+        2, 0.5, 3, 4, 0.25, 6,
+      ]);
+    });
+
+    it("sends the resources and all views as themselves, and an absent stone lever as 1", () => {
+      for (const view of ["resources", "all"] as const) {
+        const { engine: stub, sent } = recordingEngine();
+        runRenderRequest({ ...GL, view }, stub);
+        const v = sent();
+        expect(v.getUint32(12, true)).toBe(VIEW[view]);
+        expect([3, 4, 5].map((i) => v.getFloat64(COMMON_BYTES + i * 8, true))).toEqual([1, 1, 1]);
+      }
     });
 
     it("renders absent controls at neutral 1, not 0", () => {
       const { engine: stub, sent } = recordingEngine();
       runRenderRequest({ ...GL, view: "terrain" }, stub);
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 6; i++) {
         expect(sent().getFloat64(COMMON_BYTES + i * 8, true)).toBe(1);
       }
     });
 
-    it.each(["all", "resources", "cliffs", "enemies", "trees", "rocks", "landmask"] as const)(
+    it.each(["cliffs", "enemies", "trees", "rocks", "landmask"] as const)(
       "serves view %s as terrain",
       (view) => {
         const { engine: stub, sent } = recordingEngine();

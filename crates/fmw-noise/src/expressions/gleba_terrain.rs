@@ -135,10 +135,16 @@ pub struct GlebaTerrainFields {
     pub fertile_solid: f64,
     /// `gleba_fertile_spots_coastal`.
     pub fertile_spots_coastal: f64,
+    /// `gleba_wobble_x`, which the starting stone cone's distortion reads.
+    pub wobble_x: f64,
+    /// `gleba_wobble_small_x` and `gleba_wobble_small_y`, which warp the
+    /// coordinates `gleba_simple_spot` reads.
+    pub wobble_small_x: f64,
+    pub wobble_small_y: f64,
 }
 
-/// A multioctave noise with Gleba's usual `output_scale = 1`.
-fn noise(
+/// A multioctave noise, every parameter narrowed to its f32 slot.
+pub(crate) fn noise(
     seed0: u32,
     seed1: u32,
     octaves: f64,
@@ -163,7 +169,7 @@ const SEED1_SHARED: u32 = 1_000_000;
 /// starting cones and the spot-region cache of `gleba_fertile_spots_coastal_raw`.
 pub struct GlebaTerrain {
     seed0: u32,
-    vars: GlebaSeedVars,
+    pub(crate) vars: GlebaSeedVars,
     water_size: f64,
     starting: GlebaStarting,
     starting_positions: Vec<Point>,
@@ -575,6 +581,9 @@ impl GlebaTerrain {
             rockpools_pitrock: pitrock,
             fertile_solid,
             fertile_spots_coastal,
+            wobble_x,
+            wobble_small_x,
+            wobble_small_y,
         }
     }
 }

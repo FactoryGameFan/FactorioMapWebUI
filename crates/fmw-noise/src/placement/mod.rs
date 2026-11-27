@@ -11,6 +11,7 @@
 
 pub mod aquilo;
 pub mod generate;
+pub mod gleba;
 pub mod roll;
 
 #[cfg(test)]

@@ -16,9 +16,11 @@ from code that was read, but not traced instruction by instruction.
 "MEASURED" means checked against game output, with the test named.
 
 Where it is used: `crates/fmw-noise/src/placement/generate.rs` (the model, in
-its module docs) and `crates/fmw-noise/src/placement/aquilo.rs` (Aquilo's five
-autoplacers). Aquilo is the only planet that runs it so far, because it is the
-only planet whose every entity autoplacer is ported.
+its module docs), `crates/fmw-noise/src/placement/aquilo.rs` (Aquilo's five
+autoplacers) and `crates/fmw-noise/src/placement/gleba.rs` (Gleba's stone and
+two stromatolites, #454). Aquilo runs it because every one of its entity
+autoplacers is ported. Gleba runs it for the first group of its stream and
+for stone, which needs no stream (see "Gleba" below).
 
 ## How it was read
 
@@ -526,17 +528,54 @@ be (-42, -68), but (-41, -68) comes first in decreasing tile order. A real
 surface keeps only that first vent, because the others' 2.8-tile boxes
 overlap it. The preview draws them all.
 
+## Gleba (2026-11-26): the first group, and a resource that needs no stream
+
+Read from the prototypes on a real Gleba surface
+(`test/fixtures/oracle-gleba-real-surface-entities.seed123456.json`,
+`scripts/probes/gleba-entities`). Sorted by (`order`, name):
+
+| order | prototypes |
+| --- | --- |
+| `""` | copper-stromatolite, iron-stromatolite (one group of two) |
+| `a[tree]-b[forest]-a` .. `-k`, `a[tree]-d[decorative]-a[water-cane]` | the twelve plants (`gleba_plants`) |
+| `b` | stone, the only resource |
+| `b[enemy]-c[spawner]-a[large]`, `-b[small]` | the two pentapod nests |
+
+- **The stromatolites set no `order`**, so they share the empty one and form
+  ONE group, the first the stream serves. That is the first group of two any
+  port has needed: the richness tie-break (section 2) is now in
+  `generate_chunk`. Neither autoplace sets a `richness_expression` in the
+  Lua, and the port reads 0 for both, so a full tie goes to copper, which
+  sorts first. The game's default richness for them was not read; it can only
+  matter on a tile where both probabilities are equal and positive, and the
+  replay windows hold none.
+- **Stone needs no stream.** Its probability is `(size > 0) * (richness >
+  1)`, exactly 0 or 1, and the roll is `p > U` with `U` in `[0, 1)`. So the
+  plant groups between it and the stromatolites, unported, cannot move it.
+- **MEASURED:** replayed on our corrected tiles and applied row-major with
+  touching boxes colliding, the stream places all 5,193 stone and
+  stromatolites of the 1024 window at the game's positions, and nothing else.
+  Without the apply step the queues hold 8,631. Columns order gives the same
+  5,193, so this surface does not tell rows from columns.
+- **Plants block stromatolites across chunk edges.** With every control at its
+  default, one copper stromatolite of 5,193 is missing: a water-cane from the
+  chunk above, applied first, stands where its box crosses the edge. So the
+  apply step really does test later groups' entities of earlier chunks, which
+  is section 7's rule seen from another planet.
+
 ## What `generate.rs` does not port, and why each is unreachable today
 
 - **`placement_density`.** The attempt count per tile. No entity prototype
   sets it (only decoratives do), so it is the default 1.
 - **Grid snapping** (`buildPosition`), for entities that are neither
   resources nor off-grid. No caller has one.
-- **The richness tie-break** inside a group with more than one prototype.
-  Every Aquilo group holds one prototype. `generate_chunk` refuses (panics on)
-  a group of two rather than quietly using a rule the game does not. Vulcanus's
-  solid ores share `order` `"b"`, so Vulcanus needs it.
-- **`tile_restriction`.** No Aquilo entity declares one.
+- **`tile_restriction`.** No Aquilo entity declares one, nor do Gleba's stone
+  and stromatolites. Gleba's yumako tree and jellystem do, so the plants need
+  it.
+
+The richness tie-break inside a group of more than one prototype is ported
+now (Gleba's stromatolites). Vulcanus's solid ores share `order` `"b"` and
+will use it too.
 
 Two smaller gaps in the Aquilo inputs:
 

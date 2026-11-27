@@ -204,6 +204,11 @@ POISONED_TESTS=(
   # one (64,969 and 65,150 of 65,536 wrong under poison, measured).
   fixtures::fulgora_real_surface::fulgora_raw_tiles_against_the_real_surface
   fixtures::fulgora_real_surface::fulgora_corrected_tiles_against_the_real_surface
+  # Gleba's stone and stromatolites (#454, slice 3): the resource fields carry
+  # `poison::f64_result` on the iron probability and the stone richness, and
+  # the real-surface replay reaches the generator's `poison::bool_result` roll.
+  fixtures::gleba_entities::gleba_resource_fields_match_the_game
+  fixtures::gleba_entities::gleba_entities_replay_the_real_surface
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

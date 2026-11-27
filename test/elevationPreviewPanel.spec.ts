@@ -897,13 +897,15 @@ describe("ElevationPreviewPanel", () => {
       expect((renderer.render as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
     });
 
-    it("with dev mode on, offers terrain alone and renders it with the preset's levers", async () => {
+    it("with dev mode on, offers terrain, resources and all, and renders with the preset's levers", async () => {
       stubCanvas();
       const renderer = okRenderer();
       const w = setup("nauvis", renderer, { planet: "gleba", dev: true });
       expect(w.find('[data-test="unsupported"]').exists()).toBe(false);
-      expect(w.find('[data-test="view-terrain"]').attributes("disabled")).toBeUndefined();
-      for (const t of ["resources", "cliffs", "rocks", "enemies", "trees", "all"]) {
+      for (const t of ["terrain", "resources", "all"]) {
+        expect(w.find(`[data-test="view-${t}"]`).attributes("disabled"), t).toBeUndefined();
+      }
+      for (const t of ["cliffs", "rocks", "enemies", "trees"]) {
         expect(w.find(`[data-test="view-${t}"]`).attributes("disabled"), t).toBeDefined();
       }
 
@@ -913,7 +915,14 @@ describe("ElevationPreviewPanel", () => {
       const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(arg).toMatchObject({
         planet: "gleba",
-        glebaControls: { waterFrequency: 1, waterSize: 1, plantsFrequency: 1 },
+        glebaControls: {
+          waterFrequency: 1,
+          waterSize: 1,
+          plantsFrequency: 1,
+          stoneFrequency: 1,
+          stoneSize: 1,
+          stoneRichness: 1,
+        },
       });
     });
   });

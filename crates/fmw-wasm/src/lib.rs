@@ -1891,10 +1891,11 @@ mod aquilo_render_tests {
 #[cfg(test)]
 mod gleba_render_tests {
     use crate::abi::{self, Status, COMMON_BYTES, GLEBA_PARAMS_BYTES};
-    use crate::render::{render, PLANET_GLEBA, VIEW_ALL, VIEW_TERRAIN};
+    use crate::render::{render, PLANET_GLEBA, VIEW_ALL, VIEW_RESOURCES, VIEW_TERRAIN};
     use fmw_noise::at::At;
     use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
     use fmw_noise::expressions::gleba_terrain::GlebaControls;
+    use fmw_noise::placement::gleba::GlebaEntity;
 
     /// The derived Gleba surface seed for map seed 123456.
     const SEED0: u32 = 3_215_206_427;
@@ -1920,6 +1921,10 @@ mod gleba_render_tests {
         put_f64(&mut b, 48, 1.0);
         for (i, v) in levers.into_iter().enumerate() {
             put_f64(&mut b, COMMON_BYTES + i * 8, v);
+        }
+        // The `gleba_stone` control, neutral: only the entity views read it.
+        for i in 3..6 {
+            put_f64(&mut b, COMMON_BYTES + i * 8, 1.0);
         }
         b
     }
@@ -2003,10 +2008,11 @@ mod gleba_render_tests {
         }
     }
 
-    /// Every view but terrain is refused.
+    /// Every view but terrain, resources and all is refused.
     #[test]
     fn views_gleba_does_not_serve_are_refused() {
-        for view in (0..14).filter(|v| *v != VIEW_TERRAIN) {
+        let served = [VIEW_TERRAIN, VIEW_RESOURCES, VIEW_ALL];
+        for view in (0..14).filter(|v| !served.contains(v)) {
             let b = request(view, (2, 2), (0.0, 0.0), [1.0; 3]);
             let mut out = vec![0u8; 16];
             assert_eq!(
@@ -2015,6 +2021,51 @@ mod gleba_render_tests {
                 "view {view}"
             );
         }
-        assert_ne!(VIEW_ALL, VIEW_TERRAIN);
+        for view in served {
+            let b = request(view, (2, 2), (0.0, 0.0), [1.0; 3]);
+            assert_eq!(render(&b, &mut [0u8; 16]), Status::Ok, "view {view}");
+        }
+    }
+
+    /// The resources view is the terrain with stone and stromatolites over it:
+    /// every pixel that differs is one of their two colours, and a window
+    /// with both holds both. Off one tile per pixel no entity is drawn, so
+    /// the two views are the same bytes.
+    #[test]
+    fn the_resources_view_is_the_terrain_with_entity_marks() {
+        let (dims, origin) = ((128, 128), (384.0, 256.0));
+        let render_view = |view, tpp: f64| {
+            let mut b = request(view, dims, origin, [1.0; 3]);
+            b[48..56].copy_from_slice(&tpp.to_le_bytes());
+            let mut out = vec![0u8; 128 * 128 * 4];
+            assert_eq!(render(&b, &mut out), Status::Ok);
+            out
+        };
+        let terrain = render_view(VIEW_TERRAIN, 1.0);
+        let resources = render_view(VIEW_RESOURCES, 1.0);
+        let marks = [
+            GlebaEntity::IronStromatolite.color(),
+            GlebaEntity::Stone.color(),
+        ];
+        let mut counts = [0usize; 2];
+        for (t, r) in terrain
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(resources.as_chunks::<4>().0)
+        {
+            if t != r {
+                let k = marks
+                    .iter()
+                    .position(|m| r[..3] == *m)
+                    .expect("a differing pixel is an entity colour");
+                counts[k] += 1;
+            }
+        }
+        assert!(counts[0] > 0 && counts[1] > 0, "{counts:?}");
+        assert_eq!(
+            render_view(VIEW_RESOURCES, 2.0),
+            render_view(VIEW_TERRAIN, 2.0)
+        );
     }
 }

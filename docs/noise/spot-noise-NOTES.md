@@ -300,12 +300,21 @@ region sizes 1024/2048):
    skip_span, ... (the `generateSpotList` rule; measured at span 1, offset 1 by
    scripts/probes/spot-skip-offset - see the `skip_offset` gotcha above). For
    skip_offset < skip_span this is "j mod skip_span == skip_offset".
-   **The shipped `select_spots` (`crates/fmw-noise/src/spot_selection.rs`)
-   implements only that special case**: it filters `j % span == skip_offset`,
-   which keeps nothing when the offset is not below the span. Gleba's
-   `gleba_simple_spot` call (span 1, offset 1, count 22) would come out empty,
-   where the game keeps every accepted spot but the first (21 of 22 per region,
-   before the target trim). It must change before Gleba stone is ported (#489).
+   `select_spots` (`crates/fmw-noise/src/spot_selection.rs`) implemented only
+   that special case until 2026-11-26: it filtered `j % span == skip_offset`,
+   which keeps nothing when the offset is not below the span, so Gleba's
+   `gleba_simple_spot` call (span 1, offset 1, count 22) came out empty. It
+   now keeps `j >= skip_offset && (j - skip_offset) % skip_span == 0` (#489),
+   which is the same set below the span: 21 of the 22 accepted spots per
+   region, before the target trim. Graded by Gleba stone: `gleba_stone_richness`
+   matches the game at 2,560 of 2,560 positions and 1,577 with the old filter
+   (`gleba_resource_fields_match_the_game` in
+   `crates/fmw-noise/src/fixtures/gleba_entities.rs`). It also accounts for the
+   2026-11-26 research finding that offset 1 is NOT a pure removal under
+   Gleba's own favorability: the target is the mean density over the skip
+   set, so dropping spot 0 moves the target, and with it how many spots the
+   trim keeps. The port reproduces the game's field with exactly that rule;
+   no other mechanism was tested.
 3. TARGET: regional quantity target = mean of density_expression over the
    set's accepted spot positions, times region_size^2. (Proven to sample the
    ACCEPTED spots, not the first candidates and not a uniform average, via

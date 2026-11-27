@@ -6,6 +6,7 @@ import {
   runRenderRequest,
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
+import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
 import { compileEngine, instantiateEngine, type EngineExports } from "../src/noise/wasm/engine";
 
@@ -104,6 +105,30 @@ function differingPixels(a: Uint8ClampedArray, b: Uint8ClampedArray): string[] {
   }
   return out;
 }
+
+describe("tiled render equals untiled render at the app's 1024 geometry, Gleba", () => {
+  // Gleba's `all` view places stone and stromatolites with the game's
+  // per-chunk generator and the apply step's collision (#454, slice 3). Each
+  // worker tile generates its own chunks plus a one-chunk ring, so a seam that
+  // dropped or doubled an entity would show here. The seed is the derived
+  // Gleba surface seed for map seed 123456.
+  it("Gleba all, at 128 and 256 px worker tiles", () => {
+    const req: ElevationRenderRequest = {
+      ...appReq(surfaceSeedForPlanet("gleba", 123456)),
+      planet: "gleba",
+      view: "all",
+    };
+    const whole = new Uint8ClampedArray(runRenderRequest(req, engine).buffer);
+    const terrain = new Uint8ClampedArray(
+      runRenderRequest({ ...req, view: "terrain" }, engine).buffer,
+    );
+    // Not vacuous: thousands of entity pixels, so a seam has some to lose.
+    expect(differingPixels(whole, terrain).length).toBeGreaterThan(10000);
+    for (const size of TILE_SIZES) {
+      expect(differingPixels(renderTiled(req, size), whole), `${size} px tiles`).toEqual([]);
+    }
+  }, 600_000);
+});
 
 describe("tiled render equals untiled render at the app's 1024 geometry (#566)", () => {
   for (const seed0 of SEEDS) {

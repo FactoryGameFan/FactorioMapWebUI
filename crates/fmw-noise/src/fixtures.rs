@@ -12924,5 +12924,8 @@ fn gleba_corrected_tiles_against_a_columns_request() {
 // Aquilo (#454): the terrain against a real surface, in its own file.
 mod aquilo_real_surface;
 
+// Gleba (#454, slice 3): stone and the stromatolites against a real surface.
+mod gleba_entities;
+
 // Fulgora against a real surface: the raw argmax, then tile correction.
 mod fulgora_real_surface;

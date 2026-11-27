@@ -11,8 +11,10 @@
 //!    least a threshold that starts at `spacing^2` and is multiplied by 15/16
 //!    on every rejection. The walk ends when
 //!    `candidate_spot_count * skip_span` spots have been accepted.
-//! 2. **Skip.** Accepted spot `j` belongs to set `j mod skip_span`; the
-//!    expression renders the set matching its `skip_offset`.
+//! 2. **Skip.** The expression keeps accepted spots `skip_offset`,
+//!    `skip_offset + skip_span`, ... (`generateSpotList`). Below the span that
+//!    is the set `j mod skip_span == skip_offset`; at or past it, the first
+//!    `skip_offset` spots are dropped and the rest are kept every `skip_span`.
 //! 3. **Target.** The regional quantity target is the mean of
 //!    `density_expression` over the set's accepted spots, times the region
 //!    area.
@@ -128,11 +130,15 @@ pub fn select_spots(key: &SpotRegionKey, p: &SpotSelectParams) -> Vec<SelectedSp
         }
     }
 
-    // Phase 2: this expression's skip set.
+    // Phase 2: this expression's skip set. `generateSpotList` copies the
+    // accepted indices `skip_offset, skip_offset + skip_span, ...`. That is
+    // `j % span == skip_offset` only while the offset is below the span;
+    // Gleba's `gleba_simple_spot` runs offset 1 with span 1, which keeps every
+    // accepted spot but the first (#489).
     let mine: Vec<SpotPoint> = accepted
         .iter()
         .enumerate()
-        .filter(|(j, _)| j % span == p.skip_offset)
+        .filter(|&(j, _)| j >= p.skip_offset && (j - p.skip_offset).is_multiple_of(span))
         .map(|(_, a)| *a)
         .collect();
 
@@ -252,6 +258,32 @@ mod tests {
         let out = select_spots(&KEY, &params(&one, &step, &one, None));
         assert!(!out.is_empty(), "the x>0 spots must survive");
         assert!(out.iter().all(|s| s.quantity > 0.0));
+    }
+
+    /// An offset at or past the span drops the first `skip_offset` accepted
+    /// spots and keeps the rest (#489). Under constant density the trim keeps
+    /// every spot, so offset 1 with span 1 is offset 0 minus its first spot,
+    /// which is what the game's constant-favorability arm showed
+    /// (`docs/noise/spot-noise-NOTES.md`). The old `j % span == offset`
+    /// filter kept nothing here.
+    #[test]
+    fn an_offset_past_the_span_drops_the_first_spots() {
+        let one = |_: f64, _: f64| 1.0;
+        let q = |_: f64, _: f64| 10.0;
+        let at = |offset: usize, span: usize| {
+            let mut p = params(&one, &q, &one, None);
+            p.skip_offset = offset;
+            p.skip_span = span;
+            select_spots(&KEY, &p)
+        };
+        let all = at(0, 1);
+        assert_eq!(all.len(), 21);
+        assert_eq!(at(1, 1), all[1..].to_vec());
+        assert_eq!(at(5, 1), all[5..].to_vec());
+        // Below the span the rule is the old one: offset 1 of span 3 keeps
+        // accepted spots 1, 4, 7, ... of the 63 the walk accepts.
+        let span3 = at(1, 3);
+        assert_eq!(span3.len(), 21);
     }
 
     #[test]

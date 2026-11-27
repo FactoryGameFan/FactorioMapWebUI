@@ -37,13 +37,17 @@ use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::{
     FulgoraStack, CORRECTION_MARGIN_CHUNKS as FULGORA_CORRECTION_MARGIN_CHUNKS,
 };
-use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
+use fmw_noise::expressions::gleba_resources::GlebaStoneControls;
+use fmw_noise::expressions::gleba_stack::{
+    GlebaCtx, GlebaStack, KeptInputs, CORRECTION_MARGIN_CHUNKS,
+};
 use fmw_noise::expressions::gleba_terrain::GlebaControls;
 use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack, NAUVIS_RESOURCE_COUNT};
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::aquilo::{AquiloEntities, AquiloEntityView};
+use fmw_noise::placement::gleba::{place_chunks, rows};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
 use fmw_noise::resources::aquilo_wells::AquiloWell;
 use fmw_noise::resources::fulgora_catalog::{FulgoraScrapPlacement, SCRAP_MAP_COLOR};
@@ -293,7 +297,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         ) | (
             PLANET_AQUILO,
             VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ROCKS | VIEW_ALL | VIEW_ENTITY_FOOTPRINT
-        ) | (PLANET_GLEBA, VIEW_TERRAIN)
+        ) | (PLANET_GLEBA, VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ALL)
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -746,24 +750,49 @@ const KEPT_CHUNKS_MAX: i32 = 64;
 
 /// Build the Gleba graph for one render.
 pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
-    GlebaStack::new(&GlebaCtx {
-        seed0,
-        controls: GlebaControls {
-            water_frequency: p.water_frequency,
-            water_size: p.water_size,
-            plants_frequency: p.plants_frequency,
+    GlebaStack::with_stone(
+        &GlebaCtx {
+            seed0,
+            controls: GlebaControls {
+                water_frequency: p.water_frequency,
+                water_size: p.water_size,
+                plants_frequency: p.plants_frequency,
+            },
         },
-    })
+        &GlebaStoneControls {
+            frequency: p.stone_frequency,
+            size: p.stone_size,
+            richness: p.stone_richness,
+        },
+    )
 }
 
-/// Sweep the window and paint each pixel's Gleba tile in its `map_color`.
+/// Chunks generated around a Gleba entity render's own, on each side. A
+/// real surface applies chunks row-major, so a stromatolite near a chunk edge
+/// can be blocked by one the chunk above or to the left placed first; and an
+/// entity's box can reach one tile into the window from the chunk beside it.
+/// One ring covers both. Those ring chunks are themselves applied without
+/// THEIR earlier neighbours, which could only reach a window pixel through a
+/// chain of two edge collisions; the tiled-render test in
+/// `test/wasmGlebaEntityParity.spec.ts` stitches to the whole render byte for
+/// byte, and the whole 1024 window matches the real surface.
+const GLEBA_ENTITY_RING_CHUNKS: i64 = 1;
+
+/// The most chunks a Gleba entity render keeps terrain fields for (about
+/// 40 KB each, so 4 MB at the cap). The app's 128-pixel tiles touch 36 with
+/// the ring and 256-pixel tiles touch 100.
+const GLEBA_KEPT_CHUNKS_MAX: i64 = 100;
+
+/// Sweep the window and paint each pixel's Gleba tile in its `map_color`,
+/// and, for `resources` and `all`, stone and the two stromatolites over it.
 ///
-/// Terrain only (#454, slice 2). At one tile per pixel on a whole-tile origin
-/// the pixels are the tiles a REAL surface holds: the raw argmax (a tie going
-/// to the name that sorts first), then tile correction over the window's
-/// chunks plus [`CORRECTION_MARGIN_CHUNKS`] (`fmw_noise::tiles::correction`).
-/// Correction is defined on tiles, so at any other zoom a pixel is the raw
-/// argmax at a point, as the game's own preview draws it.
+/// At one tile per pixel on a whole-tile origin the pixels are the tiles a
+/// REAL surface holds: the raw argmax (a tie going to the name that sorts
+/// first), then tile correction over the window's chunks plus
+/// [`CORRECTION_MARGIN_CHUNKS`] (`fmw_noise::tiles::correction`). Correction
+/// is defined on tiles, so at any other zoom a pixel is the raw argmax at a
+/// point, as the game's own preview draws it, and no entity is drawn: the
+/// entities a real surface places depend on its corrected tiles.
 fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
     // An empty window paints nothing. Without this, tile correction would
     // still generate and correct the margin chunks around it.
@@ -772,14 +801,18 @@ fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
     }
     let stack = gleba_stack(req.seed0, p);
     let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
-    let tiles =
-        (req.tiles_per_pixel == 1.0 && whole(req.origin_x) && whole(req.origin_y)).then(|| {
-            stack.corrected_tiles(
-                (req.origin_x as i32, req.origin_y as i32),
-                (req.width, req.height),
-                CORRECTION_MARGIN_CHUNKS,
-            )
-        });
+    let on_tiles = req.tiles_per_pixel == 1.0 && whole(req.origin_x) && whole(req.origin_y);
+    if on_tiles && matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
+        render_gleba_entities(req, &stack, out);
+        return;
+    }
+    let tiles = on_tiles.then(|| {
+        stack.corrected_tiles(
+            (req.origin_x as i32, req.origin_y as i32),
+            (req.width, req.height),
+            CORRECTION_MARGIN_CHUNKS,
+        )
+    });
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
@@ -797,6 +830,66 @@ fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
             out[offset + 2] = color[2];
             out[offset + 3] = 255;
             offset += 4;
+        }
+    }
+}
+
+/// Gleba's `resources` and `all` views at one tile per pixel: the corrected
+/// terrain, then every stone and stromatolite a real surface places (#454,
+/// slice 3), each painted over its footprint in its map colour.
+///
+/// The entities come from the game's per-chunk generator and the apply step's
+/// collision (`fmw_noise::placement::gleba`), run over the window's chunks
+/// and a ring of [`GLEBA_ENTITY_RING_CHUNKS`] in row-major order, on the
+/// corrected tiles of all of them. Stone stands on land and a stromatolite's
+/// whole box on wetland, so no two footprints overlap.
+fn render_gleba_entities(req: &Request, stack: &GlebaStack, out: &mut [u8]) {
+    let (x0, y0) = (req.origin_x as i64, req.origin_y as i64);
+    let (w, h) = (i64::from(req.width), i64::from(req.height));
+    let ring = GLEBA_ENTITY_RING_CHUNKS;
+    let cx = (x0.div_euclid(32) - ring, (x0 + w - 1).div_euclid(32) + ring);
+    let cy = (y0.div_euclid(32) - ring, (y0 + h - 1).div_euclid(32) + ring);
+    let (ox, oy) = (cx.0 * 32, cy.0 * 32);
+    let (aw, ah) = ((cx.1 - cx.0 + 1) * 32, (cy.1 - cy.0 + 1) * 32);
+    // Correction evaluates the terrain at every tile of these chunks, and the
+    // entity fields read five of those values at the same tiles, so keep them
+    // rather than evaluate the terrain twice. Capped, as Aquilo's are, so a
+    // huge window does not hold hundreds of megabytes; above it the entity
+    // pass evaluates its own (the output is the same).
+    let chunks = (cx.1 - cx.0 + 1) * (cy.1 - cy.0 + 1);
+    let mut kept = (chunks <= GLEBA_KEPT_CHUNKS_MAX)
+        .then(|| KeptInputs::new((cx.0 as i32, cx.1 as i32), (cy.0 as i32, cy.1 as i32)));
+    let tiles = stack.corrected_tiles_keeping(
+        (ox as i32, oy as i32),
+        (aw as u32, ah as u32),
+        CORRECTION_MARGIN_CHUNKS,
+        kept.as_mut(),
+    );
+    let index = |tx: i64, ty: i64| ((ty - oy) * aw + (tx - ox)) as usize;
+
+    let mut offset = 0usize;
+    for ty in y0..y0 + h {
+        for tx in x0..x0 + w {
+            let color = tiles[index(tx, ty)].color();
+            out[offset] = color[0];
+            out[offset + 1] = color[1];
+            out[offset + 2] = color[2];
+            out[offset + 3] = 255;
+            offset += 4;
+        }
+    }
+
+    let at = |tx: i64, ty: i64| {
+        ((ox..ox + aw).contains(&tx) && (oy..oy + ah).contains(&ty)).then(|| tiles[index(tx, ty)])
+    };
+    for e in place_chunks(stack, &at, kept.as_ref(), &rows(cx, cy)) {
+        let (fx0, fx1, fy0, fy1) = e.footprint();
+        let color = e.entity.color();
+        for ty in fy0.max(y0)..=fy1.min(y0 + h - 1) {
+            for tx in fx0.max(x0)..=fx1.min(x0 + w - 1) {
+                let o = (((ty - y0) * w + (tx - x0)) * 4) as usize;
+                out[o..o + 3].copy_from_slice(&color);
+            }
         }
     }
 }

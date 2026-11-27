@@ -80,9 +80,13 @@ export function readGlebaControls(preset: {
 }): Required<GlebaControls> {
   const water = preset.autoplaceControls.gleba_water;
   const plants = preset.autoplaceControls.gleba_plants;
+  const stone = preset.autoplaceControls.gleba_stone;
   return {
     waterFrequency: water ? water.frequency : 1,
     waterSize: water ? water.size : 1,
     plantsFrequency: plants ? plants.frequency : 1,
+    stoneFrequency: stone ? stone.frequency : 1,
+    stoneSize: stone ? stone.size : 1,
+    stoneRichness: stone ? stone.richness : 1,
   };
 }
