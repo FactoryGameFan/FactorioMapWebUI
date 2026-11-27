@@ -935,8 +935,10 @@ never reach them. Two 256 x 256 windows, each from one radius request:
 - **Not covered by these windows:** the second pass's shared queue (skipping
   the second pass changes no Nauvis tile here; Gleba's tests catch it), and
   overlays: resources, rocks and enemies still test the RAW tile for their
-  water gate, and the tree overlay reads the painted pixel, which is now the
-  corrected one at one tile per pixel.
+  water gate (`tile_allowed`), and the tree overlay reads the painted pixel,
+  which is now the corrected one at one tile per pixel. The rock pass's
+  pre-roll water test reads the corrected tile too, at the rock's own
+  position (#566, below).
 
 **Tier 1** is `crates/fmw-noise/src/fixtures/nauvis_real_surface.rs` (by tile
 name; the raw, spawn and coast tests are in `POISONED_TESTS`). **Tier 3** is the
@@ -982,6 +984,61 @@ Nauvis overlays' water gates evaluate tiles on the point kernel
 (`nauvis_tile_at`), not the chunk grid, so they cannot reuse the corrected
 pass's raw tiles without changing their output. Sharing raw chunks between
 worker tiles would be the next lever.
+
+### Nauvis rocks at worker-tile seams (#566)
+
+The rock pass tests a rock's tile for water before it rolls. It sweeps one
+pixel past the worker tile, because a rock there still owes the tile part of
+its 3 x 3 mark. The test used to read the painted buffer at
+`(py * width + px)`, the way `renderRocks.ts` did, and for `px = -1` that is
+the last pixel of the previous row: the far edge of the same tile. So a seam
+rock depended on the tile width. On the 1024 `rocks` view, 128-pixel tiles
+matched the whole render on 12 of 12 seeds and 256-pixel tiles missed a 3-pixel
+rock column on 4 (seeds 123456, 7, 8 and 11).
+
+**The fix reads the terrain at the rock's own world position.** The render
+keeps its Nauvis tiles in a grid that covers the sweep halo as well as the
+window (`NauvisTerrainGrid` in `crates/fmw-wasm/src/render.rs`), and the
+pre-roll test reads that grid. At one tile per pixel the halo tiles come out of
+the margin chunks the window's own correction has already corrected
+(`nauvis_corrected_tiles_reading_out`), so they cost nothing.
+
+Four ways were built and compared on the 1024 app window, 12 seeds, at 128 and
+256 pixel tiles:
+
+| fix | tiled = whole | whole render vs before | cost, `all` at 256 px |
+| --- | --- | --- | ---: |
+| correct a window widened by the halo | 12 of 12 | same | +16% (`rocks` +27%) |
+| read the halo from the margin (shipped) | 12 of 12 | same | about 0 |
+| a point outside the tile is not water | 12 of 12 | same | 0 |
+| drop the pre-roll test (`tile_allowed` alone) | 12 of 12 | 3 px off at water level 20 | 0 |
+
+- **Why not the widened window.** It is the same answer, and it pulls in a
+  whole extra ring of chunks, which spends most of what 256-pixel tiles save.
+- **Why not "outside is not water".** It is right only while the whole render's
+  answer for that tile is "not water" or `tile_allowed` refuses the rock
+  anyway. Nothing makes that so; it happened to hold on 12 seeds.
+- **Why not drop the test.** The test is live. At water level 20, seed 123456,
+  it refuses a rock at (797..799, 51) on a tile that correction made water,
+  which `tile_allowed` (the raw point kernel) cannot see. A real surface places
+  entities after correction, so the refusal is the faithful one.
+- **How exact the margin read is.** Not by proof, any more than the window's
+  own tiles are: both rest on the margin being wide enough. Over the 1024 app
+  window at 12 seeds and at water levels 0, 20 and -15, every halo tile matched
+  the whole window's tile, at both tile sizes. Without a margin the same reads
+  were 14 to 44 tiles off per render.
+  `halo_tiles_read_from_the_margin_match_a_window_that_holds_them` keeps a
+  coast-window case, with a raw-argmax control that misses 5 halo tiles.
+
+`test/tiledEqualityAppGeometry.spec.ts` renders the app's own geometry (1024
+square, one tile per pixel, the spawn at the centre, the `rocks` view) at 128
+and 256 pixel tiles on seeds 123456 and 7. Before the fix it failed at 256 on
+both, at (255, 417..419) and (512, 1015..1017); after, both pass.
+
+The `all` view also changed in one way the gate cannot see at these seeds: the
+pre-roll test used to read the painted buffer AFTER crude oil, whose mark may
+spill onto water, so an oil pixel over water read as land. It now reads the
+terrain. On seeds 123456, 7, 8 and 11 the `all` whole render did not move.
 
 ### Fulgora: the terrain view, graded against a real surface
 
