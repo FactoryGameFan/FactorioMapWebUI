@@ -1641,6 +1641,32 @@ describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes
     const terrain = Array.from(render(request(w), e));
     expect(all).not.toEqual(terrain);
   }, 300000);
+
+  /**
+   * The same request, drawn twice, each time on a freshly instantiated engine,
+   * must come back byte for byte the same.
+   *
+   * **This exists because of the render cache.** `render` draws each request
+   * once per file and copies it out after that, so no other test here draws
+   * the same request twice any more. Before the cache, the count tests redrew
+   * what the freeze tests drew, on new engine instances, and a render that
+   * depended on leftover module state or on anything but its request would
+   * have shown up there by accident. This states that check on purpose.
+   *
+   * Both draws call `runRenderRequest` directly, never the cache. The window
+   * is `very far` in the `all` view: one request that runs terrain, trees,
+   * rocks, enemies, cliffs and resources (oil's roll included). The test took
+   * 5.3 s for both draws on hammond (2026-11-26). The second engine is instantiated only after the first has
+   * rendered, so it cannot share any state the first one built.
+   */
+  it("draws the same bytes twice on two fresh engine instances", async () => {
+    const req = allRequest(ALL_WINDOWS[2]);
+    const first = new Uint8ClampedArray(runRenderRequest(req, await engine()).buffer);
+    const second = new Uint8ClampedArray(runRenderRequest(req, await engine()).buffer);
+    expect(first.length).toBe(req.width * req.height * 4);
+    expect(foldPixels(second)).toBe(foldPixels(first));
+    expect(Array.from(second)).toEqual(Array.from(first));
+  }, 300000);
 });
 
 describe("the WASM engine's Nauvis terrain against the game's own preview", () => {
