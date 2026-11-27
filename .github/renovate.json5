@@ -162,9 +162,11 @@
       ],
     },
     {
-      // @cloudflare/vitest-plugin hard-pins an exact wrangler. Split PRs install
-      // a second wrangler/workerd/miniflare tree instead of failing, so these two
-      // only ever move together.
+      // wrangler and @cloudflare/vitest-plugin both pull in miniflare and
+      // workerd. Through plugin 1.6.0 the plugin hard-pinned an exact wrangler; since
+      // 1.9.1 it depends on miniflare directly and pins `vitest: 5.1.1` as a peer.
+      // Split PRs install a second workerd/miniflare tree instead of failing, so
+      // these two only ever move together.
       //
       // The package was @cloudflare/vitest-pool-workers until its 1.0 rename
       // (workers-sdk #15074). The old name is deliberately NOT kept here: no

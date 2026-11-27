@@ -669,7 +669,7 @@ Dependabot's `ignore` entries cannot express them; Renovate's `packageRules` +
 `prBodyNotes` can, so the reasoning arrives attached to the proposal. `typescript`
 is disabled outright, `pako` carries a 14-day age and a pointer at the
 byte-exactness invariant, `wrangler` + `@cloudflare/vitest-plugin` are
-grouped because the plugin hard-pins wrangler, and the `engines.node` floor is
+grouped because both pull in miniflare and workerd, and the `engines.node` floor is
 marked as deliberate rather than stale.
 
 **The worker's `vitest` is coupled to `vite-plus`.** vite-plus pins the whole
@@ -694,16 +694,22 @@ because `pnpm run verify` misses the split. To update by hand, upgrade the
 global `vp` and run `pnpm vp migrate`, then delete any
 `minimumReleaseAgeExclude:` block it writes (see below).
 
-**`pnpm outdated`'s "latest" is a trap for `wrangler`.** `@cloudflare/vitest-plugin`
-pins it EXACTLY (`1.1.7` -> `wrangler = 4.131.0`, `1.1.8` -> `4.131.1`), so taking
-the newest wrangler splits the tree into two copies - which matters because
-`wrangler types --check` runs the direct copy while the tests run the plugin's.
-Move wrangler to whatever version the plugin being installed names, not to
-`latest`, and confirm with
-`grep -oE "^  wrangler@[0-9][0-9.]*" pnpm-lock.yaml | sort -u` returning ONE
-line. The `sort -u` is load-bearing: a single wrangler appears under both
-`packages:` and `snapshots:`, so without it one copy can print as two identical
-lines (it did on `main` at 4.124.0) and two copies can print as three.
+**Move `wrangler` and `@cloudflare/vitest-plugin` together, and check for ONE
+copy of each runtime piece afterwards.** Through plugin 1.6.0, the plugin pinned
+wrangler EXACTLY (`1.1.7` -> `wrangler = 4.131.0`), so taking the newest wrangler
+split the tree into two copies. Since 1.9.1 (2026-11-27, #548) the plugin no
+longer depends on wrangler at all: it depends on `miniflare` directly and declares
+`vitest: 5.1.1` EXACTLY as a peer. The coupling now runs through miniflare and
+workerd, which both packages pull in, so a split would show up as two of those.
+`wrangler types --check` runs wrangler's copy while the tests run the plugin's
+miniflare. Confirm with
+`grep -oE "^  (wrangler|miniflare|workerd)@[0-9][0-9a-z.-]*" pnpm-lock.yaml | sort -u`
+returning ONE line for each. The `sort -u` is load-bearing: a single package
+appears under both `packages:` and `snapshots:`, so without it one copy can print
+as two identical lines (it did on `main` at wrangler 4.124.0) and two copies can
+print as three. The plugin's exact vitest peer also means a vitest bump must wait
+for a plugin release that names it, as well as for vite-plus (see the vitest
+paragraph above).
 
 **The plugin was `@cloudflare/vitest-pool-workers` until its 1.0 rename**
 (workers-sdk #15074; the API is unchanged, see Cloudflare's
