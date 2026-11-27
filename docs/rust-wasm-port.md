@@ -1625,14 +1625,37 @@ version of this port, which read every raw tile of the margin and ring:
 
 | render | raw argmax | eager correction | `correct_window` |
 | --- | ---: | ---: | ---: |
-| app default: 1024 x 1024 `all`, 64 tiles of 128 px | 25.7 s | 84.3 s (3.3x) | 51.9 s (2.0x) |
+| 1024 x 1024 `all`, 64 tiles of 128 px, the four ore controls at size 0 | 25.7 s | 84.3 s (3.3x) | 51.9 s (2.0x) |
 | the same, `terrain` | 18.8 s | 76.8 s (4.1x) | 45.0 s (2.4x) |
 | one 256 x 256 terrain render | 1.16 s | 2.65 s (2.3x) | 1.88 s (1.6x) |
+
+**The first row is not the app's default view.** It was measured with the
+ore controls at size 0, as the real-surface capture had them, so it has no ore
+overlay. Re-measured on 2026-11-26 (same method): that setting gives 53.1 s,
+and the app's own default, ores on, gives 92.0 s at 128-pixel tiles and 68.6 s
+at 256. The ore overlay was the other half of the render (39.0 s at 128 px,
+31.1 s at 256), and it now goes through two projections; see "The ore overlay
+reads projections" below.
 
 The eager and lazy renders are byte-identical over the whole app view, in both
 views. What is left is mostly the raw tiles of each tile's margin: a 128-pixel
 tile (4 x 4 chunks) corrects 6 x 6 chunks, so it reads about 2.25 times its own
-tiles, at about 18 microseconds per raw Vulcanus tile. The worker pool divides these times by its worker count.
+tiles, at about 18 microseconds per raw Vulcanus tile. Measured with a counter
+on the raw reads (2026-11-26): a 128-pixel tile reads 38,200 raw tiles for its
+own 16,384, a 256-pixel tile 104,800 for 65,536, and the whole 1024 window as one
+piece would read 1,191,000.
+
+**The worker pool does not divide these times by its worker count.** Measured
+in Chrome with no DevTools attached, on hammond (6 performance cores with two
+threads each, plus 4 efficiency cores): a 256-pixel Vulcanus tile that takes
+4.4 s alone takes about 7 s while 14 others run beside it, so 15 or 16 workers
+run about 9 times faster than one thread at best, not 15 times. The 256-pixel
+grid also gives 16 tiles to 15 workers, so the 16th tile runs alone at the end:
+10.3 s against 7.6 s with 16 workers.
+
+**Do not time a render through a browser that has DevTools attached.** Under
+chrome-devtools-mcp the same tile took 8.5 s instead of 4.2 s, because V8 runs
+WebAssembly in its debug tier while a debugger is attached.
 
 **Not modelled.** Entity placement on a real surface runs after correction, so
 the rock lists that name hot and cold ground tiles may see corrected tiles. The
@@ -1650,6 +1673,41 @@ check 1,815 to 1,808), and no margin (1 to 72 pixels, and the 128-pixel tiled
 render no longer stitches). In tier 1: poison on the argmax (1 to 64,368 by
 name), and the `-each` capture corrected in columns order instead of its own
 row order (0 to non-zero).
+
+### The ore overlay reads projections (2026-11-26)
+
+`paint_vulcanus_resources` used to call the whole resource layer
+(`VulcanusStack::resources`) twice over: once per pixel for the three solid
+ores, and once per tile of every chunk the geyser roll resolves. The geyser
+roll resolves whole chunks, so a 1-pixel halo pulls in a full ring of them: 100
+chunks for an interior 256-pixel tile against its own 64, and 36 for a
+128-pixel tile against 16. The whole layer also evaluates four favorabilities,
+the sulfur cones, the sulfur spots and the patch noise, none of which a solid
+ore reads, and the three solid ores' cones and spots, none of which the geyser
+reads.
+
+Both passes now read a projection: the solid ores `ore_regions` (the existing
+fast path the ore -> cliff rejection uses), the geyser
+`sulfuric_acid_region_patchy`. Each projection calls the same helpers the full
+layer does, and each has a raw-bits twin test against it in
+`expressions/vulcanus_resources.rs`
+(`the_ore_region_projection_agrees_with_the_full_eval_bit_for_bit`,
+`the_geyser_patchy_projection_agrees_with_the_full_eval_bit_for_bit`).
+
+- **Output: unchanged.** The 1024 x 1024 app view stitches to the same bytes
+  as before at 128- and 256-pixel tiles, in the `all` and `resources` views.
+  No frozen count moved.
+- **Cost:** Node, one thread, sum over the tiles of the app view, medians of
+  two interleaved runs: `all` 68.4 s to 46.9 s at 256-pixel tiles (31% less)
+  and 92.1 s to 63.9 s at 128 (31%); the `resources` view 62.6 s to 40.7 s
+  at 256.
+  In Chrome with 15 workers the 256-pixel render went from 10.3 s to 7.0 s,
+  and with 4 workers from 19.3 s to 13.2 s.
+- **Poison still reaches the geyser.** Under `--features poison` the geyser
+  probability over a 64 x 64 window changes at every position, and the
+  placements over a 512 x 512 window go from 56 to 29,567: the projection
+  reaches the same `basis_noise`, spot and `f64_result` hooks the full layer
+  does.
 
 ### Current tier-1 counts
 

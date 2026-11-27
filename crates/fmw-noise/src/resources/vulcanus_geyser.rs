@@ -97,7 +97,9 @@ impl<'a, 'b> VulcanusGeyserPlacement<'a, 'b> {
 
 impl PlacementSource for VulcanusGeyserPlacement<'_, '_> {
     fn probability(&self, x: f64, y: f64) -> f64 {
-        sulfuric_acid_geyser_probability(self.stack.resources(x, y).sulfuric_acid_region_patchy)
+        // The projection rather than the full layer: the geyser reads one
+        // field, and this runs at every tile of every chunk the sweep touches.
+        sulfuric_acid_geyser_probability(self.stack.sulfuric_acid_region_patchy(x, y))
     }
 
     /// The two Vulcanus tiles no geyser may sit on.

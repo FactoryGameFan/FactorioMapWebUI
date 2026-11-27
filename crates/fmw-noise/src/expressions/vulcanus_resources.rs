@@ -615,6 +615,28 @@ impl<'a> VulcanusResources<'a> {
         )
     }
 
+    /// `max` of the two sulfur starting cones, which take three quarters of
+    /// the resource wobble where the solid ores take half.
+    fn starting_sulfur(&self, x: f64, y: f64, wx: f64, wy: f64) -> f64 {
+        let cone = |spot: &StartingSpot| {
+            starting_spot_at_angle(spot, x, y, f32r(0.75 * wx), f32r(0.75 * wy))
+        };
+        max2(cone(&self.spot_sulfur_far), cone(&self.spot_sulfur_near))
+    }
+
+    /// `vulcanus_sulfuric_acid_patches`: `0.8 * |patch noise|`.
+    fn sulfuric_acid_patches_at(&self, at: At) -> f64 {
+        f32r(f32r(0.8) * f64::from(self.patch_noise.eval_at(at)).abs())
+    }
+
+    /// `vulcanus_sulfuric_acid_region_patchy`, from the region and the patches.
+    fn patchy(sulfuric_acid_region: f64, sulfuric_acid_patches: f64) -> f64 {
+        f32r(
+            f32r(f32r(1.0 + sulfuric_acid_region) * f32r(0.5 + f32r(0.5 * sulfuric_acid_patches)))
+                - 1.0,
+        )
+    }
+
     /// `max(starting_<ore>, min(1 - starting_circle, place_*(...)))`.
     fn region(starting: f64, starting_circle: f64, placed: f64) -> f64 {
         max2(starting, min2(f32r(1.0 - f32r(starting_circle)), placed))
@@ -670,6 +692,40 @@ impl<'a> VulcanusResources<'a> {
         }
     }
 
+    /// `sulfuric_acid_region_patchy` alone, the one field the geyser's
+    /// probability reads.
+    ///
+    /// The geyser roll asks it at every tile of every chunk its sweep touches,
+    /// a 1-pixel halo included, so on the default Vulcanus preview it is the
+    /// largest overlay cost. Going through [`VulcanusResources::eval`] for it
+    /// would also evaluate the three solid ores' cones and spots and the four
+    /// favorabilities, none of which the geyser reads.
+    ///
+    /// **A projection, not a second model**, the same as
+    /// [`VulcanusResources::ore_regions`]: it calls the same helpers `eval`
+    /// does, and
+    /// `tests::the_geyser_patchy_projection_agrees_with_the_full_eval_bit_for_bit`
+    /// asserts the two agree on raw bits.
+    #[must_use]
+    pub fn sulfuric_acid_region_patchy(&self, x: f64, y: f64) -> f64 {
+        self.sulfuric_acid_region_patchy_at(At::point(x, y))
+    }
+
+    /// [`Self::sulfuric_acid_region_patchy`] at an [`At`] (#451).
+    #[must_use]
+    pub fn sulfuric_acid_region_patchy_at(&self, at: At) -> f64 {
+        let (x, y) = (at.x(), at.y());
+        let wobble = WobbleSums::at_pos(self.helpers, at);
+        let starting_circle = self.spawn.eval_at(at, wobble).starting_circle;
+        let (wx, wy) = self.resource_wobble_at(at);
+        let sulfuric_acid_region = Self::region(
+            self.starting_sulfur(x, y, wx, wy),
+            starting_circle,
+            self.place_capped_spots_at(self.sulfur_spots, at),
+        );
+        Self::patchy(sulfuric_acid_region, self.sulfuric_acid_patches_at(at))
+    }
+
     /// Evaluate every graded field of this layer at one position.
     #[must_use]
     pub fn eval(&self, x: f64, y: f64) -> ResourceFields {
@@ -693,10 +749,7 @@ impl<'a> VulcanusResources<'a> {
         let starting_tungsten = cone(&self.spot_tungsten, 0.5);
         let starting_coal = cone(&self.spot_coal, 0.5);
         let starting_calcite = cone(&self.spot_calcite, 0.5);
-        let starting_sulfur = max2(
-            cone(&self.spot_sulfur_far, 0.75),
-            cone(&self.spot_sulfur_near, 0.75),
-        );
+        let starting_sulfur = self.starting_sulfur(x, y, wx, wy);
 
         let tungsten_region = Self::region(
             starting_tungsten,
@@ -719,11 +772,8 @@ impl<'a> VulcanusResources<'a> {
             self.place_capped_spots_at(self.sulfur_spots, at),
         );
 
-        let sulfuric_acid_patches = f32r(f32r(0.8) * f64::from(self.patch_noise.eval_at(at)).abs());
-        let sulfuric_acid_region_patchy = f32r(
-            f32r(f32r(1.0 + sulfuric_acid_region) * f32r(0.5 + f32r(0.5 * sulfuric_acid_patches)))
-                - 1.0,
-        );
+        let sulfuric_acid_patches = self.sulfuric_acid_patches_at(at);
+        let sulfuric_acid_region_patchy = Self::patchy(sulfuric_acid_region, sulfuric_acid_patches);
 
         // `vulcanus_metal_tile = max(0, vulcanus_tungsten_ore_probability)`,
         // where the probability is
@@ -816,6 +866,52 @@ mod tests {
         assert!(
             nonzero > 100,
             "only {nonzero} of 432 positions had any ore signal"
+        );
+    }
+
+    /// The [`VulcanusResources::sulfuric_acid_region_patchy`] fast path the
+    /// geyser roll reads, against the full [`VulcanusResources::eval`], on RAW
+    /// BITS - the twin of the ore-region test above.
+    ///
+    /// The geyser overlay reads ONLY the projection, so this is what keeps it
+    /// drawing the field the resource-layer fixture grades.
+    #[test]
+    fn the_geyser_patchy_projection_agrees_with_the_full_eval_bit_for_bit() {
+        let ctx = EvalCtx::new(123_456);
+        let base = crate::expressions::vulcanus_stack::VulcanusBase::with_host_trig(&ctx);
+        let biomes = base.biomes_with_host_trig();
+        let stack =
+            crate::expressions::vulcanus_stack::VulcanusStack::with_host_trig(&base, &biomes);
+
+        // Sulfur is sparse - a 17-tile grid over -500..500 finds `patchy > 0`
+        // at 19 of 3,600 positions - so three windows sit where seed 123456
+        // has it: the starting area, where the two sulfur cones decide, and
+        // two patches where the sulfur spots do. The fourth is far out, where
+        // only the spots can reach.
+        let mut positive = 0usize;
+        for (x0, y0, step) in [
+            (-80.0, 70.0, 4.0),
+            (-275.0, 165.0, 3.0),
+            (-410.0, -395.0, 3.0),
+            (1500.0, 1500.0, 19.0),
+        ] {
+            for i in 0..12 {
+                for j in 0..12 {
+                    let (x, y) = (x0 + f64::from(i) * step, y0 + f64::from(j) * step);
+                    let full = stack.resources(x, y).sulfuric_acid_region_patchy;
+                    let proj = stack.sulfuric_acid_region_patchy(x, y);
+                    assert_eq!(proj.to_bits(), full.to_bits(), "patchy at ({x}, {y})");
+                    if proj > 0.0 {
+                        positive += 1;
+                    }
+                }
+            }
+        }
+        // Without this the comparison could pass on a field that is negative
+        // (no geyser possible) everywhere sampled. 132 at the time of writing.
+        assert!(
+            positive > 100,
+            "only {positive} of 576 positions could hold a geyser"
         );
     }
 

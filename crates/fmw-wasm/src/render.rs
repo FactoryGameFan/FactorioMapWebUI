@@ -2123,10 +2123,13 @@ fn paint_vulcanus_resources(
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            // One evaluation for all three ores rather than one per ore. The
-            // TypeScript asks each entry's own memoised region closure and
-            // stops at the first winner; this reads the same values off one
-            // pass of the layer, which is the same numbers in fewer calls.
+            // One evaluation for all three ores rather than one per ore, and
+            // through the `ore_regions` projection rather than the whole
+            // resource layer: the full layer also evaluates the sulfur cones,
+            // the sulfur spots, the patch noise and four favorabilities, none
+            // of which a solid ore reads. The projection agrees with the full
+            // layer on raw bits (its twin test in `vulcanus_resources.rs`),
+            // and it halves this pass.
             //
             // Both the field and the roll are read at the pixel's TILE, as
             // `VulcanusOreFootprint::occupies` reads them. At a fractional
@@ -2134,11 +2137,15 @@ fn paint_vulcanus_resources(
             // pair one tile's `rp` with a point elsewhere in it, which is not
             // the graded footprint.
             let (tx, ty) = (wx.floor(), wy.floor());
-            let regions = stack.resources(tx, ty);
+            let regions = stack.ore_regions(tx, ty);
             let penalty = roll.penalty_at(tx, ty);
             for entry in &thresholded {
-                if ore_probability(entry.region(&regions), penalty) < RESOURCE_PROBABILITY_THRESHOLD
-                {
+                // Every thresholded entry is a solid ore, so this always has
+                // a region; the `else` is the geyser, which rolls instead.
+                let Some(region) = entry.ore_region(&regions) else {
+                    continue;
+                };
+                if ore_probability(region, penalty) < RESOURCE_PROBABILITY_THRESHOLD {
                     continue;
                 }
                 let color = entry.map_color();
