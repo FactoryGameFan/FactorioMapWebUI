@@ -65,7 +65,7 @@ impl GlebaStack {
     ) -> Vec<GlebaTile> {
         let layers = gleba_layers();
         let mut raw = |x: i32, y: i32| tile_id(self.tile_at(At::tile(x, y)));
-        correct_window(&mut raw, &layers, origin, size, margin_chunks)
+        correct_window(&mut raw, &layers, None, origin, size, margin_chunks)
             .into_iter()
             .map(|id| TILE_ORDER[usize::from(id) - 1])
             .collect()

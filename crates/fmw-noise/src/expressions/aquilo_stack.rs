@@ -130,7 +130,7 @@ impl AquiloStack {
             }
             aquilo_tile_id(f.tile())
         };
-        correct_window(&mut raw, &layers, origin, size, margin_chunks)
+        correct_window(&mut raw, &layers, None, origin, size, margin_chunks)
             .into_iter()
             .map(|id| TILE_ORDER[usize::from(id) - 1])
             .collect()

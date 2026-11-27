@@ -66,6 +66,9 @@ use fmw_noise::rocks::vulcanus_field::VulcanusRockFields;
 use fmw_noise::rocks::vulcanus_placement::VulcanusRockPlacement;
 use fmw_noise::tiles::fulgora_catalog::FulgoraTile;
 use fmw_noise::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog};
+use fmw_noise::tiles::nauvis_correction::{
+    nauvis_corrected_tiles, NAUVIS_CORRECTION_MARGIN_CHUNKS,
+};
 use fmw_noise::tiles::nauvis_resolve::nauvis_tile;
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
 use fmw_noise::trees::catalog::{TREE_MAP_COLOR, TREE_MAX_ALPHA};
@@ -970,12 +973,37 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     let stack = NauvisStack::new(&ctx);
     let catalog = NauvisTileCatalog::new(req.seed0);
 
+    // At one tile per pixel on a whole-tile origin the pixels are the tiles a
+    // REAL surface holds: the raw argmax, then tile correction over the
+    // window's chunks plus a margin (`fmw_noise::tiles::nauvis_correction`),
+    // as Gleba does. At any other zoom a pixel is the raw argmax at a point,
+    // as the game's own preview draws it.
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+    let corrected = (req.tiles_per_pixel == 1.0
+        && req.width > 0
+        && req.height > 0
+        && whole(req.origin_x)
+        && whole(req.origin_y))
+    .then(|| {
+        nauvis_corrected_tiles(
+            &stack,
+            &catalog,
+            (req.origin_x as i32, req.origin_y as i32),
+            (req.width, req.height),
+            NAUVIS_CORRECTION_MARGIN_CHUNKS,
+        )
+    });
+
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let color = nauvis_tile_color(nauvis_tile(&stack, &catalog, terrain_at(req, wx, wy)));
+            let tile = match &corrected {
+                Some(t) => t[(py * req.width + px) as usize],
+                None => nauvis_tile(&stack, &catalog, terrain_at(req, wx, wy)),
+            };
+            let color = nauvis_tile_color(tile);
             out[offset] = color[0];
             out[offset + 1] = color[1];
             out[offset + 2] = color[2];

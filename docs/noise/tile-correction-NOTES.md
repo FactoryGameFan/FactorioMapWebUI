@@ -1,6 +1,7 @@
 # Tile correction - the map-gen pass that rewrites tile boundaries
 
-**Status: ported for Gleba (#454, 2026-11-26), and exact there.**
+**Status: ported for Gleba (#454, 2026-11-26) and Nauvis (the same day, with
+`allowed_neighbors`), and exact on both.**
 `crates/fmw-noise/src/tiles/correction.rs` is the port, and its module docs are
 the algorithm. The sections below this one are the earlier arm64 reading
 (2.1.14) and the preview probe, kept as history; where they say "not decoded",
@@ -50,10 +51,39 @@ name, on the radius capture and on a chunk-by-chunk columns capture
 (697 by map colour). A row-by-row request is 16 tiles off; its real order was
 not decoded (`scripts/probes/gleba-real-surface/README.md`).
 
-Not ported, because no Gleba tile reaches it: the per-prototype table of which
-tiles may touch (`TilePrototype +0x1b28`) and its replacement table (`+0x1b48`),
-the out-of-map tile, and the list-driven re-run at `+0x48a0`. Nauvis, Vulcanus
-and Fulgora still render the raw argmax, which is what their preview PNGs show.
+Not ported, because no Gleba or Nauvis tile reaches it: the out-of-map tile and
+the list-driven re-run at `+0x48a0`. Vulcanus, Fulgora and Aquilo still render
+the raw argmax, which is what their preview PNGs show.
+
+## Ported for Nauvis, with `allowed_neighbors` (2026-11-26)
+
+Nauvis needs one more piece: `deepwater` declares `allowed_neighbors =
+{ "water" }`. Read from the same binary:
+
+- **The table is symmetric.** `TilePrototype::postLoadSetup` (0x26e3d50) sets
+  `this.allowed[other] = 1` whenever `other.allowed[this]` is set, or both
+  tiles have `automatic_neighbors`. At runtime no land tile allows deepwater:
+  38 forbidden pairs, read back from `LuaTilePrototype::allowed_neighbors`.
+- **`isTileConsistentWithFixedTiles`** fails a candidate at once when a fixed
+  neighbour's table (`+0x1b28`) does not allow it, before any layer test, with
+  that neighbour as the offending tile.
+- **`correctFromTile`**, when the candidate does not allow the offending tile,
+  tries the offending tile's replacement entry for the candidate (`+0x1b48`)
+  instead of the offending tile itself.
+- **The replacement table** is filled in
+  `GlobalContext::postPrototypesConstructedSetup` (around 0x374ea94): for each
+  tile `P` and target `T` that `P` does not allow, a breadth-first search from
+  the tiles `P` allows, in tile-list order, recording each path's first step;
+  the first path to reach `T` gives the entry (0 when none does). Between
+  deepwater and land, in either direction, it is `water`, the only tile that
+  allows deepwater.
+
+`tiles::correction::Neighbours` is the port. Result: 0 of 65,536 tiles differ
+from a real surface in the spawn window and in a coast window where the raw
+argmax puts deepwater beside land 90 times (326 before correction; 73 with the
+layer checks alone). Over the whole 1024 x 1024 preview window a scratch real
+surface differs from the raw argmax at 2,810 tiles and from the corrected tiles
+at 0.
 
 Every claim below is graded. "Decoded" means read out of the disassembly
 instruction by instruction. "Structural" means the shape is clear from the call

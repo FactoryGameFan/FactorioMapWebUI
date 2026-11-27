@@ -1,5 +1,6 @@
 //! Tile correction: the pass a real surface runs after the tile argmax
-//! (`TileCorrectionMapGenerationTask`), ported for Gleba (#454, slice 2).
+//! (`TileCorrectionMapGenerationTask`), ported for Gleba (#454, slice 2) and
+//! used by Aquilo and Nauvis.
 //!
 //! Read out of the Factorio 2.1.23 linux64 headless binary (build 87750) with
 //! Ghidra, then checked against real surfaces: the reverse-engineering notes are
@@ -37,13 +38,33 @@
 //!   the same chunks one by one in another order moved 16 to 450 of 65,536
 //!   tiles in the game (`scripts/probes/gleba-real-surface/README.md`).
 //!
+//! ## Tiles that may not touch ([`Neighbours`])
+//!
+//! A tile prototype's `allowed_neighbors` (`TilePrototype +0x1b28`, made
+//! symmetric in `TilePrototype::postLoadSetup`) can forbid a pair outright:
+//! Nauvis's `deepwater` allows only `water`. Two more rules then apply, read
+//! from the 2.1.23 binary (#454 follow-up, Nauvis):
+//!
+//! - In `isTileConsistentWithFixedTiles`, a fixed neighbour that does not
+//!   allow the candidate makes it inconsistent at once, before any layer test,
+//!   with that neighbour as the offending tile.
+//! - In `correctFromTile`, when the candidate does not allow the offending
+//!   tile, the next candidate is not the offending tile but the offending
+//!   tile's replacement entry for the candidate (`+0x1b48`). That table is
+//!   built in `GlobalContext::postPrototypesConstructedSetup`: a breadth-first
+//!   search over the allowed graph from the offending tile to the candidate,
+//!   which records the first step. Between deepwater and land it is `water`.
+//!
+//! [`Area::new`] allows every pair, which is what Gleba needs.
+//!
 //! ## What is not ported
 //!
-//! - The prototype table that says which tiles may touch (`TilePrototype` at
-//!   `+0x1b28`, with a replacement table at `+0x1b48`). Every Gleba tile may
-//!   touch every other here; a planet with `allowed_neighbors` needs it.
 //! - The out-of-map tile, the list-driven re-run (`+0x48a0`), large tiles and
-//!   variation selection, none of which changes a Gleba tile id.
+//!   variation selection, none of which changes a Gleba or Nauvis tile id.
+//! - The replacement search runs over a planet's own tiles here, in id order;
+//!   the game's runs over every tile prototype. They agree whenever the first
+//!   step of every shortest path is a tile of the planet and unique, which is
+//!   true for Nauvis (only `water` allows `deepwater`, measured at runtime).
 //!
 //! Tiles are small integer ids, `1..`, with `0` reserved (the game's empty id)
 //! and [`UNKNOWN`] reserved for a tile not yet read; `layers[id]` is the tile's
@@ -93,6 +114,76 @@ pub const UNKNOWN: u8 = u8::MAX;
 /// Where an area reads a tile it does not hold yet, by area position `(a, b)`.
 type Source<'s> = RefCell<&'s mut dyn FnMut(usize, usize) -> u8>;
 
+/// Which tile ids may touch, and what correction puts between two that may
+/// not. Indexed by correction id; id 0 is unused.
+pub struct Neighbours {
+    allowed: Vec<Vec<bool>>,
+    /// `replacement[o][c]`: the tile tried after `c` when the offending tile
+    /// `o` and `c` may not touch. 0 when no path joins them.
+    replacement: Vec<Vec<u8>>,
+}
+
+impl Neighbours {
+    /// From a symmetric table of which ids may touch (`allowed[a][b]`, ids
+    /// `0..allowed.len()`). The replacement table is the game's search: from
+    /// `o`, every id `o` allows starts a path; paths grow breadth first, in id
+    /// order, and the first to reach `c` names its first step.
+    #[must_use]
+    pub fn from_allowed(allowed: Vec<Vec<bool>>) -> Self {
+        let n = allowed.len();
+        let mut replacement = vec![vec![0u8; n]; n];
+        for o in 1..n {
+            for c in 1..n {
+                replacement[o][c] = if c == o || allowed[o][c] {
+                    c as u8
+                } else {
+                    first_step(&allowed, o, c)
+                };
+            }
+        }
+        Self {
+            allowed,
+            replacement,
+        }
+    }
+
+    fn may_touch(&self, a: u8, b: u8) -> bool {
+        self.allowed[a as usize][b as usize]
+    }
+}
+
+/// The game's search for `replacement[o][c]` (see [`Neighbours::from_allowed`]).
+/// The queue holds `(tile, first step)`; a tile is marked seen once it is
+/// expanded, and a tile not yet seen may be queued more than once, as in the
+/// game.
+fn first_step(allowed: &[Vec<bool>], o: usize, c: usize) -> u8 {
+    let n = allowed.len();
+    let mut seen = vec![false; n];
+    seen[o] = true;
+    let mut queue: Vec<(usize, usize)> = Vec::new();
+    for x in 1..n {
+        if allowed[o][x] {
+            queue.push((x, x));
+            seen[x] = true;
+        }
+    }
+    let mut i = 0;
+    while i < queue.len() {
+        let (t, first) = queue[i];
+        i += 1;
+        if t == c {
+            return first as u8;
+        }
+        for y in 1..n {
+            if allowed[t][y] && !seen[y] {
+                queue.push((y, first));
+            }
+        }
+        seen[t] = true;
+    }
+    0
+}
+
 /// One 96 x 96 correction area, `[a][b]`.
 pub struct Area<'a> {
     tiles: Box<[[Cell<u8>; AREA]; AREA]>,
@@ -100,6 +191,8 @@ pub struct Area<'a> {
     /// given up front.
     source: Option<Source<'a>>,
     layers: &'a [u16],
+    /// `None` lets every pair touch.
+    neighbours: Option<&'a Neighbours>,
     /// The walk's "fixed" map, as generation stamps: a tile is fixed when its
     /// stamp equals `generation`. Bumping the generation clears the map, which
     /// the game does with a 9 KB `memset` per walk.
@@ -137,6 +230,7 @@ impl<'a> Area<'a> {
             tiles: Box::new(tiles.map(|column| column.map(Cell::new))),
             source: None,
             layers,
+            neighbours: None,
             stamps: Box::new([[0; AREA]; AREA]),
             generation: 0,
         }
@@ -151,8 +245,37 @@ impl<'a> Area<'a> {
             })),
             source: Some(RefCell::new(source)),
             layers,
+            neighbours: None,
             stamps: Box::new([[0; AREA]; AREA]),
             generation: 0,
+        }
+    }
+
+    /// An area whose tiles obey `neighbours` (see [`Neighbours`]).
+    #[must_use]
+    pub fn with_neighbours(
+        tiles: [[u8; AREA]; AREA],
+        layers: &'a [u16],
+        neighbours: &'a Neighbours,
+    ) -> Self {
+        let mut area = Self::new(tiles, layers);
+        area.neighbours = Some(neighbours);
+        area
+    }
+
+    fn may_touch(&self, a: u8, b: u8) -> bool {
+        self.neighbours.is_none_or(|n| n.may_touch(a, b))
+    }
+
+    /// The tile `correctFromTile` tries after `current` was found
+    /// inconsistent with `offending`: the offending tile itself, or, when the
+    /// two may not touch, the offending tile's replacement for `current`.
+    fn next_candidate(&self, current: u8, offending: u8) -> u8 {
+        match self.neighbours {
+            Some(n) if offending != current && !n.may_touch(current, offending) => {
+                n.replacement[offending as usize][current as usize]
+            }
+            _ => offending,
         }
     }
 
@@ -268,6 +391,10 @@ impl<'a> Area<'a> {
                 v.offending = n;
                 if n == c {
                     continue;
+                }
+                // A neighbour that may not touch this tile at all.
+                if !self.may_touch(n, c) {
+                    return fail(v);
                 }
                 let ln = self.layers[n as usize];
                 if ln == lc {
@@ -450,7 +577,7 @@ impl<'a> Area<'a> {
                         break;
                     }
                     tried.push(current);
-                    let next = verdict.offending;
+                    let next = self.next_candidate(current, verdict.offending);
                     let cycled = tried.contains(&next);
                     current = next;
                     if cycled || next == 0 {
@@ -545,10 +672,22 @@ impl TileWorld {
 /// Run the correction task for every chunk in `cx0..=cx1` by `cy0..=cy1`, in
 /// columns order (x outer, y inner), each reading and writing `world` as the
 /// game's tasks read and write the surface. The world must hold one chunk more
-/// on every side, every tile filled.
+/// on every side, every tile filled. Every pair of tiles may touch.
 pub fn correct_chunks(
     world: &mut TileWorld,
     layers: &[u16],
+    chunks_x: (i32, i32),
+    chunks_y: (i32, i32),
+) {
+    correct_chunks_with(world, layers, None, chunks_x, chunks_y);
+}
+
+/// [`correct_chunks`] for tiles that obey `neighbours` (`None` lets every
+/// pair touch).
+pub fn correct_chunks_with(
+    world: &mut TileWorld,
+    layers: &[u16],
+    neighbours: Option<&Neighbours>,
     (cx0, cx1): (i32, i32),
     (cy0, cy1): (i32, i32),
 ) {
@@ -560,6 +699,7 @@ pub fn correct_chunks(
         world,
         &mut |_, _| unreachable!("every tile is known"),
         layers,
+        neighbours,
         (cx0, cx1),
         (cy0, cy1),
     );
@@ -571,6 +711,7 @@ fn correct_chunks_reading(
     world: &mut TileWorld,
     raw: &mut dyn FnMut(i32, i32) -> u8,
     layers: &[u16],
+    neighbours: Option<&Neighbours>,
     (cx0, cx1): (i32, i32),
     (cy0, cy1): (i32, i32),
 ) {
@@ -591,6 +732,7 @@ fn correct_chunks_reading(
                     world.tiles[k]
                 };
                 let mut area = Area::lazy(layers, &mut source);
+                area.neighbours = neighbours;
                 for (a, b) in area.correct_centre_chunk() {
                     let v = area.tile(a, b);
                     changes.push((a * AREA + b, v));
@@ -617,10 +759,12 @@ fn correct_chunks_reading(
 ///
 /// The margin stands in for the chunks a real map has generated around the
 /// window: correction writes into neighbouring chunks, so a chunk's result
-/// depends on its neighbours' tasks.
+/// depends on its neighbours' tasks. `neighbours` says which tiles may not
+/// touch (`None` lets every pair touch).
 pub fn correct_window(
     raw: &mut dyn FnMut(i32, i32) -> u8,
     layers: &[u16],
+    neighbours: Option<&Neighbours>,
     (x0, y0): (i32, i32),
     (width, height): (u32, u32),
     margin_chunks: i32,
@@ -642,7 +786,7 @@ pub fn correct_window(
         tiles: Vec::new(),
     };
     world.tiles = vec![UNKNOWN; world.width() * (world.chunks_high * 32) as usize];
-    correct_chunks_reading(&mut world, raw, layers, (cx0, cx1), (cy0, cy1));
+    correct_chunks_reading(&mut world, raw, layers, neighbours, (cx0, cx1), (cy0, cy1));
     let mut out = Vec::with_capacity(width as usize * height as usize);
     for y in y0..y0 + height as i32 {
         for x in x0..x0 + width as i32 {
@@ -684,12 +828,33 @@ mod tests {
         }
     }
 
+    /// A rule for the random grids: id 1 may touch only id 2, the shape of
+    /// Nauvis's deepwater. The tests below run with and without it.
+    fn one_touches_only_two() -> Neighbours {
+        let mut allowed = vec![vec![true; 5]; 5];
+        for (i, row) in allowed.iter_mut().enumerate() {
+            row[i] = false;
+        }
+        for other in [3, 4] {
+            allowed[1][other] = false;
+            allowed[other][1] = false;
+        }
+        Neighbours::from_allowed(allowed)
+    }
+
     /// Skipping the walks from seeds inside a block of one id changes neither
     /// the tiles nor the positions written back, on random areas where
-    /// correction has plenty to do.
+    /// correction has plenty to do, with and without a neighbour rule.
     #[test]
     fn skipping_uniform_seeds_changes_nothing() {
         let layers = [0, 10, 20, 30, 40];
+        let rule = one_touches_only_two();
+        for rules in [None, Some(&rule)] {
+            skipping_uniform_seeds_changes_nothing_under(&layers, rules);
+        }
+    }
+
+    fn skipping_uniform_seeds_changes_nothing_under(layers: &[u16], rules: Option<&Neighbours>) {
         let mut skipped_somewhere = false;
         for seed in 0..12u64 {
             let mut tiles = [[0u8; AREA]; AREA];
@@ -698,8 +863,10 @@ mod tests {
                     *t = raw_tile(seed, a as i32, b as i32);
                 }
             }
-            let mut with = Area::new(tiles, &layers);
-            let mut without = Area::new(tiles, &layers);
+            let mut with = Area::new(tiles, layers);
+            let mut without = Area::new(tiles, layers);
+            with.neighbours = rules;
+            without.neighbours = rules;
             for a in 32..64 {
                 for b in 32..64 {
                     skipped_somewhere |= with.uniform_around(a, b);
@@ -729,10 +896,23 @@ mod tests {
 
     /// The lazy window and an eager world corrected over the same chunks give
     /// the same tiles, and the lazy one reads fewer raw tiles. Over several
-    /// seeds, windows and margins, so a lazy read that went stale would show.
+    /// seeds, windows and margins, so a lazy read that went stale would show,
+    /// with and without a neighbour rule. The rule must also change the
+    /// result somewhere, or its arm would grade nothing.
     #[test]
     fn lazy_and_eager_reads_agree() {
         let layers = [0, 10, 20, 30, 40];
+        let rule = one_touches_only_two();
+        let plain = lazy_and_eager_reads_agree_under(&layers, None);
+        let ruled = lazy_and_eager_reads_agree_under(&layers, Some(&rule));
+        assert_ne!(plain, ruled, "the neighbour rule changed no tile");
+    }
+
+    fn lazy_and_eager_reads_agree_under(
+        layers: &[u16],
+        rules: Option<&Neighbours>,
+    ) -> Vec<Vec<u8>> {
+        let mut results = Vec::new();
         for seed in 0..6u64 {
             for &((x0, y0), (w, h), margin) in &[
                 ((-40, 17), (70u32, 50u32), 1),
@@ -745,7 +925,8 @@ mod tests {
                         reads += 1;
                         raw_tile(seed, x, y)
                     },
-                    &layers,
+                    layers,
+                    rules,
                     (x0, y0),
                     (w, h),
                     margin,
@@ -771,7 +952,7 @@ mod tests {
                     }
                 }
                 let raw_world = world.tiles.clone();
-                correct_chunks(&mut world, &layers, (cx0, cx1), (cy0, cy1));
+                correct_chunks_with(&mut world, layers, rules, (cx0, cx1), (cy0, cy1));
                 let mut eager = Vec::new();
                 for y in y0..y0 + h as i32 {
                     for x in x0..x0 + w as i32 {
@@ -789,6 +970,78 @@ mod tests {
                     .count();
                 assert!(changed > 0, "seed {seed}: nothing to correct");
                 assert!(reads < ww * wh, "seed {seed}: read {reads} of {}", ww * wh);
+                results.push(lazy);
+            }
+        }
+        results
+    }
+
+    /// Ids 1..=3 in a chain: 1 may touch only 2, 2 touches both, 3 only 2. Id
+    /// 4 touches nothing. The deepwater, water, land shape, plus an island.
+    fn chain() -> Neighbours {
+        let mut allowed = vec![vec![false; 5]; 5];
+        for (a, b) in [(1, 2), (2, 3)] {
+            allowed[a][b] = true;
+            allowed[b][a] = true;
+        }
+        Neighbours::from_allowed(allowed)
+    }
+
+    /// The replacement is the first step from the offending tile toward the
+    /// candidate, the tile itself when the two may touch, and 0 when nothing
+    /// joins them.
+    #[test]
+    fn the_replacement_is_the_first_step_of_the_search() {
+        let n = chain();
+        assert_eq!(n.replacement[1][3], 2);
+        assert_eq!(n.replacement[3][1], 2);
+        assert_eq!(n.replacement[1][2], 2);
+        assert_eq!(n.replacement[2][3], 3);
+        assert_eq!(n.replacement[1][4], 0);
+        assert_eq!(n.replacement[4][1], 0);
+    }
+
+    /// The search takes the first step in id order when two paths are equally
+    /// short: 1 reaches 4 through 2 or 3, and 2 comes first.
+    #[test]
+    fn a_tie_between_paths_goes_to_the_lower_id() {
+        let mut allowed = vec![vec![false; 5]; 5];
+        for (a, b) in [(1, 2), (1, 3), (2, 4), (3, 4)] {
+            allowed[a][b] = true;
+            allowed[b][a] = true;
+        }
+        assert_eq!(Neighbours::from_allowed(allowed).replacement[1][4], 2);
+    }
+
+    /// An area half "land" (3) and half "deepwater" (1), both on one layer, so
+    /// the layer checks see nothing to fix. Without the neighbour rule nothing
+    /// changes; with it, every changed tile becomes "water" (2), and no
+    /// deepwater touches land in the centre chunk.
+    #[test]
+    fn forbidden_neighbours_are_replaced_by_the_tile_between_them() {
+        let layers = [0u16, 10, 10, 10, 10];
+        let mut tiles = [[3u8; AREA]; AREA];
+        for column in tiles.iter_mut().skip(48) {
+            *column = [1u8; AREA];
+        }
+        let mut plain = Area::new(tiles, &layers);
+        assert!(plain.correct_centre_chunk().is_empty());
+
+        let rules = chain();
+        let mut area = Area::with_neighbours(tiles, &layers, &rules);
+        let changed = area.correct_centre_chunk();
+        assert!(!changed.is_empty());
+        for (a, b) in &changed {
+            assert_eq!(area.tile(*a, *b), 2, "({a}, {b})");
+        }
+        for a in 32..64i32 {
+            for b in 32..64i32 {
+                if area.id(a, b) != 1 {
+                    continue;
+                }
+                for (da, db) in RING {
+                    assert_ne!(area.id(a + da, b + db), 3, "({a}, {b})");
+                }
             }
         }
     }
