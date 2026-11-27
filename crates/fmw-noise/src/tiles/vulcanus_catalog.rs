@@ -193,6 +193,54 @@ impl VulcanusTile {
     pub fn is_cliff_blocking(self) -> bool {
         matches!(self, Self::Lava | Self::LavaHot)
     }
+
+    /// The tile's effective layer (layer group plus `layer`), as the game
+    /// reports it at runtime in `oracle-vulcanus-real-surface.seed123456.json`.
+    /// Tile correction compares nothing else about a tile's look.
+    ///
+    /// Lava sits in `water-overlay` and lava-hot in `water`, far below the
+    /// ground tiles' `ground-natural`, which is why the raw `layer` numbers in
+    /// `tiles-vulcanus.lua` cannot be compared across them.
+    #[must_use]
+    pub fn layer(self) -> u16 {
+        match self {
+            Self::VolcanicJaggedGround => 189,
+            Self::Lava => 86,
+            Self::LavaHot => 69,
+            Self::VolcanicCracksHot => 186,
+            Self::VolcanicCracksWarm => 187,
+            Self::VolcanicCracks => 188,
+            Self::VolcanicFoldsFlat => 200,
+            Self::VolcanicAshLight => 198,
+            Self::VolcanicAshDark => 197,
+            Self::VolcanicAshFlats => 196,
+            Self::VolcanicPumiceStones => 199,
+            Self::VolcanicSmoothStone => 185,
+            Self::VolcanicSmoothStoneWarm => 184,
+            Self::VolcanicAshCracks => 190,
+            Self::VolcanicFolds => 202,
+            Self::VolcanicFoldsWarm => 201,
+            Self::VolcanicSoilDark => 191,
+            Self::VolcanicSoilLight => 192,
+            Self::VolcanicAshSoil => 195,
+        }
+    }
+
+    /// Whether two different tiles may stand side by side. Lava and lava-hot
+    /// set `allowed_neighbors` to each other and nothing else; every other
+    /// Vulcanus tile may touch every other. So lava never touches ground in
+    /// the game's table, though a real map is full of such edges: correction
+    /// leaves them alone, because no chain of tiles joins the two groups (see
+    /// `tiles::correction`). Read back from the game, as `layer` is.
+    ///
+    /// **Not [`Self::is_cliff_blocking`]**, though the set is the same two
+    /// tiles: that one reads the collision mask, this one the
+    /// `allowed_neighbors` lists.
+    #[must_use]
+    pub fn may_touch(self, other: Self) -> bool {
+        let lava = |t: Self| matches!(t, Self::Lava | Self::LavaHot);
+        lava(self) == lava(other)
+    }
 }
 
 /// FNV-1a 64 over every cliff-blocking tile's name, sorted, joined by `\n`.

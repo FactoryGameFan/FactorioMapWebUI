@@ -15,6 +15,7 @@ import {
 
 import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
+import realSurface from "./fixtures/oracle-vulcanus-real-surface.seed123456.json";
 import { createRenderCache } from "./renderCache";
 import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
 import { compileEngine, instantiateEngine } from "../src/noise/wasm/engine";
@@ -135,8 +136,19 @@ const VULCANUS_SURFACE_SEED = 1249936247;
  * was a volcanic-cracks / volcanic-cracks-warm swap; the point-kernel test in
  * `crates/fmw-noise/src/fixtures.rs` now has cracks equal to the game's score
  * to the ULP, and the spawn and biome chains are what flipped the winner.
+ *
+ * **0 -> 39,950 on 2026-11-26, and the PNG is now a reference, not the
+ * target.** The render runs tile correction at one tile per pixel, as a real
+ * surface does and the game's preview does not, so it now draws what a
+ * player's map shows (`crates/fmw-noise/src/tiles/vulcanus_correction.rs`).
+ * The 39,950 pixels are where correction changed a tile's colour: the raw
+ * argmax still matches this PNG at every pixel. They are where the real
+ * surface differs from the PNG: an uncommitted real capture of this whole
+ * 1024 x 1024 window (one radius request) differs from the PNG at 39,949
+ * pixels, and from our render at 3, all at its left edge. Inside the committed
+ * real-surface window the test below pins it pixel by pixel.
  */
-const DIFFERING_PX = 0;
+const DIFFERING_PX = 39950;
 
 /**
  * The count the same comparison reports with the ore levers left at their
@@ -151,8 +163,12 @@ const DIFFERING_PX = 0;
  * 10,605 -> 10,636 on 2026-11-24 with #521's f32 rounding. This arm compares
  * a deliberately mismatched render, so the count only has to stay far from
  * `DIFFERING_PX`; its drift with the arithmetic is not a finding.
+ *
+ * 10,636 -> 50,383 on 2026-11-26 with tile correction, which adds its own
+ * 39,950 pixels on top of the ore halo's 10,636, less 203 where the two
+ * overlap.
  */
-const DIFFERING_PX_AT_DEFAULT_LEVERS = 10636;
+const DIFFERING_PX_AT_DEFAULT_LEVERS = 50383;
 
 /** The capture's own setting: `--map-gen-settings` with each of these at size 0. */
 const ORE_LEVERS_OFF: VulcanusResourceControls = {
@@ -1020,6 +1036,165 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
     // 2026-11-26). This used to read `> DIFFERING_PX * 10`, which became
     // `> 0` once DIFFERING_PX reached 0, so it now states the scale directly.
     expect(differing).toBeGreaterThan((SIZE * SIZE) / 2);
+  }, 300000);
+});
+
+/**
+ * The target: `get_tile` on a REAL Vulcanus surface, 256 x 256 around spawn
+ * (`oracle-vulcanus-real-surface.seed123456.json`, one radius request, the
+ * capture's own levers). Eric ruled on 2026-11-26 that the engine should show
+ * what the map will actually look like, not the preview PNG. Each tile is
+ * drawn in its own `map_color`, so the three ash tiles that share one colour
+ * are graded by name in `crates/fmw-noise/src/tiles/vulcanus_correction.rs`,
+ * not here.
+ */
+describe("the WASM engine against the real Vulcanus surface", () => {
+  const SIDE = realSurface.window.width;
+  const WINDOW: ElevationRenderRequest = {
+    ...request(WINDOWS[0] as Window),
+    width: SIDE,
+    height: SIDE,
+    originX: realSurface.window.x0,
+    originY: realSurface.window.y0,
+    tilesPerPixel: 1,
+    vulcanusResourceControls: ORE_LEVERS_OFF,
+  };
+
+  const real = (() => {
+    const rgb = new Uint8Array(SIDE * SIDE * 3);
+    let i = 0;
+    for (const row of realSurface.rows) {
+      for (const c of row) {
+        const name = realSurface.names[
+          realSurface.alphabet.indexOf(c)
+        ] as keyof typeof realSurface.tiles;
+        rgb.set(realSurface.tiles[name].mapColor, i * 3);
+        i++;
+      }
+    }
+    expect(i).toBe(SIDE * SIDE);
+    return rgb;
+  })();
+
+  const sameAt = (rgb: Uint8Array, px: ArrayLike<number>, i: number): boolean =>
+    rgb[i * 3] === px[i * 4] &&
+    rgb[i * 3 + 1] === px[i * 4 + 1] &&
+    rgb[i * 3 + 2] === px[i * 4 + 2];
+
+  /** The real-surface window cut out of the 1024 preview PNG. */
+  const previewWindow = (): Uint8Array => {
+    const png = reference("oracle-preview-vulcanus-terrain.seed123456.png");
+    const off = (png.width - SIDE) / 2;
+    const rgb = new Uint8Array(SIDE * SIDE * 3);
+    for (let y = 0; y < SIDE; y++) {
+      const start = ((y + off) * png.width + off) * 3;
+      rgb.set(png.rgb.subarray(start, start + SIDE * 3), y * SIDE * 3);
+    }
+    return rgb;
+  };
+
+  /**
+   * **1 of 65,536 pixels**, at (-127, 95): we draw lava-hot, this capture
+   * lava. That tile is the order the game corrects chunks in near the edge of
+   * a request, not the pass: a capture of the whole 1024 window (a larger
+   * radius request) has lava-hot there too, and corrected in the order the
+   * game queues the tasks for this request, every tile matches
+   * (`the_games_request_order_reproduces_both_captures` in
+   * `vulcanus_correction.rs`). The render keeps columns order. Before tile
+   * correction this was 1,814, the gap between the preview PNG and the real
+   * surface.
+   */
+  const DIFFERING_FROM_REAL = 1;
+
+  it("matches the real surface at all but one pixel", async () => {
+    const ours = render(WINDOW, await engine());
+    const where: [number, number][] = [];
+    for (let i = 0; i < SIDE * SIDE; i++) {
+      if (!sameAt(real, ours, i)) {
+        where.push([WINDOW.originX + (i % SIDE), WINDOW.originY + Math.floor(i / SIDE)]);
+      }
+    }
+    withDiffArtifacts(
+      {
+        spec: "wasmVulcanusRenderParity",
+        case: "terrain-vs-real-surface",
+        game: { width: SIDE, height: SIDE, rgb: real },
+        ours: { width: SIDE, height: SIDE, rgba: ours },
+      },
+      () => {
+        expect(where.length).toBe(DIFFERING_FROM_REAL);
+        expect(where).toEqual([[-127, 95]]);
+      },
+    );
+  }, 300000);
+
+  /**
+   * The control that the correction is in the render: the preview PNG shows
+   * the raw argmax, and inside this window it differs from our render exactly
+   * where it differs from the real surface, plus the one tile above.
+   */
+  it("differs from the preview PNG exactly where the real surface does, but one", async () => {
+    const png = previewWindow();
+    const ours = render(WINDOW, await engine());
+    let fromPng = 0;
+    let realFromPng = 0;
+    const onlyOne: number[] = [];
+    for (let i = 0; i < SIDE * SIDE; i++) {
+      const pngVsOurs = !sameAt(png, ours, i);
+      const pngVsReal =
+        png[i * 3] !== real[i * 3] ||
+        png[i * 3 + 1] !== real[i * 3 + 1] ||
+        png[i * 3 + 2] !== real[i * 3 + 2];
+      fromPng += Number(pngVsOurs);
+      realFromPng += Number(pngVsReal);
+      if (pngVsOurs !== pngVsReal) onlyOne.push(i);
+    }
+    expect(realFromPng).toBe(1814);
+    expect(fromPng).toBe(1815);
+    // The one is (-127, 95), where the PNG and the real surface both have lava.
+    expect(onlyOne).toEqual([(95 - WINDOW.originY) * SIDE + (-127 - WINDOW.originX)]);
+  }, 300000);
+
+  /**
+   * Correction reads neighbouring chunks, so each worker tile corrects its own
+   * one-chunk margin. Cut into the app's 128-pixel tiles, and into 100-pixel
+   * tiles that are not chunk aligned, the render must still stitch back to the
+   * whole one byte for byte.
+   */
+  it("a tiled render stitches to the whole render", async () => {
+    const e = await engine();
+    const full: ImageBox = {
+      originX: WINDOW.originX,
+      originY: WINDOW.originY,
+      width: SIDE,
+      height: SIDE,
+      tilesPerPixel: 1,
+    };
+    const whole = render(WINDOW, e);
+    for (const size of [128, 100]) {
+      const tiles = planTiles(full, size).map((t) => ({
+        dx: t.dx,
+        dy: t.dy,
+        width: t.width,
+        height: t.height,
+        data: new Uint8ClampedArray(
+          runRenderRequest(
+            {
+              ...WINDOW,
+              originX: t.originX,
+              originY: t.originY,
+              width: t.width,
+              height: t.height,
+              fullImage: full,
+            },
+            e,
+          ).buffer,
+        ),
+      }));
+      expect(Array.from(stitchTiles(full, tiles)), `${String(size)}-pixel tiles`).toEqual(
+        Array.from(whole),
+      );
+    }
   }, 300000);
 });
 

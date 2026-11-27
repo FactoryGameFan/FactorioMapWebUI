@@ -62,6 +62,7 @@ const EXTRA_DISABLED: Record<string, string[]> = {
   nauvis: [],
   // `fulgora_islands` cannot be disabled and stays at its default.
   fulgora: ["scrap", "fulgora_cliff"],
+  vulcanus: ["calcite", "tungsten_ore", "vulcanus_coal", "sulfuric_acid_geyser"],
 };
 const PLANET = process.env.FMW_PLANET ?? "gleba";
 const EXTRA = EXTRA_DISABLED[PLANET];

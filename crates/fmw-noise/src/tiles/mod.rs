@@ -18,3 +18,4 @@ pub mod nauvis_catalog;
 pub mod nauvis_correction;
 pub mod nauvis_resolve;
 pub mod vulcanus_catalog;
+pub mod vulcanus_correction;

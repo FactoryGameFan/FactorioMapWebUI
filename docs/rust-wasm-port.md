@@ -1357,6 +1357,96 @@ the preview's entities on top. `docs/noise/aquilo-NOTES.md` has the findings.
   argmax misses 172 (`aquilo_corrected_land_matches_the_entity_stream_surface`),
   so the entity replay could read our tiles instead of the game's.
 
+### Vulcanus: the terrain graded against a real surface (2026-11-26)
+
+At one tile per pixel on a whole-tile origin, the Vulcanus render now runs tile
+correction, as a real surface does and the game's preview does not, so the
+terrain under every view is what a player's map shows. The module is
+`crates/fmw-noise/src/tiles/vulcanus_correction.rs`; `render_vulcanus` calls
+it. The target is `get_tile` on a real surface, the same rule Eric set for
+Gleba.
+
+**Against the real surface**, 256 x 256 tiles around spawn, map seed 123456,
+derived surface seed 1249936247, the ore controls at size 0 as the preview
+capture had them (`oracle-vulcanus-real-surface.seed123456.json`):
+
+| step | tiles wrong (by name) | pixels wrong (map colour) |
+| --- | ---: | ---: |
+| raw argmax (what the preview PNG shows) | 2,053 | 1,814 |
+| tile correction, layers only | 217 | 217 |
+| plus the may-touch rule (`allowed_neighbors`) | **1** | **1** |
+
+- **Layers.** `VulcanusTile::layer` is the game's effective layer, read back at
+  runtime. Lava (`water-overlay`, 86) and lava-hot (`water`, 69) sit far below
+  the ground tiles (`ground-natural`, 184 to 202).
+- **Tiles that may not touch.** Lava and lava-hot allow only each other, so
+  lava against ground fails the consistency check before any layer test
+  (`Neighbours` in `tiles/correction.rs`, the design the Nauvis port read from
+  the binary). The game's replacement search finds no path out of that pair,
+  in its own tile list or in ours, so lava and ground never replace each other;
+  without the rule the layer checks turn ground into lava along one-wide
+  strips, the 217 above.
+- **The last tile is order, not the pass.** At (-127, 95) we draw lava-hot and
+  the capture lava. Corrected in the order the game queues the tasks for that
+  request (`MapGenerationManager::request`, decoded by the Fulgora port:
+  each requested chunk first asks for its 3 x 3 one stage lower, so one
+  request corrects the 5 x 5 around it), both committed captures match at
+  every tile, the radius one and the one-at-a-time `-each` one
+  (`the_games_request_order_reproduces_both_captures`). An uncommitted capture
+  of the whole 1024 x 1024 window (one radius-18 request,
+  `realsurface.local/real-vulcanus-1024-radius18.json`) has lava-hot at
+  (-127, 95), like the render; the render differs from it at 3 of 1,048,576
+  tiles, all at its left edge, and the request order takes that to 0. The
+  render keeps columns order: it cannot know what a game requested, and
+  columns order agrees with the request order away from a request's edge.
+- **No ties.** No two tiles share the winning score anywhere in the 1024 x 1024
+  window (closest 2.4e-7), so the listing-order argmax needs no tie order.
+- **Margin.** One chunk, as Gleba: none leaves 79 tiles wrong, two changes
+  nothing. Tiled renders (128- and 100-pixel tiles) stitch to the whole one byte
+  for byte.
+
+**What moved.** The preview PNG is now a reference: the render differs from it
+at 39,950 of 1,048,576 pixels, where correction changed a colour, and inside
+the fixture window exactly where the real surface differs from it, plus the one
+order tile. Eleven tier-3 rows moved, all at one tile per pixel on a whole-tile
+origin (the 64 x 64 window at the origin in every view, and two ore windows in
+the resource view); in each, every moved pixel is a terrain pixel correction
+changed, and no overlay pixel moved. The overlay counts (rocks, cliffs, ore,
+composite) did not move. No tier-2 fold moved: correction is a render step.
+
+**What it costs.** The render goes through `correct_window` (lazy raw reads,
+no-op walks skipped, from the Aquilo port). Node, one thread, median of three
+interleaved runs on hammond with other sessions running; "eager" is the first
+version of this port, which read every raw tile of the margin and ring:
+
+| render | raw argmax | eager correction | `correct_window` |
+| --- | ---: | ---: | ---: |
+| app default: 1024 x 1024 `all`, 64 tiles of 128 px | 25.7 s | 84.3 s (3.3x) | 51.9 s (2.0x) |
+| the same, `terrain` | 18.8 s | 76.8 s (4.1x) | 45.0 s (2.4x) |
+| one 256 x 256 terrain render | 1.16 s | 2.65 s (2.3x) | 1.88 s (1.6x) |
+
+The eager and lazy renders are byte-identical over the whole app view, in both
+views. What is left is mostly the raw tiles of each tile's margin: a 128-pixel
+tile (4 x 4 chunks) corrects 6 x 6 chunks, so it reads about 2.25 times its own
+tiles, at about 18 microseconds per raw Vulcanus tile. The worker pool divides these times by its worker count.
+
+**Not modelled.** Entity placement on a real surface runs after correction, so
+the rock lists that name hot and cold ground tiles may see corrected tiles. The
+overlays still read the raw argmax; their cliff and lava tests only ask lava or
+not, which correction never changes.
+
+**Tier 3** is the real-surface block of `test/wasmVulcanusRenderParity.spec.ts`
+(1 pixel, at (-127, 95); the PNG window differs from the render at 1,815 pixels,
+exactly its 1,814 against the real surface plus that tile; tiled renders stitch).
+Tier 1 grades the same window by name in `vulcanus_correction.rs`.
+
+**Planted breaks, each turning a frozen count red.** Planted in the shipped
+render and run through tier 3: no may-touch rule (1 to 217 pixels; the PNG
+check 1,815 to 1,808), and no margin (1 to 72 pixels, and the 128-pixel tiled
+render no longer stitches). In tier 1: poison on the argmax (1 to 64,368 by
+name), and the `-each` capture corrected in columns order instead of its own
+row order (0 to non-zero).
+
 ### Current tier-1 counts
 
 **`crates/fmw-noise/src/fixtures.rs` is the authority, and the tables live in

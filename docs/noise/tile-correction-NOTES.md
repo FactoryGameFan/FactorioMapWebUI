@@ -577,3 +577,18 @@ off.
 A pixel where the engine differs from the game's preview cannot be explained as
 tile correction, because the preview does not run it. Every such pixel is a
 difference in the raw scores.
+
+## Vulcanus (2026-11-26)
+
+Vulcanus runs the same pass with its own layers and one may-touch pair: lava
+and lava-hot allow only each other (`allowed_neighbors`, read back at runtime;
+the same `Neighbours` rule the Nauvis port read from the binary). No chain of
+tiles joins that pair to the ground tiles, so the replacement is always 0 and
+lava never trades places with ground. Against a real surface (256 x 256 around
+spawn), the raw argmax is 2,053 tiles off by name, layers alone 217, and the
+full pass 1: one tile at the edge of what was requested (a capture of the
+whole 1024 window agrees with us there). Corrected in the order the game queues
+the tasks for each request (`MapGenerationManager::request`, decoded by the
+Fulgora port), the radius capture, a one-at-a-time capture and the 1024 capture
+all match at every tile. The port is `crates/fmw-noise/src/tiles/vulcanus_correction.rs`;
+`docs/rust-wasm-port.md` has the counts and costs.
