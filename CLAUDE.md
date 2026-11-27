@@ -707,7 +707,12 @@ miniflare. Confirm with
 returning ONE line for each. The `sort -u` is load-bearing: a single package
 appears under both `packages:` and `snapshots:`, so without it one copy can print
 as two identical lines (it did on `main` at wrangler 4.124.0) and two copies can
-print as three. The plugin's exact vitest peer also means a vitest bump must wait
+print as three. That version-only grep cannot see two peer contexts of the SAME
+version, which pnpm installs as separate instances, so also list the full keys
+with `grep -E "^  (wrangler|miniflare|workerd)@" pnpm-lock.yaml | sort -u`. Expect
+one bare key under `packages:` and at most one peer-suffixed key under
+`snapshots:` per package (on 2026-11-27: two miniflare, two wrangler, one
+workerd). The plugin's exact vitest peer also means a vitest bump must wait
 for a plugin release that names it, as well as for vite-plus (see the vitest
 paragraph above).
 
