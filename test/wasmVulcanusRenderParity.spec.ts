@@ -15,6 +15,7 @@ import {
 
 import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
+import { createRenderCache } from "./renderCache";
 import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
 import { compileEngine, instantiateEngine } from "../src/noise/wasm/engine";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
@@ -202,6 +203,15 @@ async function engine() {
   return instantiateEngine(compiled);
 }
 
+/**
+ * Each whole-window render, drawn once per run and copied out on every read.
+ * The resource view of `coarse, all four entries` is the costly one, and four
+ * tests read it. Keyed on the whole request - see `renderCache.ts` for why
+ * that matters here of all places. Worker tiles and the three 1024 renders
+ * below are not routed through it: no two of them share a request.
+ */
+const render = createRenderCache();
+
 function reference(name: string): { width: number; height: number; rgb: Uint8Array } {
   const bytes = new Uint8Array(readFileSync(join(FIXTURES, name)));
   return decodePng(bytes, (b) => new Uint8Array(inflateSync(b)));
@@ -274,7 +284,7 @@ describe("the WASM engine renders Vulcanus terrain to its frozen bytes", () => {
     const e = await engine();
     for (const w of WINDOWS) {
       const req = request(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "terrain", wasm);
     }
@@ -291,7 +301,7 @@ describe("the WASM engine renders Vulcanus terrain to its frozen bytes", () => {
   it("each of those windows carries several distinct colours", async () => {
     const e = await engine();
     for (const w of WINDOWS) {
-      const px = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const px = render(request(w), e);
       const distinct = new Set<number>();
       for (let i = 0; i < px.length; i += 4) {
         distinct.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2]);
@@ -318,7 +328,7 @@ describe("the WASM engine renders Vulcanus terrain to its frozen bytes", () => {
     const w = WINDOWS[0] as Window;
     for (const view of ["terrain", "cliffs", "rocks", "resources", "all"] as const) {
       const composite = { ...request(w), view };
-      const withEngine = new Uint8ClampedArray(runRenderRequest(composite, e).buffer);
+      const withEngine = render(composite, e);
 
       // This used to render the same request twice - once with the engine and
       // once without - and assert the two agreed. #227 makes that the sharper
@@ -337,8 +347,8 @@ describe("the WASM engine renders Vulcanus terrain to its frozen bytes", () => {
 
     // And `all` really does differ from bare terrain here, so the assertion
     // above is not comparing two copies of the same picture.
-    const all = new Uint8ClampedArray(runRenderRequest({ ...request(w), view: "all" }, e).buffer);
-    const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+    const all = render({ ...request(w), view: "all" }, e);
+    const terrain = render(request(w), e);
     expect(Array.from(all)).not.toEqual(Array.from(terrain));
   }, 300000);
 });
@@ -378,7 +388,7 @@ describe("the WASM engine renders the Vulcanus rock overlay to its frozen bytes"
     const e = await engine();
     for (const w of WINDOWS) {
       const req = rockRequest(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "rocks", wasm);
     }
@@ -398,8 +408,8 @@ describe("the WASM engine renders the Vulcanus rock overlay to its frozen bytes"
     const e = await engine();
     const counts: number[] = [];
     for (const w of WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const wasm = render(rockRequest(w), e);
+      const terrain = render(request(w), e);
       let painted = 0;
       for (let i = 0; i < wasm.length; i += 4) {
         if (isColor(wasm, i, ROCK_MAP_COLOR) && !isColor(terrain, i, ROCK_MAP_COLOR)) painted++;
@@ -426,7 +436,7 @@ describe("the WASM engine renders the Vulcanus rock overlay to its frozen bytes"
   it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
     const e = await engine();
     const w = WINDOWS[2] as Window; // tall, coarse - 8 tiles per pixel
-    const whole = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
+    const whole = render(rockRequest(w), e);
 
     const full: ImageBox = {
       originX: w.originX,
@@ -562,7 +572,7 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
     const e = await engine();
     for (const w of ORE_WINDOWS) {
       const req = oreRequest(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "resources", wasm);
     }
@@ -580,7 +590,7 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
     const e = await engine();
     const table: number[][] = [];
     for (const w of ORE_WINDOWS) {
-      const px = new Uint8ClampedArray(runRenderRequest(oreRequest(w), e).buffer);
+      const px = render(oreRequest(w), e);
       table.push(
         VULCANUS_RESOURCE_CATALOG.map((entry) => {
           let n = 0;
@@ -611,7 +621,7 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
   it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
     const e = await engine();
     const w = ORE_WINDOWS[4] as Window;
-    const whole = new Uint8ClampedArray(runRenderRequest(oreRequest(w), e).buffer);
+    const whole = render(oreRequest(w), e);
     const full: ImageBox = {
       originX: w.originX,
       originY: w.originY,
@@ -663,9 +673,9 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
     const counts: number[] = [];
     for (const w of WINDOWS) {
       const req = allRequest(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       freeze(w.label, "all", wasm);
-      counts.push(paintedOver(wasm, new Uint8ClampedArray(runRenderRequest(request(w), e).buffer)));
+      counts.push(paintedOver(wasm, render(request(w), e)));
     }
     expect(counts).toEqual(ALL_PIXELS_PER_WINDOW);
   }, 300000);
@@ -715,11 +725,11 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
       originY: w.originY,
       tilesPerPixel: w.tilesPerPixel,
     };
-    const render = (view: "all" | "resources" | "cliffs") =>
-      new Uint8ClampedArray(runRenderRequest({ ...request(w), ...geometry, view }, e).buffer);
-    const all = render("all");
-    const resources = render("resources");
-    const cliffs = render("cliffs");
+    const renderView = (view: "all" | "resources" | "cliffs") =>
+      render({ ...request(w), ...geometry, view }, e);
+    const all = renderView("all");
+    const resources = renderView("resources");
+    const cliffs = renderView("cliffs");
 
     const oreColors = VULCANUS_RESOURCE_CATALOG.map((p) => p.mapColor);
     const isOre = (px: Uint8ClampedArray, i: number) => oreColors.some((c) => isColor(px, i, c));
@@ -767,7 +777,7 @@ describe("the WASM engine renders Vulcanus cliffs to its frozen bytes", () => {
     const e = await engine();
     for (const w of WINDOWS) {
       const req = cliffRequest(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "cliffs", wasm);
     }
@@ -791,8 +801,8 @@ describe("the WASM engine renders Vulcanus cliffs to its frozen bytes", () => {
 
     const counts: number[] = [];
     for (const w of WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const wasm = render(cliffRequest(w), e);
+      const terrain = render(request(w), e);
       let painted = 0;
       let overTerrain = 0;
       for (let i = 0; i < wasm.length; i += 4) {
@@ -829,7 +839,7 @@ describe("the WASM engine renders Vulcanus cliffs to its frozen bytes", () => {
   it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
     const e = await engine();
     const w = WINDOWS[2] as Window; // tall, coarse - 8 tiles per pixel
-    const whole = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
+    const whole = render(cliffRequest(w), e);
 
     const full: ImageBox = {
       originX: w.originX,
