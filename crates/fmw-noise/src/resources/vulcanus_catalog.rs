@@ -35,7 +35,7 @@
 
 use crate::eval::ctx::{ResourceLevers, VulcanusResourceControls};
 use crate::eval::math::f32r;
-use crate::expressions::vulcanus_resources::ResourceFields;
+use crate::expressions::vulcanus_resources::{OreRegions, ResourceFields};
 use crate::expressions::vulcanus_stack::VulcanusStack;
 use crate::resources::vulcanus_ore_roll::{ore_probability, VulcanusOreRoll};
 
@@ -260,6 +260,20 @@ impl VulcanusResource {
             Self::Calcite => r.calcite_region,
             Self::Coal => r.coal_region,
             Self::SulfuricAcidGeyser => r.sulfuric_acid_region_patchy,
+        }
+    }
+
+    /// [`Self::region`] read off the [`OreRegions`] projection, for the three
+    /// solid ores; `None` for the geyser, which that projection does not
+    /// carry. The ore overlay reads this, so it evaluates only what a solid
+    /// ore needs.
+    #[must_use]
+    pub const fn ore_region(self, r: &OreRegions) -> Option<f64> {
+        match self {
+            Self::TungstenOre => Some(r.tungsten),
+            Self::Calcite => Some(r.calcite),
+            Self::Coal => Some(r.coal),
+            Self::SulfuricAcidGeyser => None,
         }
     }
 }

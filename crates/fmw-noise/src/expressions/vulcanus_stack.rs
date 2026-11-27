@@ -274,6 +274,13 @@ impl<'a> VulcanusStack<'a> {
         self.resources.ore_regions_at(at)
     }
 
+    /// `sulfuric_acid_region_patchy` alone, the field the geyser's probability
+    /// reads. See [`VulcanusResources::sulfuric_acid_region_patchy`].
+    #[must_use]
+    pub fn sulfuric_acid_region_patchy(&self, x: f64, y: f64) -> f64 {
+        self.resources.sulfuric_acid_region_patchy(x, y)
+    }
+
     /// `vulcanus_elev` and `vulcanus_elevation` together - the raw field and
     /// the `max(-500, elev)` clamp over it.
     ///
