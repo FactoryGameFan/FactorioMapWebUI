@@ -24,8 +24,19 @@ export interface ElevationRenderer {
   dispose(): void;
 }
 
-/** Square tile edge in pixels. 128 gives 64 tiles at the fixed 1024px preview. */
-export const DEFAULT_TILE_SIZE = 128;
+/**
+ * Square tile edge in pixels. 256 gives 16 tiles at the fixed 1024px preview.
+ *
+ * It was 128 (64 tiles). At one tile per pixel every worker tile corrects its
+ * terrain over its own chunks plus a one-chunk margin, and neighbouring tiles
+ * redo each other's margins, so fewer, larger tiles repeat less of that work:
+ * 256 measured a tie to 11% faster than 128 at 15 workers, 10-20% faster at 7
+ * and 24-31% faster at 4, on all five planets (headless Chrome, default view,
+ * medians). The switch waited on #566, a Nauvis rock seam that only 256-pixel
+ * tiles showed; `test/tiledEqualityAppGeometry.spec.ts` renders this geometry
+ * at both sizes.
+ */
+export const DEFAULT_TILE_SIZE = 256;
 
 /**
  * One worker per core, less one so the main thread stays free to blit tiles and
