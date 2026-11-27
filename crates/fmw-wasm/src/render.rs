@@ -1218,7 +1218,8 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     if matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
         paint_nauvis_resources(req, p, &stack, &catalog, out);
     }
-    if matches!(req.view, VIEW_ROCKS | VIEW_ALL) {
+    // An empty window has no terrain grid to read, so it paints no rocks.
+    if matches!(req.view, VIEW_ROCKS | VIEW_ALL) && req.width > 0 && req.height > 0 {
         paint_nauvis_rocks(req, p, &stack, &catalog, &ctx, &terrain, out);
     }
     if matches!(req.view, VIEW_ENEMIES | VIEW_ALL) {
