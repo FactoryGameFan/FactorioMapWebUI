@@ -23,6 +23,8 @@ use crate::eval::math::max2;
 use crate::test_json::{load, Json};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod nauvis_real_surface;
+
 /// Load a fixture and pin the game version its ground truth was captured from.
 ///
 /// The frozen exact counts in this file all describe "this port against game

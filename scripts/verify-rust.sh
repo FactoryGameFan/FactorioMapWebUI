@@ -194,6 +194,11 @@ POISONED_TESTS=(
   # The same tiles after tile correction (`tiles::correction`), which reads
   # nothing but the argmax, so the argmax hook is what reaches it.
   fixtures::gleba_corrected_tiles_against_the_real_surface
+  # Nauvis against a real surface: the raw argmax through `poison::index_result`
+  # in `NauvisTileCatalog::resolve`, and the corrected tiles that read it.
+  fixtures::nauvis_real_surface::nauvis_raw_tiles_against_the_real_surface
+  fixtures::nauvis_real_surface::nauvis_corrected_tiles_against_the_real_surface
+  fixtures::nauvis_real_surface::nauvis_corrected_tiles_against_the_real_coast
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

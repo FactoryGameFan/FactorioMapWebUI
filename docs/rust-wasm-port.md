@@ -896,6 +896,93 @@ the panel still says "Client preview is not available for Gleba yet." In dev
 mode it renders terrain, and every other view, `all` included, shows the
 terrain. Plants, stone, stromatolites, cliffs and enemies are not drawn.
 
+### Nauvis: the terrain graded against a real surface (2026-11-26)
+
+Nauvis follows Gleba: at one tile per pixel on a whole-tile origin the render
+is the raw argmax plus tile correction, and it matches `get_tile` on a real
+surface. At any other zoom it is still the raw argmax at a point, as the game's
+preview draws it. The wiring is `tiles/nauvis_correction.rs` and a short branch in
+`render_nauvis`; the layers come from the game (`NauvisTile::layer`).
+
+**The fixtures** come from `scripts/probes/gleba-real-surface`, which now takes
+`FMW_PLANET`, `FMW_X0`, `FMW_Y0` and `FMW_SIDE`. Nauvis needs a FRESH surface
+with the `nauvis` surface's settings and seed 123456: the game's own `nauvis`
+surface generates its spawn chunks before `on_init`, so the disabled controls
+never reach them. Two 256 x 256 windows, each from one radius request:
+
+| window | raw argmax vs real (by name = by colour) | corrected | corrected, every pair allowed |
+| --- | ---: | ---: | ---: |
+| spawn, -128..127 | 89 | **0** | 0 |
+| coast, x 384..639, y -320..-65 | 326 | **0** | 73 |
+| whole preview, -512..511 (scratch capture, not committed) | 2,810 | **0** | 59 |
+
+- **`allowed_neighbors` is part of the port now.** `deepwater` allows only
+  `water`, and the game makes the table symmetric, so no land tile may touch it.
+  Correction fails a tile beside a forbidden neighbour at once and replaces it
+  with the first step of a path between the two, which is `water`
+  (`tiles::correction::Neighbours`; the reading is in
+  `docs/noise/tile-correction-NOTES.md`). The spawn window never puts deepwater
+  beside land in its raw tiles, so the coast window was chosen to have it, 90
+  times.
+- **No ties.** Gleba's argmax ties go to the name that sorts first. No position
+  of the spawn window and its margin has two Nauvis tiles sharing the top score,
+  nor any of five wider windows checked by hand (a 1024 and four 512 windows,
+  out to 8,000 tiles), so registration order and name order pick the same tile
+  and Nauvis cannot say which rule the game uses. `TILE_ORDER` stays.
+- **The margin.** One chunk, as Gleba. The spawn window is exact even with none;
+  the 1024 window is 8 tiles off with none, 0 with one or two. 128-pixel worker
+  tiles stitch to the whole render byte for byte.
+- **Not covered by these windows:** the second pass's shared queue (skipping
+  the second pass changes no Nauvis tile here; Gleba's tests catch it), and
+  overlays: resources, rocks and enemies still test the RAW tile for their
+  water gate, and the tree overlay reads the painted pixel, which is now the
+  corrected one at one tile per pixel.
+
+**Tier 1** is `crates/fmw-noise/src/fixtures/nauvis_real_surface.rs` (by tile
+name; the raw, spawn and coast tests are in `POISONED_TESTS`). **Tier 3** is the
+real-surface block in `test/wasmNauvisRenderParity.spec.ts`. The preview PNG is
+now a reference: the 1024 count moved 0 -> 2,810, exactly the tiles where the
+scratch real surface differs from the PNG, and in the spawn window the PNG
+differs from the render at the same 89 pixels where it differs from the real
+surface. No tier-2 fold moved (they grade fields per position, not the render),
+and no frozen `nauvis:render` row moved, because none of them is at one tile
+per pixel on a whole-tile origin.
+
+**Planted breaks:** correcting chunks in rows order (spawn 0 -> 2); sand-1's
+layer 152 -> 176 (spawn 0 -> 21, and the layer test red); replacing with the
+offending tile instead of the replacement (coast 0 -> 8,907); dropping the
+forbidden-neighbour check (coast 0 -> 73); poison (all three red).
+
+**Through `correct_window`.** The Nauvis render uses Aquilo's lazy
+`correct_window` (raw tiles read only when the pass first needs them, and no
+walk from a seed inside a 3 x 3 block of one id) with the deepwater rule passed
+in. That changes no tile: the eager pass over a fully filled world gives the
+same tiles on both committed windows (asserted) and on the 1024 scratch
+surface (measured), and `lazy_and_eager_reads_agree` and
+`skipping_uniform_seeds_changes_nothing` now also run with a neighbour rule
+(id 1 may touch only id 2) active.
+
+**What it costs.** WASM under Node on hammond with other sessions running,
+median of 5 interleaved rounds (each round runs every case on all three
+modules in turn):
+
+| render | raw argmax (915d3af) | first wiring, eager (7a38504) | now, lazy |
+| --- | ---: | ---: | ---: |
+| `all` 1024 x 1024, the app's default view, as 64 worker tiles of 128 summed on one thread | 5,974 ms | 14,237 ms (2.38x) | 9,290 ms (1.56x) |
+| terrain, the same 64 worker tiles | 2,445 ms | 10,727 ms (4.39x) | 5,825 ms (2.38x) |
+| terrain 256 x 256 at 1 tile per pixel | 154 ms | 394 ms | 254 ms |
+
+Other zooms are not corrected, so they cost what they did. What is left is the
+raw tiles of the margin chunks, which correction must read in full: a
+128-pixel worker tile corrects 6 x 6 chunks to paint 4 x 4, and the worker
+tiles redo each other's margins. Nauvis has less to gain from the uniform skip
+than Aquilo's open ocean (the land is a patchwork of 19 tiles), and Aquilo's
+third change, keeping the fields for the entity pass, does not transfer: the
+Nauvis overlays' water gates evaluate tiles on the point kernel
+(`nauvis_tile_at`), not the chunk grid, so they cannot reuse the corrected
+pass's raw tiles without changing their output. Sharing raw chunks between
+worker tiles would be the next lever.
+
 ### Aquilo (#454)
 
 Aquilo is the fourth planet to render through the engine. It was ported

@@ -1,7 +1,8 @@
 # gleba-real-surface
 
 Reads the tiles a real Gleba surface places, so the engine's Gleba terrain can
-be graded against what a player's map shows (#454).
+be graded against what a player's map shows (#454). It reads Nauvis too
+(`FMW_PLANET`, below).
 
 ```bash
 node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
@@ -20,6 +21,27 @@ Run it from the repository root. Each run starts Factorio 2.1.23 once, through
 `test/fixtures/oracle-gleba-real-surface.seed123456.json`, the second the
 columns arm beside it. Set `FMW_FACTORIO_2_1_23` to the install's root folder if
 it is not at `/home/eric/factorio-headless/2.1.23/factorio`.
+
+`FMW_PLANET` picks another planet (`gleba` by default; `nauvis` is wired too),
+and `FMW_X0`, `FMW_Y0` and `FMW_SIDE` move and size the window (default -128,
+-128, 256; chunk aligned). The Nauvis fixtures:
+
+```bash
+FMW_PLANET=nauvis node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+FMW_PLANET=nauvis FMW_X0=384 FMW_Y0=-320 \
+  FMW_OUT=test/fixtures/oracle-nauvis-real-surface-coast.seed123456.json \
+  node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+```
+
+**Nauvis uses a fresh surface**, not the game's own `nauvis` surface: that one
+generates its spawn chunks before `on_init` runs, so the disabled controls do
+not reach them (a first try read 1,645 ore and stone entities in the window).
+The fresh surface takes the `nauvis` surface's map-gen settings and the map
+seed, and `pregenerated` is empty.
+
+A tile that may not touch some candidates (`allowed_neighbors`, made symmetric
+by the game) lists them under `notAllowed` in `tiles`. Nauvis has 38 such
+pairs: `deepwater` against each of the 19 land tiles, both ways round.
 
 ## What it reads
 

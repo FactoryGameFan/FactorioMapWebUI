@@ -22,7 +22,9 @@ import {
   type ElevationRenderRequest,
 } from "../src/noise/preview/elevationRenderRequest";
 import { TREE_MAP_COLOR } from "../src/noise/preview/palette";
-import { planTiles } from "../src/noise/preview/tiling";
+import { planTiles, stitchTiles } from "../src/noise/preview/tiling";
+import spawnSurface from "./fixtures/oracle-nauvis-real-surface.seed123456.json";
+import coastSurface from "./fixtures/oracle-nauvis-real-surface-coast.seed123456.json";
 
 /**
  * Tier 3 for Nauvis (#226): the Rust engine's terrain render against the
@@ -140,8 +142,20 @@ const ENEMY_RGB = [255, 25, 25] as const;
  * which is equal in exact math and rounds differently in f32. Read off the
  * 2.1.23 binary with Ghidra and confirmed at all 36 grass scores in a 3x3
  * around the pixel.
+ *
+ * **0 -> 2,810 on 2026-11-26, and the PNG became a reference, not the
+ * target.** The render now applies tile correction at one tile per pixel
+ * (`crates/fmw-noise/src/tiles/nauvis_correction.rs`), which a real surface
+ * runs and the preview PNG does not, so the render moved off the PNG and onto
+ * the real surface. The 2,810 are exactly the pixels where a real surface of
+ * this whole 1024 window differs from the PNG: a scratch capture of it
+ * (`FMW_PLANET=nauvis FMW_X0=-512 FMW_Y0=-512 FMW_SIDE=1024` through
+ * `scripts/probes/gleba-real-surface/capture.ts`, not committed) differs from
+ * our raw argmax at 2,810 tiles, by name and by colour, and from our corrected
+ * tiles at 0 of 1,048,576. The committed real-surface windows below grade the
+ * same thing at 256 x 256.
  */
-const DIFFERING_PX = 0;
+const DIFFERING_PX = 2810;
 
 interface Window {
   readonly label: string;
@@ -1728,6 +1742,153 @@ describe("the WASM engine's Nauvis terrain against the game's own preview", () =
         expect(differing).toBe(DIFFERING_PX);
       },
     );
+  }, 300000);
+});
+
+/**
+ * **The target: a REAL Nauvis surface (#454 follow-up).** `get_tile` on a
+ * fresh surface at map seed 123456, terrain-only, its chunks made by one
+ * radius request the way a game start makes its spawn area
+ * (`scripts/probes/gleba-real-surface`, `FMW_PLANET=nauvis`). Each tile is
+ * drawn in the `map_color` the game reported for it.
+ *
+ * At one tile per pixel the render is the raw argmax plus tile correction
+ * (`crates/fmw-noise/src/tiles/nauvis_correction.rs`), and it matches both
+ * windows at every pixel. Before the port the spawn window differed at 89
+ * pixels, all on tile edges, and the coast window at 326. The coast window is
+ * the one where the raw tiles put deepwater beside land, which only `water`
+ * may touch (`allowed_neighbors`); without that rule it is 73 off. By tile
+ * name the Rust tests grade the same windows (`fixtures/nauvis_real_surface.rs`).
+ */
+describe("the WASM engine against a real Nauvis surface", () => {
+  interface Surface {
+    readonly window: { x0: number; y0: number; width: number; height: number };
+    readonly rows: readonly string[];
+    readonly names: readonly string[];
+    readonly alphabet: string;
+    readonly tiles: Readonly<Record<string, { mapColor: readonly number[] }>>;
+    readonly surfaceSeed: number;
+    readonly buildLine: string;
+    readonly chunkOrder: string;
+    readonly pregenerated: readonly unknown[];
+  }
+  const surfaceImage = (s: Surface) => {
+    const side = s.window.width;
+    const rgb = new Uint8Array(side * side * 3);
+    let i = 0;
+    for (const row of s.rows) {
+      for (const c of row.split("")) {
+        const tile = s.tiles[s.names[s.alphabet.indexOf(c)] ?? ""];
+        if (tile === undefined) throw new Error(`unknown symbol ${c}`);
+        rgb.set(tile.mapColor, i * 3);
+        i++;
+      }
+    }
+    expect(i).toBe(side * side);
+    return { width: side, height: side, rgb };
+  };
+  const windowOf = (s: Surface): Window => ({
+    label: `real surface ${s.window.x0},${s.window.y0}`,
+    width: s.window.width,
+    height: s.window.height,
+    originX: s.window.x0,
+    originY: s.window.y0,
+    tilesPerPixel: 1,
+  });
+  const key = (a: ArrayLike<number>, i: number, stride: number) =>
+    `${a[i * stride]},${a[i * stride + 1]},${a[i * stride + 2]}`;
+  const differing = (img: { rgb: Uint8Array }, ours: ArrayLike<number>, n: number) => {
+    let d = 0;
+    for (let i = 0; i < n; i++) if (key(img.rgb, i, 3) !== key(ours, i, 4)) d++;
+    return d;
+  };
+
+  it("are fresh surfaces at the map seed, terrain-only, with no chunk made beforehand", () => {
+    for (const s of [spawnSurface, coastSurface] as Surface[]) {
+      expect(s.surfaceSeed).toBe(SEED);
+      expect(s.buildLine).toContain("Version: 2.1.23 ");
+      expect(s.chunkOrder).toBe("radius");
+      expect(s.pregenerated).toEqual([]);
+    }
+  });
+
+  it("matches both real surfaces at every pixel", async () => {
+    const e = await engine();
+    for (const s of [spawnSurface, coastSurface] as Surface[]) {
+      const img = surfaceImage(s);
+      const ours = render(request(windowOf(s)), e);
+      const n = differing(img, ours, img.width * img.height);
+      withDiffArtifacts(
+        {
+          spec: "wasmNauvisRenderParity",
+          case: `nauvis-terrain-vs-real-surface-${s.window.x0}-${s.window.y0}`,
+          game: img,
+          ours: { width: img.width, height: img.height, rgba: ours },
+        },
+        () => {
+          expect(n).toBe(0);
+        },
+      );
+    }
+  }, 300000);
+
+  /**
+   * The control that the correction is in the render: the preview PNG, which
+   * shows the raw argmax, differs from our render in the spawn window at
+   * exactly the 89 pixels where it differs from the real surface.
+   */
+  it("differs from the preview PNG in the spawn window exactly where the real surface does", async () => {
+    const png = decodePng(
+      new Uint8Array(readFileSync(join(FIXTURES, "oracle-preview-nauvis-terrain.seed123456.png"))),
+      (b) => new Uint8Array(inflateSync(b)),
+    );
+    const real = surfaceImage(spawnSurface);
+    const side = real.width;
+    const off = spawnSurface.window.x0 + SIZE / 2;
+    expect(spawnSurface.window.y0 + SIZE / 2).toBe(off);
+    const cut = new Uint8Array(side * side * 3);
+    for (let y = 0; y < side; y++) {
+      cut.set(
+        png.rgb.subarray(((y + off) * SIZE + off) * 3, ((y + off) * SIZE + off + side) * 3),
+        y * side * 3,
+      );
+    }
+    const ours = render(request(windowOf(spawnSurface)), await engine());
+    let onlyOne = 0;
+    for (let i = 0; i < side * side; i++) {
+      const p = key(cut, i, 3);
+      if ((p !== key(ours, i, 4)) !== (p !== key(real.rgb, i, 3))) onlyOne++;
+    }
+    expect(differing({ rgb: cut }, ours, side * side)).toBe(89);
+    expect(onlyOne, "pixels where the PNG differs from one of the two only").toBe(0);
+  }, 300000);
+
+  /**
+   * Correction reads neighbouring chunks, so a worker tile corrects its own
+   * one-chunk margin. Cut into 100-pixel tiles (not chunk aligned), the coast
+   * window must still stitch back to the whole render byte for byte.
+   */
+  it("a tiled render stitches to the whole render", async () => {
+    const e = await engine();
+    const w = windowOf(coastSurface);
+    const full = { ...w };
+    const whole = render(request(w), e);
+    const tiles = planTiles(full, 100).map((t) => ({
+      ...t,
+      data: new Uint8ClampedArray(
+        runRenderRequest(
+          request({
+            ...w,
+            originX: t.originX,
+            originY: t.originY,
+            width: t.width,
+            height: t.height,
+          }),
+          e,
+        ).buffer,
+      ),
+    }));
+    expect(stitchTiles(full, tiles)).toEqual(new Uint8ClampedArray(whole));
   }, 300000);
 });
 
