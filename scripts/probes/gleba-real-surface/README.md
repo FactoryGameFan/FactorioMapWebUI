@@ -22,9 +22,9 @@ Run it from the repository root. Each run starts Factorio 2.1.23 once, through
 columns arm beside it. Set `FMW_FACTORIO_2_1_23` to the install's root folder if
 it is not at `/home/eric/factorio-headless/2.1.23/factorio`.
 
-`FMW_PLANET` picks another planet (`gleba` by default; `nauvis` is wired too),
-and `FMW_X0`, `FMW_Y0` and `FMW_SIDE` move and size the window (default -128,
--128, 256; chunk aligned). The Nauvis fixtures:
+`FMW_PLANET` picks another planet (`gleba` by default; `nauvis`, `aquilo` and
+`fulgora` are wired too), and `FMW_X0`, `FMW_Y0` and `FMW_SIDE` move and size
+the window (default -128, -128, 256; chunk aligned). The Nauvis fixtures:
 
 ```bash
 FMW_PLANET=nauvis node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
@@ -42,6 +42,24 @@ seed, and `pregenerated` is empty.
 A tile that may not touch some candidates (`allowed_neighbors`, made symmetric
 by the game) lists them under `notAllowed` in `tiles`. Nauvis has 38 such
 pairs: `deepwater` against each of the 19 land tiles, both ways round.
+
+`FMW_MARGIN_CHUNKS` sets the chunks requested around the window (default 2).
+Fulgora's three fixtures:
+
+```bash
+FMW_PLANET=fulgora FMW_MARGIN_CHUNKS=6 \
+  FMW_OUT=test/fixtures/oracle-fulgora-real-surface-radius10.seed123456.json \
+  node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+FMW_PLANET=fulgora node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+FMW_PLANET=fulgora FMW_CHUNK_ORDER=rows \
+  FMW_OUT=test/fixtures/oracle-fulgora-real-surface-rows.seed123456.json \
+  node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+```
+
+The rows arm's order is decoded now: see "Fulgora, and the order near the edge
+of a request" in `docs/noise/tile-correction-NOTES.md`. Correction within about
+two chunks of the requested area's edge depends on where that edge is, so a
+wider margin reads the window as the inside of a generated area.
 
 ## What it reads
 

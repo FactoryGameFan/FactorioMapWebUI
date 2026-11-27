@@ -3730,9 +3730,9 @@ fn reproduces_the_fulgora_scrap_probability_at_every_captured_position() {
 /// too; the two are counting different populations, which is why this asserts
 /// its own).
 ///
-/// The `-2` variants collapse: the game distinguishes `oil-ocean-shallow-2` and
-/// `oil-ocean-deep-2`, and this port models neither, so both fold onto their
-/// base tile before comparing.
+/// The `-2` variants collapse: this fixture was graded before the port split
+/// `oil-ocean-shallow-2` and `oil-ocean-deep-2` from their base tiles, so both
+/// sides fold onto the base tile before comparing.
 #[test]
 fn puts_every_fulgora_tile_where_the_game_puts_it() {
     let fixture = load_captured_at(
@@ -3749,7 +3749,7 @@ fn puts_every_fulgora_tile_where_the_game_puts_it() {
     for (i, name) in names.iter().enumerate() {
         let game = name.as_str();
         let game_base = game.strip_suffix("-2").unwrap_or(game);
-        let ours = f[i].tile().game_name();
+        let ours = f[i].tile().folded().game_name();
         if ours == game_base {
             exact += 1;
         }
@@ -12923,3 +12923,6 @@ fn gleba_corrected_tiles_against_a_columns_request() {
 
 // Aquilo (#454): the terrain against a real surface, in its own file.
 mod aquilo_real_surface;
+
+// Fulgora against a real surface: the raw argmax, then tile correction.
+mod fulgora_real_surface;

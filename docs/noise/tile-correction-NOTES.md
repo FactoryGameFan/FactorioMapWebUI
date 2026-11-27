@@ -52,8 +52,8 @@ name, on the radius capture and on a chunk-by-chunk columns capture
 not decoded (`scripts/probes/gleba-real-surface/README.md`).
 
 Not ported, because no Gleba or Nauvis tile reaches it: the out-of-map tile and
-the list-driven re-run at `+0x48a0`. Vulcanus, Fulgora and Aquilo still render
-the raw argmax, which is what their preview PNGs show.
+the list-driven re-run at `+0x48a0`. Vulcanus still renders the raw argmax,
+which is what its preview PNG shows.
 
 ## Ported for Nauvis, with `allowed_neighbors` (2026-11-26)
 
@@ -84,6 +84,37 @@ argmax puts deepwater beside land 90 times (326 before correction; 73 with the
 layer checks alone). Over the whole 1024 x 1024 preview window a scratch real
 surface differs from the raw argmax at 2,810 tiles and from the corrected tiles
 at 0.
+
+## Fulgora, and the order near the edge of a request (2026-11-26)
+
+Fulgora uses the same port with its own ids and layers
+(`FulgoraStack::corrected_tiles`). Its four oil-ocean tiles are four ids: the
+`-2` twins share a map colour with their base tile but not a layer (shallow
+148, shallow-2 147, deep 66, deep-2 67), so correction sees a boundary between
+them. No Fulgora tile has `allowed_neighbors`. Against a real surface it is 0
+of 65,536 tiles off, from 1,703 by name for the raw argmax.
+
+**Why a row-by-row request differs.** `MapGenerationManager::request` (read
+from the 2.1.23 binary) asks for a chunk's 3 x 3 neighbourhood one stage lower
+before it queues the chunk: the entity stage needs its 3 x 3 at the stage
+after correction, and each of those needs its own 3 x 3 corrected. The
+neighbours go x outer, y inner, the chunk itself included, and a queued chunk
+is not queued twice. `generateAllSynchronously` then runs each stage's queue in
+full. So the correction tasks run in that walk's order
+(`tiles::correction::requested_correction_order`), not in request order.
+
+Inside a generated area the walk gives the same tiles as columns order. Within
+about two chunks of the edge of what was requested it does not: on Fulgora a
+radius-6 request (edge two chunks from the window) differs from radius 7, 10
+and 18 at 5 tiles, and a rows-order request at 10. On Gleba the rows-order
+request is the 16 tiles above. The walk reproduces every one of these captures
+at every tile. The renderers keep columns order, because a preview cannot know
+where a player's game drew that edge.
+
+Not the cause, checked against the 2.1.23 decompile: `correctFromTile`,
+`isTileConsistentWithFixedTiles` and `checkForWeakDiagonalSupport` match the
+port branch for branch, and `countFixedNeighborsOfKind` is called as
+`count(here, n) > count(beyond, n)` fails, as ported.
 
 Every claim below is graded. "Decoded" means read out of the disassembly
 instruction by instruction. "Structural" means the shape is clear from the call

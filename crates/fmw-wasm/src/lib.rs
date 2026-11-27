@@ -911,7 +911,7 @@ pub extern "C" fn checksum_fulgora(
                 // the winner of the single twelve-way tile argmax, so it agrees
                 // with the resolved tile (field 75) rather than with an
                 // ocean-first test.
-                41 => match f.tile() {
+                41 => match f.tile().folded() {
                     fulgora_catalog::FulgoraTile::Shallow => 1.0,
                     fulgora_catalog::FulgoraTile::Deep => 2.0,
                     _ => 0.0,
@@ -954,9 +954,14 @@ pub extern "C" fn checksum_fulgora(
 }
 
 /// The resolved tile as a number, in the order `FulgoraTile` declares.
+///
+/// The `-2` oil-ocean variants fold onto their base tile, the codes this
+/// checksum had before the port told them apart; the split is graded by name
+/// against a real surface instead (`fulgora_raw_tiles_against_the_real_surface`
+/// in `fmw-noise`'s fixtures).
 fn tile_code(tile: fulgora_catalog::FulgoraTile) -> f64 {
     use fulgora_catalog::FulgoraTile as T;
-    match tile {
+    match tile.folded() {
         T::FulgoranDust => 0.0,
         T::FulgoranDunes => 1.0,
         T::FulgoranSand => 2.0,
@@ -965,8 +970,8 @@ fn tile_code(tile: fulgora_catalog::FulgoraTile) -> f64 {
         T::FulgoranWalls => 5.0,
         T::FulgoranConduit => 6.0,
         T::FulgoranMachinery => 7.0,
-        T::Shallow => 8.0,
-        T::Deep => 9.0,
+        T::Shallow | T::Shallow2 => 8.0,
+        T::Deep | T::Deep2 => 9.0,
     }
 }
 

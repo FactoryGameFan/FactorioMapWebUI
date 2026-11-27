@@ -1046,3 +1046,232 @@ mod tests {
         }
     }
 }
+
+// The order the game queues correction tasks in, near the edge of a request.
+// Tests model it; renderers keep columns order (see
+// `requested_correction_order`).
+
+/// Run the correction task for each chunk of `order`, in that order, as
+/// `correct_chunks` does in columns order. Tiles of `world` that are
+/// [`UNKNOWN`] are read from `raw(x, y)` the first time a task needs them, and
+/// `neighbours` says which tiles may not touch (`None` lets every pair touch).
+/// The world must hold one chunk more on every side of every chunk named.
+pub fn correct_chunks_in_order(
+    world: &mut TileWorld,
+    raw: &mut dyn FnMut(i32, i32) -> u8,
+    layers: &[u16],
+    neighbours: Option<&Neighbours>,
+    order: &[(i32, i32)],
+) {
+    let mut changes: Vec<(usize, u8)> = Vec::new();
+    for &(cx, cy) in order {
+        assert!(cx > world.chunk_x0 && cx < world.chunk_x0 + world.chunks_wide - 1);
+        assert!(cy > world.chunk_y0 && cy < world.chunk_y0 + world.chunks_high - 1);
+        let (gx0, gy0) = ((cx - 1) * 32, (cy - 1) * 32);
+        changes.clear();
+        {
+            let mut source = |a: usize, b: usize| {
+                let (x, y) = (gx0 + a as i32, gy0 + b as i32);
+                let k = world.index(x, y);
+                if world.tiles[k] == UNKNOWN {
+                    world.tiles[k] = raw(x, y);
+                }
+                world.tiles[k]
+            };
+            let mut area = Area::lazy(layers, &mut source);
+            area.neighbours = neighbours;
+            for (a, b) in area.correct_centre_chunk() {
+                changes.push((a * AREA + b, area.tile(a, b)));
+            }
+        }
+        for &(ab, v) in &changes {
+            let (a, b) = ((ab / AREA) as i32, (ab % AREA) as i32);
+            let k = world.index(gx0 + a, gy0 + b);
+            world.tiles[k] = v;
+        }
+    }
+}
+
+/// The order the game queues tile-correction tasks in when `requested` chunks
+/// are requested one after another (`MapGenerationManager::request`, read
+/// from the 2.1.23 binary).
+///
+/// A request for a chunk asks for its 3 x 3 neighbourhood one stage lower
+/// first, depth first, and queues a stage only after its prerequisites: a
+/// chunk's entity stage needs its 3 x 3 at the stage after correction, and each
+/// of those needs its own 3 x 3 corrected. The neighbours are visited x outer,
+/// y inner, the chunk itself included, and a chunk already queued at a stage
+/// is not queued again. So one request queues the 5 x 5 around it, and a run
+/// of requests corrects close to, but not exactly in, columns order. Each
+/// queue then runs in full, so this is the order the tasks run.
+///
+/// `generateAllSynchronously` runs the queues; the spawn-area radius request
+/// asks for its chunks in columns order (measured: a radius request and a
+/// chunk-by-chunk columns request give the same surface).
+///
+/// **Inside a generated area this gives the same tiles as [`correct_chunks`]'s
+/// columns order; it differs within about two chunks of the edge of what was
+/// requested.** Measured on real surfaces: on Fulgora a radius-6 request
+/// differs from radius 7, 10 and 18 at 5 tiles near its edge, and a rows-order
+/// request at 10; on Gleba a rows-order request is 16 tiles off columns order.
+/// This order reproduces all of them at every tile. A renderer cannot know
+/// what a game requested, so the renderers use columns order, and this is the
+/// tests' model of the edge.
+#[must_use]
+pub fn requested_correction_order(requested: &[(i32, i32)]) -> Vec<(i32, i32)> {
+    let around =
+        |(x, y): (i32, i32)| (-1..=1).flat_map(move |dx| (-1..=1).map(move |dy| (x + dx, y + dy)));
+    let mut after_correction = std::collections::HashSet::new();
+    let mut corrected = std::collections::HashSet::new();
+    let mut order = Vec::new();
+    for &chunk in requested {
+        for n in around(chunk) {
+            if !after_correction.insert(n) {
+                continue;
+            }
+            for m in around(n) {
+                if corrected.insert(m) {
+                    order.push(m);
+                }
+            }
+        }
+    }
+    order
+}
+
+#[cfg(test)]
+mod request_order_tests {
+    use super::*;
+
+    /// One request queues the 5 x 5 around it, in the order the nested
+    /// neighbour walk first reaches each chunk.
+    #[test]
+    fn one_request_queues_its_five_by_five_in_walk_order() {
+        let order = requested_correction_order(&[(0, 0)]);
+        assert_eq!(
+            order,
+            vec![
+                (-2, -2),
+                (-2, -1),
+                (-2, 0),
+                (-1, -2),
+                (-1, -1),
+                (-1, 0),
+                (0, -2),
+                (0, -1),
+                (0, 0),
+                (-2, 1),
+                (-1, 1),
+                (0, 1),
+                (-2, 2),
+                (-1, 2),
+                (0, 2),
+                (1, -2),
+                (1, -1),
+                (1, 0),
+                (1, 1),
+                (1, 2),
+                (2, -2),
+                (2, -1),
+                (2, 0),
+                (2, 1),
+                (2, 2),
+            ]
+        );
+    }
+
+    /// A second request queues only the chunks the first did not, and the
+    /// order is not columns: the next column's top arrives before this
+    /// column's bottom.
+    #[test]
+    fn a_second_request_adds_only_new_chunks() {
+        let order = requested_correction_order(&[(0, 0), (0, 1)]);
+        assert_eq!(order.len(), 30);
+        assert_eq!(&order[25..], &[(-2, 3), (-1, 3), (0, 3), (1, 3), (2, 3)]);
+        let columns: Vec<_> = (-2..=2)
+            .flat_map(|x| (-2..=3).map(move |y| (x, y)))
+            .collect();
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, columns, "every chunk once");
+        assert_ne!(order, columns, "and not in columns order");
+    }
+
+    /// The order and the touching rule compose: in columns order with a rule
+    /// that forbids 1 beside 3, `correct_chunks_in_order` is
+    /// `correct_chunks_with`, and the rule changes the result.
+    #[test]
+    fn the_order_and_the_neighbour_rule_compose() {
+        let layers = [0u16, 1, 2, 3];
+        let mut allowed = vec![vec![true; 4]; 4];
+        allowed[1][3] = false;
+        allowed[3][1] = false;
+        let rules = Neighbours::from_allowed(allowed);
+        let mut tiles = Vec::new();
+        let mut r = 0x2545_f491u32;
+        for _ in 0..(5 * 32) * (5 * 32) {
+            r ^= r << 13;
+            r ^= r >> 17;
+            r ^= r << 5;
+            tiles.push((r % 3) as u8 + 1);
+        }
+        let world = || TileWorld {
+            chunk_x0: 0,
+            chunk_y0: 0,
+            chunks_wide: 5,
+            chunks_high: 5,
+            tiles: tiles.clone(),
+        };
+        let (mut a, mut b, mut plain) = (world(), world(), world());
+        correct_chunks_with(&mut a, &layers, Some(&rules), (1, 3), (1, 3));
+        let columns: Vec<_> = (1..=3).flat_map(|x| (1..=3).map(move |y| (x, y))).collect();
+        correct_chunks_in_order(
+            &mut b,
+            &mut |_, _| unreachable!(),
+            &layers,
+            Some(&rules),
+            &columns,
+        );
+        assert!(a.tiles == b.tiles, "the two paths agree under the rule");
+        correct_chunks_in_order(
+            &mut plain,
+            &mut |_, _| unreachable!(),
+            &layers,
+            None,
+            &columns,
+        );
+        assert!(a.tiles != plain.tiles, "the rule reaches the result");
+    }
+
+    /// `correct_chunks` is columns order, and on noisy tiles the order the
+    /// tasks run in changes the result, which is why the order is modelled.
+    #[test]
+    fn correct_chunks_is_columns_order() {
+        let layers = [0u16, 1, 2, 3];
+        let mut tiles = Vec::new();
+        let mut r = 0x9e37_79b9u32;
+        for _ in 0..(5 * 32) * (5 * 32) {
+            r ^= r << 13;
+            r ^= r >> 17;
+            r ^= r << 5;
+            tiles.push((r % 3) as u8 + 1);
+        }
+        let world = |tiles: &Vec<u8>| TileWorld {
+            chunk_x0: 0,
+            chunk_y0: 0,
+            chunks_wide: 5,
+            chunks_high: 5,
+            tiles: tiles.clone(),
+        };
+        let (mut a, mut b, mut c) = (world(&tiles), world(&tiles), world(&tiles));
+        correct_chunks(&mut a, &layers, (1, 3), (1, 3));
+        let columns: Vec<_> = (1..=3).flat_map(|x| (1..=3).map(move |y| (x, y))).collect();
+        correct_chunks_in_order(&mut b, &mut |_, _| unreachable!(), &layers, None, &columns);
+        assert_eq!(a.tiles, b.tiles);
+        assert!(a.tiles != tiles, "correction changed something");
+        let rows: Vec<_> = (1..=3).flat_map(|y| (1..=3).map(move |x| (x, y))).collect();
+        correct_chunks_in_order(&mut c, &mut |_, _| unreachable!(), &layers, None, &rows);
+        let moved = a.tiles.iter().zip(&c.tiles).filter(|(x, y)| x != y).count();
+        assert!(moved > 0, "the order matters");
+    }
+}

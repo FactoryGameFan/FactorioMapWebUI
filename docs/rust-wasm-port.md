@@ -983,6 +983,85 @@ Nauvis overlays' water gates evaluate tiles on the point kernel
 pass's raw tiles without changing their output. Sharing raw chunks between
 worker tiles would be the next lever.
 
+### Fulgora: the terrain view, graded against a real surface
+
+Fulgora's terrain now matches `get_tile` on a REAL surface at every one of
+65,536 tiles at one tile per pixel, the way Gleba's does. It used to match the
+game's preview PNG exactly, which is the raw argmax: 1,003 pixels from the real
+map in the 256 x 256 window around spawn (map seed 123456, derived surface seed
+2967702466).
+
+| step | tiles wrong (by name) | pixels wrong (map colour) |
+| --- | ---: | ---: |
+| raw argmax, the `-2` ocean tiles told apart | 1,703 | 1,003 |
+| tile correction, columns order, window plus one chunk | **0** | **0** |
+
+By name the raw count is larger than by colour because correction also moves
+tiles between each oil-ocean tile and its `-2` twin.
+
+- **The `-2` twins are real tiles to correction.** `oil-ocean-shallow-2` and
+  `oil-ocean-deep-2` share a map colour with their base tile but not a layer
+  (147 against 148, 67 against 66), so a boundary between them is a boundary.
+  `FulgoraTile` gained `Shallow2` and `Deep2`; `folded()` maps them back for a
+  picture, the land mask and the tier-2 checksum, whose folds did not move.
+- **Ties.** The twelve scores are visited in tile-name order (`NAME_ORDER`),
+  Gleba's measured rule. There is no exact tie at the maximum anywhere the
+  render reads around the window, or on a 16,384-point sweep far from spawn
+  (`fulgora_ties_at_the_maximum`), so the order changes no tile here; putting
+  the old order back turns nothing red.
+- **The order near a request's edge.** The probe's default radius-6 request
+  puts its edge two chunks from the window, and that surface differs from
+  radius 7, 10 and 18 at 5 tiles, all near that edge. The game queues
+  correction tasks through `MapGenerationManager::request`'s 3 x 3
+  prerequisite walk (`tiles::correction::requested_correction_order`); that
+  order reproduces radius 6, radius 10 and a rows-order request at every tile,
+  and it reproduces Gleba's rows capture too. Inside a generated area it gives
+  the same tiles as columns order, so the renderer uses columns order and is
+  graded against the radius-10 capture. The walk order is a test model only,
+  because it depends on an edge no preview can know, and it would make a tiled
+  render differ from a whole one (36 tiles at 1024 in 128-pixel tiles).
+- **The margin.** No margin leaves 61 tiles wrong; one and two chunks give the
+  same 0. A 1024 render cut into the app's 128-pixel tiles stitches to the
+  whole render at every tile, and its centre matches the real surface.
+- **Not reached.** Scrap placement still tests the raw tile for oil ocean. A
+  real surface places scrap after correction, so a corrected tile could move a
+  scrap entity; the scrap views are not graded against a real surface.
+
+**What it costs.** The render goes through `correct_window`, which reads raw
+tiles lazily and skips walks that cannot change anything (Aquilo's cost fix).
+Measured on hammond in Node, serial, median of 7 interleaved runs:
+
+| render | raw argmax | eager correction (559b658) | lazy correction |
+| --- | ---: | ---: | ---: |
+| 256 x 256 terrain | 170 ms | 418 ms (2.5x) | 301 ms (1.8x) |
+| app default: 1024 x 1024 `all`, 128-pixel worker tiles | 4.95 s | 13.76 s (2.8x) | 9.29 s (1.9x) |
+
+The app figure is total worker time; the pool splits it. The lazy render is
+byte-identical to the eager one on 24 requests and the whole app default.
+What is left is raw tiles: the app reads 2.33 raw tiles per pixel shown, and
+2.25 of that is the corrected chunks themselves, which every walk reads. A
+128-pixel tile corrects 6 x 6 chunks to show 4 x 4, so only a larger worker
+tile would cut it further (256 pixels would make it 1.56). The app renders at
+one tile per pixel only, so every user sees the corrected map.
+
+**Tier 3** is `test/wasmFulgoraRenderParity.spec.ts`: 0 pixels against the
+radius-10 surface, the preview PNG differing from the render exactly where it
+differs from the real surface (1,003 in the window, 22,288 of the full 1024),
+and the tiling check. Eleven tier-3 rows were re-recorded: every 1-tile-per-pixel
+window (origin land mask, terrain, resources, all; both scrap windows'
+resources and all; the three scrap-slider cases). Checked against the old
+engine, every moved pixel is terrain (no scrap pixel moved), and the origin
+window went from 189 pixels off the real surface to 0. The rows at other zooms
+did not move. Tier 1 grades by name in `fixtures/fulgora_real_surface.rs`.
+
+**Planted breaks:** swapping the shallow twins' layers (0 to 679 tiles by name
+and 83 pixels; 11 of 33 tier-3 tests red); folding `-shallow-2` back into
+`-shallow` before correction (raw kinds 12 to 11, corrected 0 to 18,564 by
+name and 56 by colour); no correction margin (0 to 61); columns order against
+the radius-6 and rows captures (5 and 10, where the walk gives 0). Two plants did NOT go red, and that is a finding:
+the old tie order (there are no ties), and visiting the walk's neighbours
+y outer instead of x outer (these captures cannot tell the two apart).
+
 ### Aquilo (#454)
 
 Aquilo is the fourth planet to render through the engine. It was ported
