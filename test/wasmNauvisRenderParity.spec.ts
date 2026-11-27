@@ -14,6 +14,7 @@ import {
   frozenCount,
 } from "./tier3Frozen";
 import { decodePng } from "./oracle/decodePng";
+import { createRenderCache } from "./renderCache";
 import { compileEngine, instantiateEngine, renderThroughWasm } from "../src/noise/wasm/engine";
 import {
   ENGINE_REQUIRED,
@@ -277,12 +278,22 @@ async function engine() {
   return instantiateEngine(compiled);
 }
 
+/**
+ * Each whole-window render, drawn once per run and copied out on every read.
+ * The overlay blocks share windows (`very far` is the cliff, enemy and `all`
+ * window at once), and each block's count test redraws what its freeze test
+ * drew, so most pictures here are read two to five times. Keyed on the whole
+ * request - see `renderCache.ts`. Worker tiles, the ABI-cap refusals and the
+ * 1024 render are not routed through it.
+ */
+const render = createRenderCache();
+
 describe("the WASM engine renders Nauvis terrain to its frozen bytes", () => {
   it("is byte-identical across four windows", async () => {
     const e = await engine();
     for (const w of WINDOWS) {
       const req = request(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "terrain", wasm);
     }
@@ -294,7 +305,7 @@ describe("the WASM engine renders Nauvis terrain to its frozen bytes", () => {
     // rich window would otherwise cover for three flat ones.
     const e = await engine();
     for (const w of WINDOWS) {
-      const px = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const px = render(request(w), e);
       const seen = new Set<string>();
       for (let i = 0; i < px.length; i += 4) {
         seen.add(`${px[i]},${px[i + 1]},${px[i + 2]}`);
@@ -327,8 +338,7 @@ describe("the WASM engine renders Nauvis terrain to its frozen bytes", () => {
       originY: -256,
       tilesPerPixel: 4,
     };
-    const flat = (r: ElevationRenderRequest, eng: typeof e) =>
-      Array.from(new Uint8ClampedArray(runRenderRequest(r, eng).buffer));
+    const flat = (r: ElevationRenderRequest, eng: typeof e) => Array.from(render(r, eng));
     const baseWasm = flat(base, e);
     freeze("climate base", "terrain", baseWasm);
 
@@ -402,8 +412,7 @@ describe("the WASM engine renders Nauvis terrain to its frozen bytes", () => {
       originY: -280,
       tilesPerPixel: 7,
     };
-    const flat = (r: ElevationRenderRequest, eng: typeof e) =>
-      Array.from(new Uint8ClampedArray(runRenderRequest(r, eng).buffer));
+    const flat = (r: ElevationRenderRequest, eng: typeof e) => Array.from(render(r, eng));
     expect(
       flat({ ...near, waterLevel: 10 } as ElevationRenderRequest, e),
       "near spawn the lever is masked - if this ever moves, the control is stale",
@@ -471,15 +480,13 @@ describe("the WASM engine renders Nauvis terrain to its frozen bytes", () => {
       ...request(WINDOWS[0]),
       startingPositions: [{ x: 512, y: -256 }],
     };
-    const withEngine = Array.from(new Uint8ClampedArray(runRenderRequest(moved, e).buffer));
+    const withEngine = Array.from(render(moved, e));
     freeze("spawn moved", "terrain", withEngine);
 
     // Anti-vacuity, and it is what makes the equality above mean something: the
     // spawn has to actually move the render. If it did not, a module that
     // ignored the list entirely would satisfy the assertion above.
-    const atOrigin = Array.from(
-      new Uint8ClampedArray(runRenderRequest(request(WINDOWS[0]), e).buffer),
-    );
+    const atOrigin = Array.from(render(request(WINDOWS[0]), e));
     expect(withEngine).not.toEqual(atOrigin);
 
     // TWO points, because one point is the case a hard-coded origin can still
@@ -492,7 +499,7 @@ describe("the WASM engine renders Nauvis terrain to its frozen bytes", () => {
         { x: -300.5, y: 96.25 },
       ],
     };
-    const twoWasm = Array.from(new Uint8ClampedArray(runRenderRequest(two, e).buffer));
+    const twoWasm = Array.from(render(two, e));
     expect(twoWasm).not.toEqual(withEngine);
     freeze("spawn two points", "terrain", twoWasm);
   }, 300000);
@@ -590,7 +597,7 @@ describe("the WASM engine renders the Nauvis tree overlay to its frozen bytes", 
   it("is byte-identical across five windows", async () => {
     const e = await engine();
     for (const w of OVERLAY_WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(treeRequest(w), e).buffer);
+      const wasm = render(treeRequest(w), e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "trees", wasm);
     }
@@ -606,8 +613,8 @@ describe("the WASM engine renders the Nauvis tree overlay to its frozen bytes", 
     const e = await engine();
     const counts: number[] = [];
     for (const w of OVERLAY_WINDOWS) {
-      const trees = new Uint8ClampedArray(runRenderRequest(treeRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const trees = render(treeRequest(w), e);
+      const terrain = render(request(w), e);
       let changed = 0;
       for (let i = 0; i < trees.length; i += 4) {
         let moved = false;
@@ -641,7 +648,7 @@ describe("the WASM engine renders the Nauvis tree overlay to its frozen bytes", 
       height: 128,
     };
     const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
-      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+      Array.from(render(req, eng));
     const baseWasm = flat(base, e);
     freeze("trees base", "trees", baseWasm);
 
@@ -670,7 +677,7 @@ describe("the WASM engine renders the Nauvis tree overlay to its frozen bytes", 
     // Every other overlay in this port has to widen its query box instead.
     const e = await engine();
     const w = WINDOWS[0];
-    const whole = new Uint8ClampedArray(runRenderRequest(treeRequest(w), e).buffer);
+    const whole = render(treeRequest(w), e);
     const full = {
       originX: w.originX,
       originY: w.originY,
@@ -734,7 +741,7 @@ describe("the WASM engine renders the Nauvis rock overlay to its frozen bytes", 
   it("is byte-identical across five windows", async () => {
     const e = await engine();
     for (const w of OVERLAY_WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
+      const wasm = render(rockRequest(w), e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "rocks", wasm);
     }
@@ -748,8 +755,8 @@ describe("the WASM engine renders the Nauvis rock overlay to its frozen bytes", 
     const e = await engine();
     const counts: number[] = [];
     for (const w of OVERLAY_WINDOWS) {
-      const rocks = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const rocks = render(rockRequest(w), e);
+      const terrain = render(request(w), e);
       let changed = 0;
       let rockColoured = 0;
       for (let i = 0; i < rocks.length; i += 4) {
@@ -780,7 +787,7 @@ describe("the WASM engine renders the Nauvis rock overlay to its frozen bytes", 
     const e = await engine();
     const base = rockRequest(DENSE_WINDOW);
     const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
-      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+      Array.from(render(req, eng));
     const baseWasm = flat(base, e);
     freeze("rocks base", "rocks", baseWasm);
     for (const [label, patch] of [
@@ -804,7 +811,7 @@ describe("the WASM engine renders the Nauvis rock overlay to its frozen bytes", 
     // what proves the box is doing work rather than being decoration.
     const e = await engine();
     const w = DENSE_WINDOW;
-    const whole = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
+    const whole = render(rockRequest(w), e);
     const full = {
       originX: w.originX,
       originY: w.originY,
@@ -925,7 +932,7 @@ describe("the WASM engine renders the Nauvis enemy overlay to its frozen bytes",
   it("is byte-identical across five windows", async () => {
     const e = await engine();
     for (const w of ENEMY_WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(enemyRequest(w), e).buffer);
+      const wasm = render(enemyRequest(w), e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "enemies", wasm);
     }
@@ -935,8 +942,8 @@ describe("the WASM engine renders the Nauvis enemy overlay to its frozen bytes",
     const e = await engine();
     const counts: number[] = [];
     for (const w of ENEMY_WINDOWS) {
-      const enemies = new Uint8ClampedArray(runRenderRequest(enemyRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const enemies = render(enemyRequest(w), e);
+      const terrain = render(request(w), e);
       let changed = 0;
       let enemyColoured = 0;
       for (let i = 0; i < enemies.length; i += 4) {
@@ -970,7 +977,7 @@ describe("the WASM engine renders the Nauvis enemy overlay to its frozen bytes",
     const e = await engine();
     const base = enemyRequest(ENEMY_WINDOWS[4]);
     const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
-      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+      Array.from(render(req, eng));
     const baseWasm = flat(base, e);
     freeze("enemies base", "enemies", baseWasm);
     for (const [label, patch] of [
@@ -990,7 +997,7 @@ describe("the WASM engine renders the Nauvis enemy overlay to its frozen bytes",
   it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
     const e = await engine();
     const w = ENEMY_WINDOWS[4];
-    const whole = new Uint8ClampedArray(runRenderRequest(enemyRequest(w), e).buffer);
+    const whole = render(enemyRequest(w), e);
     const full = {
       originX: w.originX,
       originY: w.originY,
@@ -1084,7 +1091,7 @@ describe("the WASM engine renders the Nauvis cliff overlay to its frozen bytes",
   it("is byte-identical across five windows", async () => {
     const e = await engine();
     for (const w of CLIFF_WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
+      const wasm = render(cliffRequest(w), e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "cliffs", wasm);
     }
@@ -1094,8 +1101,8 @@ describe("the WASM engine renders the Nauvis cliff overlay to its frozen bytes",
     const e = await engine();
     const counts: number[] = [];
     for (const w of CLIFF_WINDOWS) {
-      const cliffs = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const cliffs = render(cliffRequest(w), e);
+      const terrain = render(request(w), e);
       let changed = 0;
       let cliffColoured = 0;
       for (let i = 0; i < cliffs.length; i += 4) {
@@ -1132,7 +1139,7 @@ describe("the WASM engine renders the Nauvis cliff overlay to its frozen bytes",
     const e = await engine();
     const base = cliffRequest(CLIFF_WINDOWS[4]);
     const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
-      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+      Array.from(render(req, eng));
     const baseWasm = flat(base, e);
     freeze("cliffs base", "cliffs", baseWasm);
     for (const [label, patch] of [
@@ -1169,8 +1176,8 @@ describe("the WASM engine renders the Nauvis cliff overlay to its frozen bytes",
       ...cliffRequest(w),
       cliffSettings: { cliffElevation0: 10, cliffElevationInterval: 40, richness: 0 },
     } as ElevationRenderRequest;
-    const terrain = Array.from(new Uint8ClampedArray(runRenderRequest(request(w), e).buffer));
-    const offWasm = Array.from(new Uint8ClampedArray(runRenderRequest(off, e).buffer));
+    const terrain = Array.from(render(request(w), e));
+    const offWasm = Array.from(render(off, e));
     expect(offWasm).toEqual(terrain);
     freeze("cliffs richness 0", "cliffs", offWasm);
   }, 300000);
@@ -1182,7 +1189,7 @@ describe("the WASM engine renders the Nauvis cliff overlay to its frozen bytes",
     // rather than one serving both.
     const e = await engine();
     const w = CLIFF_WINDOWS[4];
-    const whole = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
+    const whole = render(cliffRequest(w), e);
     const full = {
       originX: w.originX,
       originY: w.originY,
@@ -1332,7 +1339,7 @@ describe("the WASM engine renders the Nauvis resource overlay to its frozen byte
   it("is byte-identical across six windows", async () => {
     const e = await engine();
     for (const w of RESOURCE_WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(resourceRequest(w), e).buffer);
+      const wasm = render(resourceRequest(w), e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "resources", wasm);
     }
@@ -1342,8 +1349,8 @@ describe("the WASM engine renders the Nauvis resource overlay to its frozen byte
     const e = await engine();
     const table: number[][] = [];
     for (const w of RESOURCE_WINDOWS) {
-      const ore = new Uint8ClampedArray(runRenderRequest(resourceRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const ore = render(resourceRequest(w), e);
+      const terrain = render(request(w), e);
       const row = ORE_RGB.map((c) => {
         let n = 0;
         for (let i = 0; i < ore.length; i += 4) {
@@ -1371,7 +1378,7 @@ describe("the WASM engine renders the Nauvis resource overlay to its frozen byte
     const w = RESOURCE_WINDOWS[1];
     const base = resourceRequest(w);
     const flat = (req: ElevationRenderRequest, eng: typeof e): number[] =>
-      Array.from(new Uint8ClampedArray(runRenderRequest(req, eng).buffer));
+      Array.from(render(req, eng));
     const baseWasm = flat(base, e);
     freeze("resources base", "resources", baseWasm);
 
@@ -1395,7 +1402,7 @@ describe("the WASM engine renders the Nauvis resource overlay to its frozen byte
     // has any oil to grade it with.
     const e = await engine();
     const w = RESOURCE_WINDOWS[5];
-    const whole = new Uint8ClampedArray(runRenderRequest(resourceRequest(w), e).buffer);
+    const whole = render(resourceRequest(w), e);
     const full = {
       originX: w.originX,
       originY: w.originY,
@@ -1486,7 +1493,7 @@ describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes
   it("is byte-identical across four windows", async () => {
     const e = await engine();
     for (const w of ALL_WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer);
+      const wasm = render(allRequest(w), e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "all", wasm);
     }
@@ -1498,8 +1505,8 @@ describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes
     const e = await engine();
     const counts: number[] = [];
     for (const w of ALL_WINDOWS) {
-      const all = new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const all = render(allRequest(w), e);
+      const terrain = render(request(w), e);
       let changed = 0;
       for (let i = 0; i < all.length; i += 4) {
         if (
@@ -1545,14 +1552,10 @@ describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes
     // counts.
     const e = await engine();
     const w = ALL_WINDOWS[2];
-    const all = new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer);
-    const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
-    const res = new Uint8ClampedArray(
-      new Uint8ClampedArray(runRenderRequest({ ...request(w), view: "resources" }, e).buffer),
-    );
-    const cliffsView = new Uint8ClampedArray(
-      runRenderRequest({ ...request(w), view: "cliffs" }, e).buffer,
-    );
+    const all = render(allRequest(w), e);
+    const terrain = render(request(w), e);
+    const res = render({ ...request(w), view: "resources" }, e);
+    const cliffsView = render({ ...request(w), view: "cliffs" }, e);
     const at = (px: Uint8ClampedArray, i: number, c: readonly number[]): boolean =>
       px[i] === c[0] && px[i + 1] === c[1] && px[i + 2] === c[2];
     let ore = 0;
@@ -1620,7 +1623,7 @@ describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes
       "all",
     ] as const) {
       const req = { ...request(w), view } as ElevationRenderRequest;
-      const wasm = Array.from(new Uint8ClampedArray(runRenderRequest(req, e).buffer));
+      const wasm = Array.from(render(req, e));
 
       // This used to render the same request twice - once with the engine and
       // once without - and assert the two agreed. #227 makes it the sharper
@@ -1634,9 +1637,35 @@ describe("the WASM engine renders the Nauvis `all` composite to its frozen bytes
       // and a bare window label would collide with the per-view blocks above.
       freeze(`routes ${w.label}`, view, wasm);
     }
-    const all = Array.from(new Uint8ClampedArray(runRenderRequest(allRequest(w), e).buffer));
-    const terrain = Array.from(new Uint8ClampedArray(runRenderRequest(request(w), e).buffer));
+    const all = Array.from(render(allRequest(w), e));
+    const terrain = Array.from(render(request(w), e));
     expect(all).not.toEqual(terrain);
+  }, 300000);
+
+  /**
+   * The same request, drawn twice, each time on a freshly instantiated engine,
+   * must come back byte for byte the same.
+   *
+   * **This exists because of the render cache.** `render` draws each request
+   * once per file and copies it out after that, so no other test here draws
+   * the same request twice any more. Before the cache, the count tests redrew
+   * what the freeze tests drew, on new engine instances, and a render that
+   * depended on leftover module state or on anything but its request would
+   * have shown up there by accident. This states that check on purpose.
+   *
+   * Both draws call `runRenderRequest` directly, never the cache. The window
+   * is `very far` in the `all` view: one request that runs terrain, trees,
+   * rocks, enemies, cliffs and resources (oil's roll included). The test took
+   * 5.3 s for both draws on hammond (2026-11-26). The second engine is instantiated only after the first has
+   * rendered, so it cannot share any state the first one built.
+   */
+  it("draws the same bytes twice on two fresh engine instances", async () => {
+    const req = allRequest(ALL_WINDOWS[2]);
+    const first = new Uint8ClampedArray(runRenderRequest(req, await engine()).buffer);
+    const second = new Uint8ClampedArray(runRenderRequest(req, await engine()).buffer);
+    expect(first.length).toBe(req.width * req.height * 4);
+    expect(foldPixels(second)).toBe(foldPixels(first));
+    expect(Array.from(second)).toEqual(Array.from(first));
   }, 300000);
 });
 
