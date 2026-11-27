@@ -563,6 +563,47 @@ Read from the prototypes on a real Gleba surface
   apply step really does test later groups' entities of earlier chunks, which
   is section 7's rule seen from another planet.
 
+## Gleba (2026-11-27): the plants, and stone removing them
+
+Graded against `oracle-gleba-real-surface-plants.seed123456.json` (plants
+on, nests and cliffs off). The whole story and its grades are "Gleba (#454),
+slice 4" in `docs/rust-wasm-port.md`; the generator facts are here.
+
+- **Twelve groups of one.** Every plant has its own `order`, so each is its
+  own group, served in `order` order after the stromatolites. MEASURED: on
+  our corrected tiles the stream places every one of the window's 30,451
+  plants at the game's position; water-cane, the last of them, needed all
+  eleven before it exact, because each group's draws start after the earlier
+  groups' successes (two jitter draws each).
+- **`tile_restriction`** (section 2, step 3), READ from the prototypes at
+  runtime: only yumako-tree (three yumako soils) and jellystem (three
+  jellynut soils). Stingfrond's Lua has a restriction in an `autoplace` key
+  its own table overwrites. MEASURED: dropping the restriction, or giving
+  stingfrond the overwritten one, each breaks the replay.
+- **`ResourceEntity::postSetup` removes trees** (READ as decompiled C from
+  2.1.23, file address `0x1fd0180`). Before the cliff search that Vulcanus
+  measured, it checks the resource prototype's `tree_removal_probability`
+  (prototype `+0x718`): if it is not 0, it takes the smallest squared distance
+  in tiles from the resource to a list of positions on the surface (INFERRED:
+  the starting positions) and, if that is within `tree_removal_max_distance`
+  (`+0x728`) squared, builds an `EntitySearch<Entity>` over the resource's
+  AABB widened outward to whole tiles. For each entity found that is not
+  already being destroyed and answers a vtable query at `+0x1188` (INFERRED:
+  "is a tree"), it draws `U` from a taus88 state at `+0x42c` of the object at
+  the entity's `+0x78`, and calls `Entity::forceDestroy` when `U <=
+  probability * (1 - d^2 / max^2)`. Stone sets 0.8 and `32 * 32`.
+- **That generator is not the placement stream.** No other map-gen function
+  reads `+0x42c`, and the object comes from a pointer every entity carries,
+  not from the chunk. So its state at a roll depends on every draw before it
+  in the whole generation. A tile-by-tile preview cannot reproduce the
+  outcome; the port takes the expected one (a plant goes when its odds of
+  surviving every stone that covers it fall below one half). MEASURED: that
+  removes 28 of the 29 covered plants in the window (searched by real
+  overlap); the game removed 27 of them and kept a stingfrond at odds 0.19.
+- **NOT READ:** whether `EntitySearch` counts a box that only touches. The
+  data favour a real overlap (see the port doc). Whether anything else draws
+  from the shared generator during map generation.
+
 ## What `generate.rs` does not port, and why each is unreachable today
 
 - **`placement_density`.** The attempt count per tile. No entity prototype

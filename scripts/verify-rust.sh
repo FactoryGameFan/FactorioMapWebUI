@@ -209,6 +209,11 @@ POISONED_TESTS=(
   # the real-surface replay reaches the generator's `poison::bool_result` roll.
   fixtures::gleba_entities::gleba_resource_fields_match_the_game
   fixtures::gleba_entities::gleba_entities_replay_the_real_surface
+  # Gleba's plants (#454, slice 4): the plant fields carry `poison::f64_result`
+  # on the water-cane probability and read the poisoned moisture and aux, and
+  # the replay reaches the generator's `poison::bool_result` roll.
+  fixtures::gleba_plants::gleba_plant_fields_match_the_game
+  fixtures::gleba_plants::gleba_plants_replay_the_real_surface
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

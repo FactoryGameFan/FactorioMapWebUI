@@ -1038,10 +1038,162 @@ x 6 chunks of entities, and every one of those is needed (see
 `GLEBA_ENTITY_RING_CHUNKS`). The browser with its worker pool was not
 measured.
 
-**What is not drawn yet:** plants, cliffs and pentapod nests. The views that
-would show them (`trees`, `cliffs`, `enemies`, `rocks`) fall back to the
-terrain. Plants are the next slice: they are the next groups in the stream,
-and the yumako tree and jellystem need `tile_restriction`.
+**What is not drawn yet:** cliffs and pentapod nests. The views that would
+show them (`cliffs`, `enemies`, `rocks`) fall back to the terrain. The plants
+are slice 4, below.
+
+### Gleba (#454), slice 4: the twelve plants, against a real surface
+
+The `trees` view draws every plant a REAL Gleba surface places, `resources`
+draws stone and the stromatolites, and `all` draws both, at one tile per
+pixel. Every view generates every entity, because a plant can block a
+stromatolite and stone can remove a plant. Over the 1024 x 1024 window
+-512..511 at map seed 123456 the engine places 35,642 of the game's 35,643
+plants, stromatolites and stone at the game's own position, to the 1/256
+tile, and nothing else. Stone stays 863 of 863.
+
+**The fixture** is `oracle-gleba-real-surface-plants.seed123456.json`
+(`FMW_ARM=plants scripts/probes/gleba-entities`): the same surface with the
+plants and stone at their defaults and the nests and cliffs off. It holds
+30,451 plants in the window (18,280 of them water-cane), every autoplacer's
+facts with its collision-mask flags, and 19 fields at 2,048 positions.
+
+**Credit.** FactMapGen (`factorio_gleba_plants.go`, AGPL-3.0) holds the same
+twelve expressions and was read alongside the Lua. Its preview rule (no apply
+step, so no stone removing plants either) is what this slice does not copy.
+
+**What a real surface does, and the port with it**
+(`expressions/gleba_plants.rs`, `placement/gleba.rs`):
+
+- **The fields.** Each plant's `probability_expression` and its
+  `local_expressions` from `plants.lua`, and `gleba_water_plant_ramp`,
+  `gleba_decal_noise` and the three `gleba_*_region` expressions from
+  `planet-gleba-map-gen.lua`, f32 per step in the Lua's operand order. All 19
+  match `calculate_tile_properties` at 2,048 of 2,048 positions
+  (`gleba_plant_fields_match_the_game`), on the first run.
+- **Twelve groups, one plant each.** Every plant has its own autoplace
+  `order`, so after the stromatolites' `""` group the stream serves
+  yumako-tree, jellystem, sunnycomb, boompuff, stingfrond, lickmaw, teflilly,
+  funneltrunk, slipstack, hairyclubnub, cuttlepop and water-cane, then stone.
+  A group draws once for every tile with a winner, even where its probability
+  is 0, and two jitter draws for each success, so a group's first draw depends
+  on every earlier group's successes. Water-cane, last, needed all eleven
+  before it exact.
+- **Two tile restrictions, not three.** yumako-tree may stand only on the
+  yumako soils and jellystem only on the jellynut soils, checked on the one
+  tile under the position. **Stingfrond's Lua table has two `autoplace`
+  keys.** The first carries `tile_restriction = {"midland-turquoise-bark"}`;
+  the second, order `-e`, carries none. A Lua table constructor keeps the last
+  value for a repeated key, and the prototypes report stingfrond with order
+  `-e` and no restriction. A restriction check rejects a tile before it gets
+  a winner, so a restricted tile draws nothing.
+- **Masks.** Seven plants keep the default tree mask (`item, meltable,
+  object, player, water_tile` and the two object layers), so they stand only
+  on land. Cuttlepop, slipstack and hairyclubnub share the stromatolites'
+  mask, so they stand on wetland and block stromatolites. Water-cane drops
+  `player` ("not player", says the Lua), so it stands on wetland and on the
+  deep lake. No entity sets a collision-mask flag (read at runtime), so
+  "shares a layer" is the whole collision rule.
+- **The water-cane takes the stromatolite.** The copper stromatolite at
+  (134.5, -479.625) that slice 3's default map kept is blocked by the
+  water-cane at (134.375, -480.125), in the chunk above and so applied first.
+  The resources view now matches the default map exactly.
+- **Stone removes the plants under it.** `ResourceEntity::postSetup`
+  (decompiled from 2.1.23, file address `0x1fd0180`) has a branch ahead of
+  the cliff removal that Vulcanus uses: within the resource prototype's
+  `tree_removal_max_distance` of the nearest starting position, it searches
+  the resource's tile-widened box for trees and destroys each with
+  probability `tree_removal_probability * (1 - d^2 / max^2)`. Stone has 0.8
+  and `32 * 32`. In a dense stone patch a plant is under several stones and
+  rolls once for each. Without this the replay kept 27 plants the game had
+  removed, all inside stone patches; the game's own plants almost never
+  overlap a stone (1 of 30,451).
+- **That roll cannot be reproduced, so the port takes its expected
+  outcome.** The roll draws from a taus88 state at `+0x42c` of an object every
+  entity points to (`this + 0x78`), shared by the whole surface, not reseeded
+  per chunk: no map-gen function reads that offset. Its state depends on every
+  earlier draw in the whole generation, which a worker tile cannot know. So
+  each stone multiplies a covered plant's odds of surviving by `1 - p`, and
+  the plant goes when they fall below one half. Over the window the 29
+  plants whose box meets a stone's tile had survival odds summing to about
+  2.2; the game kept 2, at odds 0.04 and 0.19, and removed three whose odds
+  were near 0.43, so the outcome is a roll, not a threshold. The 0.04 one, a
+  sunnycomb, only touches its stones' tiles: under a real overlap it is never
+  searched at all. The real overlap is what the port uses
+  (it measures one entity better, and the touching rule needs a 4% survival
+  to explain the data). That is a likelihood argument, not a read of
+  `EntitySearch`'s box test. The one remaining survivor, a stingfrond at
+  (-324.9375, 451.1875) kept against odds of 0.19, is the frozen miss.
+- **Paint.** Footprints are tiles, as in slice 3. The ten `tree`s have no
+  `map_color`, so the chart draws them in its `default_color_by_type` for
+  trees, `{0.19, 0.39, 0.19, 0.40}` (`utility-constants.lua`): each blends
+  its footprint toward (48, 99, 48) at 102/256, rounded as the Nauvis tree
+  overlay rounds. yumako-tree and jellystem are `plant`s with `map_color =
+  {255, 255, 255}`, painted solid. Two footprints can share a tile, so they
+  paint in a fixed class order: trees, then the two white plants, then stone
+  and the stromatolites. Blends of one colour commute, so the pixels do not
+  depend on placement order.
+- **`gleba_plants` at size 0** makes every plant probability 0, so the
+  generator skips the plant groups (`GLEBA_GROUPS_NO_PLANTS`): the
+  stromatolites draw first and stone needs no stream, so nothing reads the
+  draws they would have spent. That stops holding once a group after the
+  plants reads the stream (the nests), and must be measured then.
+- **ABI.** The Gleba block grew 48 -> 56 bytes (request 112) for
+  `control:gleba_plants:size` at +48, appended.
+
+**Grades.**
+
+| test | what | frozen |
+| --- | --- | --- |
+| `gleba_plant_fields_match_the_game` | 19 fields, 2,048 positions, f32 bits | 2,048 each |
+| `gleba_plants_replay_the_real_surface` | three 128 windows, all 15 entities between them | 741, 567 and 876 of the same |
+| `gleba_plant_replay_controls` | no tree removal / touching boxes / preview | (741, 761) (740, 740) (741, 815) in the spawn window |
+| `gleba_plants_keep_stone_exact` | stone and stromatolites, with and without our plants | 465 stone; copper (74, 75) with plants off |
+| `test/wasmGlebaEntityParity.spec.ts` | the 1024 window, `all` view, through the module | 2 of 1,048,576 pixels, pinned by tile |
+| same | `trees` view | 4 pixels (the same stingfrond, all four tiles), pinned by tile |
+| same | `resources` view against the default map | 0 pixels (was 1) |
+
+The 2 pixels are tiles (-326, 450) and (-326, 451); the stingfrond's other
+two tiles hold stone, painted over it either way.
+
+**Planted breaks, each run:**
+
+| break | what went red |
+| --- | --- |
+| no tile restriction | the replay: (465, 2,521), (74, 1,687), (128, 1,276) matched and placed against 741, 567, 876 |
+| stingfrond keeps its overwritten `midland-turquoise-bark` restriction | the facts test, the replay (666, 105, 221 matched), the stone check (copper 73 of 74) |
+| water-cane served before the forest groups | the facts test, the replay (703, 77, 128 matched), the stone check |
+| sunnycomb reads `gleba_plants_noise` instead of `_b` | its field 1,393 of 2,048; the spawn window 664 of 741 |
+| stone's removal odds without the distance falloff | only `stone_tree_removal_falls_off_with_distance`: the replay stays green |
+
+The last row is a gap in the GRADE, stated rather than hidden: the falloff
+changes an outcome only past about 627 tiles from spawn, where one stone's
+odds of removal drop below one half, and no covered plant in this capture is
+that far out. The unit test pins the code to the formula read from the
+binary and the Lua, not to the game.
+
+**What it costs** (the app's own preview at its default geometry, Gleba at
+seed 123456, `?dev=1`, the panel's elapsed-ms readout after a warm-up
+render; the production build in headless Chrome 158 with NO DevTools client,
+the app's worker pool on hammond; median of 7 runs interleaved with `main`
+at 4d8fee8):
+
+| view | `main` | this slice | change |
+| --- | ---: | ---: | ---: |
+| `terrain` | 528 ms | 524 ms | none |
+| `all` | 808 ms | 906 ms | +12% |
+
+The seven `all` runs spread 800 to 854 ms on `main` and 898 to 915 ms here,
+so the ranges do not overlap. The plant groups reuse the terrain values tile
+correction keeps (`KeptInputs`, now eight f32s a tile, which holds them
+exactly), so the plants add their twelve expressions and the decal noise,
+not a second terrain evaluation.
+
+**What is not drawn yet:** cliffs (`cliff-gleba`) and the pentapod nests. On
+the default map the cliffs (and perhaps the nests) also block plants: the
+default arm has 29,935 against the plants arm's 30,451 (sunnycomb 949
+against 1,039, stingfrond 2,002 against 2,170), so the `trees` view draws
+516 plants too many there until those land.
 
 ### Nauvis: the terrain graded against a real surface (2026-11-26)
 

@@ -50,8 +50,8 @@
 //!   prototype sets it (only decoratives do), so it is the default 1.
 //! - **Grid snapping** (`buildPosition`) for entities that are neither
 //!   resources nor off-grid. No caller has one.
-//! - **`tile_restriction`**. No entity this module places declares one
-//!   (Gleba's yumako tree and jellystem do, and they are not ported).
+//! - **`tile_restriction`** is the caller's: Gleba's yumako tree and
+//!   jellystem check it in their `ChunkInputs::candidate` (`placement::gleba`).
 //!
 //! The richness tie-break inside a group of more than one prototype IS ported
 //! (cpp:394): Gleba's two stromatolites share the empty `order` and form one

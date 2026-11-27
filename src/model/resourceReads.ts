@@ -88,5 +88,6 @@ export function readGlebaControls(preset: {
     stoneFrequency: stone ? stone.frequency : 1,
     stoneSize: stone ? stone.size : 1,
     stoneRichness: stone ? stone.richness : 1,
+    plantsSize: plants ? plants.size : 1,
   };
 }

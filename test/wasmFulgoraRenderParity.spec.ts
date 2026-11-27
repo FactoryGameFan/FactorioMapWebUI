@@ -316,10 +316,11 @@ describe("the request encoding is pinned on both sides", () => {
     // Vulcanus's, so `REQUEST_BYTES` stays Nauvis's 576.
     expect(fixture.aquilo.totalBytes).toBe(COMMON_BYTES + AQUILO_PARAMS_BYTES);
     expect(fixture.aquilo.totalBytes).toBe(184);
-    // Gleba's block is six levers (three terrain, then the gleba_stone
-    // control the stone overlay reads), 48 bytes, so its request is 104.
+    // Gleba's block is seven levers (three terrain, the gleba_stone control
+    // the stone overlay reads, then the plants' size), 56 bytes, so its
+    // request is 112.
     expect(fixture.gleba.totalBytes).toBe(COMMON_BYTES + GLEBA_PARAMS_BYTES);
-    expect(fixture.gleba.totalBytes).toBe(104);
+    expect(fixture.gleba.totalBytes).toBe(112);
     // Nauvis is the LARGEST now, at 576 - the resource overlay's eighteen
     // per-resource levers took it past Vulcanus's 368, and #227's
     // starting-point block (a count plus eight `[x, y]` pairs) grew it again so
