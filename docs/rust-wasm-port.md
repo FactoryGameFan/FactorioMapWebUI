@@ -55,8 +55,13 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 8 (#363) | Fulgora's `resources` and `all` composites                                                            | done |
 | 9 (#454) | Aquilo end to end - terrain, tiles, wells, icebergs; Rust-first, no TypeScript counterpart            | done |
 | 10 (#492) | Aquilo's wells and icebergs through the game's own per-chunk entity generator (`placement/generate.rs`), replacing the salted roll there | done |
+| 11 (#454) | Gleba slice 1 - the terrain fields and the 41-tile choice at tier 1 (`terrace` op, `gleba_*`); no ABI, render, cliffs or entities yet | tier 1 done |
+| 12 (#454) | Gleba slice 2 - the terrain view through the engine, name-order tie-break, and tile correction (`tiles/correction.rs`), graded against a REAL surface; dev mode only in the app | terrain done |
+| 13 (#454) | Aquilo's terrain through tile correction at one tile per pixel, graded against a REAL surface; the preview PNGs become a reference | terrain done |
+| 14 (#454) | Gleba slice 3 - stone and both stromatolites in `resources` and `all`, placed as a REAL surface places them (the per-chunk generator plus apply), 5,193 of 5,193 | stone and stromatolites done |
 
-**Every planet except Gleba, every view the panel offers, renders through the engine.** The
+**Every planet, every view the panel offers, renders through the engine.** Gleba
+offers terrain, resources and all, and only in dev mode. The
 per-layer landing narrative is in the history doc; what follows is only what is
 still a rule.
 
@@ -158,13 +163,12 @@ identical text: `NauvisParams` and `VulcanusParams` both end
 compiler; the second was not - it type-checked and rendered zero enemies, which
 looked exactly like a broken port.
 
-**One TypeScript file in a ported directory was kept for a reason that is not
-obvious.** `cliffConnections.ts` has zero consumers of any kind since #360
-deleted the 23 investigation specs that imported it. It is the human-readable
-reference `crates/fmw-noise/src/cliffs/connections.rs` cites as its source, so
-that #84's cliff investigation can still be run against the engine. The
-type-checker still covers it, because `tsconfig.json` includes `src/**/*` by
-glob rather than by reachability.
+**`cliffConnections.ts` was kept after the port, and is now deleted.** It had
+zero consumers of any kind since #360 deleted the 23 investigation specs that
+imported it, and was kept only as the human-readable reference
+`crates/fmw-noise/src/cliffs/connections.rs` cites as its source. It was deleted
+on 2026-11-26; read it at `dc6bccd`. The Rust port's module comment points
+there.
 
 ### A window must CONTAIN the thing it grades
 
@@ -570,6 +574,14 @@ went in as its own graded change:
   no rounding). Keep the bounds LITERAL - computing `-1.7` as `-1 - 0.7` rounds
   the bound and contaminates the measurement.
 
+  **Where it is graded now.** The 39-cell game comparison, with the two
+  rejected forms as controls, is `reproduces_the_games_slider_to_linear_at_all_39_points`
+  and its companion in `crates/fmw-noise/src/fixtures.rs`. The TypeScript copy
+  of `slider_to_linear` and its spec (`test/sliderToLinearOracle.spec.ts`) were
+  deleted once nothing shipped called them; a test-local copy in
+  `test/dslMathOracle.ts` remains only as the TypeScript side of the 600-point
+  fold in `test/wasmEvalParity.spec.ts`.
+
   It also corrected a comment that appeared in both `eval/math.rs` and
   `eval/math.ts`: `slider_to_linear` does NOT "resolve on the prototype side -
   Lua, not the noise VM". It is declared `type = "noise-function"`, so it is
@@ -769,6 +781,491 @@ construction on exactly the term that differed. Both are f64 now. And
 0.7^4, 0.7^6 and 0.7^8, and one ULP there flips the f32 rounding of the octave
 gain, which moves every point in the case.
 
+### Gleba (#454), slice 1: terrain fields and tiles at tier 1
+
+`expressions/gleba_terrain.rs`, `gleba_starting.rs`, `gleba_stack.rs` and
+`tiles/gleba_catalog.rs` hold the four property fields (`gleba_elevation`,
+`gleba_aux`, `gleba_moisture`, `gleba_temperature`) and the 41 tile
+probabilities. `eval::math::terrace` is the new op, decoded from
+`NoiseOperations::Terrace::run`. Graded against
+`oracle-gleba-fields.seed123456.json` (surface seed FORCED to 123456):
+every field and every tile column is 1,024 of 1,024, and the winner matches the
+game's strict argmax at all 957 positions that have one.
+
+What a reader needs that the code comments do not say:
+
+- **The fixture cannot grade the tile tie-break.** 67 of its 1,024 positions have
+  a tied top score, all between variants of one family (`lowland-olive-blubber`
+  and its `-2` and `-3`, `wetland-green-slime` and `-light-`, and so on). The
+  game keeps the first of its own candidate list at a tie
+  (`generateBasicTiles` uses a strict `>` from `-inf`). Slice 2 settled the
+  order from data: name byte order (`TIE_ORDER`), see below.
+- **`y_distortion` is `gleba_wobble_x * 15` at every starting cone**, not
+  `gleba_wobble_y`. It is the game's own typo and it is kept (see
+  `expressions/gleba_starting.rs`).
+- **Planted breaks the grade sees** (columns that fall below 1,024): `terrace` as
+  the identity (elevation 834), `gleba_select`'s constant folded in f64 (aux
+  1,014), no distortion on the cones (yumako soil 918), no fertile spot field
+  (yumako soil 563), libm `sin` in the spiral bridges (elevation 1,023, four
+  columns). The strict `<` in `terrace` at `frac == strength` is not reached by
+  the fixture and is pinned by a unit test.
+- **Only the point kernel is graded.** Every position is a
+  `calculate_tile_properties` read. The raw-coordinate multioctaves follow the
+  `At` they are given, so the chunk-grid path is available to a render but
+  ungraded.
+- **Only default levers are graded.** The water frequency and size and the plants
+  frequency are wired through `GlebaControls` and untested away from 1.
+
+### Gleba (#454), slice 2: the terrain view, graded against a real surface
+
+The terrain view renders through the engine, and at one tile per pixel it
+matches `get_tile` on a REAL Gleba surface at every one of 65,536 tiles. Eric
+chose the real surface over the preview PNG as the target on 2026-11-26: the
+preview skips a pass a real map runs, so matching it would mean matching a
+picture no player sees.
+
+**The ABI block.** `PLANET_GLEBA = 4`, a 24-byte block (`gleba_water`
+frequency and size, `gleba_plants` frequency), so a request was 80 bytes.
+Slice 3 appended the `gleba_stone` control's frequency, size and richness, so
+the block is 48 bytes and a request 104; the first three did not move.
+`writeGlebaParams` is the one place an absent lever becomes 1. **No trig
+crosses the boundary**, which is a deliberate exception to "trig crosses as
+values": Gleba's spiral bridges take a sine per POSITION, so the module
+computes every sine with the game's own polynomial (`vm_sin`, #531). That
+polynomial is plain f64 arithmetic with no libm, so it gives the same bits in
+V8, in WASM and natively; the starting cones use it too.
+
+**Three steps took the render from 2,470 wrong tiles to 0** (by name, 256 x 256
+window around spawn, map seed 123456, derived surface seed 3215206427):
+
+| step | tiles wrong (by name) | pixels wrong (map colour) |
+| --- | ---: | ---: |
+| raw argmax, listing-order ties (row-by-row capture) | 2,470 | 1,499 |
+| ties to the name that sorts first | 1,680 | 698 |
+| same, against the radius capture | 1,682 | 697 |
+| tile correction ported | **0** | **0** |
+
+- **Ties: name byte order** (`TIE_ORDER` in `tiles/gleba_catalog.rs`). Against
+  the game's own terrain preview PNG, which shows the raw argmax, the listing
+  order differed at 831 pixels of the 256 window and 20,535 of the full 1024,
+  every one a tie; name order differs at 0 of 1,048,576. The comparator in
+  `CompiledMapGenSettings::compile` was not decoded, so the rule is inferred.
+  The tie-break agent's real-surface reading agrees (94.9% of 7,209 tied cells,
+  the rest near correction).
+- **Tile correction** (`tiles/correction.rs`, and
+  `docs/noise/tile-correction-NOTES.md` for how it was read). The 697 pixels the
+  raw argmax still had wrong were exactly the pixels where the preview PNG and
+  the real surface disagree, so all of them were this pass.
+- **The chunk order matters, and is part of the port.** Correction writes into
+  neighbouring chunks, so the order chunks are corrected in changes the map:
+  requesting the same chunks one by one in reverse moved 450 tiles. One radius
+  request, the way a game start makes its spawn area, corrects in columns order
+  (x outer, y inner), and the port does the same. It matches the radius capture
+  and a chunk-by-chunk columns capture at every tile; a row-by-row capture is 16
+  tiles off, because that request does not correct in plain row order and its
+  real order was not decoded. A player who explores in another order can get a
+  slightly different map, which no preview can know.
+- **The margin.** Each render corrects the chunks its pixels touch plus one
+  chunk on each side (`CORRECTION_MARGIN_CHUNKS`), reading raw tiles one chunk
+  further. With no margin, 33 tiles of the window are wrong; one and two give
+  the same 0. A tiled render (100-pixel tiles, not chunk aligned) stitches to
+  the whole render byte for byte, because every tile corrects the same chunks
+  in the same global order around itself.
+- **Only at one tile per pixel on a whole-tile origin.** Correction is defined
+  on tiles. At any other zoom a pixel is the raw argmax at a point, which is
+  what the game's preview draws.
+
+**What it costs.** A 256 x 256 Gleba render takes about 380 ms in WASM against
+150 ms for the raw argmax (2 tiles per pixel) and 63 ms for an Aquilo terrain
+render, measured once on hammond under load from other sessions. The extra is
+the raw tiles of the margin and about 1.7 ms of correction per chunk.
+
+**Tier 3** is `test/wasmGlebaRenderParity.spec.ts`: 0 pixels against both
+real-surface captures, the preview PNG differing from the render exactly where
+it differs from the real surface (697 in the window, 9,736 of the full 1024),
+the seed trap, the plants lever (8,544), and the tiling check. Tier 1 grades the
+same windows by tile name in `fixtures.rs` (`gleba_raw_tiles_against_the_real_surface`,
+`gleba_corrected_tiles_against_the_real_surface`,
+`gleba_corrected_tiles_against_a_columns_request`).
+
+**Planted breaks, each turning a frozen count red:** listing-order ties (real
+surface 698 to 1,499 before correction; preview 0 to 20,535); counting the
+candidate's id in `countFixedNeighborsOfKind` (0 to 840 tiles); writing back
+every second-pass change (0 to 2 on each capture); rows order (0 to 44);
+skipping correction in the render (5 of 8 tier-3 tests red, 697 pixels).
+
+**In the app** Gleba is `devOnly` in `PLANET_CAPABILITIES`: with dev mode off
+the panel still says "Client preview is not available for Gleba yet." Slice 3
+below adds stone and the stromatolites to the `resources` and `all` views.
+
+### Gleba (#454), slice 3: stone and the stromatolites, against a real surface
+
+The `resources` and `all` views draw every `stone`, `iron-stromatolite` and
+`copper-stromatolite` a REAL Gleba surface places, at one tile per pixel. Over
+the 1024 x 1024 window -512..511 at map seed 123456 the engine places all
+5,193 of them at the game's own position, to the 1/256 tile, and nothing
+else, on its own corrected tiles. That is the real surface, not the game's
+preview. The preview skips the apply step (measured on Aquilo, #492), and
+without that step the generator's queues for this window hold 8,631.
+
+**Why this slice first.** The research census (`gleba.local/`, 1024 window)
+counts about 30,000 plants, 4,330 stromatolites, 863 stone, 2,484 cliffs and
+67 nests. Plants are the most visible, but the game's own data put the
+stromatolites first: they have the empty autoplace `order`, so they are the
+FIRST group each chunk's random stream serves, and nothing another group
+draws can move them. Stone is next in value and needs no stream at all (see
+below). Plants come after the stromatolites in the stream and need
+`tile_restriction`, which the generator does not have yet. So this slice is
+exact without porting anything else, and the plants can build on it.
+
+**The fixtures** are `oracle-gleba-real-surface-entities.seed123456.json`
+(plants, nests and cliffs off, so nothing else can take a graded entity's
+place) and `...-entities-default.seed123456.json` (every control at its
+default), from `scripts/probes/gleba-entities`. The graded fixture also holds
+every autoplacer's facts and every tile's collision layers as the prototypes
+report them at runtime, and eleven fields at 2,560 positions.
+
+**Credit.** FactMapGen (`M45-Science/FactMapGen`, Go, AGPL-3.0, which credits
+this repo) draws Gleba's stone and stromatolites to match the game's preview.
+Its `factorio_gleba_features.go` and `factorio_gleba_placement.go` were read
+alongside the Lua for the two stromatolite expressions, the
+`gleba_simple_spot` call with `skip_offset = 1`, and the stromatolites sharing
+one group ahead of the plants. Each rule here was then graded against the
+game. Its preview rule (no apply step) is what this slice does NOT copy.
+
+**What a real surface does, and the port with it** (`placement/gleba.rs`,
+`expressions/gleba_resources.rs`):
+
+- **The fields.** `gleba_select(gleba_<metal>_stromatolite -
+  clamp(gleba_decorative_knockout, 0, 1), 1.3, 2, 0.2, 0, 1)` for each
+  stromatolite, and `4000 * max(starting, gleba_simple_spot(...) *
+  max(gleba_highland, gleba_midland_aux_2)) * richness / size` for stone, f32
+  per step. All eleven match `calculate_tile_properties` at 2,560 of 2,560
+  positions (`gleba_resource_fields_match_the_game`).
+- **`skip_offset = 1`.** `gleba_simple_spot` drops the first accepted spot of
+  each region. `select_spots` kept nothing at an offset at or past the span
+  (#489); it now keeps `j >= offset && (j - offset) % span == 0`, which is the
+  same set below the span, so no other planet's output moves.
+- **The groups.** Sorted by (`order`, name): copper and iron stromatolites
+  share `""`, then the twelve plants, then `stone` (`b`), then the nests. The
+  two stromatolites are ONE group, so each tile goes to the higher
+  probability and draws once. `generate_chunk` refused a group of two; it now
+  ports the richness tie-break (cpp:394). The facts test
+  (`gleba_autoplacer_facts_match_the_game`) checks the sort, every box, flag
+  and layer, and all 41 tiles' layers against the prototypes.
+- **Stone needs no stream.** Its probability is exactly 0 or 1, and a roll
+  places when `p > U` with `U` in `[0, 1)`. So it places on exactly the tiles
+  where its probability is 1, wherever its draws land. The port runs it
+  straight after the stromatolites and cannot be told apart from the game.
+- **Masks.** Stromatolites stand only on wetland (their mask holds
+  `ground_tile`, which every land tile has, and `player`, which the deep lake
+  has); stone only on land (`resource`, which wetland and the lake carry).
+  So the stream reads the corrected tiles, and the raw argmax is not good
+  enough: on it the whole window matched 3,546 of 5,193.
+- **Apply.** Each chunk's queue in order, chunks row-major, dropping an entity
+  whose box meets (touching included) one already placed on a shared layer.
+  Stromatolites block stromatolites; stone blocks stone; the two never share
+  a layer. Columns order gave the same 5,193, so this capture does not tell
+  the two orders apart; rows is what Aquilo measured.
+- **The render** (`render_gleba_entities`) generates the window's chunks plus
+  one ring, on the corrected tiles of all of them, and paints each entity
+  over the tiles `floor(left)` to `ceil(right) - 1` in its map colour:
+  (129, 105, 78) for both stromatolites, as in the Lua, so a map cannot tell
+  iron from copper, and (175, 155, 108) for stone, as the preview PNG draws
+  it. At any other zoom, or a fractional origin, no entity is drawn, because
+  the entities depend on the corrected tiles.
+
+**Grades.**
+
+| test | what | frozen |
+| --- | --- | --- |
+| `gleba_resource_fields_match_the_game` | 11 fields, 2,560 positions, f32 bits | 2,560 each |
+| `gleba_entities_replay_the_real_surface` | two dense 128 windows, by position | 209 of 209, 158 of 158 |
+| `gleba_entity_replay_controls` | strict overlap / preview / raw tiles | (207, 214) (209, 279) (168, 214); (156, 161) (158, 208) (116, 154) |
+| `test/wasmGlebaEntityParity.spec.ts` | the 1024 window through the module, pixel by pixel | 0 of 1,048,576 |
+| same | against the default map | 1 pixel |
+| same | stone control at size 0 | 863 pixels, no stone left |
+
+The debug-build Rust tests replay two 128-tile windows (one iron and stone,
+one copper and stone) because the whole window takes about 9 seconds even in
+release. The spec grades the whole window through the release module: it
+paints the game's entities onto OUR terrain render by the same footprint rule
+and compares every pixel, so a differing pixel is a misplaced, missing or
+extra entity. The terrain stays 0 in `wasmGlebaRenderParity.spec.ts`.
+
+**The remainder against the map a player gets: 1 of 5,193.** The default map
+lacks one copper stromatolite at (134.5, -479.625). Its box reaches y =
+-480.125, past the chunk edge at -480, where a water-cane at (134.375,
+-480.125) stands; the water-cane is in the chunk above, which is applied
+first. Plants are not ported, so the render shows that stromatolite. Its
+footprint is two pixels and a neighbour covers one, so the spec freezes 1.
+
+**Planted breaks, each run:**
+
+| break | what went red |
+| --- | --- |
+| the old skip filter `j % span == offset` | stone richness 1,577 of 2,560, probability 2,046; the replay loses every stone (71 of 209, 52 of 158) |
+| the two stromatolites as two groups | iron window 140 matched of 206 placed (copper sorts first, so its window holds) |
+| probabilities read at the tile centre | 128 of 203, 105 of 164 |
+| the preview's rule (no apply) in the render | 2,037 pixels |
+| raw tiles in the entity pass | 3,552 pixels |
+| no chunk ring in the render | 5 pixels, all at the window's edge |
+
+Two swaps changed nothing in the two replay windows, so neither rule is
+graded there: the two stromatolites' order inside their group (no tile there
+has both at the same positive probability), and the point kernel at the
+integer corner instead of the chunk grid (no roll there falls between the
+two). The facts test pins the first from the prototypes. Neither was tried
+on the whole window.
+
+**What it costs** (the app's default view, 1024 x 1024 at one tile per pixel,
+map seed 123456, WASM under Node, the 64 tiles of 128 summed on one thread,
+median of 7 interleaved runs on hammond, other sessions running):
+
+| module | `terrain` | `all` | ratio |
+| --- | ---: | ---: | ---: |
+| first wiring | 6,653 ms | 17,242 ms | 2.6x |
+| shipped (kept fields) | 6,906 ms | 13,200 ms | 1.9x |
+
+The shipped module keeps the five terrain values the resource fields read
+(`KeptInputs`, about 40 KB a chunk, for up to 100 chunks, enough for a 256-pixel tile and its ring) as tile correction
+evaluates them, so the entity pass does not evaluate the terrain a second
+time. Its output equals the first wiring's byte for byte over 77 requests
+(every view, the 64 app tiles, whole 1024 windows, chunk-aligned and not, 2
+tiles per pixel, a fractional origin, moved stone levers). What is left is the
+ring: a 128-pixel tile corrects 8 x 8 chunks instead of 6 x 6 and generates 6
+x 6 chunks of entities, and every one of those is needed (see
+`GLEBA_ENTITY_RING_CHUNKS`). The browser with its worker pool was not
+measured.
+
+**What is not drawn yet:** plants, cliffs and pentapod nests. The views that
+would show them (`trees`, `cliffs`, `enemies`, `rocks`) fall back to the
+terrain. Plants are the next slice: they are the next groups in the stream,
+and the yumako tree and jellystem need `tile_restriction`.
+
+### Nauvis: the terrain graded against a real surface (2026-11-26)
+
+Nauvis follows Gleba: at one tile per pixel on a whole-tile origin the render
+is the raw argmax plus tile correction, and it matches `get_tile` on a real
+surface. At any other zoom it is still the raw argmax at a point, as the game's
+preview draws it. The wiring is `tiles/nauvis_correction.rs` and a short branch in
+`render_nauvis`; the layers come from the game (`NauvisTile::layer`).
+
+**The fixtures** come from `scripts/probes/gleba-real-surface`, which now takes
+`FMW_PLANET`, `FMW_X0`, `FMW_Y0` and `FMW_SIDE`. Nauvis needs a FRESH surface
+with the `nauvis` surface's settings and seed 123456: the game's own `nauvis`
+surface generates its spawn chunks before `on_init`, so the disabled controls
+never reach them. Two 256 x 256 windows, each from one radius request:
+
+| window | raw argmax vs real (by name = by colour) | corrected | corrected, every pair allowed |
+| --- | ---: | ---: | ---: |
+| spawn, -128..127 | 89 | **0** | 0 |
+| coast, x 384..639, y -320..-65 | 326 | **0** | 73 |
+| whole preview, -512..511 (scratch capture, not committed) | 2,810 | **0** | 59 |
+
+- **`allowed_neighbors` is part of the port now.** `deepwater` allows only
+  `water`, and the game makes the table symmetric, so no land tile may touch it.
+  Correction fails a tile beside a forbidden neighbour at once and replaces it
+  with the first step of a path between the two, which is `water`
+  (`tiles::correction::Neighbours`; the reading is in
+  `docs/noise/tile-correction-NOTES.md`). The spawn window never puts deepwater
+  beside land in its raw tiles, so the coast window was chosen to have it, 90
+  times.
+- **No ties.** Gleba's argmax ties go to the name that sorts first. No position
+  of the spawn window and its margin has two Nauvis tiles sharing the top score,
+  nor any of five wider windows checked by hand (a 1024 and four 512 windows,
+  out to 8,000 tiles), so registration order and name order pick the same tile
+  and Nauvis cannot say which rule the game uses. `TILE_ORDER` stays.
+- **The margin.** One chunk, as Gleba. The spawn window is exact even with none;
+  the 1024 window is 8 tiles off with none, 0 with one or two. 128-pixel worker
+  tiles stitch to the whole render byte for byte.
+- **Not covered by these windows:** the second pass's shared queue (skipping
+  the second pass changes no Nauvis tile here; Gleba's tests catch it), and
+  overlays: resources, rocks and enemies still test the RAW tile for their
+  water gate (`tile_allowed`), and the tree overlay reads the painted pixel,
+  which is now the corrected one at one tile per pixel. The rock pass's
+  pre-roll water test reads the corrected tile too, at the rock's own
+  position (#566, below).
+
+**Tier 1** is `crates/fmw-noise/src/fixtures/nauvis_real_surface.rs` (by tile
+name; the raw, spawn and coast tests are in `POISONED_TESTS`). **Tier 3** is the
+real-surface block in `test/wasmNauvisRenderParity.spec.ts`. The preview PNG is
+now a reference: the 1024 count moved 0 -> 2,810, exactly the tiles where the
+scratch real surface differs from the PNG, and in the spawn window the PNG
+differs from the render at the same 89 pixels where it differs from the real
+surface. No tier-2 fold moved (they grade fields per position, not the render),
+and no frozen `nauvis:render` row moved, because none of them is at one tile
+per pixel on a whole-tile origin.
+
+**Planted breaks:** correcting chunks in rows order (spawn 0 -> 2); sand-1's
+layer 152 -> 176 (spawn 0 -> 21, and the layer test red); replacing with the
+offending tile instead of the replacement (coast 0 -> 8,907); dropping the
+forbidden-neighbour check (coast 0 -> 73); poison (all three red).
+
+**Through `correct_window`.** The Nauvis render uses Aquilo's lazy
+`correct_window` (raw tiles read only when the pass first needs them, and no
+walk from a seed inside a 3 x 3 block of one id) with the deepwater rule passed
+in. That changes no tile: the eager pass over a fully filled world gives the
+same tiles on both committed windows (asserted) and on the 1024 scratch
+surface (measured), and `lazy_and_eager_reads_agree` and
+`skipping_uniform_seeds_changes_nothing` now also run with a neighbour rule
+(id 1 may touch only id 2) active.
+
+**What it costs.** WASM under Node on hammond with other sessions running,
+median of 5 interleaved rounds (each round runs every case on all three
+modules in turn):
+
+| render | raw argmax (915d3af) | first wiring, eager (7a38504) | now, lazy |
+| --- | ---: | ---: | ---: |
+| `all` 1024 x 1024, the app's default view, as 64 worker tiles of 128 summed on one thread | 5,974 ms | 14,237 ms (2.38x) | 9,290 ms (1.56x) |
+| terrain, the same 64 worker tiles | 2,445 ms | 10,727 ms (4.39x) | 5,825 ms (2.38x) |
+| terrain 256 x 256 at 1 tile per pixel | 154 ms | 394 ms | 254 ms |
+
+Other zooms are not corrected, so they cost what they did. What is left is the
+raw tiles of the margin chunks, which correction must read in full: a
+128-pixel worker tile corrects 6 x 6 chunks to paint 4 x 4, and the worker
+tiles redo each other's margins. Nauvis has less to gain from the uniform skip
+than Aquilo's open ocean (the land is a patchwork of 19 tiles), and Aquilo's
+third change, keeping the fields for the entity pass, does not transfer: the
+Nauvis overlays' water gates evaluate tiles on the point kernel
+(`nauvis_tile_at`), not the chunk grid, so they cannot reuse the corrected
+pass's raw tiles without changing their output. Sharing raw chunks between
+worker tiles would be the next lever.
+
+### Nauvis rocks at worker-tile seams (#566)
+
+The rock pass tests a rock's tile for water before it rolls. It sweeps one
+pixel past the worker tile, because a rock there still owes the tile part of
+its 3 x 3 mark. The test used to read the painted buffer at
+`(py * width + px)`, the way `renderRocks.ts` did, and for `px = -1` that is
+the last pixel of the previous row: the far edge of the same tile. So a seam
+rock depended on the tile width. On the 1024 `rocks` view, 128-pixel tiles
+matched the whole render on 12 of 12 seeds and 256-pixel tiles missed a 3-pixel
+rock column on 4 (seeds 123456, 7, 8 and 11).
+
+**The fix reads the terrain at the rock's own world position.** The render
+keeps its Nauvis tiles in a grid that covers the sweep halo as well as the
+window (`NauvisTerrainGrid` in `crates/fmw-wasm/src/render.rs`), and the
+pre-roll test reads that grid. At one tile per pixel the halo tiles come out of
+the margin chunks the window's own correction has already corrected
+(`nauvis_corrected_tiles_reading_out`), so they cost nothing.
+
+Four ways were built and compared on the 1024 app window, 12 seeds, at 128 and
+256 pixel tiles:
+
+| fix | tiled = whole | whole render vs before | cost, `all` at 256 px |
+| --- | --- | --- | ---: |
+| correct a window widened by the halo | 12 of 12 | same | +16% (`rocks` +27%) |
+| read the halo from the margin (shipped) | 12 of 12 | same | about 0 |
+| a point outside the tile is not water | 12 of 12 | same | 0 |
+| drop the pre-roll test (`tile_allowed` alone) | 12 of 12 | 3 px off at water level 20 | 0 |
+
+- **Why not the widened window.** It is the same answer, and it pulls in a
+  whole extra ring of chunks, which spends most of what 256-pixel tiles save.
+- **Why not "outside is not water".** It is right only while the whole render's
+  answer for that tile is "not water" or `tile_allowed` refuses the rock
+  anyway. Nothing makes that so; it happened to hold on 12 seeds.
+- **Why not drop the test.** The test is live. At water level 20, seed 123456,
+  it refuses a rock at (797..799, 51) on a tile that correction made water,
+  which `tile_allowed` (the raw point kernel) cannot see. A real surface places
+  entities after correction, so the refusal is the faithful one.
+- **How exact the margin read is.** Not by proof, any more than the window's
+  own tiles are: both rest on the margin being wide enough. Over the 1024 app
+  window at 12 seeds and at water levels 0, 20 and -15, every halo tile matched
+  the whole window's tile, at both tile sizes. Without a margin the same reads
+  were 14 to 44 tiles off per render.
+  `halo_tiles_read_from_the_margin_match_a_window_that_holds_them` keeps a
+  coast-window case, with a raw-argmax control that misses 5 halo tiles.
+
+`test/tiledEqualityAppGeometry.spec.ts` renders the app's own geometry (1024
+square, one tile per pixel, the spawn at the centre, the `rocks` view) at 128
+and 256 pixel tiles on seeds 123456 and 7. Before the fix it failed at 256 on
+both, at (255, 417..419) and (512, 1015..1017); after, both pass.
+
+The `all` view also changed in one way the gate cannot see at these seeds: the
+pre-roll test used to read the painted buffer AFTER crude oil, whose mark may
+spill onto water, so an oil pixel over water read as land. It now reads the
+terrain. On seeds 123456, 7, 8 and 11 the `all` whole render did not move.
+
+### Fulgora: the terrain view, graded against a real surface
+
+Fulgora's terrain now matches `get_tile` on a REAL surface at every one of
+65,536 tiles at one tile per pixel, the way Gleba's does. It used to match the
+game's preview PNG exactly, which is the raw argmax: 1,003 pixels from the real
+map in the 256 x 256 window around spawn (map seed 123456, derived surface seed
+2967702466).
+
+| step | tiles wrong (by name) | pixels wrong (map colour) |
+| --- | ---: | ---: |
+| raw argmax, the `-2` ocean tiles told apart | 1,703 | 1,003 |
+| tile correction, columns order, window plus one chunk | **0** | **0** |
+
+By name the raw count is larger than by colour because correction also moves
+tiles between each oil-ocean tile and its `-2` twin.
+
+- **The `-2` twins are real tiles to correction.** `oil-ocean-shallow-2` and
+  `oil-ocean-deep-2` share a map colour with their base tile but not a layer
+  (147 against 148, 67 against 66), so a boundary between them is a boundary.
+  `FulgoraTile` gained `Shallow2` and `Deep2`; `folded()` maps them back for a
+  picture, the land mask and the tier-2 checksum, whose folds did not move.
+- **Ties.** The twelve scores are visited in tile-name order (`NAME_ORDER`),
+  Gleba's measured rule. There is no exact tie at the maximum anywhere the
+  render reads around the window, or on a 16,384-point sweep far from spawn
+  (`fulgora_ties_at_the_maximum`), so the order changes no tile here; putting
+  the old order back turns nothing red.
+- **The order near a request's edge.** The probe's default radius-6 request
+  puts its edge two chunks from the window, and that surface differs from
+  radius 7, 10 and 18 at 5 tiles, all near that edge. The game queues
+  correction tasks through `MapGenerationManager::request`'s 3 x 3
+  prerequisite walk (`tiles::correction::requested_correction_order`); that
+  order reproduces radius 6, radius 10 and a rows-order request at every tile,
+  and it reproduces Gleba's rows capture too. Inside a generated area it gives
+  the same tiles as columns order, so the renderer uses columns order and is
+  graded against the radius-10 capture. The walk order is a test model only,
+  because it depends on an edge no preview can know, and it would make a tiled
+  render differ from a whole one (36 tiles at 1024 in 128-pixel tiles).
+- **The margin.** No margin leaves 61 tiles wrong; one and two chunks give the
+  same 0. A 1024 render cut into the app's 128-pixel tiles stitches to the
+  whole render at every tile, and its centre matches the real surface.
+- **Not reached.** Scrap placement still tests the raw tile for oil ocean. A
+  real surface places scrap after correction, so a corrected tile could move a
+  scrap entity; the scrap views are not graded against a real surface.
+
+**What it costs.** The render goes through `correct_window`, which reads raw
+tiles lazily and skips walks that cannot change anything (Aquilo's cost fix).
+Measured on hammond in Node, serial, median of 7 interleaved runs:
+
+| render | raw argmax | eager correction (559b658) | lazy correction |
+| --- | ---: | ---: | ---: |
+| 256 x 256 terrain | 170 ms | 418 ms (2.5x) | 301 ms (1.8x) |
+| app default: 1024 x 1024 `all`, 128-pixel worker tiles | 4.95 s | 13.76 s (2.8x) | 9.29 s (1.9x) |
+
+The app figure is total worker time; the pool splits it. The lazy render is
+byte-identical to the eager one on 24 requests and the whole app default.
+What is left is raw tiles: the app reads 2.33 raw tiles per pixel shown, and
+2.25 of that is the corrected chunks themselves, which every walk reads. A
+128-pixel tile corrects 6 x 6 chunks to show 4 x 4, so only a larger worker
+tile would cut it further (256 pixels would make it 1.56). The app renders at
+one tile per pixel only, so every user sees the corrected map.
+
+**Tier 3** is `test/wasmFulgoraRenderParity.spec.ts`: 0 pixels against the
+radius-10 surface, the preview PNG differing from the render exactly where it
+differs from the real surface (1,003 in the window, 22,288 of the full 1024),
+and the tiling check. Eleven tier-3 rows were re-recorded: every 1-tile-per-pixel
+window (origin land mask, terrain, resources, all; both scrap windows'
+resources and all; the three scrap-slider cases). Checked against the old
+engine, every moved pixel is terrain (no scrap pixel moved), and the origin
+window went from 189 pixels off the real surface to 0. The rows at other zooms
+did not move. Tier 1 grades by name in `fixtures/fulgora_real_surface.rs`.
+
+**Planted breaks:** swapping the shallow twins' layers (0 to 679 tiles by name
+and 83 pixels; 11 of 33 tier-3 tests red); folding `-shallow-2` back into
+`-shallow` before correction (raw kinds 12 to 11, corrected 0 to 18,564 by
+name and 56 by colour); no correction margin (0 to 61); columns order against
+the radius-6 and rows captures (5 and 10, where the walk gives 0). Two plants did NOT go red, and that is a finding:
+the old tie order (there are no ties), and visiting the walk's neighbours
+y outer instead of x outer (these captures cannot tell the two apart).
+
 ### Aquilo (#454)
 
 Aquilo is the fourth planet to render through the engine. It was ported
@@ -867,19 +1364,23 @@ and the extra windows were added beside it rather than accepting the constants.
   rows were written from the WASM run and the native test matched them with no
   copying.
 
-**Tier 3: the terrain gap is 0 of 1,048,576, and since #492 the composite is
-too, inside a 4-pixel border.** The spec is
-`test/wasmAquiloRenderParity.spec.ts` (24 tests since #492, 26 before: the
+**Tier 3: the terrain matches a real surface at every pixel; the preview PNGs
+are now a reference (2026-11-26, see "Aquilo against a real surface" below).**
+Before that the terrain gap to the preview was 0 of 1,048,576, and since #492
+the composite's was too, inside a 4-pixel border. The spec is
+`test/wasmAquiloRenderParity.spec.ts` (27 tests since the real-surface change, 24 since #492, 26 before: the
 per-colour fingerprint and the halo-radius check went. About 17 to 20 seconds on
 tealc, about 1.5 times Fulgora's). All of it uses the derived surface seed 3111923328
 for map seed 123456, and the window is -512 to 511 at one tile per pixel.
 
 | what                                                           | frozen                |
 | -------------------------------------------------------------- | --------------------- |
-| terrain view against the terrain PNG (levers at size 0)        | 0 of 1,048,576        |
-| same, levers left at neutral (control)                         | 13,194                |
+| terrain view against the REAL surface, -128..127 (levers at size 0) | 0 of 65,536      |
+| preview PNG against our render in that window, and against the real surface | 531, at the same pixels |
+| terrain view against the terrain PNG (levers at size 0), a reference | 718 of 1,048,576 (0 before the correction) |
+| same, levers left at neutral (control)                         | 13,707 (13,194 before) |
 | raw map seed instead of the derived one, 256 by 256 at spawn   | 7,376 of 8,843 land pixels differ (83%; measured, asserted > 50%) |
-| composite (wells and icebergs) against the full PNG, every pixel | 3 of 1,048,576; 0 inside a 4-pixel border |
+| composite (wells and icebergs) against the full PNG, every pixel | 1,067 of 1,048,576: 1,064 tile against tile (0 before), 3 entity pixels at the edge, 0 entity pixels inside a 4-pixel border |
 | per-colour pixels in that composite                            | equal to the game's, except iceberg +3 |
 | footprint pixels outside, grown by 1 pixel                     | 7                     |
 | footprint pixels outside, grown by 2 pixels                    | 0                     |
@@ -890,8 +1391,8 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
 
 - **The terrain PNG was captured with all three resource controls at size 0,
   and those controls reshape the islands.** A render that names no levers
-  renders at size 1 and differs from the PNG in 13,194 pixels. The matched
-  pairing gives 0. The spec freezes both numbers so the levers stay load-bearing.
+  renders at size 1 and differs from the PNG in 13,707 pixels (13,194 before the correction). The matched
+  pairing gives 718, the correction's footprint (0 before). The spec freezes both numbers so the levers stay load-bearing.
   This is the Vulcanus lesson again (see tier 3 above).
 - **The full-PNG test grades the composite, every pixel, nothing masked
   (#492).** Wells and icebergs come from the game's own per-chunk entity
@@ -980,6 +1481,176 @@ generator, and the 209/209 real-surface replay confirms them.
   imported string with an Aquilo richness of 0 would draw wells the game does
   not place.
 
+### Aquilo against a real surface (#454, 2026-11-26)
+
+At one tile per pixel on a whole-tile origin, the Aquilo render now runs tile
+correction after the argmax, the way Gleba's does (`render_aquilo`,
+`AquiloStack::corrected_tiles`), so the terrain is what a real surface holds.
+At any other zoom a pixel is still the raw argmax at a point. The wells and
+icebergs are still drawn by the preview's rule (#553). The app opens Aquilo at
+one tile per pixel in the `all` view, so a user sees the corrected terrain with
+the preview's entities on top. `docs/noise/aquilo-NOTES.md` has the findings.
+
+- **Correction alone closes the gap.** Aquilo's nine layers through the
+  unchanged `tiles/correction.rs` give 0 wrong tiles by name against the
+  committed real surface (551 raw), and against two uncommitted 1024 x 1024
+  real surfaces (levers off, and neutral with every entity autoplace removed).
+  No Aquilo tile has `allowed_neighbors`, and the argmax has no ties in
+  1,327,104 tiles, so neither the neighbour table nor the tie order is
+  reached. `correction.rs` did not change, so Gleba stays at 0.
+- **The fixture** is `oracle-aquilo-real-surface.seed123456.json`, from the
+  Gleba probe with `FMW_PLANET=aquilo` (`scripts/probes/gleba-real-surface`).
+  A columns-order request gave the same window at every tile and is not
+  committed.
+- **The preview tests moved only to the correction's footprint.** The terrain
+  PNG went from 0 to 718, and in the 256 window the PNG differs from the render
+  exactly where it differs from the real surface (531 pixels, asserted). On
+  the full PNG, 1,064 tile pixels moved, and on the 1,042,881 pixels where both
+  images show a tile they are exactly where the neutral 1024 real surface
+  differs from the PNG (measured). The `aquilo:render` digests: 13 of 14 rows
+  moved, and in each one every moved pixel is a tile colour on both sides and
+  equals the corrected terrain view (old and new module compared, render by
+  render). "slider fluorine vent frequency | all" did not move because the
+  correction changes no tile in that window.
+- **The margin is load-bearing for the worker pool.** Cut into the app's
+  128-pixel tiles with no margin, 45 tiles of the committed window are wrong;
+  with one chunk, 0 (`aquilo_corrected_tiles_against_the_real_surface`).
+- **Planted breaks:** no correction in the render (real surface 0 to 531,
+  terrain PNG 718 to 0, full PNG 1,064 to 0, 15 of 27 tests red); brash ice at
+  the oceans' layer 67 (corrected tiles 0 to 160 wrong, and the layer check
+  red); `AQUILO_CORRECTION_MARGIN_CHUNKS` at 0 (tiled 0 to 45 wrong).
+- **What it costs: about 1.3x, after three changes that alter no output
+  byte.** The first wiring cost about 3x, because a 128-pixel tile evaluated
+  8 x 8 chunks of raw tiles to draw its 4 x 4, and the entity pass then
+  evaluated the window again. Now:
+  - `correct_window` (`tiles/correction.rs`) reads raw tiles lazily, so the
+    outer ring of chunks, which is read but never corrected, costs only the
+    band the walks reach. Gleba uses it too.
+  - The scan skips a walk whose seed sits in a 3 x 3 block of one id. Such a
+    walk changes and queues nothing (the module docs give the argument), and
+    open ocean is mostly such seeds.
+  - The Aquilo render keeps the fields correction evaluated for the window's
+    chunks (`KeptFields`, up to 64 chunks) and the entity generator reads them
+    instead of evaluating each tile a second time.
+
+  Measured on hammond with other sessions running, the app's default view
+  (1024 x 1024 `all`, map seed 123456):
+
+  | module | WASM under Node, 64 tiles of 128 summed on one thread | browser, headless Chrome, 15 workers, wall |
+  | --- | ---: | ---: |
+  | raw argmax, before correction | 2,236 ms | 590 ms |
+  | first correction wiring | 6,645 ms | 1,691 ms |
+  | now | 2,920 ms | 750 ms |
+
+  Node is the median of 7 interleaved runs; the browser is the median of 9
+  `Generate` clicks after one warm-up, read off the dev-mode elapsed readout
+  (`pnpm vp dev`, `?dev=1`, seed fixed at 123456). A 256 x 256 terrain render
+  went 63 ms, 187 ms, 118 ms. What is left is mostly the raw tiles of the
+  margin chunks, which correction must read in full. 256-pixel worker tiles
+  instead of 128 measured 727 ms against 738 ms in the browser, inside the
+  noise, so the pool's tile size was left alone.
+
+  The output is the same, byte for byte, as the first wiring's: 52 Aquilo and
+  Gleba requests (every view, levers off and neutral, chunk-aligned and not,
+  1, 2 and 0.5 tiles per pixel) and the whole 1024 `all` view, tiled and
+  whole, compared with the previous module. The unit tests
+  `lazy_and_eager_reads_agree` and `skipping_uniform_seeds_changes_nothing`
+  pin the two correction changes on random grids.
+- **The entity overlays are the next step (#553).** The corrected land matches
+  the land mask of `oracle-aquilo-surface` at all 409,600 tiles, where the raw
+  argmax misses 172 (`aquilo_corrected_land_matches_the_entity_stream_surface`),
+  so the entity replay could read our tiles instead of the game's.
+
+### Vulcanus: the terrain graded against a real surface (2026-11-26)
+
+At one tile per pixel on a whole-tile origin, the Vulcanus render now runs tile
+correction, as a real surface does and the game's preview does not, so the
+terrain under every view is what a player's map shows. The module is
+`crates/fmw-noise/src/tiles/vulcanus_correction.rs`; `render_vulcanus` calls
+it. The target is `get_tile` on a real surface, the same rule Eric set for
+Gleba.
+
+**Against the real surface**, 256 x 256 tiles around spawn, map seed 123456,
+derived surface seed 1249936247, the ore controls at size 0 as the preview
+capture had them (`oracle-vulcanus-real-surface.seed123456.json`):
+
+| step | tiles wrong (by name) | pixels wrong (map colour) |
+| --- | ---: | ---: |
+| raw argmax (what the preview PNG shows) | 2,053 | 1,814 |
+| tile correction, layers only | 217 | 217 |
+| plus the may-touch rule (`allowed_neighbors`) | **1** | **1** |
+
+- **Layers.** `VulcanusTile::layer` is the game's effective layer, read back at
+  runtime. Lava (`water-overlay`, 86) and lava-hot (`water`, 69) sit far below
+  the ground tiles (`ground-natural`, 184 to 202).
+- **Tiles that may not touch.** Lava and lava-hot allow only each other, so
+  lava against ground fails the consistency check before any layer test
+  (`Neighbours` in `tiles/correction.rs`, the design the Nauvis port read from
+  the binary). The game's replacement search finds no path out of that pair,
+  in its own tile list or in ours, so lava and ground never replace each other;
+  without the rule the layer checks turn ground into lava along one-wide
+  strips, the 217 above.
+- **The last tile is order, not the pass.** At (-127, 95) we draw lava-hot and
+  the capture lava. Corrected in the order the game queues the tasks for that
+  request (`MapGenerationManager::request`, decoded by the Fulgora port:
+  each requested chunk first asks for its 3 x 3 one stage lower, so one
+  request corrects the 5 x 5 around it), both committed captures match at
+  every tile, the radius one and the one-at-a-time `-each` one
+  (`the_games_request_order_reproduces_both_captures`). An uncommitted capture
+  of the whole 1024 x 1024 window (one radius-18 request,
+  `realsurface.local/real-vulcanus-1024-radius18.json`) has lava-hot at
+  (-127, 95), like the render; the render differs from it at 3 of 1,048,576
+  tiles, all at its left edge, and the request order takes that to 0. The
+  render keeps columns order: it cannot know what a game requested, and
+  columns order agrees with the request order away from a request's edge.
+- **No ties.** No two tiles share the winning score anywhere in the 1024 x 1024
+  window (closest 2.4e-7), so the listing-order argmax needs no tie order.
+- **Margin.** One chunk, as Gleba: none leaves 79 tiles wrong, two changes
+  nothing. Tiled renders (128- and 100-pixel tiles) stitch to the whole one byte
+  for byte.
+
+**What moved.** The preview PNG is now a reference: the render differs from it
+at 39,950 of 1,048,576 pixels, where correction changed a colour, and inside
+the fixture window exactly where the real surface differs from it, plus the one
+order tile. Eleven tier-3 rows moved, all at one tile per pixel on a whole-tile
+origin (the 64 x 64 window at the origin in every view, and two ore windows in
+the resource view); in each, every moved pixel is a terrain pixel correction
+changed, and no overlay pixel moved. The overlay counts (rocks, cliffs, ore,
+composite) did not move. No tier-2 fold moved: correction is a render step.
+
+**What it costs.** The render goes through `correct_window` (lazy raw reads,
+no-op walks skipped, from the Aquilo port). Node, one thread, median of three
+interleaved runs on hammond with other sessions running; "eager" is the first
+version of this port, which read every raw tile of the margin and ring:
+
+| render | raw argmax | eager correction | `correct_window` |
+| --- | ---: | ---: | ---: |
+| app default: 1024 x 1024 `all`, 64 tiles of 128 px | 25.7 s | 84.3 s (3.3x) | 51.9 s (2.0x) |
+| the same, `terrain` | 18.8 s | 76.8 s (4.1x) | 45.0 s (2.4x) |
+| one 256 x 256 terrain render | 1.16 s | 2.65 s (2.3x) | 1.88 s (1.6x) |
+
+The eager and lazy renders are byte-identical over the whole app view, in both
+views. What is left is mostly the raw tiles of each tile's margin: a 128-pixel
+tile (4 x 4 chunks) corrects 6 x 6 chunks, so it reads about 2.25 times its own
+tiles, at about 18 microseconds per raw Vulcanus tile. The worker pool divides these times by its worker count.
+
+**Not modelled.** Entity placement on a real surface runs after correction, so
+the rock lists that name hot and cold ground tiles may see corrected tiles. The
+overlays still read the raw argmax; their cliff and lava tests only ask lava or
+not, which correction never changes.
+
+**Tier 3** is the real-surface block of `test/wasmVulcanusRenderParity.spec.ts`
+(1 pixel, at (-127, 95); the PNG window differs from the render at 1,815 pixels,
+exactly its 1,814 against the real surface plus that tile; tiled renders stitch).
+Tier 1 grades the same window by name in `vulcanus_correction.rs`.
+
+**Planted breaks, each turning a frozen count red.** Planted in the shipped
+render and run through tier 3: no may-touch rule (1 to 217 pixels; the PNG
+check 1,815 to 1,808), and no margin (1 to 72 pixels, and the 128-pixel tiled
+render no longer stitches). In tier 1: poison on the argmax (1 to 64,368 by
+name), and the `-each` capture corrected in columns order instead of its own
+row order (0 to non-zero).
+
 ### Current tier-1 counts
 
 **`crates/fmw-noise/src/fixtures.rs` is the authority, and the tables live in
@@ -1034,6 +1705,7 @@ declares `params_bytes`, then a per-planet block follows:
 | planet   | block | request |
 | -------- | ----- | ------- |
 | Aquilo   | 128   | 184     |
+| Gleba    | 24    | 80      |
 | Fulgora  | 64    | 120     |
 | Nauvis   | 520   | 576     |
 | Vulcanus | 312   | 368     |
@@ -1111,8 +1783,8 @@ not `Math.sin`: the game's `sin` is not libm, and a correctly rounded f32 sine
 is one ULP away from it on about 5% of inputs. The bearings feeding it are
 graded against the game on 606 seeds (`test/bearingChain.spec.ts`).
 
-`test/fixtures/wasm-request.v2.json` pins the encoding for all four planets
-(Aquilo, 128 bytes, request 184, added in #454). It is declared under
+`test/fixtures/wasm-request.v2.json` pins the encoding for all five planets
+(Aquilo, 128 bytes, request 184, and Gleba, 24 bytes, request 80, both added in #454). It is declared under
 `notFixtures` because it is our own ABI rather than Factorio
 ground truth, and its bytes are checked by
 `test/fixtures/verify-wasm-request.py` - **a third implementation, not the

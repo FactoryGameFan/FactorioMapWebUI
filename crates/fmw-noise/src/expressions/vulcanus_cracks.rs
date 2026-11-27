@@ -204,21 +204,80 @@ mod tests {
     /// `flood_cracks_a` lerps TOWARD 1 and `flood_cracks_b` lerps FROM it. The
     /// two are easy to transcribe the same way round, and the fixture would
     /// catch it - but not say why.
+    ///
+    /// The audit (2026-11-26) changed this: it used to count how often
+    /// `flood_cracks_a > flood_cracks_b`, a bound that holds with the lerps
+    /// either way round. It now rebuilds the crack and mix terms with the
+    /// layer's own scale chain and checks the product's two fields against
+    /// them. Where a mix clamp is saturated the direction shows without any
+    /// formula (to a lerp's f32 rounding): `a` is the crack pattern at mix 0 and 1 at mix 1, `b` is 1 at
+    /// mix 0 and the pattern at mix 1.
     #[test]
     fn the_two_flood_cracks_lerp_in_opposite_directions() {
-        let (_, cracks) = layer();
-        let mut a_above_b = 0usize;
-        for (x, y) in grid() {
+        let (helpers, cracks) = layer();
+        let cs = VULCANUS_CRACKS_SCALE as f32;
+        let scaled = |k: f64| f64::from((k as f32) * cs);
+        let a1 = helpers.plasma(7_543, scaled(2.5), scaled(4.0), 0.5, 1.0);
+        let a2 = helpers.plasma(7_443, scaled(1.5), scaled(3.5), 0.5, 1.0);
+        let a_mix = helpers.detail_noise(241, scaled(2.0), 2.0, 0.25);
+        let b1 = helpers.plasma(12_223, scaled(2.0), scaled(3.0), 0.5, 1.0);
+        let b2 = helpers.plasma(152, scaled(1.0), scaled(1.5), 0.25, 0.5);
+        let b_mix = helpers.detail_noise(821, scaled(6.0), 2.0, 0.5);
+
+        let (mut a_open, mut a_shut, mut b_shut, mut b_open) = (0usize, 0, 0, 0);
+        for k in 0..1200 {
+            let (x, y) = (f64::from(k) * 11.5 - 400.0, f64::from(k) * -6.25 + 150.0);
             let f = cracks.eval(x, y);
-            if f.flood_cracks_a > f.flood_cracks_b {
-                a_above_b += 1;
+            let pattern_a = min2(a1.eval(x, y), a2.eval(x, y));
+            let t_a = clamp(f64::from(a_mix.eval(x, y)), 0.0, 1.0);
+            assert_eq!(
+                f.flood_cracks_a,
+                lerp_f32(pattern_a, 1.0, t_a),
+                "flood_cracks_a at ({x}, {y})"
+            );
+            if t_a == 0.0 {
+                assert!(
+                    (f.flood_cracks_a - pattern_a).abs() < 1e-6,
+                    "mix 0 leaves the pattern"
+                );
+                a_open += 1;
+            }
+            if t_a == 1.0 {
+                assert!(
+                    (f.flood_cracks_a - 1.0).abs() < 1e-6,
+                    "mix 1 floods it shut"
+                );
+                a_shut += 1;
+            }
+
+            let pattern_b = f32r(min2(b1.eval(x, y), b2.eval(x, y)) - 0.5);
+            let t_b = clamp(f32r(f32r(0.2) + f64::from(b_mix.eval(x, y))), 0.0, 1.0);
+            assert_eq!(
+                f.flood_cracks_b,
+                lerp_f32(1.0, pattern_b, t_b),
+                "flood_cracks_b at ({x}, {y})"
+            );
+            if t_b == 0.0 {
+                assert!(
+                    (f.flood_cracks_b - 1.0).abs() < 1e-6,
+                    "mix 0 leaves it flooded"
+                );
+                b_shut += 1;
+            }
+            if t_b == 1.0 {
+                assert!(
+                    (f.flood_cracks_b - pattern_b).abs() < 1e-6,
+                    "mix 1 shows the pattern"
+                );
+                b_open += 1;
             }
         }
-        // They are different fields with different seeds, so this is a shape
-        // check rather than an identity: neither dominates everywhere.
+        // Non-vacuity. `a`'s mix never reaches 1 on this path, so only its 0
+        // end is required; that end alone tells the two directions apart,
+        // because the pattern is not 1 there.
         assert!(
-            a_above_b > 0 && a_above_b < 80,
-            "flood_cracks_a exceeds flood_cracks_b at {a_above_b} of 80 points"
+            a_open > 0 && b_shut > 0 && b_open > 0,
+            "clamp ends reached: a {a_open}/{a_shut}, b {b_shut}/{b_open}"
         );
     }
 

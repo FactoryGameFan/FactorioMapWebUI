@@ -40,7 +40,9 @@ ABI_VERSION = 2
 COMMON_BYTES = 56
 FULGORA_PARAMS_BYTES = 64
 VULCANUS_PARAMS_BYTES = 312
-PLANET = {"fulgora": 0, "vulcanus": 1, "nauvis": 2, "aquilo": 3}
+PLANET = {"fulgora": 0, "vulcanus": 1, "nauvis": 2, "aquilo": 3, "gleba": 4}
+GLEBA_PARAMS_BYTES = 48
+"""Must equal fmw_wasm::abi::GLEBA_PARAMS_BYTES."""
 VIEW = {
     "landmask": 0,
     "terrain": 1,
@@ -676,6 +678,84 @@ def decode_aquilo(b, req):
     return trig, {"x0": sweep[0], "y0": sweep[1], "x1": sweep[2], "y1": sweep[3]}
 
 
+# The Gleba arm's request, written here for the same reason as Aquilo's. Six
+# levers (three terrain, then the gleba_stone control) and no trig: the module
+# computes Gleba's sines itself, per position, with the game's own polynomial.
+GLEBA_REQUEST = {
+    "planet": "gleba",
+    "view": "terrain",
+    "seed0": 3215206427,
+    "width": 8,
+    "height": 4,
+    "originX": -512.5,
+    "originY": 256.25,
+    "tilesPerPixel": 2,
+    # Distinct and non-default, so a swapped field is visible.
+    "glebaControls": {
+        "waterFrequency": 1.5,
+        "waterSize": 0.5,
+        "plantsFrequency": 0.75,
+        "stoneFrequency": 1.25,
+        "stoneSize": 0.625,
+        "stoneRichness": 3.0,
+    },
+}
+
+
+def encode_gleba(req):
+    """Build the 104-byte request from the layout table, with struct."""
+    b = bytearray(COMMON_BYTES + GLEBA_PARAMS_BYTES)
+    struct.pack_into(
+        "<IIIIIII",
+        b,
+        0,
+        MAGIC,
+        ABI_VERSION,
+        PLANET[req["planet"]],
+        VIEW[req["view"]],
+        req["seed0"],
+        req["width"],
+        req["height"],
+    )
+    struct.pack_into("<I", b, 28, GLEBA_PARAMS_BYTES)
+    struct.pack_into("<ddd", b, 32, req["originX"], req["originY"], req["tilesPerPixel"])
+    c = req["glebaControls"]
+    struct.pack_into(
+        "<dddddd",
+        b,
+        COMMON_BYTES,
+        c["waterFrequency"],
+        c["waterSize"],
+        c["plantsFrequency"],
+        c["stoneFrequency"],
+        c["stoneSize"],
+        c["stoneRichness"],
+    )
+    return bytes(b)
+
+
+def decode_gleba(b, req):
+    """Gleba's block: six levers at +0, +8, ..., +40."""
+    want = COMMON_BYTES + GLEBA_PARAMS_BYTES
+    if len(b) != want:
+        raise AssertionError(f"gleba request is {len(b)} bytes, expected {want}")
+    decode_common(b, req, GLEBA_PARAMS_BYTES)
+    c = req["glebaControls"]
+    names = [
+        "waterFrequency",
+        "waterSize",
+        "plantsFrequency",
+        "stoneFrequency",
+        "stoneSize",
+        "stoneRichness",
+    ]
+    values = [c[n] for n in names]
+    if len(set(values)) != len(values) or 1 in values:
+        raise AssertionError("the gleba fixture must use a DISTINCT, non-neutral value per lever")
+    for i, n in enumerate(names):
+        check(n, f64(b, COMMON_BYTES + i * 8), c[n])
+
+
 def main():
     src, dest = sys.argv[1], sys.argv[2]
     d = json.load(open(src))
@@ -687,6 +767,9 @@ def main():
     nlevers = decode_nauvis(nb, d["nauvis"]["request"])
     ab = encode_aquilo(AQUILO_REQUEST)
     atrig, abox = decode_aquilo(ab, AQUILO_REQUEST)
+    gb = encode_gleba(GLEBA_REQUEST)
+    decode_gleba(gb, GLEBA_REQUEST)
+    print(f"gleba: all six levers agree and are pairwise distinct, {len(gb)} bytes")
     print("fulgora: all fields agree, both bearings unit-norm")
     print(
         "vulcanus: all fields agree, ten bearings unit-norm, 1 legitimate duplicate, "
@@ -752,6 +835,11 @@ def main():
             "come from request.ts at all; the trig pairs are checked by unit norm, by each "
             "angle's offset from the first bearing, and against this script's own copy of the game's sin and cos polynomial to "
             "2e-7. "
+            "The Gleba arm (104 bytes, six distinct non-neutral levers and no trig, because "
+            "Gleba's sines are per position and the module computes them with the game's own "
+            "polynomial) is built and decoded by this script from the layout table too. Its "
+            "block grew 24 -> 48 when the gleba_stone control's three levers were appended for "
+            "the stone overlay (#454). "
             "The Nauvis block grew 512 -> 520 (request 568 -> 576) when the starting-area radius "
             "was appended as its last slot, after the starting points; the independent decoder "
             "reads it at the layout table's offset and requires it to be distinct from every other "
@@ -795,6 +883,12 @@ def main():
             "request": AQUILO_REQUEST,
             "decoded": {"trig": atrig, "placementSweepBox": abox},
             "bytes": list(ab),
+        },
+        "gleba": {
+            "paramsBytes": GLEBA_PARAMS_BYTES,
+            "totalBytes": len(gb),
+            "request": GLEBA_REQUEST,
+            "bytes": list(gb),
         },
     }
     with open(dest, "w") as f:

@@ -184,19 +184,34 @@ mod tests {
 
     /// `(angle / 180) * PI` is not `angle * (PI / 180)`. Pinned because the
     /// second form is the one a reader is likely to "tidy" it into.
+    ///
+    /// The audit (2026-11-26) changed this: it used to compare the two
+    /// associations of f64 `PI` with each other and never called
+    /// `AngleTrig::from_degrees`. It now checks the product's sine and cosine,
+    /// bit for bit, against the game's polynomial fed the TypeScript's radians
+    /// (`f32(f32(angle / 180) * f32(PI))`), and counts the angles where the
+    /// tidied form would give different trig, so the check cannot be vacuous.
     #[test]
     fn the_radian_conversion_keeps_the_typescripts_association() {
-        let mut differing = 0;
+        let pi32 = f64::from(std::f64::consts::PI as f32);
+        let mut tidied_differs = 0;
         for degrees in 1..=720 {
             let a = f64::from(degrees);
-            if ((a / 180.0) * std::f64::consts::PI) != (a * (std::f64::consts::PI / 180.0)) {
-                differing += 1;
+            let ts_radians = f64::from(((a / 180.0) as f32 as f64 * pi32) as f32);
+            let tidied_radians = f64::from((a * (pi32 / 180.0)) as f32);
+            let trig = AngleTrig::from_degrees(a);
+            assert_eq!(trig.sin.to_bits(), vm_sin(ts_radians).to_bits(), "sin {a}");
+            assert_eq!(trig.cos.to_bits(), vm_cos(ts_radians).to_bits(), "cos {a}");
+            if vm_sin(tidied_radians).to_bits() != trig.sin.to_bits()
+                || vm_cos(tidied_radians).to_bits() != trig.cos.to_bits()
+            {
+                tidied_differs += 1;
             }
         }
         assert!(
-            differing > 0,
-            "the two associations agree everywhere tested, so this guard is \
-             vacuous - pick a wider sweep"
+            tidied_differs > 0,
+            "the tidied association gives the same trig everywhere tested, so \
+             this guard is vacuous - pick a wider sweep"
         );
     }
 }

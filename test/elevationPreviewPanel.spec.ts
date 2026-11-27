@@ -879,27 +879,52 @@ describe("ElevationPreviewPanel", () => {
     });
   });
 
-  describe("planets with no renderer", () => {
-    it.each([["gleba", "Gleba"]] as const)(
-      "%s shows the unsupported note and renders nothing",
-      async (planet, label) => {
-        stubCanvas();
-        const renderer = okRenderer();
-        const w = setup("nauvis", renderer);
-        await w.find('[data-test="generate"]').trigger("click");
-        await flushPromises();
-        const calls = (renderer.render as ReturnType<typeof vi.fn>).mock.calls.length;
+  describe("Gleba is dev-mode only (#454, slice 2)", () => {
+    it("with dev mode off, shows the unsupported note and renders nothing", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { dev: false });
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      const calls = (renderer.render as ReturnType<typeof vi.fn>).mock.calls.length;
 
-        await setPlanet(w, planet);
+      await setPlanet(w, "gleba");
 
-        expect(w.find('[data-test="unsupported"]').text()).toBe(
-          `Client preview is not available for ${label} yet.`,
-        );
-        expect(w.find('[data-test="generate"]').attributes("disabled")).toBeDefined();
-        expect(w.find('[data-test="view-terrain"]').exists()).toBe(false);
-        expect((renderer.render as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
-      },
-    );
+      expect(w.find('[data-test="unsupported"]').text()).toBe(
+        "Client preview is not available for Gleba yet.",
+      );
+      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeDefined();
+      expect((renderer.render as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+    });
+
+    it("with dev mode on, offers terrain, resources and all, and renders with the preset's levers", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "gleba", dev: true });
+      expect(w.find('[data-test="unsupported"]').exists()).toBe(false);
+      for (const t of ["terrain", "resources", "all"]) {
+        expect(w.find(`[data-test="view-${t}"]`).attributes("disabled"), t).toBeUndefined();
+      }
+      for (const t of ["cliffs", "rocks", "enemies", "trees"]) {
+        expect(w.find(`[data-test="view-${t}"]`).attributes("disabled"), t).toBeDefined();
+      }
+
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({
+        planet: "gleba",
+        glebaControls: {
+          waterFrequency: 1,
+          waterSize: 1,
+          plantsFrequency: 1,
+          stoneFrequency: 1,
+          stoneSize: 1,
+          stoneRichness: 1,
+        },
+      });
+    });
   });
 
   describe("Aquilo", () => {

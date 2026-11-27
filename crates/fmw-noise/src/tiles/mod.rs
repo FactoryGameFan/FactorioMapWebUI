@@ -8,10 +8,14 @@
 //! every one of its land tiles composes (#226).
 
 pub mod aquilo_catalog;
+pub mod correction;
 pub mod expression_in_range;
 pub mod fulgora_catalog;
 pub mod fulgora_ocean;
+pub mod gleba_catalog;
 pub mod helpers;
 pub mod nauvis_catalog;
+pub mod nauvis_correction;
 pub mod nauvis_resolve;
 pub mod vulcanus_catalog;
+pub mod vulcanus_correction;

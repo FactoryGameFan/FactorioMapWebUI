@@ -691,10 +691,100 @@ describe("fulgora scrap is gated on the view", () => {
     expect(scrapPixels("terrain")).toBe(0);
   }, 120000);
 
-  it.each(["gleba"] as const)("refuses planet %s rather than painting Nauvis", (planet) => {
-    expect(() => runRenderRequest({ ...REQ, planet, view: "all" }, engine)).toThrow(
-      new RegExp(`no renderer for planet ${planet}`),
+  it("refuses a planet marked not rendered rather than painting Nauvis", () => {
+    // Every planet renders now (Gleba since #454 slice 2), so the `rendered`
+    // guard is exercised by switching Gleba off for this one test.
+    const table = PLANET_CAPABILITIES as Record<Planet, PlanetCapability>;
+    const saved = table.gleba;
+    table.gleba = { rendered: false, views: [], fallToTerrain: [] };
+    try {
+      expect(() => runRenderRequest({ ...REQ, planet: "gleba", view: "all" }, engine)).toThrow(
+        "no renderer for planet gleba, view all",
+      );
+    } finally {
+      table.gleba = saved;
+    }
+    expect(PLANET_CAPABILITIES.gleba.rendered).toBe(true);
+  });
+
+  describe("Gleba dispatch", () => {
+    /** An engine that records the request bytes and draws nothing. */
+    function recordingEngine(): { engine: EngineExports; sent: () => DataView } {
+      const memory = new WebAssembly.Memory({ initial: 4 });
+      let len = 0;
+      const stub = {
+        memory,
+        scratch_ptr: () => 0,
+        scratch_len: () => 65536,
+        render_ptr: () => 65536,
+        render_len: () => 65536,
+        render_request: (n: number) => {
+          len = n;
+          return 0;
+        },
+      } as unknown as EngineExports;
+      return { engine: stub, sent: () => new DataView(memory.buffer, 0, len) };
+    }
+    const GL = { ...REQ, planet: "gleba" as const };
+
+    it("sends planet code 4, the terrain view and the preset's levers", () => {
+      const { engine: stub, sent } = recordingEngine();
+      runRenderRequest(
+        {
+          ...GL,
+          view: "terrain",
+          glebaControls: {
+            waterFrequency: 2,
+            waterSize: 0.5,
+            plantsFrequency: 3,
+            stoneFrequency: 4,
+            stoneSize: 0.25,
+            stoneRichness: 6,
+          },
+        },
+        stub,
+      );
+      const v = sent();
+      expect(v.byteLength).toBe(COMMON_BYTES + 48);
+      expect(v.getUint32(8, true)).toBe(4);
+      expect(v.getUint32(12, true)).toBe(VIEW.terrain);
+      expect([0, 1, 2, 3, 4, 5].map((i) => v.getFloat64(COMMON_BYTES + i * 8, true))).toEqual([
+        2, 0.5, 3, 4, 0.25, 6,
+      ]);
+    });
+
+    it("sends the resources and all views as themselves, and an absent stone lever as 1", () => {
+      for (const view of ["resources", "all"] as const) {
+        const { engine: stub, sent } = recordingEngine();
+        runRenderRequest({ ...GL, view }, stub);
+        const v = sent();
+        expect(v.getUint32(12, true)).toBe(VIEW[view]);
+        expect([3, 4, 5].map((i) => v.getFloat64(COMMON_BYTES + i * 8, true))).toEqual([1, 1, 1]);
+      }
+    });
+
+    it("renders absent controls at neutral 1, not 0", () => {
+      const { engine: stub, sent } = recordingEngine();
+      runRenderRequest({ ...GL, view: "terrain" }, stub);
+      for (let i = 0; i < 6; i++) {
+        expect(sent().getFloat64(COMMON_BYTES + i * 8, true)).toBe(1);
+      }
+    });
+
+    it.each(["cliffs", "enemies", "trees", "rocks", "landmask"] as const)(
+      "serves view %s as terrain",
+      (view) => {
+        const { engine: stub, sent } = recordingEngine();
+        runRenderRequest({ ...GL, view }, stub);
+        expect(sent().getUint32(12, true)).toBe(VIEW.terrain);
+      },
     );
+
+    it("refuses the elevation view", () => {
+      expect(() => runRenderRequest({ ...GL, view: "elevation" }, engine)).toThrow(
+        "no renderer for planet gleba, view elevation",
+      );
+    });
   });
 
   describe("Aquilo dispatch", () => {
@@ -787,20 +877,20 @@ describe("fulgora scrap is gated on the view", () => {
 
   it("refuses a planet marked rendered that has no dispatch branch, rather than painting Nauvis", () => {
     // Turning a planet on in PLANET_CAPABILITIES before its branch exists must
-    // fail loudly. Flip Gleba on for this one test and restore it in `finally`.
-    const table = PLANET_CAPABILITIES as Record<Planet, PlanetCapability>;
-    const saved = table.gleba;
-    table.gleba = { rendered: true, views: ["terrain", "all"], fallToTerrain: [] };
+    // fail loudly. Every real planet has a branch now, so this adds a planet
+    // the app does not know for one test and removes it in `finally`.
+    const table = PLANET_CAPABILITIES as Record<string, PlanetCapability>;
+    table.venus = { rendered: true, views: ["terrain", "all"], fallToTerrain: [] };
     try {
       for (const view of ["terrain", "all"] as const) {
-        expect(() => runRenderRequest({ ...REQ, planet: "gleba", view }, engine)).toThrow(
-          `no renderer for planet gleba, view ${view}`,
+        expect(() => runRenderRequest({ ...REQ, planet: "venus" as Planet, view }, engine)).toThrow(
+          `no renderer for planet venus, view ${view}`,
         );
       }
     } finally {
-      table.gleba = saved;
+      delete table.venus;
     }
-    expect(PLANET_CAPABILITIES.gleba.rendered).toBe(false);
+    expect(Object.hasOwn(PLANET_CAPABILITIES, "venus")).toBe(false);
   });
 
   it("refuses view 'elevation' on Fulgora rather than drawing the Nauvis field", () => {

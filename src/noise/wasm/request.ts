@@ -47,6 +47,12 @@ export const VULCANUS_PARAMS_BYTES = 312;
 /** Must equal `fmw_wasm::abi::AQUILO_PARAMS_BYTES`. */
 export const AQUILO_PARAMS_BYTES = 128;
 
+/**
+ * Must equal `fmw_wasm::abi::GLEBA_PARAMS_BYTES`: three terrain levers, then
+ * the `gleba_stone` control's three.
+ */
+export const GLEBA_PARAMS_BYTES = 48;
+
 /** Capacity of a Nauvis request's starting-point list. Mirrors
  * `fmw_wasm::abi::NAUVIS_MAX_STARTING_POINTS`. */
 export const NAUVIS_MAX_STARTING_POINTS = 8;
@@ -76,10 +82,16 @@ export const NAUVIS_PARAMS_BYTES = NAUVIS_STARTING_AREA_RADIUS_OFFSET + 8;
  */
 export const REQUEST_BYTES =
   COMMON_BYTES +
-  Math.max(FULGORA_PARAMS_BYTES, VULCANUS_PARAMS_BYTES, NAUVIS_PARAMS_BYTES, AQUILO_PARAMS_BYTES);
+  Math.max(
+    FULGORA_PARAMS_BYTES,
+    VULCANUS_PARAMS_BYTES,
+    NAUVIS_PARAMS_BYTES,
+    AQUILO_PARAMS_BYTES,
+    GLEBA_PARAMS_BYTES,
+  );
 
 /** The `planet` codes the module understands. */
-export const PLANET = { fulgora: 0, vulcanus: 1, nauvis: 2, aquilo: 3 } as const;
+export const PLANET = { fulgora: 0, vulcanus: 1, nauvis: 2, aquilo: 3, gleba: 4 } as const;
 
 /**
  * The `view` codes the module understands.
@@ -362,11 +374,37 @@ export interface AquiloRenderRequest extends CommonRenderRequest {
   };
 }
 
+/** Gleba's levers, wire values, neutral at 1. */
+export interface GlebaControls {
+  /** `control:gleba_water:frequency`. */
+  readonly waterFrequency?: number;
+  /** `control:gleba_water:size`. */
+  readonly waterSize?: number;
+  /** `control:gleba_plants:frequency`, which the tile scores read. */
+  readonly plantsFrequency?: number;
+  /** `control:gleba_stone:frequency`, read by the stone overlay. */
+  readonly stoneFrequency?: number;
+  /** `control:gleba_stone:size`. */
+  readonly stoneSize?: number;
+  /** `control:gleba_stone:richness`. */
+  readonly stoneRichness?: number;
+}
+
+export interface GlebaRenderRequest extends CommonRenderRequest {
+  readonly planet: "gleba";
+  /**
+   * Optional, and `writeGlebaParams` substitutes the neutral 1 for anything
+   * absent. The module does NOT default these; the Rust `Default` is 0.
+   */
+  readonly glebaControls?: GlebaControls;
+}
+
 export type WasmRenderRequest =
   | FulgoraRenderRequest
   | VulcanusRenderRequest
   | NauvisRenderRequest
-  | AquiloRenderRequest;
+  | AquiloRenderRequest
+  | GlebaRenderRequest;
 
 /**
  * `f32(f32(a / 180) * f32(PI))`, then the GAME's `sin`/`cos` - the narrowing
@@ -511,6 +549,7 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
   else if (planet === "nauvis") paramsBytes = NAUVIS_PARAMS_BYTES;
   else if (planet === "fulgora") paramsBytes = FULGORA_PARAMS_BYTES;
   else if (planet === "aquilo") paramsBytes = AQUILO_PARAMS_BYTES;
+  else if (planet === "gleba") paramsBytes = GLEBA_PARAMS_BYTES;
   else throw new Error(`no params layout for planet ${String(planet)} in render request`);
   const total = COMMON_BYTES + paramsBytes;
   if (target.byteLength < total) {
@@ -543,6 +582,8 @@ export function encodeRenderRequest(target: Uint8Array, req: WasmRenderRequest):
     writeFulgoraParams(view, req as FulgoraRenderRequest);
   } else if (planet === "aquilo") {
     writeAquiloParams(view, req as AquiloRenderRequest);
+  } else if (planet === "gleba") {
+    writeGlebaParams(view, req as GlebaRenderRequest);
   } else {
     throw new Error(`no params writer for planet ${String(planet)} in render request`);
   }
@@ -667,6 +708,23 @@ function writeAquiloParams(view: DataView, req: AquiloRenderRequest): void {
   view.setFloat64(p + 104, box.y0, true);
   view.setFloat64(p + 112, box.x1, true);
   view.setFloat64(p + 120, box.y1, true);
+}
+
+/**
+ * Gleba's block: six levers and no trig. Gleba's sines are per position (the
+ * spiral bridges), so the module computes them itself with the game's own
+ * polynomial (#531), which touches no libm. See `fmw_wasm::abi` for the table.
+ */
+function writeGlebaParams(view: DataView, req: GlebaRenderRequest): void {
+  const p = COMMON_BYTES;
+  const c = req.glebaControls ?? {};
+  // The ONE place an absent Gleba slider becomes the neutral 1.
+  view.setFloat64(p, c.waterFrequency ?? 1, true);
+  view.setFloat64(p + 8, c.waterSize ?? 1, true);
+  view.setFloat64(p + 16, c.plantsFrequency ?? 1, true);
+  view.setFloat64(p + 24, c.stoneFrequency ?? 1, true);
+  view.setFloat64(p + 32, c.stoneSize ?? 1, true);
+  view.setFloat64(p + 40, c.stoneRichness ?? 1, true);
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {

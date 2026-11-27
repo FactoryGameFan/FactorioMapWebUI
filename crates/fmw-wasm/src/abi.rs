@@ -57,7 +57,8 @@
 //! common prefix
 //!   0  u32  magic          'FMWR' little-endian
 //!   4  u32  abi_version
-//!   8  u32  planet         0 = fulgora, 1 = vulcanus, 2 = nauvis, 3 = aquilo
+//!   8  u32  planet         0 = fulgora, 1 = vulcanus, 2 = nauvis, 3 = aquilo,
+//!                          4 = gleba
 //!  12  u32  view           see the VIEW_* constants in render.rs; 0 = landmask
 //!                          through 7 = trees. Adding a code is not a layout
 //!                          change - only `supported` has to name it.
@@ -107,6 +108,20 @@
 //!                fluorine vent bearings, in that order
 //! +96  f64 x 4   placement_sweep_box: x0, y0, x1, y1 (decoded, NOT read
 //!                since #492; kept so the layout does not move)
+//!
+//! gleba block (48 bytes, so a Gleba request is 104)
+//!  +0  f64  water_frequency    control:gleba_water:frequency
+//!  +8  f64  water_size         control:gleba_water:size
+//! +16  f64  plants_frequency   control:gleba_plants:frequency (the plants
+//!                              noise the tile scores read)
+//! +24  f64  stone_frequency    control:gleba_stone:frequency
+//! +32  f64  stone_size         control:gleba_stone:size
+//! +40  f64  stone_richness     control:gleba_stone:richness (the stone
+//!                              overlay; the block grew 24 -> 48 for it,
+//!                              appended, so the first three did not move)
+//!                No trig: Gleba's sines are per position (the spiral
+//!                bridges), so the module computes every one with the game's
+//!                own polynomial (`vm_sin`, #531), which touches no libm.
 //!
 //! nauvis block (520 bytes, so a Nauvis request is 576 - the largest, so
 //! `REQUEST_BYTES` is Nauvis's)
@@ -195,6 +210,10 @@ pub const VULCANUS_PARAMS_BYTES: usize = 312;
 /// placement sweep box.
 pub const AQUILO_PARAMS_BYTES: usize = 128;
 
+/// Size of Gleba's parameter block: the three terrain levers, then the
+/// `gleba_stone` control's three.
+pub const GLEBA_PARAMS_BYTES: usize = 48;
+
 /// Nauvis's block: eight climate and elevation levers, the tree overlay's four,
 /// the rock overlay's two, its sweep box, the enemy overlay's two, the cliff
 /// overlay's five and its own query box, then the resource overlay's eighteen.
@@ -252,8 +271,10 @@ pub const REQUEST_BYTES: usize = COMMON_BYTES
     } else {
         VULCANUS_PARAMS_BYTES
     };
-// Aquilo's block (128) is smaller than both, so it does not enter the `max`.
+// Aquilo's block (128) and Gleba's (24) are smaller than both, so they do not
+// enter the `max`.
 const _: () = assert!(AQUILO_PARAMS_BYTES < VULCANUS_PARAMS_BYTES);
+const _: () = assert!(GLEBA_PARAMS_BYTES < VULCANUS_PARAMS_BYTES);
 
 /// `planet` code for Fulgora.
 pub const PLANET_FULGORA: u32 = 0;
@@ -263,6 +284,8 @@ pub const PLANET_VULCANUS: u32 = 1;
 pub const PLANET_NAUVIS: u32 = 2;
 /// Planet code for Aquilo.
 pub const PLANET_AQUILO: u32 = 3;
+/// Planet code for Gleba.
+pub const PLANET_GLEBA: u32 = 4;
 
 /// The ten Vulcanus bearings, in the order their `(sin, cos)` pairs appear in
 /// the block.
@@ -341,6 +364,28 @@ pub enum Params {
     Vulcanus(VulcanusParams),
     Nauvis(NauvisParams),
     Aquilo(AquiloParams),
+    Gleba(GlebaParams),
+}
+
+/// Gleba's block: the three terrain levers and the stone control, wire values.
+///
+/// Neutral is 1 for all six, and `Default` gives 0 on purpose, as
+/// [`FulgoraParams::scrap_frequency`] explains: the writer substitutes the
+/// neutral value once.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GlebaParams {
+    /// `control:gleba_water:frequency`.
+    pub water_frequency: f64,
+    /// `control:gleba_water:size`.
+    pub water_size: f64,
+    /// `control:gleba_plants:frequency`.
+    pub plants_frequency: f64,
+    /// `control:gleba_stone:frequency`.
+    pub stone_frequency: f64,
+    /// `control:gleba_stone:size`.
+    pub stone_size: f64,
+    /// `control:gleba_stone:richness`.
+    pub stone_richness: f64,
 }
 
 /// Fulgora's block.
@@ -681,6 +726,7 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
         PLANET_VULCANUS => VULCANUS_PARAMS_BYTES,
         PLANET_NAUVIS => NAUVIS_PARAMS_BYTES,
         PLANET_AQUILO => AQUILO_PARAMS_BYTES,
+        PLANET_GLEBA => GLEBA_PARAMS_BYTES,
         _ => return Err(Status::UnsupportedPlanetOrView),
     };
     if declared != expected {
@@ -780,6 +826,14 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
                 placement_sweep_box,
             })
         }
+        PLANET_GLEBA => Params::Gleba(GlebaParams {
+            water_frequency: f64_at(bytes, p),
+            water_size: f64_at(bytes, p + 8),
+            plants_frequency: f64_at(bytes, p + 16),
+            stone_frequency: f64_at(bytes, p + 24),
+            stone_size: f64_at(bytes, p + 32),
+            stone_richness: f64_at(bytes, p + 40),
+        }),
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
             for (i, slot) in trig.iter_mut().enumerate() {
@@ -1044,7 +1098,7 @@ mod tests {
                 assert_eq!(f.islands_frequency, 1.0);
                 assert_eq!(f.islands_size, 1.0);
             }
-            Params::Vulcanus(_) | Params::Nauvis(_) | Params::Aquilo(_) => {
+            Params::Vulcanus(_) | Params::Nauvis(_) | Params::Aquilo(_) | Params::Gleba(_) => {
                 panic!("wrong block decoded")
             }
         }
@@ -1090,11 +1144,13 @@ mod tests {
             COMMON_BYTES + VULCANUS_PARAMS_BYTES,
             COMMON_BYTES + NAUVIS_PARAMS_BYTES,
             COMMON_BYTES + AQUILO_PARAMS_BYTES,
+            COMMON_BYTES + GLEBA_PARAMS_BYTES,
         ];
         assert_eq!(
             REQUEST_BYTES,
-            sizes.into_iter().max().expect("four planets")
+            sizes.into_iter().max().expect("five planets")
         );
+        assert_eq!(COMMON_BYTES + GLEBA_PARAMS_BYTES, 104);
     }
 
     /// Each failure mode has its OWN code, so a caller can tell "you sent an
@@ -1260,16 +1316,81 @@ mod tests {
         header(PLANET_AQUILO, AQUILO_PARAMS_BYTES)
     }
 
-    /// Planet code 4 has no block, so it is refused by the planet check
-    /// rather than read as some other planet's layout.
+    /// Planet code 5 has no block, so it is refused by the planet check
+    /// rather than read as some other planet's layout. Code 4 is Gleba's, and
+    /// an Aquilo-length block under it is a length error, not Aquilo.
     #[test]
-    fn a_planet_code_past_aquilo_is_refused() {
+    fn a_planet_code_past_gleba_is_refused() {
         let mut b = good_aquilo();
-        b[8..12].copy_from_slice(&4u32.to_le_bytes());
+        b[8..12].copy_from_slice(&5u32.to_le_bytes());
         assert_eq!(decode(&b), Err(Status::UnsupportedPlanetOrView));
+        b[8..12].copy_from_slice(&PLANET_GLEBA.to_le_bytes());
+        assert_eq!(decode(&b), Err(Status::BadParamsLength));
         // Control: the same bytes under Aquilo's own code decode.
         b[8..12].copy_from_slice(&PLANET_AQUILO.to_le_bytes());
         assert!(decode(&b).is_ok());
+    }
+
+    /// A distinct value into each of Gleba's six slots, all read back.
+    #[test]
+    fn no_two_gleba_fields_share_an_offset() {
+        let mut b = header(PLANET_GLEBA, GLEBA_PARAMS_BYTES);
+        for i in 0..6 {
+            let at = COMMON_BYTES + i * 8;
+            b[at..at + 8].copy_from_slice(&(100.0f64 + i as f64).to_le_bytes());
+        }
+        let Params::Gleba(g) = decode(&b).expect("should decode").params else {
+            panic!("wrong block")
+        };
+        assert_eq!(
+            [
+                g.water_frequency,
+                g.water_size,
+                g.plants_frequency,
+                g.stone_frequency,
+                g.stone_size,
+                g.stone_richness
+            ],
+            [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]
+        );
+        assert_eq!(GLEBA_PARAMS_BYTES, 6 * 8);
+    }
+
+    /// The committed fixture's Gleba bytes decode to the request it records.
+    #[test]
+    fn the_committed_gleba_fixture_decodes_to_its_request() {
+        const FIXTURE: &str = include_str!("../../../test/fixtures/wasm-request.v2.json");
+        let arm = FIXTURE
+            .split("\"gleba\": {")
+            .nth(1)
+            .expect("the fixture has a gleba arm");
+        let list = arm
+            .split("\"bytes\": [")
+            .nth(1)
+            .and_then(|t| t.split(']').next())
+            .expect("the gleba arm has bytes");
+        let bytes: Vec<u8> = list
+            .split(',')
+            .map(|t| t.trim().parse().expect("a byte"))
+            .collect();
+        assert_eq!(bytes.len(), COMMON_BYTES + GLEBA_PARAMS_BYTES);
+        let r = decode(&bytes).expect("should decode");
+        assert_eq!(r.planet, PLANET_GLEBA);
+        assert_eq!((r.seed0, r.width, r.height), (3_215_206_427, 8, 4));
+        let Params::Gleba(g) = r.params else {
+            panic!("wrong block")
+        };
+        assert_eq!(
+            [
+                g.water_frequency,
+                g.water_size,
+                g.plants_frequency,
+                g.stone_frequency,
+                g.stone_size,
+                g.stone_richness
+            ],
+            [1.5, 0.5, 0.75, 1.25, 0.625, 3.0]
+        );
     }
 
     /// A distinct value into every one of Aquilo's 16 slots, all read back:

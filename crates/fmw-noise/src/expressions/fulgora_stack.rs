@@ -27,7 +27,8 @@ use crate::expressions::fulgora_shared::{
     fulgora_bearing_angles, FulgoraCtx, FulgoraShared, SharedFields,
 };
 use crate::expressions::starting_spot_at_angle::AngleTrig;
-use crate::tiles::fulgora_catalog::{land_probabilities, resolve_tile, FulgoraTile};
+use crate::tiles::correction::correct_window;
+use crate::tiles::fulgora_catalog::{land_probabilities, resolve_tile, FulgoraTile, NAME_ORDER};
 
 /// Every named expression on Fulgora, at one position.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -136,6 +137,83 @@ impl FulgoraStack {
             scrap,
         }
     }
+
+    /// The tile at one position: the twelve-way argmax. The same layers as
+    /// [`Self::eval_at`] up to the tile, without the scrap layer, which no
+    /// tile reads.
+    pub fn tile_at(&mut self, at: At) -> FulgoraTile {
+        let (x, y) = (at.x(), at.y());
+        let shared = self.shared.eval_at(at);
+        let cells = self.cells.eval(&shared);
+        let elevation = self.elevation.eval_at(at, &shared, &cells);
+        let masks = fulgora_masks::eval(&shared, &cells, &elevation);
+        let roads = self.roads.eval(x, y, &shared, &cells);
+        let ruins = self.ruins.eval_at(at, &cells, &masks, &roads);
+        resolve_tile(&cells, &elevation, &roads, &ruins)
+    }
+
+    /// The tiles of a window as a real surface holds them: the raw argmax at
+    /// every whole tile (the chunk-grid kernel), then tile correction run over
+    /// every chunk the window touches plus `margin_chunks` on each side, in
+    /// columns order (`tiles::correction`). Row-major, `y` outer.
+    ///
+    /// The same shape as `GlebaStack::corrected_tiles`, through
+    /// `correct_window`, which reads raw tiles lazily: a tile of the outer ring
+    /// is evaluated only if a walk reaches it. Columns order is what
+    /// the inside of a generated area gets: real surfaces made by radius
+    /// requests of 7, 10 and 18 chunks hold the same window tile for tile,
+    /// and this matches them. Within about two chunks of the edge of what the
+    /// game was asked for, the order the game queues the tasks in
+    /// (`tiles::correction::requested_correction_order`) moves a few tiles;
+    /// no preview can know that edge.
+    pub fn corrected_tiles(
+        &mut self,
+        (x0, y0): (i32, i32),
+        (width, height): (u32, u32),
+        margin_chunks: i32,
+    ) -> Vec<FulgoraTile> {
+        let layers = correction_layers();
+        let mut raw = |x: i32, y: i32| correction_id(self.tile_at(At::tile(x, y)));
+        // No Fulgora tile has `allowed_neighbors`, so every pair may touch.
+        correct_window(
+            &mut raw,
+            &layers,
+            None,
+            (x0, y0),
+            (width, height),
+            margin_chunks,
+        )
+        .into_iter()
+        .map(tile_from_correction_id)
+        .collect()
+    }
+}
+
+/// The margin, in chunks, [`FulgoraStack::corrected_tiles`] corrects around a
+/// window for the renderer. See `fulgora_corrected_tiles_against_the_real_surface`
+/// in `fixtures/fulgora_real_surface.rs` for the measurement behind it.
+pub const CORRECTION_MARGIN_CHUNKS: i32 = 1;
+
+/// A correction id back to its tile.
+#[must_use]
+pub fn tile_from_correction_id(id: u8) -> FulgoraTile {
+    NAME_ORDER[usize::from(id) - 1]
+}
+
+/// A tile's id for `tiles::correction`: its index in `NAME_ORDER`, plus one (0
+/// is the game's empty id).
+#[must_use]
+pub fn correction_id(t: FulgoraTile) -> u8 {
+    let i = NAME_ORDER.iter().position(|o| *o == t).unwrap_or(0);
+    (i + 1) as u8
+}
+
+/// The layer of each correction id; index 0 is unused.
+#[must_use]
+pub fn correction_layers() -> Vec<u16> {
+    std::iter::once(0)
+        .chain(NAME_ORDER.iter().map(|t| t.layer()))
+        .collect()
 }
 
 #[cfg(test)]

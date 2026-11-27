@@ -497,10 +497,20 @@ mod tests {
             starting_lake_positions: None,
             bias: 20.0,
         });
-        let differs = (0..40).any(|i| {
+        let nauvis = ElevationNauvis::new(&ElevationNauvisParams::defaults(123_456));
+        let mut differs = false;
+        for i in 0..40 {
             let x = f64::from(i) * 11.5 - 200.0;
-            p.elevation.eval(x, 60.25) != lakes.eval(x, 60.25)
-        });
+            differs |= p.elevation.eval(x, 60.25) != lakes.eval(x, 60.25);
+            // The audit (2026-11-26) added this: "not elevation_lakes" passed
+            // for ANY other tree, such as the no-cliff variant. The tree the
+            // layer holds must be `elevation_nauvis` itself, bit for bit.
+            assert_eq!(
+                p.elevation.eval(x, 60.25).to_bits(),
+                nauvis.eval(x, 60.25).to_bits(),
+                "at x = {x}"
+            );
+        }
         assert!(differs, "the two elevation trees agree, so this is vacuous");
     }
 

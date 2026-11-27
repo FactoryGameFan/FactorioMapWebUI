@@ -305,7 +305,11 @@ describe("findIslands", () => {
       concurrency: 4,
       refineCount: 2,
     });
-    expect(found.filter((r) => r.refined).length).toBeLessThanOrEqual(2);
+    // `toBeLessThanOrEqual(2)` passed with ZERO refined rows (test-pruning
+    // audit, 2026-11-26). This window has far more than two islands, so the
+    // refine pass must mark exactly refineCount of them.
+    expect(found.length).toBeGreaterThan(2);
+    expect(found.filter((r) => r.refined).length).toBe(2);
   }, 300000);
 
   it("reports progress that ends at the total, WITHOUT the end-of-run fallback firing", async () => {

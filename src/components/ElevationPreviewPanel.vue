@@ -63,9 +63,9 @@ const preview = computed(() =>
 // island), which `preview.value.supported` already gates. Vulcanus (Task 11)
 // needs none of the preset's Nauvis-specific fields (V1 renders it with
 // neutral/default ctx), so it is unconditionally supported regardless of
-// `mapType`. Gleba has no client renderer at all (out of scope)
-// - without this guard they would silently fall through `runRenderRequest`'s
-// dispatch to the Nauvis terrain renderer and render mislabeled Nauvis colors.
+// `mapType`. Gleba renders terrain only and is marked `devOnly`, so it renders
+// in dev mode alone (#454, slice 2). Without the `rendered` guard a planet with
+// no renderer would fall through `runRenderRequest`'s dispatch.
 // Only the Nauvis writer sends `startingPositions` to the engine (Vulcanus and
 // Fulgora derive their own spawn), and it refuses more than the ABI cap. So the
 // limit is checked here, for Nauvis only, to give a plain message up front.
@@ -77,7 +77,12 @@ const tooManyStartingPoints = computed(
     startingPointCount.value > NAUVIS_MAX_STARTING_POINTS,
 );
 const supported = computed(() => {
-  if (planet.value !== "nauvis") return PLANET_CAPABILITIES[planet.value].rendered;
+  if (planet.value !== "nauvis") {
+    const cap = PLANET_CAPABILITIES[planet.value];
+    // A dev-only planet (Gleba, terrain only) renders in dev mode alone; with
+    // dev mode off it shows the same "not available yet" message as before.
+    return cap.rendered && (cap.devOnly !== true || ui.devMode);
+  }
   return (preview.value?.supported ?? false) && !tooManyStartingPoints.value;
 });
 /** The one "why not" message shown when the preview cannot render. */
@@ -223,6 +228,7 @@ async function generate(reroll = false) {
         resourceControls: info.resourceControls,
         vulcanusResourceControls: info.vulcanusResourceControls,
         aquiloResourceControls: info.aquiloResourceControls,
+        glebaControls: info.glebaControls,
         enemyControls: info.enemyControls,
         cliffControls: info.cliffControls,
         cliffSettings: info.cliffSettings,

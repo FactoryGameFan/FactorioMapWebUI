@@ -172,16 +172,24 @@ mod tests {
     /// the first. A first draft of this test used `0.1*f` and both forms agreed
     /// to the bit, which would have made the assertion vacuous rather than
     /// wrong - the kind of near miss only running it catches.
+    ///
+    /// The audit (2026-11-26) changed this: it used to recompute both forms in
+    /// the test and never built a `FulgoraScrap`. It now reads the product's
+    /// `cells_cut` at the off-default frequency and pins it to the
+    /// constant-first value.
     #[test]
     fn off_the_default_slider_the_two_forms_disagree() {
         let frequency = 4.0 / 3.0;
-        let constant_first = f64::from(
-            (f64::from(0.05f32) + f64::from((f64::from(0.05f32) * frequency) as f32)) as f32,
-        );
-        let product_first = f64::from((0.05f64 + 0.05f64 * frequency) as f32);
+        let constant_first = 0.116_666_674_613_952_64;
+        let product_first = 0.116_666_667_163_372_04;
         assert_ne!(constant_first, product_first);
-        assert_eq!(constant_first, 0.116_666_674_613_952_64);
-        assert_eq!(product_first, 0.116_666_667_163_372_04);
+
+        let s = FulgoraScrap::new(&ScrapControls {
+            frequency,
+            size: 1.0,
+        });
+        assert_eq!(s.cells_cut, constant_first);
+        assert_ne!(s.cells_cut, product_first);
 
         // And the FIRST cut agrees between the two forms at this frequency, so
         // a test that used it would prove nothing.

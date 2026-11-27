@@ -1,7 +1,8 @@
 //! `Cliff::updateConnections` and `Cliff::onDestroy` - the APPLY-time pass that
 //! trims a cliff run back to where its connections actually resolve.
 //!
-//! Ported from `src/noise/cliffs/cliffConnections.ts`. Where
+//! Ported from `src/noise/cliffs/cliffConnections.ts`, last present at
+//! `dc6bccd` and deleted on 2026-11-26 because nothing imported it. Where
 //! [`super::placement`] models `crossingsForChunk` and `generateCliffs` -
 //! deciding the crossings and queueing a cliff per placing cell - this models
 //! what happens **after** that, in `EntityMapGenerationTask::applyCliffs`:

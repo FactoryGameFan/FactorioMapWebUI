@@ -8,7 +8,7 @@
  * `makeResourceResolver`'s `controls` map. See M3a plan T6.
  */
 import type { AutoplaceSetting } from "./types";
-import type { AquiloResourceControls } from "../noise/wasm/request";
+import type { AquiloResourceControls, GlebaControls } from "../noise/wasm/request";
 import type { VulcanusResourceControls, VulcanusResourceLevers } from "../noise/eval/ctx";
 import type { ResourceControlLevers } from "../noise/resources/resourceCatalog";
 import { RESOURCE_CATALOG } from "../noise/resources/resourceCatalog";
@@ -66,5 +66,27 @@ export function readAquiloResourceControls(preset: {
     crudeOil: read("aquilo_crude_oil"),
     lithiumBrine: read("lithium_brine"),
     fluorineVent: read("fluorine_vent"),
+  };
+}
+
+/**
+ * Gleba's three terrain levers: `gleba_water` frequency and size, and
+ * `gleba_plants` frequency (the plants noise the tile scores read). An absent
+ * control reads as the neutral 1, as for Aquilo; a present one keeps what it
+ * holds.
+ */
+export function readGlebaControls(preset: {
+  autoplaceControls: Record<string, AutoplaceSetting>;
+}): Required<GlebaControls> {
+  const water = preset.autoplaceControls.gleba_water;
+  const plants = preset.autoplaceControls.gleba_plants;
+  const stone = preset.autoplaceControls.gleba_stone;
+  return {
+    waterFrequency: water ? water.frequency : 1,
+    waterSize: water ? water.size : 1,
+    plantsFrequency: plants ? plants.frequency : 1,
+    stoneFrequency: stone ? stone.frequency : 1,
+    stoneSize: stone ? stone.size : 1,
+    stoneRichness: stone ? stone.richness : 1,
   };
 }

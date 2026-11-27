@@ -15,6 +15,8 @@ import {
 
 import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng } from "./oracle/decodePng";
+import realSurface from "./fixtures/oracle-vulcanus-real-surface.seed123456.json";
+import { createRenderCache } from "./renderCache";
 import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
 import { compileEngine, instantiateEngine } from "../src/noise/wasm/engine";
 import { CLIFF_MAP_COLOR } from "../src/noise/cliffs/cliffCatalog";
@@ -134,8 +136,19 @@ const VULCANUS_SURFACE_SEED = 1249936247;
  * was a volcanic-cracks / volcanic-cracks-warm swap; the point-kernel test in
  * `crates/fmw-noise/src/fixtures.rs` now has cracks equal to the game's score
  * to the ULP, and the spawn and biome chains are what flipped the winner.
+ *
+ * **0 -> 39,950 on 2026-11-26, and the PNG is now a reference, not the
+ * target.** The render runs tile correction at one tile per pixel, as a real
+ * surface does and the game's preview does not, so it now draws what a
+ * player's map shows (`crates/fmw-noise/src/tiles/vulcanus_correction.rs`).
+ * The 39,950 pixels are where correction changed a tile's colour: the raw
+ * argmax still matches this PNG at every pixel. They are where the real
+ * surface differs from the PNG: an uncommitted real capture of this whole
+ * 1024 x 1024 window (one radius request) differs from the PNG at 39,949
+ * pixels, and from our render at 3, all at its left edge. Inside the committed
+ * real-surface window the test below pins it pixel by pixel.
  */
-const DIFFERING_PX = 0;
+const DIFFERING_PX = 39950;
 
 /**
  * The count the same comparison reports with the ore levers left at their
@@ -150,8 +163,12 @@ const DIFFERING_PX = 0;
  * 10,605 -> 10,636 on 2026-11-24 with #521's f32 rounding. This arm compares
  * a deliberately mismatched render, so the count only has to stay far from
  * `DIFFERING_PX`; its drift with the arithmetic is not a finding.
+ *
+ * 10,636 -> 50,383 on 2026-11-26 with tile correction, which adds its own
+ * 39,950 pixels on top of the ore halo's 10,636, less 203 where the two
+ * overlap.
  */
-const DIFFERING_PX_AT_DEFAULT_LEVERS = 10636;
+const DIFFERING_PX_AT_DEFAULT_LEVERS = 50383;
 
 /** The capture's own setting: `--map-gen-settings` with each of these at size 0. */
 const ORE_LEVERS_OFF: VulcanusResourceControls = {
@@ -201,6 +218,15 @@ async function engine() {
   );
   return instantiateEngine(compiled);
 }
+
+/**
+ * Each whole-window render, drawn once per run and copied out on every read.
+ * The resource view of `coarse, all four entries` is the costly one, and four
+ * tests read it. Keyed on the whole request - see `renderCache.ts` for why
+ * that matters here of all places. Worker tiles and the three 1024 renders
+ * below are not routed through it: no two of them share a request.
+ */
+const render = createRenderCache();
 
 function reference(name: string): { width: number; height: number; rgb: Uint8Array } {
   const bytes = new Uint8Array(readFileSync(join(FIXTURES, name)));
@@ -274,7 +300,7 @@ describe("the WASM engine renders Vulcanus terrain to its frozen bytes", () => {
     const e = await engine();
     for (const w of WINDOWS) {
       const req = request(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "terrain", wasm);
     }
@@ -291,7 +317,7 @@ describe("the WASM engine renders Vulcanus terrain to its frozen bytes", () => {
   it("each of those windows carries several distinct colours", async () => {
     const e = await engine();
     for (const w of WINDOWS) {
-      const px = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const px = render(request(w), e);
       const distinct = new Set<number>();
       for (let i = 0; i < px.length; i += 4) {
         distinct.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2]);
@@ -318,7 +344,7 @@ describe("the WASM engine renders Vulcanus terrain to its frozen bytes", () => {
     const w = WINDOWS[0] as Window;
     for (const view of ["terrain", "cliffs", "rocks", "resources", "all"] as const) {
       const composite = { ...request(w), view };
-      const withEngine = new Uint8ClampedArray(runRenderRequest(composite, e).buffer);
+      const withEngine = render(composite, e);
 
       // This used to render the same request twice - once with the engine and
       // once without - and assert the two agreed. #227 makes that the sharper
@@ -337,8 +363,8 @@ describe("the WASM engine renders Vulcanus terrain to its frozen bytes", () => {
 
     // And `all` really does differ from bare terrain here, so the assertion
     // above is not comparing two copies of the same picture.
-    const all = new Uint8ClampedArray(runRenderRequest({ ...request(w), view: "all" }, e).buffer);
-    const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+    const all = render({ ...request(w), view: "all" }, e);
+    const terrain = render(request(w), e);
     expect(Array.from(all)).not.toEqual(Array.from(terrain));
   }, 300000);
 });
@@ -378,7 +404,7 @@ describe("the WASM engine renders the Vulcanus rock overlay to its frozen bytes"
     const e = await engine();
     for (const w of WINDOWS) {
       const req = rockRequest(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "rocks", wasm);
     }
@@ -398,8 +424,8 @@ describe("the WASM engine renders the Vulcanus rock overlay to its frozen bytes"
     const e = await engine();
     const counts: number[] = [];
     for (const w of WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const wasm = render(rockRequest(w), e);
+      const terrain = render(request(w), e);
       let painted = 0;
       for (let i = 0; i < wasm.length; i += 4) {
         if (isColor(wasm, i, ROCK_MAP_COLOR) && !isColor(terrain, i, ROCK_MAP_COLOR)) painted++;
@@ -426,7 +452,7 @@ describe("the WASM engine renders the Vulcanus rock overlay to its frozen bytes"
   it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
     const e = await engine();
     const w = WINDOWS[2] as Window; // tall, coarse - 8 tiles per pixel
-    const whole = new Uint8ClampedArray(runRenderRequest(rockRequest(w), e).buffer);
+    const whole = render(rockRequest(w), e);
 
     const full: ImageBox = {
       originX: w.originX,
@@ -562,7 +588,7 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
     const e = await engine();
     for (const w of ORE_WINDOWS) {
       const req = oreRequest(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "resources", wasm);
     }
@@ -580,7 +606,7 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
     const e = await engine();
     const table: number[][] = [];
     for (const w of ORE_WINDOWS) {
-      const px = new Uint8ClampedArray(runRenderRequest(oreRequest(w), e).buffer);
+      const px = render(oreRequest(w), e);
       table.push(
         VULCANUS_RESOURCE_CATALOG.map((entry) => {
           let n = 0;
@@ -611,7 +637,7 @@ describe("the WASM engine renders the Vulcanus resource overlay to its frozen by
   it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
     const e = await engine();
     const w = ORE_WINDOWS[4] as Window;
-    const whole = new Uint8ClampedArray(runRenderRequest(oreRequest(w), e).buffer);
+    const whole = render(oreRequest(w), e);
     const full: ImageBox = {
       originX: w.originX,
       originY: w.originY,
@@ -663,9 +689,9 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
     const counts: number[] = [];
     for (const w of WINDOWS) {
       const req = allRequest(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       freeze(w.label, "all", wasm);
-      counts.push(paintedOver(wasm, new Uint8ClampedArray(runRenderRequest(request(w), e).buffer)));
+      counts.push(paintedOver(wasm, render(request(w), e)));
     }
     expect(counts).toEqual(ALL_PIXELS_PER_WINDOW);
   }, 300000);
@@ -715,11 +741,11 @@ describe("the WASM engine renders the Vulcanus composite to its frozen bytes", (
       originY: w.originY,
       tilesPerPixel: w.tilesPerPixel,
     };
-    const render = (view: "all" | "resources" | "cliffs") =>
-      new Uint8ClampedArray(runRenderRequest({ ...request(w), ...geometry, view }, e).buffer);
-    const all = render("all");
-    const resources = render("resources");
-    const cliffs = render("cliffs");
+    const renderView = (view: "all" | "resources" | "cliffs") =>
+      render({ ...request(w), ...geometry, view }, e);
+    const all = renderView("all");
+    const resources = renderView("resources");
+    const cliffs = renderView("cliffs");
 
     const oreColors = VULCANUS_RESOURCE_CATALOG.map((p) => p.mapColor);
     const isOre = (px: Uint8ClampedArray, i: number) => oreColors.some((c) => isColor(px, i, c));
@@ -767,7 +793,7 @@ describe("the WASM engine renders Vulcanus cliffs to its frozen bytes", () => {
     const e = await engine();
     for (const w of WINDOWS) {
       const req = cliffRequest(w);
-      const wasm = new Uint8ClampedArray(runRenderRequest(req, e).buffer);
+      const wasm = render(req, e);
       expect(wasm.length, `${w.label}: length`).toBe(w.width * w.height * 4);
       freeze(w.label, "cliffs", wasm);
     }
@@ -791,8 +817,8 @@ describe("the WASM engine renders Vulcanus cliffs to its frozen bytes", () => {
 
     const counts: number[] = [];
     for (const w of WINDOWS) {
-      const wasm = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
-      const terrain = new Uint8ClampedArray(runRenderRequest(request(w), e).buffer);
+      const wasm = render(cliffRequest(w), e);
+      const terrain = render(request(w), e);
       let painted = 0;
       let overTerrain = 0;
       for (let i = 0; i < wasm.length; i += 4) {
@@ -829,7 +855,7 @@ describe("the WASM engine renders Vulcanus cliffs to its frozen bytes", () => {
   it("tiles to the same bytes as one whole render, and the halo is what makes it so", async () => {
     const e = await engine();
     const w = WINDOWS[2] as Window; // tall, coarse - 8 tiles per pixel
-    const whole = new Uint8ClampedArray(runRenderRequest(cliffRequest(w), e).buffer);
+    const whole = render(cliffRequest(w), e);
 
     const full: ImageBox = {
       originX: w.originX,
@@ -1005,9 +1031,170 @@ describe("the WASM engine agrees with the game's own Vulcanus preview PNG", () =
         differing++;
       }
     }
-    // An order of magnitude worse than the frozen count above, so the surface
-    // seed derivation is load-bearing rather than incidental.
-    expect(differing).toBeGreaterThan(DIFFERING_PX * 10);
+    // The surface seed derivation is load-bearing rather than incidental: at
+    // the raw map seed 940,914 of 1,048,576 pixels differ (measured
+    // 2026-11-26). This used to read `> DIFFERING_PX * 10`, which became
+    // `> 0` once DIFFERING_PX reached 0, so it now states the scale directly.
+    expect(differing).toBeGreaterThan((SIZE * SIZE) / 2);
+  }, 300000);
+});
+
+/**
+ * The target: `get_tile` on a REAL Vulcanus surface, 256 x 256 around spawn
+ * (`oracle-vulcanus-real-surface.seed123456.json`, one radius request, the
+ * capture's own levers). Eric ruled on 2026-11-26 that the engine should show
+ * what the map will actually look like, not the preview PNG. Each tile is
+ * drawn in its own `map_color`, so the three ash tiles that share one colour
+ * are graded by name in `crates/fmw-noise/src/tiles/vulcanus_correction.rs`,
+ * not here.
+ */
+describe("the WASM engine against the real Vulcanus surface", () => {
+  const SIDE = realSurface.window.width;
+  const WINDOW: ElevationRenderRequest = {
+    ...request(WINDOWS[0] as Window),
+    width: SIDE,
+    height: SIDE,
+    originX: realSurface.window.x0,
+    originY: realSurface.window.y0,
+    tilesPerPixel: 1,
+    vulcanusResourceControls: ORE_LEVERS_OFF,
+  };
+
+  const real = (() => {
+    const rgb = new Uint8Array(SIDE * SIDE * 3);
+    let i = 0;
+    for (const row of realSurface.rows) {
+      for (const c of row) {
+        const name = realSurface.names[
+          realSurface.alphabet.indexOf(c)
+        ] as keyof typeof realSurface.tiles;
+        rgb.set(realSurface.tiles[name].mapColor, i * 3);
+        i++;
+      }
+    }
+    expect(i).toBe(SIDE * SIDE);
+    return rgb;
+  })();
+
+  const sameAt = (rgb: Uint8Array, px: ArrayLike<number>, i: number): boolean =>
+    rgb[i * 3] === px[i * 4] &&
+    rgb[i * 3 + 1] === px[i * 4 + 1] &&
+    rgb[i * 3 + 2] === px[i * 4 + 2];
+
+  /** The real-surface window cut out of the 1024 preview PNG. */
+  const previewWindow = (): Uint8Array => {
+    const png = reference("oracle-preview-vulcanus-terrain.seed123456.png");
+    const off = (png.width - SIDE) / 2;
+    const rgb = new Uint8Array(SIDE * SIDE * 3);
+    for (let y = 0; y < SIDE; y++) {
+      const start = ((y + off) * png.width + off) * 3;
+      rgb.set(png.rgb.subarray(start, start + SIDE * 3), y * SIDE * 3);
+    }
+    return rgb;
+  };
+
+  /**
+   * **1 of 65,536 pixels**, at (-127, 95): we draw lava-hot, this capture
+   * lava. That tile is the order the game corrects chunks in near the edge of
+   * a request, not the pass: a capture of the whole 1024 window (a larger
+   * radius request) has lava-hot there too, and corrected in the order the
+   * game queues the tasks for this request, every tile matches
+   * (`the_games_request_order_reproduces_both_captures` in
+   * `vulcanus_correction.rs`). The render keeps columns order. Before tile
+   * correction this was 1,814, the gap between the preview PNG and the real
+   * surface.
+   */
+  const DIFFERING_FROM_REAL = 1;
+
+  it("matches the real surface at all but one pixel", async () => {
+    const ours = render(WINDOW, await engine());
+    const where: [number, number][] = [];
+    for (let i = 0; i < SIDE * SIDE; i++) {
+      if (!sameAt(real, ours, i)) {
+        where.push([WINDOW.originX + (i % SIDE), WINDOW.originY + Math.floor(i / SIDE)]);
+      }
+    }
+    withDiffArtifacts(
+      {
+        spec: "wasmVulcanusRenderParity",
+        case: "terrain-vs-real-surface",
+        game: { width: SIDE, height: SIDE, rgb: real },
+        ours: { width: SIDE, height: SIDE, rgba: ours },
+      },
+      () => {
+        expect(where.length).toBe(DIFFERING_FROM_REAL);
+        expect(where).toEqual([[-127, 95]]);
+      },
+    );
+  }, 300000);
+
+  /**
+   * The control that the correction is in the render: the preview PNG shows
+   * the raw argmax, and inside this window it differs from our render exactly
+   * where it differs from the real surface, plus the one tile above.
+   */
+  it("differs from the preview PNG exactly where the real surface does, but one", async () => {
+    const png = previewWindow();
+    const ours = render(WINDOW, await engine());
+    let fromPng = 0;
+    let realFromPng = 0;
+    const onlyOne: number[] = [];
+    for (let i = 0; i < SIDE * SIDE; i++) {
+      const pngVsOurs = !sameAt(png, ours, i);
+      const pngVsReal =
+        png[i * 3] !== real[i * 3] ||
+        png[i * 3 + 1] !== real[i * 3 + 1] ||
+        png[i * 3 + 2] !== real[i * 3 + 2];
+      fromPng += Number(pngVsOurs);
+      realFromPng += Number(pngVsReal);
+      if (pngVsOurs !== pngVsReal) onlyOne.push(i);
+    }
+    expect(realFromPng).toBe(1814);
+    expect(fromPng).toBe(1815);
+    // The one is (-127, 95), where the PNG and the real surface both have lava.
+    expect(onlyOne).toEqual([(95 - WINDOW.originY) * SIDE + (-127 - WINDOW.originX)]);
+  }, 300000);
+
+  /**
+   * Correction reads neighbouring chunks, so each worker tile corrects its own
+   * one-chunk margin. Cut into the app's 128-pixel tiles, and into 100-pixel
+   * tiles that are not chunk aligned, the render must still stitch back to the
+   * whole one byte for byte.
+   */
+  it("a tiled render stitches to the whole render", async () => {
+    const e = await engine();
+    const full: ImageBox = {
+      originX: WINDOW.originX,
+      originY: WINDOW.originY,
+      width: SIDE,
+      height: SIDE,
+      tilesPerPixel: 1,
+    };
+    const whole = render(WINDOW, e);
+    for (const size of [128, 100]) {
+      const tiles = planTiles(full, size).map((t) => ({
+        dx: t.dx,
+        dy: t.dy,
+        width: t.width,
+        height: t.height,
+        data: new Uint8ClampedArray(
+          runRenderRequest(
+            {
+              ...WINDOW,
+              originX: t.originX,
+              originY: t.originY,
+              width: t.width,
+              height: t.height,
+              fullImage: full,
+            },
+            e,
+          ).buffer,
+        ),
+      }));
+      expect(Array.from(stitchTiles(full, tiles)), `${String(size)}-pixel tiles`).toEqual(
+        Array.from(whole),
+      );
+    }
   }, 300000);
 });
 

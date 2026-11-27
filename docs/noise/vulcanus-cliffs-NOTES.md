@@ -1,5 +1,16 @@
 # Vulcanus cliffs - port notes
 
+> **Note, 2026-11-26:** the fixture-only investigation specs named below
+> (`cliffOreLeverTileConfound`, `cliffOreDirection`, `cliffOreMechanismClosure`,
+> `cliffChunkOrder`, `cliffOrientationOracle`, `craterCliffLeverSensitivity`,
+> `craterCliffRngHypothesis`, `vulcanusCliffBands`, `vulcanusCliffFineSweep`,
+> `vulcanusCliffSmoothingSweep`, `vulcanusCliffs`, `cliffRemovalProbability`)
+> were deleted: they read only committed captures, so no product change could
+> fail them. The captures stay in `test/fixtures/` with their provenance, and
+> the shipped port is graded by `crates/fmw-noise/src/fixtures.rs`. Where a
+> section says a spec "pins" or "holds" a result, read it as history; `git log
+> --diff-filter=D -- test/<name>.spec.ts` recovers the spec.
+
 > ## UPDATE 19, 2026-09-08: `Surface::wouldCollide` READ OUT OF THE RUNNING GAME - the tile half is an oriented test and it is now EXACT
 >
 > **Every earlier section graded the port against the cliffs that SURVIVED the
@@ -462,7 +473,8 @@
 > `updateConnections` is the only border-only channel left unscored.
 >
 > **`Cliff`'s connection system is now decompiled whole** (seven facts, addresses
-> in `cliffs-NOTES.md` and `cliffConnections.ts`). Three change what to try next:
+> in `cliffs-NOTES.md` and `cliffConnections.ts`, the latter deleted on 2026-11-26
+> and readable at `dc6bccd`). Three change what to try next:
 >
 > - **`onDestroy`'s cascade has FOUR gates**, including `map->[0x240] == 0` and an
 >   entity flag set from the creation parameters. All four are now READ on both
@@ -3029,7 +3041,9 @@ if (collided)          -> destroy list
 else if (!record.bool) -> updateConnections list      // record.bool = !onChunkBorder
 ```
 
-`src/noise/cliffs/cliffConnections.ts`, `test/cliffConnections.spec.ts`.
+`src/noise/cliffs/cliffConnections.ts` (deleted on 2026-11-26, read it at
+`dc6bccd`) and `test/cliffConnections.spec.ts` (deleted in #360, read it at
+`5124d2b^`). The live port is `crates/fmw-noise/src/cliffs/connections.rs`.
 
 ### `tryToAddCliff` does no collision test during map generation
 
@@ -3108,6 +3122,16 @@ Running the same lava and ore predicates through the real stage instead of
 Better on three counts, worse on none, and the no-cascade row says the cascade
 rather than the re-staging is doing it. Killing the surviving 22 surplus with the
 cascade takes `wrong` from 18 to **5**, so 13 of the 18 are again fallout.
+
+The test that froze this comparison,
+`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`,
+was deleted on 2026-11-26 because the app runs the crossing stage, not the apply
+stage. Its last frozen rows (after #408 and #416, so they differ from the table
+above) were: crossing stage 1521 / 9 / 11 / 1, `applyCliffs` with lava and ore
+1524 / 6 / 10 / 1, and `applyCliffs` with no cascade 1512 / 18 / 11 / 1
+(matched / wrong / surplus / missing). The apply stage itself is still graded
+against the game's own destruction set by
+`the_games_own_destruction_set_reproduces_the_game_exactly`.
 
 **It is deliberately NOT wired into `renderVulcanusCliffs`.** The renderer paints
 positions and ignores orientation, and on positions alone the two models are one
@@ -3376,7 +3400,8 @@ It is decidable, and it needed no capture. `test/cliffFarTenProvenance.spec.ts`.
 
 ### The two hypotheses leave different marks on the NEIGHBOURS
 
-Both rules were already ported off the disassembly in `cliffConnections.ts`; the
+Both rules were already ported off the disassembly in `cliffConnections.ts`
+(deleted on 2026-11-26, last present at `dc6bccd`); the
 point is that they differ in exactly one respect:
 
 | hypothesis | what happens to a connected neighbour |
@@ -4916,9 +4941,13 @@ region, the same slider, with all four Vulcanus resource controls switched OFF -
 the lever `oracle-vulcanus-cliff-ore-direction` pulls - on both sides. Fixture
 `oracle-vulcanus-cliff-volcanism-ore.seed123456.json` (two runs, 2 seconds
 each; the ON arm reproduces the oos capture cell for cell), test
-`the_concentrated_residual_against_the_ore_lever`.
+`the_concentrated_residual_against_the_ore_lever` (deleted 2026-11-26). The
+table below is the 2026-09-07 measurement. The resources-ON arm is still graded
+by `the_volcanism_contrast_out_of_sample`'s frequency-0.5 row, now 769 / 23 / 40 / 3
+after later fixes; that test sweeps only the default and frequency-0.5 arms, so
+the resources-OFF and no-ore arms below are no longer graded by any test.
 
-| arm                              | matched | wrong | surplus | missing | errors |
+| arm (2026-09-07)                 | matched | wrong | surplus | missing | errors |
 | -------------------------------- | ------: | ----: | ------: | ------: | -----: |
 | resources ON, port with ore      |     768 |    24 |      47 |       3 | **74** |
 | resources ON, port WITHOUT ore   |     767 |    27 |      84 |       1 |    112 |

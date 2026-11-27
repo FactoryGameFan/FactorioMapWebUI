@@ -26,9 +26,35 @@ pub enum FulgoraTile {
     FulgoranWalls,
     FulgoranConduit,
     FulgoranMachinery,
+    /// `oil-ocean-shallow`.
     Shallow,
+    /// `oil-ocean-shallow-2`: the same map colour as [`Self::Shallow`], one
+    /// layer lower, so tile correction sees a boundary between them.
+    Shallow2,
+    /// `oil-ocean-deep`.
     Deep,
+    /// `oil-ocean-deep-2`: the same map colour as [`Self::Deep`], one layer
+    /// higher.
+    Deep2,
 }
+
+/// Every Fulgora tile, in the order the game's candidate list holds them: the
+/// tile names sorted. [`resolve_tile`] keeps the first of an exact tie in this
+/// order, as Gleba's does (`gleba_catalog::TIE_ORDER`).
+pub const NAME_ORDER: [FulgoraTile; 12] = [
+    FulgoraTile::FulgoranConduit,
+    FulgoraTile::FulgoranDunes,
+    FulgoraTile::FulgoranDust,
+    FulgoraTile::FulgoranMachinery,
+    FulgoraTile::FulgoranPaving,
+    FulgoraTile::FulgoranRock,
+    FulgoraTile::FulgoranSand,
+    FulgoraTile::FulgoranWalls,
+    FulgoraTile::Deep,
+    FulgoraTile::Deep2,
+    FulgoraTile::Shallow,
+    FulgoraTile::Shallow2,
+];
 
 /// The eight land probabilities in a FIXED order, so the tie-break is stable.
 ///
@@ -105,13 +131,14 @@ pub fn land_probabilities(
 /// shallow ocean over what the game paints as rock; the old rule cost nothing
 /// else at the fixture positions (5,057 of 5,057 agree on land versus ocean).
 ///
-/// **Candidate order, and what is NOT settled.** The array is the four ocean
+/// **Candidate order.** The scores are visited in [`NAME_ORDER`], tile names
+/// sorted, and the first maximum wins, so the order decides only EXACT f32
+/// ties. Gleba's ties measured that order (#454); on Fulgora no exact tie at
+/// the maximum was seen in the real-surface window or in a 16,384-point sweep
+/// (`fixtures/fulgora_real_surface.rs`), so the order changes no
+/// tile there. The scores themselves are still computed as the four ocean
 /// scores (`oil-ocean-shallow`, `-shallow-2`, `-deep`, `-deep-2`) and then
-/// [`LAND_ORDER`], and the first maximum wins, so this order decides only EXACT
-/// f32 ties. The game sorts its candidates by an `autoplace`-side string
-/// comparison that has not been identified, so this order is the one the port
-/// already used, not a measured one. No exact tie between an ocean score and a
-/// land score has been seen in any sweep.
+/// [`LAND_ORDER`].
 ///
 /// **A NaN loses rather than poisoning the argmax.** `v > best` is false for a
 /// NaN, so a NaN never becomes the best - matching the engine, which starts the
@@ -137,34 +164,53 @@ pub fn resolve_tile(
     let ocean = ocean_probabilities(elevation);
     let land = land_probabilities(cells, elevation, roads, ruins);
 
+    let mut scores = [0.0; CANDIDATES];
+    for (s, v) in scores.iter_mut().zip(ocean.iter().chain(land.iter())) {
+        *s = *v;
+    }
+    // `None` is the all-NaN-or-`-inf` fallback; the poison hook still rotates
+    // it so the control sees the choice either way.
+    let winner = crate::poison::index_result(
+        candidate_argmax(&scores).unwrap_or(OCEAN_CANDIDATES),
+        CANDIDATES,
+    );
+    candidate_tile(winner)
+}
+
+/// The first maximum of the twelve scores (`[shallow, shallow-2, deep,
+/// deep-2, LAND_ORDER..]`), visited in [`NAME_ORDER`]; `None` if every score is
+/// NaN or `-inf`.
+fn candidate_argmax(scores: &[f64; CANDIDATES]) -> Option<usize> {
     let mut best_index: Option<usize> = None;
     let mut best_value = f32::NEG_INFINITY;
-    for (i, v) in ocean.iter().chain(land.iter()).enumerate() {
+    for &i in &NAME_ORDER_CANDIDATES {
         // Both sides are f32 in the game; every score above is already rounded
         // to f32, so this narrowing is exact.
-        let v = *v as f32;
+        let v = scores[i] as f32;
         if v > best_value {
             best_value = v;
             best_index = Some(i);
         }
     }
-    // `None` is the all-NaN-or-`-inf` fallback; the poison hook still rotates
-    // it so the control sees the choice either way.
-    let winner = crate::poison::index_result(best_index.unwrap_or(OCEAN_CANDIDATES), CANDIDATES);
-    candidate_tile(winner)
+    best_index
 }
 
 /// Four ocean scores in front of the eight land ones.
 const OCEAN_CANDIDATES: usize = 4;
 const CANDIDATES: usize = OCEAN_CANDIDATES + LAND_ORDER.len();
 
+/// [`NAME_ORDER`] as indices into the score array
+/// `[shallow, shallow-2, deep, deep-2, LAND_ORDER..]`.
+const NAME_ORDER_CANDIDATES: [usize; CANDIDATES] = [10, 5, 4, 11, 8, 7, 6, 9, 2, 3, 0, 1];
+
 /// Index into `[shallow, shallow-2, deep, deep-2, LAND_ORDER..]` to its tile.
-/// The `-2` variants share a map colour with their base tile and this port does
-/// not model the split.
+/// The `-2` variants share a map colour with their base tile but not a layer.
 fn candidate_tile(index: usize) -> FulgoraTile {
     match index {
-        0 | 1 => FulgoraTile::Shallow,
-        2 | 3 => FulgoraTile::Deep,
+        0 => FulgoraTile::Shallow,
+        1 => FulgoraTile::Shallow2,
+        2 => FulgoraTile::Deep,
+        3 => FulgoraTile::Deep2,
         i => LAND_ORDER[i - OCEAN_CANDIDATES],
     }
 }
@@ -202,11 +248,52 @@ impl FulgoraTile {
             Self::FulgoranWalls => "fulgoran-walls",
             Self::FulgoranConduit => "fulgoran-conduit",
             Self::FulgoranMachinery => "fulgoran-machinery",
-            // The game distinguishes `-2` variants of both; they share a map
-            // colour and this port does not model the split. See
-            // `tiles::fulgora_ocean`.
             Self::Shallow => "oil-ocean-shallow",
+            Self::Shallow2 => "oil-ocean-shallow-2",
             Self::Deep => "oil-ocean-deep",
+            Self::Deep2 => "oil-ocean-deep-2",
+        }
+    }
+
+    /// Whether this is one of the four oil-ocean tiles.
+    #[must_use]
+    pub fn is_ocean(self) -> bool {
+        matches!(
+            self,
+            Self::Shallow | Self::Shallow2 | Self::Deep | Self::Deep2
+        )
+    }
+
+    /// The `-2` variants folded onto their base tile: what a picture, or a
+    /// fixture captured before the split was modelled, can tell apart.
+    #[must_use]
+    pub fn folded(self) -> Self {
+        match self {
+            Self::Shallow2 => Self::Shallow,
+            Self::Deep2 => Self::Deep,
+            t => t,
+        }
+    }
+
+    /// The tile's effective layer (layer group plus offset), as the game
+    /// reports it at runtime (the `oracle-fulgora-real-surface-*` fixtures,
+    /// checked by `fulgora_layers_match_the_game`). Tile correction compares
+    /// nothing else about a tile.
+    #[must_use]
+    pub fn layer(self) -> u16 {
+        match self {
+            Self::Deep => 66,
+            Self::Deep2 => 67,
+            Self::Shallow2 => 147,
+            Self::Shallow => 148,
+            Self::FulgoranPaving => 149,
+            Self::FulgoranDust => 150,
+            Self::FulgoranDunes => 151,
+            Self::FulgoranSand => 152,
+            Self::FulgoranRock => 153,
+            Self::FulgoranWalls => 154,
+            Self::FulgoranConduit => 155,
+            Self::FulgoranMachinery => 156,
         }
     }
 }
@@ -255,6 +342,35 @@ mod tests {
             ),
             FulgoraTile::FulgoranDunes
         );
+    }
+
+    /// An exact tie goes to the tile whose name sorts first, whatever order
+    /// the scores are computed in: land before oil ocean, `deep` before
+    /// `deep-2` before `shallow`.
+    #[test]
+    fn an_exact_tie_goes_to_the_name_that_sorts_first() {
+        let tie = |pairs: &[(usize, f64)]| {
+            let mut s = [f64::NEG_INFINITY; CANDIDATES];
+            for &(i, v) in pairs {
+                s[i] = v;
+            }
+            candidate_tile(candidate_argmax(&s).expect("a winner"))
+        };
+        // shallow (index 0) against dust (4): dust sorts first.
+        assert_eq!(tie(&[(0, 2.0), (4, 2.0)]), FulgoraTile::FulgoranDust);
+        // deep-2 (3) against shallow (0): deep-2 sorts first.
+        assert_eq!(tie(&[(0, 2.0), (3, 2.0)]), FulgoraTile::Deep2);
+        // conduit (10) against dunes (5): conduit sorts first.
+        assert_eq!(tie(&[(5, 1.0), (10, 1.0)]), FulgoraTile::FulgoranConduit);
+        // Control: without the tie, the larger score wins.
+        assert_eq!(tie(&[(0, 2.5), (4, 2.0)]), FulgoraTile::Shallow);
+        // Every index is visited exactly once.
+        let mut seen = NAME_ORDER_CANDIDATES;
+        seen.sort_unstable();
+        assert_eq!(seen, std::array::from_fn(|i| i));
+        for (k, &i) in NAME_ORDER_CANDIDATES.iter().enumerate() {
+            assert_eq!(candidate_tile(i), NAME_ORDER[k]);
+        }
     }
 
     /// A NaN must LOSE, not poison. Reachable in principle through the ocean

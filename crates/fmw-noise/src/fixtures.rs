@@ -23,6 +23,8 @@ use crate::eval::math::max2;
 use crate::test_json::{load, Json};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod nauvis_real_surface;
+
 /// Load a fixture and pin the game version its ground truth was captured from.
 ///
 /// The frozen exact counts in this file all describe "this port against game
@@ -140,13 +142,25 @@ fn tables_from_fixture(fixture: &Json) -> BasisNoiseTables {
 /// TypeScript exactly - JavaScript numbers are f64, so `p.x * inputScale` is an
 /// f64 product there and narrowing it here would evaluate a different point.
 fn score(fixture: &Json, tables: &BasisNoiseTables) -> (usize, f64) {
+    score_with(fixture, tables, &|_, expected| expected)
+}
+
+/// [`score`], with `expect` free to change each point's expectation (its index
+/// and the fixture's value in, the value to grade against out). The audit
+/// (2026-11-26) split this out so the scorer's own test can move one
+/// expectation and still run THE scorer rather than a copy of its loop.
+fn score_with(
+    fixture: &Json,
+    tables: &BasisNoiseTables,
+    expect: &dyn Fn(usize, f64) -> f64,
+) -> (usize, f64) {
     let input_scale = fixture.get("inputScale").as_f64();
     let mut exact = 0usize;
     let mut worst = 0.0f64;
-    for point in fixture.get("points").as_array() {
+    for (k, point) in fixture.get("points").as_array().iter().enumerate() {
         let x = point.get("x").as_f64() * input_scale;
         let y = point.get("y").as_f64() * input_scale;
-        let expected = point.get("v").as_f64();
+        let expected = expect(k, point.get("v").as_f64());
         let got = basis_noise(x, y, tables);
         worst = worst.max((f64::from(got) - expected).abs());
         if f64::from(got) == expected {
@@ -247,25 +261,25 @@ fn the_scorer_resolves_a_single_wrong_point() {
     // being blind to one bad point among 512 - which is the shape a real
     // regression takes. Here the port is left alone and the EXPECTATION is
     // moved by one ULP, so the assertion under test is the scorer's.
+    //
+    // The audit (2026-11-26) changed this: it used to carry a copy of the
+    // scoring loop and so never ran `score`. It now grades through `score_with`.
     let fixture = load_captured_at("test/fixtures/basis-noise.seed123456.json", "2.1.12");
     let tables = tables_from_fixture(&fixture);
-    let input_scale = fixture.get("inputScale").as_f64();
-
-    let mut exact = 0usize;
-    let mut nudged_one = false;
-    for point in fixture.get("points").as_array() {
-        let x = point.get("x").as_f64() * input_scale;
-        let y = point.get("y").as_f64() * input_scale;
-        let mut expected = point.get("v").as_f64() as f32;
-        // Nudge the first non-zero expectation, once.
-        if !nudged_one && expected != 0.0 {
-            expected = f32::from_bits(expected.to_bits() + 1);
-            nudged_one = true;
+    // Nudge the first non-zero expectation, once, and grade through `score`.
+    let first_nonzero = fixture
+        .get("points")
+        .as_array()
+        .iter()
+        .position(|p| p.get("v").as_f64() as f32 != 0.0);
+    let nudged_one = first_nonzero.is_some();
+    let (exact, _) = score_with(&fixture, &tables, &|k, v| {
+        if Some(k) == first_nonzero {
+            f64::from(f32::from_bits((v as f32).to_bits() + 1))
+        } else {
+            v
         }
-        if basis_noise(x, y, &tables) == expected {
-            exact += 1;
-        }
-    }
+    });
 
     assert!(nudged_one, "no non-zero point to nudge");
     // 511, not 512. If this ever reads 512 the exact-match count has stopped
@@ -2482,7 +2496,7 @@ fn reproduces_the_voronoi_search_range_fixture_and_rejects_the_wrong_ring() {
 // assert an exact count rather than a bound.
 // ---------------------------------------------------------------------------
 
-use crate::eval::math::{slider_rescale, slider_rescale_rounded_once};
+use crate::eval::math::{slider_rescale, slider_rescale_rounded_once, slider_to_linear};
 use crate::eval::multisample::multisample;
 use crate::expressions::vulcanus_seed::{seed_normalized, seed_small};
 use crate::fast_approx::{fast_cbrt, fast_pow, noise_machine_pow};
@@ -2882,6 +2896,144 @@ fn reproduces_the_games_slider_rescale_at_all_seven_probe_points() {
          has been misread or the probe drifted",
         7 - fastapprox_misses
     );
+}
+
+/// `slider_to_linear` against the game's own answers, and what settles #324.
+///
+/// The fixture is `scripts/probes/cliff-slider-to-linear` run against Factorio
+/// 2.1.17: the probe registers `slider_to_linear(x, lo, hi)` as the elevation
+/// property, so the capture positions ARE the slider positions and `y` picks
+/// the range. `slider_to_linear` is a `noise-function`
+/// (`core/prototypes/noise-functions.lua:10`), so these are the noise machine's
+/// own values. Until #324's follow-up this was graded on the TypeScript side
+/// alone (`test/sliderToLinearOracle.spec.ts`, now deleted along with that
+/// copy of the function), and the shipped Rust form was checked at four points.
+///
+/// **Scored by EXACT match.** The game's values are f32 and so are ours, so a
+/// bound would only hide which candidate is right.
+///
+/// **The RANGE is what discriminates, not the slider.** Only `(-1.7, 1.7)` has
+/// bounds f32 cannot hold exactly, and it is the only such range in the whole
+/// of `factorio-data`. On the others, narrowing the bounds is a no-op.
+#[test]
+fn reproduces_the_games_slider_to_linear_at_all_39_points() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-slider-to-linear.seed123456.json",
+        "2.1.17",
+    );
+    let sliders = fixture.get("sliders").as_f64_array();
+    assert_eq!(
+        sliders.len(),
+        13,
+        "the fixture is the shape the probe wrote"
+    );
+
+    // (key, lo, hi, are the bounds exactly representable in f32)
+    let ranges: [(&str, f64, f64, bool); 3] = [
+        ("narrow", -1.0, 1.0, true),
+        ("wide", -1.7, 1.7, false),
+        ("fulgora", -50.0, 50.0, true),
+    ];
+    for (key, lo, hi, dyadic) in ranges {
+        let declared = fixture.get("ranges").get(key).as_f64_array();
+        assert_eq!(declared, vec![lo, hi], "range {key}");
+        assert_eq!(fixture.get(key).as_array().len(), 13, "{key} column size");
+        // The bound claim the whole finding rests on.
+        assert_eq!(
+            f64::from(lo as f32) == lo && f64::from(hi as f32) == hi,
+            dyadic,
+            "range {key}"
+        );
+    }
+
+    let game = |key: &str| fixture.get(key).as_f64_array();
+
+    // The shipped form: EXACT at every cell of every range.
+    let mut exact = 0usize;
+    for (key, lo, hi, _) in ranges {
+        for (s, want) in sliders.iter().zip(game(key)) {
+            let got = f64::from(slider_to_linear(*s, lo, hi));
+            assert_eq!(got, want, "slider_to_linear({s}, {lo}, {hi})");
+            exact += 1;
+        }
+    }
+    assert_eq!(exact, 39, "13 sliders over 3 ranges");
+
+    // Controls: cells where every candidate must agree. If these break, the
+    // capture is not measuring `slider_to_linear` and no count may be read.
+    let at = |key: &str, s: f64| {
+        let i = sliders
+            .iter()
+            .position(|v| *v == s)
+            .expect("slider present");
+        game(key)[i]
+    };
+    assert_eq!(at("narrow", 6.0), 1.0);
+    assert_eq!(at("fulgora", 6.0), 50.0);
+    assert_eq!(at("wide", 6.0), f64::from(1.7f32));
+    assert_eq!(at("narrow", 1.0), 0.0);
+    assert_eq!(at("fulgora", 1.0), 0.0);
+    // The sharpest single point: exactly 0 on (-1.7, 1.7) at s = 1.
+    assert_eq!(at("wide", 1.0), 0.0);
+}
+
+/// The anti-vacuity half of the test above: both forms that used to ship score
+/// strictly worse against the same game values, and only the non-dyadic range
+/// says so. Without it the full-match assertion could be satisfied by a version
+/// that had never been at risk.
+#[test]
+fn the_two_rejected_slider_to_linear_forms_score_worse_against_the_game() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-slider-to-linear.seed123456.json",
+        "2.1.17",
+    );
+    let sliders = fixture.get("sliders").as_f64_array();
+    let ranges: [(&str, f64, f64); 3] = [
+        ("narrow", -1.0, 1.0),
+        ("wide", -1.7, 1.7),
+        ("fulgora", -50.0, 50.0),
+    ];
+
+    let ratio =
+        |s: f64| f64::from((f64::from(s.log2() as f32) / f64::from(6.0f64.log2() as f32)) as f32);
+
+    // What the shipped form did BEFORE #324: every operation narrowed to f32,
+    // the bounds not.
+    let without_bounds_narrowing = |s: f64, lo: f64, hi: f64| -> f64 {
+        let half_span = (0.5 * f64::from((hi - lo) as f32)) as f32;
+        let scaled = (f64::from(half_span) * f64::from((1.0 + ratio(s)) as f32)) as f32;
+        f64::from((lo + f64::from(scaled)) as f32)
+    };
+    // What the cliff catalog did before #324 deleted it: all f64.
+    let plain_f64 = |s: f64, lo: f64, hi: f64| -> f64 {
+        lo + 0.5 * (hi - lo) * (1.0 + s.log2() / 6.0f64.log2())
+    };
+
+    let count = |eval: &dyn Fn(f64, f64, f64) -> f64| -> Vec<usize> {
+        ranges
+            .iter()
+            .map(|(key, lo, hi)| {
+                sliders
+                    .iter()
+                    .zip(fixture.get(key).as_f64_array())
+                    .filter(|(s, want)| eval(**s, *lo, *hi) == *want)
+                    .count()
+            })
+            .collect()
+    };
+
+    // Identical to the shipped form wherever the bounds are f32-exact, and
+    // wrong on 8 of 13 where they are not.
+    assert_eq!(count(&without_bounds_narrowing), vec![13, 5, 13]);
+    assert_eq!(count(&plain_f64), vec![2, 1, 2]);
+    // It fails a control outright: at s = 6 it returns 1.7, the game f32(1.7).
+    let i = sliders.iter().position(|v| *v == 6.0).unwrap();
+    assert_ne!(
+        plain_f64(6.0, -1.7, 1.7),
+        fixture.get("wide").as_f64_array()[i]
+    );
+    // And s = 1 on (-1.7, 1.7) is exactly 0 against 4.77e-8.
+    assert_ne!(without_bounds_narrowing(1.0, -1.7, 1.7), 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -3578,9 +3730,9 @@ fn reproduces_the_fulgora_scrap_probability_at_every_captured_position() {
 /// too; the two are counting different populations, which is why this asserts
 /// its own).
 ///
-/// The `-2` variants collapse: the game distinguishes `oil-ocean-shallow-2` and
-/// `oil-ocean-deep-2`, and this port models neither, so both fold onto their
-/// base tile before comparing.
+/// The `-2` variants collapse: this fixture was graded before the port split
+/// `oil-ocean-shallow-2` and `oil-ocean-deep-2` from their base tiles, so both
+/// sides fold onto the base tile before comparing.
 #[test]
 fn puts_every_fulgora_tile_where_the_game_puts_it() {
     let fixture = load_captured_at(
@@ -3597,7 +3749,7 @@ fn puts_every_fulgora_tile_where_the_game_puts_it() {
     for (i, name) in names.iter().enumerate() {
         let game = name.as_str();
         let game_base = game.strip_suffix("-2").unwrap_or(game);
-        let ours = f[i].tile().game_name();
+        let ours = f[i].tile().folded().game_name();
         if ours == game_base {
             exact += 1;
         }
@@ -4952,8 +5104,8 @@ use crate::cliffs::collision::{
     box_tile_collides, get_aabb, placed_box, rotation_word, tile_collides,
 };
 use crate::cliffs::connections::{
-    apply_cliff_connections, connected_sides, on_chunk_border, opposite_side, ApplyCollision,
-    CliffConnectionOptions, CliffRemoval, CLIFF_ORIENTATION_ENDS,
+    apply_cliff_connections, cell_index, connected_sides, is_cliff_connected, on_chunk_border,
+    opposite_side, ApplyCollision, CliffConnectionOptions, CliffRemoval, CLIFF_ORIENTATION_ENDS,
 };
 use crate::cliffs::placement::{
     CellRejection, CliffBands, CliffFields, CliffPlacement, PlacedCliffCell, TileCollision,
@@ -5193,9 +5345,9 @@ fn places_every_vulcanus_cliff_where_the_game_places_it() {
 /// One region of one volcanism arm, in the four counts #84 and #307 track,
 /// plus the cells those counts leave out.
 ///
-/// **Same definitions as
-/// [`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`]**,
-/// so a row here reads against that table directly. `missing` is NOT
+/// **Same definitions as the apply-stage table** (that test was deleted on
+/// 2026-11-26; its table is in `docs/noise/vulcanus-cliffs-NOTES.md`), so a row
+/// here reads against it directly. `missing` is NOT
 /// `game - matched` from [`CliffScore`]: that counts every `cliff-vulcanus`
 /// the game placed, and 38 of the 1569 at the default sit OUTSIDE the region -
 /// `find_entities_filtered{area}` selects on the entity's bounding box, so a
@@ -5757,225 +5909,14 @@ fn sweep_cells(
     }
 }
 
-/// The ORE lever on the one region the replication found concentrated (#84).
-///
-/// `[-2200,-1500]` at frequency 0.5 carries 24 wrong and 47 surplus of 795
-/// comparable cells. Surplus is a cell the port places and the game does not,
-/// and the game's cliff-REMOVING mechanism in this port's model is the ore rule
-/// (`cliff_removal_probability`, the destroy stage). So the same region and the
-/// same slider, with every Vulcanus resource control switched OFF on both sides.
-/// If the 47 follow the lever, the concentration is the ore rule at a
-/// non-default field; if they stay, it is something the ore rule does not touch.
-///
-/// The sets are intersected rather than counted: which of the port's surplus
-/// cells are among the cells the game's ore rule removed (present with resources
-/// OFF, absent with them ON) is the attribution, and a count could not give it.
-#[test]
-fn the_concentrated_residual_against_the_ore_lever() {
-    let fixture = load_captured_at(
-        "test/fixtures/oracle-vulcanus-cliff-volcanism-ore.seed123456.json",
-        "2.1.17",
-    );
-    let oos = load_captured_at(
-        "test/fixtures/oracle-vulcanus-cliff-volcanism-oos.seed123456.json",
-        "2.1.17",
-    );
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let seed0 = fixture.get("seed").as_f64() as u32;
-    let arms = fixture.get("arms").as_array();
-    assert_eq!(arms.len(), 2);
-    let (on, off) = (&arms[0], &arms[1]);
-    assert_eq!(on.get("label").as_str(), "frequency 0.5, resources ON");
-    assert_eq!(
-        off.get("label").as_str(),
-        "frequency 0.5, ALL resources OFF"
-    );
-    for arm in [on, off] {
-        assert_eq!(arm.get("reported").get("frequency").as_f64(), 0.5);
-        assert_eq!(arm.get("reported").get("size").as_f64(), 1.0);
-        let want = if arm.get("label").as_str().ends_with("OFF") {
-            0.0
-        } else {
-            1.0
-        };
-        for name in [
-            "tungsten_ore",
-            "vulcanus_coal",
-            "calcite",
-            "sulfuric_acid_geyser",
-        ] {
-            assert_eq!(
-                arm.get("reportedResources").get(name).get("size").as_f64(),
-                want,
-                "{name} read-back"
-            );
-        }
-    }
-    let on_case = &on.get("cases").as_array()[0];
-    let off_case = &off.get("cases").as_array()[0];
-    let region = on_case.get("region");
-    assert_eq!(region.get("x0").as_f64(), -2200.0);
-    assert_eq!(region.get("y0").as_f64(), -1500.0);
-
-    // Determinism: the ON arm is the oos fixture's frequency 0.5 capture of the
-    // same region, cell for cell.
-    let oos_case = &oos.get("arms").as_array()[1].get("cases").as_array()[1];
-    assert_eq!(oos_case.get("region").get("x0").as_f64(), -2200.0);
-    let cells_of = |case: &Json| -> Vec<(u64, u64, String)> {
-        case.get("cliffs")
-            .as_array()
-            .iter()
-            .map(|c| {
-                (
-                    c.get("x").as_f64().to_bits(),
-                    c.get("y").as_f64().to_bits(),
-                    c.get("orientation").as_str().to_owned(),
-                )
-            })
-            .collect()
-    };
-    assert_eq!(
-        cells_of(on_case),
-        cells_of(oos_case),
-        "ON arm reproduces oos"
-    );
-
-    let mut ctx_on = crate::eval::ctx::EvalCtx::new(seed0);
-    ctx_on.vulcanus_volcanism_frequency = 0.5;
-    let mut ctx_off = ctx_on.clone();
-    for levers in [
-        &mut ctx_off.vulcanus_resource_controls.tungsten_ore,
-        &mut ctx_off.vulcanus_resource_controls.vulcanus_coal,
-        &mut ctx_off.vulcanus_resource_controls.calcite,
-        &mut ctx_off.vulcanus_resource_controls.sulfuric_acid_geyser,
-    ] {
-        levers.size = 0.0;
-    }
-
-    let SweepCells {
-        game: game_on,
-        port: port_on,
-        ..
-    } = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx_on, true);
-    let SweepCells {
-        game: game_off,
-        port: port_off,
-        ..
-    } = sweep_cells(region, off_case.get("cliffs").as_array(), &ctx_off, true);
-    // The port with the ore rejection simply not run, at resources ON: what the
-    // port thinks the ore rule removes.
-    let port_no_ore = sweep_cells(region, on_case.get("cliffs").as_array(), &ctx_on, false).port;
-
-    let row_on = sweep_tally(&game_on, &port_on);
-    let row_off = sweep_tally(&game_off, &port_off);
-    let row_no_ore = sweep_tally(&game_on, &port_no_ore);
-    eprintln!("resources ON,  port with ore rejection : {row_on:?}");
-    eprintln!("resources ON,  port WITHOUT ore rejection: {row_no_ore:?}");
-    eprintln!("resources OFF, port with ore rejection : {row_off:?}");
-
-    // What the GAME's ore rule removed: present with resources OFF, absent ON.
-    let game_removed: BTreeSet<(u64, u64)> = game_off
-        .keys()
-        .filter(|k| !game_on.contains_key(*k))
-        .copied()
-        .collect();
-    let game_added: BTreeSet<(u64, u64)> = game_on
-        .keys()
-        .filter(|k| !game_off.contains_key(*k))
-        .copied()
-        .collect();
-    // What the PORT's ore rule removed.
-    let port_removed: BTreeSet<(u64, u64)> = port_no_ore
-        .keys()
-        .filter(|k| !port_on.contains_key(*k))
-        .copied()
-        .collect();
-    // The surplus at ON, and how many of those the game's ore rule removed.
-    let surplus_on: BTreeSet<(u64, u64)> = port_on
-        .keys()
-        .filter(|k| !game_on.contains_key(*k))
-        .copied()
-        .collect();
-    let surplus_is_ore = surplus_on.intersection(&game_removed).count();
-    let surplus_off: BTreeSet<(u64, u64)> = port_off
-        .keys()
-        .filter(|k| !game_off.contains_key(*k))
-        .copied()
-        .collect();
-    eprintln!(
-        "game ore removed {} (and added {}); port ore removed {}; of {} surplus at ON, {} are cells \
-         the game's ore rule removed; surplus at OFF {}",
-        game_removed.len(),
-        game_added.len(),
-        port_removed.len(),
-        surplus_on.len(),
-        surplus_is_ore,
-        surplus_off.len(),
-    );
-    assert_eq!(surplus_on.len(), 40, "the oos row, restated");
-
-    // The frozen finding, measured 2026-09-07. Read a moved number, do not
-    // adjust it.
-    //
-    // THE CONCENTRATION IS THE ORE RULE, UNDER-REMOVING. The game's ore rule
-    // removes 65 cliffs in this region at frequency 0.5; the port's removes 39;
-    // 28 of the port's 47 surplus cells are cells the game's ore rule removed
-    // and the port's did not. Switching the ore off on BOTH sides takes the
-    // region from 74 errors to 31, and `wrong` from 24 to 11 - the destroy
-    // cascade re-orienting neighbours, missed wherever the destroy is missed.
-    // The ore regions read the biome/elevation chain (`*_resource_favorability`
-    // in planet-vulcanus-map-gen.lua), so the game's ore IS expected to move
-    // with volcanism; what this shows is the port's ore field, or its roll,
-    // diverging from the game's at a field no ore fixture was captured at. See
-    // `docs/noise/vulcanus-cliffs-NOTES.md`, the ore-rule section of 2026-09-07.
-    //
-    // Re-frozen 2026-09-13 (#414): with the engine removal geometry at the
-    // removal threshold the port's rule removes 45 of the game's 65 (39
-    // before), 24 of the 40 surplus at ON are the game's ore removals (28 of
-    // 44 before), and the ON row is 768/23/40/4 (769/24/44/2). The two new
-    // `missing` are the ring - see `cliffs/vulcanus_ore_rejection.rs`. The
-    // other rows do not read the ore rule and did not move.
-    //
-    // Re-frozen when the rule started reading the game's own roll (#84): the
-    // port's rule removes 44, one fewer, and that cell is one of the two
-    // ring `missing` back again, so the ON row is 769/23/40/3. The 24 surplus
-    // cells that are the game's removals do not move: 21 are geyser removals
-    // (`the_ore_field_where_the_cliff_rule_reads_it_at_frequency_half` bins
-    // them).
-    let row = |matched, wrong, surplus, missing| SweepRow {
-        matched,
-        wrong,
-        surplus,
-        missing,
-        unscored: 0,
-    };
-    assert_eq!(row_on, row(769, 23, 40, 3), "resources ON, port with ore");
-    assert_eq!(
-        row_no_ore,
-        row(768, 27, 81, 0),
-        "resources ON, port without ore"
-    );
-    assert_eq!(row_off, row(850, 10, 16, 0), "resources OFF, port with ore");
-    assert_eq!(game_removed.len(), 65, "cliffs the game's ore rule removed");
-    assert_eq!(game_added.len(), 0, "the lever only removes");
-    assert_eq!(port_removed.len(), 44, "cliffs the port's ore rule removed");
-    assert_eq!(
-        surplus_is_ore, 24,
-        "surplus cells that are the game's ore removals"
-    );
-    assert_eq!(surplus_off.len(), 16);
-    // Stated as a relation too, so the claim survives a re-measure that moves
-    // every row: the port under-removes, and most of the surplus is that.
-    assert!(port_removed.len() < game_removed.len());
-    assert!(surplus_is_ore * 2 > surplus_on.len());
-}
-
 use crate::resources::vulcanus_catalog::{VulcanusOreFootprint, RESOURCE_PROBABILITY_THRESHOLD};
 
 /// The port's ore FIELD against the game's ore ENTITIES, at the non-default
 /// field, where the cliff rule reads it (#84).
 ///
-/// [`the_concentrated_residual_against_the_ore_lever`] attributes the
+/// The `the_concentrated_residual_against_the_ore_lever` test (deleted
+/// 2026-11-26; its ON row is the frequency-0.5 row of
+/// [`the_volcanism_contrast_out_of_sample`]) attributed the
 /// concentrated region to the ore rule under-removing: the game's rule removes
 /// 65 cliffs at volcanism frequency 0.5 in `[-2200,-1500]`, the port's 39, and
 /// 28 of the port's surplus cells are cells the game's rule removed. It cannot
@@ -6537,8 +6478,9 @@ fn reproduces_the_vulcanus_cliff_fields_at_every_captured_corner() {
 /// [`GameEntityRemoval`].
 ///
 /// The same geometry drives both stages - only the STAGE it runs at is
-/// different, which is the whole subject of
-/// [`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`].
+/// different. The apply-stage comparison that measured this was deleted on
+/// 2026-11-26 (the app runs the crossing stage); its table is in
+/// `docs/noise/vulcanus-cliffs-NOTES.md`.
 struct LavaAndOre<'a, 'b> {
     lava: VulcanusLavaTiles<'a, 'b>,
     ore: VulcanusOreRejection<'a, 'b>,
@@ -6561,186 +6503,6 @@ struct OrientationScore {
     surplus: usize,
     /// A cell the game has and this does not.
     missing: usize,
-}
-
-/// `applyCliffs` against `rejectAtCrossingStage` - the two stages a rejection
-/// could act at, scored on ORIENTATION against the game's own cliffs.
-///
-/// `rejectAtCrossingStage` zeroes a rejected cell's four edges. The real stage
-/// destroys the entity and lets `Cliff::onDestroy` take the facing end of each
-/// CONNECTED neighbour - one or two sides, not four, and by rewriting the
-/// orientation rather than by clearing a crossing.
-///
-/// **This is what grades [`crate::cliffs::connections`] at all.** That module
-/// is on no render path - it is the model #84's investigation is scored with -
-/// so without this it would be a port with unit tests and no measurement
-/// against anything. Here it runs the same three arms the TypeScript's
-/// `cliffConnections.spec.ts` runs, over the same fixture, and must reach the
-/// same numbers:
-///
-/// | model | matched | wrong | surplus | missing |
-/// | --- | ---: | ---: | ---: | ---: |
-/// | `reject_at_crossing_stage` (ships) | 1504 | 21 | 22 | 6 |
-/// | `applyCliffs`, lava + ore | **1508** | **18** | 22 | **5** |
-/// | `applyCliffs`, no cascade | 1500 | 25 | 22 | 6 |
-///
-/// Those are the rows from when both ports existed. The frozen rows on the
-/// test have moved twice since - #407's oriented tile test and #414's
-/// removal geometry - and the assertions are the current record; the shape
-/// of the claim has held through both.
-///
-/// The apply stage is better on three counts and worse on none, and the
-/// no-cascade row is what says the CASCADE rather than the re-staging is doing
-/// it - without that arm "the apply stage is better" would not distinguish the
-/// two explanations.
-///
-/// **It is deliberately not what the renderer runs.** On POSITION alone the two
-/// models are a wash - 1526 against 1525 of 1531 - and the renderer paints
-/// positions and ignores orientation. Adopting it there means running the pass
-/// over a padded query and filtering afterwards, which changes the geometry the
-/// tiled-equals-whole tests pin. That is worth doing on its own evidence, not
-/// smuggled in for one cell.
-///
-/// The 64-tile pad is a HALO, not a margin: a cell on the query's outer chunk
-/// ring reads its neighbour across the boundary, and the `onDestroy` cascade can
-/// reach further still.
-#[test]
-fn the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none() {
-    let fixture = load_captured_at(
-        "test/fixtures/oracle-vulcanus-cliff-entities.seed123456.json",
-        "2.1.12",
-    );
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let seed0 = fixture.get("seed").as_f64() as u32;
-
-    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
-    let base = VulcanusBase::with_host_trig(&ctx);
-    let biomes = base.biomes_with_host_trig();
-    let stack = VulcanusStack::with_host_trig(&base, &biomes);
-    let fields = VulcanusCliffFields::new(&stack, seed0);
-    let lava = VulcanusLavaTiles::new(&stack);
-    let ore = VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls);
-    let apply = LavaAndOre {
-        lava: VulcanusLavaTiles::new(&stack),
-        ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
-    };
-    let bands = CliffBands {
-        elevation0: VULCANUS_CLIFF_ELEVATION_0,
-        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
-        smoothing: VULCANUS_CLIFF_SMOOTHING,
-        ..CliffBands::default()
-    };
-
-    let mut totals = [OrientationScore::default(); 3];
-    for case in fixture.get("cases").as_array() {
-        let r = case.get("region");
-        let (x0, y0) = (r.get("x0").as_f64(), r.get("y0").as_f64());
-        let (x1, y1) = (r.get("x1").as_f64(), r.get("y1").as_f64());
-
-        // The game's own cliffs in this region, by position, carrying the
-        // orientation it gave each one.
-        let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
-        for e in case.get("cliffs").as_array() {
-            if e.get("name").as_str() != "cliff-vulcanus" {
-                continue;
-            }
-            let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
-            if x < x0 || x >= x1 || y < y0 || y >= y1 {
-                continue;
-            }
-            let want = e.get("orientation").as_str();
-            if let Some(id) = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want) {
-                game.insert((x.to_bits(), y.to_bits()), id as u8);
-            }
-        }
-
-        // Arm 0: the shipping model, rejecting at the crossing stage.
-        let shipped: BTreeMap<(u64, u64), u8> = CliffPlacement::new(
-            &fields,
-            CliffBands {
-                reject_at_crossing_stage: true,
-                ..bands
-            },
-        )
-        .with_tile_collision(&lava)
-        .with_cell_rejection(&ore)
-        .placed_cells(x0, y0, x1, y1)
-        .iter()
-        .filter_map(|c| cliff_orientation_for_code(c.code).map(|id| (cell_key(c), id)))
-        .collect();
-
-        // Arms 1 and 2: the crossing field and the repair alone, over a 64-tile
-        // halo, with the rejection moved to the apply stage.
-        let raw = CliffPlacement::new(&fields, bands).placed_cells(
-            x0 - 64.0,
-            y0 - 64.0,
-            x1 + 64.0,
-            y1 + 64.0,
-        );
-        let staged = |no_cascade: bool| -> BTreeMap<(u64, u64), u8> {
-            apply_cliff_connections(
-                &raw,
-                &CliffConnectionOptions {
-                    collides: Some(&apply),
-                    no_cascade,
-                    ..Default::default()
-                },
-            )
-            .iter()
-            .filter(|c| c.x >= x0 && c.x < x1 && c.y >= y0 && c.y < y1)
-            .map(|c| ((c.x.to_bits(), c.y.to_bits()), c.orientation))
-            .collect()
-        };
-
-        for (i, port) in [shipped, staged(false), staged(true)].iter().enumerate() {
-            for (k, id) in port {
-                match game.get(k) {
-                    None => totals[i].surplus += 1,
-                    Some(want) if want == id => totals[i].matched += 1,
-                    Some(_) => totals[i].wrong += 1,
-                }
-            }
-            totals[i].missing += game.keys().filter(|k| !port.contains_key(*k)).count();
-        }
-    }
-
-    let row = |matched, wrong, surplus, missing| OrientationScore {
-        matched,
-        wrong,
-        surplus,
-        missing,
-    };
-    eprintln!("crossing / apply / apply no cascade: {totals:?}");
-    // Re-frozen 2026-09-13 (#414): 1521/10/16/0 -> 1520/10/12/1,
-    // 1525/6/14/0 -> 1523/7/11/1, 1513/18/16/0 -> 1511/19/12/1. The one
-    // `missing` on every arm is the same cell, a true cliff whose oriented box
-    // reaches a ring tile - see `cliffs/vulcanus_ore_rejection.rs`.
-    //
-    // Re-frozen when the rule started reading the game's own roll (#84):
-    // 1520/10/12/1 -> 1521/9/11/1, 1523/7/11/1 -> 1524/6/10/1,
-    // 1511/19/12/1 -> 1512/18/11/1. The one `missing` stays.
-    assert_eq!(
-        totals[0],
-        row(1521, 9, 11, 1),
-        "rejectAtCrossingStage (ships)"
-    );
-    assert_eq!(totals[1], row(1524, 6, 10, 1), "applyCliffs, lava + ore");
-    assert_eq!(totals[2], row(1512, 18, 11, 1), "applyCliffs, no cascade");
-
-    // Stated as relations too, so the claim survives a re-measure that moves
-    // every row: better on three counts, worse on none.
-    assert!(totals[1].matched > totals[0].matched);
-    assert!(totals[1].wrong < totals[0].wrong);
-    assert!(totals[1].surplus < totals[0].surplus);
-    assert_eq!(
-        totals[1].missing, totals[0].missing,
-        "both zero since #407, both one since #414"
-    );
-    // And on POSITION alone it is the same 1530 cells (1531 before #414),
-    // which is why the renderer is left alone. The whole gain is in
-    // orientation.
-    assert_eq!(totals[1].matched + totals[1].wrong, 1530);
-    assert_eq!(totals[0].matched + totals[0].wrong, 1530);
 }
 
 /// The game's own destruction set as an [`ApplyCollision`]: inside the region,
@@ -6782,9 +6544,9 @@ impl ApplyCollision for OracleKill<'_> {
 /// reproduces every one of the 1531 game cliffs - positions AND orientations.
 ///
 /// This is the Rust side of `test/cliffDestructionResidual.spec.ts`, and it is
-/// STRONGER than any arm of
-/// [`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`]:
-/// all three of those carry our own collision model, so each one measures the
+/// STRONGER than any arm of the deleted apply-stage comparison
+/// (`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`,
+/// removed 2026-11-26): all three of those carried our own collision model, so each one measures the
 /// port and the model together. Removing the model from the comparison is what
 /// isolates the residual to `Surface::wouldCollide`.
 ///
@@ -6911,6 +6673,166 @@ fn the_games_own_destruction_set_reproduces_the_game_exactly() {
         "the halo does not decide it: our own lava + ore predicate out there \
          gives the identical answer"
     );
+}
+
+/// Count the facing-end pairs in a cell set, and how many of them fail
+/// `isCliffConnected`. A facing pair is two adjacent cells that each carry an
+/// end on the shared side; it fails when the two ends run the wrong way, two
+/// `to` ends or two `from` ends meeting.
+fn facing_pairs(cells: &BTreeMap<(i64, i64), u8>) -> (usize, usize) {
+    const STEP: [(i64, i64); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+    let (mut facing, mut mismatched) = (0, 0);
+    for (&(cx, cy), &o) in cells {
+        for side in connected_sides(o) {
+            let (dx, dy) = STEP[side as usize];
+            let Some(&theirs) = cells.get(&(cx + dx, cy + dy)) else {
+                continue;
+            };
+            if !has_end(theirs, opposite_side(side)) {
+                continue;
+            }
+            facing += 1;
+            if !is_cliff_connected(side, o, theirs) {
+                mismatched += 1;
+            }
+        }
+    }
+    (facing, mismatched)
+}
+
+/// **No two facing cliff ends ever run the wrong way, in the port's queue or
+/// in the game's own cliffs.** This invariant is the reason the cascade that
+/// `updateConnections` starts cannot change a result.
+///
+/// The update pass destroys an end only when the neighbour on that side is
+/// missing or not connected. The cascade then asks that neighbour to drop its
+/// facing end. If the neighbour is missing, or has no facing end, that does
+/// nothing. If its facing end runs the right way the two are connected and
+/// the end is never destroyed. So the cascade acts only on a facing pair that
+/// runs the wrong way, and `destroyEnd` only ever turns an end into `none`, so
+/// a set with no such pair never gains one.
+///
+/// Measured 2026-11-26: switching that cascade off
+/// (`do_destroy_end(.., true)` at the update-pass call site) left all 614
+/// workspace tests green, and running the pass both ways over the 39 regions
+/// below, with no collision and with the lava + ore predicate, gave 0
+/// differing cells. This test is what makes that "cannot" rather than
+/// "did not". If it ever goes red, the update-pass cascade has inputs it can
+/// act on, and nothing else grades it.
+///
+/// Counts are frozen, so a placement change that moves the queue shows here.
+/// `crater-cliff` is skipped: craters are outside the connection system.
+#[test]
+fn no_facing_cliff_ends_run_the_wrong_way_in_the_queue_or_the_games_cliffs() {
+    let fixture = load_captured_at(
+        "test/fixtures/oracle-vulcanus-cliff-entities.seed123456.json",
+        "2.1.12",
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seed0 = fixture.get("seed").as_f64() as u32;
+    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
+    let base = VulcanusBase::with_host_trig(&ctx);
+    let biomes = base.biomes_with_host_trig();
+    let stack = VulcanusStack::with_host_trig(&base, &biomes);
+    let fields = VulcanusCliffFields::new(&stack, seed0);
+    let bands = CliffBands {
+        elevation0: VULCANUS_CLIFF_ELEVATION_0,
+        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
+        smoothing: VULCANUS_CLIFF_SMOOTHING,
+        ..CliffBands::default()
+    };
+
+    // The port's raw queue: the fixture's three regions plus a 6x6 sweep of
+    // 256-tile regions around spawn, each with the 64-tile halo the apply
+    // pass is handed.
+    let mut regions: Vec<(f64, f64, f64, f64)> = Vec::new();
+    for case in fixture.get("cases").as_array() {
+        let r = case.get("region");
+        regions.push((
+            r.get("x0").as_f64(),
+            r.get("y0").as_f64(),
+            r.get("x1").as_f64(),
+            r.get("y1").as_f64(),
+        ));
+    }
+    for i in -3..3 {
+        for j in -3..3 {
+            let (x0, y0) = (f64::from(i) * 320.0, f64::from(j) * 320.0);
+            regions.push((x0, y0, x0 + 256.0, y0 + 256.0));
+        }
+    }
+    let (mut queued, mut facing, mut mismatched) = (0, 0, 0);
+    for (x0, y0, x1, y1) in regions {
+        let cells: BTreeMap<(i64, i64), u8> = CliffPlacement::new(&fields, bands)
+            .placed_cells(x0 - 64.0, y0 - 64.0, x1 + 64.0, y1 + 64.0)
+            .iter()
+            .filter_map(|c| cliff_orientation_for_code(c.code).map(|o| (cell_index(c.x, c.y), o)))
+            .collect();
+        queued += cells.len();
+        let (f, m) = facing_pairs(&cells);
+        facing += f;
+        mismatched += m;
+    }
+    assert_eq!(
+        (queued, facing, mismatched),
+        (50_592, 91_722, 0),
+        "the port's queue: (cells, facing pairs, pairs running the wrong way)"
+    );
+
+    // The game's own cliffs, every case of every captured cliff-entity set.
+    for (path, want_cells, want_facing) in [
+        (
+            "oracle-vulcanus-cliff-entities.seed123456.json",
+            1_569,
+            2_852,
+        ),
+        (
+            "oracle-vulcanus-cliff-entities-more-regions.seed123456.json",
+            5_395,
+            9_520,
+        ),
+        (
+            "oracle-vulcanus-cliff-entities-west-oos.seed123456.json",
+            10_100,
+            17_976,
+        ),
+        (
+            "oracle-vulcanus-cliff-entities-border-batch.seed123456.json",
+            10_729,
+            19_320,
+        ),
+        ("oracle-cliff-entities.seed123456.json", 334, 620),
+    ] {
+        let fx = load_captured_at(&format!("test/fixtures/{path}"), "2.1.12");
+        let (mut cells_n, mut facing, mut mismatched) = (0, 0, 0);
+        for case in fx.get("cases").as_array() {
+            let mut cells: BTreeMap<(i64, i64), u8> = BTreeMap::new();
+            for e in case.get("cliffs").as_array() {
+                if e.get("name").as_str() == "crater-cliff" {
+                    continue;
+                }
+                let want = e.get("orientation").as_str();
+                let id = CLIFF_ORIENTATION_NAMES
+                    .iter()
+                    .position(|n| *n == want)
+                    .unwrap_or_else(|| panic!("{path}: unknown orientation {want}"));
+                #[allow(clippy::cast_possible_truncation)]
+                cells.insert(
+                    cell_index(e.get("x").as_f64(), e.get("y").as_f64()),
+                    id as u8,
+                );
+            }
+            cells_n += cells.len();
+            let (f, m) = facing_pairs(&cells);
+            facing += f;
+            mismatched += m;
+        }
+        assert_eq!(
+            (cells_n, facing, mismatched),
+            (want_cells, want_facing, 0),
+            "{path}: (cells, facing pairs, pairs running the wrong way)"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -7227,255 +7149,6 @@ fn the_tile_half_of_would_collide_graded_against_the_games_own_calls() {
     );
 }
 
-/// The tile half `#90` shipped and `#407` replaced - the raw stored rectangle
-/// over an inclusive floor - plus the shipped ore rule. Kept as the "before"
-/// arm the oriented test is read against.
-struct RawRectLavaAndOre<'a, 'b> {
-    lava: VulcanusLavaTiles<'a, 'b>,
-    ore: VulcanusOreRejection<'a, 'b>,
-}
-
-impl ApplyCollision for RawRectLavaAndOre<'_, '_> {
-    fn collides(&self, orientation: u8, x: f64, y: f64) -> bool {
-        port_tile_collides(orientation, x, y, &self.lava) || self.ore.removes(orientation, x, y)
-    }
-}
-
-/// [`LavaAndOre`] plus the entity half read off the fixture: destroy these
-/// cells outright.
-struct OrientedLavaAndOre<'a, 'b> {
-    lava: VulcanusLavaTiles<'a, 'b>,
-    ore: VulcanusOreRejection<'a, 'b>,
-    entity_kills: Option<&'a BTreeSet<(u64, u64)>>,
-}
-
-impl ApplyCollision for OrientedLavaAndOre<'_, '_> {
-    fn collides(&self, orientation: u8, x: f64, y: f64) -> bool {
-        if self
-            .entity_kills
-            .is_some_and(|k| k.contains(&(x.to_bits(), y.to_bits())))
-        {
-            return true;
-        }
-        tile_collides(orientation, x, y, &self.lava) || self.ore.removes(orientation, x, y)
-    }
-}
-
-/// **The oriented tile test takes `missing` to ZERO through the apply stage**,
-/// scored on the game's 1531 cliffs exactly as
-/// [`the_apply_stage_beats_the_crossing_stage_on_three_counts_and_loses_on_none`]
-/// scores the shipped model:
-///
-/// | arm | matched | wrong | surplus | missing |
-/// | --- | ---: | ---: | ---: | ---: |
-/// | shipped `LavaAndOre` | 1508 | 18 | 22 | 5 |
-/// | oriented tile test + the same ore rule | **1525** | **6** | **16** | **0** |
-/// | ... + the fixture's entity kills | 1528 | 3 | 13 | 0 |
-/// | ... + the raw queued orientation at test time | 1528 | 3 | **11** | 0 |
-///
-/// Of the 16 cells the third arm still gets wrong, every one is in
-/// `[1500,1500]`. Fourteen are cells the game's `wouldCollide` KEPT -
-/// `result = false` in the fixture - that are nonetheless absent from the
-/// game's map, so they die after the apply stage, not in it: the `1542/1546`
-/// knot and `1622/1626` pair UPDATE 8 tied to the ore lever, the
-/// `1606`/`1630` cells beside them, and the `1742/1746` run that sits under a
-/// demolisher body segment's box (`Segment`, 1745.2..1753.0 x 1532.1..1538.3).
-/// No collision box can reach a cell the collision test passed; that residual
-/// belongs to the ore rule's geometry and to whatever places the demolisher.
-///
-/// The other two, `(1626, 1602.5)` and `(1630, 1602.5)`, the game KILLED on
-/// lava - with the raw queued orientation. `apply_cliff_connections` tests a
-/// cell after earlier chunks' destructions have cascaded into it, so it tested
-/// those two with a trimmed box that misses the lava. The fourth arm hands the
-/// pass the raw orientation by position and takes exactly those two.
-///
-/// The second arm is the one a port change would ship - the entity half has
-/// no model - and it is better on every count.
-///
-/// Re-frozen 2026-09-13 (#414) with the engine removal geometry in the ore
-/// rule: 1507/18/20/6 -> 1505/19/17/7, 1525/6/14/0 -> 1523/7/11/1,
-/// 1528/3/11/0 -> 1526/4/8/1. Every arm gains the same one `missing`, the
-/// ring's (`cliffs/vulcanus_ore_rejection.rs`); the relations hold.
-///
-/// Re-frozen when the ore rule started reading the game's own roll (#84):
-/// 1505/19/17/7 -> 1506/18/16/7, 1523/7/11/1 -> 1524/6/10/1,
-/// 1526/4/8/1 -> 1527/3/7/1, leftovers 13 -> 11. The one `missing` stays.
-#[test]
-fn the_oriented_tile_test_through_the_apply_stage() {
-    let fixture = load_captured_at(
-        "test/fixtures/oracle-vulcanus-cliff-entities.seed123456.json",
-        "2.1.12",
-    );
-    let calls = load_captured_at(
-        "test/fixtures/oracle-vulcanus-wouldcollide.seed123456.json",
-        "2.0.77",
-    );
-    let mut entity_kills: BTreeSet<(u64, u64)> = BTreeSet::new();
-    for (_, _, region) in would_collide_calls(&calls) {
-        for c in &region {
-            if c.entity.is_some() && c.prototype == "cliff-vulcanus" {
-                entity_kills.insert((c.x.to_bits(), c.y.to_bits()));
-            }
-            if c.prototype == "cliff-vulcanus" {
-                assert_eq!(
-                    c.rotation,
-                    rotation_word(c.orientation),
-                    "rotation word at ({}, {})",
-                    c.x,
-                    c.y
-                );
-            }
-        }
-    }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let seed0 = fixture.get("seed").as_f64() as u32;
-    let ctx = crate::eval::ctx::EvalCtx::new(seed0);
-    let base = VulcanusBase::with_host_trig(&ctx);
-    let biomes = base.biomes_with_host_trig();
-    let stack = VulcanusStack::with_host_trig(&base, &biomes);
-    let fields = VulcanusCliffFields::new(&stack, seed0);
-    let raw_rect = RawRectLavaAndOre {
-        lava: VulcanusLavaTiles::new(&stack),
-        ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
-    };
-    let oriented = OrientedLavaAndOre {
-        lava: VulcanusLavaTiles::new(&stack),
-        ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
-        entity_kills: None,
-    };
-    let oriented_entities = OrientedLavaAndOre {
-        lava: VulcanusLavaTiles::new(&stack),
-        ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
-        entity_kills: Some(&entity_kills),
-    };
-    let bands = CliffBands {
-        elevation0: VULCANUS_CLIFF_ELEVATION_0,
-        interval: VULCANUS_CLIFF_ELEVATION_INTERVAL,
-        smoothing: VULCANUS_CLIFF_SMOOTHING,
-        ..CliffBands::default()
-    };
-    let arms: [&dyn ApplyCollision; 3] = [&raw_rect, &oriented, &oriented_entities];
-    let mut totals = [OrientationScore::default(); 3];
-    let mut leftovers: Vec<(f64, f64)> = Vec::new();
-    for case in fixture.get("cases").as_array() {
-        let r = case.get("region");
-        let (x0, y0) = (r.get("x0").as_f64(), r.get("y0").as_f64());
-        let (x1, y1) = (r.get("x1").as_f64(), r.get("y1").as_f64());
-        let mut game: BTreeMap<(u64, u64), u8> = BTreeMap::new();
-        for e in case.get("cliffs").as_array() {
-            if e.get("name").as_str() != "cliff-vulcanus" {
-                continue;
-            }
-            let (x, y) = (e.get("x").as_f64(), e.get("y").as_f64());
-            if x < x0 || x >= x1 || y < y0 || y >= y1 {
-                continue;
-            }
-            let want = e.get("orientation").as_str();
-            if let Some(id) = CLIFF_ORIENTATION_NAMES.iter().position(|n| *n == want) {
-                game.insert((x.to_bits(), y.to_bits()), id as u8);
-            }
-        }
-        let raw = CliffPlacement::new(&fields, bands).placed_cells(
-            x0 - 64.0,
-            y0 - 64.0,
-            x1 + 64.0,
-            y1 + 64.0,
-        );
-        for (i, apply) in arms.iter().enumerate() {
-            let port: BTreeMap<(u64, u64), u8> = apply_cliff_connections(
-                &raw,
-                &CliffConnectionOptions {
-                    collides: Some(*apply),
-                    ..Default::default()
-                },
-            )
-            .iter()
-            .filter(|c| c.x >= x0 && c.x < x1 && c.y >= y0 && c.y < y1)
-            .map(|c| ((c.x.to_bits(), c.y.to_bits()), c.orientation))
-            .collect();
-            for (k, id) in &port {
-                match game.get(k) {
-                    None => {
-                        totals[i].surplus += 1;
-                        if i == 2 {
-                            leftovers.push((f64::from_bits(k.0), f64::from_bits(k.1)));
-                        }
-                    }
-                    Some(want) if want == id => totals[i].matched += 1,
-                    Some(_) => {
-                        totals[i].wrong += 1;
-                        if i == 2 {
-                            leftovers.push((f64::from_bits(k.0), f64::from_bits(k.1)));
-                        }
-                    }
-                }
-            }
-            for k in game.keys().filter(|k| !port.contains_key(*k)) {
-                totals[i].missing += 1;
-                if i == 2 {
-                    leftovers.push((f64::from_bits(k.0), f64::from_bits(k.1)));
-                }
-            }
-        }
-    }
-    let row = |matched, wrong, surplus, missing| OrientationScore {
-        matched,
-        wrong,
-        surplus,
-        missing,
-    };
-    eprintln!(
-        "raw rect / oriented / oriented + kills: {totals:?}; leftovers {}",
-        leftovers.len()
-    );
-    assert_eq!(
-        totals[0],
-        row(1506, 18, 16, 7),
-        "the raw rectangle #90 shipped"
-    );
-    assert_eq!(totals[1], row(1524, 6, 10, 1), "oriented tile test + ore");
-    assert_eq!(
-        totals[2],
-        row(1527, 3, 7, 1),
-        "oriented + ore + entity kills"
-    );
-    assert!(totals[1].matched > totals[0].matched);
-    assert!(totals[1].wrong < totals[0].wrong);
-    assert!(totals[1].surplus < totals[0].surplus);
-    assert!(totals[1].missing < totals[0].missing);
-    assert_eq!(leftovers.len(), 11);
-    let tested: BTreeMap<(u64, u64), (u8, bool)> = would_collide_calls(&calls)
-        .iter()
-        .flat_map(|(_, _, region)| region.iter())
-        .map(|c| ((c.x.to_bits(), c.y.to_bits()), (c.orientation, c.result)))
-        .collect(); // Every leftover is a cell the game's own collision test KEPT. Before
-                    // #407's third edit two more sat here that the game killed on lava with
-                    // the RAW queued orientation, which the port's apply pass no longer had by
-                    // the time it tested them; the pass reads the queued orientation now.
-    let mut kept_by_game = 0;
-    let mut killed_by_game = Vec::new();
-    for (x, y) in &leftovers {
-        assert!(
-            (1500.0..1756.0).contains(x) && (1500.0..1756.0).contains(y),
-            "({x}, {y}) in [1500,1500]"
-        );
-        let (o, result) = tested
-            .get(&(x.to_bits(), y.to_bits()))
-            .unwrap_or_else(|| panic!("the game queued ({x}, {y})"));
-        if *result {
-            killed_by_game.push((*x, *y, CLIFF_ORIENTATION_NAMES[usize::from(*o)]));
-        } else {
-            kept_by_game += 1;
-        }
-    }
-    assert_eq!(kept_by_game, 11);
-    assert_eq!(
-        killed_by_game,
-        Vec::<(f64, f64, &str)>::new(),
-        "every leftover passed the game's own test"
-    );
-}
-
 /// **The game tests every cell with its RAW queued orientation, and the port's
 /// raw queue IS the game's queue: 2088 of 2088 `cliff-vulcanus` calls carry
 /// the orientation `CliffPlacement` computes for that cell, with no cell
@@ -7483,13 +7156,18 @@ fn the_oriented_tile_test_through_the_apply_stage() {
 /// established the queue's exactness through the cascade; this is the queue
 /// before anything touches it.
 ///
-/// That settles which orientation the apply pass must hand to `collides`.
-/// `apply_cliff_connections` tests a cell AFTER earlier destructions have
-/// cascaded into it, so a cell whose neighbour died first is tested with a
-/// trimmed box; the game tests the queued box. `(1626, 1602.5)` and
-/// `(1630, 1602.5)` are the two cells that shows on, and the last arm here
-/// hands the pass the raw orientation by position to measure what fixing it
-/// is worth.
+/// What this test asserts: inside the regions, the orientations the game
+/// queued for `cliff-vulcanus` equal the ones `CliffPlacement` computes, cell
+/// for cell, with nothing queued on one side only. It does not run the apply
+/// pass.
+///
+/// Background, from the apply-stage comparison deleted on 2026-11-26: the
+/// game's collision test reads the QUEUED orientation, while a cell tested
+/// after a neighbour's destruction had cascaded into it would see a trimmed
+/// box. `(1626, 1602.5)` and `(1630, 1602.5)` were the two cells where that
+/// showed. `apply_cliff_connections` now hands `collides` the queued
+/// orientation; the ore removal still reads the live one (see
+/// `cliffs/vulcanus_ore_rejection.rs`).
 #[test]
 fn the_game_tests_the_raw_queued_orientation_and_the_raw_queue_is_exact() {
     let fixture = load_captured_at(
@@ -10694,8 +10372,8 @@ impl CliffRemoval for GameEntityRemoval<'_, '_> {
     }
 }
 
-/// One region's arms through the apply stage, scored on the game's cliffs the
-/// way [`the_oriented_tile_test_through_the_apply_stage`] scores them.
+/// One region's arms through the apply stage, scored on the game's cliffs (the
+/// way the deleted `the_oriented_tile_test_through_the_apply_stage` scored them).
 fn score_removal_geometries(
     case: &Json,
     ctx: &crate::eval::ctx::EvalCtx,
@@ -10770,10 +10448,9 @@ fn score_removal_geometries(
     // The reference: the oriented tile test plus the PORT's own ore rule as
     // it ships - the engine geometry at the removal threshold since #414,
     // the base box before.
-    let shipped = OrientedLavaAndOre {
+    let shipped = LavaAndOre {
         lava: VulcanusLavaTiles::new(&stack),
         ore: VulcanusOreRejection::new(&stack, &ctx.vulcanus_resource_controls),
-        entity_kills: None,
     };
     let mut rows = vec![score_arm(&shipped, None)];
     for &geometry in geometries {
@@ -12715,50 +12392,6 @@ fn aquilo_real_surface_replay_needs_touching_boxes_to_collide() {
     assert!(ours > game && matched < game, "{matched} {ours}");
 }
 
-#[test]
-fn zz_probe_last_pixel_parts() {
-    use crate::tiles::helpers::{expression_in_range_base, noise_layer_noise};
-    let seed0 = 123_456;
-    let stack = NauvisStack::new(&NauvisCtx::defaults(seed0));
-    for &(px, py) in &[(229.0, -19.0), (229.5, -18.5)] {
-        let at = At::point(px, py);
-        eprintln!("PART at ({px}, {py})");
-        let a = stack.aux.eval_at(at);
-        let m = stack.moisture.eval_at(at);
-        let e = stack.elevation_nauvis.eval_at(at);
-        eprintln!("PART aux {a:.9} ({:e}) moisture {m:.9} elevation {e:.6}", a);
-        for (tile, layer, box_) in [
-            ("grass-1", 19u32, (-10.0, 0.7, 11.0, 11.0)),
-            ("grass-2", 20, (0.45, 0.45, 11.0, 0.8)),
-            ("grass-3", 21, (-10.0, 0.6, 0.65, 0.9)),
-            ("grass-4", 22, (-10.0, 0.5, 0.55, 0.7)),
-        ] {
-            let _ = noise_layer_noise;
-            let l = f64::from(
-                crate::multioctave_noise::Prepared::new(
-                    &crate::multioctave_noise::MultioctaveParams {
-                        seed0,
-                        seed1: layer,
-                        octaves: 4.0,
-                        persistence: crate::eval::math::f32r(0.7),
-                        input_scale: 1.0 / 6.0,
-                        output_scale: crate::eval::math::f32r(2.0 / 3.0),
-                    },
-                )
-                .eval_at(at),
-            );
-            let b = expression_in_range_base(a, m, box_.0, box_.1, box_.2, box_.3);
-            let g = game_point_score("nauvis", tile);
-            let ours = f64::from((b + l) as f32);
-            eprintln!(
-            "PART {tile}: layer {l:.9} box {b:.9} ours {ours:.9} game {g:.9} implied_box {:.9} box_err {:e}",
-            g - l,
-            b - (g - l)
-        );
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // #531: the game's own sin/cos polynomial.
 // ---------------------------------------------------------------------------
@@ -12963,3 +12596,336 @@ fn reproduces_the_games_vulcanus_protector_bearing_on_606_seeds() {
         "CONTROL: the un-narrowed sum must fail on 39"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Gleba (#454), tier 1: the terrain fields and the 41-tile choice.
+// ---------------------------------------------------------------------------
+
+use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
+use crate::expressions::gleba_terrain::{GlebaControls, GlebaTerrainFields};
+use crate::tiles::gleba_catalog::{
+    argmax as gleba_argmax, probabilities as gleba_probabilities, GlebaTile,
+    TILE_COUNT as GLEBA_TILE_COUNT, TILE_ORDER as GLEBA_TILE_ORDER,
+};
+
+/// Gleba's planet-field capture, written by `scripts/probes/planet-fields`: 1,024
+/// positions on the 1/256 grid with `elevation`, `moisture`, `aux` and
+/// `temperature` under `climate` and the 41 tile scores under `tiles`. The surface
+/// seed is FORCED to 123456, not the derived one the preview PNGs use.
+const GLEBA_FIELDS: &str = "test/fixtures/oracle-gleba-fields.seed123456.json";
+
+/// Evaluate our terrain fields at every position of the fixture, as points (the
+/// capture is a `calculate_tile_properties` read).
+fn gleba_terrain_at(fixture: &Json) -> Vec<GlebaTerrainFields> {
+    let positions = fixture.get("positions").as_array();
+    assert_eq!(positions.len(), 1024);
+    let stack = GlebaStack::new(&GlebaCtx {
+        seed0: 123_456,
+        controls: GlebaControls::default(),
+    });
+    positions
+        .iter()
+        .map(|p| {
+            let xy = p.as_array();
+            stack.eval_at(At::point(xy[0].as_f64(), xy[1].as_f64()))
+        })
+        .collect()
+}
+
+/// The four property fields against the game: an exact f32 count each.
+#[test]
+fn gleba_climate_fields_match_the_game() {
+    let fixture = load_captured_at(GLEBA_FIELDS, "2.1.23");
+    assert_eq!(fixture.get("seed").as_f64(), 123_456.0);
+    let fields = gleba_terrain_at(&fixture);
+    let climate = fixture.get("climate");
+    type Column = (&'static str, fn(&GlebaTerrainFields) -> f64);
+    let columns: [Column; 4] = [
+        ("elevation", |f| f.elevation),
+        ("moisture", |f| f.moisture),
+        ("aux", |f| f.aux),
+        ("temperature", |f| f.temperature),
+    ];
+    let mut counts = Vec::new();
+    for (name, select) in columns {
+        let got: Vec<f64> = fields.iter().map(select).collect();
+        let n = count_exact_bits(&got, climate.get(name).as_array());
+        eprintln!("gleba {name}: {n}");
+        counts.push(n);
+    }
+    assert_eq!(counts, vec![1024; 4]);
+}
+
+/// The 41 tile scores against the game: an exact count per tile.
+#[test]
+fn gleba_tile_scores_match_the_game() {
+    let fixture = load_captured_at(GLEBA_FIELDS, "2.1.23");
+    let fields = gleba_terrain_at(&fixture);
+    let scores: Vec<[f64; GLEBA_TILE_COUNT]> = fields.iter().map(gleba_probabilities).collect();
+    let mut counts = Vec::new();
+    for (t, tile) in GLEBA_TILE_ORDER.iter().enumerate() {
+        let got: Vec<f64> = scores.iter().map(|s| s[t]).collect();
+        let n = count_exact_bits(&got, fixture.get("tiles").get(tile.game_name()).as_array());
+        eprintln!("gleba tile {}: {n}", tile.game_name());
+        counts.push(n);
+    }
+    assert_eq!(counts, vec![1024; GLEBA_TILE_COUNT]);
+}
+
+/// Our winner against the strict argmax of the GAME's own 41 scores, and our
+/// per-tile win counts against the fixture's `winCounts`.
+///
+/// The fixture was built so every tile wins at least once, and it records 67
+/// positions where the top score is tied (mostly at the clamp values 1.0 and
+/// 1.1). The game's strict argmax gives no winner there from this data, and the
+/// game's own candidate order, which would decide it, is not established. So
+/// those 67 are counted and not graded: at each one we only check that our
+/// winner is one of the tied tiles.
+#[test]
+fn gleba_tile_winner_matches_the_game() {
+    let fixture = load_captured_at(GLEBA_FIELDS, "2.1.23");
+    let fields = gleba_terrain_at(&fixture);
+    let per_tile: Vec<&[Json]> = GLEBA_TILE_ORDER
+        .iter()
+        .map(|t| fixture.get("tiles").get(t.game_name()).as_array())
+        .collect();
+    let game_scores = |i: usize| -> [f64; GLEBA_TILE_COUNT] {
+        let mut out = [0.0; GLEBA_TILE_COUNT];
+        for (t, scores) in per_tile.iter().enumerate() {
+            let bits = u32::from_str_radix(scores[i].as_str(), 16).expect("hex f32 bits");
+            out[t] = f64::from(f32::from_bits(bits));
+        }
+        out
+    };
+    let (mut same, mut graded, mut ties, mut tie_member) = (0usize, 0usize, 0usize, 0usize);
+    let mut wins = std::collections::BTreeMap::new();
+    for (i, f) in fields.iter().enumerate() {
+        let want = game_scores(i);
+        let best = want.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let top: Vec<usize> = (0..GLEBA_TILE_COUNT).filter(|t| want[*t] == best).collect();
+        let ours = gleba_argmax(&gleba_probabilities(f));
+        if let [only] = top[..] {
+            graded += 1;
+            same += usize::from(ours == GLEBA_TILE_ORDER[only]);
+            *wins
+                .entry(GLEBA_TILE_ORDER[only].game_name())
+                .or_insert(0usize) += 1;
+        } else {
+            ties += 1;
+            tie_member += usize::from(top.iter().any(|t| GLEBA_TILE_ORDER[*t] == ours));
+        }
+    }
+    eprintln!(
+        "gleba winner: {same} of {graded} graded, {ties} ties ({tie_member} of ours in the tie)"
+    );
+    assert_eq!((same, graded, ties, tie_member), (957, 957, 67, 67));
+    // The fixture's own win counts, tile by tile.
+    let counts = fixture.get("winCounts");
+    for tile in GLEBA_TILE_ORDER {
+        let want = counts.get(tile.game_name()).as_f64() as usize;
+        assert_eq!(
+            wins.get(tile.game_name()).copied(),
+            Some(want),
+            "{}",
+            tile.game_name()
+        );
+    }
+    // Non-vacuity: all 41 tiles win somewhere.
+    assert_eq!(wins.len(), GLEBA_TILE_COUNT);
+}
+
+// ---------------------------------------------------------------------------
+// Gleba (#454), slice 2: the raw tile choice against a REAL surface.
+// ---------------------------------------------------------------------------
+
+/// `get_tile` over -128..127 on a real Gleba surface at map seed 123456 (the
+/// derived surface seed), written by `scripts/probes/gleba-real-surface`.
+const GLEBA_REAL_SURFACE: &str = "test/fixtures/oracle-gleba-real-surface.seed123456.json";
+
+/// The same window from a surface whose chunks were requested one by one in
+/// columns order (`FMW_CHUNK_ORDER=columns`).
+const GLEBA_REAL_SURFACE_COLUMNS: &str =
+    "test/fixtures/oracle-gleba-real-surface-columns.seed123456.json";
+
+/// The derived Gleba surface seed for map seed 123456: `123456 + crc32("gleba")`.
+const GLEBA_SURFACE_SEED_123456: u32 = 3_215_206_427;
+
+/// The real-surface fixture as a grid of tile names, row-major from (x0, y0).
+fn gleba_real_surface_grid(fixture: &Json) -> (i32, i32, usize, Vec<String>) {
+    let names: Vec<&str> = fixture
+        .get("names")
+        .as_array()
+        .iter()
+        .map(Json::as_str)
+        .collect();
+    let alphabet: Vec<char> = fixture.get("alphabet").as_str().chars().collect();
+    let window = fixture.get("window");
+    let side = window.get("width").as_f64() as usize;
+    assert_eq!(window.get("height").as_f64() as usize, side);
+    let mut grid = Vec::with_capacity(side * side);
+    for row in fixture.get("rows").as_array() {
+        let row = row.as_str();
+        assert_eq!(row.chars().count(), side);
+        for c in row.chars() {
+            let i = alphabet
+                .iter()
+                .position(|a| *a == c)
+                .expect("a known symbol");
+            grid.push(names[i].to_string());
+        }
+    }
+    assert_eq!(grid.len(), side * side);
+    (
+        window.get("x0").as_f64() as i32,
+        window.get("y0").as_f64() as i32,
+        side,
+        grid,
+    )
+}
+
+/// Every Gleba tile's `map_color` is the one the game reports.
+#[test]
+fn gleba_map_colours_match_the_game() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE, "2.1.23");
+    let tiles = fixture.get("tiles");
+    for tile in GLEBA_TILE_ORDER {
+        let want: Vec<u8> = tiles
+            .get(tile.game_name())
+            .get("mapColor")
+            .as_array()
+            .iter()
+            .map(|v| v.as_f64() as u8)
+            .collect();
+        assert_eq!(tile.color().to_vec(), want, "{}", tile.game_name());
+    }
+}
+
+/// Every Gleba tile's effective layer is the one the game reports. Tile
+/// correction compares nothing else about a tile.
+#[test]
+fn gleba_layers_match_the_game() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE, "2.1.23");
+    let tiles = fixture.get("tiles");
+    for tile in GLEBA_TILE_ORDER {
+        let want = tiles.get(tile.game_name()).get("layer").as_f64();
+        assert_eq!(f64::from(tile.layer()), want, "{}", tile.game_name());
+    }
+}
+
+/// Count where `ours` (row-major over the fixture window) differs from the real
+/// surface, by tile name and by map colour.
+fn gleba_differences(ours: &[GlebaTile], real: &[String]) -> (usize, usize) {
+    assert_eq!(
+        ours.len(),
+        real.len(),
+        "our tiles and the real surface's tiles"
+    );
+    let (mut names, mut colours) = (0usize, 0usize);
+    for (tile, want) in ours.iter().zip(real) {
+        if tile.game_name() != want {
+            names += 1;
+            let want_tile = GLEBA_TILE_ORDER
+                .iter()
+                .find(|t| t.game_name() == want)
+                .expect("a Gleba tile");
+            colours += usize::from(want_tile.color() != tile.color());
+        }
+    }
+    (names, colours)
+}
+
+fn gleba_surface_stack(fixture: &Json) -> GlebaStack {
+    assert_eq!(
+        fixture.get("surfaceSeed").as_f64(),
+        f64::from(GLEBA_SURFACE_SEED_123456)
+    );
+    GlebaStack::new(&GlebaCtx {
+        seed0: GLEBA_SURFACE_SEED_123456,
+        controls: GlebaControls::default(),
+    })
+}
+
+/// Our raw tile choice, through the chunk-grid kernel the game's map generation
+/// uses (`At::tile`), against `get_tile` on a real surface.
+///
+/// **This grades the argmax alone, and the real surface runs one more pass.**
+/// The gap is the tile-correction pass, which
+/// `gleba_corrected_tiles_against_the_real_surface` closes. Both counts are by
+/// tile name and by map colour (several tiles share a colour, so a picture
+/// sees only the second).
+#[test]
+fn gleba_raw_tiles_against_the_real_surface() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE, "2.1.23");
+    let (x0, y0, side, real) = gleba_real_surface_grid(&fixture);
+    let stack = gleba_surface_stack(&fixture);
+    let mut ours = Vec::with_capacity(side * side);
+    for j in 0..side {
+        for i in 0..side {
+            ours.push(stack.tile_at(At::tile(x0 + i as i32, y0 + j as i32)));
+        }
+    }
+    let kinds: std::collections::BTreeSet<_> = ours.iter().map(|t| t.game_name()).collect();
+    let (names_differ, colours_differ) = gleba_differences(&ours, &real);
+    eprintln!("gleba raw vs real surface: {names_differ} by name, {colours_differ} by colour");
+    // Non-vacuity: the window spans many tiles, so a constant answer cannot pass.
+    assert!(kinds.len() > 30, "{} kinds", kinds.len());
+    // Against the row-by-row capture this was 2,470 and 1,499 under the
+    // listing-order tie-break and 1,680 and 698 under name order. The fixture
+    // is the radius capture now. The colour count equals the gap between the
+    // game's own preview PNG (which shows the raw argmax and matches this one at
+    // every pixel) and the real surface, so it is all tile correction.
+    assert_eq!((names_differ, colours_differ), (1682, 697));
+}
+
+/// Our tiles after tile correction (`tiles::correction`) against the real
+/// surface: **0 of 65,536 differ**, by name and so by colour.
+///
+/// The fixture is one radius request, which corrects chunks in columns order;
+/// the port uses the same order. The margin control below shows the result
+/// depends on correcting the chunks around the window: with none, 33 tiles
+/// (8 by colour) differ.
+#[test]
+fn gleba_corrected_tiles_against_the_real_surface() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE, "2.1.23");
+    assert_eq!(fixture.get("chunkOrder").as_str(), "radius");
+    let (x0, y0, side, real) = gleba_real_surface_grid(&fixture);
+    let stack = gleba_surface_stack(&fixture);
+    let window = |margin| stack.corrected_tiles((x0, y0), (side as u32, side as u32), margin);
+    let shipped = window(CORRECTION_MARGIN_CHUNKS);
+    let differ = gleba_differences(&shipped, &real);
+    eprintln!("gleba corrected vs real surface: {differ:?}");
+    assert_eq!(differ, (0, 0));
+    // Control: correcting only the window's own chunks leaves its border wrong,
+    // so the margin is load-bearing. A wider margin changes nothing here.
+    assert_eq!(gleba_differences(&window(0), &real), (33, 8));
+    assert_eq!(window(CORRECTION_MARGIN_CHUNKS + 1), shipped);
+}
+
+/// The same window from a second real surface, whose chunks were requested one
+/// at a time in columns (x outer, y inner) over -6..5, which is the window and
+/// two chunks of margin. Correcting exactly those chunks reproduces it: 0 of
+/// 65,536.
+///
+/// Both captures see the second pass's shared queue (see `tiles::correction`):
+/// writing back every tile the second pass changes, as a reading of the code
+/// without the shared vector would, leaves 2 tiles wrong in each (measured).
+/// And correcting in rows order instead of columns leaves 44 wrong in the
+/// radius capture.
+#[test]
+fn gleba_corrected_tiles_against_a_columns_request() {
+    let fixture = load_captured_at(GLEBA_REAL_SURFACE_COLUMNS, "2.1.23");
+    assert_eq!(fixture.get("chunkOrder").as_str(), "columns");
+    let (x0, y0, side, real) = gleba_real_surface_grid(&fixture);
+    let stack = gleba_surface_stack(&fixture);
+    let ours = stack.corrected_tiles((x0, y0), (side as u32, side as u32), 2);
+    assert_eq!(gleba_differences(&ours, &real), (0, 0));
+}
+
+// Aquilo (#454): the terrain against a real surface, in its own file.
+mod aquilo_real_surface;
+
+// Gleba (#454, slice 3): stone and the stromatolites against a real surface.
+mod gleba_entities;
+
+// Fulgora against a real surface: the raw argmax, then tile correction.
+mod fulgora_real_surface;

@@ -571,7 +571,7 @@ export function buildCliffControlLua(
   const dumpFile = opts.dumpFile ?? CLIFF_DUMP_FILE;
   // With `planet` set, run on that planet's own surface with the seed FORCED,
   // exactly as `buildEntityCountControlLua` does - so a Vulcanus capture describes
-  // the surface `withCtxDefaults({ seed0: seed })` describes, not the
+  // the surface with `seed0 = seed` that the tier-2 specs render, not the
   // `seed + crc32(planet)` one a real save would generate. Every committed
   // Vulcanus fixture is captured this way; see `entityCounts.ts`'s header.
   // Cliff settings go on the SAME `mgs` round-trip as the seed, before any chunk

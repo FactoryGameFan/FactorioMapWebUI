@@ -57,7 +57,7 @@ describe("chainComponents", () => {
     expect(new Set(ids).size).toBe(2);
   });
 
-  it("uses the same distance metric for boxGap and minGapTiles", () => {
+  it("measures minGapTiles in tiles (a 31-tile gap)", () => {
     // With the old unit mismatch, minGapTiles returned distance - 1, but the
     // box prefilter checked raw distance. A pair at exactly distance 31 would:
     // - be skipped by prefilter (31 > 30)

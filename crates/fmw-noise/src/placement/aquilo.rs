@@ -61,7 +61,7 @@ use super::generate::{
     generate_chunk, preview_footprint, Autoplacer, ChunkInputs, MapGenBox, Positioning, Queued,
 };
 use super::roll::{CHUNK, TILES_PER_CHUNK};
-use crate::expressions::aquilo_stack::{tile_at, AquiloFields, AquiloStack};
+use crate::expressions::aquilo_stack::{tile_at, AquiloFields, AquiloStack, KeptFields};
 use crate::resources::aquilo_wells::AquiloWell;
 use crate::rocks::aquilo_icebergs::{iceberg_probabilities, iceberg_tile_allowed, ICEBERG_COLOR};
 use crate::tiles::aquilo_catalog::AquiloTile;
@@ -200,13 +200,31 @@ pub struct AquiloChunkInputs<'a> {
 impl<'a> AquiloChunkInputs<'a> {
     #[must_use]
     pub fn new(stack: &'a RefCell<AquiloStack>, chunk_x: i64, chunk_y: i64) -> Self {
+        Self::reusing(stack, chunk_x, chunk_y, None)
+    }
+
+    /// As [`Self::new`], taking a tile's fields from `kept` where a
+    /// correction pass already evaluated them. They are `eval_at`'s own
+    /// values, so the inputs are the same either way.
+    #[must_use]
+    pub fn reusing(
+        stack: &'a RefCell<AquiloStack>,
+        chunk_x: i64,
+        chunk_y: i64,
+        kept: Option<&KeptFields>,
+    ) -> Self {
         let mut own = Vec::with_capacity(TILES_PER_CHUNK);
         for i in 0..TILES_PER_CHUNK {
             #[allow(clippy::cast_possible_wrap)]
             let (lx, ly) = ((i as i64) & 31, (i as i64) >> 5);
-            #[allow(clippy::cast_precision_loss)]
-            let at = tile_at((chunk_x * CHUNK + lx) as f64, (chunk_y * CHUNK + ly) as f64);
-            own.push(stack.borrow_mut().eval_at(at));
+            let (tx, ty) = (chunk_x * CHUNK + lx, chunk_y * CHUNK + ly);
+            #[allow(clippy::cast_possible_truncation)]
+            let reused = kept.and_then(|k| k.get(tx as i32, ty as i32));
+            own.push(reused.unwrap_or_else(|| {
+                #[allow(clippy::cast_precision_loss)]
+                let at = tile_at(tx as f64, ty as f64);
+                stack.borrow_mut().eval_at(at)
+            }));
         }
         Self {
             stack,
@@ -271,6 +289,7 @@ struct ChunkPaint {
 pub struct AquiloEntities<'a> {
     stack: &'a RefCell<AquiloStack>,
     cache: RefCell<BTreeMap<(i64, i64), Rc<ChunkPaint>>>,
+    kept: Option<KeptFields>,
 }
 
 impl<'a> AquiloEntities<'a> {
@@ -279,6 +298,17 @@ impl<'a> AquiloEntities<'a> {
         Self {
             stack,
             cache: RefCell::new(BTreeMap::new()),
+            kept: None,
+        }
+    }
+
+    /// As [`Self::new`], reading tile fields from `kept` where it has them
+    /// (see [`AquiloChunkInputs::reusing`]).
+    #[must_use]
+    pub fn reusing(stack: &'a RefCell<AquiloStack>, kept: KeptFields) -> Self {
+        Self {
+            kept: Some(kept),
+            ..Self::new(stack)
         }
     }
 
@@ -286,7 +316,8 @@ impl<'a> AquiloEntities<'a> {
         if let Some(c) = self.cache.borrow().get(&(chunk_x, chunk_y)) {
             return Rc::clone(c);
         }
-        let mut inputs = AquiloChunkInputs::new(self.stack, chunk_x, chunk_y);
+        let mut inputs =
+            AquiloChunkInputs::reusing(self.stack, chunk_x, chunk_y, self.kept.as_ref());
         let queue = generate_chunk(
             chunk_x,
             chunk_y,
@@ -355,19 +386,47 @@ mod tests {
         RefCell::new(AquiloStack::new(&ctx, AquiloBearings::from_host(seed0)))
     }
 
+    /// The audit (2026-11-26) changed this: it used to sort a local literal
+    /// against itself and never read the product's table. It now pairs each
+    /// `AQUILO_ENTITIES` slot with the game's autoplace `order` string
+    /// (`space-age/prototypes/entity/resources.lua`, `base/.../resources.lua`
+    /// and `decoratives-aquilo.lua`, read at 2.1.14) and requires the strings
+    /// to be strictly increasing in table order, then ties the autoplacer
+    /// table's positioning to the entity kind.
     #[test]
     fn the_autoplacer_table_is_in_the_games_sorted_order() {
-        let order = [
-            "a[resources]-a[fluorine]",
-            "a[resources]-b[lithium]",
-            "a[rock]-a[huge]",
-            "a[rock]-b[big]",
-            "c",
-        ];
-        let mut sorted = order;
+        let game_order = |e: AquiloEntity| match e {
+            AquiloEntity::FluorineVent => "a[resources]-a[fluorine]",
+            AquiloEntity::LithiumBrine => "a[resources]-b[lithium]",
+            AquiloEntity::IcebergHuge => "a[rock]-a[huge]",
+            AquiloEntity::IcebergBig => "a[rock]-b[big]",
+            AquiloEntity::CrudeOil => "c",
+        };
+        let names: Vec<&str> = AQUILO_ENTITIES.iter().map(|e| e.game_name()).collect();
+        assert_eq!(
+            names,
+            [
+                "fluorine-vent",
+                "lithium-brine",
+                "lithium-iceberg-huge",
+                "lithium-iceberg-big",
+                "crude-oil"
+            ]
+        );
+        let orders: Vec<&str> = AQUILO_ENTITIES.iter().map(|&e| game_order(e)).collect();
+        let mut sorted = orders.clone();
         sorted.sort_unstable();
-        assert_eq!(sorted, order);
+        sorted.dedup();
+        assert_eq!(sorted, orders, "AQUILO_ENTITIES is not in sorted order");
         assert_eq!(AQUILO_ENTITIES.len(), AQUILO_AUTOPLACERS.len());
+        for (e, placer) in AQUILO_ENTITIES.iter().zip(&AQUILO_AUTOPLACERS) {
+            let want = if e.well().is_some() {
+                Positioning::Resource
+            } else {
+                Positioning::OffGrid
+            };
+            assert_eq!(placer.positioning, want, "{}", e.game_name());
+        }
     }
 
     /// A few wells the game's real surface and its preview agree on, at the

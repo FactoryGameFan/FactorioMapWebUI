@@ -1,0 +1,361 @@
+/**
+ * The tiles a REAL Gleba surface places, for the tier-3 terrain grade (#454).
+ *
+ *   node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+ *   FMW_PLANET=aquilo node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+ *   FMW_PLANET=fulgora node --experimental-strip-types scripts/probes/gleba-real-surface/capture.ts
+ *
+ * Run from the repository root. It needs the 2.1.23 headless install named in
+ * `INSTALL` below (override with `FMW_FACTORIO_2_1_23=<root>`) and writes
+ * `test/fixtures/oracle-gleba-real-surface.seed123456.json`. Read `README.md`
+ * beside this file for what it found. `FMW_PLANET` picks another planet that
+ * makes its own surface (see `EXTRA_DISABLED`); the default output is then
+ * `oracle-<planet>-real-surface.seed123456.json`.
+ *
+ * ## Why the real surface and not the preview PNG
+ *
+ * The preview PNG shows the raw tile argmax. A real surface runs one more pass,
+ * `TileCorrectionMapGenerationTask` (`docs/noise/tile-correction-NOTES.md`),
+ * that rewrites tiles at boundaries. Eric's ruling (2026-11-26): the engine
+ * should match what the map will actually look like, so Gleba's terrain is
+ * graded against `get_tile` on a generated surface.
+ *
+ * ## What it reads
+ *
+ * Map seed 123456, Gleba's own `create_surface()` (so the surface seed is the
+ * derived one), the terrain-only data-stage mod the preview captures use
+ * (`TERRAIN_ONLY_DATA_FINAL_FIXES`), and the same controls the terrain PNG
+ * disabled. None of those controls reaches a terrain field, so they only keep
+ * entities out; the census asserts the window holds none.
+ *
+ * The window's chunks plus a margin of at least two chunks are generated first
+ * (one radius request by default, see `ORDER`), so each window chunk has its
+ * full 3x3 neighbourhood before it is read. Then every tile of the window is
+ * read with `get_tile`.
+ *
+ * Each candidate tile's `map_color` and effective `layer` (layer group plus
+ * offset) are read from the prototypes too, so the colour table and the layer
+ * order tile correction compares come from the game rather than from the Lua.
+ */
+
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+import { DISABLEABLE, TERRAIN_ONLY_DATA_FINAL_FIXES } from "../../../test/oracle/previewCompare.ts";
+
+const run = promisify(execFile);
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+/**
+ * The planet, and the controls its terrain PNG disabled beyond `DISABLEABLE`
+ * (`previewCompare.ts`). Aquilo's three resource controls reshape its islands,
+ * so they must match the PNG's, not only keep entities out. `FMW_PLANET`
+ * picks it (default `gleba`).
+ */
+const EXTRA_DISABLED: Record<string, string[]> = {
+  gleba: ["gleba_stone", "gleba_cliff"],
+  aquilo: ["lithium_brine", "fluorine_vent", "aquilo_crude_oil"],
+  nauvis: [],
+  // `fulgora_islands` cannot be disabled and stays at its default.
+  fulgora: ["scrap", "fulgora_cliff"],
+  vulcanus: ["calcite", "tungsten_ore", "vulcanus_coal", "sulfuric_acid_geyser"],
+};
+const PLANET = process.env.FMW_PLANET ?? "gleba";
+const EXTRA = EXTRA_DISABLED[PLANET];
+if (EXTRA === undefined) {
+  throw new Error(`FMW_PLANET must be one of ${Object.keys(EXTRA_DISABLED).join(", ")}`);
+}
+/**
+ * Where to write. `FMW_OUT` overrides it, for the chunk-order arms below,
+ * which are measurements and not fixtures.
+ */
+const OUT =
+  process.env.FMW_OUT ??
+  join(REPO, "test", "fixtures", `oracle-${PLANET}-real-surface.seed123456.json`);
+
+/**
+ * How the chunks are requested. The committed fixture uses `radius`: ONE
+ * request centred on chunk (0, 0) with a radius that covers the window and its
+ * margin, which is how a game start asks for its spawn area. The other arms
+ * are measurements: `rows` requests chunk by chunk, row by row (y outer, x
+ * inner), then forces generation once; `reverse` is the opposite order;
+ * `each` forces each chunk as soon as it is requested, row by row; `columns`
+ * requests x outer, y inner. Tile correction reads and writes neighbouring
+ * chunks, so the order changes the result; the README has the numbers.
+ */
+const ORDER = process.env.FMW_CHUNK_ORDER ?? "radius";
+if (!["rows", "reverse", "each", "columns", "radius"].includes(ORDER)) {
+  throw new Error(`FMW_CHUNK_ORDER must be rows, reverse, each, columns or radius, not ${ORDER}`);
+}
+const ORACLE = join(process.env.HOME ?? "", ".cargo", "bin", "factorio-oracle");
+
+const INSTALL = {
+  root: process.env.FMW_FACTORIO_2_1_23 ?? "/home/eric/factorio-headless/2.1.23/factorio",
+  version: "2.1.23",
+};
+
+const MAP_SEED = 123456;
+/**
+ * Nauvis's own surface generates its spawn chunks before `on_init` runs, so the
+ * control changes below would not reach them. A fresh surface with Nauvis's
+ * settings and the map seed holds no chunk yet (`pregenerated` checks it).
+ */
+const SURFACE_LUA =
+  PLANET === "nauvis"
+    ? `game.create_surface("fmw-real-nauvis", (function() local m = game.surfaces["nauvis"].map_gen_settings; m.seed = ${String(MAP_SEED)}; return m end)())`
+    : `game.planets["${PLANET}"].create_surface()`;
+/**
+ * The window: x from `X0` to `X0 + SIDE - 1`, y from `Y0`. Chunk aligned.
+ * `FMW_X0`, `FMW_Y0` and `FMW_SIDE` move and size it (default -128, -128,
+ * 256).
+ */
+const X0 = Number(process.env.FMW_X0 ?? -128);
+const Y0 = Number(process.env.FMW_Y0 ?? -128);
+const SIDE = Number(process.env.FMW_SIDE ?? 256);
+if (X0 % 32 !== 0 || Y0 % 32 !== 0 || SIDE % 32 !== 0) {
+  throw new Error(`the window must be chunk aligned`);
+}
+/**
+ * Extra chunks requested around the window, so correction has neighbours.
+ * `FMW_MARGIN_CHUNKS` overrides it: tile correction within about two chunks of
+ * the edge of what was requested depends on where that edge is, so a wider
+ * margin reads the window as the inside of a larger generated area.
+ */
+const MARGIN_CHUNKS = Number(process.env.FMW_MARGIN_CHUNKS ?? 2);
+/** The controls the terrain PNG disabled (`previewCompare.ts`, this planet's arm). */
+const DISABLED = [...DISABLEABLE, ...EXTRA];
+
+/** One character per tile, indexing `names`. 64 symbols covers 41 tiles. */
+const ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+/";
+
+function controlLua(): string {
+  return `-- GENERATED by scripts/probes/gleba-real-surface/capture.ts.
+local X0, Y0, SIDE, MARGIN = ${String(X0)}, ${String(Y0)}, ${String(SIDE)}, ${String(MARGIN_CHUNKS)}
+local ORDER = "${ORDER}"
+local DISABLED = helpers.json_to_table([==[${JSON.stringify(DISABLED)}]==])
+script.on_init(function()
+  local s = ${SURFACE_LUA}
+  local mgs = s.map_gen_settings
+  for _, n in ipairs(DISABLED) do
+    mgs.autoplace_controls[n] = { frequency = 1, size = 0, richness = 1 }
+  end
+  s.map_gen_settings = mgs
+  local controls = {}
+  for _, n in ipairs(DISABLED) do
+    local c = s.map_gen_settings.autoplace_controls[n]
+    controls[n] = c and c.size or -1
+  end
+  local cx0, cx1 = math.floor(X0 / 32) - MARGIN, math.floor((X0 + SIDE - 1) / 32) + MARGIN
+  local cy0, cy1 = math.floor(Y0 / 32) - MARGIN, math.floor((Y0 + SIDE - 1) / 32) + MARGIN
+  -- Chunks that already exist before any request: a new surface may hold some.
+  local pregenerated = {}
+  for cy = cy0 - 2, cy1 + 2 do
+    for cx = cx0 - 2, cx1 + 2 do
+      if s.is_chunk_generated({ cx, cy }) then pregenerated[#pregenerated + 1] = { cx, cy } end
+    end
+  end
+  local chunks = {}
+  if ORDER == "columns" then
+    for cx = cx0, cx1 do
+      for cy = cy0, cy1 do chunks[#chunks + 1] = { cx, cy } end
+    end
+  else
+    for cy = cy0, cy1 do
+      for cx = cx0, cx1 do chunks[#chunks + 1] = { cx, cy } end
+    end
+  end
+  if ORDER == "reverse" then
+    local n = #chunks
+    for i = 1, math.floor(n / 2) do chunks[i], chunks[n + 1 - i] = chunks[n + 1 - i], chunks[i] end
+  end
+  if ORDER == "radius" then
+    -- One request with a radius, the way a game start asks for its spawn area.
+    s.request_to_generate_chunks({ x = 16, y = 16 }, math.max(-cx0, cx1, -cy0, cy1))
+  else
+    for _, c in ipairs(chunks) do
+      s.request_to_generate_chunks({ x = c[1] * 32 + 16, y = c[2] * 32 + 16 }, 0)
+      if ORDER == "each" then s.force_generate_chunk_requests() end
+    end
+  end
+  s.force_generate_chunk_requests()
+  local rows = {}
+  local seen = {}
+  for y = Y0, Y0 + SIDE - 1 do
+    local row = {}
+    for x = X0, X0 + SIDE - 1 do
+      local n = s.get_tile(x, y).name
+      row[#row + 1] = n
+      seen[n] = true
+    end
+    rows[#rows + 1] = table.concat(row, " ")
+  end
+  local cands = {}
+  for name in pairs(s.map_gen_settings.autoplace_settings.tile.settings) do
+    cands[#cands + 1] = name
+    seen[name] = true
+  end
+  table.sort(cands)
+  local tiles = {}
+  for n in pairs(seen) do
+    local p = prototypes.tile[n]
+    local c = p.map_color
+    tiles[n] = { mapColor = { c.r, c.g, c.b }, layer = p.layer }
+    -- The candidates this tile may not touch (\`allowed_neighbors\`), only
+    -- when there are any; tile correction treats those pairs specially.
+    local banned = {}
+    for _, m in ipairs(cands) do
+      if m ~= n and p.allowed_neighbors[m] == nil then banned[#banned + 1] = m end
+    end
+    if #banned > 0 then tiles[n].notAllowed = banned end
+  end
+  local entities = 0
+  for _, e in pairs(s.find_entities_filtered({ area = { { X0 - 8, Y0 - 8 }, { X0 + SIDE + 8, Y0 + SIDE + 8 } } })) do
+    local tx, ty = math.floor(e.position.x), math.floor(e.position.y)
+    if tx >= X0 and tx < X0 + SIDE and ty >= Y0 and ty < Y0 + SIDE then entities = entities + 1 end
+  end
+  helpers.write_file("oracle-dump.json", helpers.table_to_json({
+    surfaceSeed = s.map_gen_settings.seed,
+    controls = controls,
+    candidates = cands,
+    tiles = tiles,
+    rows = rows,
+    entitiesInWindow = entities,
+    pregenerated = pregenerated,
+  }))
+  error("DUMPED-OK")
+end)
+`;
+}
+
+interface Dump {
+  surfaceSeed: number;
+  controls: Record<string, number>;
+  candidates: string[];
+  tiles: Record<
+    string,
+    { mapColor: [number, number, number]; layer: number; notAllowed?: string[] }
+  >;
+  rows: string[];
+  entitiesInWindow: number;
+  pregenerated: [number, number][];
+}
+
+async function capture(): Promise<{ dump: Dump; buildLine: string }> {
+  const dir = await mkdtemp(join(tmpdir(), `${PLANET}-real-surface-`));
+  try {
+    const controlPath = join(dir, "control.lua");
+    await writeFile(controlPath, controlLua());
+    const probePath = join(dir, "probe.json");
+    await writeFile(
+      probePath,
+      JSON.stringify({
+        mode: "create",
+        mod: {
+          name: `${PLANET}_real_surface_probe`,
+          version: "0.0.1",
+          dependencies: ["base", "space-age"],
+          control_lua_file: controlPath,
+          data_final_fixes_lua: TERRAIN_ONLY_DATA_FINAL_FIXES,
+        },
+        seed: MAP_SEED,
+        timeout_seconds: 900,
+      }),
+    );
+    const workDir = join(dir, "work");
+    let oracleError: unknown;
+    let stdout = "";
+    try {
+      const r = await run(
+        ORACLE,
+        [
+          "run",
+          "--probe",
+          probePath,
+          "--work-dir",
+          workDir,
+          "--factorio",
+          INSTALL.root,
+          "--version",
+          INSTALL.version,
+        ],
+        { maxBuffer: 256 * 1024 * 1024 },
+      );
+      stdout = r.stdout;
+    } catch (e) {
+      // A successful run ends in error("DUMPED-OK"), so it lands here too.
+      oracleError = e;
+      stdout = (e as { stdout?: string }).stdout ?? "";
+    }
+    let report: { provenance?: { buildLine?: string } } = {};
+    try {
+      report = JSON.parse(stdout) as typeof report;
+    } catch {
+      // Left empty; the buildLine check below names the failure.
+    }
+    const buildLine = report.provenance?.buildLine ?? "";
+    // Without --version a bad path silently runs another install with exit 0.
+    if (!buildLine.includes(`Version: ${INSTALL.version} `)) {
+      throw new Error(`ran "${buildLine}", wanted ${INSTALL.version}`, { cause: oracleError });
+    }
+    const dumpPath = join(workDir, "write", "script-output", "oracle-dump.json");
+    const text = await readFile(dumpPath, "utf8").catch((e: unknown) => {
+      throw new Error(`no dump at ${dumpPath}`, { cause: oracleError ?? e });
+    });
+    return { dump: JSON.parse(text) as Dump, buildLine };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+const { dump, buildLine } = await capture();
+
+if (dump.rows.length !== SIDE) throw new Error(`read ${String(dump.rows.length)} rows`);
+if (dump.entitiesInWindow !== 0) {
+  throw new Error(`${String(dump.entitiesInWindow)} entities in the window; the mod did not hold`);
+}
+for (const n of DISABLED) {
+  if (dump.controls[n] !== 0) throw new Error(`control ${n} read back ${String(dump.controls[n])}`);
+}
+const names = [...dump.candidates];
+for (const row of dump.rows) {
+  for (const n of row.split(" ")) {
+    if (!names.includes(n)) names.push(n);
+  }
+}
+if (names.length > ALPHABET.length) throw new Error(`${String(names.length)} tile names`);
+const grid = dump.rows.map((row) => {
+  const cells = row.split(" ");
+  if (cells.length !== SIDE) throw new Error(`row has ${String(cells.length)} tiles`);
+  return cells.map((n) => ALPHABET[names.indexOf(n)]).join("");
+});
+const counts: Record<string, number> = {};
+for (const row of dump.rows) for (const n of row.split(" ")) counts[n] = (counts[n] ?? 0) + 1;
+
+const fixture = {
+  about: `get_tile on a real ${PLANET.charAt(0).toUpperCase() + PLANET.slice(1)} surface (${PLANET === "nauvis" ? "a fresh game.create_surface() with Nauvis's settings" : `game.planets.${PLANET}.create_surface()`}), the window and a margin of at least 2 chunks force-generated (see chunkOrder), terrain-only data-stage mod. Written by scripts/probes/gleba-real-surface/capture.ts.`,
+  buildLine,
+  mapSeed: MAP_SEED,
+  surfaceSeed: dump.surfaceSeed,
+  disabledControls: DISABLED,
+  window: { x0: X0, y0: Y0, width: SIDE, height: SIDE },
+  alphabet: ALPHABET,
+  names,
+  tiles: Object.fromEntries(names.map((n) => [n, dump.tiles[n]])),
+  chunkOrder: ORDER,
+  // Written only when it is not the default 2, so a re-run of an earlier
+  // capture stays byte-identical.
+  ...(MARGIN_CHUNKS === 2 ? {} : { marginChunks: MARGIN_CHUNKS }),
+  // Chunks the new surface already held before the first request. Lua sends
+  // an empty table as {}, so that case is normalised to [].
+  pregenerated: Array.isArray(dump.pregenerated) ? dump.pregenerated : [],
+  counts,
+  rows: grid,
+};
+await writeFile(OUT, `${JSON.stringify(fixture, null, 1)}\n`);
+console.log(
+  `wrote ${OUT}: ${buildLine}, surface seed ${String(dump.surfaceSeed)}, ${String(Object.keys(counts).length)} tiles present`,
+);

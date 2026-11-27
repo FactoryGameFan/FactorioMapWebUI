@@ -911,7 +911,7 @@ pub extern "C" fn checksum_fulgora(
                 // the winner of the single twelve-way tile argmax, so it agrees
                 // with the resolved tile (field 75) rather than with an
                 // ocean-first test.
-                41 => match f.tile() {
+                41 => match f.tile().folded() {
                     fulgora_catalog::FulgoraTile::Shallow => 1.0,
                     fulgora_catalog::FulgoraTile::Deep => 2.0,
                     _ => 0.0,
@@ -954,9 +954,14 @@ pub extern "C" fn checksum_fulgora(
 }
 
 /// The resolved tile as a number, in the order `FulgoraTile` declares.
+///
+/// The `-2` oil-ocean variants fold onto their base tile, the codes this
+/// checksum had before the port told them apart; the split is graded by name
+/// against a real surface instead (`fulgora_raw_tiles_against_the_real_surface`
+/// in `fmw-noise`'s fixtures).
 fn tile_code(tile: fulgora_catalog::FulgoraTile) -> f64 {
     use fulgora_catalog::FulgoraTile as T;
-    match tile {
+    match tile.folded() {
         T::FulgoranDust => 0.0,
         T::FulgoranDunes => 1.0,
         T::FulgoranSand => 2.0,
@@ -965,8 +970,8 @@ fn tile_code(tile: fulgora_catalog::FulgoraTile) -> f64 {
         T::FulgoranWalls => 5.0,
         T::FulgoranConduit => 6.0,
         T::FulgoranMachinery => 7.0,
-        T::Shallow => 8.0,
-        T::Deep => 9.0,
+        T::Shallow | T::Shallow2 => 8.0,
+        T::Deep | T::Deep2 => 9.0,
     }
 }
 
@@ -1630,9 +1635,16 @@ mod survey_tests {
         let mut b = survey_request(1, 0.0, 0.0, 8.0, 2, 2);
         b[8..12].copy_from_slice(&abi::PLANET_NAUVIS.to_le_bytes());
         // The declared params length still says Fulgora's, so this is refused
-        // as a length error before the planet is ever read - which is the
-        // check doing its job, and why the planet guard needs its own case.
-        assert_ne!(run_survey(&b), 0);
+        // as a length error before the planet is ever read.
+        assert_eq!(run_survey(&b), abi::Status::BadParamsLength as u32);
+
+        // The planet guard needs a well-formed Nauvis request to be reached at
+        // all. This test used to stop at the case above with `assert_ne!(_, 0)`,
+        // which never reached the guard (test-pruning audit, 2026-11-26).
+        let mut n = vec![0u8; abi::COMMON_BYTES + abi::NAUVIS_PARAMS_BYTES];
+        n[..abi::COMMON_BYTES].copy_from_slice(&b[..abi::COMMON_BYTES]);
+        n[28..32].copy_from_slice(&(abi::NAUVIS_PARAMS_BYTES as u32).to_le_bytes());
+        assert_eq!(run_survey(&n), abi::Status::UnsupportedPlanetOrView as u32);
     }
 
     /// The step the module reports is the one the finder was written against.
@@ -1786,21 +1798,57 @@ mod aquilo_render_tests {
         assert_eq!(count(&off, FLUORINE_COLOR), 0);
     }
 
+    /// The audit (2026-11-26) changed this: it only checked the pixels where
+    /// both overlays equal terrain, so an `all` view that dropped one overlay
+    /// still passed. It now requires every `all` pixel to be terrain, the wells
+    /// pixel or the icebergs pixel, and to take the overlay wherever exactly
+    /// one overlay differs from terrain.
     #[test]
     fn the_all_view_is_terrain_plus_both_overlays() {
-        let (dims, origin) = vent_window();
+        // The vent window holds no icebergs, so the pixel check runs on a
+        // 160 tile window at (-160, -160) that holds both kinds (278 iceberg
+        // pixels, 42 well pixels, measured 2026-11-26).
+        let (dims, origin) = ((160, 160), (-160.0, -160.0));
         let all = run(VIEW_ALL, dims, origin, 1.0);
         let wells = run(VIEW_RESOURCES, dims, origin, 1.0);
         let rocks = run(VIEW_ROCKS, dims, origin, 1.0);
         let terrain = run(VIEW_TERRAIN, dims, origin, 1.0);
-        // Every pixel `all` shares with neither overlay is terrain.
+        let (mut only_wells, mut only_rocks, mut both) = (0usize, 0usize, 0usize);
         for i in (0..all.len()).step_by(4) {
-            if wells[i..i + 4] == terrain[i..i + 4] && rocks[i..i + 4] == terrain[i..i + 4] {
-                assert_eq!(all[i..i + 4], terrain[i..i + 4]);
+            let px = i..i + 4;
+            let (w, r) = (
+                wells[px.clone()] != terrain[px.clone()],
+                rocks[px.clone()] != terrain[px.clone()],
+            );
+            match (w, r) {
+                (false, false) => assert_eq!(all[px.clone()], terrain[px], "pixel {}", i / 4),
+                (true, false) => {
+                    assert_eq!(all[px.clone()], wells[px], "wells pixel {}", i / 4);
+                    only_wells += 1;
+                }
+                (false, true) => {
+                    assert_eq!(all[px.clone()], rocks[px], "iceberg pixel {}", i / 4);
+                    only_rocks += 1;
+                }
+                (true, true) => {
+                    assert!(
+                        all[px.clone()] == wells[px.clone()] || all[px.clone()] == rocks[px],
+                        "pixel {} is neither overlay",
+                        i / 4
+                    );
+                    both += 1;
+                }
             }
         }
-        assert!(count(&all, FLUORINE_COLOR) > 0);
+        assert!(
+            only_wells > 0 && only_rocks > 0,
+            "this window must show each overlay alone: wells {only_wells}, \
+             icebergs {only_rocks}, both {both}"
+        );
         assert_ne!(all, terrain);
+        // And the guaranteed vent still shows in `all` at the spawn cone.
+        let (vdims, vorigin) = vent_window();
+        assert!(count(&run(VIEW_ALL, vdims, vorigin, 1.0), FLUORINE_COLOR) > 0);
     }
 
     #[test]
@@ -1836,5 +1884,188 @@ mod aquilo_render_tests {
                 "view {view}"
             );
         }
+    }
+}
+
+/// The Gleba render entry, through the real decoder.
+#[cfg(test)]
+mod gleba_render_tests {
+    use crate::abi::{self, Status, COMMON_BYTES, GLEBA_PARAMS_BYTES};
+    use crate::render::{render, PLANET_GLEBA, VIEW_ALL, VIEW_RESOURCES, VIEW_TERRAIN};
+    use fmw_noise::at::At;
+    use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
+    use fmw_noise::expressions::gleba_terrain::GlebaControls;
+    use fmw_noise::placement::gleba::GlebaEntity;
+
+    /// The derived Gleba surface seed for map seed 123456.
+    const SEED0: u32 = 3_215_206_427;
+
+    fn request(view: u32, (w, h): (u32, u32), (ox, oy): (f64, f64), levers: [f64; 3]) -> Vec<u8> {
+        let mut b = vec![0u8; COMMON_BYTES + GLEBA_PARAMS_BYTES];
+        let put_u32 = |b: &mut Vec<u8>, at: usize, v: u32| {
+            b[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        };
+        let put_f64 = |b: &mut Vec<u8>, at: usize, v: f64| {
+            b[at..at + 8].copy_from_slice(&v.to_le_bytes());
+        };
+        put_u32(&mut b, 0, abi::MAGIC);
+        put_u32(&mut b, 4, abi::ABI_VERSION);
+        put_u32(&mut b, 8, PLANET_GLEBA);
+        put_u32(&mut b, 12, view);
+        put_u32(&mut b, 16, SEED0);
+        put_u32(&mut b, 20, w);
+        put_u32(&mut b, 24, h);
+        put_u32(&mut b, 28, GLEBA_PARAMS_BYTES as u32);
+        put_f64(&mut b, 32, ox);
+        put_f64(&mut b, 40, oy);
+        put_f64(&mut b, 48, 1.0);
+        for (i, v) in levers.into_iter().enumerate() {
+            put_f64(&mut b, COMMON_BYTES + i * 8, v);
+        }
+        // The `gleba_stone` control, neutral: only the entity views read it.
+        for i in 3..6 {
+            put_f64(&mut b, COMMON_BYTES + i * 8, 1.0);
+        }
+        b
+    }
+
+    fn run(dims: (u32, u32), origin: (f64, f64), levers: [f64; 3]) -> Vec<u8> {
+        let mut out = vec![0u8; dims.0 as usize * dims.1 as usize * 4];
+        let status = render(&request(VIEW_TERRAIN, dims, origin, levers), &mut out);
+        assert_eq!(status, Status::Ok);
+        out
+    }
+
+    /// At one tile per pixel each pixel is the corrected tile, in its map
+    /// colour: the render adds nothing between `corrected_tiles` and the
+    /// palette. The window is one where correction changes something, so a
+    /// render that skipped it would fail.
+    #[test]
+    fn terrain_paints_each_corrected_tiles_map_colour() {
+        let (dims, origin) = ((48, 48), (-120.0, -128.0));
+        let px = run(dims, origin, [1.0; 3]);
+        let stack = GlebaStack::new(&GlebaCtx {
+            seed0: SEED0,
+            controls: GlebaControls::default(),
+        });
+        let corrected = stack.corrected_tiles((-120, -128), (48, 48), CORRECTION_MARGIN_CHUNKS);
+        let mut seen = std::collections::BTreeSet::new();
+        let mut moved = 0;
+        for (k, p) in px.as_chunks::<4>().0.iter().enumerate() {
+            let (i, j) = (k % dims.0 as usize, k / dims.0 as usize);
+            let tile = corrected[k];
+            assert_eq!(p[..3], tile.color(), "pixel ({i}, {j})");
+            assert_eq!(p[3], 255);
+            seen.insert(tile.game_name());
+            moved += usize::from(stack.tile_at(At::tile(-120 + i as i32, -128 + j as i32)) != tile);
+        }
+        assert!(
+            seen.len() > 2,
+            "a near-constant window grades little: {seen:?}"
+        );
+        assert!(moved > 0, "correction changed no tile in the window");
+    }
+
+    /// Off one tile per pixel there is no tile grid to correct, so each pixel
+    /// is the raw argmax at its point.
+    #[test]
+    fn a_zoomed_render_paints_the_raw_argmax() {
+        let mut out = vec![0u8; 16 * 16 * 4];
+        let mut b = request(VIEW_TERRAIN, (16, 16), (-120.0, -128.0), [1.0; 3]);
+        b[48..56].copy_from_slice(&2.0f64.to_le_bytes());
+        assert_eq!(render(&b, &mut out), Status::Ok);
+        let stack = GlebaStack::new(&GlebaCtx {
+            seed0: SEED0,
+            controls: GlebaControls::default(),
+        });
+        for (k, p) in out.as_chunks::<4>().0.iter().enumerate() {
+            let (i, j) = ((k % 16) as f64, (k / 16) as f64);
+            let tile = stack.tile_at(At::point(-120.0 + 2.0 * i, -128.0 + 2.0 * j));
+            assert_eq!(p[..3], tile.color(), "pixel {k}");
+        }
+    }
+
+    /// Each of the three levers crosses the boundary and moves the picture.
+    ///
+    /// The window is 600 tiles out: at spawn the starting cones decide most
+    /// tiles, and the water frequency moved none of a 48 x 48 window there.
+    #[test]
+    fn each_lever_changes_the_render() {
+        let (dims, origin) = ((48, 48), (600.0, -600.0));
+        let neutral = run(dims, origin, [1.0; 3]);
+        for i in 0..3 {
+            let mut levers = [1.0; 3];
+            levers[i] = 2.0;
+            let moved = run(dims, origin, levers);
+            let differ = moved
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(neutral.as_chunks::<4>().0)
+                .filter(|(a, b)| a != b)
+                .count();
+            assert!(differ > 0, "lever {i} moved no pixel");
+        }
+    }
+
+    /// Every view but terrain, resources and all is refused.
+    #[test]
+    fn views_gleba_does_not_serve_are_refused() {
+        let served = [VIEW_TERRAIN, VIEW_RESOURCES, VIEW_ALL];
+        for view in (0..14).filter(|v| !served.contains(v)) {
+            let b = request(view, (2, 2), (0.0, 0.0), [1.0; 3]);
+            let mut out = vec![0u8; 16];
+            assert_eq!(
+                render(&b, &mut out),
+                Status::UnsupportedPlanetOrView,
+                "view {view}"
+            );
+        }
+        for view in served {
+            let b = request(view, (2, 2), (0.0, 0.0), [1.0; 3]);
+            assert_eq!(render(&b, &mut [0u8; 16]), Status::Ok, "view {view}");
+        }
+    }
+
+    /// The resources view is the terrain with stone and stromatolites over it:
+    /// every pixel that differs is one of their two colours, and a window
+    /// with both holds both. Off one tile per pixel no entity is drawn, so
+    /// the two views are the same bytes.
+    #[test]
+    fn the_resources_view_is_the_terrain_with_entity_marks() {
+        let (dims, origin) = ((128, 128), (384.0, 256.0));
+        let render_view = |view, tpp: f64| {
+            let mut b = request(view, dims, origin, [1.0; 3]);
+            b[48..56].copy_from_slice(&tpp.to_le_bytes());
+            let mut out = vec![0u8; 128 * 128 * 4];
+            assert_eq!(render(&b, &mut out), Status::Ok);
+            out
+        };
+        let terrain = render_view(VIEW_TERRAIN, 1.0);
+        let resources = render_view(VIEW_RESOURCES, 1.0);
+        let marks = [
+            GlebaEntity::IronStromatolite.color(),
+            GlebaEntity::Stone.color(),
+        ];
+        let mut counts = [0usize; 2];
+        for (t, r) in terrain
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(resources.as_chunks::<4>().0)
+        {
+            if t != r {
+                let k = marks
+                    .iter()
+                    .position(|m| r[..3] == *m)
+                    .expect("a differing pixel is an entity colour");
+                counts[k] += 1;
+            }
+        }
+        assert!(counts[0] > 0 && counts[1] > 0, "{counts:?}");
+        assert_eq!(
+            render_view(VIEW_RESOURCES, 2.0),
+            render_view(VIEW_TERRAIN, 2.0)
+        );
     }
 }

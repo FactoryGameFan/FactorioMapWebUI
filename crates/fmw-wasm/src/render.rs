@@ -5,8 +5,8 @@
 //! `runRenderRequest`'s signature does not change.
 
 use crate::abi::{
-    self, AquiloParams, FulgoraParams, NauvisParams, Params, Request, Status, VulcanusBearing,
-    VulcanusParams,
+    self, AquiloParams, FulgoraParams, GlebaParams, NauvisParams, Params, Request, Status,
+    VulcanusBearing, VulcanusParams,
 };
 use core::cell::RefCell;
 use fmw_noise::at::At;
@@ -27,17 +27,27 @@ use fmw_noise::eval::ctx::{EvalCtx, ResourceLevers, VulcanusResourceControls};
 use fmw_noise::expressions::aquilo_resources::{
     AquiloBearings, AquiloLevers, AquiloResourceControls,
 };
-use fmw_noise::expressions::aquilo_stack::{tile_at, AquiloCtx, AquiloStack};
+use fmw_noise::expressions::aquilo_stack::{
+    tile_at, AquiloCtx, AquiloStack, KeptFields, AQUILO_CORRECTION_MARGIN_CHUNKS,
+};
 use fmw_noise::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
 use fmw_noise::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
 use fmw_noise::expressions::fulgora_scrap::ScrapControls;
 use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
-use fmw_noise::expressions::fulgora_stack::FulgoraStack;
+use fmw_noise::expressions::fulgora_stack::{
+    FulgoraStack, CORRECTION_MARGIN_CHUNKS as FULGORA_CORRECTION_MARGIN_CHUNKS,
+};
+use fmw_noise::expressions::gleba_resources::GlebaStoneControls;
+use fmw_noise::expressions::gleba_stack::{
+    GlebaCtx, GlebaStack, KeptInputs, CORRECTION_MARGIN_CHUNKS,
+};
+use fmw_noise::expressions::gleba_terrain::GlebaControls;
 use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack, NAUVIS_RESOURCE_COUNT};
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::aquilo::{AquiloEntities, AquiloEntityView};
+use fmw_noise::placement::gleba::{place_chunks, rows};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
 use fmw_noise::resources::aquilo_wells::AquiloWell;
 use fmw_noise::resources::fulgora_catalog::{FulgoraScrapPlacement, SCRAP_MAP_COLOR};
@@ -62,8 +72,12 @@ use fmw_noise::rocks::vulcanus_field::VulcanusRockFields;
 use fmw_noise::rocks::vulcanus_placement::VulcanusRockPlacement;
 use fmw_noise::tiles::fulgora_catalog::FulgoraTile;
 use fmw_noise::tiles::nauvis_catalog::{NauvisTile, NauvisTileCatalog};
-use fmw_noise::tiles::nauvis_resolve::nauvis_tile;
+use fmw_noise::tiles::nauvis_correction::{
+    nauvis_corrected_tiles, nauvis_corrected_tiles_reading_out, NAUVIS_CORRECTION_MARGIN_CHUNKS,
+};
+use fmw_noise::tiles::nauvis_resolve::{is_water_tile, nauvis_tile};
 use fmw_noise::tiles::vulcanus_catalog::VulcanusTile;
+use fmw_noise::tiles::vulcanus_correction;
 use fmw_noise::trees::catalog::{TREE_MAP_COLOR, TREE_MAX_ALPHA};
 use fmw_noise::trees::field::{TreeBase, TreeFieldParams, TreeFields};
 use std::cmp::Ordering;
@@ -78,6 +92,8 @@ pub const PLANET_VULCANUS: u32 = 1;
 pub const PLANET_NAUVIS: u32 = 2;
 /// Planet code for Aquilo.
 pub const PLANET_AQUILO: u32 = 3;
+/// Planet code for Gleba.
+pub const PLANET_GLEBA: u32 = 4;
 /// `view` code for the land mask - land versus ocean, no land argmax.
 pub const VIEW_LANDMASK: u32 = 0;
 /// `view` code for the full terrain render, all ten tile colours.
@@ -229,8 +245,8 @@ fn tile_color(tile: FulgoraTile) -> [u8; 3] {
         FulgoraTile::FulgoranWalls => [114, 75, 65],
         FulgoraTile::FulgoranConduit => [100, 79, 68],
         FulgoraTile::FulgoranMachinery => [89, 79, 68],
-        FulgoraTile::Shallow => SHALLOW,
-        FulgoraTile::Deep => DEEP,
+        FulgoraTile::Shallow | FulgoraTile::Shallow2 => SHALLOW,
+        FulgoraTile::Deep | FulgoraTile::Deep2 => DEEP,
     }
 }
 
@@ -281,7 +297,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         ) | (
             PLANET_AQUILO,
             VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ROCKS | VIEW_ALL | VIEW_ENTITY_FOOTPRINT
-        )
+        ) | (PLANET_GLEBA, VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ALL)
     );
     if !supported {
         return Status::UnsupportedPlanetOrView;
@@ -304,6 +320,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
         (PLANET_VULCANUS, Params::Vulcanus(p)) => render_vulcanus(&req, &p, &mut out[..needed]),
         (PLANET_NAUVIS, Params::Nauvis(p)) => render_nauvis(&req, &p, &mut out[..needed]),
         (PLANET_AQUILO, Params::Aquilo(p)) => render_aquilo(&req, &p, &mut out[..needed]),
+        (PLANET_GLEBA, Params::Gleba(p)) => render_gleba(&req, &p, &mut out[..needed]),
         _ => return Status::UnsupportedPlanetOrView,
     }
     Status::Ok
@@ -321,6 +338,13 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
 /// 0.998x to 1.039x at 8 tiles/px and 1.005x to 1.017x at 2 after the change, in
 /// the noise, because `eval_at` already evaluates every field for both views and
 /// only the eight-formula argmax itself is added.
+///
+/// At one tile per pixel on a whole-tile origin, every view that paints a
+/// tile paints the tile a REAL surface holds: the raw argmax, then tile
+/// correction (`FulgoraStack::corrected_tiles`, over the window's chunks plus
+/// one, in columns order). The game's preview PNG shows the raw argmax,
+/// which is what any other zoom draws, since correction is defined on
+/// tiles.
 fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
     let ctx = FulgoraCtx {
         seed0: req.seed0,
@@ -359,16 +383,42 @@ fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
     // provably identical.
     let overlay = matches!(req.view, VIEW_RESOURCES | VIEW_ALL);
 
+    // An empty window paints nothing, and correction would still generate and
+    // correct the chunks around it.
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+    let corrected = (req.width > 0
+        && req.height > 0
+        && req.view != VIEW_SCRAP_FOOTPRINT
+        && req.tiles_per_pixel == 1.0
+        && whole(req.origin_x)
+        && whole(req.origin_y))
+    .then(|| {
+        stack.borrow_mut().corrected_tiles(
+            (req.origin_x as i32, req.origin_y as i32),
+            (req.width, req.height),
+            FULGORA_CORRECTION_MARGIN_CHUNKS,
+        )
+    });
+
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let fields = stack.borrow_mut().eval_at(terrain_at(req, wx, wy));
+            // A corrected render has every tile already, so it evaluates
+            // nothing per pixel; the scrap footprint view is never corrected.
+            let fields = corrected
+                .is_none()
+                .then(|| stack.borrow_mut().eval_at(terrain_at(req, wx, wy)));
+            let tile = || match (&corrected, &fields) {
+                (Some(t), _) => t[(py * req.width + px) as usize],
+                (None, Some(f)) => f.tile(),
+                (None, None) => unreachable!("fields are evaluated when not corrected"),
+            };
             let color = match req.view {
-                VIEW_TERRAIN => tile_color(fields.tile()),
+                VIEW_TERRAIN => tile_color(tile()),
                 VIEW_SCRAP_FOOTPRINT => {
-                    if fields.scrap.probability > 0.0 {
+                    if fields.is_some_and(|f| f.scrap.probability > 0.0) {
                         SCRAP_FOOTPRINT
                     } else {
                         [0, 0, 0]
@@ -381,12 +431,12 @@ fn render_fulgora(req: &Request, p: &FulgoraParams, out: &mut [u8]) {
                     if placed.placed(wx, wy) {
                         SCRAP_MAP_COLOR
                     } else {
-                        tile_color(fields.tile())
+                        tile_color(tile())
                     }
                 }
                 // The land mask follows the game's single twelve-way tile
                 // argmax, so it agrees with the terrain view pixel for pixel.
-                _ => match fields.tile() {
+                _ => match tile().folded() {
                     FulgoraTile::Shallow => SHALLOW,
                     FulgoraTile::Deep => DEEP,
                     _ => LAND,
@@ -506,12 +556,36 @@ fn render_vulcanus(req: &Request, p: &VulcanusParams, out: &mut [u8]) {
     let biomes = vulcanus_biomes(&base, p);
     let stack = vulcanus_stack(&base, &biomes, p);
 
+    // At one tile per pixel on a whole-tile origin, the tiles a real surface
+    // holds: the argmax, then tile correction over the window's chunks plus a
+    // margin (`vulcanus_correction`). At any other zoom a pixel is not one
+    // tile, so it draws the raw argmax, as the game's preview does. Every view
+    // draws this terrain under its overlays.
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+    let corrected = (req.width > 0
+        && req.height > 0
+        && req.tiles_per_pixel == 1.0
+        && whole(req.origin_x)
+        && whole(req.origin_y))
+    .then(|| {
+        vulcanus_correction::corrected_tiles(
+            &stack,
+            (req.origin_x as i32, req.origin_y as i32),
+            (req.width, req.height),
+            vulcanus_correction::CORRECTION_MARGIN_CHUNKS,
+        )
+    });
+
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let color = vulcanus_tile_color(stack.tile_at(terrain_at(req, wx, wy)));
+            let tile = match &corrected {
+                Some(t) => t[(py * req.width + px) as usize],
+                None => stack.tile_at(terrain_at(req, wx, wy)),
+            };
+            let color = vulcanus_tile_color(tile);
             out[offset] = color[0];
             out[offset + 1] = color[1];
             out[offset + 2] = color[2];
@@ -585,6 +659,12 @@ pub(crate) fn aquilo_stack(seed0: u32, p: &AquiloParams) -> AquiloStack {
 
 /// Sweep the window and paint Aquilo: terrain, then wells, then icebergs.
 ///
+/// At one tile per pixel on a whole-tile origin the terrain is what a REAL
+/// surface holds (#454): the raw argmax, then tile correction over the
+/// window's chunks plus [`AQUILO_CORRECTION_MARGIN_CHUNKS`], as Gleba does. At
+/// any other zoom a pixel is the raw argmax at a point, as the game's preview
+/// draws it. The wells and icebergs are still the preview's (#553).
+///
 /// The stack sits behind a `RefCell` because the two placement sources and the
 /// terrain pass all evaluate it and `eval_at` needs `&mut self`. Every borrow
 /// is taken and dropped inside one statement.
@@ -596,16 +676,54 @@ fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
         return;
     }
 
+    let view = match req.view {
+        VIEW_ALL => Some(AquiloEntityView::All),
+        VIEW_RESOURCES => Some(AquiloEntityView::Wells),
+        VIEW_ROCKS => Some(AquiloEntityView::Icebergs),
+        _ => None,
+    };
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+    let mut kept = None;
+    let corrected = (req.width > 0
+        && req.height > 0
+        && req.tiles_per_pixel == 1.0
+        && whole(req.origin_x)
+        && whole(req.origin_y))
+    .then(|| {
+        let (x0, y0) = (req.origin_x as i32, req.origin_y as i32);
+        let (cx, cy) = (
+            (
+                x0.div_euclid(32),
+                (x0 + req.width as i32 - 1).div_euclid(32),
+            ),
+            (
+                y0.div_euclid(32),
+                (y0 + req.height as i32 - 1).div_euclid(32),
+            ),
+        );
+        // The entity generator reads every tile of the window's chunks, and
+        // correction has just evaluated them all, so keep their fields rather
+        // than evaluate them twice. Capped so a huge window does not hold
+        // hundreds of megabytes; above it the entities evaluate their own.
+        let chunks = (cx.1 - cx.0 + 1) * (cy.1 - cy.0 + 1);
+        kept = (view.is_some() && chunks <= KEPT_CHUNKS_MAX).then(|| KeptFields::new(cx, cy));
+        stack.borrow_mut().corrected_tiles_keeping(
+            (x0, y0),
+            (req.width, req.height),
+            AQUILO_CORRECTION_MARGIN_CHUNKS,
+            kept.as_mut(),
+        )
+    });
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
             let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let color = stack
-                .borrow_mut()
-                .eval_at(terrain_at(req, wx, wy))
-                .tile()
-                .color();
+            let tile = match &corrected {
+                Some(t) => t[(py * req.width + px) as usize],
+                None => stack.borrow_mut().eval_at(terrain_at(req, wx, wy)).tile(),
+            };
+            let color = tile.color();
             out[offset] = color[0];
             out[offset + 1] = color[1];
             out[offset + 2] = color[2];
@@ -617,25 +735,172 @@ fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
     // Wells and icebergs together: the game's own generator, one stream per
     // chunk, drawn by the preview's rule (#492). A pixel reads only its own
     // chunk, so no sweep halo is needed.
-    let view = match req.view {
-        VIEW_ALL => Some(AquiloEntityView::All),
-        VIEW_RESOURCES => Some(AquiloEntityView::Wells),
-        VIEW_ROCKS => Some(AquiloEntityView::Icebergs),
-        _ => None,
-    };
     if let Some(view) = view {
-        paint_aquilo_entities(req, &stack, view, out);
+        let entities = match kept {
+            Some(k) => AquiloEntities::reusing(&stack, k),
+            None => AquiloEntities::new(&stack),
+        };
+        paint_aquilo_entities(req, &entities, view, out);
+    }
+}
+
+/// The most chunks an Aquilo render keeps fields for (about 160 KB each). The
+/// app's worker tiles touch 16 at 128 pixels and 64 (the cap) at 256.
+const KEPT_CHUNKS_MAX: i32 = 64;
+
+/// Build the Gleba graph for one render.
+pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
+    GlebaStack::with_stone(
+        &GlebaCtx {
+            seed0,
+            controls: GlebaControls {
+                water_frequency: p.water_frequency,
+                water_size: p.water_size,
+                plants_frequency: p.plants_frequency,
+            },
+        },
+        &GlebaStoneControls {
+            frequency: p.stone_frequency,
+            size: p.stone_size,
+            richness: p.stone_richness,
+        },
+    )
+}
+
+/// Chunks generated around a Gleba entity render's own, on each side. A
+/// real surface applies chunks row-major, so a stromatolite near a chunk edge
+/// can be blocked by one the chunk above or to the left placed first; and an
+/// entity's box can reach one tile into the window from the chunk beside it.
+/// One ring covers both. Those ring chunks are themselves applied without
+/// THEIR earlier neighbours, which could only reach a window pixel through a
+/// chain of two edge collisions; the tiled-render test in
+/// `test/wasmGlebaEntityParity.spec.ts` stitches to the whole render byte for
+/// byte, and the whole 1024 window matches the real surface.
+const GLEBA_ENTITY_RING_CHUNKS: i64 = 1;
+
+/// The most chunks a Gleba entity render keeps terrain fields for (about
+/// 40 KB each, so 4 MB at the cap). The app's 128-pixel tiles touch 36 with
+/// the ring and 256-pixel tiles touch 100.
+const GLEBA_KEPT_CHUNKS_MAX: i64 = 100;
+
+/// Sweep the window and paint each pixel's Gleba tile in its `map_color`,
+/// and, for `resources` and `all`, stone and the two stromatolites over it.
+///
+/// At one tile per pixel on a whole-tile origin the pixels are the tiles a
+/// REAL surface holds: the raw argmax (a tie going to the name that sorts
+/// first), then tile correction over the window's chunks plus
+/// [`CORRECTION_MARGIN_CHUNKS`] (`fmw_noise::tiles::correction`). Correction
+/// is defined on tiles, so at any other zoom a pixel is the raw argmax at a
+/// point, as the game's own preview draws it, and no entity is drawn: the
+/// entities a real surface places depend on its corrected tiles.
+fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
+    // An empty window paints nothing. Without this, tile correction would
+    // still generate and correct the margin chunks around it.
+    if req.width == 0 || req.height == 0 {
+        return;
+    }
+    let stack = gleba_stack(req.seed0, p);
+    let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+    let on_tiles = req.tiles_per_pixel == 1.0 && whole(req.origin_x) && whole(req.origin_y);
+    if on_tiles && matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
+        render_gleba_entities(req, &stack, out);
+        return;
+    }
+    let tiles = on_tiles.then(|| {
+        stack.corrected_tiles(
+            (req.origin_x as i32, req.origin_y as i32),
+            (req.width, req.height),
+            CORRECTION_MARGIN_CHUNKS,
+        )
+    });
+    let mut offset = 0usize;
+    for py in 0..req.height {
+        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
+        for px in 0..req.width {
+            let tile = match &tiles {
+                Some(t) => t[(py * req.width + px) as usize],
+                None => {
+                    let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
+                    stack.tile_at(terrain_at(req, wx, wy))
+                }
+            };
+            let color = tile.color();
+            out[offset] = color[0];
+            out[offset + 1] = color[1];
+            out[offset + 2] = color[2];
+            out[offset + 3] = 255;
+            offset += 4;
+        }
+    }
+}
+
+/// Gleba's `resources` and `all` views at one tile per pixel: the corrected
+/// terrain, then every stone and stromatolite a real surface places (#454,
+/// slice 3), each painted over its footprint in its map colour.
+///
+/// The entities come from the game's per-chunk generator and the apply step's
+/// collision (`fmw_noise::placement::gleba`), run over the window's chunks
+/// and a ring of [`GLEBA_ENTITY_RING_CHUNKS`] in row-major order, on the
+/// corrected tiles of all of them. Stone stands on land and a stromatolite's
+/// whole box on wetland, so no two footprints overlap.
+fn render_gleba_entities(req: &Request, stack: &GlebaStack, out: &mut [u8]) {
+    let (x0, y0) = (req.origin_x as i64, req.origin_y as i64);
+    let (w, h) = (i64::from(req.width), i64::from(req.height));
+    let ring = GLEBA_ENTITY_RING_CHUNKS;
+    let cx = (x0.div_euclid(32) - ring, (x0 + w - 1).div_euclid(32) + ring);
+    let cy = (y0.div_euclid(32) - ring, (y0 + h - 1).div_euclid(32) + ring);
+    let (ox, oy) = (cx.0 * 32, cy.0 * 32);
+    let (aw, ah) = ((cx.1 - cx.0 + 1) * 32, (cy.1 - cy.0 + 1) * 32);
+    // Correction evaluates the terrain at every tile of these chunks, and the
+    // entity fields read five of those values at the same tiles, so keep them
+    // rather than evaluate the terrain twice. Capped, as Aquilo's are, so a
+    // huge window does not hold hundreds of megabytes; above it the entity
+    // pass evaluates its own (the output is the same).
+    let chunks = (cx.1 - cx.0 + 1) * (cy.1 - cy.0 + 1);
+    let mut kept = (chunks <= GLEBA_KEPT_CHUNKS_MAX)
+        .then(|| KeptInputs::new((cx.0 as i32, cx.1 as i32), (cy.0 as i32, cy.1 as i32)));
+    let tiles = stack.corrected_tiles_keeping(
+        (ox as i32, oy as i32),
+        (aw as u32, ah as u32),
+        CORRECTION_MARGIN_CHUNKS,
+        kept.as_mut(),
+    );
+    let index = |tx: i64, ty: i64| ((ty - oy) * aw + (tx - ox)) as usize;
+
+    let mut offset = 0usize;
+    for ty in y0..y0 + h {
+        for tx in x0..x0 + w {
+            let color = tiles[index(tx, ty)].color();
+            out[offset] = color[0];
+            out[offset + 1] = color[1];
+            out[offset + 2] = color[2];
+            out[offset + 3] = 255;
+            offset += 4;
+        }
+    }
+
+    let at = |tx: i64, ty: i64| {
+        ((ox..ox + aw).contains(&tx) && (oy..oy + ah).contains(&ty)).then(|| tiles[index(tx, ty)])
+    };
+    for e in place_chunks(stack, &at, kept.as_ref(), &rows(cx, cy)) {
+        let (fx0, fx1, fy0, fy1) = e.footprint();
+        let color = e.entity.color();
+        for ty in fy0.max(y0)..=fy1.min(y0 + h - 1) {
+            for tx in fx0.max(x0)..=fx1.min(x0 + w - 1) {
+                let o = (((ty - y0) * w + (tx - x0)) * 4) as usize;
+                out[o..o + 3].copy_from_slice(&color);
+            }
+        }
     }
 }
 
 /// Paint the entities the preview draws, tile by tile, in each one's colour.
 fn paint_aquilo_entities(
     req: &Request,
-    stack: &RefCell<AquiloStack>,
+    entities: &AquiloEntities<'_>,
     view: AquiloEntityView,
     out: &mut [u8],
 ) {
-    let entities = AquiloEntities::new(stack);
     let mut offset = 0usize;
     for py in 0..req.height {
         let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
@@ -845,6 +1110,133 @@ fn terrain_at(req: &Request, wx: f64, wy: f64) -> At {
     }
 }
 
+/// Nauvis's terrain tiles over a pixel rectangle that may reach past the
+/// window, in the window's own pixel coordinates (so `x0` and `y0` can be
+/// negative).
+///
+/// At one tile per pixel on a whole-tile origin the tiles are the ones a REAL
+/// surface holds: the raw argmax, then tile correction over the window's
+/// chunks plus a margin (`fmw_noise::tiles::nauvis_correction`), as Gleba
+/// does. At any other zoom a pixel is the raw argmax at a point, as the game's
+/// own preview draws it.
+///
+/// # Why it can be wider than the window (#566)
+///
+/// The rock pass sweeps one pixel past the window, because a rock there still
+/// owes the window part of its 3x3 mark, and it tests that rock's own tile for
+/// water before rolling. That test used to read the PAINTED buffer at
+/// `py * width + px`, which for `px = -1` is the last pixel of the previous
+/// row: the far edge of the same tile, not the tile being tested. A seam rock
+/// then depended on the tile width, and 256 px worker tiles lost a 3 px rock
+/// column on 4 of 12 seeds where the whole render had it.
+///
+/// So the grid takes the sweep box and holds those tiles too, and the test
+/// reads the terrain at the rock's own world position, which is what the whole
+/// render reads there.
+///
+/// # The halo is read from the margin, not corrected again
+///
+/// At one tile per pixel a halo tile sits in the margin chunks the window's own
+/// correction has already corrected, so it is read out of that same pass
+/// (`nauvis_corrected_tiles_reading_out`) at no extra cost. Correcting a
+/// window widened by the halo instead pulls in a whole extra ring of chunks:
+/// measured +16% on the `all` view and +27% on `rocks` at 256-pixel worker
+/// tiles, which would have spent most of what 256-pixel tiles save. The
+/// margin read matched the whole image's tiles at every halo tile of the 1024
+/// app window (seeds 123456, 7, 8, 11, 1 to 6, 9 and 10; water levels 0, 20
+/// and -15; 128 and 256 pixel tiles), where a margin of 0 missed 14 to 44 per
+/// render; `halo_tiles_read_from_the_margin_match_a_window_that_holds_them`
+/// keeps a case of it. A sweep box that reaches past the margin (no caller
+/// sends one) falls back to correcting the widened window.
+struct NauvisTerrainGrid {
+    x0: i64,
+    y0: i64,
+    width: i64,
+    tiles: Vec<NauvisTile>,
+}
+
+impl NauvisTerrainGrid {
+    /// The window's tiles, widened to cover `sweep_box` (a world box, as the
+    /// ABI carries it) when one is given.
+    fn new(
+        req: &Request,
+        stack: &NauvisStack,
+        catalog: &NauvisTileCatalog,
+        sweep_box: Option<[f64; 4]>,
+    ) -> Self {
+        let (w, h) = (i64::from(req.width), i64::from(req.height));
+        let (mut x0, mut x1, mut y0, mut y1) = (0, w, 0, h);
+        // An empty window paints nothing, so it needs no halo either.
+        if let (Some(b), true) = (sweep_box, w > 0 && h > 0) {
+            let (px0, px1, py0, py1) = sweep_pixel_range(req, b);
+            x0 = x0.min(px0);
+            x1 = x1.max(px1);
+            y0 = y0.min(py0);
+            y1 = y1.max(py1);
+        }
+        let (gw, gh) = (x1 - x0, y1 - y0);
+        let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let tiles = if req.tiles_per_pixel == 1.0
+            && w > 0
+            && h > 0
+            && whole(req.origin_x)
+            && whole(req.origin_y)
+        {
+            // One tile per pixel, so a pixel offset is a tile offset.
+            let (wx0, wy0) = (req.origin_x as i32, req.origin_y as i32);
+            let rect = ((wx0 + x0 as i32, wy0 + y0 as i32), (gw as u32, gh as u32));
+            let chunk = |v: i32| v.div_euclid(32);
+            let m = NAUVIS_CORRECTION_MARGIN_CHUNKS;
+            let inside_margin = chunk(rect.0 .0) >= chunk(wx0) - m
+                && chunk(rect.0 .0 + gw as i32 - 1) <= chunk(wx0 + w as i32 - 1) + m
+                && chunk(rect.0 .1) >= chunk(wy0) - m
+                && chunk(rect.0 .1 + gh as i32 - 1) <= chunk(wy0 + h as i32 - 1) + m;
+            if inside_margin {
+                nauvis_corrected_tiles_reading_out(
+                    stack,
+                    catalog,
+                    (wx0, wy0),
+                    (req.width, req.height),
+                    m,
+                    rect,
+                )
+            } else {
+                nauvis_corrected_tiles(stack, catalog, rect.0, rect.1, m)
+            }
+        } else {
+            let mut t = Vec::with_capacity((gw.max(0) * gh.max(0)) as usize);
+            for py in y0..y1 {
+                #[allow(clippy::cast_precision_loss)]
+                let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
+                for px in x0..x1 {
+                    #[allow(clippy::cast_precision_loss)]
+                    let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
+                    t.push(nauvis_tile(stack, catalog, terrain_at(req, wx, wy)));
+                }
+            }
+            t
+        };
+        Self {
+            x0,
+            y0,
+            width: gw,
+            tiles,
+        }
+    }
+
+    /// The tile at window pixel `(px, py)`, which must lie inside the grid.
+    fn at(&self, px: i64, py: i64) -> NauvisTile {
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        self.tiles[((py - self.y0) * self.width + (px - self.x0)) as usize]
+    }
+
+    /// Whether window pixel `(px, py)` is a water tile.
+    fn water(&self, px: i64, py: i64) -> bool {
+        is_water_tile(self.at(px, py))
+    }
+}
+
 /// Sweep the window and paint each pixel's winning tile, then the overlays.
 fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     // The elevation views share the planet code and nothing else: they paint a
@@ -861,12 +1253,22 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     let stack = NauvisStack::new(&ctx);
     let catalog = NauvisTileCatalog::new(req.seed0);
 
+    // The terrain grid is the window, plus the rock pass's sweep halo when that
+    // pass runs: its pre-roll water test reads the terrain one pixel past the
+    // window's edge (#566), so those tiles are resolved here too.
+    let rocks = matches!(req.view, VIEW_ROCKS | VIEW_ALL);
+    let terrain = NauvisTerrainGrid::new(
+        req,
+        &stack,
+        &catalog,
+        rocks.then_some(p.placement_sweep_box),
+    );
+
     let mut offset = 0usize;
     for py in 0..req.height {
-        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
         for px in 0..req.width {
-            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            let color = nauvis_tile_color(nauvis_tile(&stack, &catalog, terrain_at(req, wx, wy)));
+            let tile = terrain.at(i64::from(px), i64::from(py));
+            let color = nauvis_tile_color(tile);
             out[offset] = color[0];
             out[offset + 1] = color[1];
             out[offset + 2] = color[2];
@@ -909,8 +1311,9 @@ fn render_nauvis(req: &Request, p: &NauvisParams, out: &mut [u8]) {
     if matches!(req.view, VIEW_RESOURCES | VIEW_ALL) {
         paint_nauvis_resources(req, p, &stack, &catalog, out);
     }
-    if matches!(req.view, VIEW_ROCKS | VIEW_ALL) {
-        paint_nauvis_rocks(req, p, &stack, &catalog, &ctx, out);
+    // An empty window has no terrain grid to read, so it paints no rocks.
+    if matches!(req.view, VIEW_ROCKS | VIEW_ALL) && req.width > 0 && req.height > 0 {
+        paint_nauvis_rocks(req, p, &stack, &catalog, &ctx, &terrain, out);
     }
     if matches!(req.view, VIEW_ENEMIES | VIEW_ALL) {
         paint_nauvis_enemies(req, p, &stack, &catalog, &ctx, out);
@@ -1182,37 +1585,6 @@ fn paint_mark_skipping(
     }
 }
 
-/// The water test `renderRocks.ts` applies BEFORE rolling, reproduced including
-/// the part of it that is a quirk.
-///
-/// The sweep runs over the halo-widened box, so `px` can be negative or past
-/// the width - and the TypeScript indexes `base.data[(py * width + px) * 4]`
-/// with it anyway. For `px < 0` and `py > 0` that is a VALID index into the
-/// previous row, so the skip consults a pixel that is not the one being tested.
-/// It is not harmless: a rock at `px = -1` still owes pixel 0 part of its 3x3
-/// mark, so the wrong read decides whether a real pixel is painted.
-///
-/// Out of the buffer entirely, JavaScript yields `undefined`, which compares
-/// equal to no colour - so an out-of-range read is "not water". All three
-/// channels have to be in range for the same reason: at `o = len - 2` the blue
-/// channel is `undefined` and the comparison fails.
-///
-/// Reproduced rather than fixed, for the reason the whole port reproduces
-/// #326: tier 3 asserts the two renders are byte-identical, so a unilateral
-/// correction here would read as a port bug.
-fn water_at_wrapping_offset(out: &[u8], width: i64, px: i64, py: i64) -> bool {
-    let o = (py * width + px) * 4;
-    if o < 0 {
-        return false;
-    }
-    #[allow(clippy::cast_sign_loss)]
-    let o = o as usize;
-    if o + 2 >= out.len() {
-        return false;
-    }
-    is_nauvis_water(out[o], out[o + 1], out[o + 2])
-}
-
 /// Composite the Nauvis rock overlay over terrain that is already painted.
 ///
 /// Rolls rather than thresholds, like the Vulcanus pass below: it draws the
@@ -1220,11 +1592,20 @@ fn water_at_wrapping_offset(out: &[u8], width: i64, px: i64, py: i64) -> bool {
 /// the water restriction and collision gates pass.
 ///
 /// Two things Vulcanus's pass does not have. The water gate is real here, and
-/// it appears TWICE for different reasons - once before the roll, where it is
-/// an optimisation reading painted pixels, and once inside the mark, where it
-/// keeps a 3x3 from spilling onto the sea. The gate that matters for
-/// correctness is neither: it is `tile_allowed` inside the placement set, which
-/// reads the tile resolver and is therefore a pure function of world position.
+/// it appears TWICE for different reasons - once before the roll, and once
+/// inside the mark, where it keeps a 3x3 from spilling onto the sea.
+///
+/// The pre-roll test reads the rendered TERRAIN at the rock's own pixel
+/// (`terrain`), not the painted buffer. At one tile per pixel that is the
+/// tile-corrected tile, so it also refuses a rock on land that correction
+/// turned to water beside deepwater, which the raw-argmax `tile_allowed` in
+/// the placement set cannot see. It used to read the painted buffer at a
+/// wrapped offset, reproducing `renderRocks.ts` byte for byte, and that made a
+/// seam rock depend on the worker tile's width (#566);
+/// [`NauvisTerrainGrid`] has the story. Reading terrain rather than the buffer
+/// also keeps an earlier overlay out of the answer: in the `all` view crude
+/// oil paints first and its mark may spill onto water, which used to turn
+/// those water pixels into "not water" here.
 ///
 /// The 3x3 mark can straddle a tile seam, hence the halo-widened
 /// `placement_sweep_box` rather than the request's own pixel box.
@@ -1234,6 +1615,7 @@ fn paint_nauvis_rocks(
     stack: &NauvisStack,
     catalog: &NauvisTileCatalog,
     ctx: &NauvisCtx,
+    terrain: &NauvisTerrainGrid,
     out: &mut [u8],
 ) {
     let mut params = RockFieldParams::defaults(req.seed0);
@@ -1258,7 +1640,7 @@ fn paint_nauvis_rocks(
     for py in py0..py1 {
         let wy = req.origin_y + py as f64 * req.tiles_per_pixel;
         for px in px0..px1 {
-            if water_at_wrapping_offset(out, width, px, py) {
+            if terrain.water(px, py) {
                 continue;
             }
             let wx = req.origin_x + px as f64 * req.tiles_per_pixel;
@@ -1548,11 +1930,11 @@ fn paint_nauvis_cliffs(req: &Request, p: &NauvisParams, out: &mut [u8]) {
 
 /// Composite the Nauvis enemy-base overlay over terrain that is already painted.
 ///
-/// Simpler than the rock pass in one way that matters: there is no pre-roll
-/// water skip, so none of `water_at_wrapping_offset`'s row-wrap quirk arises
-/// here. The water test happens only inside the mark, where it stops a 3x3 from
-/// spilling onto the sea, and inside `tile_allowed`, which is the gate that
-/// matters.
+/// Simpler than the rock pass in one way: there is no pre-roll water skip, so
+/// it needs no terrain past the window. The water test happens only inside the
+/// mark, where it stops a 3x3 from spilling onto the sea and reads only the
+/// window's own pixels, and inside `tile_allowed`, which is a pure function of
+/// world position.
 ///
 /// The mark is the same symmetric 3x3 the rocks paint, which is why this reads
 /// the same `placement_sweep_box` rather than needing one of its own.

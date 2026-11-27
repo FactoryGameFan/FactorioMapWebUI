@@ -116,6 +116,39 @@ impl NauvisTile {
         }
     }
 
+    /// The tile's effective layer (layer group plus offset), as the game
+    /// reports it at runtime (`prototypes.tile[name].layer`), stored in
+    /// `oracle-nauvis-real-surface.seed123456.json`. Tile correction compares
+    /// nothing else; `nauvis_layers_match_the_game` checks all 21.
+    ///
+    /// Both water tiles sit at 67 (the `water` group), so correction never
+    /// rewrites one into the other.
+    #[must_use]
+    pub fn layer(self) -> u16 {
+        match self {
+            Self::Deepwater | Self::Water => 67,
+            Self::Grass1 => 170,
+            Self::Grass2 => 172,
+            Self::Grass3 => 173,
+            Self::Grass4 => 174,
+            Self::DryDirt => 162,
+            Self::Dirt1 => 163,
+            Self::Dirt2 => 164,
+            Self::Dirt3 => 165,
+            Self::Dirt4 => 166,
+            Self::Dirt5 => 167,
+            Self::Dirt6 => 168,
+            Self::Dirt7 => 169,
+            Self::Sand1 => 152,
+            Self::Sand2 => 153,
+            Self::Sand3 => 154,
+            Self::RedDesert0 => 175,
+            Self::RedDesert1 => 158,
+            Self::RedDesert2 => 159,
+            Self::RedDesert3 => 160,
+        }
+    }
+
     /// The tile's `map_color`, 0-255 verbatim from the data file.
     ///
     /// `sand-2` and `red-desert-3` share `[128, 93, 52]`, which is why a

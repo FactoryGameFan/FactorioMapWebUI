@@ -1,8 +1,120 @@
 # Tile correction - the map-gen pass that rewrites tile boundaries
 
-**Status: reverse-engineered, NOT ported.** This file records what the pass is,
-what it reads, and how it is scoped. It does not claim a complete algorithm -
-the section at the end lists exactly what is still unknown.
+**Status: ported for Gleba (#454, 2026-11-26) and Nauvis (the same day, with
+`allowed_neighbors`), and exact on both.**
+`crates/fmw-noise/src/tiles/correction.rs` is the port, and its module docs are
+the algorithm. The sections below this one are the earlier arm64 reading
+(2.1.14) and the preview probe, kept as history; where they say "not decoded",
+the 2026-11-26 section answers.
+
+## Ported for Gleba (2026-11-26)
+
+Read from the 2.1.23 linux64 headless binary (build 87750) with Ghidra
+(`decompiling-with-ghidra`), whose DWARF build has every function the arm64
+notes below call "not decoded" as its own symbol:
+`TileCorrectionMapGenerationTask::isTileConsistentWithFixedTiles` (0x1ca5260),
+`correctFromTile` (0x1ca4890), `checkForWeakDiagonalSupport` (0x1ca6030),
+`countFixedNeighborsOfKind` (0x1ca5e60) and `apply` (0x1983310), which holds the
+inlined `computeInternal` and `trySecondPass`. The decompiled C is not
+committed.
+
+What settled the open points:
+
+- **Grid orientation.** `area[a][b]`, `a` is x and `b` is y: `apply` copies a
+  chunk's tiles in x-major runs and writes back `TilePosition{x = a - off,
+  y = b - off}`. The scan is `a` outer, `b` inner. The other orientation was
+  tried and left 1,531 of 65,536 tiles wrong.
+- **`countFixedNeighborsOfKind(pos, id)`** counts the NEIGHBOUR tile's id
+  around the tile and around the one beyond the neighbour. Counting the
+  candidate's id instead left 829 wrong.
+- **The decision.** `isTileConsistentWithFixedTiles` returns the last examined
+  neighbour as the replacement, and `correctFromTile` keeps taking it until the
+  tile is consistent or it comes back to a tile it already tried.
+- **Weak against strong.** "Weak" support treats a not-yet-fixed neighbour as
+  support; the strong check inside the higher-neighbour arm needs it fixed.
+  Reading 1 below was right.
+- **The second pass** pushes its changes into the walk's own queue, which the
+  next walk clears, so only the last walk's changes are written back. Writing
+  them all back leaves 2 tiles wrong on each capture.
+- **Write-back** covers every changed tile in the 3 x 3 chunks, and the next
+  task reads it. So **the result depends on the order chunks are corrected
+  in**: a reversed chunk-by-chunk request moved 450 of 65,536 tiles. One radius
+  request (how a game start asks for its spawn area) corrects in columns order,
+  x outer, y inner; correcting in rows order instead leaves 44 wrong.
+- **The neighbour ring** the walk visits is `(0,-1), (1,-1), (1,0), (1,1),
+  (0,1), (-1,1), (-1,0), (-1,-1)` (`.rodata 0xede450`).
+
+Result: against `get_tile` on a real Gleba surface, 0 of 65,536 tiles differ by
+name, on the radius capture and on a chunk-by-chunk columns capture
+(`gleba_corrected_tiles_against_the_real_surface`,
+`gleba_corrected_tiles_against_a_columns_request`). Before the port it was 1,682
+(697 by map colour). A row-by-row request is 16 tiles off; its real order was
+not decoded (`scripts/probes/gleba-real-surface/README.md`).
+
+Not ported, because no Gleba or Nauvis tile reaches it: the out-of-map tile and
+the list-driven re-run at `+0x48a0`. Vulcanus still renders the raw argmax,
+which is what its preview PNG shows.
+
+## Ported for Nauvis, with `allowed_neighbors` (2026-11-26)
+
+Nauvis needs one more piece: `deepwater` declares `allowed_neighbors =
+{ "water" }`. Read from the same binary:
+
+- **The table is symmetric.** `TilePrototype::postLoadSetup` (0x26e3d50) sets
+  `this.allowed[other] = 1` whenever `other.allowed[this]` is set, or both
+  tiles have `automatic_neighbors`. At runtime no land tile allows deepwater:
+  38 forbidden pairs, read back from `LuaTilePrototype::allowed_neighbors`.
+- **`isTileConsistentWithFixedTiles`** fails a candidate at once when a fixed
+  neighbour's table (`+0x1b28`) does not allow it, before any layer test, with
+  that neighbour as the offending tile.
+- **`correctFromTile`**, when the candidate does not allow the offending tile,
+  tries the offending tile's replacement entry for the candidate (`+0x1b48`)
+  instead of the offending tile itself.
+- **The replacement table** is filled in
+  `GlobalContext::postPrototypesConstructedSetup` (around 0x374ea94): for each
+  tile `P` and target `T` that `P` does not allow, a breadth-first search from
+  the tiles `P` allows, in tile-list order, recording each path's first step;
+  the first path to reach `T` gives the entry (0 when none does). Between
+  deepwater and land, in either direction, it is `water`, the only tile that
+  allows deepwater.
+
+`tiles::correction::Neighbours` is the port. Result: 0 of 65,536 tiles differ
+from a real surface in the spawn window and in a coast window where the raw
+argmax puts deepwater beside land 90 times (326 before correction; 73 with the
+layer checks alone). Over the whole 1024 x 1024 preview window a scratch real
+surface differs from the raw argmax at 2,810 tiles and from the corrected tiles
+at 0.
+
+## Fulgora, and the order near the edge of a request (2026-11-26)
+
+Fulgora uses the same port with its own ids and layers
+(`FulgoraStack::corrected_tiles`). Its four oil-ocean tiles are four ids: the
+`-2` twins share a map colour with their base tile but not a layer (shallow
+148, shallow-2 147, deep 66, deep-2 67), so correction sees a boundary between
+them. No Fulgora tile has `allowed_neighbors`. Against a real surface it is 0
+of 65,536 tiles off, from 1,703 by name for the raw argmax.
+
+**Why a row-by-row request differs.** `MapGenerationManager::request` (read
+from the 2.1.23 binary) asks for a chunk's 3 x 3 neighbourhood one stage lower
+before it queues the chunk: the entity stage needs its 3 x 3 at the stage
+after correction, and each of those needs its own 3 x 3 corrected. The
+neighbours go x outer, y inner, the chunk itself included, and a queued chunk
+is not queued twice. `generateAllSynchronously` then runs each stage's queue in
+full. So the correction tasks run in that walk's order
+(`tiles::correction::requested_correction_order`), not in request order.
+
+Inside a generated area the walk gives the same tiles as columns order. Within
+about two chunks of the edge of what was requested it does not: on Fulgora a
+radius-6 request (edge two chunks from the window) differs from radius 7, 10
+and 18 at 5 tiles, and a rows-order request at 10. On Gleba the rows-order
+request is the 16 tiles above. The walk reproduces every one of these captures
+at every tile. The renderers keep columns order, because a preview cannot know
+where a player's game drew that edge.
+
+Not the cause, checked against the 2.1.23 decompile: `correctFromTile`,
+`isTileConsistentWithFixedTiles` and `checkForWeakDiagonalSupport` match the
+port branch for branch, and `countFixedNeighborsOfKind` is called as
+`count(here, n) > count(beyond, n)` fails, as ported.
 
 Every claim below is graded. "Decoded" means read out of the disassembly
 instruction by instruction. "Structural" means the shape is clear from the call
@@ -465,3 +577,18 @@ off.
 A pixel where the engine differs from the game's preview cannot be explained as
 tile correction, because the preview does not run it. Every such pixel is a
 difference in the raw scores.
+
+## Vulcanus (2026-11-26)
+
+Vulcanus runs the same pass with its own layers and one may-touch pair: lava
+and lava-hot allow only each other (`allowed_neighbors`, read back at runtime;
+the same `Neighbours` rule the Nauvis port read from the binary). No chain of
+tiles joins that pair to the ground tiles, so the replacement is always 0 and
+lava never trades places with ground. Against a real surface (256 x 256 around
+spawn), the raw argmax is 2,053 tiles off by name, layers alone 217, and the
+full pass 1: one tile at the edge of what was requested (a capture of the
+whole 1024 window agrees with us there). Corrected in the order the game queues
+the tasks for each request (`MapGenerationManager::request`, decoded by the
+Fulgora port), the radius capture, a one-at-a-time capture and the 1024 capture
+all match at every tile. The port is `crates/fmw-noise/src/tiles/vulcanus_correction.rs`;
+`docs/rust-wasm-port.md` has the counts and costs.

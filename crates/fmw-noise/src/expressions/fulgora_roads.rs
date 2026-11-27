@@ -212,54 +212,115 @@ impl FulgoraRoads {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    const GRID: f64 = 48.0;
+
+    fn roads() -> FulgoraRoads {
+        FulgoraRoads::new(&FulgoraCtx::new(123_456), GRID)
+    }
+
+    fn eval_at(r: &mut FulgoraRoads, x: f64, y: f64) -> RoadFields {
+        r.eval(x, y, &SharedFields::default(), &CellFields::default())
+    }
 
     /// The stretch is on `y` only, and it is the CONSTANT that is narrowed.
     /// `y * 0.8f32` and `(y * 0.8f64) as f32` are different numbers, which is
-    /// the whole finding - so this pins that they are, rather than trusting the
-    /// comment.
+    /// the whole finding.
+    ///
+    /// The audit (2026-11-26) changed this: it used to compare the two forms of
+    /// the formula against each other inside the test and never ran the roads
+    /// code. It now runs `FulgoraRoads::eval` and compares its structure
+    /// fields, bit for bit, with a second `Voronoi` sampled at the
+    /// constant-first `y`. It also counts the points where the product-first
+    /// form would give a different `structure_facets`, so the comparison
+    /// cannot pass vacuously.
     #[test]
     fn the_y_stretch_narrows_the_constant_not_the_product() {
-        let mut differing = 0;
+        let mut r = roads();
+        let mut reference = Voronoi::new(&VoronoiParams {
+            seed0: 123_456,
+            seed1: SEED1_STRUCTURE_CELLS,
+            grid_size: GRID / 8.0,
+            jitter: STRUCTURE_JITTER,
+            distance_type: VoronoiDistanceType::Minkowski3,
+            search_range_override: None,
+        });
+        let mut distinguishable = 0;
         for k in 1..500 {
+            let x = f64::from(k) * 7.5 - 1700.0;
             let y = f64::from(k) * 13.25 - 2000.0;
             let constant_first = y * f64::from(0.8f32);
             let product_first = f64::from((y * 0.8f64) as f32);
-            if constant_first != product_first {
-                differing += 1;
+            let got = eval_at(&mut r, x, y);
+            let want_facets = f64::from(reference.facet_noise(x, constant_first));
+            let want_cells = f64::from(reference.cell_id(x, constant_first));
+            assert_eq!(
+                got.structure_facets.to_bits(),
+                want_facets.to_bits(),
+                "structure_facets at ({x}, {y}) is not sampled at y * f32(0.8)"
+            );
+            assert_eq!(got.structure_cells.to_bits(), want_cells.to_bits());
+            if f64::from(reference.facet_noise(x, product_first)).to_bits() != want_facets.to_bits()
+            {
+                distinguishable += 1;
             }
         }
         assert!(
-            differing > 400,
-            "only {differing} of 499 points tell the two forms apart, so the \
-             distinction this module rests on is not observable here"
+            distinguishable > 50,
+            "only {distinguishable} of 499 points tell the two forms apart, so \
+             the distinction this module rests on is not observable here"
         );
     }
 
     /// `%` is a TRUNCATED remainder and keeps the dividend's sign in both Rust
     /// and JavaScript, so the banding fields need no adjustment in the port.
     ///
-    /// The values are read out of a loop rather than written as literals, or
-    /// the compiler folds them and clippy is right that the assertion proves
-    /// nothing.
+    /// The audit (2026-11-26) changed this: it used to apply `%` to its own
+    /// inputs and never ran the roads code. It now takes `pyramids_banding` and
+    /// `spots_banding` from `FulgoraRoads::eval`, which sees `cells.pyramids`
+    /// and `starting_vault_cone` as inputs, so negative dividends are fed in
+    /// directly. A floored remainder would put those results in [0, 1).
     #[test]
     fn the_banding_fields_are_a_truncated_remainder() {
-        let mut negatives = 0;
-        let mut in_unit_interval = 0;
+        let mut r = roads();
+        let mut negative_pyramids = 0;
+        let mut negative_spots = 0;
         for k in -50..=50i32 {
-            let pyramids = f64::from(k) / 100.0;
-            let band = (pyramids * 8.0) % 1.0;
-            if pyramids < 0.0 && band < 0.0 {
-                negatives += 1;
+            let value = f64::from(k) / 100.0;
+            let cells = CellFields {
+                pyramids: value,
+                // `spots * 9 + 0.5` goes below zero once `spots < -1/18`.
+                spots: value * 0.4,
+                ..CellFields::default()
+            };
+            let shared = SharedFields {
+                starting_vault_cone: 0.0,
+                ..SharedFields::default()
+            };
+            let got = r.eval(10.0, 20.0, &shared, &cells);
+            let band = f64::from((value * 8.0) as f32) % 1.0;
+            assert_eq!(got.pyramids_banding, band, "pyramids {value}");
+            if value < 0.0 {
+                assert!(got.pyramids_banding <= 0.0, "kept no sign at {value}");
+                if got.pyramids_banding < 0.0 {
+                    negative_pyramids += 1;
+                }
+            } else {
+                assert!((0.0..1.0).contains(&got.pyramids_banding));
             }
-            if pyramids >= 0.0 && (0.0..1.0).contains(&band) {
-                in_unit_interval += 1;
+            assert_eq!(got.spots_banding, got.spots_prebanding % 1.0);
+            if got.spots_prebanding < 0.0 && got.spots_banding < 0.0 {
+                negative_spots += 1;
             }
         }
-        // A floored remainder would put every negative input in [0, 1) instead.
-        assert!(negatives > 30, "only {negatives} negatives kept their sign");
         assert!(
-            in_unit_interval > 45,
-            "only {in_unit_interval} stayed in [0,1)"
+            negative_pyramids > 30,
+            "only {negative_pyramids} negatives kept their sign"
+        );
+        assert!(
+            negative_spots > 10,
+            "only {negative_spots} negative spots inputs kept their sign"
         );
     }
 }

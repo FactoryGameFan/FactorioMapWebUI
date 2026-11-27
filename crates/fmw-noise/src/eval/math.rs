@@ -175,6 +175,46 @@ pub fn max2(a: f64, b: f64) -> f64 {
     max(&[a, b])
 }
 
+/// The noise machine's `terrace` op: snap `value` onto steps `width` apart,
+/// starting at `offset`, with a smooth ramp of fraction `1 - strength` between
+/// them.
+///
+/// Read from `NoiseOperations::Terrace::run` in the 2.1.23 headless binary
+/// (0x251aa50). Every step is f32, in this order:
+///
+/// ```text
+/// t    = (value - offset) / width
+/// f    = floorf(t)
+/// frac = t - f
+/// up   = strength < frac ? (frac - strength) / (1 - strength) : 0
+/// out  = (up + f) * width + offset
+/// ```
+///
+/// The comparison is strict, so a `frac` exactly at `strength` gives `up = 0`.
+/// A NaN `value` gives a NaN `t` and `f`, so `up` is 0 (the comparison is
+/// false) but the result is still NaN. The binary's SSE path and its scalar
+/// tail compute the same expression, and neither fuses the last multiply and
+/// add, so this does not use `mul_add`.
+///
+/// Gleba's elevation reads it twice (`peaks_terrace` and `ridge_terrace`),
+/// both with `offset = 40`, `width = 20`, `strength = 0.2`.
+///
+/// All four arguments are narrowed to f32 first, as the machine holds them.
+#[must_use]
+pub fn terrace(value: f64, offset: f64, width: f64, strength: f64) -> f64 {
+    let (value, offset, width, strength) =
+        (value as f32, offset as f32, width as f32, strength as f32);
+    let t = (value - offset) / width;
+    let floor = t.floor();
+    let frac = t - floor;
+    let up = if strength < frac {
+        (frac - strength) / (1.0 - strength)
+    } else {
+        0.0
+    };
+    poison::f64_result(f64::from((up + floor) * width + offset))
+}
+
 /// `range_select_base` (`core/prototypes/noise-functions.lua`): select a
 /// `from`-`to` range, at or above 0 inside it and descending outside when `min`
 /// is negative.
@@ -456,6 +496,34 @@ mod tests {
         assert!(max(&[-0.0, 0.0]).is_sign_positive());
     }
 
+    /// `terrace` against the f32 decode of the binary, evaluated in numpy
+    /// float32 (`(up + floor(t)) * w + off`). The `frac == strength` boundary
+    /// is strict, and the next f32 above it ramps.
+    #[test]
+    fn terrace_snaps_to_steps_and_its_boundary_is_strict() {
+        // Mid-ramp: t = 0.5, up = (0.5 - 0.2) / 0.8.
+        assert_eq!(terrace(50.0, 40.0, 20.0, 0.2), 47.5);
+        // frac == strength exactly (4 / 20 is the f32 nearest 0.2): no ramp.
+        assert_eq!(terrace(44.0, 40.0, 20.0, 0.2), 40.0);
+        // One f32 step above it: the ramp starts.
+        let just_above = f64::from(f32::from_bits(44.0f32.to_bits() + 1));
+        assert_eq!(
+            terrace(just_above, 40.0, 20.0, 0.2),
+            f64::from(40.000_004f32)
+        );
+        // Below the offset the floor is negative.
+        assert_eq!(terrace(-5.0, 40.0, 20.0, 0.2), -6.25);
+        assert_eq!(terrace(30.0, 40.0, 20.0, 0.2), 27.5);
+        assert_eq!(terrace(39.99, 40.0, 20.0, 0.2), f64::from(39.987_503f32));
+    }
+
+    /// A NaN input stays NaN, and the `up` term does not turn it into a
+    /// number: `strength < NaN` is false, so `up` is 0, but the floor is NaN.
+    #[test]
+    fn terrace_of_nan_is_nan() {
+        assert!(terrace(f64::NAN, 40.0, 20.0, 0.2).is_nan());
+    }
+
     /// The identities the Lua guarantees, at both ends of the slider.
     #[test]
     fn slider_rescale_hits_its_three_exact_identities() {
@@ -479,10 +547,11 @@ mod tests {
     /// `(-1.7, 1.7)` is that range, and it is the only one in the whole of
     /// `factorio-data`; `cliffiness_nauvis` reads it
     /// (`noise-programs.lua:358`). The game's own values live in
-    /// `test/fixtures/oracle-slider-to-linear.seed123456.json` and are graded on
-    /// the TypeScript side by `test/sliderToLinearOracle.spec.ts` - this test is
-    /// the Rust half, pinning the two cells that discriminate so a "simplify the
-    /// casts" edit reads as the behaviour change it would be.
+    /// `test/fixtures/oracle-slider-to-linear.seed123456.json` and are graded at
+    /// all 39 points by `reproduces_the_games_slider_to_linear_at_all_39_points`
+    /// in `fixtures.rs` - this test pins the two cells that discriminate beside
+    /// the function, so a "simplify the casts" edit reads as the behaviour
+    /// change it would be.
     #[test]
     fn slider_to_linear_narrows_its_bounds_before_using_them() {
         // s = 1 makes the ratio exactly 0, so the result is the midpoint. With

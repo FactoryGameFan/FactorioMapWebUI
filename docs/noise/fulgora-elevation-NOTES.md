@@ -68,7 +68,8 @@ sweep that skipped 3 would have "confirmed" the f64 form. This is the third time
 in this repo an f32-vs-f64 detail has hidden behind a sweep that happened to
 avoid the one discriminating input (cf. #165, #166, #167).
 
-`sliderToLinear` in `src/noise/eval/math.ts` was changed to f32 for **all**
+`sliderToLinear` (then in `src/noise/eval/math.ts`, now only `slider_to_linear`
+in `crates/fmw-noise/src/eval/math.rs`) was changed to f32 for **all**
 callers. Nauvis's moisture use is unaffected because its default size is 1, so
 `log2(1) = 0` is exact either way - which is what the function's own comment had
 predicted would eventually matter.
