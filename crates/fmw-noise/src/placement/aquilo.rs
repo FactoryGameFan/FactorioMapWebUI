@@ -52,9 +52,13 @@
 //! entity whose map-gen box meets an already placed one on a shared collision
 //! layer (`EntityMapGenerationTask::apply`, see
 //! `docs/noise/entity-generation-NOTES.md`). Boxes that only touch collide,
-//! and chunks apply row-major; both were measured here first (#492). The two
-//! masks share no layer, so a well never blocks an iceberg, or the other way
-//! round: wells block wells and icebergs block icebergs.
+//! and chunks apply in columns order (x outer, y inner). The touching rule
+//! was measured here first (#492). The order was measured in #589, which
+//! watched the game finish the chunks; before that, neither capture could
+//! tell rows from columns, and the graded windows still score the same under
+//! rows order. The two masks share no layer, so a well never blocks an
+//! iceberg, or the other way round: wells block wells and icebergs block
+//! icebergs.
 //!
 //! ## Richness
 //!
@@ -536,8 +540,9 @@ pub fn apply(queues: &[Vec<Queued>], rule: Apply) -> Vec<AquiloPlaced> {
 }
 
 /// Generate and apply the chunks `chunks` on `tiles`, in the order given,
-/// which should be the order a real surface applies them: row-major, y outer
-/// and x inner ([`rows`]). Returns every entity placed, in apply order.
+/// which should be the order a real surface applies them: columns order, x
+/// outer and y inner ([`columns`], #589). Returns every entity placed, in
+/// apply order.
 #[must_use]
 pub fn place_chunks(
     stack: &RefCell<AquiloStack>,
@@ -551,7 +556,22 @@ pub fn place_chunks(
     )
 }
 
-/// The chunks from `(cx0, cy0)` to `(cx1, cy1)` inclusive, row-major.
+/// The chunks from `(cx0, cy0)` to `(cx1, cy1)` inclusive, in columns order:
+/// x outer, y inner. The game finishes one big chunk request in this order
+/// (1,173 of 1,173 chunks on Nauvis, Gleba and Aquilo, #589), so it is the
+/// order the shipped path applies them in.
+#[must_use]
+pub fn columns(cx: (i64, i64), cy: (i64, i64)) -> Vec<(i64, i64)> {
+    (cx.0..=cx.1)
+        .flat_map(|x| (cy.0..=cy.1).map(move |y| (x, y)))
+        .collect()
+}
+
+/// The chunks from `(cx0, cy0)` to `(cx1, cy1)` inclusive, row-major: y
+/// outer, x inner. This is NOT the order the game applies a big request in
+/// ([`columns`] is). It stays as a test control: the captures graded here
+/// score the same under either order, so a green run under `rows` is a gap in
+/// the grade and not a claim about the game.
 #[must_use]
 pub fn rows(cx: (i64, i64), cy: (i64, i64)) -> Vec<(i64, i64)> {
     (cy.0..=cy.1)
@@ -560,8 +580,8 @@ pub fn rows(cx: (i64, i64), cy: (i64, i64)) -> Vec<(i64, i64)> {
 }
 
 /// Chunks generated around a window's own, on each side, when its entities
-/// are placed. A real surface applies chunks row-major, so an entity near a
-/// chunk edge can be blocked by one the chunk above or to the left placed
+/// are placed. A real surface applies chunks in columns order, so an entity
+/// near a chunk edge can be blocked by one the chunk above or to the left placed
 /// first, and a huge iceberg's box reaches two tiles into the chunk beside
 /// it. One ring covers both. Those ring chunks are applied without THEIR
 /// earlier neighbours, which could only reach a window pixel through a chain
@@ -597,7 +617,8 @@ impl AquiloSurfaceWindow {
 /// The window `origin` .. `origin + size` as a real surface holds it: tile
 /// correction over the window's chunks plus `ring` chunks on each side (and
 /// `AQUILO_CORRECTION_MARGIN_CHUNKS` read past that), then every entity of
-/// those chunks generated on the corrected tiles and applied row-major.
+/// those chunks generated on the corrected tiles and applied in columns
+/// order.
 ///
 /// Correction evaluates every tile of the entity area, and the generator
 /// reads the same fields there, so they are kept rather than evaluated twice
@@ -640,7 +661,7 @@ pub fn real_surface_window(
         placed: Vec::new(),
     };
     let lookup = |tx: i64, ty: i64| window.tile(tx, ty);
-    let placed = place_chunks(stack, &lookup, kept.as_ref(), &rows(cx, cy));
+    let placed = place_chunks(stack, &lookup, kept.as_ref(), &columns(cx, cy));
     window.placed = placed;
     window
 }

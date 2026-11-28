@@ -471,10 +471,14 @@ Two apply rules were MEASURED there, not read from the binary
   keeps icebergs the game dropped: 214 placed, 201 of them the game's. The
   control is `aquilo_real_surface_replay_controls` (since #553; it was
   `aquilo_real_surface_replay_needs_touching_boxes_to_collide`).
-- **Chunks are applied row-major**, y outer and x inner. The order decides
-  which of two entities on either side of a chunk edge survives. In a scratch
-  Python simulator (not kept in the repo), a spiral order gave 206 of 209 and
-  the reverse order 191.
+- **Chunks are applied in columns order**, x outer and y inner (#589). The
+  order decides which of two entities on either side of a chunk edge
+  survives. In a scratch Python simulator (not kept in the repo), a spiral
+  order gave 206 of 209 and the reverse order 191. This surface did not tell
+  rows from columns: the 640 capture scores the same under both. This note
+  used to say row-major, chosen because rows beat those two orders. #589 then
+  measured the order itself: the game finishes one big request in columns
+  order, 1,173 of 1,173 chunks on Nauvis, Gleba and Aquilo.
 
 **Why it needs the game's land.** A real surface runs tile correction (see
 `tile-correction-NOTES.md`), and our resolver does not. Tile correction moves
@@ -499,9 +503,10 @@ the app's `all`, `resources` and `rocks` views now draw
 (`scripts/probes/aquilo-real-surface-entities`) holds every well and iceberg
 over -512..511 on the map a player gets: no data-stage mod, one radius-18
 request. The shipped path (our corrected tiles over the window's chunks plus
-one ring, then apply row-major) places all 635 at the game's positions to the
+one ring, then apply in columns order) places all 635 at the game's positions to the
 1/256 tile, and nothing else (`aquilo_entities_whole_window_real_surface`,
-release). Without the ring, 3 of the 635 are wrong. The map preview queues
+release). Rows order gives the same 635 (a control in that test). Without the
+ring, 3 of the 635 are wrong. The map preview queues
 1,501 in the same window.
 
 The wells' `created_effect` rewrites tiles near each well (2,756 tiles of the
@@ -579,11 +584,13 @@ Read from the prototypes on a real Gleba surface
 - **Stone needs no stream.** Its probability is `(size > 0) * (richness >
   1)`, exactly 0 or 1, and the roll is `p > U` with `U` in `[0, 1)`. So the
   plant groups between it and the stromatolites, unported, cannot move it.
-- **MEASURED:** replayed on our corrected tiles and applied row-major with
-  touching boxes colliding, the stream places all 5,193 stone and
+- **MEASURED:** replayed on our corrected tiles and applied in columns order
+  with touching boxes colliding, the stream places all 5,193 stone and
   stromatolites of the 1024 window at the game's positions, and nothing else.
-  Without the apply step the queues hold 8,631. Columns order gives the same
-  5,193, so this surface does not tell rows from columns.
+  Without the apply step the queues hold 8,631. Rows order gives the same
+  5,193, so this surface does not tell rows from columns; the order is
+  columns because #589 measured the game finishing a big request that way.
+  The replay was rows until #589, and `rows` stays as a test control.
 - **Plants block stromatolites across chunk edges.** With every control at its
   default, one copper stromatolite of 5,193 is missing: a water-cane from the
   chunk above, applied first, stands where its box crosses the edge. So the

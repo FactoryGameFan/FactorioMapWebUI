@@ -330,7 +330,7 @@ pub fn gleba_cliffs_with(
 }
 
 /// Cliffs as obstacles to the entity apply step: an entity is blocked by a
-/// cliff of its own chunk or an earlier one in row-major order (a later
+/// cliff of its own chunk or an earlier one in columns order (a later
 /// chunk's cliffs are not on the surface yet), whose oriented box meets the
 /// entity's box, when their layers meet.
 pub struct GlebaCliffObstacles {
@@ -372,7 +372,8 @@ impl Obstacles for GlebaCliffObstacles {
                 };
                 for c in list {
                     let (k, kc) = (c.chunk(), chunk);
-                    if (k.1, k.0) > (kc.1, kc.0) {
+                    // Tuples compare x first, then y: columns order (#589).
+                    if k > kc {
                         continue;
                     }
                     let (cb, rot) = c.oriented();

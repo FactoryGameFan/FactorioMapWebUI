@@ -966,11 +966,16 @@ game. Its preview rule (no apply step) is what this slice does NOT copy.
   has); stone only on land (`resource`, which wetland and the lake carry).
   So the stream reads the corrected tiles, and the raw argmax is not good
   enough: on it the whole window matched 3,546 of 5,193.
-- **Apply.** Each chunk's queue in order, chunks row-major, dropping an entity
-  whose box meets (touching included) one already placed on a shared layer.
-  Stromatolites block stromatolites; stone blocks stone; the two never share
-  a layer. Columns order gave the same 5,193, so this capture does not tell
-  the two orders apart; rows is what Aquilo measured.
+- **Apply.** Each chunk's queue in order, chunks in columns order (x outer, y
+  inner), dropping an entity whose box meets (touching included) one already
+  placed on a shared layer. Stromatolites block stromatolites; stone blocks
+  stone; the two never share a layer. Rows order gives the same 5,193, so this
+  capture does not tell the two orders apart. The order is columns because
+  #589 watched the game finish one big request that way (1,173 of 1,173 chunks
+  on Nauvis, Gleba and Aquilo). Until then it was rows, chosen because Aquilo's
+  #492 measured rows against a spiral and the reverse order. The rows order
+  stays as a test control (`gleba_entity_replay_rows_order_control`), green on
+  this capture, which is a gap in the grade and not a claim about the game.
 - **The render** (`render_gleba_entities`) generates the window's chunks plus
   one ring, on the corrected tiles of all of them, and paints each entity
   over the tiles `floor(left)` to `ceil(right) - 1` in its map colour:
@@ -1254,7 +1259,7 @@ On this surface the plants differ from the default map's by 1 water-cane and
 - **Cliffs block entities.** Each chunk applies its cliffs before its
   entities, so a plant or stromatolite whose box meets a standing cliff's
   oriented box, on a shared layer, is not placed. The port blocks with the
-  cliffs of the entity's own chunk and earlier ones in row-major order; all
+  cliffs of the entity's own chunk and earlier ones in columns order (#589); all
   cliffs, or touching boxes too, scored the same, so this capture does not
   tell those apart.
 - **Paint.** Solid `map_color` {144, 119, 87}, after the tree blend and before
@@ -1844,8 +1849,9 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
   `fixtures.rs`). That replay needs the game's own land, because a real
   surface runs tile correction and moves the shore, and the preview does not.
   It also applies entity collision, which the preview skips. Two of its apply
-  rules (touching boxes collide; chunks apply row-major) were measured, and
-  the touching rule has a control that fails without it.
+  rules (touching boxes collide; chunks apply in columns order) were measured,
+  and the touching rule has a control that fails without it. The touching rule
+  came from #492; the order from #589 (see the Apply bullet below).
 - **The footprint is 7 outside when grown by 1 pixel, not 0.** All 7 are
   iceberg edge pixels. A huge iceberg is 3.7 by 2.5 tiles and the game draws it
   that wide, so an edge can sit two pixels from the tile it was rolled on.
@@ -2021,16 +2027,17 @@ Gleba's recipe):
   lands. On the 640 surface (`oracle-aquilo-surface`) the replay on our
   corrected tiles places the game's 209 of 209; on the raw argmax it places
   222, 86 of them the game's.
-- **Apply.** Each chunk's queue in queue order, chunks row-major, dropping an
-  entity whose map-gen box meets an already placed one on a shared layer,
-  touching included (both rules measured in #492). Wells carry `{resource}`
+- **Apply.** Each chunk's queue in queue order, chunks in columns order (x
+  outer, y inner), dropping an entity whose map-gen box meets an already
+  placed one on a shared layer, touching included (the touching rule measured
+  in #492, the order in #589). Wells carry `{resource}`
   and icebergs `{item, object, player, water_tile}`, so wells block wells,
   icebergs block icebergs, and the two never meet.
 - **The render** (`render_aquilo_entities` through
   `placement::aquilo::real_surface_window`) corrects the tiles of the
   window's chunks plus one ring (`AQUILO_ENTITY_RING_CHUNKS`), with the usual
   correction margin read past that, generates every chunk of that area on
-  them and applies it row-major. A tile outside the area blocks an iceberg.
+  them and applies it in columns order. A tile outside the area blocks an iceberg.
   The fields correction evaluates are kept for the generator, as before, now
   up to 324 chunks (a 512-pixel tile and its ring).
 - **Paint.** Each entity over the tiles `floor(left)` to `ceil(right) - 1`,
@@ -2071,12 +2078,17 @@ and "slider fluorine vent frequency | all" did not.
 | raw tiles in the stream | `all` 1,960, `resources` 338, `rocks` 1,685; windows (11, 71), (19, 45); whole window 345 of 650 |
 | `AQUILO_ENTITY_RING_CHUNKS` at 0 | `all` 10, `resources` 3, `rocks` 7, and the 128-pixel tiles no longer stitch (the Rust tests pass their ring explicitly, so only the spec sees this one) |
 | paint order reversed | `all` 72 pixels, and the overlap test (an iceberg over crude oil) |
-| chunks applied in columns order instead of rows | **nothing**: every test stays green |
+| chunks applied in rows order instead of columns | **nothing**: every test stays green |
 
 The last row is a gap, stated rather than hidden: neither this capture nor
-the 640 one tells row-major from column-major, as on Gleba. Row-major stays
-because #492 measured it against a spiral and the reverse order, not because
-anything here grades it against columns.
+the 640 one tells row-major from column-major, as on Gleba. Columns order is
+what the shipped path uses because #589 measured the game finishing one big
+request that way (1,173 of 1,173 chunks on Nauvis, Gleba and Aquilo). Before
+#589 the path used rows, chosen because #492 measured it against a spiral and
+the reverse order. Nothing here grades the order: `rows` stays as a test
+control (`aquilo_entity_replay_rows_order_control`, and a rows line in the
+ignored whole-window test), green on every capture, so the grade could not
+catch the order being wrong.
 
 **What is still not drawn: the wells' tile rewrite.** Each well's
 `created_effect` spawns two explosions whose `set-tile` effects turn nearby

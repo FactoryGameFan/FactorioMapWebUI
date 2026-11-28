@@ -19,7 +19,7 @@ use crate::expressions::gleba_plants::{GlebaPlantFields, PLANTS};
 use crate::expressions::gleba_resources::{GlebaStoneControls, ResourceInputs};
 use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
 use crate::expressions::gleba_terrain::GlebaControls;
-use crate::placement::gleba::{apply, queue_chunks, rows, Apply, GLEBA_ENTITIES};
+use crate::placement::gleba::{apply, columns, queue_chunks, Apply, GLEBA_ENTITIES};
 use crate::test_json::Json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -124,7 +124,7 @@ fn gleba_plant_fields_match_the_game() {
 
 /// Per-name (matched, ours, game) over one window of the plants fixture:
 /// the window's chunks plus one ring, on our corrected tiles, applied
-/// row-major under `rule`, as the render does.
+/// in columns order under `rule`, as the render does.
 fn score_by_name(
     stack: &GlebaStack,
     fixture: &Json,
@@ -146,7 +146,7 @@ fn score_by_name(
         ((ox..ox + w).contains(&tx) && (oy..oy + h).contains(&ty))
             .then(|| tiles[((ty - oy) * w + (tx - ox)) as usize])
     };
-    let queues = queue_chunks(stack, &at, None, &rows(cx, cy));
+    let queues = queue_chunks(stack, &at, None, &columns(cx, cy));
     let game = game_entities(fixture, x, y);
     let ours: BTreeSet<(&'static str, i64, i64)> = apply(&queues, rule)
         .iter()
