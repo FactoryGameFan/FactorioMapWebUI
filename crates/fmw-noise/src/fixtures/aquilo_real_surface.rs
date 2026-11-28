@@ -367,17 +367,30 @@ const LITHIUM: ((i64, i64), (i64, i64)) = ((128, -448), (160, 128));
 /// One rule changed at a time over the same two windows, each against the
 /// game: (matched, ours, game).
 fn aquilo_window_control(
-    (origin, size): ((i64, i64), (i64, i64)),
+    window: ((i64, i64), (i64, i64)),
     raw_tiles: bool,
     rule: crate::placement::aquilo::Apply,
 ) -> (usize, usize, usize) {
-    use crate::placement::aquilo::{apply, queue_chunks, real_surface_window, rows};
+    aquilo_window_ordered(window, raw_tiles, rule, crate::placement::aquilo::columns)
+}
+
+/// A chunk order: the window's chunk ranges in, the chunks in apply order out.
+type ChunkOrder = fn((i64, i64), (i64, i64)) -> Vec<(i64, i64)>;
+
+/// [`aquilo_window_control`] with the chunk order named, for the rows control.
+fn aquilo_window_ordered(
+    (origin, size): ((i64, i64), (i64, i64)),
+    raw_tiles: bool,
+    rule: crate::placement::aquilo::Apply,
+    order: ChunkOrder,
+) -> (usize, usize, usize) {
+    use crate::placement::aquilo::{apply, queue_chunks, real_surface_window};
     let fx = load_captured_at(AQUILO_REAL_ENTITIES, "2.1.23");
     let stack = neutral_stack();
     let surface = real_surface_window(&stack, origin, size, 1, 0);
     let (ax, ay) = surface.area_origin;
     let (aw, ah) = surface.area_size;
-    let chunks = rows((ax / 32, (ax + aw) / 32 - 1), (ay / 32, (ay + ah) / 32 - 1));
+    let chunks = order((ax / 32, (ax + aw) / 32 - 1), (ay / 32, (ay + ah) / 32 - 1));
     let lookup = |tx: i64, ty: i64| surface.tile(tx, ty);
     let tiles: Option<&dyn Fn(i64, i64) -> Option<AquiloTile>> =
         (!raw_tiles).then_some(&lookup as &dyn Fn(i64, i64) -> Option<AquiloTile>);
@@ -389,6 +402,21 @@ fn aquilo_window_control(
         .collect();
     let game = game_entities(&fx, origin, size);
     (game.intersection(&ours).count(), ours.len(), game.len())
+}
+
+/// **The rows control, which stays green on these captures, and that is a
+/// gap.** The game finishes a big request in columns order (#589), and the
+/// shipped path applies it so. Rows order, which this crate used before #589,
+/// scores the same on both windows (and on the whole window, below), so the
+/// captures cannot tell the two apart: they would not catch the order being
+/// wrong. The grade is honest about that.
+#[test]
+fn aquilo_entity_replay_rows_order_control() {
+    use crate::placement::aquilo::{rows, Apply};
+    let spawn = aquilo_window_ordered(SPAWN, false, Apply::RealSurface, rows);
+    let lithium = aquilo_window_ordered(LITHIUM, false, Apply::RealSurface, rows);
+    assert_eq!(spawn, (69, 69, 69));
+    assert_eq!(lithium, (43, 43, 43));
 }
 
 /// The controls for the test above. Each changes one rule of the shipped
@@ -437,4 +465,14 @@ fn aquilo_entities_whole_window_real_surface() {
     eprintln!("aquilo whole window: {whole:?}, no ring {no_ring:?}");
     assert_eq!(whole, (635, 635, 635));
     assert_eq!(no_ring, (632, 635, 635));
+    // The rows control (#589): the same whole window, chunks in rows order.
+    // It stays at 635 of 635, so this capture cannot tell the orders apart.
+    use crate::placement::aquilo::{rows, Apply};
+    let rows_order = aquilo_window_ordered(
+        ((-512, -512), (1024, 1024)),
+        false,
+        Apply::RealSurface,
+        rows,
+    );
+    assert_eq!(rows_order, (635, 635, 635));
 }

@@ -224,7 +224,7 @@ pub(super) fn score_nests(
     use super::gleba_cliffs::Tiles;
     use crate::cliffs::catalog::CLIFF_ORIENTATION_NAMES;
     use crate::placement::gleba::{
-        apply_with, queue_chunks, queue_chunks_grouped, rows, Obstacles,
+        apply_with, columns, queue_chunks, queue_chunks_grouped, Obstacles,
     };
     use crate::placement::gleba_cliffs::{
         gleba_cliffs, stone_tiles, GlebaCliffControls, GlebaCliffObstacles,
@@ -255,7 +255,7 @@ pub(super) fn score_nests(
     } else {
         Vec::new()
     };
-    let chunks = rows(ecx, ecy);
+    let chunks = columns(ecx, ecy);
     let queues = match groups {
         Some(g) => queue_chunks_grouped(stack, &at, None, &chunks, g),
         None => queue_chunks(stack, &at, None, &chunks),

@@ -50,7 +50,9 @@ use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::aquilo::{
     real_surface_window, AquiloEntityView, AquiloPlaced, AQUILO_ENTITY_RING_CHUNKS,
 };
-use fmw_noise::placement::gleba::{place_chunks_with, rows, GlebaLayer, GlebaPaint, GlebaPlaced};
+use fmw_noise::placement::gleba::{
+    columns, place_chunks_with, GlebaLayer, GlebaPaint, GlebaPlaced,
+};
 use fmw_noise::placement::gleba_cliffs::{
     gleba_cliffs, stone_tiles, GlebaCliffControls, GlebaCliffObstacles, GLEBA_CLIFF_COLOR,
 };
@@ -820,7 +822,7 @@ pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
 }
 
 /// Chunks generated around a Gleba entity render's own, on each side. A
-/// real surface applies chunks row-major, so a stromatolite near a chunk edge
+/// real surface applies chunks in columns order, so a stromatolite near a chunk edge
 /// can be blocked by one the chunk above or to the left placed first; and an
 /// entity's box can reach one tile into the window from the chunk beside it.
 /// One ring covers both. Those ring chunks are themselves applied without
@@ -917,7 +919,7 @@ fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
 ///
 /// The entities come from the game's per-chunk generator and the apply step
 /// (`fmw_noise::placement::gleba`), run over the window's chunks and a ring
-/// of [`GLEBA_ENTITY_RING_CHUNKS`] in row-major order, on the corrected tiles
+/// of [`GLEBA_ENTITY_RING_CHUNKS`] in columns order, on the corrected tiles
 /// of all of them. Every entity view generates every entity, because a plant
 /// can block a stromatolite or a nest, a nest can block a plant of a later
 /// chunk, and stone can remove a plant. Footprints are whole
@@ -998,10 +1000,16 @@ fn render_gleba_entities(req: &Request, p: &GlebaParams, stack: &GlebaStack, out
     let mut placed: Vec<_> = if req.view == VIEW_CLIFFS {
         Vec::new()
     } else {
-        place_chunks_with(stack, &at, kept.as_ref(), &rows(ecx, ecy), Some(&obstacles))
-            .into_iter()
-            .filter(|e| drawn(e.entity.layer()))
-            .collect()
+        place_chunks_with(
+            stack,
+            &at,
+            kept.as_ref(),
+            &columns(ecx, ecy),
+            Some(&obstacles),
+        )
+        .into_iter()
+        .filter(|e| drawn(e.entity.layer()))
+        .collect()
     };
     placed.sort_by_key(|e| e.entity.paint_pass());
     let mut paint = |(fx0, fx1, fy0, fy1): (i64, i64, i64, i64), paint: GlebaPaint| {

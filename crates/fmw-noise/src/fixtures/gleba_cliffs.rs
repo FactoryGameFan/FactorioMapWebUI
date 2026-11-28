@@ -23,7 +23,7 @@ use crate::expressions::gleba_nests::GlebaEnemyControls;
 use crate::expressions::gleba_resources::GlebaStoneControls;
 use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
 use crate::expressions::gleba_terrain::GlebaControls;
-use crate::placement::gleba::{apply_with, queue_chunks, rows, Apply, Obstacles};
+use crate::placement::gleba::{apply_with, columns, queue_chunks, Apply, Obstacles};
 use crate::placement::gleba_cliffs::{
     gleba_cliffs_with, stone_tiles, GlebaCliffControls, GlebaCliffObstacles, GlebaCliffRules,
 };
@@ -181,7 +181,7 @@ fn score_window(
         (ecx, ecy),
         rules,
     );
-    let chunks = rows(ecx, ecy);
+    let chunks = columns(ecx, ecy);
     let queues = queue_chunks(stack, &at, None, &chunks);
     let obstacles = GlebaCliffObstacles::new(&cliffs);
     let inside = |ex: i64, ey: i64| {

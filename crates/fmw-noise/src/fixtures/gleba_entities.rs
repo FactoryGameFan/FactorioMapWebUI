@@ -25,7 +25,7 @@ use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CH
 use crate::expressions::gleba_terrain::GlebaControls;
 use crate::placement::generate::{Positioning, FIXED_ONE};
 use crate::placement::gleba::{
-    apply, gleba_groups, layer, queue_chunks, rows, tile_layers, Apply, GLEBA_AUTOPLACERS,
+    apply, columns, gleba_groups, layer, queue_chunks, rows, tile_layers, Apply, GLEBA_AUTOPLACERS,
     GLEBA_ENTITIES, GLEBA_GROUPS,
 };
 use crate::test_json::Json;
@@ -302,7 +302,7 @@ const WINDOWS: [((i64, i64), (i64, i64)); 2] =
 
 /// Replay one window on OUR tiles, corrected or raw, and score it under each
 /// apply rule in `rules`. The chunks are the window's plus one ring, applied
-/// row-major, as the render does.
+/// in columns order, as the render does.
 fn replay(
     fixture: &Json,
     x: (i64, i64),
@@ -313,6 +313,9 @@ fn replay(
     replay_with(&stack(), fixture, x, y, corrected, rules)
 }
 
+/// A chunk order: the window's chunk ranges in, the chunks in apply order out.
+type ChunkOrder = fn((i64, i64), (i64, i64)) -> Vec<(i64, i64)>;
+
 /// [`replay`] with a given graph.
 pub(super) fn replay_with(
     stack: &GlebaStack,
@@ -321,6 +324,19 @@ pub(super) fn replay_with(
     y: (i64, i64),
     corrected: bool,
     rules: &[Apply],
+) -> Vec<ReplayScore> {
+    replay_ordered(stack, fixture, x, y, corrected, rules, columns)
+}
+
+/// [`replay_with`] with the chunk order named, for the rows control.
+fn replay_ordered(
+    stack: &GlebaStack,
+    fixture: &Json,
+    x: (i64, i64),
+    y: (i64, i64),
+    corrected: bool,
+    rules: &[Apply],
+    order: ChunkOrder,
 ) -> Vec<ReplayScore> {
     let cx = (x.0.div_euclid(32) - 1, (x.1 - 1).div_euclid(32) + 1);
     let cy = (y.0.div_euclid(32) - 1, (y.1 - 1).div_euclid(32) + 1);
@@ -343,7 +359,7 @@ pub(super) fn replay_with(
         ((ox..ox + w).contains(&tx) && (oy..oy + h).contains(&ty))
             .then(|| tiles[((ty - oy) * w + (tx - ox)) as usize])
     };
-    let queues = queue_chunks(stack, &at, None, &rows(cx, cy));
+    let queues = queue_chunks(stack, &at, None, &order(cx, cy));
     let game = game_entities(fixture, x, y);
     rules
         .iter()
@@ -368,9 +384,10 @@ pub(super) fn replay_with(
 ///
 /// Over the whole 1024 window the same replay scores 5,193 of 5,193 (release
 /// build, measured 2026-11-26), and `test/wasmGlebaEntityParity.spec.ts`
-/// grades that window through the module. Applying chunks in columns order
-/// instead of rows scored the same 5,193 there, so this capture does not tell
-/// the two orders apart; rows is what Aquilo measured.
+/// grades that window through the module. Applying chunks in rows order
+/// instead of columns scores the same 5,193 there, so this capture does not
+/// tell the two orders apart (see `gleba_entities_replay_rows_order_control`).
+/// The game's order is columns, from #589.
 #[test]
 fn gleba_entities_replay_the_real_surface() {
     let fixture = load_captured_at(ENTITIES_FIXTURE, "2.1.23");
@@ -378,6 +395,23 @@ fn gleba_entities_replay_the_real_surface() {
     for (x, y) in WINDOWS {
         let s = replay(&fixture, x, y, true, &[Apply::RealSurface]).remove(0);
         eprintln!("gleba replay {x:?} {y:?}: {s:?}");
+        scores.push((s.matched, s.ours, s.game));
+    }
+    assert_eq!(scores, vec![(209, 209, 209), (158, 158, 158)]);
+}
+
+/// **The rows control, which stays green on this capture, and that is a gap.**
+/// The game finishes a big request in columns order (#589), and the shipped
+/// path applies it so. Rows order, which this crate used before #589, scores
+/// the same on both windows, so the capture cannot tell the two apart: it
+/// would not catch the order being wrong. The grade is honest about that.
+#[test]
+fn gleba_entity_replay_rows_order_control() {
+    let fixture = load_captured_at(ENTITIES_FIXTURE, "2.1.23");
+    let mut scores = Vec::new();
+    for (x, y) in WINDOWS {
+        let s =
+            replay_ordered(&stack(), &fixture, x, y, true, &[Apply::RealSurface], rows).remove(0);
         scores.push((s.matched, s.ours, s.game));
     }
     assert_eq!(scores, vec![(209, 209, 209), (158, 158, 158)]);

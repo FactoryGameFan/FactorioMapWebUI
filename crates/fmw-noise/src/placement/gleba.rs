@@ -71,8 +71,11 @@
 //! entity whose map-gen box meets an already placed one on a shared collision
 //! layer (`EntityMapGenerationTask::apply`, see
 //! `docs/noise/entity-generation-NOTES.md`). Boxes that only touch collide,
-//! and chunks apply row-major; both were measured on Aquilo and hold here
-//! (`fixtures`). Stromatolites block stromatolites and stone blocks stone; the
+//! and chunks apply in columns order (x outer, y inner, #589); the touching
+//! rule was measured on Aquilo and holds here (`fixtures`). The captures
+//! graded here score the same under rows order, so they cannot tell the two
+//! apart; the order comes from #589, which watched the game finish the
+//! chunks. Stromatolites block stromatolites and stone blocks stone; the
 //! two never share a layer.
 
 use super::generate::{generate_chunk, Autoplacer, ChunkInputs, MapGenBox, Positioning, Queued};
@@ -885,8 +888,8 @@ impl Surface<'_> {
 }
 
 /// Generate and apply the chunks `chunks`, in the order given, which should
-/// be the order a real surface applies them: row-major, y outer and x inner.
-/// Returns every entity placed, in apply order.
+/// be the order a real surface applies them: columns order, x outer and y
+/// inner ([`columns`], #589). Returns every entity placed, in apply order.
 #[must_use]
 pub fn place_chunks(
     stack: &GlebaStack,
@@ -985,7 +988,22 @@ pub fn apply_with(
         .collect()
 }
 
-/// The chunks from `(cx0, cy0)` to `(cx1, cy1)` inclusive, row-major.
+/// The chunks from `(cx0, cy0)` to `(cx1, cy1)` inclusive, in columns order:
+/// x outer, y inner. The game finishes one big chunk request in this order
+/// (1,173 of 1,173 chunks on Nauvis, Gleba and Aquilo, #589), so it is the
+/// order the shipped path applies them in.
+#[must_use]
+pub fn columns(cx: (i64, i64), cy: (i64, i64)) -> Vec<(i64, i64)> {
+    (cx.0..=cx.1)
+        .flat_map(|x| (cy.0..=cy.1).map(move |y| (x, y)))
+        .collect()
+}
+
+/// The chunks from `(cx0, cy0)` to `(cx1, cy1)` inclusive, row-major: y
+/// outer, x inner. This is NOT the order the game applies a big request in
+/// ([`columns`] is). It stays as a test control: the captures graded here
+/// score the same under either order, so a green run under `rows` is a gap in
+/// the grade and not a claim about the game.
 #[must_use]
 pub fn rows(cx: (i64, i64), cy: (i64, i64)) -> Vec<(i64, i64)> {
     (cy.0..=cy.1)
