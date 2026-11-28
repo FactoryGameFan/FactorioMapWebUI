@@ -10,6 +10,8 @@ use crate::expressions::aquilo_resources::{AquiloLevers, AquiloResourceControls}
 use crate::expressions::aquilo_stack::{AquiloCtx, AquiloStack, AQUILO_CORRECTION_MARGIN_CHUNKS};
 use crate::test_json::Json;
 use crate::tiles::aquilo_catalog::{probabilities, AquiloTile, TILE_ORDER};
+use core::cell::RefCell;
+use std::collections::BTreeSet;
 
 /// `get_tile` over -128..127 on a real Aquilo surface at map seed 123456 (the
 /// derived surface seed), the three resource controls at size 0 as the terrain
@@ -282,4 +284,157 @@ fn aquilo_corrected_land_matches_the_entity_stream_surface() {
         AQUILO_CORRECTION_MARGIN_CHUNKS,
     );
     assert_eq!((wrong(&raw), wrong(&corrected)), (172, 0));
+}
+
+// ---------------------------------------------------------------------------
+// #553: the wells and icebergs over the app's default window.
+// ---------------------------------------------------------------------------
+
+/// Every well and iceberg on a real Aquilo surface over -512..511 at neutral
+/// levers, the map a player gets, by `scripts/probes/aquilo-real-surface-entities`.
+const AQUILO_REAL_ENTITIES: &str =
+    "test/fixtures/oracle-aquilo-real-surface-entities.seed123456.json";
+
+/// An entity as (name, x, y), x and y in 1/256 tile.
+type Named = (String, i64, i64);
+
+/// Whether a position in 1/256 tile stands on a tile of the window.
+fn in_window((x, y): (i64, i64), (x0, y0): (i64, i64), (w, h): (i64, i64)) -> bool {
+    (x0..x0 + w).contains(&x.div_euclid(256)) && (y0..y0 + h).contains(&y.div_euclid(256))
+}
+
+/// The game's entities whose tile is in the window.
+fn game_entities(fx: &Json, origin: (i64, i64), size: (i64, i64)) -> BTreeSet<Named> {
+    fx.get("entities")
+        .as_array()
+        .iter()
+        .map(|r| {
+            let r = r.as_array();
+            let fixed = |v: &Json| (v.as_f64() * 256.0) as i64;
+            (r[0].as_str().to_string(), fixed(&r[1]), fixed(&r[2]))
+        })
+        .filter(|(_, x, y)| in_window((*x, *y), origin, size))
+        .collect()
+}
+
+/// The stack at the fixture's seed and neutral levers.
+fn neutral_stack() -> RefCell<AquiloStack> {
+    RefCell::new(AquiloStack::with_host_trig(&AquiloCtx {
+        seed0: SEED,
+        controls: AquiloResourceControls::default(),
+    }))
+}
+
+/// The shipped path over a window, against the game: (matched, ours, game),
+/// counting the entities whose tile is in the window. `ring` is the chunks
+/// placed around the window's own.
+fn aquilo_window_replay(origin: (i64, i64), size: (i64, i64), ring: i64) -> (usize, usize, usize) {
+    use crate::placement::aquilo::real_surface_window;
+    let fx = load_captured_at(AQUILO_REAL_ENTITIES, "2.1.23");
+    assert_eq!(fx.get("surfaceSeed").as_f64(), f64::from(SEED));
+    let stack = neutral_stack();
+    let surface = real_surface_window(&stack, origin, size, ring, 0);
+    let ours: BTreeSet<Named> = surface
+        .placed
+        .iter()
+        .filter(|p| in_window((p.x, p.y), origin, size))
+        .map(|p| (p.entity.game_name().to_string(), p.x, p.y))
+        .collect();
+    let game = game_entities(&fx, origin, size);
+    (game.intersection(&ours).count(), ours.len(), game.len())
+}
+
+/// **Two windows of the shipped path against the real surface, every entity
+/// at the game's position to the 1/256 tile, and nothing else.** The windows
+/// are the spec's two (spawn, and the lithium field to the north-east),
+/// snapped out to whole chunks. The whole 1024 window is
+/// `aquilo_entities_whole_window_real_surface`, ignored because it takes
+/// about a minute in a debug build.
+#[test]
+fn aquilo_entities_replay_the_real_surface() {
+    let spawn = aquilo_window_replay(SPAWN.0, SPAWN.1, 1);
+    let lithium = aquilo_window_replay(LITHIUM.0, LITHIUM.1, 1);
+    eprintln!("aquilo entity windows: spawn {spawn:?}, lithium {lithium:?}");
+    assert_eq!(spawn, (69, 69, 69));
+    assert_eq!(lithium, (43, 43, 43));
+}
+
+/// The spec's spawn window, snapped out to whole chunks.
+const SPAWN: ((i64, i64), (i64, i64)) = ((-64, -128), (128, 128));
+/// The spec's lithium window to the north-east, snapped out to whole chunks.
+const LITHIUM: ((i64, i64), (i64, i64)) = ((128, -448), (160, 128));
+
+/// One rule changed at a time over the same two windows, each against the
+/// game: (matched, ours, game).
+fn aquilo_window_control(
+    (origin, size): ((i64, i64), (i64, i64)),
+    raw_tiles: bool,
+    rule: crate::placement::aquilo::Apply,
+) -> (usize, usize, usize) {
+    use crate::placement::aquilo::{apply, queue_chunks, real_surface_window, rows};
+    let fx = load_captured_at(AQUILO_REAL_ENTITIES, "2.1.23");
+    let stack = neutral_stack();
+    let surface = real_surface_window(&stack, origin, size, 1, 0);
+    let (ax, ay) = surface.area_origin;
+    let (aw, ah) = surface.area_size;
+    let chunks = rows((ax / 32, (ax + aw) / 32 - 1), (ay / 32, (ay + ah) / 32 - 1));
+    let lookup = |tx: i64, ty: i64| surface.tile(tx, ty);
+    let tiles: Option<&dyn Fn(i64, i64) -> Option<AquiloTile>> =
+        (!raw_tiles).then_some(&lookup as &dyn Fn(i64, i64) -> Option<AquiloTile>);
+    let placed = apply(&queue_chunks(&stack, tiles, None, &chunks), rule);
+    let ours: BTreeSet<Named> = placed
+        .iter()
+        .filter(|p| in_window((p.x, p.y), origin, size))
+        .map(|p| (p.entity.game_name().to_string(), p.x, p.y))
+        .collect();
+    let game = game_entities(&fx, origin, size);
+    (game.intersection(&ours).count(), ours.len(), game.len())
+}
+
+/// The controls for the test above. Each changes one rule of the shipped
+/// path, and each turns the spawn window red (matched, ours, game):
+///
+/// - **strict overlap** (boxes that only touch do not collide): (65, 72, 69)
+///   and (40, 44, 43);
+/// - **the preview's rule** (no apply step): every game entity is there, under
+///   (69, 180, 69) and (43, 78, 43) of the preview's own;
+/// - **the raw argmax** as the stream's tiles (no correction): (11, 71, 69)
+///   and (19, 45, 43), so the correction is the larger step;
+/// - **no ring** of chunks around the window (the same window placed alone):
+///   (68, 68, 69) at spawn. It stays green in the lithium window, which no
+///   cross-chunk collision reaches; the whole window shows it too (3 wrong).
+#[test]
+fn aquilo_entity_replay_controls() {
+    use crate::placement::aquilo::Apply;
+    let rows = [SPAWN, LITHIUM].map(|w| {
+        (
+            aquilo_window_control(w, false, Apply::StrictOverlap),
+            aquilo_window_control(w, false, Apply::Preview),
+            aquilo_window_control(w, true, Apply::RealSurface),
+            aquilo_window_replay(w.0, w.1, 0),
+        )
+    });
+    eprintln!("aquilo entity controls (strict, preview, raw, no ring): {rows:?}");
+    assert_eq!(
+        rows[0],
+        ((65, 72, 69), (69, 180, 69), (11, 71, 69), (68, 68, 69))
+    );
+    assert_eq!(
+        rows[1],
+        ((40, 44, 43), (43, 78, 43), (19, 45, 43), (43, 43, 43))
+    );
+}
+
+/// **The whole default window: all 635 of the game's wells and icebergs at
+/// the game's positions, and nothing else.** Without the ring of chunks
+/// around the window, 3 of the 635 placed are wrong. Run it with
+/// `--release --ignored`; it takes about 4 seconds there.
+#[test]
+#[ignore = "about a minute in a debug build; run with --release --ignored"]
+fn aquilo_entities_whole_window_real_surface() {
+    let whole = aquilo_window_replay((-512, -512), (1024, 1024), 1);
+    let no_ring = aquilo_window_replay((-512, -512), (1024, 1024), 0);
+    eprintln!("aquilo whole window: {whole:?}, no ring {no_ring:?}");
+    assert_eq!(whole, (635, 635, 635));
+    assert_eq!(no_ring, (632, 635, 635));
 }

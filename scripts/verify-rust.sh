@@ -180,6 +180,9 @@ POISONED_TESTS=(
   # different set of entities and moves every later draw in the chunk.
   fixtures::aquilo_real_surface_replay_places_every_entity_the_game_did
   fixtures::the_tiny_vent_lands_where_the_game_puts_it
+  # The shipped real-surface path (#553): corrected tiles, then apply, graded
+  # against the 1024 capture. Poisoned it places 0 of 69 and 0 of 43.
+  fixtures::aquilo_real_surface::aquilo_entities_replay_the_real_surface
   # Gleba (#454). The climate fields carry `poison::f64_result` on the
   # elevation, moisture, aux and temperature, and `terrace` carries its own on
   # both terrace results (its unit test reds under poison). The tile scores

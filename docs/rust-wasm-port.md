@@ -59,6 +59,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 12 (#454) | Gleba slice 2 - the terrain view through the engine, name-order tie-break, and tile correction (`tiles/correction.rs`), graded against a REAL surface; dev mode only in the app | terrain done |
 | 13 (#454) | Aquilo's terrain through tile correction at one tile per pixel, graded against a REAL surface; the preview PNGs become a reference | terrain done |
 | 14 (#454) | Gleba slice 3 - stone and both stromatolites in `resources` and `all`, placed as a REAL surface places them (the per-chunk generator plus apply), 5,193 of 5,193 | stone and stromatolites done |
+| 15 (#553) | Aquilo's wells and icebergs placed as a REAL surface places them (corrected tiles plus apply), 635 of 635 over the app's default window; the preview PNG becomes a reference | done |
 
 **Every planet, every view the panel offers, renders through the engine.** Gleba
 offers terrain, resources and all, and only in dev mode. The
@@ -1558,7 +1559,8 @@ numbers here.
 **The ABI block.** `PLANET_AQUILO = 3`. The block is 128 bytes (six resource
 levers, three bearing pairs of sine and cosine, and one placement sweep box), so
 a request is 184 bytes. Since #492 the sweep box is decoded and not read: each
-pixel reads only its own chunk's entities, so there is no halo. The slot stays
+pixel read only its own chunk's entities, and since #553 the module places a
+ring of chunks around each request itself, so the pool sends no halo. The slot stays
 so the layout does not move. That is smaller than Vulcanus's 368, so
 `REQUEST_BYTES` stays Nauvis's 576. The offered views are terrain, resources,
 rocks and all. `VIEW_ENTITY_FOOTPRINT = 12` exists for the test that grades
@@ -1649,7 +1651,7 @@ and the extra windows were added beside it rather than accepting the constants.
 are now a reference (2026-11-26, see "Aquilo against a real surface" below).**
 Before that the terrain gap to the preview was 0 of 1,048,576, and since #492
 the composite's was too, inside a 4-pixel border. The spec is
-`test/wasmAquiloRenderParity.spec.ts` (27 tests since the real-surface change, 24 since #492, 26 before: the
+`test/wasmAquiloRenderParity.spec.ts` (32 tests since #553, 27 since the real-surface change, 24 since #492, 26 before: the
 per-colour fingerprint and the halo-radius check went. About 17 to 20 seconds on
 tealc, about 1.5 times Fulgora's). All of it uses the derived surface seed 3111923328
 for map seed 123456, and the window is -512 to 511 at one tile per pixel.
@@ -1661,12 +1663,14 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
 | terrain view against the terrain PNG (levers at size 0), a reference | 718 of 1,048,576 (0 before the correction) |
 | same, levers left at neutral (control)                         | 13,707 (13,194 before) |
 | raw map seed instead of the derived one, 256 by 256 at spawn   | 7,376 of 8,843 land pixels differ (83%; measured, asserted > 50%) |
-| composite (wells and icebergs) against the full PNG, every pixel | 1,067 of 1,048,576: 1,064 tile against tile (0 before), 3 entity pixels at the edge, 0 entity pixels inside a 4-pixel border |
-| per-colour pixels in that composite                            | equal to the game's, except iceberg +3 |
+| `all`, `resources`, `rocks` against the REAL surface's entities (#553) | 0 of 1,048,576 each |
+| full PNG, a reference since #553: entity pixels, ours against the preview's | 4,716 against 5,692 |
+| same, pixels where both show a tile and differ                 | 1,036 (1,064 before #553) |
 | footprint pixels outside, grown by 1 pixel                     | 7                     |
 | footprint pixels outside, grown by 2 pixels                    | 0                     |
 | footprint share of the window                                  | 3.59% (asserted 1% to 10%) |
-| tiled render against whole render, 100-pixel tiles cutting through chunks, no halo | 0 bytes differ |
+| tiled render against whole render, 100-pixel tiles cutting through chunks, one chunk ring inside the module (#553) | 0 bytes differ |
+| the app's 128-pixel tiles of the 1024 `all` render against the whole (#553) | 0 bytes differ |
 | entity pixels straddling those seams (control)                 | asserted > 0          |
 | `aquilo:render` rows in `tier3-render-checksums.json`          | 14                    |
 
@@ -1675,8 +1679,9 @@ for map seed 123456, and the window is -512 to 511 at one tile per pixel.
   renders at size 1 and differs from the PNG in 13,707 pixels (13,194 before the correction). The matched
   pairing gives 718, the correction's footprint (0 before). The spec freezes both numbers so the levers stay load-bearing.
   This is the Vulcanus lesson again (see tier 3 above).
-- **The full-PNG test grades the composite, every pixel, nothing masked
-  (#492).** Wells and icebergs come from the game's own per-chunk entity
+- **Until #553 the full-PNG test graded the composite, every pixel, nothing
+  masked (#492).** It is a reference now; the next two paragraphs are the
+  record of the preview's drawing rule. Wells and icebergs come from the game's own per-chunk entity
   generator (`crates/fmw-noise/src/placement/generate.rs`; the
   reverse-engineering is `docs/noise/entity-generation-NOTES.md`): one
   unsalted taus88 stream per chunk, shared by the five autoplace groups in
@@ -1768,9 +1773,8 @@ At one tile per pixel on a whole-tile origin, the Aquilo render now runs tile
 correction after the argmax, the way Gleba's does (`render_aquilo`,
 `AquiloStack::corrected_tiles`), so the terrain is what a real surface holds.
 At any other zoom a pixel is still the raw argmax at a point. The wells and
-icebergs are still drawn by the preview's rule (#553). The app opens Aquilo at
-one tile per pixel in the `all` view, so a user sees the corrected terrain with
-the preview's entities on top. `docs/noise/aquilo-NOTES.md` has the findings.
+icebergs were still drawn by the preview's rule until #553 (next section).
+`docs/noise/aquilo-NOTES.md` has the findings.
 
 - **Correction alone closes the gap.** Aquilo's nine layers through the
   unchanged `tiles/correction.rs` give 0 wrong tiles by name against the
@@ -1837,10 +1841,127 @@ the preview's entities on top. `docs/noise/aquilo-NOTES.md` has the findings.
   whole, compared with the previous module. The unit tests
   `lazy_and_eager_reads_agree` and `skipping_uniform_seeds_changes_nothing`
   pin the two correction changes on random grids.
-- **The entity overlays are the next step (#553).** The corrected land matches
+- **The entity overlays were the next step (#553).** The corrected land matches
   the land mask of `oracle-aquilo-surface` at all 409,600 tiles, where the raw
   argmax misses 172 (`aquilo_corrected_land_matches_the_entity_stream_surface`),
-  so the entity replay could read our tiles instead of the game's.
+  so the entity replay could read our tiles instead of the game's. The next
+  section does that.
+
+### Aquilo's wells and icebergs against a real surface (#553, 2026-11-27)
+
+The `all`, `resources` and `rocks` views draw every well and iceberg a REAL
+Aquilo surface places, at one tile per pixel on a whole-tile origin. Over the
+app's default window, -512..511 at map seed 123456 and neutral levers, the
+engine places all 635 of the game's at the game's position, to the 1/256
+tile, and nothing else, and each view matches that surface at every pixel.
+Before, the views drew the game's map preview, which skips the apply step and
+reads the raw tiles: it queues 1,501 there (2.4 times), almost all of the
+extra being big icebergs (1,310 against 460).
+
+**Measured first.** The game's own counts, preview by `--report-quantities`,
+real by a force-generated surface (`scripts/probes/real-surface-counts`'s
+functions, 2026-11-27): 551 against 198 over -256..255, 1,501 against 635
+over -512..511. `docs/noise/aquilo-NOTES.md` has the table by prototype.
+
+**The fixture** is `oracle-aquilo-real-surface-entities.seed123456.json`
+(`scripts/probes/aquilo-real-surface-entities`): the map a player gets, no
+data-stage mod, one radius-18 request, every resource and simple-entity in
+the window and a 3-tile ring at its exact position. A second run with the
+wells' `created_effect` removed placed the same entities.
+
+**What a real surface does, and the port with it** (`placement/aquilo.rs`,
+Gleba's recipe):
+
+- **The stream reads the corrected tiles.** Every land tile is an iceberg
+  candidate and spends a draw, so the shore decides where every later draw
+  lands. On the 640 surface (`oracle-aquilo-surface`) the replay on our
+  corrected tiles places the game's 209 of 209; on the raw argmax it places
+  222, 86 of them the game's.
+- **Apply.** Each chunk's queue in queue order, chunks row-major, dropping an
+  entity whose map-gen box meets an already placed one on a shared layer,
+  touching included (both rules measured in #492). Wells carry `{resource}`
+  and icebergs `{item, object, player, water_tile}`, so wells block wells,
+  icebergs block icebergs, and the two never meet.
+- **The render** (`render_aquilo_entities` through
+  `placement::aquilo::real_surface_window`) corrects the tiles of the
+  window's chunks plus one ring (`AQUILO_ENTITY_RING_CHUNKS`), with the usual
+  correction margin read past that, generates every chunk of that area on
+  them and applies it row-major. A tile outside the area blocks an iceberg.
+  The fields correction evaluates are kept for the generator, as before, now
+  up to 324 chunks (a 512-pixel tile and its ring).
+- **Paint.** Each entity over the tiles `floor(left)` to `ceil(right) - 1`,
+  with no clip to its own chunk (that clip is the preview's). Where a well
+  and an iceberg share a tile, the earlier autoplace group is on top: vent
+  and brine over icebergs, icebergs over crude oil. That is the preview's
+  rule, measured on its PNG in #492; how a player's map draws two
+  overlapping entities was not measured, and the pixel tests paint both
+  sides by the same rule, so they do not grade it.
+- **Other zooms** draw no entity, as Gleba's do: the entities depend on the
+  corrected tiles, which exist only at one tile per pixel. The app's preview
+  is always at one tile per pixel. Before #553 the preview's entities were
+  drawn at any zoom.
+
+**Grades.**
+
+| test | what | frozen |
+| --- | --- | --- |
+| `aquilo_real_surface_replay_places_every_entity_the_game_did` | the 640 surface on the game's land, through the shipped `apply` | 209 of 209 |
+| `aquilo_real_surface_replay_on_our_corrected_tiles` | the same on our corrected tiles | 209 of 209 |
+| `aquilo_real_surface_replay_controls` | strict overlap / raw tiles / the preview's rule | (201, 214) (86, 222) (88, 580) matched and placed |
+| `aquilo_entities_replay_the_real_surface` | spawn and lithium windows of the 1024 fixture, by position | 69 of 69, 43 of 43 |
+| `aquilo_entity_replay_controls` | strict overlap / preview / raw tiles / no ring, both windows | see the test |
+| `aquilo_entities_whole_window_real_surface` (ignored, about 4 s release) | the whole window | 635 of 635; 632 with no ring |
+| `test/wasmAquiloRenderParity.spec.ts` | `all`, `resources`, `rocks` against the fixture's entities painted on our terrain | 0 of 1,048,576 each |
+| same | the app's 128-pixel tiles stitched against the whole `all` render | byte for byte |
+| same | the full preview PNG, a reference: entity pixels, and tiles where both show one | 5,692 against our 4,716; 1,036 |
+
+The `aquilo:render` digests: 11 of the 14 rows moved; the two terrain rows
+and "slider fluorine vent frequency | all" did not.
+
+**Planted breaks, each run through the rebuilt module and the Rust tests:**
+
+| break | what went red |
+| --- | --- |
+| the preview's rule (no apply) in `place_chunks` | `all` 1,107 pixels, `resources` 30, `rocks` 1,088; the windows (69, 180), (43, 78) matched and placed; the whole window 635 matched of 1,493 placed |
+| strict overlap | `all` 168, `rocks` 169 (`resources` stayed 0: no two wells touch here); windows (65, 72), (40, 44); whole window 607 of 651 |
+| raw tiles in the stream | `all` 1,960, `resources` 338, `rocks` 1,685; windows (11, 71), (19, 45); whole window 345 of 650 |
+| `AQUILO_ENTITY_RING_CHUNKS` at 0 | `all` 10, `resources` 3, `rocks` 7, and the 128-pixel tiles no longer stitch (the Rust tests pass their ring explicitly, so only the spec sees this one) |
+| paint order reversed | `all` 72 pixels, and the overlap test (an iceberg over crude oil) |
+| chunks applied in columns order instead of rows | **nothing**: every test stays green |
+
+The last row is a gap, stated rather than hidden: neither this capture nor
+the 640 one tells row-major from column-major, as on Gleba. Row-major stays
+because #492 measured it against a spiral and the reverse order, not because
+anything here grades it against columns.
+
+**What is still not drawn: the wells' tile rewrite.** Each well's
+`created_effect` spawns two explosions whose `set-tile` effects turn nearby
+water into snow and ice. On the default window that rewrites 2,756 tiles,
+2,120 of them outside every well's 3 x 3 footprint, up to 5 tiles from a
+well. The outer explosion is a `cluster` of seven at a random distance, from
+the surface's own random generator (read from the Lua, not traced), so a
+tile of the preview cannot reproduce it. It moves no entity.
+
+**What it costs** (the app's own preview, Aquilo at seed 123456, `?dev=1`,
+the panel's elapsed-ms readout after a warm-up render; the same production
+build with `main`'s engine at d69e8bc swapped in for the main arm (no other
+file under `src/` differs), served statically, in headless Chrome 158 with NO
+DevTools client and the app's 15-worker pool on hammond; median of 7 runs
+interleaved):
+
+| view | `main` | this change | change |
+| --- | ---: | ---: | ---: |
+| `terrain` | 230 ms | 232 ms | none |
+| `all` | 257 ms | 347 ms | +35% |
+
+The seven `all` runs spread 250 to 264 ms on `main` and 333 to 353 ms here,
+so the ranges do not overlap. The cost is the ring: a tile of 4 x 4 chunks
+now corrects 6 x 6 (reading 8 x 8) and generates 6 x 6, where it corrected
+4 x 4 (reading 6 x 6) and generated 4 x 4, and the ring is load-bearing (the
+planted break above).
+In absolute terms it is 90 ms on the app's default view.
+
+The module grew from 548,809 to 554,359 bytes.
 
 ### Vulcanus: the terrain graded against a real surface (2026-11-26)
 

@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 import { withDiffArtifacts } from "./diffArtifacts";
 import { decodePng, type DecodedImage } from "./oracle/decodePng";
 import realSurface from "./fixtures/oracle-aquilo-real-surface.seed123456.json";
+import realEntities from "./fixtures/oracle-aquilo-real-surface-entities.seed123456.json";
 import {
   consultedCount,
   expectFrozen,
@@ -43,11 +44,13 @@ import type { AquiloRenderRequest, AquiloResourceControls } from "../src/noise/w
  * 2. The terrain render against `oracle-preview-aquilo-terrain.seed123456.png`,
  *    every one of the 1,048,576 pixels, now as a REFERENCE: it differs exactly
  *    by the correction's footprint, 718 pixels. Before the correction it was 0.
- * 3. The composite, wells and icebergs included, against
- *    `oracle-preview-aquilo-full.seed123456.png`, every pixel (#492). The
- *    entities still match the preview's (#553 is about the real world's); the
- *    terrain under them differs by the correction's footprint. Plus a superset
- *    check on the entity footprint view.
+ * 3. The wells and icebergs of the `all`, `resources` and `rocks` views against
+ *    `oracle-aquilo-real-surface-entities.seed123456.json`, every entity a
+ *    REAL surface holds over the whole 1024 window (#553): 0 pixels differ
+ *    from our terrain with the game's entities painted on it. The game's map
+ *    preview skips the apply step and runs on the raw tiles, so it shows about
+ *    2.4 times as many (1,501 against 635); its full PNG is now a reference,
+ *    with a superset check on the entity footprint view beside it.
  * 4. Byte-identity of the composites on small windows, frozen in
  *    `tier3-render-checksums.json` under `aquilo:render`, plus the tiling and
  *    slider checks that keep the worker pool honest.
@@ -443,88 +446,184 @@ describe("the game's terrain PNG, for reference only", () => {
   }, 300000);
 });
 
-describe("the WASM engine draws the game's full preview, entities included", () => {
-  /**
-   * **Our composite against the game's full preview, every pixel, nothing
-   * masked.** The full PNG is the only reference with the resource controls at
-   * NEUTRAL, so it grades the island shapes at default sliders as well as
-   * every well and iceberg.
-   *
-   * The entities come from the game's own per-chunk generator
-   * (`crates/fmw-noise/src/placement/generate.rs`, #492): one unsalted taus88
-   * stream per chunk shared by the five autoplace groups, jitter included, and
-   * drawn by the preview's rule - no entity-against-entity collision, each
-   * entity clipped to its own chunk, the first queued winning an overlap. The
-   * per-colour counts are asserted beside the total so a failure says which
-   * layer moved.
-   *
-   * **3 entity pixels differ, all at the capture's bottom edge, and they are frozen
-   * there.** They belong to one huge iceberg at (211.375, 511.6875) whose box
-   * reaches tile row 512, one past the 1024-tile capture. The game did not
-   * draw it; we do. The leading explanation is that the preview generates
-   * tiles only inside its own area, so the generator's tile check finds no
-   * ground past the edge. That was seen once, not read from code. Only 4 of
-   * our entities cross the capture edge at all, and the other 3 (big icebergs
-   * beside it) are fully covered by neighbours, so they cannot confirm or
-   * refute it. The app renders a continuous map, so the engine does not copy
-   * an edge that only a fixed-size capture has. Inside a border of
-   * `EDGE_PX` pixels - more than any Aquilo box reaches - no entity pixel
-   * differs.
-   *
-   * **The terrain under the entities is the real surface's, not the
-   * preview's (#454), so it differs from this PNG at `TERRAIN_PX` pixels**,
-   * every one a tile colour on both sides. That is the tile correction's
-   * footprint at neutral levers where no entity covers it. Against an
-   * uncommitted 1024 x 1024 real surface at neutral levers with every entity
-   * autoplace removed (2026-11-26), the corrected terrain matches `get_tile` at
-   * all 1,048,576 tiles and the raw argmax differs at 1,358 by colour. On the
-   * 1,042,881 pixels where both images show a tile, our render differs from
-   * this PNG at exactly the 1,064 where that real surface does. It was 0 before
-   * the correction. The entities are still the preview's (#553).
-   */
-  const TERRAIN_PX = 1064;
+/**
+ * Each prototype's map-gen box in 1/256 tile (half width, half height), and
+ * its place in the paint order: the module paints the HIGHER rank first, so
+ * the earlier autoplace group ends on top (`AquiloPlaced::paint_rank`).
+ */
+const REAL_ENTITY_SPECS: Record<
+  string,
+  { readonly half: readonly [number, number]; readonly rank: number; readonly name: EntityName }
+> = {
+  "fluorine-vent": { half: [358, 358], rank: 0, name: "fluorineVent" },
+  "lithium-brine": { half: [358, 358], rank: 1, name: "lithiumBrine" },
+  "lithium-iceberg-huge": { half: [473, 320], rank: 2, name: "iceberg" },
+  "lithium-iceberg-big": { half: [256, 192], rank: 3, name: "iceberg" },
+  "crude-oil": { half: [358, 358], rank: 4, name: "crudeOil" },
+};
+type RealEntityView = "all" | "resources" | "rocks";
+const shownIn = (view: RealEntityView, name: EntityName): boolean =>
+  view === "all" || (view === "rocks") === (name === "iceberg");
 
-  it("matches the full PNG on every entity pixel; the terrain differs by the correction", async () => {
-    const game = fullPng();
-    const ours = await pngWindowRender("all, levers neutral", { view: "all" });
-    const EDGE_PX = 4;
-    let differing = 0;
-    let entityInside = 0;
-    let terrainOnly = 0;
-    for (let y = 0; y < SIZE; y++) {
-      for (let x = 0; x < SIZE; x++) {
-        const i = y * SIZE + x;
-        const g = gameKey(game, i);
-        const o = oursKey(ours, i);
-        if (g === o) continue;
-        differing++;
-        if (TILE_KEYS.has(g) && TILE_KEYS.has(o)) {
-          terrainOnly++;
-          continue;
-        }
-        const inside = x >= EDGE_PX && y >= EDGE_PX && x < SIZE - EDGE_PX && y < SIZE - EDGE_PX;
-        if (inside) entityInside++;
+/**
+ * OUR terrain render of the 1024 window with the GAME's entities painted on
+ * it the way the module paints its own: each covers the tiles `floor(left)`
+ * to `ceil(right) - 1`, the higher paint rank first. A pixel where this
+ * differs from our view render is a misplaced, missing or extra entity.
+ */
+function terrainWithGameEntities(terrain: Uint8ClampedArray, view: RealEntityView): DecodedImage {
+  const rgb = new Uint8Array(SIZE * SIZE * 3);
+  for (let i = 0; i < SIZE * SIZE; i++) rgb.set(terrain.subarray(i * 4, i * 4 + 3), i * 3);
+  const list = realEntities.entities
+    .map(([name, x, y]) => {
+      const spec = REAL_ENTITY_SPECS[name as string];
+      if (!spec) throw new Error(`unknown entity ${String(name)}`);
+      return { spec, x: Math.round((x as number) * 256), y: Math.round((y as number) * 256) };
+    })
+    .filter((e) => shownIn(view, e.spec.name))
+    .sort((a, b) => b.spec.rank - a.spec.rank);
+  for (const { spec, x, y } of list) {
+    const [hw, hh] = spec.half;
+    const x0 = Math.floor((x - hw) / 256) - PNG_WINDOW.originX;
+    const x1 = Math.floor((x + hw - 1) / 256) - PNG_WINDOW.originX;
+    const y0 = Math.floor((y - hh) / 256) - PNG_WINDOW.originY;
+    const y1 = Math.floor((y + hh - 1) / 256) - PNG_WINDOW.originY;
+    const colour = ENTITY_COLORS[spec.name];
+    for (let py = Math.max(0, y0); py <= Math.min(SIZE - 1, y1); py++) {
+      for (let px = Math.max(0, x0); px <= Math.min(SIZE - 1, x1); px++) {
+        rgb.set(colour, (py * SIZE + px) * 3);
       }
     }
-    let gameEntities = { crudeOil: 0, lithiumBrine: 0, fluorineVent: 0, iceberg: 0 };
+  }
+  return { width: SIZE, height: SIZE, rgb };
+}
+
+describe("the WASM engine draws the wells and icebergs a real surface holds (#553)", () => {
+  it("the fixture is the derived seed's surface at 2.1.23, the map a player gets", () => {
+    expect(realEntities.surfaceSeed).toBe(SEED0);
+    expect(realEntities.buildLine).toContain("Version: 2.1.23 ");
+    expect(realEntities.window).toEqual({ x0: -512, y0: -512, width: SIZE, height: SIZE });
+    expect(realEntities.totals).toEqual({
+      "crude-oil": 60,
+      "fluorine-vent": 16,
+      "lithium-brine": 51,
+      "lithium-iceberg-big": 460,
+      "lithium-iceberg-huge": 48,
+    });
+    // The ring past the window's edge holds two more.
+    expect(realEntities.entities).toHaveLength(635 + 2);
+  });
+
+  /**
+   * **0 of 1,048,576 pixels in each view.** Every one of the 635 wells and
+   * icebergs a real surface places in the window is drawn at the game's
+   * position, and nothing else is. The Rust tests grade the same entities by
+   * position (`crates/fmw-noise/src/fixtures/aquilo_real_surface.rs`: 635 of
+   * 635 over the window, and two smaller windows in a debug build).
+   *
+   * The paint order where a well and an iceberg share a tile is the module's
+   * own rule, used on both sides here, so this does not grade it; see the
+   * overlap test below for where it comes from.
+   */
+  it.each(["all", "resources", "rocks"] as const)(
+    "the %s view matches the real surface at every pixel",
+    async (view) => {
+      const terrain = await pngWindowRender("terrain, levers neutral", { view: "terrain" });
+      const ours = await pngWindowRender(`${view}, levers neutral`, { view });
+      const want = terrainWithGameEntities(terrain, view);
+      const n = countDiffering(want, ours);
+      withDiffArtifacts(
+        {
+          spec: "wasmAquiloRenderParity",
+          case: `aquilo-${view}-vs-real-surface-entities`,
+          game: want,
+          ours: { width: SIZE, height: SIZE, rgba: ours },
+        },
+        () => {
+          expect(n).toBe(0);
+        },
+      );
+      // The view really draws entities, so the 0 above is not a terrain match.
+      const counts = entityCounts(ours);
+      if (view !== "rocks") expect(counts.crudeOil).toBeGreaterThan(0);
+      if (view !== "resources") expect(counts.iceberg).toBeGreaterThan(0);
+    },
+    300000,
+  );
+
+  /**
+   * The app cuts the preview into 128-pixel tiles, one per worker. Each tile
+   * places its own chunks plus one ring (`AQUILO_ENTITY_RING_CHUNKS`), so the
+   * tiles must stitch to the whole render byte for byte. With no ring they do
+   * not: an entity's box reaches into the next chunk, and a real surface
+   * applies the chunk above or to the left first.
+   */
+  it("the app's 128-pixel tiles stitch to the whole render", async () => {
+    const whole = await pngWindowRender("all, levers neutral", { view: "all" });
+    const e = await engine();
+    const full: ImageBox = {
+      originX: PNG_WINDOW.originX,
+      originY: PNG_WINDOW.originY,
+      width: SIZE,
+      height: SIZE,
+      tilesPerPixel: 1,
+    };
+    const tiles = planTiles(full, 128).map((t) => ({
+      ...t,
+      data: renderThroughWasm(e, {
+        ...PNG_WINDOW,
+        view: "all",
+        originX: t.originX,
+        originY: t.originY,
+        width: t.width,
+        height: t.height,
+      }).slice(),
+    }));
+    expect(tiles).toHaveLength(64);
+    expect(stitchTiles(full, tiles)).toEqual(whole);
+  }, 300000);
+});
+
+describe("the game's full preview PNG, for reference only", () => {
+  /**
+   * **The preview is not the target, and it holds far more entities.** It
+   * runs the generator on the raw argmax and never applies the queue, so
+   * overlapping icebergs all stay: the game's own `--report-quantities`
+   * queues 1,501 entities in this window where a real surface holds 635
+   * (551 against 198 over -256..255, `scripts/probes/real-surface-counts`,
+   * 2026-11-27). Its PNG draws 5,692 entity pixels and our `all` view, the
+   * real surface's, 4,716: the pixel gap is smaller than the count gap
+   * because the preview's extra icebergs mostly overlap each other.
+   *
+   * **Where both images show a tile, they differ at 1,036 pixels.** That is
+   * the tile correction's footprint at neutral levers where neither image
+   * draws an entity (1,064 before #553, when our entities were the preview's
+   * and covered the same pixels as the PNG's). Against an uncommitted 1024 x 1024 real surface at neutral
+   * levers with every entity autoplace removed (2026-11-26), the corrected
+   * terrain matches `get_tile` at all 1,048,576 tiles. The map a player gets
+   * also has the wells' tile rewrite, which neither image draws: 2,756 tiles
+   * of this window (`oracle-aquilo-real-surface-entities`, `wellTileRewrite`).
+   */
+  const PREVIEW_ENTITY_PX = 5692;
+  const OUR_ENTITY_PX = 4716;
+  const TERRAIN_PX = 1036;
+
+  it("draws far more entities than a real surface, and the terrain differs by the correction", async () => {
+    const game = fullPng();
+    const ours = await pngWindowRender("all, levers neutral", { view: "all" });
+    let terrainOnly = 0;
+    let gameEntityPx = 0;
+    let ourEntityPx = 0;
     for (let i = 0; i < SIZE * SIZE; i++) {
-      const n = ENTITY_BY_KEY.get(gameKey(game, i));
-      if (n) gameEntities = { ...gameEntities, [n]: gameEntities[n] + 1 };
+      const g = gameKey(game, i);
+      const o = oursKey(ours, i);
+      if (ENTITY_BY_KEY.has(g)) gameEntityPx++;
+      if (ENTITY_BY_KEY.has(o)) ourEntityPx++;
+      if (g !== o && TILE_KEYS.has(g) && TILE_KEYS.has(o)) terrainOnly++;
     }
-    withDiffArtifacts(
-      {
-        spec: "wasmAquiloRenderParity",
-        case: "aquilo-full-vs-game",
-        game,
-        ours: { width: SIZE, height: SIZE, rgba: ours },
-      },
-      () => {
-        expect(entityInside).toBe(0);
-        expect(terrainOnly).toBe(TERRAIN_PX);
-        expect(differing).toBe(TERRAIN_PX + 3);
-        expect(entityCounts(ours)).toEqual({ ...gameEntities, iceberg: gameEntities.iceberg + 3 });
-      },
-    );
+    expect(gameEntityPx).toBe(PREVIEW_ENTITY_PX);
+    expect(ourEntityPx).toBe(OUR_ENTITY_PX);
+    expect(terrainOnly).toBe(TERRAIN_PX);
   }, 300000);
 });
 
@@ -677,12 +776,18 @@ describe("the WASM engine renders Aquilo's views to their frozen bytes", () => {
   });
 
   /**
-   * Where a well and an iceberg cover the same tile, the one the game queued
-   * FIRST is drawn. The groups queue in autoplace `order`: fluorine vent and
+   * Where a well and an iceberg cover the same tile, the one of the earlier
+   * autoplace group is drawn. The groups queue in `order`: fluorine vent and
    * lithium brine before the icebergs, crude oil after them. So the composite
    * shows brine or vent over an iceberg, and an iceberg over crude oil. Both
    * kinds of overlap are found from the two single-layer views over both
    * windows; each must occur, so neither half of the rule is vacuous.
+   *
+   * This is the preview's rule (the first queued wins), measured on its PNG
+   * in #492. A real surface lets a well and an iceberg overlap, because their
+   * collision masks share no layer, but how a player's map draws two such
+   * entities on one tile was not measured; the real-surface test above paints
+   * both sides by this rule, so it cannot grade it.
    */
   it("an overlap shows whichever entity the game queued first", async () => {
     const e = await engine();
@@ -722,14 +827,15 @@ describe("the WASM engine renders Aquilo's views to their frozen bytes", () => {
 describe("tiled equals whole for the all view", () => {
   /**
    * 256 x 256 as one request against the same window cut into tiles. Since
-   * #492 a pixel reads only its own chunk's entities (the preview draws each
-   * entity inside its own chunk only), so the tiles need no halo at all, and
-   * the worker pool's `placementSweepBox` is not read for Aquilo.
+   * #553 each request places its own chunks plus one ring
+   * (`AQUILO_ENTITY_RING_CHUNKS`), so a tile needs no halo from the worker
+   * pool, and the pool's `placementSweepBox` is not read for Aquilo.
    *
    * The tiles are 100 pixels wide, so their seams at x = -28 and x = 72 cut
    * through chunks rather than along chunk lines. That is the case a
    * chunk-local cache could get wrong, and the control below shows entities
-   * really are drawn across those seams.
+   * really are drawn across those seams. The app's own 128-pixel tiles over
+   * the whole 1024 window are stitched in the real-surface tests above.
    */
   const FULL: ImageBox = {
     originX: -128,
