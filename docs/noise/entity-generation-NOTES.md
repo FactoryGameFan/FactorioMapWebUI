@@ -468,9 +468,9 @@ Two apply rules were MEASURED there, not read from the binary
 (`Surface::collide` was not read):
 
 - **Boxes that only touch collide.** With strict overlap instead, the replay
-  keeps icebergs the game dropped. The control is
-  `aquilo_real_surface_replay_needs_touching_boxes_to_collide`, which asserts
-  that the strict rule places more than 209 and matches fewer.
+  keeps icebergs the game dropped: 214 placed, 201 of them the game's. The
+  control is `aquilo_real_surface_replay_controls` (since #553; it was
+  `aquilo_real_surface_replay_needs_touching_boxes_to_collide`).
 - **Chunks are applied row-major**, y outer and x inner. The order decides
   which of two entities on either side of a chunk edge survives. In a scratch
   Python simulator (not kept in the repo), a spiral order gave 206 of 209 and
@@ -486,9 +486,36 @@ matched. That gap is how tile correction was found to matter. A change of land
 subtype (snow against ice) changes nothing for the stream, because every land
 tile admits an iceberg.
 
+**Since #553 our own corrected tiles do the same job** (2026-11-27). The
+corrected land matches this surface's at all 409,600 tiles, and the replay on
+it places the same 209 of 209 (`aquilo_real_surface_replay_on_our_corrected_tiles`).
+On the raw argmax it places 222, only 86 of them the game's. That is the path
+the app's `all`, `resources` and `rocks` views now draw
+(`placement::aquilo::real_surface_window`).
+
+### A real surface over the app's default window: 635 of 635 (#553)
+
+`test/fixtures/oracle-aquilo-real-surface-entities.seed123456.json`
+(`scripts/probes/aquilo-real-surface-entities`) holds every well and iceberg
+over -512..511 on the map a player gets: no data-stage mod, one radius-18
+request. The shipped path (our corrected tiles over the window's chunks plus
+one ring, then apply row-major) places all 635 at the game's positions to the
+1/256 tile, and nothing else (`aquilo_entities_whole_window_real_surface`,
+release). Without the ring, 3 of the 635 are wrong. The map preview queues
+1,501 in the same window.
+
+The wells' `created_effect` rewrites tiles near each well (2,756 tiles of the
+window, up to 5 tiles from a well), but moves no entity: a run with the
+effect stripped placed the same entities.
+
 ### The preview: the whole 1024 by 1024 PNG, 3 pixels at the edge
 
-The game's map preview runs no tile correction, so on our tiles (which are the
+**Superseded by #553 as a grade of the shipped render, kept as the record of
+the preview's drawing rule.** The engine no longer draws the preview's
+entities, so the test named below is gone; the spec now compares the full PNG
+as a reference only.
+
+The game's map preview runs no tile correction, so on our raw tiles (the
 preview's tiles) the stream reproduces the preview PNG. The preview draws by a
 rule that was MEASURED against its PNG, not read from code
 (`preview_footprint` in `generate.rs`):
@@ -696,16 +723,20 @@ Two smaller gaps in the Aquilo inputs:
 ## How to re-check
 
 ```bash
-# The model's unit tests, the Aquilo wiring, and the two real-surface tests.
+# The model's unit tests, the Aquilo wiring, and the real-surface tests.
 cargo test -p fmw-noise placement::
 cargo test -p fmw-noise aquilo_real_surface_replay
+cargo test -p fmw-noise aquilo_entit
+cargo test -p fmw-noise --release aquilo_entities_whole_window -- --ignored
 cargo test -p fmw-noise the_tiny_vent_lands_where_the_game_puts_it
 
-# The preview: the whole-PNG test, the overlap test and the tiling test.
+# The render against the real surface, the overlap test and the tiling tests.
 pnpm vp test test/wasmAquiloRenderParity.spec.ts
 
-# Re-capture the real surface (about 10 seconds, needs both headless installs).
+# Re-capture the 640 surface (about 10 seconds, needs both headless installs).
 node --experimental-strip-types scripts/probes/aquilo-entity-stream/capture.ts
+# Re-capture the 1024 window, the map a player gets (about 10 seconds, 2.1.23).
+node --experimental-strip-types scripts/probes/aquilo-real-surface-entities/capture.ts
 ```
 
 `scripts/verify-rust.sh` lists the two `fixtures.rs` tests under

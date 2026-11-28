@@ -1,5 +1,7 @@
-//! Aquilo's wells and icebergs, placed by the game's own per-chunk generator
-//! ([`super::generate`]) and drawn by the preview's rule (#492).
+//! Aquilo's wells and icebergs, placed as a REAL surface places them (#553):
+//! the game's own per-chunk generator ([`super::generate`], #492) on the
+//! corrected tiles, then the apply step's entity-against-entity collision,
+//! which the game's map preview skips.
 //!
 //! Aquilo is the first planet where every entity autoplacer is ported, so
 //! it is the first that can run the real stream: five prototypes, each its
@@ -33,9 +35,26 @@
 //! The wells' `collision_mask` is `{resource}`, and no Aquilo tile carries
 //! that layer (`tile_collision_masks.ammoniacal_ocean()` comments it out), so
 //! a well is a candidate on every tile and each well group spends 1,024 draws
-//! per chunk. The icebergs' mask holds `water_tile`, which both oceans and
-//! brash ice carry, so an iceberg is a candidate only on the six land tiles,
-//! and its box must cover land only.
+//! per chunk. The icebergs' mask is `{item, object, player, water_tile}`, and
+//! both oceans and brash ice carry `water_tile`, so an iceberg is a candidate
+//! only on the six land tiles, and its box must cover land only.
+//!
+//! **The stream reads the CORRECTED tiles.** A real surface runs tile
+//! correction before the entity stage, and every iceberg candidate on land
+//! spends a draw, so the shore decides where every later draw lands. On the
+//! raw argmax (the preview's tiles) the replay of the 640 surface places 222
+//! entities, only 86 of them among the game's 209; on the corrected tiles it
+//! places exactly the game's 209 (`fixtures`).
+//!
+//! ## Apply
+//!
+//! A real surface applies each chunk's queue in queue order, dropping an
+//! entity whose map-gen box meets an already placed one on a shared collision
+//! layer (`EntityMapGenerationTask::apply`, see
+//! `docs/noise/entity-generation-NOTES.md`). Boxes that only touch collide,
+//! and chunks apply row-major; both were measured here first (#492). The two
+//! masks share no layer, so a well never blocks an iceberg, or the other way
+//! round: wells block wells and icebergs block icebergs.
 //!
 //! ## Richness
 //!
@@ -48,18 +67,20 @@
 //! as positive. **An imported string with an Aquilo richness of 0 would draw
 //! wells the game does not place.**
 //!
-//! ## Why the preview and a real surface differ
+//! ## What the wells do to the tiles, and why it is not drawn
 //!
-//! The stream reads the tiles, and a real surface runs tile correction where
-//! the preview does not. Replayed on our tiles, which are the preview's, the
-//! stream reproduces the game's preview PNG. Replayed on the game's
-//! real-surface tiles and then applied with entity collision, it reproduces
-//! the real surface. `fixtures` pins the second against
-//! `oracle-aquilo-surface.seed123456.json`.
+//! Each well's `created_effect` spawns two explosions whose `set-tile`
+//! effects turn the water near it into snow and ice. The outer one is a
+//! `cluster` of seven at a random distance, drawn from the surface's own
+//! random generator, which a tile of the preview cannot know (the same reason
+//! Gleba's stone takes the expected outcome of its tree-removal roll; read
+//! from the Lua, not traced). The terrain is drawn without it: over the
+//! default window it rewrites 2,756 tiles, 2,120 outside every well's 3 x 3
+//! footprint, up to 5 tiles from a well. It moves no entity: the entity list is the same with the effect removed
+//! (`oracle-aquilo-entities`, `scripts/probes/aquilo-real-surface-entities`).
 
-use super::generate::{
-    generate_chunk, preview_footprint, Autoplacer, ChunkInputs, MapGenBox, Positioning, Queued,
-};
+use super::generate::FIXED_ONE;
+use super::generate::{generate_chunk, Autoplacer, ChunkInputs, MapGenBox, Positioning, Queued};
 use super::roll::{CHUNK, TILES_PER_CHUNK};
 use crate::expressions::aquilo_stack::{tile_at, AquiloFields, AquiloStack, KeptFields};
 use crate::resources::aquilo_wells::AquiloWell;
@@ -67,7 +88,6 @@ use crate::rocks::aquilo_icebergs::{iceberg_probabilities, iceberg_tile_allowed,
 use crate::tiles::aquilo_catalog::AquiloTile;
 use core::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
 
 /// One of Aquilo's five entity autoplacers, in group order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +137,20 @@ pub const AQUILO_AUTOPLACERS: [Autoplacer; 5] = [
 /// One prototype per group.
 pub const AQUILO_GROUPS: [&[usize]; 5] = [&[0], &[1], &[2], &[3], &[4]];
 
+/// The farthest any box reaches from its position, on either axis, in 1/256
+/// tile: the huge iceberg's 473. The apply step searches this far past a new
+/// box for entities that might meet it.
+const MAX_REACH: i64 = 473;
+
+/// Collision layers as bits: only the ones these five prototypes carry.
+pub mod layer {
+    pub const RESOURCE: u32 = 1 << 0;
+    pub const ITEM: u32 = 1 << 1;
+    pub const OBJECT: u32 = 1 << 2;
+    pub const PLAYER: u32 = 1 << 3;
+    pub const WATER_TILE: u32 = 1 << 4;
+}
+
 impl AquiloEntity {
     /// The prototype's name in the game's own vocabulary.
     #[must_use]
@@ -141,11 +175,25 @@ impl AquiloEntity {
         }
     }
 
-    /// The colour the preview draws: the well's `map_color`, or the icebergs'
+    /// The colour a map draws: the well's `map_color`, or the icebergs'
     /// shared one.
     #[must_use]
     pub fn color(self) -> [u8; 3] {
         self.well().map_or(ICEBERG_COLOR, AquiloWell::color)
+    }
+
+    /// The prototype's collision layers: a resource's default `{resource}`
+    /// for the wells (`resources.lua` sets no mask of its own), and
+    /// `decoratives-aquilo.lua`'s `{item, object, player, water_tile}` for
+    /// both icebergs (read at 2.1.23).
+    #[must_use]
+    pub fn layers(self) -> u32 {
+        use layer::{ITEM, OBJECT, PLAYER, RESOURCE, WATER_TILE};
+        if self.well().is_some() {
+            RESOURCE
+        } else {
+            ITEM | OBJECT | PLAYER | WATER_TILE
+        }
     }
 
     /// The autoplace probability at a tile's fields, an f32 widened to f64.
@@ -175,7 +223,9 @@ pub enum AquiloEntityView {
 }
 
 impl AquiloEntityView {
-    fn shows(self, e: AquiloEntity) -> bool {
+    /// Whether the view draws this entity.
+    #[must_use]
+    pub fn shows(self, e: AquiloEntity) -> bool {
         match self {
             Self::All => true,
             Self::Wells => e.well().is_some(),
@@ -184,13 +234,21 @@ impl AquiloEntityView {
     }
 }
 
-/// The generator's inputs over one chunk, read from the stack.
+/// The tiles the generator may look at, by world tile. `None` is a tile the
+/// caller did not compute; it blocks every iceberg, so a box that reaches
+/// past the computed area is refused rather than placed on a guess. A well
+/// never asks.
+pub type AquiloTiles<'a> = &'a dyn Fn(i64, i64) -> Option<AquiloTile>;
+
+/// The generator's inputs over one chunk.
 ///
-/// The chunk's own 1,024 tiles are evaluated once, up front. Tiles outside
-/// the chunk are needed only to check an iceberg's box near the edge, and are
-/// evaluated on demand.
+/// The chunk's own 1,024 fields are evaluated once, up front, or taken from
+/// a correction pass that kept them. The tiles come from `tiles` when given
+/// (a real surface's corrected tiles); without it they are the raw argmax at
+/// each tile, the preview's, evaluated on demand outside the chunk.
 pub struct AquiloChunkInputs<'a> {
     stack: &'a RefCell<AquiloStack>,
+    tiles: Option<AquiloTiles<'a>>,
     chunk_x: i64,
     chunk_y: i64,
     own: Vec<AquiloFields>,
@@ -198,20 +256,22 @@ pub struct AquiloChunkInputs<'a> {
 }
 
 impl<'a> AquiloChunkInputs<'a> {
+    /// The raw argmax as the tiles: the preview's.
     #[must_use]
     pub fn new(stack: &'a RefCell<AquiloStack>, chunk_x: i64, chunk_y: i64) -> Self {
-        Self::reusing(stack, chunk_x, chunk_y, None)
+        Self::on_tiles(stack, None, None, chunk_x, chunk_y)
     }
 
-    /// As [`Self::new`], taking a tile's fields from `kept` where a
-    /// correction pass already evaluated them. They are `eval_at`'s own
-    /// values, so the inputs are the same either way.
+    /// `tiles` as the tiles (the raw argmax when `None`), taking a tile's
+    /// fields from `kept` where a correction pass already evaluated them.
+    /// They are `eval_at`'s own values, so the inputs are the same either way.
     #[must_use]
-    pub fn reusing(
+    pub fn on_tiles(
         stack: &'a RefCell<AquiloStack>,
+        tiles: Option<AquiloTiles<'a>>,
+        kept: Option<&KeptFields>,
         chunk_x: i64,
         chunk_y: i64,
-        kept: Option<&KeptFields>,
     ) -> Self {
         let mut own = Vec::with_capacity(TILES_PER_CHUNK);
         for i in 0..TILES_PER_CHUNK {
@@ -228,6 +288,7 @@ impl<'a> AquiloChunkInputs<'a> {
         }
         Self {
             stack,
+            tiles,
             chunk_x,
             chunk_y,
             own,
@@ -241,7 +302,8 @@ impl<'a> AquiloChunkInputs<'a> {
         ((0..CHUNK).contains(&lx) && (0..CHUNK).contains(&ly)).then(|| (ly * CHUNK + lx) as usize)
     }
 
-    fn tile(&mut self, tx: i64, ty: i64) -> AquiloTile {
+    /// The raw argmax at a tile.
+    fn raw_tile(&mut self, tx: i64, ty: i64) -> AquiloTile {
         if let Some(i) = self.own_index(tx, ty) {
             return self.own[i].tile();
         }
@@ -268,105 +330,319 @@ impl ChunkInputs for AquiloChunkInputs<'_> {
     }
 
     fn tile_blocks(&mut self, proto: usize, tx: i64, ty: i64) -> bool {
-        let tile = self.tile(tx, ty);
-        AQUILO_ENTITIES[proto].blocked_by(tile)
+        let e = AQUILO_ENTITIES[proto];
+        if e.well().is_some() {
+            return false;
+        }
+        match self.tiles {
+            Some(tiles) => tiles(tx, ty).is_none_or(|t| e.blocked_by(t)),
+            None => {
+                let t = self.raw_tile(tx, ty);
+                e.blocked_by(t)
+            }
+        }
     }
 }
 
-/// One chunk's queue and its preview footprint for each view.
-struct ChunkPaint {
-    queue: Vec<Queued>,
-    all: [Option<u16>; TILES_PER_CHUNK],
-    wells: [Option<u16>; TILES_PER_CHUNK],
-    icebergs: [Option<u16>; TILES_PER_CHUNK],
+/// One chunk's queue on `tiles` (the raw argmax when `None`), in queue
+/// order.
+#[must_use]
+pub fn queue_chunk(
+    stack: &RefCell<AquiloStack>,
+    tiles: Option<AquiloTiles<'_>>,
+    kept: Option<&KeptFields>,
+    chunk_x: i64,
+    chunk_y: i64,
+) -> Vec<Queued> {
+    let mut inputs = AquiloChunkInputs::on_tiles(stack, tiles, kept, chunk_x, chunk_y);
+    generate_chunk(
+        chunk_x,
+        chunk_y,
+        &AQUILO_GROUPS,
+        &AQUILO_AUTOPLACERS,
+        &mut inputs,
+    )
 }
 
-/// Aquilo's entities over a render: one generator run per chunk, cached.
-///
-/// A pixel's colour depends only on its own chunk, because the preview draws
-/// each entity only inside the chunk that generated it. So a tiled render
-/// agrees with a whole one with no halo.
-pub struct AquiloEntities<'a> {
-    stack: &'a RefCell<AquiloStack>,
-    cache: RefCell<BTreeMap<(i64, i64), Rc<ChunkPaint>>>,
-    kept: Option<KeptFields>,
+/// The queue the generator builds for one chunk on the raw argmax (the
+/// preview's tiles), as (entity, x, y) in 1/256 tile.
+#[must_use]
+pub fn preview_chunk_queue(
+    stack: &RefCell<AquiloStack>,
+    chunk_x: i64,
+    chunk_y: i64,
+) -> Vec<(AquiloEntity, i64, i64)> {
+    queue_chunk(stack, None, None, chunk_x, chunk_y)
+        .iter()
+        .map(|q| (AQUILO_ENTITIES[q.proto], q.x, q.y))
+        .collect()
 }
 
-impl<'a> AquiloEntities<'a> {
+/// Each chunk's queue on `tiles`, in the order given. A chunk's queue reads
+/// only the fields and the tiles, never another chunk's entities, so it can
+/// be built once and applied under several rules.
+#[must_use]
+pub fn queue_chunks(
+    stack: &RefCell<AquiloStack>,
+    tiles: Option<AquiloTiles<'_>>,
+    kept: Option<&KeptFields>,
+    chunks: &[(i64, i64)],
+) -> Vec<Vec<Queued>> {
+    chunks
+        .iter()
+        .map(|&(cx, cy)| queue_chunk(stack, tiles, kept, cx, cy))
+        .collect()
+}
+
+/// How the queue is applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Apply {
+    /// What a real surface does: an entity whose box meets (touching
+    /// included) a placed one on a shared layer is dropped.
+    RealSurface,
+    /// The same, but boxes that only touch do not collide. A control: the
+    /// game does not do this (`fixtures`).
+    StrictOverlap,
+    /// Every queued entity is kept, as the game's map preview draws them.
+    Preview,
+}
+
+/// One placed entity: its position and map-gen box in 1/256 tile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AquiloPlaced {
+    pub entity: AquiloEntity,
+    pub x: i64,
+    pub y: i64,
+    /// Left, top, right, bottom.
+    pub bounds: [i64; 4],
+}
+
+impl AquiloPlaced {
+    /// The tiles a map paints for it: `floor(left)` to `ceil(right) - 1` on
+    /// each axis, so an edge exactly on a tile line does not take the tile
+    /// past it. This is the drawing rule measured against the game's preview
+    /// PNG (`generate::preview_footprint`), without that rule's clip to the
+    /// entity's own chunk, which a real map does not have. Returns (x0, x1,
+    /// y0, y1), inclusive.
     #[must_use]
-    pub fn new(stack: &'a RefCell<AquiloStack>) -> Self {
-        Self {
-            stack,
-            cache: RefCell::new(BTreeMap::new()),
-            kept: None,
-        }
+    pub fn footprint(&self) -> (i64, i64, i64, i64) {
+        let [left, top, right, bottom] = self.bounds;
+        (
+            left.div_euclid(FIXED_ONE),
+            (right - 1).div_euclid(FIXED_ONE),
+            top.div_euclid(FIXED_ONE),
+            (bottom - 1).div_euclid(FIXED_ONE),
+        )
     }
 
-    /// As [`Self::new`], reading tile fields from `kept` where it has them
-    /// (see [`AquiloChunkInputs::reusing`]).
+    /// Where it sits in the paint order: a render paints the HIGHER ranks
+    /// first, so where two footprints share a tile the entity of the earlier
+    /// autoplace group is on top, the preview's own rule (the first queued
+    /// wins, measured on its PNG). Only a well and an iceberg can share a
+    /// tile, because each blocks its own kind; two icebergs that share one
+    /// paint the same colour.
     #[must_use]
-    pub fn reusing(stack: &'a RefCell<AquiloStack>, kept: KeptFields) -> Self {
-        Self {
-            kept: Some(kept),
-            ..Self::new(stack)
-        }
-    }
-
-    fn chunk(&self, chunk_x: i64, chunk_y: i64) -> Rc<ChunkPaint> {
-        if let Some(c) = self.cache.borrow().get(&(chunk_x, chunk_y)) {
-            return Rc::clone(c);
-        }
-        let mut inputs =
-            AquiloChunkInputs::reusing(self.stack, chunk_x, chunk_y, self.kept.as_ref());
-        let queue = generate_chunk(
-            chunk_x,
-            chunk_y,
-            &AQUILO_GROUPS,
-            &AQUILO_AUTOPLACERS,
-            &mut inputs,
-        );
-        let fp = |view: AquiloEntityView| {
-            preview_footprint(chunk_x, chunk_y, &queue, &AQUILO_AUTOPLACERS, &|p| {
-                view.shows(AQUILO_ENTITIES[p])
-            })
-        };
-        let paint = Rc::new(ChunkPaint {
-            all: fp(AquiloEntityView::All),
-            wells: fp(AquiloEntityView::Wells),
-            icebergs: fp(AquiloEntityView::Icebergs),
-            queue,
-        });
-        self.cache
-            .borrow_mut()
-            .insert((chunk_x, chunk_y), Rc::clone(&paint));
-        paint
-    }
-
-    /// The queue the generator built for one chunk, in queue order.
-    #[must_use]
-    pub fn chunk_queue(&self, chunk_x: i64, chunk_y: i64) -> Vec<(AquiloEntity, i64, i64)> {
-        self.chunk(chunk_x, chunk_y)
-            .queue
+    pub fn paint_rank(&self) -> usize {
+        AQUILO_ENTITIES
             .iter()
-            .map(|q| (AQUILO_ENTITIES[q.proto], q.x, q.y))
-            .collect()
+            .position(|e| *e == self.entity)
+            .unwrap_or(0)
+    }
+}
+
+/// The surface the apply step tests against: every placed entity, bucketed by
+/// the tile its position is on.
+struct Surface {
+    rule: Apply,
+    placed: Vec<AquiloPlaced>,
+    buckets: BTreeMap<(i64, i64), Vec<usize>>,
+}
+
+impl Surface {
+    fn new(rule: Apply) -> Self {
+        Self {
+            rule,
+            placed: Vec::new(),
+            buckets: BTreeMap::new(),
+        }
     }
 
-    /// The entity the preview draws on the tile containing `(x, y)`, if any.
-    #[must_use]
-    pub fn drawn_at(&self, x: f64, y: f64, view: AquiloEntityView) -> Option<AquiloEntity> {
-        #[allow(clippy::cast_possible_truncation)]
-        let (tx, ty) = (x.floor() as i64, y.floor() as i64);
-        let c = self.chunk(tx.div_euclid(CHUNK), ty.div_euclid(CHUNK));
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-        let i = (ty.rem_euclid(CHUNK) * CHUNK + tx.rem_euclid(CHUNK)) as usize;
-        let k = match view {
-            AquiloEntityView::All => c.all[i],
-            AquiloEntityView::Wells => c.wells[i],
-            AquiloEntityView::Icebergs => c.icebergs[i],
-        }?;
-        Some(AQUILO_ENTITIES[c.queue[usize::from(k)].proto])
+    /// Whether `b` meets the box of a placed entity on a shared layer.
+    fn collides(&self, e: AquiloEntity, b: [i64; 4]) -> bool {
+        if self.rule == Apply::Preview {
+            return false;
+        }
+        // Touching boxes meet; under the control they must overlap.
+        let edge = i64::from(self.rule == Apply::StrictOverlap);
+        // A placed entity whose box can meet `b` has its position within
+        // MAX_REACH of it on each axis, and is bucketed by that position.
+        let (x0, x1) = (
+            (b[0] - MAX_REACH).div_euclid(FIXED_ONE),
+            (b[2] + MAX_REACH).div_euclid(FIXED_ONE),
+        );
+        let (y0, y1) = (
+            (b[1] - MAX_REACH).div_euclid(FIXED_ONE),
+            (b[3] + MAX_REACH).div_euclid(FIXED_ONE),
+        );
+        for by in y0..=y1 {
+            for bx in x0..=x1 {
+                let Some(list) = self.buckets.get(&(bx, by)) else {
+                    continue;
+                };
+                for &k in list {
+                    let o = self.placed[k];
+                    if o.entity.layers() & e.layers() != 0
+                        && b[0] + edge <= o.bounds[2]
+                        && o.bounds[0] + edge <= b[2]
+                        && b[1] + edge <= o.bounds[3]
+                        && o.bounds[1] + edge <= b[3]
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
+
+    fn apply(&mut self, q: &Queued) {
+        let entity = AQUILO_ENTITIES[q.proto];
+        let bounds = q.bounds(&AQUILO_AUTOPLACERS);
+        if self.collides(entity, bounds) {
+            return;
+        }
+        let key = (q.x.div_euclid(FIXED_ONE), q.y.div_euclid(FIXED_ONE));
+        self.buckets.entry(key).or_default().push(self.placed.len());
+        self.placed.push(AquiloPlaced {
+            entity,
+            x: q.x,
+            y: q.y,
+            bounds,
+        });
+    }
+}
+
+/// Apply queues in order under `rule`. Returns every entity kept, in apply
+/// order.
+#[must_use]
+pub fn apply(queues: &[Vec<Queued>], rule: Apply) -> Vec<AquiloPlaced> {
+    let mut surface = Surface::new(rule);
+    for queue in queues {
+        for q in queue {
+            surface.apply(q);
+        }
+    }
+    surface.placed
+}
+
+/// Generate and apply the chunks `chunks` on `tiles`, in the order given,
+/// which should be the order a real surface applies them: row-major, y outer
+/// and x inner ([`rows`]). Returns every entity placed, in apply order.
+#[must_use]
+pub fn place_chunks(
+    stack: &RefCell<AquiloStack>,
+    tiles: AquiloTiles<'_>,
+    kept: Option<&KeptFields>,
+    chunks: &[(i64, i64)],
+) -> Vec<AquiloPlaced> {
+    apply(
+        &queue_chunks(stack, Some(tiles), kept, chunks),
+        Apply::RealSurface,
+    )
+}
+
+/// The chunks from `(cx0, cy0)` to `(cx1, cy1)` inclusive, row-major.
+#[must_use]
+pub fn rows(cx: (i64, i64), cy: (i64, i64)) -> Vec<(i64, i64)> {
+    (cy.0..=cy.1)
+        .flat_map(|y| (cx.0..=cx.1).map(move |x| (x, y)))
+        .collect()
+}
+
+/// Chunks generated around a window's own, on each side, when its entities
+/// are placed. A real surface applies chunks row-major, so an entity near a
+/// chunk edge can be blocked by one the chunk above or to the left placed
+/// first, and a huge iceberg's box reaches two tiles into the chunk beside
+/// it. One ring covers both. Those ring chunks are applied without THEIR
+/// earlier neighbours, which could only reach a window pixel through a chain
+/// of two edge collisions; `test/wasmAquiloRenderParity.spec.ts` stitches
+/// tiles cut through chunks to the whole render byte for byte, and the whole
+/// 1024 window matches the real surface.
+pub const AQUILO_ENTITY_RING_CHUNKS: i64 = 1;
+
+/// A window's terrain and entities as a real surface holds them.
+pub struct AquiloSurfaceWindow {
+    /// The first tile of the entity area: the window's chunks plus the ring.
+    pub area_origin: (i64, i64),
+    /// The entity area's size in tiles.
+    pub area_size: (i64, i64),
+    /// The corrected tiles of the entity area, row-major, y outer.
+    pub tiles: Vec<AquiloTile>,
+    /// Every entity placed in the entity area, in apply order.
+    pub placed: Vec<AquiloPlaced>,
+}
+
+impl AquiloSurfaceWindow {
+    /// The corrected tile at `(tx, ty)`, if it is in the entity area.
+    #[must_use]
+    pub fn tile(&self, tx: i64, ty: i64) -> Option<AquiloTile> {
+        let (ox, oy) = self.area_origin;
+        let (w, h) = self.area_size;
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        ((ox..ox + w).contains(&tx) && (oy..oy + h).contains(&ty))
+            .then(|| self.tiles[((ty - oy) * w + (tx - ox)) as usize])
+    }
+}
+
+/// The window `origin` .. `origin + size` as a real surface holds it: tile
+/// correction over the window's chunks plus `ring` chunks on each side (and
+/// `AQUILO_CORRECTION_MARGIN_CHUNKS` read past that), then every entity of
+/// those chunks generated on the corrected tiles and applied row-major.
+///
+/// Correction evaluates every tile of the entity area, and the generator
+/// reads the same fields there, so they are kept rather than evaluated twice
+/// while the area is at most `keep_max_chunks` chunks; above that the
+/// generator evaluates its own, with the same result.
+#[must_use]
+pub fn real_surface_window(
+    stack: &RefCell<AquiloStack>,
+    origin: (i64, i64),
+    size: (i64, i64),
+    ring: i64,
+    keep_max_chunks: i64,
+) -> AquiloSurfaceWindow {
+    use crate::expressions::aquilo_stack::AQUILO_CORRECTION_MARGIN_CHUNKS;
+    let cx = (
+        origin.0.div_euclid(CHUNK) - ring,
+        (origin.0 + size.0 - 1).div_euclid(CHUNK) + ring,
+    );
+    let cy = (
+        origin.1.div_euclid(CHUNK) - ring,
+        (origin.1 + size.1 - 1).div_euclid(CHUNK) + ring,
+    );
+    let area_origin = (cx.0 * CHUNK, cy.0 * CHUNK);
+    let area_size = ((cx.1 - cx.0 + 1) * CHUNK, (cy.1 - cy.0 + 1) * CHUNK);
+    let chunks = (cx.1 - cx.0 + 1) * (cy.1 - cy.0 + 1);
+    #[allow(clippy::cast_possible_truncation)]
+    let mut kept = (chunks <= keep_max_chunks)
+        .then(|| KeptFields::new((cx.0 as i32, cx.1 as i32), (cy.0 as i32, cy.1 as i32)));
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let tiles = stack.borrow_mut().corrected_tiles_keeping(
+        (area_origin.0 as i32, area_origin.1 as i32),
+        (area_size.0 as u32, area_size.1 as u32),
+        AQUILO_CORRECTION_MARGIN_CHUNKS,
+        kept.as_mut(),
+    );
+    let mut window = AquiloSurfaceWindow {
+        area_origin,
+        area_size,
+        tiles,
+        placed: Vec::new(),
+    };
+    let lookup = |tx: i64, ty: i64| window.tile(tx, ty);
+    let placed = place_chunks(stack, &lookup, kept.as_ref(), &rows(cx, cy));
+    window.placed = placed;
+    window
 }
 
 #[cfg(test)]
@@ -427,6 +703,13 @@ mod tests {
             };
             assert_eq!(placer.positioning, want, "{}", e.game_name());
         }
+        // MAX_REACH must cover every box, or the apply step misses a hit.
+        for p in &AQUILO_AUTOPLACERS {
+            let b = p.map_gen_box;
+            assert!([-b.left, -b.top, b.right, b.bottom]
+                .iter()
+                .all(|&r| r <= MAX_REACH));
+        }
     }
 
     /// A few wells the game's real surface and its preview agree on, at the
@@ -434,14 +717,13 @@ mod tests {
     #[test]
     fn the_preview_queue_holds_wells_the_game_placed() {
         let s = stack(DERIVED_SEED);
-        let e = AquiloEntities::new(&s);
         let has = |name: &str, x: f64, y: f64| {
             #[allow(clippy::cast_possible_truncation)]
             let (cx, cy) = (
                 (x.floor() as i64).div_euclid(32),
                 (y.floor() as i64).div_euclid(32),
             );
-            e.chunk_queue(cx, cy).iter().any(|&(k, qx, qy)| {
+            preview_chunk_queue(&s, cx, cy).iter().any(|&(k, qx, qy)| {
                 #[allow(clippy::cast_precision_loss)]
                 let at = (qx as f64 / 256.0, qy as f64 / 256.0);
                 k.game_name() == name && at == (x, y)
@@ -465,7 +747,7 @@ mod tests {
 
     /// The vents the generator queues within 2 tiles of the tiny vent's
     /// centre, over every chunk those tiles touch.
-    fn vents_near(e: &AquiloEntities<'_>, centre: (f64, f64)) -> Vec<(f64, f64)> {
+    fn vents_near(s: &RefCell<AquiloStack>, centre: (f64, f64)) -> Vec<(f64, f64)> {
         #[allow(clippy::cast_possible_truncation)]
         let (rx, ry) = (centre.0.round() as i64, centre.1.round() as i64);
         let mut chunks: Vec<(i64, i64)> = (-2..=2)
@@ -480,7 +762,7 @@ mod tests {
         chunks.dedup();
         let mut out = Vec::new();
         for (cx, cy) in chunks {
-            for (k, x, y) in e.chunk_queue(cx, cy) {
+            for (k, x, y) in preview_chunk_queue(s, cx, cy) {
                 #[allow(clippy::cast_precision_loss)]
                 let at = (x as f64 / 256.0, y as f64 / 256.0);
                 if k == AquiloEntity::FluorineVent
@@ -502,8 +784,7 @@ mod tests {
         for seed in [123_456_u32, 1, 4_000_000_000, DERIVED_SEED, 64_424_508] {
             let centre = tiny_vent_centre(seed);
             let s = stack(seed);
-            let e = AquiloEntities::new(&s);
-            let vents = vents_near(&e, centre);
+            let vents = vents_near(&s, centre);
             assert!(!vents.is_empty(), "seed {seed}");
             for (x, y) in &vents {
                 let d = (x - 0.5 - centre.0).hypot(y - 0.5 - centre.1);
@@ -529,19 +810,46 @@ mod tests {
             },
             AquiloBearings::from_host(seed),
         ));
-        let e = AquiloEntities::new(&s);
-        assert_eq!(vents_near(&e, tiny_vent_centre(seed)), vec![]);
+        assert_eq!(vents_near(&s, tiny_vent_centre(seed)), vec![]);
     }
 
+    fn queued(proto: usize, x: i64, y: i64) -> Queued {
+        Queued { proto, x, y }
+    }
+
+    /// Touching boxes collide; boxes a 1/256 tile apart do not; a well and
+    /// an iceberg share no layer, so they never collide.
     #[test]
-    fn a_pixel_depends_only_on_its_own_chunk() {
-        // A fresh cache asked one tile computes exactly one chunk.
-        let s = stack(DERIVED_SEED);
-        let e = AquiloEntities::new(&s);
-        let _ = e.drawn_at(5.5, -3.5, AquiloEntityView::All);
+    fn touching_boxes_collide_and_wells_never_meet_icebergs() {
+        // Two big icebergs (proto 3, 2.0 wide): 512 apart touch, 513 do not.
+        let kept = |rule, dx| apply(&[vec![queued(3, 0, 0), queued(3, dx, 0)]], rule).len();
+        assert_eq!(kept(Apply::RealSurface, 512), 1);
+        assert_eq!(kept(Apply::RealSurface, 513), 2);
+        assert_eq!(kept(Apply::StrictOverlap, 512), 2);
+        assert_eq!(kept(Apply::StrictOverlap, 511), 1);
+        // A crude oil on top of a big iceberg: both stay.
         assert_eq!(
-            e.cache.borrow().keys().copied().collect::<Vec<_>>(),
-            vec![(0, -1)]
+            apply(
+                &[vec![queued(3, 0, 0), queued(4, 128, 128)]],
+                Apply::RealSurface
+            )
+            .len(),
+            2
         );
+        // A vent on a brine: the second goes, under any rule but the preview.
+        let wells = [vec![queued(0, 128, 128)], vec![queued(1, 128 + 256, 128)]];
+        assert_eq!(apply(&wells, Apply::RealSurface).len(), 1);
+        assert_eq!(apply(&wells, Apply::Preview).len(), 2);
+    }
+
+    /// The footprint is `floor(left)` to `ceil(right) - 1`: a well at a tile
+    /// centre covers that tile and one either side.
+    #[test]
+    fn a_well_paints_three_by_three_tiles() {
+        let p = apply(
+            &[vec![queued(4, 5 * 256 + 128, -3 * 256 + 128)]],
+            Apply::Preview,
+        )[0];
+        assert_eq!(p.footprint(), (4, 6, -4, -2));
     }
 }
