@@ -47,7 +47,10 @@ use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
 use fmw_noise::placement::aquilo::{AquiloEntities, AquiloEntityView};
-use fmw_noise::placement::gleba::{place_chunks, rows, GlebaLayer, GlebaPaint};
+use fmw_noise::placement::gleba::{place_chunks_with, rows, GlebaLayer, GlebaPaint, GlebaPlaced};
+use fmw_noise::placement::gleba_cliffs::{
+    gleba_cliffs, stone_tiles, GlebaCliffControls, GlebaCliffObstacles, GLEBA_CLIFF_COLOR,
+};
 use fmw_noise::placement::roll::PLACEMENT_MARK_RADIUS_PX;
 use fmw_noise::resources::aquilo_wells::AquiloWell;
 use fmw_noise::resources::fulgora_catalog::{FulgoraScrapPlacement, SCRAP_MAP_COLOR};
@@ -299,7 +302,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
             VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ROCKS | VIEW_ALL | VIEW_ENTITY_FOOTPRINT
         ) | (
             PLANET_GLEBA,
-            VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ALL | VIEW_TREES
+            VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ALL | VIEW_TREES | VIEW_CLIFFS
         )
     );
     if !supported {
@@ -788,11 +791,26 @@ pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
 const GLEBA_ENTITY_RING_CHUNKS: i64 = 1;
 
 /// The most chunks a Gleba entity render keeps terrain fields for (about
-/// 40 KB each, so 13 MB at the cap). Sized, as Aquilo's is, to the app's
+/// 36 KB each, so 12 MB at the cap). Sized, as Aquilo's is, to the app's
 /// largest worker tile: a 512-pixel quarter of the preview touches 18 x 18
-/// chunks with the ring. At 100, the old cap, the tiles of a 15-worker pool
+/// chunks with the ring. At 100, an older cap, the tiles of a 15-worker pool
 /// (up to 117 chunks) fell back to evaluating the terrain twice.
 const GLEBA_KEPT_CHUNKS_MAX: i64 = 324;
+
+/// Rings of chunks past the entity chunks whose tiles a Gleba entity render
+/// corrects for the cliffs. **None, and that is measured and argued, not
+/// assumed.** The connection pass places cliff cells one chunk past the
+/// entity chunks; with no tiles there, each is destroyed as if on a blocking
+/// tile, which trims only the facing end of its neighbour (a changed
+/// orientation, no further cascade), within one 4-tile cell of the entity
+/// ring's outer edge. The entity ring is a whole chunk past the window, and a
+/// cliff paints and blocks at most 3.5 tiles from its cell, so no window
+/// pixel can see it. Stone outside the corrected area is missed the same
+/// way, with the same reach. Measured: two rings, one and none give the same
+/// whole 1024 window (cliffs exact) and the same sixteen 256-pixel tiles
+/// stitched to it (`test/wasmGlebaEntityParity.spec.ts`), and two rings cost
+/// +78% on the `all` view against +41% for one.
+const GLEBA_CLIFF_TILE_RING_CHUNKS: i64 = 0;
 
 /// Sweep the window and paint each pixel's Gleba tile in its `map_color`,
 /// and, for `trees`, `resources` and `all`, the entities a real surface
@@ -814,8 +832,13 @@ fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
     let stack = gleba_stack(req.seed0, p);
     let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
     let on_tiles = req.tiles_per_pixel == 1.0 && whole(req.origin_x) && whole(req.origin_y);
-    if on_tiles && matches!(req.view, VIEW_RESOURCES | VIEW_ALL | VIEW_TREES) {
-        render_gleba_entities(req, &stack, out);
+    if on_tiles
+        && matches!(
+            req.view,
+            VIEW_RESOURCES | VIEW_ALL | VIEW_TREES | VIEW_CLIFFS
+        )
+    {
+        render_gleba_entities(req, p, &stack, out);
         return;
     }
     let tiles = on_tiles.then(|| {
@@ -859,16 +882,22 @@ fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
 /// tiles, so two entities can share one: they paint in a fixed class order
 /// (`GlebaEntity::paint_pass`), the ten trees blended first, so the pixels do
 /// not depend on the order the entities were placed in.
-fn render_gleba_entities(req: &Request, stack: &GlebaStack, out: &mut [u8]) {
+fn render_gleba_entities(req: &Request, p: &GlebaParams, stack: &GlebaStack, out: &mut [u8]) {
     let (x0, y0) = (req.origin_x as i64, req.origin_y as i64);
     let (w, h) = (i64::from(req.width), i64::from(req.height));
     let ring = GLEBA_ENTITY_RING_CHUNKS;
-    let cx = (x0.div_euclid(32) - ring, (x0 + w - 1).div_euclid(32) + ring);
-    let cy = (y0.div_euclid(32) - ring, (y0 + h - 1).div_euclid(32) + ring);
+    // The chunks whose entities and cliffs are placed.
+    let ecx = (x0.div_euclid(32) - ring, (x0 + w - 1).div_euclid(32) + ring);
+    let ecy = (y0.div_euclid(32) - ring, (y0 + h - 1).div_euclid(32) + ring);
+    // The chunks whose tiles are corrected (see GLEBA_CLIFF_TILE_RING_CHUNKS
+    // for why the cliffs need no more).
+    let tr = GLEBA_CLIFF_TILE_RING_CHUNKS;
+    let cx = (ecx.0 - tr, ecx.1 + tr);
+    let cy = (ecy.0 - tr, ecy.1 + tr);
     let (ox, oy) = (cx.0 * 32, cy.0 * 32);
     let (aw, ah) = ((cx.1 - cx.0 + 1) * 32, (cy.1 - cy.0 + 1) * 32);
     // Correction evaluates the terrain at every tile of these chunks, and the
-    // entity fields read five of those values at the same tiles, so keep them
+    // entity fields read eight of those values at the same tiles, so keep them
     // rather than evaluate the terrain twice. Capped, as Aquilo's are, so a
     // huge window does not hold hundreds of megabytes; above it the entity
     // pass evaluates its own (the output is the same).
@@ -898,25 +927,61 @@ fn render_gleba_entities(req: &Request, stack: &GlebaStack, out: &mut [u8]) {
     let at = |tx: i64, ty: i64| {
         ((ox..ox + aw).contains(&tx) && (oy..oy + ah).contains(&ty)).then(|| tiles[index(tx, ty)])
     };
+    // Cliffs first, as a real surface applies them before each chunk's
+    // entities: stone within the cliff cells' reach removes some, and the
+    // rest block plants and stromatolites.
+    let stones = stone_tiles(stack, &at, kept.as_ref(), cx, cy);
+    let cliffs = gleba_cliffs(
+        stack,
+        req.seed0,
+        &GlebaCliffControls {
+            frequency: p.cliff_frequency,
+            continuity: p.cliff_continuity,
+        },
+        &at,
+        &stones,
+        ecx,
+        ecy,
+    );
+    let obstacles = GlebaCliffObstacles::new(&cliffs);
     let drawn = |layer: GlebaLayer| match req.view {
         VIEW_TREES => layer == GlebaLayer::Plants,
         VIEW_RESOURCES => layer == GlebaLayer::Resources,
+        VIEW_CLIFFS => false,
         _ => true,
     };
-    let mut placed: Vec<_> = place_chunks(stack, &at, kept.as_ref(), &rows(cx, cy))
-        .into_iter()
-        .filter(|e| drawn(e.entity.layer()))
-        .collect();
+    // The cliffs view draws no entity, and the cliffs read none (stone comes
+    // from its fields), so it places none.
+    let mut placed: Vec<_> = if req.view == VIEW_CLIFFS {
+        Vec::new()
+    } else {
+        place_chunks_with(stack, &at, kept.as_ref(), &rows(ecx, ecy), Some(&obstacles))
+            .into_iter()
+            .filter(|e| drawn(e.entity.layer()))
+            .collect()
+    };
     placed.sort_by_key(|e| e.entity.paint_pass());
-    for e in placed {
-        let (fx0, fx1, fy0, fy1) = e.footprint();
-        let paint = e.entity.paint();
+    let mut paint = |(fx0, fx1, fy0, fy1): (i64, i64, i64, i64), paint: GlebaPaint| {
         for ty in fy0.max(y0)..=fy1.min(y0 + h - 1) {
             for tx in fx0.max(x0)..=fx1.min(x0 + w - 1) {
                 let o = (((ty - y0) * w + (tx - x0)) * 4) as usize;
                 paint_gleba_pixel(&mut out[o..o + 3], paint);
             }
         }
+    };
+    // The trees blend first, then the cliffs, then the solid entities.
+    let (blended, solid): (Vec<&GlebaPlaced>, Vec<&GlebaPlaced>) =
+        placed.iter().partition(|e| e.entity.paint_pass() == 0);
+    for e in blended {
+        paint(e.footprint(), e.entity.paint());
+    }
+    if matches!(req.view, VIEW_CLIFFS | VIEW_ALL) {
+        for c in &cliffs {
+            paint(c.footprint(), GlebaPaint::Solid(GLEBA_CLIFF_COLOR));
+        }
+    }
+    for e in solid {
+        paint(e.footprint(), e.entity.paint());
     }
 }
 

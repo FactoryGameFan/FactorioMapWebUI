@@ -522,9 +522,10 @@ pub enum Apply {
     Preview,
     /// [`Apply::RealSurface`] without stone's tree removal. A control.
     NoTreeRemoval,
-    /// [`Apply::RealSurface`] with stone's tree search counting a plant
-    /// whose box only touches the stone's tile. A control.
-    TreeRemovalTouching,
+    /// [`Apply::RealSurface`] with stone's tree search requiring a real
+    /// overlap, so a plant whose box only touches the stone's tile is not
+    /// searched. A control: the game removed such a plant (`fixtures`).
+    TreeRemovalOverlap,
 }
 
 /// Stone's `tree_removal_probability` and `tree_removal_max_distance`, from
@@ -550,9 +551,21 @@ pub fn stone_tree_removal(x: i64, y: i64) -> f64 {
     }
 }
 
+/// Things already on the surface that are not entities this module places:
+/// the cliffs, which a real surface applies before a chunk's entities.
+/// `chunk` is the chunk whose entities are being applied, so an
+/// implementation can tell which cliffs stand by then.
+pub trait Obstacles {
+    /// Whether an entity with collision `layers` and map-gen box `bounds`
+    /// (1/256 tile) meets an obstacle.
+    fn blocks(&self, layers: u32, bounds: [i64; 4], chunk: (i64, i64)) -> bool;
+}
+
 /// The surface the apply step tests against: every placed entity, bucketed by
 /// the tile its position is on.
-struct Surface {
+struct Surface<'a> {
+    obstacles: Option<&'a dyn Obstacles>,
+    chunk: (i64, i64),
     rule: Apply,
     placed: Vec<GlebaPlaced>,
     /// Whether each placed entity is still there (a stone can remove a plant).
@@ -562,12 +575,14 @@ struct Surface {
     buckets: BTreeMap<(i64, i64), Vec<usize>>,
 }
 
-impl Surface {
+impl Surface<'_> {
     /// Whether `b` meets the box of a placed entity on a shared layer. Boxes
     /// that only touch collide (measured on Aquilo, and needed here: see
     /// `fixtures`).
     fn new(rule: Apply) -> Self {
         Self {
+            obstacles: None,
+            chunk: (0, 0),
             rule,
             placed: Vec::new(),
             alive: Vec::new(),
@@ -621,6 +636,13 @@ impl Surface {
         if self.collides(entity, bounds) {
             return;
         }
+        if self.rule != Apply::Preview
+            && self
+                .obstacles
+                .is_some_and(|o| o.blocks(entity.layers(), bounds, self.chunk))
+        {
+            return;
+        }
         let one = super::generate::FIXED_ONE;
         let key = (q.x.div_euclid(one), q.y.div_euclid(one));
         self.buckets.entry(key).or_default().push(self.placed.len());
@@ -638,7 +660,7 @@ impl Surface {
     }
 
     /// Stone's tree removal (`ResourceEntity::postSetup`): every plant whose
-    /// box meets the stone's tile rolls once, against the surface's own
+    /// box meets the stone's tile, touching included, rolls once, against the surface's own
     /// random generator, and is destroyed on a hit. That generator is shared
     /// by the whole surface, so a roll depends on every draw before it in the
     /// whole generation, which a tile of the preview cannot know. So this is
@@ -646,8 +668,8 @@ impl Surface {
     /// surviving, and it goes when they fall below one half.
     fn remove_trees(&mut self, x: i64, y: i64) {
         let edge = match self.rule {
-            Apply::RealSurface => 1,
-            Apply::TreeRemovalTouching => 0,
+            Apply::RealSurface => 0,
+            Apply::TreeRemovalOverlap => 1,
             Apply::StrictOverlap | Apply::Preview | Apply::NoTreeRemoval => return,
         };
         let p = stone_tree_removal(x, y);
@@ -707,6 +729,23 @@ pub fn place_chunks(
     )
 }
 
+/// [`place_chunks`] with obstacles already on the surface (the cliffs).
+#[must_use]
+pub fn place_chunks_with(
+    stack: &GlebaStack,
+    tiles: GlebaTiles<'_>,
+    kept: Option<&KeptInputs>,
+    chunks: &[(i64, i64)],
+    obstacles: Option<&dyn Obstacles>,
+) -> Vec<GlebaPlaced> {
+    apply_with(
+        &queue_chunks(stack, tiles, kept, chunks),
+        chunks,
+        Apply::RealSurface,
+        obstacles,
+    )
+}
+
 /// The groups the generator runs for this graph: every one, or, with the
 /// `gleba_plants` control at size 0, [`GLEBA_GROUPS_NO_PLANTS`].
 fn groups(stack: &GlebaStack) -> &'static [&'static [usize]] {
@@ -739,9 +778,24 @@ pub fn queue_chunks(
 /// Apply queues in order under `rule`. Returns every entity kept.
 #[must_use]
 pub fn apply(queues: &[Vec<Queued>], rule: Apply) -> Vec<GlebaPlaced> {
+    apply_with(queues, &[], rule, None)
+}
+
+/// [`apply`] with obstacles: `chunks[i]` is the chunk `queues[i]` belongs to.
+#[must_use]
+pub fn apply_with(
+    queues: &[Vec<Queued>],
+    chunks: &[(i64, i64)],
+    rule: Apply,
+    obstacles: Option<&dyn Obstacles>,
+) -> Vec<GlebaPlaced> {
     let mut surface = Surface::new(rule);
-    for q in queues.iter().flatten() {
-        surface.apply(q);
+    surface.obstacles = obstacles;
+    for (i, queue) in queues.iter().enumerate() {
+        surface.chunk = chunks.get(i).copied().unwrap_or((0, 0));
+        for q in queue {
+            surface.apply(q);
+        }
     }
     surface
         .placed

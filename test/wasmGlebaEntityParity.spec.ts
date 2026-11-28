@@ -6,6 +6,7 @@ import { withDiffArtifacts } from "./diffArtifacts";
 import graded from "./fixtures/oracle-gleba-real-surface-entities.seed123456.json";
 import defaults from "./fixtures/oracle-gleba-real-surface-entities-default.seed123456.json";
 import plants from "./fixtures/oracle-gleba-real-surface-plants.seed123456.json";
+import cliffArm from "./fixtures/oracle-gleba-real-surface-cliffs.seed123456.json";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
 import {
@@ -43,6 +44,11 @@ import type { GlebaRenderRequest } from "../src/noise/wasm/request";
  * `oracle-gleba-real-surface-plants.seed123456.json`, the same surface with
  * the plants on (nests and cliffs still off): 30,451 plants, every one at its
  * exact position but one, and the stone and stromatolites with them.
+ *
+ * **The cliffs** are graded against
+ * `oracle-gleba-real-surface-cliffs.seed123456.json`, the same surface with
+ * everything on but the nests: 2,484 cliffs at the game's position and
+ * orientation, which block plants and stromatolites.
  */
 const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
 
@@ -56,7 +62,7 @@ const SEED0 = surfaceSeedForPlanet("gleba", 123456);
 const SIDE = graded.window.width;
 const X0 = graded.window.x0;
 
-/** The graded slice-3 arm had the plants off, so this request does too. */
+/** The graded slice-3 arm had the plants and cliffs off, so this request does too. */
 const WINDOW = {
   planet: "gleba",
   view: "resources",
@@ -66,7 +72,13 @@ const WINDOW = {
   originX: X0,
   originY: X0,
   tilesPerPixel: 1,
-  glebaControls: { plantsSize: 0 },
+  glebaControls: { plantsSize: 0, cliffContinuity: 0 },
+} as const satisfies GlebaRenderRequest;
+
+/** The plants arm had the cliffs off, and everything else at its default. */
+const PLANT_WINDOW = {
+  ...WINDOW,
+  glebaControls: { cliffContinuity: 0 },
 } as const satisfies GlebaRenderRequest;
 
 /** Every lever at its default, plants included: the plants arm, and the map a player gets. */
@@ -119,37 +131,114 @@ function paintRules(autoplacers: Autoplacer[]) {
 }
 const PLANT_RULES = paintRules(plants.autoplacers as Autoplacer[]);
 
+/** `cliff-gleba`'s `map_color`, painted solid. */
+const CLIFF: readonly number[] = [144, 119, 87];
+
 /**
- * `terrain` with the plants fixture's entities painted on it by
- * [`PLANT_RULES`], in pass order, keeping only the names `keep` allows.
+ * Each cliff orientation's box AABB relative to the cell centre, in 1/256
+ * tile: left, top, right, bottom. Printed from `GlebaCliff::oriented` and
+ * `get_aabb` (`print_footprint_offsets` in `placement/gleba_cliffs.rs`); the
+ * cell centres all sit at the same tile fraction, so they are constants.
  */
-function expectedPlants(
+const CLIFF_AABB: Record<string, readonly [number, number, number, number]> = {
+  "west-to-east": [-512, -384, 512, 384],
+  "north-to-south": [-256, -512, 256, 512],
+  "east-to-west": [-512, -128, 512, 128],
+  "south-to-north": [-256, -512, 256, 512],
+  "west-to-north": [-896, -767, 256, 383],
+  "north-to-east": [-255, -767, 895, 383],
+  "east-to-south": [-257, -127, 639, 767],
+  "south-to-west": [-639, -128, 255, 766],
+  "west-to-south": [-895, -383, 255, 767],
+  "north-to-west": [-640, -767, 256, 127],
+  "east-to-north": [-255, -767, 639, 127],
+  "south-to-east": [-257, -383, 895, 767],
+  "west-to-none": [-768, -383, 0, 383],
+  "none-to-east": [-1, -383, 767, 383],
+  "east-to-none": [-1, -127, 639, 511],
+  "none-to-west": [-640, -128, 2, 512],
+  "north-to-none": [-255, -639, 511, 127],
+  "none-to-south": [-256, -127, 510, 639],
+  "south-to-none": [-511, -128, 255, 638],
+  "none-to-north": [-511, -639, 255, 127],
+};
+
+type EntityFixture = {
+  names: string[];
+  entities: number[][];
+  orientations?: string[];
+};
+
+/**
+ * `terrain` with a fixture's entities painted on it the way the module paints
+ * them: the tree blends, then the cliffs (when `withCliffs`), then the white
+ * plants, then stone and the stromatolites; each over the tiles `floor(low)`
+ * to `ceil(high) - 1` of its box (for a cliff, its oriented box's AABB),
+ * keeping only the names `keep` allows.
+ */
+function expectedFrom(
+  f: EntityFixture,
   terrain: Uint8ClampedArray,
   keep: (name: string) => boolean,
+  withCliffs: boolean,
 ): Uint8ClampedArray {
   const out = terrain.slice();
-  const list = plants.entities
-    .map(([k, x, y]) => ({ name: plants.names[k as number] as string, x: x!, y: y! }))
-    .filter((e) => keep(e.name))
-    .map((e) => ({ ...e, rule: PLANT_RULES.get(e.name)! }))
-    .sort((a, b) => a.rule.pass - b.rule.pass);
-  for (const { x, y, rule } of list) {
-    const [l, t, r, b] = rule.box as [number, number, number, number];
+  type Mark = {
+    x: number;
+    y: number;
+    box: readonly number[];
+    color: readonly number[];
+    blend: boolean;
+    order: number;
+  };
+  const marks: Mark[] = [];
+  for (const e of f.entities) {
+    const [k, x, y, o] = e as [number, number, number, number?];
+    const name = f.names[k] as string;
+    if (name === "cliff-gleba") {
+      if (!withCliffs) continue;
+      const orientation = (f.orientations as string[])[o as number] as string;
+      marks.push({ x, y, box: CLIFF_AABB[orientation]!, color: CLIFF, blend: false, order: 1 });
+      continue;
+    }
+    if (!keep(name)) continue;
+    const rule = PLANT_RULES.get(name)!;
+    // Passes 0 (trees), 1 (white plants), 2 (resources); cliffs go between 0 and 1.
+    marks.push({
+      x,
+      y,
+      box: rule.box,
+      color: rule.color,
+      blend: rule.blend,
+      order: rule.pass === 0 ? 0 : rule.pass + 1,
+    });
+  }
+  marks.sort((a, b) => a.order - b.order);
+  for (const { x, y, box, color, blend } of marks) {
+    const [l, t, r, b] = box as [number, number, number, number];
     const fx0 = Math.floor((x + l) / 256);
     const fx1 = Math.floor((x + r - 1) / 256);
     const fy0 = Math.floor((y + t) / 256);
     const fy1 = Math.floor((y + b - 1) / 256);
     for (let ty = Math.max(fy0, X0); ty <= Math.min(fy1, X0 + SIDE - 1); ty++) {
       for (let tx = Math.max(fx0, X0); tx <= Math.min(fx1, X0 + SIDE - 1); tx++) {
-        const o = ((ty - X0) * SIDE + (tx - X0)) * 4;
+        const p = ((ty - X0) * SIDE + (tx - X0)) * 4;
         for (let c = 0; c < 3; c++) {
-          const want = rule.color[c] as number;
-          out[o + c] = rule.blend ? ((256 - 102) * (out[o + c] as number) + 102 * want) >> 8 : want;
+          const want = color[c] as number;
+          out[p + c] = blend ? ((256 - 102) * (out[p + c] as number) + 102 * want) >> 8 : want;
         }
       }
     }
   }
   return out;
+}
+
+/** The plants arm painted, with no cliffs. */
+function expectedPlants(
+  terrain: Uint8ClampedArray,
+  keep: (name: string) => boolean,
+): Uint8ClampedArray {
+  return expectedFrom(plants as EntityFixture, terrain, keep, false);
 }
 
 const isPlant = (name: string) => PLANT_RULES.get(name)!.pass < 2;
@@ -304,7 +393,7 @@ describe("the WASM engine against the real Gleba surface's entities", () => {
   it("draws no stone with the stone control at size 0", async () => {
     const off = renderThroughWasm(await engine(), {
       ...WINDOW,
-      glebaControls: { plantsSize: 0, stoneSize: 0 },
+      glebaControls: { plantsSize: 0, stoneSize: 0, cliffContinuity: 0 },
     });
     const { resources } = await renders();
     expect(countColor(off, STONE)).toBe(0);
@@ -327,18 +416,19 @@ describe("the WASM engine against the real Gleba surface's plants", () => {
   });
 
   /**
-   * **The `all` view against the real surface: 2 of 1,048,576 pixels.** Both
-   * are one footprint, tiles (-326, 450) and (-326, 451): the stingfrond at
-   * (-324.9375, 451.1875) that the game kept against odds of 0.19 when the
-   * stones it overlaps rolled to remove it. The engine takes the expected
+   * **The `all` view against the real surface: 4 of 1,048,576 pixels.** They
+   * are two footprints, of the two plants the game kept against stone's
+   * tree-removal roll (odds 0.04 and 0.19). The engine takes the expected
    * outcome of that roll, which comes from a random generator the whole
-   * surface shares (`placement::gleba`). Its other two tiles hold stone,
-   * painted over it either way.
+   * surface shares (`placement::gleba`); on the cliffs arm, another
+   * generation of the same plants, the game removed both and kept two
+   * others. The stingfrond's other two tiles hold stone, painted over it
+   * either way.
    */
   it("paints every plant, stone and stromatolite of the real surface but one", async () => {
     const e = await engine();
-    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
-    const all = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "all" }).slice();
+    const terrain = renderThroughWasm(e, { ...PLANT_WINDOW, view: "terrain" }).slice();
+    const all = renderThroughWasm(e, { ...PLANT_WINDOW, view: "all" }).slice();
     const want = expectedPlants(terrain, () => true);
     const n = differingTiles(want, all);
     withDiffArtifacts(
@@ -361,10 +451,10 @@ describe("the WASM engine against the real Gleba surface's plants", () => {
   /** The `trees` view is the plants alone, and `resources` the rest. */
   it("splits the entities between the trees and resources views", async () => {
     const e = await engine();
-    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const terrain = renderThroughWasm(e, { ...PLANT_WINDOW, view: "terrain" }).slice();
     // Each render is a view into the module's memory: copy it before the next.
-    const trees = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "trees" }).slice();
-    const resources = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "resources" }).slice();
+    const trees = renderThroughWasm(e, { ...PLANT_WINDOW, view: "trees" }).slice();
+    const resources = renderThroughWasm(e, { ...PLANT_WINDOW, view: "resources" }).slice();
     expect(differingTiles(expectedPlants(terrain, isPlant), trees)).toEqual(TREES_DIFFERING_TILES);
     expect(
       differing(
@@ -380,29 +470,124 @@ describe("the WASM engine against the real Gleba surface's plants", () => {
    */
   it("draws no plant with the plants control at size 0", async () => {
     const e = await engine();
-    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const terrain = renderThroughWasm(e, { ...PLANT_WINDOW, view: "terrain" }).slice();
     const off = renderThroughWasm(e, { ...WINDOW, view: "trees" });
     expect(differing(off, terrain)).toBe(0);
   }, 300000);
 });
 
 /**
- * Frozen, by position: the one stingfrond the game kept, at (-324.9375,
- * 451.1875). See the `all` view test above.
+ * Frozen, by position: the two plants the game kept against stone's
+ * tree-removal roll on this generation. The sunnycomb at (-44.8125, -27.5)
+ * (odds 0.04; its box only touches its stones' tiles) and the stingfrond at
+ * (-324.9375, 451.1875) (odds 0.19). See the `all` view test above.
  */
 const PLANT_DIFFERING_TILES: [number, number][] = [
+  [-46, -28],
+  [-45, -28],
   [-326, 450],
   [-326, 451],
 ];
 /**
- * The same stingfrond in the `trees` view: all four tiles of its footprint,
- * because no stone paints over two of them there.
+ * The same two in the `trees` view: the stingfrond's four tiles there,
+ * because no stone paints over two of them.
  */
 const TREES_DIFFERING_TILES: [number, number][] = [
+  [-46, -28],
+  [-45, -28],
   [-326, 450],
   [-325, 450],
   [-326, 451],
   [-325, 451],
+];
+
+describe("the WASM engine against the real Gleba surface's cliffs", () => {
+  it("grades a surface with 2,484 cliffs and nothing but the graded entities", () => {
+    expect(cliffArm.surfaceSeed).toBe(SEED0);
+    expect(cliffArm.buildLine).toContain("Version: 2.1.23 ");
+    expect(cliffArm.window).toEqual(graded.window);
+    expect(cliffArm.counts["cliff-gleba"]).toBe(2484);
+    expect(cliffArm.cliffSettings).toEqual({
+      name: "cliff-gleba",
+      elevation0: 40,
+      interval: 60,
+      richness: Math.fround(0.8),
+      smoothing: 0,
+      control: "gleba_cliff",
+    });
+    expect(Object.keys(cliffArm.census).sort()).toEqual([...cliffArm.names].sort());
+  });
+
+  /**
+   * **The `cliffs` view: every cliff of the real surface at its position and
+   * orientation, and no other.** Exact over the whole window.
+   */
+  it("paints every cliff of the real surface, and nothing else", async () => {
+    const e = await engine();
+    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const cliffs = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "cliffs" }).slice();
+    const want = expectedFrom(cliffArm as EntityFixture, terrain, () => false, true);
+    const n = differingTiles(want, cliffs);
+    withDiffArtifacts(
+      {
+        spec: "wasmGlebaEntityParity",
+        case: "gleba-cliffs-vs-real-surface",
+        game: { width: SIDE, height: SIDE, rgb: rgbOf(want) },
+        ours: { width: SIDE, height: SIDE, rgba: cliffs },
+      },
+      () => {
+        expect(n).toEqual([]);
+      },
+    );
+    expect(countColor(terrain, CLIFF)).toBe(0);
+    expect(countColor(cliffs, CLIFF)).toBeGreaterThan(10000);
+  }, 300000);
+
+  /**
+   * **The `all` view against the real surface with cliffs.** The differing
+   * tiles are the footprints of the two plants the game kept against stone's
+   * tree-removal roll on this generation (`placement::gleba`).
+   */
+  it("paints the cliffs, plants, stone and stromatolites of the real surface", async () => {
+    const e = await engine();
+    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const all = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "all" }).slice();
+    const want = expectedFrom(cliffArm as EntityFixture, terrain, () => true, true);
+    const n = differingTiles(want, all);
+    withDiffArtifacts(
+      {
+        spec: "wasmGlebaEntityParity",
+        case: "gleba-all-vs-real-surface-cliffs",
+        game: { width: SIDE, height: SIDE, rgb: rgbOf(want) },
+        ours: { width: SIDE, height: SIDE, rgba: all },
+      },
+      () => {
+        expect(n).toEqual(CLIFF_ARM_DIFFERING_TILES);
+      },
+    );
+  }, 300000);
+
+  /** The cliff control reaches the render: at continuity 0 no cliff is drawn. */
+  it("draws no cliff with the cliff control at size 0", async () => {
+    const e = await engine();
+    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const off = renderThroughWasm(e, { ...PLANT_WINDOW, view: "cliffs" });
+    expect(differing(off, terrain)).toBe(0);
+  }, 300000);
+});
+
+/**
+ * Frozen, by position: the stingfrond at (-326.4375, 441.375), which the
+ * game kept against odds of 0.43 on this generation (and removed on the
+ * plants arm's). The other plant it kept, the sunnycomb at (-62.75, 0.125),
+ * lies wholly under stone paint, so no pixel shows it.
+ */
+const CLIFF_ARM_DIFFERING_TILES: [number, number][] = [
+  [-328, 440],
+  [-327, 440],
+  [-326, 440],
+  [-328, 441],
+  [-327, 441],
 ];
 
 describe("tiling", () => {
@@ -438,6 +623,40 @@ describe("tiling", () => {
     }));
     expect(stitchTiles(FULL, tiles)).toEqual(whole);
   }, 300000);
+});
+
+describe("tiling the whole window at the app's tile size", () => {
+  /**
+   * The app renders in 256-pixel worker tiles. Each generates its own rings
+   * of chunks, cliff cells and corrected tiles, so the whole 1024 window cut
+   * into sixteen such tiles must stitch to the single render byte for byte:
+   * that is what shows `GLEBA_CLIFF_TILE_RING_CHUNKS` is wide enough at every
+   * seam, not only in one region.
+   */
+  it("stitches sixteen 256-pixel tiles to the whole render, cliffs on", async () => {
+    const e = await engine();
+    const FULL: ImageBox = {
+      originX: X0,
+      originY: X0,
+      width: SIDE,
+      height: SIDE,
+      tilesPerPixel: 1,
+    };
+    const req = { ...DEFAULT_WINDOW, view: "all", ...FULL } as const;
+    const whole = renderThroughWasm(e, req).slice();
+    const tiles = planTiles(FULL, 256).map((t) => ({
+      ...t,
+      data: renderThroughWasm(e, {
+        ...req,
+        originX: t.originX,
+        originY: t.originY,
+        width: t.width,
+        height: t.height,
+      }).slice(),
+    }));
+    expect(tiles).toHaveLength(16);
+    expect(differing(stitchTiles(FULL, tiles), whole)).toBe(0);
+  }, 600000);
 });
 
 function rgbOf(rgba: Uint8ClampedArray): Uint8Array {

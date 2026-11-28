@@ -299,7 +299,7 @@ fn tight_tile_range(lo: i32, hi: i32, ext: (i32, i32)) -> (i64, i64) {
 /// expensive half: [`VulcanusOreFootprint::occupies`] evaluates the ore
 /// regions at that tile, and a corner box's 45-degree rectangle reaches
 /// fewer tiles than its square AABB scans.
-fn reaches_an_occupied_tile(
+pub(crate) fn reaches_an_occupied_tile(
     cliff: &FixedBox,
     rot: RotationWord,
     aabb: &FixedBox,

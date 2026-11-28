@@ -109,7 +109,7 @@
 //! +96  f64 x 4   placement_sweep_box: x0, y0, x1, y1 (decoded, NOT read
 //!                since #492; kept so the layout does not move)
 //!
-//! gleba block (56 bytes, so a Gleba request is 112)
+//! gleba block (72 bytes, so a Gleba request is 128)
 //!  +0  f64  water_frequency    control:gleba_water:frequency
 //!  +8  f64  water_size         control:gleba_water:size
 //! +16  f64  plants_frequency   control:gleba_plants:frequency (the plants
@@ -121,6 +121,9 @@
 //!                              appended, so the first three did not move)
 //! +48  f64  plants_size        control:gleba_plants:size (the plants, #454
 //!                              slice 4; the block grew 48 -> 56, appended)
+//! +56  f64  cliff_frequency    control:gleba_cliff:frequency (the cliffs;
+//!                              the block grew 56 -> 72, appended)
+//! +64  f64  cliff_continuity   control:gleba_cliff:size
 //!                No trig: Gleba's sines are per position (the spiral
 //!                bridges), so the module computes every one with the game's
 //!                own polynomial (`vm_sin`, #531), which touches no libm.
@@ -213,8 +216,9 @@ pub const VULCANUS_PARAMS_BYTES: usize = 312;
 pub const AQUILO_PARAMS_BYTES: usize = 128;
 
 /// Size of Gleba's parameter block: the three terrain levers, the
-/// `gleba_stone` control's three, then `control:gleba_plants:size`.
-pub const GLEBA_PARAMS_BYTES: usize = 56;
+/// `gleba_stone` control's three, `control:gleba_plants:size`, then the
+/// `gleba_cliff` control's frequency and size.
+pub const GLEBA_PARAMS_BYTES: usize = 72;
 
 /// Nauvis's block: eight climate and elevation levers, the tree overlay's four,
 /// the rock overlay's two, its sweep box, the enemy overlay's two, the cliff
@@ -273,7 +277,7 @@ pub const REQUEST_BYTES: usize = COMMON_BYTES
     } else {
         VULCANUS_PARAMS_BYTES
     };
-// Aquilo's block (128) and Gleba's (56) are smaller than both, so they do not
+// Aquilo's block (128) and Gleba's (72) are smaller than both, so they do not
 // enter the `max`.
 const _: () = assert!(AQUILO_PARAMS_BYTES < VULCANUS_PARAMS_BYTES);
 const _: () = assert!(GLEBA_PARAMS_BYTES < VULCANUS_PARAMS_BYTES);
@@ -369,8 +373,8 @@ pub enum Params {
     Gleba(GlebaParams),
 }
 
-/// Gleba's block: the three terrain levers, the stone control and the plants'
-/// size, wire values.
+/// Gleba's block: the three terrain levers, the stone control, the plants'
+/// size and the cliff control, wire values.
 ///
 /// Neutral is 1 for all six, and `Default` gives 0 on purpose, as
 /// [`FulgoraParams::scrap_frequency`] explains: the writer substitutes the
@@ -391,6 +395,10 @@ pub struct GlebaParams {
     pub stone_richness: f64,
     /// `control:gleba_plants:size`.
     pub plants_size: f64,
+    /// `control:gleba_cliff:frequency`.
+    pub cliff_frequency: f64,
+    /// `control:gleba_cliff:size`, the continuity.
+    pub cliff_continuity: f64,
 }
 
 /// Fulgora's block.
@@ -839,6 +847,8 @@ pub fn decode(bytes: &[u8]) -> Result<Request, Status> {
             stone_size: f64_at(bytes, p + 32),
             stone_richness: f64_at(bytes, p + 40),
             plants_size: f64_at(bytes, p + 48),
+            cliff_frequency: f64_at(bytes, p + 56),
+            cliff_continuity: f64_at(bytes, p + 64),
         }),
         _ => {
             let mut trig = [(0.0, 0.0); VULCANUS_BEARINGS];
@@ -1156,7 +1166,7 @@ mod tests {
             REQUEST_BYTES,
             sizes.into_iter().max().expect("five planets")
         );
-        assert_eq!(COMMON_BYTES + GLEBA_PARAMS_BYTES, 112);
+        assert_eq!(COMMON_BYTES + GLEBA_PARAMS_BYTES, 128);
     }
 
     /// Each failure mode has its OWN code, so a caller can tell "you sent an
@@ -1337,11 +1347,11 @@ mod tests {
         assert!(decode(&b).is_ok());
     }
 
-    /// A distinct value into each of Gleba's seven slots, all read back.
+    /// A distinct value into each of Gleba's nine slots, all read back.
     #[test]
     fn no_two_gleba_fields_share_an_offset() {
         let mut b = header(PLANET_GLEBA, GLEBA_PARAMS_BYTES);
-        for i in 0..7 {
+        for i in 0..9 {
             let at = COMMON_BYTES + i * 8;
             b[at..at + 8].copy_from_slice(&(100.0f64 + i as f64).to_le_bytes());
         }
@@ -1356,11 +1366,13 @@ mod tests {
                 g.stone_frequency,
                 g.stone_size,
                 g.stone_richness,
-                g.plants_size
+                g.plants_size,
+                g.cliff_frequency,
+                g.cliff_continuity
             ],
-            [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0]
+            [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0]
         );
-        assert_eq!(GLEBA_PARAMS_BYTES, 7 * 8);
+        assert_eq!(GLEBA_PARAMS_BYTES, 9 * 8);
     }
 
     /// The committed fixture's Gleba bytes decode to the request it records.
@@ -1395,9 +1407,11 @@ mod tests {
                 g.stone_frequency,
                 g.stone_size,
                 g.stone_richness,
-                g.plants_size
+                g.plants_size,
+                g.cliff_frequency,
+                g.cliff_continuity
             ],
-            [1.5, 0.5, 0.75, 1.25, 0.625, 3.0, 2.5]
+            [1.5, 0.5, 0.75, 1.25, 0.625, 3.0, 2.5, 4.0, 0.375]
         );
     }
 

@@ -97,15 +97,17 @@ impl CliffinessBasic {
     /// at every corner of every chunk the query touches and dominates the
     /// placement pass, so it is the worst place in this layer to rebuild.
     ///
-    /// **The `log2` is evaluated here, once, and only because Vulcanus pins its
-    /// argument at 1.** A transcendental inside the module is the #270 hazard:
-    /// the libm `wasm32-unknown-unknown` links is not V8's, and only a tier-2
-    /// sweep can see the difference. `log2(1)` is exactly 0 on any conforming
-    /// libm, so there is nothing to disagree about - and
+    /// **The `log2` is evaluated here, once.** A transcendental inside the
+    /// module is the #270 hazard: the libm `wasm32-unknown-unknown` links is
+    /// not V8's. Vulcanus pins the argument at 1, where `log2` is exactly 0 on
+    /// any conforming libm, and
     /// `tests::the_richness_term_is_exactly_zero_at_vulcanuss_pinned_richness`
-    /// pins that rather than leaving it as an argument. A planet that ever moves
-    /// this lever must send the term across the ABI the way the bearings' trig
-    /// is sent, not compute it here.
+    /// pins that. Gleba moves it: its cliff richness is 0.8 times the
+    /// continuity slider. The game's `log2` is a double-precision log2
+    /// narrowed to f32 (#531), the same function `slider_to_linear` already
+    /// runs in the module, and this term matched the game at 768 of 768
+    /// positions at continuity 1/6, 0.5, 1, 2 and 6
+    /// (`fixtures::gleba_cliffs`, 2026-11-27, native build).
     #[must_use]
     pub fn new(seed0: u32, cliff_richness: f64) -> Self {
         Self {

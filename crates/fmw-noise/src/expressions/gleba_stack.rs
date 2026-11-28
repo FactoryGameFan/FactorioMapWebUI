@@ -89,6 +89,12 @@ impl GlebaStack {
         self.plants.eval(at, t)
     }
 
+    /// `control:gleba_stone:size`, in its f32 slot.
+    #[must_use]
+    pub fn stone_size(&self) -> f64 {
+        self.resources.stone_size()
+    }
+
     /// `control:gleba_plants:size`, in its f32 slot.
     #[must_use]
     pub fn plants_size(&self) -> f64 {

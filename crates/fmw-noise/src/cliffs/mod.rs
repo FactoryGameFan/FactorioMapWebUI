@@ -16,6 +16,7 @@ pub mod catalog;
 pub mod collision;
 pub mod connections;
 pub mod fields;
+pub mod gleba_fields;
 pub mod placement;
 pub mod vulcanus_fields;
 pub mod vulcanus_ore_rejection;

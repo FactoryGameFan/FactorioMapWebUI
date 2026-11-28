@@ -104,3 +104,29 @@ Two things it showed:
   (1 of 30,451), because `ResourceEntity::postSetup` destroys trees in a new
   resource's tile with `tree_removal_probability`. See "Gleba (#454), slice
   4" in `docs/rust-wasm-port.md`.
+
+## The cliffs arm (2026-11-27)
+
+```bash
+FMW_ARM=cliffs node --experimental-strip-types scripts/probes/gleba-entities/capture.ts
+```
+
+Every control at its default but `gleba_enemy_base`, and Gleba's own cliff
+settings (read back: cliff-gleba, elevation 40, interval 60, richness
+f32(0.8), smoothing 0). It lists the cliffs with their `cliff_orientation`
+(an index into `orientations`) and every other entity, within 3 tiles of the
+window, because a cliff's box reaches 2 tiles past its position: 2,484
+cliffs in the window. It reads six cliff fields at 768 positions (512
+anywhere, 256 where `gleba_rockpools` is above 0).
+
+`FMW_CLIFF_SIZE=<s>` (with an `FMW_OUT`, never the committed fixture) moves
+the `gleba_cliff` size slider, which multiplies the cliff richness that
+`cliffiness_basic` takes the `log2` of. Used with `FMW_SIDE=256 FMW_X0=-128`
+at sizes 1/6, 0.5, 2 and 6 for the check in
+`fixtures::gleba_cliffs::gleba_cliffiness_at_a_moved_slider`.
+
+A first capture of this arm kept the other arms' cliff richness 0 by
+mistake and held 486 cliffs; it was thrown away. That count is worth
+knowing: cliffs survive a richness of 0. INFERRED, not measured: the rock-pool
+term of `gleba_cliffiness` (0.99 wherever `gleba_rockpools > 0`) does not
+read the richness.

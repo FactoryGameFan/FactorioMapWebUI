@@ -897,15 +897,15 @@ describe("ElevationPreviewPanel", () => {
       expect((renderer.render as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
     });
 
-    it("with dev mode on, offers terrain, trees, resources and all, and renders with the preset's levers", async () => {
+    it("with dev mode on, offers terrain, trees, cliffs, resources and all, and renders with the preset's levers", async () => {
       stubCanvas();
       const renderer = okRenderer();
       const w = setup("nauvis", renderer, { planet: "gleba", dev: true });
       expect(w.find('[data-test="unsupported"]').exists()).toBe(false);
-      for (const t of ["terrain", "trees", "resources", "all"]) {
+      for (const t of ["terrain", "trees", "cliffs", "resources", "all"]) {
         expect(w.find(`[data-test="view-${t}"]`).attributes("disabled"), t).toBeUndefined();
       }
-      for (const t of ["cliffs", "rocks", "enemies"]) {
+      for (const t of ["rocks", "enemies"]) {
         expect(w.find(`[data-test="view-${t}"]`).attributes("disabled"), t).toBeDefined();
       }
 
@@ -923,6 +923,8 @@ describe("ElevationPreviewPanel", () => {
           stoneSize: 1,
           stoneRichness: 1,
           plantsSize: 1,
+          cliffFrequency: 1,
+          cliffContinuity: 1,
         },
       });
     });

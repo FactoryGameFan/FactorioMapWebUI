@@ -597,12 +597,32 @@ slice 4" in `docs/rust-wasm-port.md`; the generator facts are here.
   not from the chunk. So its state at a roll depends on every draw before it
   in the whole generation. A tile-by-tile preview cannot reproduce the
   outcome; the port takes the expected one (a plant goes when its odds of
-  surviving every stone that covers it fall below one half). MEASURED: that
-  removes 28 of the 29 covered plants in the window (searched by real
-  overlap); the game removed 27 of them and kept a stingfrond at odds 0.19.
-- **NOT READ:** whether `EntitySearch` counts a box that only touches. The
-  data favour a real overlap (see the port doc). Whether anything else draws
-  from the shared generator during map generation.
+  surviving every stone that covers it fall below one half). MEASURED: the
+  29 plants whose box meets a stone's tile, touching included, are all
+  removed by that rule; on the plants arm the game kept 2 of them (odds 0.04
+  and 0.19), and on the cliffs arm, another generation of the same plants,
+  it kept 2 others (0.43 and 0.002) and removed those 2. The outcomes moving
+  between generations is the shared generator at work.
+- **The search counts a box that only touches** (MEASURED, not READ): the
+  cliffs arm removed a sunnycomb whose box only touches its stones' tiles,
+  which a real-overlap search could not reach.
+- **NOT READ:** whether anything else draws from the shared generator during
+  map generation.
+
+## Gleba (2026-11-27): cliffs before entities
+
+Graded against `oracle-gleba-real-surface-cliffs.seed123456.json`; the port
+doc's "Gleba (#454), slice 5" has the grades.
+
+- **Section 7's order holds for cliffs:** `applyCliffs` runs before
+  `applyEntities` in each chunk's task, and a plant or stromatolite whose box
+  meets a standing cliff's oriented box is not placed. MEASURED: without
+  that, the 1024 window keeps 425 entities the game does not have.
+- **A resource's `postSetup` removes cliffs as well as trees** (the cliff
+  branch, `cliff_removal_probability` 1, which every base resource keeps).
+  For stone the search box is its own tile. MEASURED: folded into the
+  `applyCliffs` test with the queued orientation it is exact over the
+  window; without it 12 cliffs stay that the game removed.
 
 ## What `generate.rs` does not port, and why each is unreachable today
 
@@ -610,9 +630,8 @@ slice 4" in `docs/rust-wasm-port.md`; the generator facts are here.
   sets it (only decoratives do), so it is the default 1.
 - **Grid snapping** (`buildPosition`), for entities that are neither
   resources nor off-grid. No caller has one.
-- **`tile_restriction`.** No Aquilo entity declares one, nor do Gleba's stone
-  and stromatolites. Gleba's yumako tree and jellystem do, so the plants need
-  it.
+- **`tile_restriction`** is the caller's: Gleba's yumako tree and jellystem
+  check it in `placement::gleba`'s `ChunkInputs::candidate`.
 
 The richness tie-break inside a group of more than one prototype is ported
 now (Gleba's stromatolites). Vulcanus's solid ores share `order` `"b"` and

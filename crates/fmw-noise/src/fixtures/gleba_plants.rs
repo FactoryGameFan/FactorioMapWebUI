@@ -182,14 +182,16 @@ const WINDOWS: [((i64, i64), (i64, i64)); 3] = [
 /// **The game's per-chunk stream, on our corrected tiles, applied as a real
 /// surface applies it, places every plant, stromatolite and stone the game
 /// did in all three windows, at the same 1/256-tile position, and nothing
-/// else.**
+/// else, except one plant stone's tree-removal roll spared.**
 ///
-/// Over the whole 1024 window the same replay scores 35,642 of 35,643 with
-/// no extras (release build, measured 2026-11-27), and
-/// `test/wasmGlebaEntityParity.spec.ts` grades that window through the
-/// module. The one miss is a stingfrond at (-324.9375, 451.1875) that
-/// survived stone's tree-removal rolls against odds of 0.19; see
-/// `placement::gleba` for why a preview cannot reproduce that roll.
+/// That one is the sunnycomb at (-44.8125, -27.5), in the spawn window: its
+/// box only touches its stones' tiles, its odds of surviving were 0.04, and
+/// the game kept it. Over the whole 1024 window the replay scores 35,641 of
+/// 35,643 with no extras; the other miss is a stingfrond at (-324.9375,
+/// 451.1875) kept against odds of 0.19. On the cliffs arm, a different
+/// generation of the same plants, the game removed both of those and kept
+/// two others instead, which is why the roll is taken as the expected
+/// outcome (`placement::gleba`).
 #[test]
 fn gleba_plants_replay_the_real_surface() {
     let fixture = load_captured_at(PLANTS_FIXTURE, "2.1.23");
@@ -206,7 +208,7 @@ fn gleba_plants_replay_the_real_surface() {
     assert_eq!(seen.len(), GLEBA_ENTITIES.len(), "{seen:?}");
     assert_eq!(
         scores,
-        vec![(741, 741, 741), (567, 567, 567), (876, 876, 876)]
+        vec![(740, 740, 741), (567, 567, 567), (876, 876, 876)]
     );
 }
 
@@ -215,8 +217,11 @@ fn gleba_plants_replay_the_real_surface() {
 ///
 /// - **Stone removes plants.** Without `tree_removal_probability` the spawn
 ///   window keeps 20 plants the game destroyed.
-/// - **Only a real overlap is searched.** Counting a plant whose box only
-///   touches a stone's tile removes a sunnycomb the game kept.
+/// - **A plant whose box only touches a stone's tile is searched.** Requiring
+///   a real overlap keeps the sunnycomb the game kept by luck here, which
+///   scores better on this capture, but the game removed that same plant on
+///   the cliffs arm, which no overlap rule can do
+///   (`fixtures::gleba_cliffs`).
 /// - **The apply step runs at all.** Without it (the game's map preview)
 ///   every queued entity is kept.
 #[test]
@@ -226,7 +231,7 @@ fn gleba_plant_replay_controls() {
     let mut got = Vec::new();
     for rule in [
         Apply::NoTreeRemoval,
-        Apply::TreeRemovalTouching,
+        Apply::TreeRemovalOverlap,
         Apply::Preview,
     ] {
         for (x, y) in WINDOWS {
@@ -235,15 +240,15 @@ fn gleba_plant_replay_controls() {
             got.push((t.0, t.1));
         }
     }
-    // (matched, placed) per rule, window by window. The real surface is
-    // (741, 741), (567, 567) and (876, 876).
+    // (matched, placed) per rule, window by window. The real surface rule
+    // scores (740, 740), (567, 567) and (876, 876) of 741, 567 and 876.
     assert_eq!(
         got,
         vec![
             (741, 761),
             (567, 567),
             (876, 876),
-            (740, 740),
+            (741, 741),
             (567, 567),
             (876, 876),
             (741, 815),
