@@ -51,7 +51,7 @@ function setup(find: (opts: FindOptions) => Promise<IslandResult[]>) {
   const store = usePresetsStore();
   store.createFromBuiltin("Default", "t");
   store.activePreset!.seed = 123456;
-  return mount(IslandFinderPanel, { props: { planet: "fulgora", find } });
+  return mount(IslandFinderPanel, { props: { find } });
 }
 
 describe("IslandFinderPanel", () => {
@@ -314,7 +314,7 @@ describe("IslandFinderPanel", () => {
     setActivePinia(createPinia());
     const store = usePresetsStore();
     store.createFromBuiltin("Default", "t");
-    const w = mount(IslandFinderPanel, { props: { planet: "fulgora" } });
+    const w = mount(IslandFinderPanel, { props: {} });
     await w.find('[data-test="island-search"]').trigger("click");
     await flushPromises();
     expect(w.find('[data-test="island-error"]').text()).toContain("404");
@@ -323,12 +323,16 @@ describe("IslandFinderPanel", () => {
     expect(w.find('[data-test="island-search"]').attributes("disabled")).toBeUndefined();
   });
 
-  it("is inert for a planet other than fulgora", () => {
-    setActivePinia(createPinia());
-    const store = usePresetsStore();
-    store.createFromBuiltin("Default", "t");
-    const w = mount(IslandFinderPanel, { props: { planet: "nauvis", find: async () => [] } });
-    expect(w.find('[data-test="island-search"]').exists()).toBe(false);
+  it("is always usable: it takes no planet and searches fulgora", async () => {
+    // It used to take the preview's planet and draw nothing unless that was
+    // fulgora, so Map Tools looked empty on every other planet.
+    const find = vi.fn(async (_opts: FindOptions) => [row()]);
+    const w = setup(find);
+    expect(w.find('[data-test="island-search"]').exists()).toBe(true);
+    await w.find('[data-test="island-search"]').trigger("click");
+    await flushPromises();
+    expect(find).toHaveBeenCalledTimes(1);
+    expect(w.findAll('[data-test="island-row"]')).toHaveLength(1);
   });
 
   it("forwards the preset's fulgora_islands slider values into ctx, not just seed0", async () => {

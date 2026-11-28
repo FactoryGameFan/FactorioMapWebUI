@@ -3,9 +3,9 @@
 import { computed, onBeforeUnmount, ref, shallowRef } from "vue";
 import { usePresetsStore } from "../store/presets";
 import { useUiStore } from "../store/ui";
+import type { Planet } from "../model/planets";
 import { surfaceSeedForPlanet } from "../model/planetSurfaceSeed";
 import { elevationCtxFromPreset } from "../model/elevationPreviewCtx";
-import type { Planet } from "../model/planets";
 import FButton from "../ui/FButton.vue";
 import FNumberInput from "../ui/FNumberInput.vue";
 import { createWorkerHost, defaultPoolSize } from "./useElevationPreview";
@@ -17,7 +17,6 @@ import { loadEngineModule } from "../noise/wasm/load";
 // prop: it lets the tests drive this component without spinning up Workers,
 // which do not exist in the test environment.
 const props = defineProps<{
-  planet: Planet;
   find?: (opts: FindOptions) => Promise<IslandResult[]>;
 }>();
 const emit = defineEmits<{ jump: [{ x: number; y: number }] }>();
@@ -128,7 +127,13 @@ const total = ref(0);
 const error = ref<string | null>(null);
 const results = shallowRef<IslandResult[]>([]);
 
-const supported = computed(() => props.planet === "fulgora");
+/**
+ * The finder is about Fulgora's islands, so it always searches Fulgora and does
+ * not care which planet the preview shows. It used to take the preview's planet
+ * and draw nothing unless that was Fulgora, which left the Map Tools tab empty
+ * until the user switched the preview by hand.
+ */
+const PLANET: Planet = "fulgora";
 
 /**
  * Where the refined rows stop and the coarse ones begin, or -1 if every row is
@@ -171,12 +176,10 @@ const rowKey = (r: IslandResult) => `${r.cellX},${r.cellY}`;
  * (see `nearestLandPixel`) can sit on ocean for some candidates. A ping is
  * therefore "this island", not "a buildable tile".
  *
- * The surface comes from the `planet` prop rather than a literal, even though
- * `supported` currently gates this whole panel to Fulgora - so widening that
- * gate cannot leave the tag naming the wrong surface.
+ * The surface comes from `PLANET`, the one place the panel names its planet.
  */
 function gpsTag(r: IslandResult): string {
-  return `[gps=${Math.round(r.centroidX)},${Math.round(r.centroidY)},${props.planet}]`;
+  return `[gps=${Math.round(r.centroidX)},${Math.round(r.centroidY)},${PLANET}]`;
 }
 
 function gpsState(r: IslandResult): CopyState {
@@ -250,7 +253,7 @@ function ensureHost() {
 
 async function search() {
   const preset = store.activePreset;
-  if (!preset || running.value || !supported.value) return;
+  if (!preset || running.value) return;
   // The one place the bound MUST hold: whatever the field currently shows
   // (possibly never blurred, possibly mid-edit), no out-of-range radius
   // reaches `findIslands`.
@@ -327,7 +330,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="supported" class="island-finder">
+  <div class="island-finder">
     <div class="island-toolbar">
       <label class="radius-label">
         Search radius (tiles)
