@@ -304,6 +304,14 @@ impl GlebaTerrain {
         )
     }
 
+    /// `(gleba_starting_enemies, gleba_starting_enemies_safe)` at a position,
+    /// given `gleba_wobble_x` there: the two cone groups the pentapod nests
+    /// read, which [`GlebaTerrain::eval_at`] folds into the elevation.
+    #[must_use]
+    pub fn starting_enemies(&self, at: At, wobble_x: f64) -> (f64, f64) {
+        self.starting.enemies(at.x(), at.y(), wobble_x)
+    }
+
     /// Evaluate every field at one position, in dependency order.
     #[must_use]
     pub fn eval_at(&self, at: At) -> GlebaTerrainFields {

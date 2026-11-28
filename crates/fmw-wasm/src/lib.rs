@@ -1892,7 +1892,8 @@ mod aquilo_render_tests {
 mod gleba_render_tests {
     use crate::abi::{self, Status, COMMON_BYTES, GLEBA_PARAMS_BYTES};
     use crate::render::{
-        render, PLANET_GLEBA, VIEW_ALL, VIEW_CLIFFS, VIEW_RESOURCES, VIEW_TERRAIN, VIEW_TREES,
+        render, PLANET_GLEBA, VIEW_ALL, VIEW_CLIFFS, VIEW_ENEMIES, VIEW_RESOURCES, VIEW_TERRAIN,
+        VIEW_TREES,
     };
     use fmw_noise::at::At;
     use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
@@ -1924,9 +1925,9 @@ mod gleba_render_tests {
         for (i, v) in levers.into_iter().enumerate() {
             put_f64(&mut b, COMMON_BYTES + i * 8, v);
         }
-        // The `gleba_stone` control, the plants' size and the cliff control,
-        // neutral: only the entity views read them.
-        for i in 3..9 {
+        // The `gleba_stone` control, the plants' size, the cliff control and
+        // the enemy control, neutral: only the entity views read them.
+        for i in 3..11 {
             put_f64(&mut b, COMMON_BYTES + i * 8, 1.0);
         }
         b
@@ -2011,7 +2012,8 @@ mod gleba_render_tests {
         }
     }
 
-    /// Every view but terrain, trees, cliffs, resources and all is refused.
+    /// Every view but terrain, trees, cliffs, resources, enemies and all is
+    /// refused.
     #[test]
     fn views_gleba_does_not_serve_are_refused() {
         let served = [
@@ -2019,6 +2021,7 @@ mod gleba_render_tests {
             VIEW_TREES,
             VIEW_CLIFFS,
             VIEW_RESOURCES,
+            VIEW_ENEMIES,
             VIEW_ALL,
         ];
         for view in (0..14).filter(|v| !served.contains(v)) {
@@ -2111,5 +2114,41 @@ mod gleba_render_tests {
             .count();
         assert!(changed > 1000, "{changed}");
         assert_eq!(render_view(VIEW_TREES, 2.0), render_view(VIEW_TERRAIN, 2.0));
+    }
+
+    /// The enemies view is the terrain with the pentapod nests over it: in
+    /// the window of six nests near (497, -415) every pixel that differs is
+    /// the nest colour, and off one tile per pixel it is the terrain.
+    #[test]
+    fn the_enemies_view_is_the_terrain_with_nests() {
+        let (dims, origin) = ((128, 128), (384.0, -512.0));
+        let render_view = |view, tpp: f64| {
+            let mut b = request(view, dims, origin, [1.0; 3]);
+            b[48..56].copy_from_slice(&tpp.to_le_bytes());
+            let mut out = vec![0u8; 128 * 128 * 4];
+            assert_eq!(render(&b, &mut out), Status::Ok);
+            out
+        };
+        let terrain = render_view(VIEW_TERRAIN, 1.0);
+        let enemies = render_view(VIEW_ENEMIES, 1.0);
+        let nest = match GlebaEntity::GlebaSpawner.paint() {
+            GlebaPaint::Solid(c) => c,
+            GlebaPaint::Blend(..) => panic!("a nest is blended"),
+        };
+        let changed = terrain
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(enemies.as_chunks::<4>().0)
+            .filter(|(t, r)| t != r)
+            .inspect(|(_, r)| assert_eq!(r[..3], nest))
+            .count();
+        // Six nests, each over its 5 x 5 or 3 x 3 footprint less what the
+        // terrain already shares.
+        assert!(changed > 6 * 9, "{changed}");
+        assert_eq!(
+            render_view(VIEW_ENEMIES, 2.0),
+            render_view(VIEW_TERRAIN, 2.0)
+        );
     }
 }

@@ -70,10 +70,11 @@ export function readAquiloResourceControls(preset: {
 }
 
 /**
- * Gleba's three terrain levers: `gleba_water` frequency and size, and
- * `gleba_plants` frequency (the plants noise the tile scores read). An absent
- * control reads as the neutral 1, as for Aquilo; a present one keeps what it
- * holds.
+ * Gleba's levers: `gleba_water` frequency and size, `gleba_plants` frequency
+ * (the plants noise the tile scores read) and size, and the `gleba_stone`,
+ * `gleba_cliff` and `gleba_enemy_base` controls the entity views read. An
+ * absent control reads as the neutral 1, as for Aquilo; a present one keeps
+ * what it holds.
  */
 export function readGlebaControls(preset: {
   autoplaceControls: Record<string, AutoplaceSetting>;
@@ -82,6 +83,7 @@ export function readGlebaControls(preset: {
   const plants = preset.autoplaceControls.gleba_plants;
   const stone = preset.autoplaceControls.gleba_stone;
   const cliff = preset.autoplaceControls.gleba_cliff;
+  const enemy = preset.autoplaceControls.gleba_enemy_base;
   return {
     waterFrequency: water ? water.frequency : 1,
     waterSize: water ? water.size : 1,
@@ -92,5 +94,7 @@ export function readGlebaControls(preset: {
     plantsSize: plants ? plants.size : 1,
     cliffFrequency: cliff ? cliff.frequency : 1,
     cliffContinuity: cliff ? cliff.size : 1,
+    enemyFrequency: enemy ? enemy.frequency : 1,
+    enemySize: enemy ? enemy.size : 1,
   };
 }

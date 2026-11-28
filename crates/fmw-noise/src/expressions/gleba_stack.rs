@@ -10,9 +10,11 @@
 //! adds [`GlebaStack::corrected_tiles`], the terrain view; slice 3 adds the
 //! resource fields ([`GlebaStack::resources_at`]) that stone and the two
 //! stromatolites are placed by (`placement::gleba`); slice 4 adds the plant
-//! fields ([`GlebaStack::plants_from`]).
+//! fields ([`GlebaStack::plants_from`]); slice 6 the pentapod nests'
+//! ([`GlebaStack::nests`], [`GlebaStack::nest_inputs`]).
 
 use crate::at::At;
+use crate::expressions::gleba_nests::{GlebaEnemyControls, GlebaNests, NestInputs};
 use crate::expressions::gleba_plants::{GlebaPlantFields, GlebaPlants};
 use crate::expressions::gleba_resources::{
     GlebaResourceFields, GlebaResources, GlebaStoneControls, ResourceInputs,
@@ -34,6 +36,7 @@ pub struct GlebaStack {
     terrain: GlebaTerrain,
     resources: GlebaResources,
     plants: GlebaPlants,
+    nests: GlebaNests,
 }
 
 impl GlebaStack {
@@ -55,13 +58,48 @@ impl GlebaStack {
     /// in `ctx.controls`, because the plant noises are terrain fields.
     #[must_use]
     pub fn with_levers(ctx: &GlebaCtx, stone: &GlebaStoneControls, plants_size: f64) -> Self {
+        Self::with_enemies(ctx, stone, plants_size, &GlebaEnemyControls::default())
+    }
+
+    /// [`GlebaStack::with_levers`] with the given `gleba_enemy_base` control.
+    #[must_use]
+    pub fn with_enemies(
+        ctx: &GlebaCtx,
+        stone: &GlebaStoneControls,
+        plants_size: f64,
+        enemies: &GlebaEnemyControls,
+    ) -> Self {
         let terrain = GlebaTerrain::new(ctx.seed0, &ctx.controls);
         let resources = GlebaResources::new(ctx.seed0, &terrain.vars, stone);
         let plants = GlebaPlants::new(ctx.seed0, plants_size);
+        let nests = GlebaNests::new(ctx.seed0, enemies);
         Self {
             terrain,
             resources,
             plants,
+            nests,
+        }
+    }
+
+    /// The nest fields' per-render state.
+    #[must_use]
+    pub fn nests(&self) -> &GlebaNests {
+        &self.nests
+    }
+
+    /// The terrain values the nest probabilities read at one position, given
+    /// the terrain fields kept there.
+    #[must_use]
+    pub fn nest_inputs(&self, at: At, t: &ResourceInputs) -> NestInputs {
+        let (starting_enemies, starting_enemies_safe) =
+            self.terrain.starting_enemies(at, t.wobble_x);
+        NestInputs {
+            distance: self.nests.distance(at.x(), at.y()),
+            starting_enemies,
+            starting_enemies_safe,
+            fertile_spots_coastal: t.fertile_spots_coastal,
+            aux: t.aux,
+            elevation: t.elevation,
         }
     }
 
@@ -161,13 +199,13 @@ impl GlebaStack {
 
 /// The resource inputs of the tiles of a rectangle of chunks, filled as a
 /// correction pass evaluates them ([`GlebaStack::corrected_tiles_keeping`]).
-/// Held as f32s, which is exact: about 36 KB a chunk.
+/// Held as f32s, which is exact: about 40 KB a chunk.
 pub struct KeptInputs {
     x0: i32,
     y0: i32,
     width: i32,
     height: i32,
-    inputs: Vec<Option<[f32; 8]>>,
+    inputs: Vec<Option<[f32; 9]>>,
 }
 
 impl KeptInputs {

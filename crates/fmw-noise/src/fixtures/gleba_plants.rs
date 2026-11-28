@@ -14,6 +14,7 @@
 use super::gleba_entities::{game_entities, inside};
 use super::{count_exact_bits, load_captured_at};
 use crate::at::At;
+use crate::expressions::gleba_nests::GlebaEnemyControls;
 use crate::expressions::gleba_plants::{GlebaPlantFields, PLANTS};
 use crate::expressions::gleba_resources::{GlebaStoneControls, ResourceInputs};
 use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
@@ -31,13 +32,14 @@ const SEED: u32 = 3_215_206_427;
 
 /// The graph at the fixture's levers: every control at its default.
 pub(super) fn plants_stack() -> GlebaStack {
-    GlebaStack::with_levers(
+    GlebaStack::with_enemies(
         &GlebaCtx {
             seed0: SEED,
             controls: GlebaControls::default(),
         },
         &GlebaStoneControls::default(),
         1.0,
+        &GlebaEnemyControls::off(),
     )
 }
 
@@ -204,8 +206,13 @@ fn gleba_plants_replay_the_real_surface() {
         seen.extend(s.iter().filter(|(_, v)| v.2 > 0).map(|(n, _)| *n));
         scores.push(total(&s));
     }
-    // Non-vacuity: every entity this module places is graded somewhere.
-    assert_eq!(seen.len(), GLEBA_ENTITIES.len(), "{seen:?}");
+    // Non-vacuity: every entity this arm places (all but the nests, which
+    // it turns off) is graded somewhere.
+    assert_eq!(
+        seen.len(),
+        GLEBA_ENTITIES.iter().filter(|e| !e.is_nest()).count(),
+        "{seen:?}"
+    );
     assert_eq!(
         scores,
         vec![(740, 740, 741), (567, 567, 567), (876, 876, 876)]
@@ -267,13 +274,14 @@ fn gleba_plant_replay_controls() {
 #[test]
 fn gleba_plants_keep_stone_exact() {
     let fixture = load_captured_at(PLANTS_FIXTURE, "2.1.23");
-    let no_plants = GlebaStack::with_levers(
+    let no_plants = GlebaStack::with_enemies(
         &GlebaCtx {
             seed0: SEED,
             controls: GlebaControls::default(),
         },
         &GlebaStoneControls::default(),
         0.0,
+        &GlebaEnemyControls::off(),
     );
     let mut got = Vec::new();
     for stack in [plants_stack(), no_plants] {

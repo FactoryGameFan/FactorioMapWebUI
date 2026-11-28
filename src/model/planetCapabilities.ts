@@ -54,14 +54,14 @@ export const PLANET_CAPABILITIES: Readonly<Record<Planet, PlanetCapability>> = {
     fallToTerrain: ["enemies", "cliffs", "trees", "rocks"],
   },
   // Dev mode only (#454): the tiles a real surface holds (argmax plus tile
-  // correction), and in `resources` and `all` the stone and two stromatolites
-  // a real surface places (slice 3). No plants, cliffs or pentapod nests yet,
-  // so the views that would show them render the terrain.
+  // correction), and the entities a real surface places over them: the
+  // plants (`trees`), the cliffs, stone and the two stromatolites
+  // (`resources`), the two pentapod nests (`enemies`), and all of them.
   gleba: {
     rendered: true,
     devOnly: true,
-    views: ["terrain", "trees", "cliffs", "resources", "all"],
-    fallToTerrain: ["enemies", "rocks", "landmask"],
+    views: ["terrain", "trees", "cliffs", "resources", "enemies", "all"],
+    fallToTerrain: ["rocks", "landmask"],
   },
   aquilo: {
     rendered: true,

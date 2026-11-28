@@ -1,5 +1,5 @@
-//! Gleba's stone, two stromatolites and twelve plants, placed as a REAL
-//! surface places them (#454, slices 3 and 4): the game's own per-chunk
+//! Gleba's stone, two stromatolites, twelve plants and two pentapod nests,
+//! placed as a REAL surface places them (#454, slices 3, 4 and 6): the game's own per-chunk
 //! generator ([`super::generate`]), then the apply step's entity-against-entity
 //! collision, which the game's map preview skips.
 //!
@@ -15,7 +15,8 @@
 //! | `a[tree]-b[forest]-a` .. `-k` | eleven plants, one group each | off grid | see [`GLEBA_AUTOPLACERS`] |
 //! | `a[tree]-d[decorative]-a[water-cane]` | `water-cane` | off grid | +-25 square |
 //! | `b` | `stone` | tile centre | +-25 square |
-//! | `b[enemy]-...` | two pentapod nests (`gleba_enemy_base`) | off grid | (not ported) |
+//! | `b[enemy]-c[spawner]-a[large]` | `gleba-spawner` | off grid | +-601 square |
+//! | `b[enemy]-c[spawner]-b[small]` | `gleba-spawner-small` | off grid | +-601 square |
 //!
 //! The two stromatolites set no `order`, so they share the empty one and form
 //! ONE group, the first the chunk's stream serves. Every plant has an order of
@@ -29,7 +30,22 @@
 //! `(size > 0) * (richness > 1)`, exactly 0 or 1, and a roll places when
 //! `p > U` with `U` in `[0, 1)`, so it places on exactly the tiles where its
 //! probability is 1 whatever was drawn before it. It runs after the plants,
-//! as in the game.
+//! as in the game. But it still draws one roll for every land tile, so the
+//! nests, which follow it, start where its draws end.
+//!
+//! **The nests** are the last two groups, each alone (`expressions::gleba_nests`
+//! holds their probabilities). Their probability reads `random_penalty`, a
+//! batch op whose batch is the chunk, so [`GlebaChunkInputs`] evaluates it
+//! once for all 1,024 tiles of a chunk the first time a nest asks. Both read
+//! the same penalised value at a tile, as the game's one noise program does.
+//! The small nest's map-gen box (+-2.35) is larger than its collision box
+//! (+-1.35); the generator and the apply step use the map-gen box.
+//!
+//! **A plant or nest control at size 0 skips its groups.** The generator does
+//! not run those autoplacers, so they spend no draws: with `gleba_plants` at
+//! size 0 the nests read the stream right after the stromatolites and stone.
+//! Stone's group runs at every size, spending its draws even where nothing
+//! places ([`gleba_groups`], all three measured).
 //!
 //! **Tile restrictions.** yumako-tree may stand only on the three yumako
 //! soils and jellystem only on the three jellynut soils. The generator checks
@@ -62,6 +78,7 @@
 use super::generate::{generate_chunk, Autoplacer, ChunkInputs, MapGenBox, Positioning, Queued};
 use super::roll::{CHUNK, TILES_PER_CHUNK};
 use crate::at::At;
+use crate::expressions::gleba_nests::{chunk_penalties, nest_probabilities, NestProbabilities};
 use crate::expressions::gleba_plants::{GlebaPlantFields, PLANTS};
 use crate::expressions::gleba_resources::{GlebaResourceFields, ResourceInputs};
 use crate::expressions::gleba_stack::{GlebaStack, KeptInputs};
@@ -87,10 +104,12 @@ pub enum GlebaEntity {
     Hairyclubnub,
     Cuttlepop,
     WaterCane,
+    GlebaSpawner,
+    GlebaSpawnerSmall,
 }
 
 /// Every entity, indexed as the generator's prototype index.
-pub const GLEBA_ENTITIES: [GlebaEntity; 15] = [
+pub const GLEBA_ENTITIES: [GlebaEntity; 17] = [
     GlebaEntity::CopperStromatolite,
     GlebaEntity::IronStromatolite,
     GlebaEntity::Stone,
@@ -106,11 +125,16 @@ pub const GLEBA_ENTITIES: [GlebaEntity; 15] = [
     GlebaEntity::Hairyclubnub,
     GlebaEntity::Cuttlepop,
     GlebaEntity::WaterCane,
+    GlebaEntity::GlebaSpawner,
+    GlebaEntity::GlebaSpawnerSmall,
 ];
 
 /// The prototype index of the first plant: plant `k` of [`PLANTS`] is
 /// `FIRST_PLANT + k`.
 pub const FIRST_PLANT: usize = 3;
+
+/// The prototype index of `gleba-spawner`; `gleba-spawner-small` follows it.
+pub const FIRST_NEST: usize = 15;
 
 /// An off-grid autoplacer with the box `left, top, right, bottom` in 1/256
 /// tile.
@@ -130,7 +154,7 @@ const fn off_grid(left: i64, top: i64, right: i64, bottom: i64) -> Autoplacer {
 /// each `collision_box` times 256, as the game reports it at runtime: 0.5 is
 /// exact, and a box the Lua writes as 0.1 the game holds as 0.09765625, which
 /// is 25 / 256. None declares a separate `map_generator_bounding_box`.
-pub const GLEBA_AUTOPLACERS: [Autoplacer; 15] = [
+pub const GLEBA_AUTOPLACERS: [Autoplacer; 17] = [
     off_grid(-128, -128, 128, 128),
     off_grid(-128, -128, 128, 128),
     Autoplacer {
@@ -149,16 +173,42 @@ pub const GLEBA_AUTOPLACERS: [Autoplacer; 15] = [
     off_grid(-230, -153, 230, 153), // hairyclubnub
     off_grid(-153, -204, 153, 204), // cuttlepop
     off_grid(-25, -25, 25, 25),     // water-cane
+    // Both nests: 2.34765625 is 601 / 256. The small nest's collision box is
+    // +-1.34765625, but it declares a `map_generator_bounding_box` the size
+    // of the large one's, and the generator and apply step read that.
+    off_grid(-601, -601, 601, 601), // gleba-spawner
+    off_grid(-601, -601, 601, 601), // gleba-spawner-small
 ];
 
-/// The farthest any entity's box reaches from its position, on either axis,
-/// in 1/256 tile: hairyclubnub's and boompuff's 230. The apply step searches
-/// this far past a new box for entities that might meet it.
+/// The box a placed entity occupies on the surface: its `collision_box`, in
+/// 1/256 tile, relative to its position, as (left, top, right, bottom). The
+/// apply step tests a NEW entity's map-gen box (`Surface::mapGeneratorWouldCollide`)
+/// against the collision boxes of the entities already there
+/// (`Surface::collide`). Only the small nest's two boxes differ: measured,
+/// its +-2.35 map-gen box would take two copper stromatolites of the next
+/// chunk that the game keeps beside it, at (-286.6875, 19.125) and
+/// (-287.25, 21.4375), and its +-1.35 collision box does not (`fixtures`).
+#[must_use]
+pub fn collision_box(proto: usize) -> MapGenBox {
+    if GLEBA_ENTITIES[proto] == GlebaEntity::GlebaSpawnerSmall {
+        MapGenBox::centred(345, 345)
+    } else {
+        GLEBA_AUTOPLACERS[proto].map_gen_box
+    }
+}
+
+/// The farthest any entity's box but a nest's reaches from its position, on
+/// either axis, in 1/256 tile: hairyclubnub's and boompuff's 230. The apply
+/// step searches this far past a new box for entities that might meet it.
 const MAX_REACH: i64 = 230;
 
+/// The farthest a nest's box reaches, in 1/256 tile. Nests are bucketed apart,
+/// so the other entities' searches stay at [`MAX_REACH`].
+const NEST_REACH: i64 = 601;
+
 /// The groups, in the order the chunk's stream serves them: the two
-/// stromatolites, each plant alone, then stone.
-pub const GLEBA_GROUPS: [&[usize]; 14] = [
+/// stromatolites, each plant alone, stone, then each nest alone.
+pub const GLEBA_GROUPS: [&[usize]; 16] = [
     &[0, 1],
     &[3],
     &[4],
@@ -173,16 +223,44 @@ pub const GLEBA_GROUPS: [&[usize]; 14] = [
     &[13],
     &[14],
     &[2],
+    &[15],
+    &[16],
 ];
 
-/// The groups with every plant left out: what the generator runs when the
-/// `gleba_plants` control is at size 0. Every plant probability is then 0 (or
-/// -0), so no plant places, and neither group left depends on the draws the
-/// plants would have spent: the stromatolites draw first and stone needs no
-/// stream. That stops holding once a group AFTER the plants reads the stream
-/// (the pentapod nests): whether the game still runs a size-0 autoplacer's
-/// draws must be measured before this shortcut can stay.
-pub const GLEBA_GROUPS_NO_PLANTS: [&[usize]; 2] = [&[0, 1], &[2]];
+/// The groups the generator runs: with `plants` false (`gleba_plants` at
+/// size 0) it skips the twelve plant groups, and with `nests` false
+/// (`gleba_enemy_base` at size 0) the two nest groups, so they spend no
+/// draws. Stone's group runs at every size. All three measured on the whole
+/// window (`fixtures::gleba_nests`): with the plants at size 0 the nests
+/// match the game (77 of 77) only with the plant groups skipped (0 of 77
+/// with them run); with the enemy control at size 0 the game has no nest,
+/// where running the groups would place 27; but with stone at size 0 the
+/// nests match (67 of 67) only with stone's group RUN, spending one draw per
+/// land tile though nothing places (11 of 67 with it skipped).
+///
+/// That is `prepareAutoplacers` (`docs/noise/entity-generation-NOTES.md`,
+/// section 1): it drops an autoplacer whose own autoplace `control` is at
+/// size 0. Every plant carries `gleba_plants` and both nests
+/// `gleba_enemy_base`; stone's autoplace carries no control (the resource
+/// helper puts its size gate inside the probability instead), and neither do
+/// the stromatolites, so they are never dropped.
+#[must_use]
+pub fn gleba_groups(plants: bool, nests: bool) -> Vec<&'static [usize]> {
+    GLEBA_GROUPS
+        .iter()
+        .copied()
+        .filter(|g| {
+            let e = GLEBA_ENTITIES[g[0]];
+            if e.is_plant() {
+                plants
+            } else if e.is_nest() {
+                nests
+            } else {
+                true
+            }
+        })
+        .collect()
+}
 
 /// Collision layers as bits. Only the layers some Gleba tile or one of these
 /// entities carries.
@@ -253,6 +331,8 @@ pub enum GlebaLayer {
     Plants,
     /// Stone and the stromatolites.
     Resources,
+    /// The two pentapod nests.
+    Enemies,
 }
 
 impl GlebaEntity {
@@ -263,6 +343,8 @@ impl GlebaEntity {
             Self::CopperStromatolite => "copper-stromatolite",
             Self::IronStromatolite => "iron-stromatolite",
             Self::Stone => "stone",
+            Self::GlebaSpawner => "gleba-spawner",
+            Self::GlebaSpawnerSmall => "gleba-spawner-small",
             p => PLANTS[p as usize - FIRST_PLANT],
         }
     }
@@ -270,7 +352,13 @@ impl GlebaEntity {
     /// Whether the entity is one of the twelve plants.
     #[must_use]
     pub fn is_plant(self) -> bool {
-        self as usize >= FIRST_PLANT
+        (FIRST_PLANT..FIRST_PLANT + PLANTS.len()).contains(&(self as usize))
+    }
+
+    /// Whether the entity is one of the two pentapod nests.
+    #[must_use]
+    pub fn is_nest(self) -> bool {
+        matches!(self, Self::GlebaSpawner | Self::GlebaSpawnerSmall)
     }
 
     /// The prototype's collision layers, as `prototypes.entity[name]
@@ -292,6 +380,10 @@ impl GlebaEntity {
             Self::Stone => RESOURCE,
             // "not player", says the Lua.
             Self::WaterCane => GROUND_TILE | IS_LOWER_OBJECT | IS_OBJECT | TRAIN,
+            // Both nests: they stand only on wetland, like the stromatolites.
+            Self::GlebaSpawner | Self::GlebaSpawnerSmall => {
+                GROUND_TILE | IS_LOWER_OBJECT | IS_OBJECT | OBJECT | PLAYER
+            }
             // The rest keep the default tree mask.
             _ => IS_LOWER_OBJECT | IS_OBJECT | ITEM | MELTABLE | OBJECT | PLAYER | WATER_TILE,
         }
@@ -320,6 +412,8 @@ impl GlebaEntity {
     pub fn layer(self) -> GlebaLayer {
         if self.is_plant() {
             GlebaLayer::Plants
+        } else if self.is_nest() {
+            GlebaLayer::Enemies
         } else {
             GlebaLayer::Resources
         }
@@ -333,9 +427,13 @@ impl GlebaEntity {
     /// ten are `tree`s with no `map_color`, so the chart draws them in its
     /// `default_color_by_type` for trees, `{0.19, 0.39, 0.19, 0.40}`
     /// (`utility-constants.lua`), the colour the Nauvis tree overlay blends.
+    /// The nests have no `map_color` either; the game's own Gleba preview
+    /// PNG draws every one of them (255, 25, 25), its `default_enemy_color`
+    /// `{1, 0.1, 0.1}` (`utility-constants.lua`) with 25.5 truncated.
     #[must_use]
     pub fn paint(self) -> GlebaPaint {
         match self {
+            Self::GlebaSpawner | Self::GlebaSpawnerSmall => GlebaPaint::Solid(NEST_MAP_COLOR),
             Self::CopperStromatolite | Self::IronStromatolite => GlebaPaint::Solid([129, 105, 78]),
             Self::Stone => GlebaPaint::Solid([175, 155, 108]),
             Self::YumakoTree | Self::Jellystem => GlebaPaint::Solid([255, 255, 255]),
@@ -344,7 +442,7 @@ impl GlebaEntity {
     }
 
     /// The order a render paints entities in: the blended trees first, then
-    /// the two white plants, then stone and the stromatolites. Footprints are
+    /// the two white plants, then stone and the stromatolites, then the nests. Footprints are
     /// whole tiles, so two entities whose boxes do not meet can still share a
     /// tile; a fixed class order makes the pixels independent of the order
     /// entities were placed in (blends of one colour commute).
@@ -353,12 +451,17 @@ impl GlebaEntity {
         match self.paint() {
             GlebaPaint::Blend(..) => 0,
             GlebaPaint::Solid(_) if self.is_plant() => 1,
+            GlebaPaint::Solid(_) if self.is_nest() => 3,
             GlebaPaint::Solid(_) => 2,
         }
     }
 }
 
-/// One placed entity: its position and map-gen box in 1/256 tile.
+/// The colour a map draws a pentapod nest in.
+pub const NEST_MAP_COLOR: [u8; 3] = [255, 25, 25];
+
+/// One placed entity: its position and the box it occupies, its collision
+/// box ([`collision_box`]), in 1/256 tile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GlebaPlaced {
     pub entity: GlebaEntity,
@@ -405,6 +508,10 @@ pub struct GlebaChunkInputs<'a> {
     inputs: Vec<Option<ResourceInputs>>,
     fields: Vec<Option<GlebaResourceFields>>,
     plants: Vec<Option<GlebaPlantFields>>,
+    /// `enemy_autoplace_base(0, 8)` at every tile, one batch for the chunk,
+    /// made the first time a nest asks.
+    penalties: Option<Vec<f64>>,
+    nests: Vec<Option<NestProbabilities>>,
 }
 
 impl<'a> GlebaChunkInputs<'a> {
@@ -427,6 +534,8 @@ impl<'a> GlebaChunkInputs<'a> {
             inputs: vec![None; TILES_PER_CHUNK],
             fields: vec![None; TILES_PER_CHUNK],
             plants: vec![None; TILES_PER_CHUNK],
+            penalties: None,
+            nests: vec![None; TILES_PER_CHUNK],
         }
     }
 
@@ -473,6 +582,32 @@ impl<'a> GlebaChunkInputs<'a> {
         self.plants[i] = Some(f);
         f
     }
+
+    /// Both nest probabilities at a tile of the chunk. The penalty is one
+    /// batch over the whole chunk, so the first call evaluates
+    /// `enemy_base_probability` at all 1,024 tiles.
+    fn nests(&mut self, tx: i64, ty: i64) -> NestProbabilities {
+        let i = self.index(tx, ty);
+        if let Some(p) = self.nests[i] {
+            return p;
+        }
+        let (x0, y0) = (self.x0, self.y0);
+        let nests = self.stack.nests();
+        let penalties = self.penalties.get_or_insert_with(|| {
+            #[allow(clippy::cast_precision_loss, clippy::cast_possible_wrap)]
+            let source: Vec<f64> = (0..TILES_PER_CHUNK as i64)
+                .map(|k| nests.penalty_source((x0 + k % CHUNK) as f64, (y0 + k / CHUNK) as f64))
+                .collect();
+            chunk_penalties(x0.div_euclid(CHUNK), y0.div_euclid(CHUNK), &source)
+        });
+        let penalised = penalties[i];
+        let t = self.inputs(tx, ty);
+        #[allow(clippy::cast_possible_truncation)]
+        let at = At::tile(tx as i32, ty as i32);
+        let p = nest_probabilities(penalised, &self.stack.nest_inputs(at, &t));
+        self.nests[i] = Some(p);
+        p
+    }
 }
 
 impl ChunkInputs for GlebaChunkInputs<'_> {
@@ -493,6 +628,8 @@ impl ChunkInputs for GlebaChunkInputs<'_> {
             GlebaEntity::CopperStromatolite => self.fields(tx, ty).copper_probability,
             GlebaEntity::IronStromatolite => self.fields(tx, ty).iron_probability,
             GlebaEntity::Stone => self.fields(tx, ty).stone_probability,
+            GlebaEntity::GlebaSpawner => self.nests(tx, ty).spawner,
+            GlebaEntity::GlebaSpawnerSmall => self.nests(tx, ty).spawner_small,
             _ => self.plants(tx, ty).probability[proto - FIRST_PLANT],
         }
     }
@@ -526,6 +663,11 @@ pub enum Apply {
     /// overlap, so a plant whose box only touches the stone's tile is not
     /// searched. A control: the game removed such a plant (`fixtures`).
     TreeRemovalOverlap,
+    /// [`Apply::RealSurface`] with a placed small nest occupying its map-gen
+    /// box rather than its collision box. A control: the game keeps
+    /// entities of later chunks that only the larger box would meet
+    /// (`fixtures`).
+    NestMapGenBox,
 }
 
 /// Stone's `tree_removal_probability` and `tree_removal_max_distance`, from
@@ -573,6 +715,8 @@ struct Surface<'a> {
     /// Each placed plant's odds of surviving the stone rolls so far.
     survival: Vec<f64>,
     buckets: BTreeMap<(i64, i64), Vec<usize>>,
+    /// The nests, bucketed apart: their boxes reach [`NEST_REACH`].
+    nest_buckets: BTreeMap<(i64, i64), Vec<usize>>,
 }
 
 impl Surface<'_> {
@@ -588,6 +732,7 @@ impl Surface<'_> {
             alive: Vec::new(),
             survival: Vec::new(),
             buckets: BTreeMap::new(),
+            nest_buckets: BTreeMap::new(),
         }
     }
 
@@ -595,22 +740,35 @@ impl Surface<'_> {
         if self.rule == Apply::Preview {
             return false;
         }
+        self.collides_in(&self.buckets, MAX_REACH, e, b)
+            || self.collides_in(&self.nest_buckets, NEST_REACH, e, b)
+    }
+
+    /// [`Surface::collides`] against the entities of one bucket map, whose
+    /// boxes reach at most `reach` from their positions.
+    fn collides_in(
+        &self,
+        buckets: &BTreeMap<(i64, i64), Vec<usize>>,
+        reach: i64,
+        e: GlebaEntity,
+        b: [i64; 4],
+    ) -> bool {
         // Touching boxes meet; under the control they must overlap.
         let edge = i64::from(self.rule == Apply::StrictOverlap);
         let one = super::generate::FIXED_ONE;
         // A placed entity whose box can meet `b` has its position within
-        // MAX_REACH of it on each axis, and is bucketed by that position.
+        // `reach` of it on each axis, and is bucketed by that position.
         let (x0, x1) = (
-            (b[0] - MAX_REACH).div_euclid(one),
-            (b[2] + MAX_REACH).div_euclid(one),
+            (b[0] - reach).div_euclid(one),
+            (b[2] + reach).div_euclid(one),
         );
         let (y0, y1) = (
-            (b[1] - MAX_REACH).div_euclid(one),
-            (b[3] + MAX_REACH).div_euclid(one),
+            (b[1] - reach).div_euclid(one),
+            (b[3] + reach).div_euclid(one),
         );
         for by in y0..=y1 {
             for bx in x0..=x1 {
-                let Some(list) = self.buckets.get(&(bx, by)) else {
+                let Some(list) = buckets.get(&(bx, by)) else {
                     continue;
                 };
                 for &k in list {
@@ -632,20 +790,33 @@ impl Surface<'_> {
 
     fn apply(&mut self, q: &Queued) {
         let entity = GLEBA_ENTITIES[q.proto];
-        let bounds = q.bounds(&GLEBA_AUTOPLACERS);
-        if self.collides(entity, bounds) {
+        // The new entity is tested with its map-gen box, and occupies its
+        // collision box once placed.
+        let test = q.bounds(&GLEBA_AUTOPLACERS);
+        if self.collides(entity, test) {
             return;
         }
         if self.rule != Apply::Preview
             && self
                 .obstacles
-                .is_some_and(|o| o.blocks(entity.layers(), bounds, self.chunk))
+                .is_some_and(|o| o.blocks(entity.layers(), test, self.chunk))
         {
             return;
         }
+        let c = if self.rule == Apply::NestMapGenBox {
+            GLEBA_AUTOPLACERS[q.proto].map_gen_box
+        } else {
+            collision_box(q.proto)
+        };
+        let bounds = [q.x + c.left, q.y + c.top, q.x + c.right, q.y + c.bottom];
         let one = super::generate::FIXED_ONE;
         let key = (q.x.div_euclid(one), q.y.div_euclid(one));
-        self.buckets.entry(key).or_default().push(self.placed.len());
+        let buckets = if entity.is_nest() {
+            &mut self.nest_buckets
+        } else {
+            &mut self.buckets
+        };
+        buckets.entry(key).or_default().push(self.placed.len());
         self.placed.push(GlebaPlaced {
             entity,
             x: q.x,
@@ -668,7 +839,7 @@ impl Surface<'_> {
     /// surviving, and it goes when they fall below one half.
     fn remove_trees(&mut self, x: i64, y: i64) {
         let edge = match self.rule {
-            Apply::RealSurface => 0,
+            Apply::RealSurface | Apply::NestMapGenBox => 0,
             Apply::TreeRemovalOverlap => 1,
             Apply::StrictOverlap | Apply::Preview | Apply::NoTreeRemoval => return,
         };
@@ -746,14 +917,10 @@ pub fn place_chunks_with(
     )
 }
 
-/// The groups the generator runs for this graph: every one, or, with the
-/// `gleba_plants` control at size 0, [`GLEBA_GROUPS_NO_PLANTS`].
-fn groups(stack: &GlebaStack) -> &'static [&'static [usize]] {
-    if stack.plants_size() > 0.0 {
-        &GLEBA_GROUPS
-    } else {
-        &GLEBA_GROUPS_NO_PLANTS
-    }
+/// The groups the generator runs for this graph: every one but those of a
+/// control at size 0 ([`gleba_groups`]).
+fn groups(stack: &GlebaStack) -> Vec<&'static [usize]> {
+    gleba_groups(stack.plants_size() > 0.0, stack.nests().size() > 0.0)
 }
 
 /// Each chunk's queue, in the order given. A chunk's queue reads only the
@@ -766,11 +933,24 @@ pub fn queue_chunks(
     kept: Option<&KeptInputs>,
     chunks: &[(i64, i64)],
 ) -> Vec<Vec<Queued>> {
+    queue_chunks_grouped(stack, tiles, kept, chunks, &groups(stack))
+}
+
+/// [`queue_chunks`] running exactly `groups`, whatever the controls say: the
+/// control the tests use to show that a size-0 control's groups are skipped.
+#[must_use]
+pub fn queue_chunks_grouped(
+    stack: &GlebaStack,
+    tiles: GlebaTiles<'_>,
+    kept: Option<&KeptInputs>,
+    chunks: &[(i64, i64)],
+    groups: &[&[usize]],
+) -> Vec<Vec<Queued>> {
     chunks
         .iter()
         .map(|&(cx, cy)| {
             let mut inputs = GlebaChunkInputs::new(stack, tiles, kept, cx, cy);
-            generate_chunk(cx, cy, groups(stack), &GLEBA_AUTOPLACERS, &mut inputs)
+            generate_chunk(cx, cy, groups, &GLEBA_AUTOPLACERS, &mut inputs)
         })
         .collect()
 }

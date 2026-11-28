@@ -7,6 +7,7 @@ import graded from "./fixtures/oracle-gleba-real-surface-entities.seed123456.jso
 import defaults from "./fixtures/oracle-gleba-real-surface-entities-default.seed123456.json";
 import plants from "./fixtures/oracle-gleba-real-surface-plants.seed123456.json";
 import cliffArm from "./fixtures/oracle-gleba-real-surface-cliffs.seed123456.json";
+import nestArm from "./fixtures/oracle-gleba-real-surface-nests.seed123456.json";
 import { surfaceSeedForPlanet } from "../src/model/planetSurfaceSeed";
 import { planTiles, stitchTiles, type ImageBox } from "../src/noise/preview/tiling";
 import {
@@ -49,6 +50,11 @@ import type { GlebaRenderRequest } from "../src/noise/wasm/request";
  * `oracle-gleba-real-surface-cliffs.seed123456.json`, the same surface with
  * everything on but the nests: 2,484 cliffs at the game's position and
  * orientation, which block plants and stromatolites.
+ *
+ * **The pentapod nests (#454, slice 6)** are graded against
+ * `oracle-gleba-real-surface-nests.seed123456.json`, the map a player gets,
+ * every control at its default: 30 `gleba-spawner` and 37
+ * `gleba-spawner-small`, every one at the game's position.
  */
 const wasmPath = join(import.meta.dirname, "..", "src", "noise", "wasm", "engine.wasm");
 
@@ -62,7 +68,7 @@ const SEED0 = surfaceSeedForPlanet("gleba", 123456);
 const SIDE = graded.window.width;
 const X0 = graded.window.x0;
 
-/** The graded slice-3 arm had the plants and cliffs off, so this request does too. */
+/** The graded slice-3 arm had the plants, nests and cliffs off, so this request does too. */
 const WINDOW = {
   planet: "gleba",
   view: "resources",
@@ -72,16 +78,22 @@ const WINDOW = {
   originX: X0,
   originY: X0,
   tilesPerPixel: 1,
-  glebaControls: { plantsSize: 0, cliffContinuity: 0 },
+  glebaControls: { plantsSize: 0, cliffContinuity: 0, enemySize: 0 },
 } as const satisfies GlebaRenderRequest;
 
-/** The plants arm had the cliffs off, and everything else at its default. */
+/** The plants arm had the nests and cliffs off, and everything else at its default. */
 const PLANT_WINDOW = {
   ...WINDOW,
-  glebaControls: { cliffContinuity: 0 },
+  glebaControls: { cliffContinuity: 0, enemySize: 0 },
 } as const satisfies GlebaRenderRequest;
 
-/** Every lever at its default, plants included: the plants arm, and the map a player gets. */
+/** The cliffs arm had the nests off, and everything else at its default. */
+const CLIFF_WINDOW = {
+  ...WINDOW,
+  glebaControls: { enemySize: 0 },
+} as const satisfies GlebaRenderRequest;
+
+/** Every lever at its default: the nests arm, the default arm, and the map a player gets. */
 const DEFAULT_WINDOW = {
   ...WINDOW,
   glebaControls: {},
@@ -114,22 +126,33 @@ type Fixture = { names: string[]; entities: number[][] };
  */
 const TREE_BLEND: readonly number[] = [48, 99, 48];
 const WHITE: readonly number[] = [255, 255, 255];
-type Autoplacer = { name: string; type: string; mapGenBox: number[] };
+/**
+ * A pentapod nest has no `map_color`; the game's own Gleba preview PNG draws
+ * every one in (255, 25, 25), its `default_enemy_color` `{1, 0.1, 0.1}`.
+ */
+const NEST: readonly number[] = [255, 25, 25];
+type Autoplacer = { name: string; type: string; collisionBox: number[] };
+/**
+ * Each entity paints the box it occupies on the surface, its collision box.
+ * Only the small nest's differs from its map-gen box (+-1.35 against +-2.35).
+ */
 function paintRules(autoplacers: Autoplacer[]) {
   const rules = new Map<
     string,
     { box: number[]; color: readonly number[]; blend: boolean; pass: number }
   >();
   for (const a of autoplacers) {
-    const box = a.mapGenBox.map((v) => Math.round(v * 256));
+    const box = a.collisionBox.map((v) => Math.round(v * 256));
     if (a.type === "tree") rules.set(a.name, { box, color: TREE_BLEND, blend: true, pass: 0 });
     else if (a.type === "plant") rules.set(a.name, { box, color: WHITE, blend: false, pass: 1 });
+    else if (a.type === "unit-spawner")
+      rules.set(a.name, { box, color: NEST, blend: false, pass: 3 });
     else if (a.name in COLOR)
       rules.set(a.name, { box, color: COLOR[a.name] as readonly number[], blend: false, pass: 2 });
   }
   return rules;
 }
-const PLANT_RULES = paintRules(plants.autoplacers as Autoplacer[]);
+const PLANT_RULES = paintRules(nestArm.autoplacers as Autoplacer[]);
 
 /** `cliff-gleba`'s `map_color`, painted solid. */
 const CLIFF: readonly number[] = [144, 119, 87];
@@ -172,7 +195,7 @@ type EntityFixture = {
 /**
  * `terrain` with a fixture's entities painted on it the way the module paints
  * them: the tree blends, then the cliffs (when `withCliffs`), then the white
- * plants, then stone and the stromatolites; each over the tiles `floor(low)`
+ * plants, then stone and the stromatolites, then the nests; each over the tiles `floor(low)`
  * to `ceil(high) - 1` of its box (for a cliff, its oriented box's AABB),
  * keeping only the names `keep` allows.
  */
@@ -203,7 +226,8 @@ function expectedFrom(
     }
     if (!keep(name)) continue;
     const rule = PLANT_RULES.get(name)!;
-    // Passes 0 (trees), 1 (white plants), 2 (resources); cliffs go between 0 and 1.
+    // Passes 0 (trees), 1 (white plants), 2 (resources), 3 (nests); cliffs go
+    // between 0 and 1.
     marks.push({
       x,
       y,
@@ -242,6 +266,7 @@ function expectedPlants(
 }
 
 const isPlant = (name: string) => PLANT_RULES.get(name)!.pass < 2;
+const isNest = (name: string) => PLANT_RULES.get(name)!.pass === 3;
 
 /**
  * `terrain` with the fixture's entities painted on it: each covers the tiles
@@ -524,8 +549,8 @@ describe("the WASM engine against the real Gleba surface's cliffs", () => {
    */
   it("paints every cliff of the real surface, and nothing else", async () => {
     const e = await engine();
-    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
-    const cliffs = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "cliffs" }).slice();
+    const terrain = renderThroughWasm(e, { ...CLIFF_WINDOW, view: "terrain" }).slice();
+    const cliffs = renderThroughWasm(e, { ...CLIFF_WINDOW, view: "cliffs" }).slice();
     const want = expectedFrom(cliffArm as EntityFixture, terrain, () => false, true);
     const n = differingTiles(want, cliffs);
     withDiffArtifacts(
@@ -550,8 +575,8 @@ describe("the WASM engine against the real Gleba surface's cliffs", () => {
    */
   it("paints the cliffs, plants, stone and stromatolites of the real surface", async () => {
     const e = await engine();
-    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
-    const all = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "all" }).slice();
+    const terrain = renderThroughWasm(e, { ...CLIFF_WINDOW, view: "terrain" }).slice();
+    const all = renderThroughWasm(e, { ...CLIFF_WINDOW, view: "all" }).slice();
     const want = expectedFrom(cliffArm as EntityFixture, terrain, () => true, true);
     const n = differingTiles(want, all);
     withDiffArtifacts(
@@ -570,7 +595,7 @@ describe("the WASM engine against the real Gleba surface's cliffs", () => {
   /** The cliff control reaches the render: at continuity 0 no cliff is drawn. */
   it("draws no cliff with the cliff control at size 0", async () => {
     const e = await engine();
-    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const terrain = renderThroughWasm(e, { ...CLIFF_WINDOW, view: "terrain" }).slice();
     const off = renderThroughWasm(e, { ...PLANT_WINDOW, view: "cliffs" });
     expect(differing(off, terrain)).toBe(0);
   }, 300000);
@@ -588,6 +613,126 @@ const CLIFF_ARM_DIFFERING_TILES: [number, number][] = [
   [-326, 440],
   [-328, 441],
   [-327, 441],
+];
+
+describe("the WASM engine against the real Gleba surface's pentapod nests", () => {
+  it("grades the map a player gets, with 67 nests and nothing but the graded entities", () => {
+    expect(nestArm.surfaceSeed).toBe(SEED0);
+    expect(nestArm.buildLine).toContain("Version: 2.1.23 ");
+    expect(nestArm.window).toEqual(graded.window);
+    expect(nestArm.counts["gleba-spawner"]).toBe(30);
+    expect(nestArm.counts["gleba-spawner-small"]).toBe(37);
+    expect(nestArm.counts["cliff-gleba"]).toBe(2484);
+    for (const c of Object.values(nestArm.controls)) {
+      expect(c).toEqual({ frequency: 1, size: 1, richness: 1 });
+    }
+    expect(Object.keys(nestArm.census).sort()).toEqual([...nestArm.names].sort());
+  });
+
+  /**
+   * **The `enemies` view: every nest of the real surface at its position, and
+   * no other.** Exact over the whole window.
+   */
+  it("paints every nest of the real surface, and nothing else", async () => {
+    const e = await engine();
+    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const enemies = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "enemies" }).slice();
+    const want = expectedFrom(nestArm as EntityFixture, terrain, isNest, false);
+    const n = differingTiles(want, enemies);
+    withDiffArtifacts(
+      {
+        spec: "wasmGlebaEntityParity",
+        case: "gleba-enemies-vs-real-surface",
+        game: { width: SIDE, height: SIDE, rgb: rgbOf(want) },
+        ours: { width: SIDE, height: SIDE, rgba: enemies },
+      },
+      () => {
+        expect(n).toEqual([]);
+      },
+    );
+    // Non-vacuity: the terrain has no pixel of the nest colour, and the nests
+    // paint hundreds.
+    expect(countColor(terrain, NEST)).toBe(0);
+    expect(countColor(enemies, NEST)).toBe(NEST_PX);
+  }, 300000);
+
+  /**
+   * **The `all` view against the map a player gets.** The differing tiles
+   * are the cliffs arm's: the stingfrond the game kept against stone's
+   * tree-removal roll on this generation, as there.
+   */
+  it("paints every entity of the real surface", async () => {
+    const e = await engine();
+    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const all = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "all" }).slice();
+    const want = expectedFrom(nestArm as EntityFixture, terrain, () => true, true);
+    const n = differingTiles(want, all);
+    withDiffArtifacts(
+      {
+        spec: "wasmGlebaEntityParity",
+        case: "gleba-all-vs-real-surface-nests",
+        game: { width: SIDE, height: SIDE, rgb: rgbOf(want) },
+        ours: { width: SIDE, height: SIDE, rgba: all },
+      },
+      () => {
+        expect(n).toEqual(CLIFF_ARM_DIFFERING_TILES);
+      },
+    );
+  }, 300000);
+
+  /**
+   * The views split the entities: `trees` the plants, `resources` stone and
+   * the stromatolites, each against the map a player gets, with the nests
+   * placed but not drawn.
+   */
+  it("keeps the nests out of the trees and resources views", async () => {
+    const e = await engine();
+    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const trees = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "trees" }).slice();
+    const resources = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "resources" }).slice();
+    const f = nestArm as EntityFixture;
+    expect(differingTiles(expectedFrom(f, terrain, isPlant, false), trees)).toEqual(
+      NEST_ARM_TREES_DIFFERING_TILES,
+    );
+    expect(
+      differing(
+        expectedFrom(f, terrain, (n) => !isPlant(n) && !isNest(n), false),
+        resources,
+      ),
+    ).toBe(0);
+    expect(countColor(trees, NEST)).toBe(0);
+    expect(countColor(resources, NEST)).toBe(0);
+  }, 300000);
+
+  /** The enemy control reaches the render: at size 0 no nest is drawn. */
+  it("draws no nest with the enemy control at size 0", async () => {
+    const e = await engine();
+    const terrain = renderThroughWasm(e, { ...DEFAULT_WINDOW, view: "terrain" }).slice();
+    const off = renderThroughWasm(e, { ...CLIFF_WINDOW, view: "enemies" });
+    expect(differing(off, terrain)).toBe(0);
+  }, 300000);
+});
+
+/** The nest colour's pixels in the `enemies` view of the whole window: 67 footprints. */
+const NEST_PX = 1456;
+
+/**
+ * Frozen, by position: the `trees` view against the nests arm. The two
+ * plants the game kept against stone's tree-removal roll on this generation,
+ * the sunnycomb at (-62.75, 0.125), whose tiles stone paints over in the
+ * `all` view, and the stingfrond at (-326.4375, 441.375).
+ */
+const NEST_ARM_TREES_DIFFERING_TILES: [number, number][] = [
+  [-64, -1],
+  [-63, -1],
+  [-64, 0],
+  [-63, 0],
+  [-328, 440],
+  [-327, 440],
+  [-326, 440],
+  [-328, 441],
+  [-327, 441],
+  [-326, 441],
 ];
 
 describe("tiling", () => {

@@ -174,6 +174,19 @@ impl GlebaStarting {
             enemies: max(&[at20(&self.enemies_yumako), at20(&self.enemies_jellynut)]),
         }
     }
+
+    /// Only the two enemy groups, `(gleba_starting_enemies,
+    /// gleba_starting_enemies_safe)`, which the pentapod nests read: the same
+    /// values [`GlebaStarting::eval`] gives, without the other cones.
+    #[must_use]
+    pub fn enemies(&self, x: f64, y: f64, wobble_x: f64) -> (f64, f64) {
+        let d20 = f32r(wobble_x * 20.0);
+        let at20 = |s: &StartingSpot| starting_spot_at_angle(s, x, y, d20, d20);
+        (
+            max(&[at20(&self.enemies_yumako), at20(&self.enemies_jellynut)]),
+            at20(&self.enemies_safe),
+        )
+    }
 }
 
 #[cfg(test)]

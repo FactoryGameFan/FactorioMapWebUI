@@ -82,7 +82,7 @@ pub struct GlebaResourceFields {
     pub stone_probability: f64,
 }
 
-/// The eight terrain fields the resource and plant fields read at a
+/// The nine terrain fields the resource, plant and nest fields read at a
 /// position. Small, so a render can keep them for every tile tile correction
 /// evaluates (`GlebaStack::corrected_tiles_keeping`) instead of evaluating
 /// the terrain a second time.
@@ -98,6 +98,8 @@ pub struct ResourceInputs {
     /// `gleba_plants_noise` and `gleba_plants_noise_b`, which the plants read.
     pub plants_noise: f64,
     pub plants_noise_b: f64,
+    /// `gleba_fertile_spots_coastal`, which the pentapod nests read.
+    pub fertile_spots_coastal: f64,
 }
 
 impl From<&GlebaTerrainFields> for ResourceInputs {
@@ -111,6 +113,7 @@ impl From<&GlebaTerrainFields> for ResourceInputs {
             moisture: t.moisture,
             plants_noise: t.plants_noise,
             plants_noise_b: t.plants_noise_b,
+            fertile_spots_coastal: t.fertile_spots_coastal,
         }
     }
 }
@@ -119,7 +122,7 @@ impl ResourceInputs {
     /// The inputs as f32s, which hold them exactly: every one is f32-valued.
     #[must_use]
     #[allow(clippy::cast_possible_truncation)]
-    pub fn pack(&self) -> [f32; 8] {
+    pub fn pack(&self) -> [f32; 9] {
         [
             self.elevation as f32,
             self.aux as f32,
@@ -129,12 +132,13 @@ impl ResourceInputs {
             self.moisture as f32,
             self.plants_noise as f32,
             self.plants_noise_b as f32,
+            self.fertile_spots_coastal as f32,
         ]
     }
 
     /// The inverse of [`ResourceInputs::pack`].
     #[must_use]
-    pub fn unpack(p: &[f32; 8]) -> Self {
+    pub fn unpack(p: &[f32; 9]) -> Self {
         Self {
             elevation: f64::from(p[0]),
             aux: f64::from(p[1]),
@@ -144,6 +148,7 @@ impl ResourceInputs {
             moisture: f64::from(p[5]),
             plants_noise: f64::from(p[6]),
             plants_noise_b: f64::from(p[7]),
+            fertile_spots_coastal: f64::from(p[8]),
         }
     }
 }
