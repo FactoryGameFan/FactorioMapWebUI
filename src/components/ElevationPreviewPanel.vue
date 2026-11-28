@@ -267,29 +267,41 @@ async function generate(reroll = false) {
   }
 }
 
+// ONE watcher for the planet and the render center, because they change
+// together on a jump to another planet (the island finder moves the preview to
+// Fulgora and sets the center in the same tick). Two separate watchers made the
+// outcome depend on which ran first: the planet reset cleared `hasRendered`
+// before the center watcher read it, or bumped `generation` after it had started
+// a render and so threw that render's tiles away.
+//
 // A picture of one planet must not sit under a dropdown that names another.
-// Back to the not-rendered state: the box shows its normal prompt or "not
-// available" message, and any in-flight render is dropped. The seed readout is
-// cleared too - it labels a finished picture, and with none on screen it would
-// mislead (the map seed itself is the same on every planet and is shown again by
-// the next Generate). Nothing renders until the user asks.
-watch(planet, () => {
-  generation++;
-  loading.value = false;
-  hasRendered.value = false;
-  error.value = null;
-  elapsedMs.value = null;
-  seed.value = null;
-});
-
-// Re-center on a jump target automatically, but only once the user has
-// already asked for a render at least once - a caller that sets centerX/
-// centerY before the first Generate click (e.g. mounting straight onto a
-// jump target) must not trigger a render the user never asked for.
+// A planet change goes back to the not-rendered state: the box shows its normal
+// prompt or "not available" message, and any in-flight render is dropped. The
+// seed readout is cleared too - it labels a finished picture, and with none on
+// screen it would mislead (the map seed itself is the same on every planet and
+// is shown again by the next Generate).
+//
+// A render starts by itself only when a picture was already on screen, and
+// either the center moved on the same planet, or the planet changed AND a center
+// came with it (a jump). A plain planet switch has no center, so it still
+// renders nothing until the user asks, and a jump before the first Generate
+// click renders nothing either.
 watch(
-  () => [props.centerX, props.centerY],
-  () => {
-    if (hasRendered.value) void generate();
+  () => [planet.value, props.centerX, props.centerY] as const,
+  ([nextPlanet, x, y], [prevPlanet, prevX, prevY]) => {
+    const planetChanged = nextPlanet !== prevPlanet;
+    const centerChanged = x !== prevX || y !== prevY;
+    const hadPicture = hasRendered.value;
+    if (planetChanged) {
+      generation++;
+      loading.value = false;
+      hasRendered.value = false;
+      error.value = null;
+      elapsedMs.value = null;
+      seed.value = null;
+    }
+    const jumped = planetChanged ? x !== undefined && y !== undefined : centerChanged;
+    if (hadPicture && jumped) void generate();
   },
 );
 </script>

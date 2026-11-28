@@ -802,6 +802,52 @@ describe("ElevationPreviewPanel", () => {
       expect(arg).toMatchObject({ originX: 100 - 512, originY: 200 - 512 });
     });
 
+    it("renders the new planet at the jump center when a render was shown and planet and center change together", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      expect(renderer.render).toHaveBeenCalledOnce();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (w as any).setProps({ planet: "fulgora", centerX: 100, centerY: 200 });
+      await flushPromises();
+
+      expect(renderer.render).toHaveBeenCalledTimes(2);
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[1][0];
+      expect(arg).toMatchObject({ planet: "fulgora", originX: 100 - 512, originY: 200 - 512 });
+      expect(canvasHidden(w)).toBe(false);
+    });
+
+    it("a cross-planet jump before the first Generate click renders nothing", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (w as any).setProps({ planet: "fulgora", centerX: 100, centerY: 200 });
+      await flushPromises();
+      expect(renderer.render).not.toHaveBeenCalled();
+      expect(canvasHidden(w)).toBe(true);
+    });
+
+    it("a planet switch with no jump still clears the picture and renders nothing, even if a center is dropped with it", async () => {
+      stubCanvas();
+      const renderer = okRenderer();
+      const w = setup("nauvis", renderer, { planet: "fulgora" });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (w as any).setProps({ centerX: 100, centerY: 200 });
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+      expect(renderer.render).toHaveBeenCalledOnce();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (w as any).setProps({ planet: "nauvis", centerX: undefined, centerY: undefined });
+      await flushPromises();
+      expect(renderer.render).toHaveBeenCalledOnce();
+      expect(canvasHidden(w)).toBe(true);
+    });
+
     it("does NOT auto-render when the center changes before any render has happened", async () => {
       stubCanvas();
       const renderer = okRenderer();
