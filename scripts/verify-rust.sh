@@ -218,6 +218,13 @@ POISONED_TESTS=(
   # and the replay reaches the cliff crossing hook and the generator's roll.
   fixtures::gleba_cliffs::gleba_cliff_fields_match_the_game
   fixtures::gleba_cliffs::gleba_cliffs_replay_the_real_surface
+  # Gleba's pentapod nests (#454, slice 6): the enemy-base field reads the
+  # basis noise and spot hooks, the penalty carries `random_penalty`'s own
+  # `poison::f64_result`, and the replay reaches the generator's roll.
+  # Watched going red under `--features poison`: the live enemy-base bucket
+  # 0 of 1,130, the replay 0 of 9 nests.
+  fixtures::gleba_nests::gleba_nest_fields_match_the_game
+  fixtures::gleba_nests::gleba_nests_replay_the_real_surface
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

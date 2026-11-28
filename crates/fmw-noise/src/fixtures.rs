@@ -12933,5 +12933,8 @@ mod gleba_plants;
 // Gleba (#454): cliffs against a real surface.
 mod gleba_cliffs;
 
+// Gleba (#454, slice 6): the pentapod nests against a real surface.
+mod gleba_nests;
+
 // Fulgora against a real surface: the raw argmax, then tile correction.
 mod fulgora_real_surface;

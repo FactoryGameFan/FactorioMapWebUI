@@ -19,13 +19,14 @@
 
 use super::{count_exact_bits, load_captured_at};
 use crate::at::At;
+use crate::expressions::gleba_nests::GlebaEnemyControls;
 use crate::expressions::gleba_resources::{GlebaResourceFields, GlebaStoneControls};
 use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
 use crate::expressions::gleba_terrain::GlebaControls;
 use crate::placement::generate::{Positioning, FIXED_ONE};
 use crate::placement::gleba::{
-    apply, layer, queue_chunks, rows, tile_layers, Apply, GLEBA_AUTOPLACERS, GLEBA_ENTITIES,
-    GLEBA_GROUPS, GLEBA_GROUPS_NO_PLANTS,
+    apply, gleba_groups, layer, queue_chunks, rows, tile_layers, Apply, GLEBA_AUTOPLACERS,
+    GLEBA_ENTITIES, GLEBA_GROUPS,
 };
 use crate::test_json::Json;
 use crate::tiles::gleba_catalog::{GlebaTile, TILE_ORDER};
@@ -42,13 +43,14 @@ const SEED: u32 = 3_215_206_427;
 /// graded arm set it, so no plant of ours blocks a stromatolite the game
 /// never had to compete with.
 fn stack() -> GlebaStack {
-    GlebaStack::with_levers(
+    GlebaStack::with_enemies(
         &GlebaCtx {
             seed0: SEED,
             controls: GlebaControls::default(),
         },
         &GlebaStoneControls::default(),
         0.0,
+        &GlebaEnemyControls::off(),
     )
 }
 
@@ -146,14 +148,9 @@ fn gleba_autoplacer_facts_match_the_game() {
     assert_eq!((orders[0].0.as_str(), orders[1].0.as_str()), ("", ""));
     assert!(orders[2..].iter().all(|(o, _)| !o.is_empty()));
     // Every other order is distinct, so each prototype is its own group, and
-    // the groups follow the sort: the plants, then stone, then the nests
-    // (not placed here).
+    // the groups follow the sort: the plants, then stone, then the nests.
     assert!(orders.windows(2).skip(1).all(|w| w[0].0 < w[1].0));
-    let sorted: Vec<&str> = orders[2..]
-        .iter()
-        .map(|(_, n)| n.as_str())
-        .filter(|n| !n.starts_with("gleba-spawner"))
-        .collect();
+    let sorted: Vec<&str> = orders[2..].iter().map(|(_, n)| n.as_str()).collect();
     let ours: Vec<&str> = GLEBA_GROUPS[1..]
         .iter()
         .map(|g| {
@@ -163,7 +160,11 @@ fn gleba_autoplacer_facts_match_the_game() {
         .collect();
     assert_eq!(sorted, ours);
     assert_eq!(GLEBA_GROUPS[0], &[0usize, 1][..]);
-    assert_eq!(GLEBA_GROUPS_NO_PLANTS, [&[0usize, 1][..], &[2][..]]);
+    assert_eq!(
+        gleba_groups(false, true),
+        [&[0usize, 1][..], &[2][..], &[15][..], &[16][..]]
+    );
+    assert_eq!(gleba_groups(true, true), GLEBA_GROUPS);
     // Stone is the only resource on Gleba, so nothing else competes with it.
     let resources: Vec<&str> = autoplacers
         .iter()
@@ -192,8 +193,30 @@ fn gleba_autoplacer_facts_match_the_game() {
             [ob.left, ob.top, ob.right, ob.bottom],
             "{e:?}"
         );
-        assert_eq!(a.get("mapGenBox"), a.get("collisionBox"), "{e:?}");
+        // Only the small nest declares a map-gen box of its own, larger than
+        // its collision box (+-1.34765625).
+        if *e == crate::placement::gleba::GlebaEntity::GlebaSpawnerSmall {
+            let c = a.get("collisionBox").as_array();
+            assert_eq!(
+                [fixed(&c[0]), fixed(&c[2])],
+                [-345, 345],
+                "the small nest's collision box"
+            );
+        } else {
+            assert_eq!(a.get("mapGenBox"), a.get("collisionBox"), "{e:?}");
+        }
         assert_eq!(a.get("placementDensity").as_f64(), 1.0);
+        // The control each autoplace carries, which is what decides whether
+        // the generator drops it at size 0 (`gleba_groups`): the plants and
+        // the nests carry one, stone and the stromatolites none.
+        let control = if e.is_plant() {
+            "gleba_plants"
+        } else if e.is_nest() {
+            "gleba_enemy_base"
+        } else {
+            ""
+        };
+        assert_eq!(a.get("control").as_str(), control, "{e:?}");
         // Lua writes an empty table as {}; a restriction is a list of names.
         let restriction = a.get("tileRestriction");
         if e.tile_restriction().is_empty() {

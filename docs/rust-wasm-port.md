@@ -61,7 +61,7 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 14 (#454) | Gleba slice 3 - stone and both stromatolites in `resources` and `all`, placed as a REAL surface places them (the per-chunk generator plus apply), 5,193 of 5,193 | stone and stromatolites done |
 
 **Every planet, every view the panel offers, renders through the engine.** Gleba
-offers terrain, resources and all, and only in dev mode. The
+offers terrain, trees, cliffs, resources, enemies and all, and only in dev mode. The
 per-layer landing narrative is in the history doc; what follows is only what is
 still a rule.
 
@@ -1140,10 +1140,10 @@ step, so no stone removing plants either) is what this slice does not copy.
   and the stromatolites. Blends of one colour commute, so the pixels do not
   depend on placement order.
 - **`gleba_plants` at size 0** makes every plant probability 0, so the
-  generator skips the plant groups (`GLEBA_GROUPS_NO_PLANTS`): the
-  stromatolites draw first and stone needs no stream, so nothing reads the
-  draws they would have spent. That stops holding once a group after the
-  plants reads the stream (the nests), and must be measured then.
+  generator skips the plant groups: the stromatolites draw first and stone
+  needs no stream, so nothing reads the draws they would have spent. Slice
+  6 measured that the game really skips them, now that the nests read the
+  stream after them (`gleba_groups`).
 - **ABI.** The Gleba block grew 48 -> 56 bytes (request 112) for
   `control:gleba_plants:size` at +48, appended.
 
@@ -1319,10 +1319,151 @@ list) gives 504,514, so the cliff pass, linked into the module for the first
 time (`apply_cliff_connections` was test-only before), costs about 44 KB,
 and stone, obstacles, paint and the ABI about 8 KB.
 
-**What is not drawn yet:** the pentapod nests. They follow the plants in the
-stream, so `GLEBA_GROUPS_NO_PLANTS` (the plant groups skipped at plants size
-0) must be re-measured with them. On the default map they take 1 water-cane
-and 2 hairyclubnubs from this window.
+**What is not drawn yet:** the pentapod nests, which slice 6 adds.
+
+### Gleba (#454), slice 6: the pentapod nests, against a real surface
+
+The `enemies` view draws every `gleba-spawner` and `gleba-spawner-small` a
+REAL Gleba surface places, and `all` draws them with everything else. Every
+entity view places them, because a nest of one chunk blocks plants of the
+next. Over the 1024 x 1024 window -512..511 at map seed 123456, with every
+control at its default (the map a player gets), the engine places all 67 of
+the game's nests (30 large, 37 small) at the game's position to the 1/256
+tile and nothing else, all 2,484 cliffs as before, and 35,225 of the game's
+35,227 other entities with no extras. The two misses are the plants stone's
+tree-removal roll spared, as on the cliffs arm.
+
+**The fixture** is `oracle-gleba-real-surface-nests.seed123456.json`
+(`FMW_ARM=nests scripts/probes/gleba-entities`): every control at its
+default, all 18 Gleba autoplaced entities listed with a 3-tile ring, and 15
+fields at 1,280 positions (512 anywhere, then 256 each where
+`enemy_base_probability` and the two nest probabilities are above 0).
+
+**What a real surface does, and the port with it**
+(`expressions::gleba_nests`, `placement::gleba`):
+
+- **The fields.** `gleba_spawner` and `gleba_spawner_small` from
+  `planet-gleba-map-gen.lua`, over `enemy_autoplace_base(0, 8)`. Gleba
+  replaces `enemy_base_frequency` with a formula exactly twice Nauvis's
+  (doubling is exact), so `enemy_base_probability` is the Nauvis
+  `EnemyBaseField`, unchanged, with its frequency control doubled; the Nauvis
+  code is not touched. It matched the game at 1,280 of 1,280 positions on the
+  first run, as did `distance`, the three enemy-base scalars, both starting
+  enemy cones, `gleba_fertile_spots_coastal` and the two masks.
+- **The penalty is a batch, and the batch is the chunk.** At
+  `distance_factor` 0 the source is `min(enemy_base_probability, 0.25)`, and
+  `random_penalty` seeds once from the batch's first position and spends a
+  draw only on a positive source. In the per-chunk generator the batch is the
+  chunk's 1,024 tiles, row-major, at `(x + 8, y)`: the same layout Vulcanus's
+  solid ore proved (#437), with the `x + seed` the Lua passes. The
+  generator evaluates it once per chunk the first time a nest asks, for every
+  tile, since a tile's draw depends on every later tile's source. At tier 1,
+  where `calculate_tile_properties` batches some other way, the two nest
+  probabilities are graded where the penalty cannot matter (source `<= 0`,
+  or `>= 0.13`, where `min(0.02, ...)` saturates): 1,131 of 1,131, with 551
+  and 649 of them above 0. The other 149 are left to the replay.
+- **Two groups, last in the stream.** Orders `b[enemy]-c[spawner]-a[large]`
+  and `-b[small]`, after stone. Stone draws one roll for every land tile even
+  though its outcome needs no stream, so the nests start where those draws
+  end. Both nests are off grid, with the same +-601/256 map-gen box, and
+  stand only on wetland (`ground_tile, is_lower_object, is_object, object,
+  player`).
+- **The small nest occupies its COLLISION box.** The apply step tests a new
+  entity's `map_generator_bounding_box` against the collision boxes of the
+  entities already on the surface (`Surface::mapGeneratorWouldCollide`, then
+  `Surface::collide`). The small nest declares a map-gen box (+-2.35) larger
+  than its collision box (+-1.35), and once placed it holds only the smaller
+  one. Measured: with the map-gen box, the small nest at (-289.1875, 19.5)
+  takes the two copper stromatolites of the next chunk the game keeps beside
+  it, and the cascade costs 5 nests and 2 entities over the window (62 of 67
+  nests, 2 extras). The render paints that collision box too.
+- **A control at size 0 drops its autoplacers; stone has none.**
+  `prepareAutoplacers` drops an autoplacer whose own autoplace `control` is
+  at size 0 (`docs/noise/entity-generation-NOTES.md`, section 1). Every
+  plant carries `gleba_plants` and both nests `gleba_enemy_base`; stone and
+  the stromatolites carry none (read at runtime, now pinned in
+  `gleba_autoplacer_facts_match_the_game`). Measured on the whole window
+  against scratch captures (`gleba_nests_at_a_size_0_control`, by hand):
+
+  | control at size 0 | its groups skipped | its groups run |
+  | --- | --- | --- |
+  | `gleba_plants` (`FMW_PLANTS_SIZE=0`) | **77 of 77 nests**, 5,193 of 5,193 others | 0 of 77 (99 placed) |
+  | `gleba_stone` (`FMW_STONE_SIZE=0`) | 11 of 67 (60 placed) | **67 of 67**, 34,388 of 34,388 others |
+  | `gleba_enemy_base` (the cliffs arm) | **no nest**, as in the game | 27 nests the game does not have |
+
+  So `gleba_groups` skips the plant groups and the nest groups at size 0,
+  and always runs stone's.
+- **Paint.** A nest has no `map_color`; the game's own Gleba preview PNG
+  draws every one (255, 25, 25), its `default_enemy_color` `{1, 0.1, 0.1}`
+  with 25.5 truncated (the Nauvis overlay's 26 rounds it). Solid, last of
+  all the passes, over the tiles of its collision box.
+- **ABI.** The Gleba block grew 72 -> 88 bytes (request 144) for the
+  `gleba_enemy_base` frequency (+72) and size (+80), appended. Gleba's views
+  are now terrain, trees, cliffs, resources, enemies and all.
+
+**Grades.**
+
+| test | what | frozen |
+| --- | --- | --- |
+| `gleba_nest_fields_match_the_game` | 11 fields at 1,280 positions; both nest probabilities where the penalty cannot matter | 1,280 each; 1,131 of 1,131 (149 not graded) |
+| `gleba_nests_replay_the_real_surface` | three 128 windows: cliffs, nests, other entities | (0, 1, 183), (0, 6, 372), (58, 2, 1,017), all exact |
+| `gleba_nest_replay_controls` | the small nest holding its map-gen box | others 181 of 183 in the first window |
+| `gleba_nests_whole_window` (ignored, about 20 s release) | the whole window | cliffs 2,484 of 2,484; nests 67 of 67; others 35,225 of 35,227 |
+| `gleba_nests_at_a_size_0_control` (ignored, by hand) | the size-0 table above | |
+| `test/wasmGlebaEntityParity.spec.ts` | `enemies` view, the 1024 window | 0 tiles; 1,456 nest pixels |
+| same | `all` view against the nests arm | 5 tiles, the stingfrond (as the cliffs arm) |
+| same | `trees` and `resources` views | trees 10 tiles (the stingfrond and the sunnycomb), resources 0 |
+| same | enemy control at size 0 | the terrain |
+| same | the two tiled-render tests, now with nests on | stitch byte for byte |
+
+**Planted breaks, each run** (`cargo test -p fmw-noise --lib gleba_`):
+
+| break | what went red |
+| --- | --- |
+| the penalty batch at `x + 0`, not `x + 8` | the replay: 1 of 6 nests in the second window (4 placed) |
+| `random_penalty`'s own seed 0, not 1 | the replay: 1 of 6 in the second window |
+| no penalty at all | the replay, and the penalty's unit test |
+| the batch column-major | the replay: 2 of 6 in the second window (3 placed) |
+| Gleba's frequency not doubled | the field test (`enemy_base_probability` 751 of 1,280), the replay and the control |
+| the large nest without `distance > 350` | the probabilities (915 of 1,131), the replay, the control and a unit test |
+| the starting-enemies term dropped | the probabilities (601 of 1,131), the replay |
+| the small nest's group served first | the facts test (the sort), the replay and the control |
+| the nests served before stone | the facts test, the replay and the control |
+| the placed small nest holding its map-gen box | the replay: 5 of 6 and 1 of 2 nests, 181 of 183 others |
+| placed nests blocking nothing | the replay (9 and 4 nests placed, a water-cane extra) and the control |
+| the nest groups run at enemy size 0 | the slice 3, 4 and 5 replays (nests where those arms have none) |
+| the plant groups run at plants size 0 | only the facts test's pin of `gleba_groups` |
+| the amplitude the f64 0.1, not f32(0.1) | **nothing** |
+| the green mask `aux >= 0.375`, not `>` | **nothing** |
+
+The last three rows are gaps in the GRADE, stated rather than hidden. The
+size-0 rule for the plants is graded only by hand
+(`gleba_nests_at_a_size_0_control` against a scratch capture, the table
+above); the gate pins the code, not the game. So is the rule that stone's
+group runs at size 0: no gated arm has stone at size 0 with nests on. The
+amplitude differs by 1.5e-9 times a uniform draw, too little to move a roll
+or the 0.02 cap in the gated windows; the f32 is kept because it is what the
+op reads (`crate::random_penalty`). `aux` exactly 0.375 is an f32 no graded
+tile holds.
+
+**What it costs** (the app's own preview, Gleba at seed 123456, `?dev=1`,
+production build in headless Chrome 158 with no DevTools client, the
+worker pool on hammond, median of 7 runs interleaved with the branch point
+d69e8bc):
+
+| view | d69e8bc | this slice | change |
+| --- | ---: | ---: | ---: |
+| `terrain` | 524 ms | 527 ms | none |
+| `all` | 1,011 ms | 1,082 ms | +7% |
+
+The `all` runs spread 1,004 to 1,014 ms on the base, with one at 1,099, and
+1,054 to 1,093 ms here. The cost is the penalty's batch: a chunk the nests
+ask about evaluates `enemy_base_probability` at all 1,024 of its tiles,
+because a tile's draw depends on every later tile's source.
+
+**The module** is 554,919 bytes against 548,809 at the branch point
+(+6,110): the nest fields, the chunk penalty and the ABI. `EnemyBaseField`
+was already linked for Nauvis.
 
 ### Nauvis: the terrain graded against a real surface (2026-11-26)
 
@@ -2117,7 +2258,7 @@ declares `params_bytes`, then a per-planet block follows:
 | planet   | block | request |
 | -------- | ----- | ------- |
 | Aquilo   | 128   | 184     |
-| Gleba    | 24    | 80      |
+| Gleba    | 88    | 144     |
 | Fulgora  | 64    | 120     |
 | Nauvis   | 520   | 576     |
 | Vulcanus | 312   | 368     |

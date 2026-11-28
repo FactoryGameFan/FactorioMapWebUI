@@ -130,3 +130,25 @@ mistake and held 486 cliffs; it was thrown away. That count is worth
 knowing: cliffs survive a richness of 0. INFERRED, not measured: the rock-pool
 term of `gleba_cliffiness` (0.99 wherever `gleba_rockpools > 0`) does not
 read the richness.
+
+## The nests arm (2026-11-27)
+
+```bash
+FMW_ARM=nests node --experimental-strip-types scripts/probes/gleba-entities/capture.ts
+```
+
+Every control at its default: the map a player gets. It lists all 18 Gleba
+autoplaced entities (stone, both stromatolites, the twelve plants,
+cliff-gleba, `gleba-spawner` and `gleba-spawner-small`) within 3 tiles of
+the window, as the cliffs arm does, and 15 fields at 1,280 positions (512
+anywhere, then 256 each where `enemy_base_probability` and the two nest
+probabilities are above 0). The window holds 30 large and 37 small nests.
+About 9 seconds a run; re-running it writes a byte-identical file.
+
+`FMW_PLANTS_SIZE=<s>` and `FMW_STONE_SIZE=<s>` (with an `FMW_OUT`, never the
+committed fixture) set the `gleba_plants` or `gleba_stone` size. At 0 they
+measure whether the generator still spends a skipped autoplacer's draws,
+which the nests, last in the stream, can see: see
+`fixtures::gleba_nests::gleba_nests_at_a_size_0_control` and "Gleba (#454),
+slice 6" in `docs/rust-wasm-port.md`. Plants at size 0 are dropped with their
+draws; stone at size 0 still spends them.

@@ -21,6 +21,10 @@
  *   the difference between the arms is what plants, cliffs and nests take
  *   away from them at `apply`.
  *
+ * Three later arms grade one layer more each: `plants` (#454, slice 4),
+ * `cliffs` (slice 5) and `nests` (slice 6, every control at its default and
+ * all 18 entities listed). The README has each.
+ *
  * ## What it reads
  *
  * Map seed 123456 and Gleba's own `create_surface()`, so the surface seed is
@@ -56,9 +60,17 @@ const INSTALL = {
 };
 
 const ARM = process.env.FMW_ARM ?? "graded";
-if (ARM !== "graded" && ARM !== "default" && ARM !== "plants" && ARM !== "cliffs") {
-  throw new Error(`FMW_ARM must be graded, default, plants or cliffs, not ${ARM}`);
+if (
+  ARM !== "graded" &&
+  ARM !== "default" &&
+  ARM !== "plants" &&
+  ARM !== "cliffs" &&
+  ARM !== "nests"
+) {
+  throw new Error(`FMW_ARM must be graded, default, plants, cliffs or nests, not ${ARM}`);
 }
+/** The arms that read the plants, cliffs or nests: everything a later one adds to. */
+const WIDE = ARM === "plants" || ARM === "cliffs" || ARM === "nests";
 const OUT =
   process.env.FMW_OUT ??
   join(
@@ -70,6 +82,7 @@ const OUT =
       default: "oracle-gleba-real-surface-entities-default.seed123456.json",
       plants: "oracle-gleba-real-surface-plants.seed123456.json",
       cliffs: "oracle-gleba-real-surface-cliffs.seed123456.json",
+      nests: "oracle-gleba-real-surface-nests.seed123456.json",
     }[ARM],
   );
 
@@ -95,24 +108,36 @@ const PLANTS = [
 ] as const;
 /** The entities graded, in the fixture's `names` order. */
 const GRADED: readonly string[] =
-  ARM === "cliffs"
-    ? ["copper-stromatolite", "iron-stromatolite", "stone", ...PLANTS, "cliff-gleba"]
-    : ARM === "plants"
-      ? ["copper-stromatolite", "iron-stromatolite", "stone", ...PLANTS]
-      : ["copper-stromatolite", "iron-stromatolite", "stone"];
+  ARM === "nests"
+    ? [
+        "copper-stromatolite",
+        "iron-stromatolite",
+        "stone",
+        ...PLANTS,
+        "cliff-gleba",
+        "gleba-spawner",
+        "gleba-spawner-small",
+      ]
+    : ARM === "cliffs"
+      ? ["copper-stromatolite", "iron-stromatolite", "stone", ...PLANTS, "cliff-gleba"]
+      : ARM === "plants"
+        ? ["copper-stromatolite", "iron-stromatolite", "stone", ...PLANTS]
+        : ["copper-stromatolite", "iron-stromatolite", "stone"];
 /** Controls an arm turns off: everything that places something it does not grade. */
 const OFF: readonly string[] =
-  ARM === "cliffs"
-    ? ["gleba_enemy_base"]
-    : ARM === "plants"
-      ? ["gleba_enemy_base", "gleba_cliff"]
-      : ["gleba_plants", "gleba_enemy_base", "gleba_cliff"];
+  ARM === "nests"
+    ? []
+    : ARM === "cliffs"
+      ? ["gleba_enemy_base"]
+      : ARM === "plants"
+        ? ["gleba_enemy_base", "gleba_cliff"]
+        : ["gleba_plants", "gleba_enemy_base", "gleba_cliff"];
 /**
  * How far past the window an entity's tile may be and still be listed: a
  * cliff's box reaches up to two tiles past its position, anything else's at
  * most one.
  */
-const RING = ARM === "cliffs" ? 3 : 1;
+const RING = ARM === "cliffs" || ARM === "nests" ? 3 : 1;
 /**
  * `FMW_CLIFF_SIZE` (cliffs arm only) sets the `gleba_cliff` control's size,
  * the continuity, which multiplies the cliff richness that
@@ -123,6 +148,41 @@ const CLIFF_SIZE = process.env.FMW_CLIFF_SIZE;
 if (CLIFF_SIZE !== undefined && (ARM !== "cliffs" || process.env.FMW_OUT === undefined)) {
   throw new Error("FMW_CLIFF_SIZE needs FMW_ARM=cliffs and an FMW_OUT");
 }
+
+/**
+ * `FMW_PLANTS_SIZE` (nests arm only) sets the `gleba_plants` control's size,
+ * to measure whether a size-0 autoplacer still spends its draws from the
+ * chunk's stream before the nests read it. Set, write the result somewhere
+ * other than the committed fixture.
+ */
+const PLANTS_SIZE = process.env.FMW_PLANTS_SIZE;
+if (PLANTS_SIZE !== undefined && (ARM !== "nests" || process.env.FMW_OUT === undefined)) {
+  throw new Error("FMW_PLANTS_SIZE needs FMW_ARM=nests and an FMW_OUT");
+}
+/** `FMW_STONE_SIZE` (nests arm only): the same for the `gleba_stone` control. */
+const STONE_SIZE = process.env.FMW_STONE_SIZE;
+if (STONE_SIZE !== undefined && (ARM !== "nests" || process.env.FMW_OUT === undefined)) {
+  throw new Error("FMW_STONE_SIZE needs FMW_ARM=nests and an FMW_OUT");
+}
+
+/** The fields the `nests` arm reads for tier 1, by property name. */
+const NEST_FIELDS = [
+  "distance",
+  "enemy_base_intensity",
+  "enemy_base_radius",
+  "enemy_base_frequency",
+  "enemy_base_probability",
+  "starting_area_radius",
+  "gleba_starting_enemies",
+  "gleba_starting_enemies_safe",
+  "gleba_fertile_spots_coastal",
+  "gleba_biome_mask_green",
+  "gleba_above_deep_water_mask",
+  "gleba_spawner",
+  "gleba_spawner_small",
+  "entity:gleba-spawner:probability",
+  "entity:gleba-spawner-small:probability",
+] as const;
 
 /** The fields the `plants` arm reads for tier 1, by property name. */
 const PLANT_FIELDS = [
@@ -161,7 +221,13 @@ const RESOURCE_FIELDS = [
   "entity:stone:richness",
 ] as const;
 const FIELDS: readonly string[] =
-  ARM === "cliffs" ? CLIFF_FIELDS : ARM === "plants" ? PLANT_FIELDS : RESOURCE_FIELDS;
+  ARM === "nests"
+    ? NEST_FIELDS
+    : ARM === "cliffs"
+      ? CLIFF_FIELDS
+      : ARM === "plants"
+        ? PLANT_FIELDS
+        : RESOURCE_FIELDS;
 /**
  * Field positions, two pools on the 1/256 grid. The SCOUT pool is fixed,
  * within POOL_RADIUS tiles. Most of Gleba has no stromatolite or stone at all,
@@ -183,11 +249,17 @@ const QUOTA = 512;
  */
 const PLANT_QUOTA = 128;
 const QUOTA_FIELDS: readonly string[] =
-  ARM === "cliffs"
-    ? ["gleba_rockpools"]
-    : ARM === "plants"
-      ? PLANTS.map((n) => `entity:${n}:probability`)
-      : ["entity:iron-stromatolite:probability", "entity:copper-stromatolite:probability"];
+  ARM === "nests"
+    ? [
+        "enemy_base_probability",
+        "entity:gleba-spawner:probability",
+        "entity:gleba-spawner-small:probability",
+      ]
+    : ARM === "cliffs"
+      ? ["gleba_rockpools"]
+      : ARM === "plants"
+        ? PLANTS.map((n) => `entity:${n}:probability`)
+        : ["entity:iron-stromatolite:probability", "entity:copper-stromatolite:probability"];
 
 /** A small fixed LCG, so the pool is the same on every run. */
 function pool(): [number, number][] {
@@ -209,6 +281,8 @@ function controlLua(positions: [number, number][]): string {
   return `-- GENERATED by scripts/probes/gleba-entities/capture.ts.
 local X0, SIDE, MARGIN, RING = ${String(X0)}, ${String(SIDE)}, ${String(MARGIN_CHUNKS)}, ${String(RING)}
 local CLIFF_SIZE = ${CLIFF_SIZE ?? "nil"}
+local PLANTS_SIZE = ${PLANTS_SIZE ?? "nil"}
+local STONE_SIZE = ${STONE_SIZE ?? "nil"}
 local ARM = "${ARM}"
 local OFF = helpers.json_to_table([==[${JSON.stringify(OFF)}]==])
 local GRADED = helpers.json_to_table([==[${JSON.stringify(GRADED)}]==])
@@ -241,8 +315,10 @@ script.on_init(function()
     for _, n in ipairs(OFF) do
       mgs.autoplace_controls[n] = { frequency = 1, size = 0, richness = 1 }
     end
-    if ARM ~= "cliffs" then mgs.cliff_settings.richness = 0 end
+    if ARM ~= "cliffs" and ARM ~= "nests" then mgs.cliff_settings.richness = 0 end
     if CLIFF_SIZE then mgs.autoplace_controls.gleba_cliff = { frequency = 1, size = CLIFF_SIZE, richness = 1 } end
+    if PLANTS_SIZE then mgs.autoplace_controls.gleba_plants = { frequency = 1, size = PLANTS_SIZE, richness = 1 } end
+    if STONE_SIZE then mgs.autoplace_controls.gleba_stone = { frequency = 1, size = STONE_SIZE, richness = 1 } end
   end
   s.map_gen_settings = mgs
   local controls = {}
@@ -345,7 +421,7 @@ script.on_init(function()
           mapGenBox = { mb.left_top.x, mb.left_top.y, mb.right_bottom.x, mb.right_bottom.y },
           collisionLayers = layers(p.collision_mask),
           tileRestriction = restrictions,
-          maskFlags = ARM == "plants" and {
+          maskFlags = (ARM == "plants" or ARM == "nests") and {
             notCollidingWithItself = p.collision_mask.not_colliding_with_itself or false,
             collidingWithTilesOnly = p.collision_mask.colliding_with_tiles_only or false,
             considerTileTransitions = p.collision_mask.consider_tile_transitions or false,
@@ -518,7 +594,7 @@ const positive = (v: (number | string)[] | undefined, i: number): boolean =>
 function pickScout(fields: Record<string, (number | string)[]>): number[] {
   const taken = new Set<number>();
   const kept = takeFirst(scout.length, taken, () => true);
-  const quota = ARM === "plants" ? PLANT_QUOTA : ARM === "cliffs" ? 256 : QUOTA;
+  const quota = ARM === "plants" ? PLANT_QUOTA : ARM === "cliffs" || ARM === "nests" ? 256 : QUOTA;
   for (const f of QUOTA_FIELDS) {
     if (fields[f] === undefined) throw new Error(`field ${f} did not come back`);
     kept.push(...takeFirst(scout.length, taken, (i) => positive(fields[f], i), quota));
@@ -542,7 +618,11 @@ if (ARM !== "default") {
     if (dump.controls[n]?.size !== 0) throw new Error(`control ${n} read back non-zero`);
   }
   // The cliffs arm keeps Gleba's own cliff richness (0.8, read back as an f32).
-  if (ARM === "cliffs" ? Math.fround(0.8) !== dump.cliffRichness : dump.cliffRichness !== 0)
+  if (
+    ARM === "cliffs" || ARM === "nests"
+      ? Math.fround(0.8) !== dump.cliffRichness
+      : dump.cliffRichness !== 0
+  )
     throw new Error(`cliff richness read back ${String(dump.cliffRichness)}`);
   const others = Object.keys(dump.census).filter((n) => !GRADED.includes(n));
   if (others.length > 0) throw new Error(`entities left in the window: ${others.join(", ")}`);
@@ -586,6 +666,8 @@ const fixture = {
       "Stone and both stromatolites on a REAL Gleba surface with every control at its default (the map a player gets), otherwise as the graded arm. Written by FMW_ARM=default scripts/probes/gleba-entities/capture.ts.",
     cliffs:
       "Stone, both stromatolites, the twelve plants and cliff-gleba on a REAL Gleba surface with every control at its default except gleba_enemy_base at size 0, otherwise as the graded arm. Each entity is [name index, x * 256, y * 256], and each cliff carries a fourth element, an index into orientations (LuaEntity.cliff_orientation); an entity is listed when floor(position) is in the window or within RING tiles of it (3: a cliff box reaches two tiles past its position). cliffSettings is surface.map_gen_settings.cliff_settings read back. Fields are calculate_tile_properties at positions (512 overall, then 256 where gleba_rockpools is above 0), as f32 hex bits. Written by FMW_ARM=cliffs scripts/probes/gleba-entities/capture.ts.",
+    nests:
+      "Every Gleba autoplacer on a REAL Gleba surface with every control at its default (the map a player gets): stone, both stromatolites, the twelve plants, cliff-gleba and both pentapod nests (gleba-spawner, gleba-spawner-small), otherwise as the cliffs arm. Fields are calculate_tile_properties at positions (512 overall, then 256 where each of enemy_base_probability and the two nest probabilities is above 0), as f32 hex bits. Written by FMW_ARM=nests scripts/probes/gleba-entities/capture.ts.",
     plants:
       "Stone, both stromatolites and the twelve plants on a REAL Gleba surface with gleba_plants and gleba_stone at their defaults, gleba_enemy_base and gleba_cliff at size 0 and cliff richness 0, otherwise as the graded arm. Each entity is [name index, x * 256, y * 256], listed when floor(position) is in the window or the one-tile ring around it. autoplacers (with collision mask flags) and tiles are read from the prototypes at runtime; fields are calculate_tile_properties at positions (512 overall, then 128 where each plant probability is above 0), as f32 hex bits. Written by FMW_ARM=plants scripts/probes/gleba-entities/capture.ts.",
   }[ARM],
@@ -631,9 +713,9 @@ const fixture = {
           };
         })(),
       }
-    : ARM === "plants" || ARM === "cliffs"
+    : WIDE
       ? {
-          ...(ARM === "cliffs"
+          ...(ARM === "cliffs" || ARM === "nests"
             ? { cliffSettings: dump.cliffSettings, ring: RING, orientations }
             : {}),
           autoplacers: dump.autoplacers,

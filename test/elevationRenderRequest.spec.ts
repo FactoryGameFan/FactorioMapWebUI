@@ -743,40 +743,42 @@ describe("fulgora scrap is gated on the view", () => {
             plantsSize: 7,
             cliffFrequency: 8,
             cliffContinuity: 0.125,
+            enemyFrequency: 9,
+            enemySize: 0.375,
           },
         },
         stub,
       );
       const v = sent();
-      expect(v.byteLength).toBe(COMMON_BYTES + 72);
+      expect(v.byteLength).toBe(COMMON_BYTES + 88);
       expect(v.getUint32(8, true)).toBe(4);
       expect(v.getUint32(12, true)).toBe(VIEW.terrain);
       expect(
-        [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => v.getFloat64(COMMON_BYTES + i * 8, true)),
-      ).toEqual([2, 0.5, 3, 4, 0.25, 6, 7, 8, 0.125]);
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => v.getFloat64(COMMON_BYTES + i * 8, true)),
+      ).toEqual([2, 0.5, 3, 4, 0.25, 6, 7, 8, 0.125, 9, 0.375]);
     });
 
-    it("sends the trees, resources and all views as themselves, and absent entity levers as 1", () => {
-      for (const view of ["trees", "cliffs", "resources", "all"] as const) {
+    it("sends the entity views as themselves, and absent entity levers as 1", () => {
+      for (const view of ["trees", "cliffs", "resources", "enemies", "all"] as const) {
         const { engine: stub, sent } = recordingEngine();
         runRenderRequest({ ...GL, view }, stub);
         const v = sent();
         expect(v.getUint32(12, true)).toBe(VIEW[view]);
-        expect([3, 4, 5, 6, 7, 8].map((i) => v.getFloat64(COMMON_BYTES + i * 8, true))).toEqual([
-          1, 1, 1, 1, 1, 1,
-        ]);
+        expect(
+          [3, 4, 5, 6, 7, 8, 9, 10].map((i) => v.getFloat64(COMMON_BYTES + i * 8, true)),
+        ).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
       }
     });
 
     it("renders absent controls at neutral 1, not 0", () => {
       const { engine: stub, sent } = recordingEngine();
       runRenderRequest({ ...GL, view: "terrain" }, stub);
-      for (let i = 0; i < 9; i++) {
+      for (let i = 0; i < 11; i++) {
         expect(sent().getFloat64(COMMON_BYTES + i * 8, true)).toBe(1);
       }
     });
 
-    it.each(["enemies", "rocks", "landmask"] as const)("serves view %s as terrain", (view) => {
+    it.each(["rocks", "landmask"] as const)("serves view %s as terrain", (view) => {
       const { engine: stub, sent } = recordingEngine();
       runRenderRequest({ ...GL, view }, stub);
       expect(sent().getUint32(12, true)).toBe(VIEW.terrain);

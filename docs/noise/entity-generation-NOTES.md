@@ -624,6 +624,45 @@ doc's "Gleba (#454), slice 5" has the grades.
   `applyCliffs` test with the queued orientation it is exact over the
   window; without it 12 cliffs stay that the game removed.
 
+## Gleba (2026-11-27): the pentapod nests, a batch penalty and two boxes
+
+Graded against `oracle-gleba-real-surface-nests.seed123456.json`, every
+control at its default; the port doc's "Gleba (#454), slice 6" has the
+grades.
+
+- **The nests are the last two groups**, `b[enemy]-c[spawner]-a[large]`
+  then `-b[small]`, after stone. MEASURED: on our corrected tiles the stream
+  places all 67 of the window's nests at the game's positions. Stone's group
+  draws one roll per land tile though stone needs no stream, and the nests
+  read the stream after those draws.
+- **`random_penalty` in a probability is batched per chunk.** The generator
+  evaluates the chunk's probabilities as one batch of 1,024 tiles, row-major
+  at integer corners, so `random_penalty` seeds once from the chunk's first
+  tile and spends draws last to first on positive sources only. That was
+  MEASURED for Vulcanus's solid ore (#437); the nests, whose source
+  (`enemy_base_probability`, mostly near -1000) is positive on only a few
+  tiles of a chunk, are a second planet that needs it.
+- **Section 7's two boxes are different boxes** (MEASURED, matching the
+  READ). `mapGeneratorWouldCollide` tests the NEW entity's
+  `map_generator_bounding_box`, but what it tests against is the entities
+  on the surface, which hold their `collision_box`. `gleba-spawner-small`
+  is the first entity any port has met whose two boxes differ (+-2.35
+  against +-1.35). With the larger box held after placement, the replay
+  drops two copper stromatolites the game keeps beside one, and cascades to
+  5 nests wrong; with the collision box it is exact.
+- **Section 1's size-0 drop, measured.** `prepareAutoplacers` skips an
+  autoplacer whose frequency, size or richness is "none", read through the
+  autoplace's own `control` (point 7 of "What is not settled"). On Gleba
+  every plant carries `gleba_plants` and both nests `gleba_enemy_base`;
+  stone and the stromatolites carry none. MEASURED with the nests as the
+  probe: at `gleba_plants` size 0 the nests match the game only with the
+  plant groups skipped (77 of 77, against 0 of 77 with them run); at
+  `gleba_stone` size 0 only with stone's group RUN (67 of 67, against 11 of
+  67 skipped); at `gleba_enemy_base` size 0 the game has no nest where
+  running the groups would place 27. So size 0 means "none" for a control
+  the autoplace carries, and a control the probability reads but the
+  autoplace does not carry drops nothing.
+
 ## What `generate.rs` does not port, and why each is unreachable today
 
 - **`placement_density`.** The attempt count per tile. No entity prototype
@@ -691,7 +730,9 @@ Two smaller gaps in the Aquilo inputs:
    `probability_expression`. So size 0 makes the probability 0, and the group
    still spends its draws. A planet whose entities DO carry a `control` (base
    Nauvis resources outside Space Age's planet controls, for example) needs
-   this checked before its port.
+   this checked before its port. Gleba's plants and nests do, and it was
+   measured there ("Gleba (2026-11-27): the pentapod nests" above): size 0
+   drops them, and their draws with them.
 
 ## How to re-check
 

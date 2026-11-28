@@ -49,10 +49,11 @@ export const AQUILO_PARAMS_BYTES = 128;
 
 /**
  * Must equal `fmw_wasm::abi::GLEBA_PARAMS_BYTES`: three terrain levers, the
- * `gleba_stone` control's three, `control:gleba_plants:size`, then the
- * `gleba_cliff` control's frequency and size.
+ * `gleba_stone` control's three, `control:gleba_plants:size`, the
+ * `gleba_cliff` control's frequency and size, then the `gleba_enemy_base`
+ * control's frequency and size.
  */
-export const GLEBA_PARAMS_BYTES = 72;
+export const GLEBA_PARAMS_BYTES = 88;
 
 /** Capacity of a Nauvis request's starting-point list. Mirrors
  * `fmw_wasm::abi::NAUVIS_MAX_STARTING_POINTS`. */
@@ -395,6 +396,10 @@ export interface GlebaControls {
   readonly cliffFrequency?: number;
   /** `control:gleba_cliff:size`, the cliffs' continuity; 0 turns them off. */
   readonly cliffContinuity?: number;
+  /** `control:gleba_enemy_base:frequency`, read by the pentapod nests. */
+  readonly enemyFrequency?: number;
+  /** `control:gleba_enemy_base:size`; 0 turns the nests off. */
+  readonly enemySize?: number;
 }
 
 export interface GlebaRenderRequest extends CommonRenderRequest {
@@ -735,6 +740,8 @@ function writeGlebaParams(view: DataView, req: GlebaRenderRequest): void {
   view.setFloat64(p + 48, c.plantsSize ?? 1, true);
   view.setFloat64(p + 56, c.cliffFrequency ?? 1, true);
   view.setFloat64(p + 64, c.cliffContinuity ?? 1, true);
+  view.setFloat64(p + 72, c.enemyFrequency ?? 1, true);
+  view.setFloat64(p + 80, c.enemySize ?? 1, true);
 }
 
 function writeFulgoraParams(view: DataView, req: FulgoraRenderRequest): void {

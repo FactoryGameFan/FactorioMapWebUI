@@ -37,6 +37,7 @@ use fmw_noise::expressions::fulgora_shared::FulgoraCtx;
 use fmw_noise::expressions::fulgora_stack::{
     FulgoraStack, CORRECTION_MARGIN_CHUNKS as FULGORA_CORRECTION_MARGIN_CHUNKS,
 };
+use fmw_noise::expressions::gleba_nests::GlebaEnemyControls;
 use fmw_noise::expressions::gleba_resources::GlebaStoneControls;
 use fmw_noise::expressions::gleba_stack::{
     GlebaCtx, GlebaStack, KeptInputs, CORRECTION_MARGIN_CHUNKS,
@@ -302,7 +303,7 @@ pub fn render(request: &[u8], out: &mut [u8]) -> Status {
             VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ROCKS | VIEW_ALL | VIEW_ENTITY_FOOTPRINT
         ) | (
             PLANET_GLEBA,
-            VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ALL | VIEW_TREES | VIEW_CLIFFS
+            VIEW_TERRAIN | VIEW_RESOURCES | VIEW_ALL | VIEW_TREES | VIEW_CLIFFS | VIEW_ENEMIES
         )
     );
     if !supported {
@@ -761,7 +762,7 @@ const KEPT_CHUNKS_MAX: i32 = 256;
 
 /// Build the Gleba graph for one render.
 pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
-    GlebaStack::with_levers(
+    GlebaStack::with_enemies(
         &GlebaCtx {
             seed0,
             controls: GlebaControls {
@@ -776,6 +777,10 @@ pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
             richness: p.stone_richness,
         },
         p.plants_size,
+        &GlebaEnemyControls {
+            frequency: p.enemy_frequency,
+            size: p.enemy_size,
+        },
     )
 }
 
@@ -835,7 +840,7 @@ fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
     if on_tiles
         && matches!(
             req.view,
-            VIEW_RESOURCES | VIEW_ALL | VIEW_TREES | VIEW_CLIFFS
+            VIEW_RESOURCES | VIEW_ALL | VIEW_TREES | VIEW_CLIFFS | VIEW_ENEMIES
         )
     {
         render_gleba_entities(req, p, &stack, out);
@@ -869,16 +874,18 @@ fn render_gleba(req: &Request, p: &GlebaParams, out: &mut [u8]) {
     }
 }
 
-/// Gleba's `trees`, `resources` and `all` views at one tile per pixel: the
-/// corrected terrain, then the entities a real surface places (#454, slices
-/// 3 and 4), each over its footprint: the plants for `trees`, stone and the
-/// stromatolites for `resources`, all of them for `all`.
+/// Gleba's `trees`, `resources`, `cliffs`, `enemies` and `all` views at one
+/// tile per pixel: the corrected terrain, then the entities a real surface
+/// places (#454, slices 3 to 6), each over its footprint: the plants for
+/// `trees`, stone and the stromatolites for `resources`, the cliffs for
+/// `cliffs`, the two pentapod nests for `enemies`, all of them for `all`.
 ///
 /// The entities come from the game's per-chunk generator and the apply step
 /// (`fmw_noise::placement::gleba`), run over the window's chunks and a ring
 /// of [`GLEBA_ENTITY_RING_CHUNKS`] in row-major order, on the corrected tiles
-/// of all of them. Every view generates every entity, because a plant can
-/// block a stromatolite and stone can remove a plant. Footprints are whole
+/// of all of them. Every entity view generates every entity, because a plant
+/// can block a stromatolite or a nest, a nest can block a plant of a later
+/// chunk, and stone can remove a plant. Footprints are whole
 /// tiles, so two entities can share one: they paint in a fixed class order
 /// (`GlebaEntity::paint_pass`), the ten trees blended first, so the pixels do
 /// not depend on the order the entities were placed in.
@@ -947,6 +954,7 @@ fn render_gleba_entities(req: &Request, p: &GlebaParams, stack: &GlebaStack, out
     let drawn = |layer: GlebaLayer| match req.view {
         VIEW_TREES => layer == GlebaLayer::Plants,
         VIEW_RESOURCES => layer == GlebaLayer::Resources,
+        VIEW_ENEMIES => layer == GlebaLayer::Enemies,
         VIEW_CLIFFS => false,
         _ => true,
     };

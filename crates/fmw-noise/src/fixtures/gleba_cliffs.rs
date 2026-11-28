@@ -19,6 +19,7 @@ use crate::at::At;
 use crate::cliffs::catalog::CLIFF_ORIENTATION_NAMES;
 use crate::cliffs::gleba_fields::{GlebaCliffFields, GLEBA_CLIFF_RICHNESS};
 use crate::cliffs::placement::CliffFields;
+use crate::expressions::gleba_nests::GlebaEnemyControls;
 use crate::expressions::gleba_resources::GlebaStoneControls;
 use crate::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
 use crate::expressions::gleba_terrain::GlebaControls;
@@ -38,13 +39,14 @@ const SEED: u32 = 3_215_206_427;
 
 /// The graph at the fixture's levers: every control at its default.
 fn cliffs_stack() -> GlebaStack {
-    GlebaStack::with_levers(
+    GlebaStack::with_enemies(
         &GlebaCtx {
             seed0: SEED,
             controls: GlebaControls::default(),
         },
         &GlebaStoneControls::default(),
         1.0,
+        &GlebaEnemyControls::off(),
     )
 }
 
@@ -110,7 +112,7 @@ fn gleba_cliff_fields_match_the_game() {
 }
 
 /// The corrected tiles of a window's chunks plus `ring_chunks` on each side.
-struct Tiles {
+pub(super) struct Tiles {
     ox: i64,
     oy: i64,
     w: i64,
@@ -119,7 +121,7 @@ struct Tiles {
 }
 
 impl Tiles {
-    fn new(stack: &GlebaStack, x: (i64, i64), y: (i64, i64), ring_chunks: i64) -> Self {
+    pub(super) fn new(stack: &GlebaStack, x: (i64, i64), y: (i64, i64), ring_chunks: i64) -> Self {
         let cx = (
             x.0.div_euclid(32) - ring_chunks,
             (x.1 - 1).div_euclid(32) + ring_chunks,
@@ -139,7 +141,7 @@ impl Tiles {
         Self { ox, oy, w, h, t }
     }
 
-    fn at(&self, tx: i64, ty: i64) -> Option<GlebaTile> {
+    pub(super) fn at(&self, tx: i64, ty: i64) -> Option<GlebaTile> {
         ((self.ox..self.ox + self.w).contains(&tx) && (self.oy..self.oy + self.h).contains(&ty))
             .then(|| self.t[((ty - self.oy) * self.w + (tx - self.ox)) as usize])
     }
