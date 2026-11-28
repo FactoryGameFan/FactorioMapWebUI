@@ -56,13 +56,14 @@ when this file does not. Get it with `shasum -a 256 src/noise/wasm/engine.wasm`.
 | 9 (#454) | Aquilo end to end - terrain, tiles, wells, icebergs; Rust-first, no TypeScript counterpart            | done |
 | 10 (#492) | Aquilo's wells and icebergs through the game's own per-chunk entity generator (`placement/generate.rs`), replacing the salted roll there | done |
 | 11 (#454) | Gleba slice 1 - the terrain fields and the 41-tile choice at tier 1 (`terrace` op, `gleba_*`); no ABI, render, cliffs or entities yet | tier 1 done |
-| 12 (#454) | Gleba slice 2 - the terrain view through the engine, name-order tie-break, and tile correction (`tiles/correction.rs`), graded against a REAL surface; dev mode only in the app | terrain done |
+| 12 (#454) | Gleba slice 2 - the terrain view through the engine, name-order tie-break, and tile correction (`tiles/correction.rs`), graded against a REAL surface; dev mode only in the app until #454's last slice (see below) | terrain done |
 | 13 (#454) | Aquilo's terrain through tile correction at one tile per pixel, graded against a REAL surface; the preview PNGs become a reference | terrain done |
 | 14 (#454) | Gleba slice 3 - stone and both stromatolites in `resources` and `all`, placed as a REAL surface places them (the per-chunk generator plus apply), 5,193 of 5,193 | stone and stromatolites done |
 | 15 (#553) | Aquilo's wells and icebergs placed as a REAL surface places them (corrected tiles plus apply), 635 of 635 over the app's default window; the preview PNG becomes a reference | done |
+| 16 (#454) | Gleba slices 4 to 6 - the plants, the cliffs and the pentapod nests, each placed as a REAL surface places them; Gleba open to every visitor (the `devOnly` flag removed 2026-11-28) | done |
 
 **Every planet, every view the panel offers, renders through the engine.** Gleba
-offers terrain, trees, cliffs, resources, enemies and all, and only in dev mode. The
+offers terrain, trees, cliffs, resources, enemies and all, and since 2026-11-28 it is open to every visitor. The
 per-layer landing narrative is in the history doc; what follows is only what is
 still a rule.
 
@@ -895,9 +896,11 @@ candidate's id in `countFixedNeighborsOfKind` (0 to 840 tiles); writing back
 every second-pass change (0 to 2 on each capture); rows order (0 to 44);
 skipping correction in the render (5 of 8 tier-3 tests red, 697 pixels).
 
-**In the app** Gleba is `devOnly` in `PLANET_CAPABILITIES`: with dev mode off
-the panel still says "Client preview is not available for Gleba yet." Slice 3
-below adds stone and the stromatolites to the `resources` and `all` views.
+**In the app** Gleba was `devOnly` in `PLANET_CAPABILITIES` at this slice: with
+dev mode off the panel said "Client preview is not available for Gleba yet."
+The flag was removed after slice 6 (2026-11-28), so Gleba is open to every
+visitor and the field no longer exists. Slice 3 below adds stone and the
+stromatolites to the `resources` and `all` views.
 
 ### Gleba (#454), slice 3: stone and the stromatolites, against a real surface
 

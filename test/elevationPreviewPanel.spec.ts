@@ -925,25 +925,31 @@ describe("ElevationPreviewPanel", () => {
     });
   });
 
-  describe("Gleba is dev-mode only (#454, slice 2)", () => {
-    it("with dev mode off, shows the unsupported note and renders nothing", async () => {
+  describe("Gleba is open to every visitor (#454)", () => {
+    it("with dev mode off, picking Gleba shows no unsupported note and renders the composite", async () => {
       stubCanvas();
       const renderer = okRenderer();
       const w = setup("nauvis", renderer, { dev: false });
-      await w.find('[data-test="generate"]').trigger("click");
-      await flushPromises();
-      const calls = (renderer.render as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(useUiStore().devMode).toBe(false);
+      // The planet picker offers Gleba with dev mode off and no ?dev=1.
+      const values = w
+        .findAll('[data-test="planet-select"] option')
+        .map((o) => (o.element as HTMLOptionElement).value);
+      expect(values).toContain("gleba");
 
       await setPlanet(w, "gleba");
 
-      expect(w.find('[data-test="unsupported"]').text()).toBe(
-        "Client preview is not available for Gleba yet.",
-      );
-      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeDefined();
-      expect((renderer.render as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+      expect(w.find('[data-test="unsupported"]').exists()).toBe(false);
+      expect(w.find('[data-test="generate"]').attributes("disabled")).toBeUndefined();
+
+      await w.find('[data-test="generate"]').trigger("click");
+      await flushPromises();
+
+      const arg = (renderer.render as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({ planet: "gleba", view: "all" });
     });
 
-    it("with dev mode on, offers terrain, trees, cliffs, resources, enemies and all, and renders with the preset's levers", async () => {
+    it("with dev mode on, also offers the six view toggles, and renders with the preset's levers", async () => {
       stubCanvas();
       const renderer = okRenderer();
       const w = setup("nauvis", renderer, { planet: "gleba", dev: true });

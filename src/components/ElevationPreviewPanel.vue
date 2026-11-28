@@ -63,9 +63,8 @@ const preview = computed(() =>
 // island), which `preview.value.supported` already gates. Vulcanus (Task 11)
 // needs none of the preset's Nauvis-specific fields (V1 renders it with
 // neutral/default ctx), so it is unconditionally supported regardless of
-// `mapType`. Gleba renders terrain only and is marked `devOnly`, so it renders
-// in dev mode alone (#454, slice 2). Without the `rendered` guard a planet with
-// no renderer would fall through `runRenderRequest`'s dispatch.
+// `mapType`. Every planet renders today. Without the `rendered` guard a planet
+// with no renderer would fall through `runRenderRequest`'s dispatch.
 // Only the Nauvis writer sends `startingPositions` to the engine (Vulcanus and
 // Fulgora derive their own spawn), and it refuses more than the ABI cap. So the
 // limit is checked here, for Nauvis only, to give a plain message up front.
@@ -78,10 +77,7 @@ const tooManyStartingPoints = computed(
 );
 const supported = computed(() => {
   if (planet.value !== "nauvis") {
-    const cap = PLANET_CAPABILITIES[planet.value];
-    // A dev-only planet (Gleba, terrain only) renders in dev mode alone; with
-    // dev mode off it shows the same "not available yet" message as before.
-    return cap.rendered && (cap.devOnly !== true || ui.devMode);
+    return PLANET_CAPABILITIES[planet.value].rendered;
   }
   return (preview.value?.supported ?? false) && !tooManyStartingPoints.value;
 });
