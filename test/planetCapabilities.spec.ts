@@ -12,6 +12,14 @@ describe("PLANET_CAPABILITIES", () => {
     for (const v of fallToTerrain) expect(views as readonly string[]).not.toContain(v);
   });
 
+  // Every planet is open to every visitor. Gleba was dev-mode only until #454's
+  // last slice; a planet that is not ready must be left out of PLANETS, not
+  // hidden behind a flag the panel reads.
+  it.each(PLANETS)("%s: the preview renders it for every visitor", (planet) => {
+    expect(PLANET_CAPABILITIES[planet].rendered).toBe(true);
+    expect(Object.keys(PLANET_CAPABILITIES[planet])).not.toContain("devOnly");
+  });
+
   it.each(PLANETS)("%s: rendered is false exactly when views is empty", (planet) => {
     const { rendered, views } = PLANET_CAPABILITIES[planet];
     expect(rendered).toBe(views.length > 0);

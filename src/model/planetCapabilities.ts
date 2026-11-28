@@ -15,13 +15,6 @@ export interface PlanetCapability {
   /** false = "Client preview is not available for <label> yet." */
   readonly rendered: boolean;
   /**
-   * true = the preview panel renders this planet only in dev mode
-   * (`useUiStore().devMode`); with dev mode off it shows the "not available
-   * yet" message, as if `rendered` were false. `runRenderRequest` ignores it,
-   * since the worker has no dev mode. Absent means false.
-   */
-  readonly devOnly?: boolean;
-  /**
    * The views the preview panel offers as toggles for this planet, in toggle
    * order. A view in neither `views` nor `fallToTerrain` gets no toggle, and
    * the render path may refuse it. It may also still serve it: Fulgora renders
@@ -53,13 +46,13 @@ export const PLANET_CAPABILITIES: Readonly<Record<Planet, PlanetCapability>> = {
     views: ["terrain", "all"],
     fallToTerrain: ["enemies", "cliffs", "trees", "rocks"],
   },
-  // Dev mode only (#454): the tiles a real surface holds (argmax plus tile
-  // correction), and the entities a real surface places over them: the
+  // Open to every visitor (#454): the tiles a real surface holds (argmax plus
+  // tile correction), and the entities a real surface places over them: the
   // plants (`trees`), the cliffs, stone and the two stromatolites
-  // (`resources`), the two pentapod nests (`enemies`), and all of them.
+  // (`resources`), the two pentapod nests (`enemies`), and all of them. Each
+  // layer is graded against a real surface; see docs/rust-wasm-port.md.
   gleba: {
     rendered: true,
-    devOnly: true,
     views: ["terrain", "trees", "cliffs", "resources", "enemies", "all"],
     fallToTerrain: ["rocks", "landmask"],
   },
