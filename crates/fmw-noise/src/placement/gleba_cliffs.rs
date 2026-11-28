@@ -359,10 +359,12 @@ impl Obstacles for GlebaCliffObstacles {
         }
         #[allow(clippy::cast_possible_truncation)]
         let eb: FixedBox = [b[0] as i32, b[1] as i32, b[2] as i32, b[3] as i32];
-        // A cliff box reaches at most two tiles from its position, and an
-        // entity box at most one from its own.
-        let (tx0, tx1) = (b[0].div_euclid(256) - 3, b[2].div_euclid(256) + 3);
-        let (ty0, ty1) = (b[1].div_euclid(256) - 3, b[3].div_euclid(256) + 3);
+        // A cliff's box reaches 3.5 tiles from its position
+        // (`CLIFF_FOOTPRINT_AABB`: 896/256 at the most), so a cliff that can
+        // meet the entity's box has its position's tile within four tiles of
+        // that box's edges.
+        let (tx0, tx1) = (b[0].div_euclid(256) - 4, b[2].div_euclid(256) + 4);
+        let (ty0, ty1) = (b[1].div_euclid(256) - 4, b[3].div_euclid(256) + 4);
         for ty in ty0..=ty1 {
             for tx in tx0..=tx1 {
                 let Some(list) = self.by_tile.get(&(tx, ty)) else {

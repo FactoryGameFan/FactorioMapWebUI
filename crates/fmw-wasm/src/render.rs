@@ -950,11 +950,16 @@ fn render_gleba_entities(req: &Request, p: &GlebaParams, stack: &GlebaStack, out
         VIEW_CLIFFS => false,
         _ => true,
     };
-    let mut placed: Vec<_> =
+    // The cliffs view draws no entity, and the cliffs read none (stone comes
+    // from its fields), so it places none.
+    let mut placed: Vec<_> = if req.view == VIEW_CLIFFS {
+        Vec::new()
+    } else {
         place_chunks_with(stack, &at, kept.as_ref(), &rows(ecx, ecy), Some(&obstacles))
             .into_iter()
             .filter(|e| drawn(e.entity.layer()))
-            .collect();
+            .collect()
+    };
     placed.sort_by_key(|e| e.entity.paint_pass());
     let mut paint = |(fx0, fx1, fy0, fy1): (i64, i64, i64, i64), paint: GlebaPaint| {
         for ty in fy0.max(y0)..=fy1.min(y0 + h - 1) {
