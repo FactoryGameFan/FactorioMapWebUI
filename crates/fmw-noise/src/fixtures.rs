@@ -12217,7 +12217,7 @@ fn aquilo_census_entities_stand_inside_our_footprint_on_the_census_tile() {
 /// decreasing tile order.
 #[test]
 fn the_tiny_vent_lands_where_the_game_puts_it() {
-    use crate::placement::aquilo::{AquiloEntities, AquiloEntity};
+    use crate::placement::aquilo::{preview_chunk_queue, AquiloEntity};
     let census = load_captured_at(AQUILO_ENTITIES, "2.1.23");
     let vents: Vec<(f64, f64)> = census
         .get("entities")
@@ -12230,10 +12230,8 @@ fn the_tiny_vent_lands_where_the_game_puts_it() {
     assert_eq!(vents, vec![(-40.5, -67.5)], "the census's near vent");
 
     let stack = aquilo_derived_stack();
-    let entities = AquiloEntities::new(&stack);
     // (-41, -68) is in chunk (-2, -3).
-    let queued: Vec<(f64, f64)> = entities
-        .chunk_queue(-2, -3)
+    let queued: Vec<(f64, f64)> = preview_chunk_queue(&stack, -2, -3)
         .into_iter()
         .filter(|&(e, _, _)| e == AquiloEntity::FluorineVent)
         .map(|(_, x, y)| (x as f64 / 256.0, y as f64 / 256.0))
@@ -12250,33 +12248,27 @@ fn the_tiny_vent_lands_where_the_game_puts_it() {
 /// the land mask (with the wells' tile rewrite stripped) and every entity.
 const AQUILO_SURFACE: &str = "test/fixtures/oracle-aquilo-surface.seed123456.json";
 
-/// The stream inputs with the GAME's real-surface land in place of our tiles.
-struct RealSurfaceInputs<'a> {
-    ours: crate::placement::aquilo::AquiloChunkInputs<'a>,
-    land: &'a dyn Fn(i64, i64) -> bool,
+/// Which tiles the replay's stream reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AquiloReplayTiles {
+    /// The game's own land, from the fixture.
+    Game,
+    /// Our tiles after tile correction: what the shipped render reads.
+    Corrected,
+    /// Our raw argmax, the preview's tiles. A control.
+    Raw,
 }
 
-impl crate::placement::generate::ChunkInputs for RealSurfaceInputs<'_> {
-    fn probability(&mut self, proto: usize, tx: i64, ty: i64) -> f64 {
-        self.ours.probability(proto, tx, ty)
-    }
-    fn richness_positive(&mut self, proto: usize, tx: i64, ty: i64) -> bool {
-        self.ours.richness_positive(proto, tx, ty)
-    }
-    fn tile_blocks(&mut self, proto: usize, _tx: i64, _ty: i64) -> bool {
-        use crate::placement::aquilo::AQUILO_ENTITIES;
-        AQUILO_ENTITIES[proto].well().is_none() && !(self.land)(_tx, _ty)
-    }
-}
-
-/// Replay the game's stream over the real surface and apply it as the game
-/// does, then compare with every entity the game placed. Returns
+/// Replay the game's stream over the 640 surface and apply it under `rule`,
+/// then compare with every entity the game placed. Returns
 /// (matched, ours, game).
-fn replay_aquilo_real_surface(touching_collides: bool) -> (usize, usize, usize) {
-    use crate::placement::aquilo::{
-        AquiloChunkInputs, AQUILO_AUTOPLACERS, AQUILO_ENTITIES, AQUILO_GROUPS,
-    };
-    use crate::placement::generate::generate_chunk;
+fn replay_aquilo_real_surface(
+    tiles: AquiloReplayTiles,
+    rule: crate::placement::aquilo::Apply,
+) -> (usize, usize, usize) {
+    use crate::expressions::aquilo_stack::AQUILO_CORRECTION_MARGIN_CHUNKS;
+    use crate::placement::aquilo::{apply, queue_chunks};
+    use crate::tiles::aquilo_catalog::AquiloTile;
 
     let fx = load_captured_at(AQUILO_SURFACE, "2.1.23");
     assert_eq!(fx.get("surfaceSeed").as_f64(), 3_111_923_328.0);
@@ -12292,7 +12284,9 @@ fn replay_aquilo_real_surface(touching_collides: bool) -> (usize, usize, usize) 
         assert_eq!(cells.len(), width);
         land.push(cells);
     }
-    let is_land = |tx: i64, ty: i64| land[(ty - y0) as usize][(tx - x0) as usize];
+    let inside = |tx: i64, ty: i64| {
+        (x0..x0 + width as i64).contains(&tx) && (y0..y0 + width as i64).contains(&ty)
+    };
 
     // The chunks the game took to the entity stage, applied ROW-MAJOR (y outer,
     // x inner). The order decides collisions across chunk edges: measured, not
@@ -12309,29 +12303,34 @@ fn replay_aquilo_real_surface(touching_collides: bool) -> (usize, usize, usize) 
     chunks.sort_by_key(|&(cx, cy)| (cy, cx));
 
     let stack = aquilo_derived_stack();
-    let mut placed: Vec<(usize, [i64; 4], i64, i64)> = Vec::new();
-    for (cx, cy) in chunks {
-        let mut inputs = RealSurfaceInputs {
-            ours: AquiloChunkInputs::new(&stack, cx, cy),
-            land: &is_land,
-        };
-        for q in generate_chunk(cx, cy, &AQUILO_GROUPS, &AQUILO_AUTOPLACERS, &mut inputs) {
-            let b = q.bounds(&AQUILO_AUTOPLACERS);
-            // Masks share a layer only well-with-well and iceberg-with-iceberg.
-            let well = AQUILO_ENTITIES[q.proto].well().is_some();
-            let hit = placed.iter().any(|&(p, o, _, _)| {
-                AQUILO_ENTITIES[p].well().is_some() == well
-                    && if touching_collides {
-                        b[0] <= o[2] && o[0] <= b[2] && b[1] <= o[3] && o[1] <= b[3]
-                    } else {
-                        b[0] < o[2] && o[0] < b[2] && b[1] < o[3] && o[1] < b[3]
-                    }
-            });
-            if !hit {
-                placed.push((q.proto, b, q.x, q.y));
+    let corrected = (tiles == AquiloReplayTiles::Corrected).then(|| {
+        stack.borrow_mut().corrected_tiles(
+            (x0 as i32, y0 as i32),
+            (width as u32, width as u32),
+            AQUILO_CORRECTION_MARGIN_CHUNKS,
+        )
+    });
+    // The game's land as a tile: any land tile or any water tile blocks an
+    // iceberg the same way, and a well reads no tile.
+    let game_tile = |tx: i64, ty: i64| {
+        inside(tx, ty).then(|| {
+            if land[(ty - y0) as usize][(tx - x0) as usize] {
+                AquiloTile::SnowFlat
+            } else {
+                AquiloTile::AmmoniacalOcean
             }
-        }
-    }
+        })
+    };
+    let our_tile = |tx: i64, ty: i64| {
+        let t = corrected.as_ref().expect("corrected tiles");
+        inside(tx, ty).then(|| t[((ty - y0) * width as i64 + (tx - x0)) as usize])
+    };
+    let source: Option<&dyn Fn(i64, i64) -> Option<AquiloTile>> = match tiles {
+        AquiloReplayTiles::Game => Some(&game_tile),
+        AquiloReplayTiles::Corrected => Some(&our_tile),
+        AquiloReplayTiles::Raw => None,
+    };
+    let placed = apply(&queue_chunks(&stack, source, None, &chunks), rule);
 
     let game: BTreeSet<(String, i64, i64)> = fx
         .get("entities")
@@ -12345,8 +12344,9 @@ fn replay_aquilo_real_surface(touching_collides: bool) -> (usize, usize, usize) 
         .collect();
     let ours: BTreeSet<(String, i64, i64)> = placed
         .iter()
-        .map(|&(p, _, x, y)| (AQUILO_ENTITIES[p].game_name().to_string(), x, y))
+        .map(|p| (p.entity.game_name().to_string(), p.x, p.y))
         .collect();
+    assert_eq!(ours.len(), placed.len(), "two entities at one position");
     (game.intersection(&ours).count(), ours.len(), game.len())
 }
 
@@ -12356,9 +12356,11 @@ fn replay_aquilo_real_surface(touching_collides: bool) -> (usize, usize, usize) 
 /// Ground truth is the whole surface at chunk radius 8 (289 chunks), not a
 /// window. The replay runs [`crate::placement::generate::generate_chunk`]
 /// with our probability fields and the game's land, then applies each queue
-/// as the game's `applyEntities` does: in queue order, dropping any entity
+/// as the game's `applyEntities` does, through the shipped
+/// [`crate::placement::aquilo::apply`]: in queue order, dropping any entity
 /// whose map-gen box meets an already placed one that shares a collision
-/// layer. That last step is the one thing this test adds over the preview.
+/// layer. That last step is the one thing a real surface adds over the
+/// preview.
 ///
 /// Two of its rules were measured here, not read from the binary, and each
 /// has a control below that fails without it:
@@ -12370,26 +12372,52 @@ fn replay_aquilo_real_surface(touching_collides: bool) -> (usize, usize, usize) 
 ///   reverse orders were measured worse (206 and 191 of 209 in the scratch
 ///   simulator).
 ///
-/// The real surface needs the game's own land because a real surface runs
-/// tile correction, which moves the shore by a few tiles, and every iceberg
-/// candidate on land spends a draw. On our (preview) tiles the same replay
-/// places only some of these; the preview test in
-/// `test/wasmAquiloRenderParity.spec.ts` grades our tiles instead.
+/// The game's own land is what this test isolates the apply step on. The
+/// shipped render reads OUR corrected tiles instead, graded by the next test.
 #[test]
 fn aquilo_real_surface_replay_places_every_entity_the_game_did() {
-    let (matched, ours, game) = replay_aquilo_real_surface(true);
+    use crate::placement::aquilo::Apply;
+    let (matched, ours, game) =
+        replay_aquilo_real_surface(AquiloReplayTiles::Game, Apply::RealSurface);
     eprintln!("aquilo real surface: {matched} matched, ours {ours}, game {game}");
     assert_eq!((matched, ours, game), (209, 209, 209));
 }
 
-/// The control for the touching rule: with strict overlap the replay keeps
-/// icebergs the game dropped, so the test above can fail on that rule.
+/// **On OUR corrected tiles, the shipped path places the same 209 of 209**
+/// (#553). That is what the `all`, `resources` and `rocks` views draw. The
+/// correction matches this surface's land at all 409,600 tiles
+/// (`aquilo_corrected_land_matches_the_entity_stream_surface`), so this is
+/// the replay above with nothing of the game's left in it but the chunk list.
 #[test]
-fn aquilo_real_surface_replay_needs_touching_boxes_to_collide() {
-    let (matched, ours, game) = replay_aquilo_real_surface(false);
-    eprintln!("aquilo real surface, strict overlap: {matched} matched, ours {ours}, game {game}");
-    assert_eq!(game, 209);
-    assert!(ours > game && matched < game, "{matched} {ours}");
+fn aquilo_real_surface_replay_on_our_corrected_tiles() {
+    use crate::placement::aquilo::Apply;
+    let (matched, ours, game) =
+        replay_aquilo_real_surface(AquiloReplayTiles::Corrected, Apply::RealSurface);
+    eprintln!("aquilo real surface on our tiles: {matched} matched, ours {ours}, game {game}");
+    assert_eq!((matched, ours, game), (209, 209, 209));
+}
+
+/// The controls for the two tests above, each one rule changed:
+///
+/// - **strict overlap** keeps icebergs the game dropped: 214 placed, 201 of
+///   them the game's. So the touching rule is graded.
+/// - **the raw argmax** (the preview's tiles) moves the shore, and with it
+///   every later iceberg draw: 222 placed, only 86 of them the game's. So the
+///   correction is graded, and it is the larger of the two steps.
+/// - **the preview's rule** (no apply, raw tiles) keeps every queued entity:
+///   580, 2.8 times the game's 209. That is the gap #553 is about; the game's
+///   own `--report-quantities` gives 551 against a real surface's 198 over
+///   tiles -256..255 (`scripts/probes/real-surface-counts`, 2026-11-27).
+#[test]
+fn aquilo_real_surface_replay_controls() {
+    use crate::placement::aquilo::Apply;
+    let strict = replay_aquilo_real_surface(AquiloReplayTiles::Game, Apply::StrictOverlap);
+    let raw = replay_aquilo_real_surface(AquiloReplayTiles::Raw, Apply::RealSurface);
+    let preview = replay_aquilo_real_surface(AquiloReplayTiles::Raw, Apply::Preview);
+    eprintln!("aquilo controls: strict {strict:?}, raw {raw:?}, preview {preview:?}");
+    assert_eq!(strict, (201, 214, 209));
+    assert_eq!(raw, (86, 222, 209));
+    assert_eq!(preview, (88, 580, 209));
 }
 
 // ---------------------------------------------------------------------------

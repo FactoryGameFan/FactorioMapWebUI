@@ -27,18 +27,23 @@ const showImport = ref(false);
  * "centered on world origin" default rather than this component asserting a
  * coordinate.
  */
-const jumpTarget = ref<{ x: number; y: number } | null>(null);
+const jumpTarget = ref<{ x: number; y: number; planet: Planet } | null>(null);
 
 function onIslandJump(target: { x: number; y: number }) {
   // No tab switch: the preview lives in the always-visible right-hand box.
-  jumpTarget.value = target;
+  // The finder searches Fulgora whatever the preview shows, so the jump also
+  // moves the preview to Fulgora. The target remembers its planet so the
+  // watcher below keeps it through that very switch.
+  jumpTarget.value = { ...target, planet: "fulgora" };
+  selectedPlanet.value = "fulgora";
 }
 
 // A jump target named for one planet's geography is meaningless on another -
 // switching planets without clearing it would leave a stale coordinate note
-// (and a stale render center) pointing at nothing in particular.
-watch(selectedPlanet, () => {
-  jumpTarget.value = null;
+// (and a stale render center) pointing at nothing in particular. Only a switch
+// AWAY from the target's own planet clears it.
+watch(selectedPlanet, (planet) => {
+  if (jumpTarget.value && jumpTarget.value.planet !== planet) jumpTarget.value = null;
 });
 </script>
 
@@ -97,7 +102,7 @@ watch(selectedPlanet, () => {
           <TerrainTab v-else-if="activeTab === 'Terrain'" />
           <EnemyTab v-else-if="activeTab === 'Enemy'" />
           <div v-else-if="activeTab === 'Map Tools'" class="map-tools-tab">
-            <IslandFinderPanel :planet="selectedPlanet" @jump="onIslandJump" />
+            <IslandFinderPanel @jump="onIslandJump" />
             <p v-if="jumpTarget" class="jump-note" data-test="jump-target">
               Centered on {{ jumpTarget.x }}, {{ jumpTarget.y }}.
             </p>

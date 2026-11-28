@@ -28,7 +28,7 @@ use fmw_noise::expressions::aquilo_resources::{
     AquiloBearings, AquiloLevers, AquiloResourceControls,
 };
 use fmw_noise::expressions::aquilo_stack::{
-    tile_at, AquiloCtx, AquiloStack, KeptFields, AQUILO_CORRECTION_MARGIN_CHUNKS,
+    tile_at, AquiloCtx, AquiloStack, AQUILO_CORRECTION_MARGIN_CHUNKS,
 };
 use fmw_noise::expressions::elevation_lakes::{ElevationLakes, ElevationLakesParams};
 use fmw_noise::expressions::elevation_nauvis::{ElevationNauvis, ElevationNauvisParams};
@@ -47,7 +47,9 @@ use fmw_noise::expressions::nauvis_stack::{NauvisCtx, NauvisStack, NAUVIS_RESOUR
 use fmw_noise::expressions::starting_spot_at_angle::AngleTrig;
 use fmw_noise::expressions::vulcanus_biomes::VulcanusBiomes;
 use fmw_noise::expressions::vulcanus_stack::{VulcanusBase, VulcanusStack};
-use fmw_noise::placement::aquilo::{AquiloEntities, AquiloEntityView};
+use fmw_noise::placement::aquilo::{
+    real_surface_window, AquiloEntityView, AquiloPlaced, AQUILO_ENTITY_RING_CHUNKS,
+};
 use fmw_noise::placement::gleba::{place_chunks_with, rows, GlebaLayer, GlebaPaint, GlebaPlaced};
 use fmw_noise::placement::gleba_cliffs::{
     gleba_cliffs, stone_tiles, GlebaCliffControls, GlebaCliffObstacles, GLEBA_CLIFF_COLOR,
@@ -664,17 +666,22 @@ pub(crate) fn aquilo_stack(seed0: u32, p: &AquiloParams) -> AquiloStack {
     )
 }
 
-/// Sweep the window and paint Aquilo: terrain, then wells, then icebergs.
+/// Sweep the window and paint Aquilo: the terrain, then, for `all`,
+/// `resources` and `rocks`, the wells and icebergs a REAL surface places.
 ///
-/// At one tile per pixel on a whole-tile origin the terrain is what a REAL
+/// At one tile per pixel on a whole-tile origin the terrain is what a real
 /// surface holds (#454): the raw argmax, then tile correction over the
-/// window's chunks plus [`AQUILO_CORRECTION_MARGIN_CHUNKS`], as Gleba does. At
-/// any other zoom a pixel is the raw argmax at a point, as the game's preview
-/// draws it. The wells and icebergs are still the preview's (#553).
+/// window's chunks plus [`AQUILO_CORRECTION_MARGIN_CHUNKS`], as Gleba does,
+/// and the entity views draw the wells and icebergs a real surface places
+/// (#553, `placement::aquilo::real_surface_window`). At any other zoom, or a
+/// fractional origin, a pixel is the raw argmax at a point, as the game's
+/// preview draws it, and no entity is drawn: the entities a real surface
+/// places depend on its corrected tiles. The app's preview is always at one
+/// tile per pixel.
 ///
-/// The stack sits behind a `RefCell` because the two placement sources and the
-/// terrain pass all evaluate it and `eval_at` needs `&mut self`. Every borrow
-/// is taken and dropped inside one statement.
+/// The stack sits behind a `RefCell` because the generator and the terrain
+/// pass both evaluate it and `eval_at` needs `&mut self`. Every borrow is
+/// taken and dropped inside one statement.
 fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
     let stack = RefCell::new(aquilo_stack(req.seed0, p));
 
@@ -690,35 +697,22 @@ fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
         _ => None,
     };
     let whole = |v: f64| v.fract() == 0.0 && v.abs() < f64::from(i32::MAX / 2);
-    let mut kept = None;
-    let corrected = (req.width > 0
+    let on_tiles = req.width > 0
         && req.height > 0
         && req.tiles_per_pixel == 1.0
         && whole(req.origin_x)
-        && whole(req.origin_y))
-    .then(|| {
-        let (x0, y0) = (req.origin_x as i32, req.origin_y as i32);
-        let (cx, cy) = (
-            (
-                x0.div_euclid(32),
-                (x0 + req.width as i32 - 1).div_euclid(32),
-            ),
-            (
-                y0.div_euclid(32),
-                (y0 + req.height as i32 - 1).div_euclid(32),
-            ),
-        );
-        // The entity generator reads every tile of the window's chunks, and
-        // correction has just evaluated them all, so keep their fields rather
-        // than evaluate them twice. Capped so a huge window does not hold
-        // hundreds of megabytes; above it the entities evaluate their own.
-        let chunks = (cx.1 - cx.0 + 1) * (cy.1 - cy.0 + 1);
-        kept = (view.is_some() && chunks <= KEPT_CHUNKS_MAX).then(|| KeptFields::new(cx, cy));
-        stack.borrow_mut().corrected_tiles_keeping(
-            (x0, y0),
+        && whole(req.origin_y);
+    if on_tiles {
+        if let Some(view) = view {
+            render_aquilo_entities(req, &stack, view, out);
+            return;
+        }
+    }
+    let corrected = on_tiles.then(|| {
+        stack.borrow_mut().corrected_tiles(
+            (req.origin_x as i32, req.origin_y as i32),
             (req.width, req.height),
             AQUILO_CORRECTION_MARGIN_CHUNKS,
-            kept.as_mut(),
         )
     });
     let mut offset = 0usize;
@@ -738,27 +732,68 @@ fn render_aquilo(req: &Request, p: &AquiloParams, out: &mut [u8]) {
             offset += 4;
         }
     }
-
-    // Wells and icebergs together: the game's own generator, one stream per
-    // chunk, drawn by the preview's rule (#492). A pixel reads only its own
-    // chunk, so no sweep halo is needed.
-    if let Some(view) = view {
-        let entities = match kept {
-            Some(k) => AquiloEntities::reusing(&stack, k),
-            None => AquiloEntities::new(&stack),
-        };
-        paint_aquilo_entities(req, &entities, view, out);
-    }
 }
 
-/// The most chunks an Aquilo render keeps fields for (about 160 KB each, so
-/// 41 MB at the cap). Sized to the app's largest worker tile: the plan gives
-/// each worker one tile (`planForPool` in `src/noise/preview/tiling.ts`), and
-/// on a pool of four or fewer that is a 512-pixel quarter of the preview, 256
-/// chunks. Above the cap the entities evaluate their own fields and draw the
-/// same pixels more slowly: at 64, the old cap, the 77-chunk tiles of a
-/// 15-worker pool rendered Aquilo 25% slower than 256-pixel tiles did.
-const KEPT_CHUNKS_MAX: i32 = 256;
+/// The most chunks an Aquilo entity render keeps fields for (about 160 KB
+/// each, so 52 MB at the cap). Sized to the app's largest worker tile with
+/// its ring: the plan gives each worker one tile (`planForPool` in
+/// `src/noise/preview/tiling.ts`), and on a pool of four or fewer that is a
+/// 512-pixel quarter of the preview, 16 x 16 chunks and 18 x 18 with the
+/// ring. Above the cap the generator evaluates its own fields and draws the
+/// same pixels more slowly.
+const KEPT_CHUNKS_MAX: i64 = 324;
+
+/// Aquilo's `all`, `resources` and `rocks` views at one tile per pixel: the
+/// corrected terrain, then the entities a real surface places, each over its
+/// footprint (`AquiloPlaced::footprint`), in the paint order that puts the
+/// earlier autoplace group on top (`AquiloPlaced::paint_rank`).
+fn render_aquilo_entities(
+    req: &Request,
+    stack: &RefCell<AquiloStack>,
+    view: AquiloEntityView,
+    out: &mut [u8],
+) {
+    let (x0, y0) = (req.origin_x as i64, req.origin_y as i64);
+    let (w, h) = (i64::from(req.width), i64::from(req.height));
+    let surface = real_surface_window(
+        stack,
+        (x0, y0),
+        (w, h),
+        AQUILO_ENTITY_RING_CHUNKS,
+        KEPT_CHUNKS_MAX,
+    );
+    let mut offset = 0usize;
+    for ty in y0..y0 + h {
+        for tx in x0..x0 + w {
+            let color = surface
+                .tile(tx, ty)
+                .expect("the entity area holds the window")
+                .color();
+            out[offset] = color[0];
+            out[offset + 1] = color[1];
+            out[offset + 2] = color[2];
+            out[offset + 3] = 255;
+            offset += 4;
+        }
+    }
+    let mut placed: Vec<&AquiloPlaced> = surface
+        .placed
+        .iter()
+        .filter(|e| view.shows(e.entity))
+        .collect();
+    // Higher ranks first, so the earlier group paints last and stays on top.
+    placed.sort_by_key(|e| core::cmp::Reverse(e.paint_rank()));
+    for e in placed {
+        let (fx0, fx1, fy0, fy1) = e.footprint();
+        let c = e.entity.color();
+        for ty in fy0.max(y0)..=fy1.min(y0 + h - 1) {
+            for tx in fx0.max(x0)..=fx1.min(x0 + w - 1) {
+                let o = (((ty - y0) * w + (tx - x0)) * 4) as usize;
+                out[o..o + 3].copy_from_slice(&c);
+            }
+        }
+    }
+}
 
 /// Build the Gleba graph for one render.
 pub(crate) fn gleba_stack(seed0: u32, p: &GlebaParams) -> GlebaStack {
@@ -1003,29 +1038,6 @@ fn paint_gleba_pixel(px: &mut [u8], paint: GlebaPaint) {
             for (p, c) in px.iter_mut().zip(c) {
                 *p = (((256 - a) * i32::from(*p) + a * i32::from(c)) >> 8) as u8;
             }
-        }
-    }
-}
-
-/// Paint the entities the preview draws, tile by tile, in each one's colour.
-fn paint_aquilo_entities(
-    req: &Request,
-    entities: &AquiloEntities<'_>,
-    view: AquiloEntityView,
-    out: &mut [u8],
-) {
-    let mut offset = 0usize;
-    for py in 0..req.height {
-        let wy = req.origin_y + f64::from(py) * req.tiles_per_pixel;
-        for px in 0..req.width {
-            let wx = req.origin_x + f64::from(px) * req.tiles_per_pixel;
-            if let Some(e) = entities.drawn_at(wx, wy, view) {
-                let c = e.color();
-                out[offset] = c[0];
-                out[offset + 1] = c[1];
-                out[offset + 2] = c[2];
-            }
-            offset += 4;
         }
     }
 }

@@ -91,10 +91,11 @@ second pass of any kind. Measured at 2.1.23, map seed 123456, levers matched:
   are wrong (46 and 108 on the two 1024 windows); with one chunk of margin, 0.
 - **For #553.** The corrected land reproduces the entity-stream surface's land
   mask at every tile, where the raw argmax misses 172. So the entity replay,
-  which reads the game's land today because our raw shore was wrong, could read
-  our corrected tiles instead. The wells' `created_effect` rewrite is still not
-  modelled; the levers-off captures have no wells, and the neutral one had every
-  entity removed.
+  which read the game's land because our raw shore was wrong, could read our
+  corrected tiles instead, and since #553 the render does (see "Wells and
+  icebergs on a real surface" below). The wells' `created_effect` rewrite is
+  still not modelled; the levers-off captures have no wells, and the neutral
+  one had every entity removed.
 
 ## The size-0 levers reshape the islands
 
@@ -348,6 +349,35 @@ The census window had 24 wells placed by us against the game's 19 (8, 10 and 6
 against 11, 4 and 4). The fields were right and the stream was not. The spec
 that froze this table as a fingerprint was replaced in #492 by the
 every-pixel test above.
+
+### Wells and icebergs on a real surface (#553, 2026-11-27)
+
+Since #553 the `all`, `resources` and `rocks` views draw what a real surface
+places, not the preview. The gap was large and almost all icebergs, measured
+with the game's own counts on 2026-11-27 (`--report-quantities` for the
+preview, a force-generated surface for the real one, map seed 123456):
+
+| window | picture | crude oil | lithium brine | fluorine vent | huge iceberg | big iceberg | all |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| -256..255 | preview | 12 | 4 | 6 | 30 | 499 | 551 |
+| -256..255 | real | 11 | 4 | 4 | 21 | 158 | 198 |
+| -512..511 | preview | 61 | 52 | 19 | 59 | 1,310 | 1,501 |
+| -512..511 | real | 60 | 51 | 16 | 48 | 460 | 635 |
+
+Two steps close it, both from the Gleba port's recipe and both graded:
+
+- **The stream reads the corrected tiles.** Every land tile is an iceberg
+  candidate and spends a draw, so the shore decides every later draw. On the
+  raw tiles the 640 replay keeps 86 of the game's 209; on the corrected tiles,
+  209.
+- **The queue is applied.** Row-major chunks, touching boxes collide, wells
+  block wells and icebergs block icebergs (their masks share no layer).
+
+Over the 1024 window the engine now places all 635 at the game's positions
+(`oracle-aquilo-real-surface-entities`), and the three views match that
+surface at every pixel. What a player's map has that the engine still does not
+draw is the wells' tile rewrite: 2,756 tiles of that window, up to 5 tiles
+from a well, from a random `cluster` of `set-tile` explosions.
 
 ## Other measured facts
 
