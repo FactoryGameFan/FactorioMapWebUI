@@ -12,6 +12,7 @@
 pub mod aquilo;
 pub mod generate;
 pub mod gleba;
+pub mod gleba_cliffs;
 pub mod roll;
 
 #[cfg(test)]

@@ -130,9 +130,17 @@ describe("the committed WASM engine", () => {
    *
    * If this fires again, measure what grew before moving it - the stub-and-
    * rebuild above is the method, and it takes a minute.
+   *
+   * **It fired at 548,788 on Gleba's cliffs (#454), and the measurement was
+   * taken before the ceiling moved.** `main` was 496,704. Stubbing the cliff
+   * pass (`gleba_cliffs` replaced by an empty list) gives 504,514: the pass
+   * links `cliffs::connections` into the module for the first time (it was
+   * test-only for Vulcanus), and it and Gleba's cliff fields cost about
+   * 44 KB; stone finding, the obstacles, the paint and the ABI about 8 KB.
+   * 768 KiB keeps 1.43x headroom over 548,788, room for the pentapod nests.
    */
   it("is small enough that the size trend stays worth watching", () => {
     const bytes = readFileSync(wasmPath).byteLength;
-    expect(bytes).toBeLessThan(512 * 1024);
+    expect(bytes).toBeLessThan(768 * 1024);
   });
 });

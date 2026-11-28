@@ -12930,5 +12930,8 @@ mod gleba_entities;
 // Gleba (#454, slice 4): the twelve plants against a real surface.
 mod gleba_plants;
 
+// Gleba (#454): cliffs against a real surface.
+mod gleba_cliffs;
+
 // Fulgora against a real surface: the raw argmax, then tile correction.
 mod fulgora_real_surface;

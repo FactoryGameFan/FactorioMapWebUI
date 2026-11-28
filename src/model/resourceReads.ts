@@ -81,6 +81,7 @@ export function readGlebaControls(preset: {
   const water = preset.autoplaceControls.gleba_water;
   const plants = preset.autoplaceControls.gleba_plants;
   const stone = preset.autoplaceControls.gleba_stone;
+  const cliff = preset.autoplaceControls.gleba_cliff;
   return {
     waterFrequency: water ? water.frequency : 1,
     waterSize: water ? water.size : 1,
@@ -89,5 +90,7 @@ export function readGlebaControls(preset: {
     stoneSize: stone ? stone.size : 1,
     stoneRichness: stone ? stone.richness : 1,
     plantsSize: plants ? plants.size : 1,
+    cliffFrequency: cliff ? cliff.frequency : 1,
+    cliffContinuity: cliff ? cliff.size : 1,
   };
 }

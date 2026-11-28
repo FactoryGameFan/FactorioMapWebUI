@@ -204,6 +204,12 @@ impl GlebaResources {
         }
     }
 
+    /// `control:gleba_stone:size`, in its f32 slot.
+    #[must_use]
+    pub fn stone_size(&self) -> f64 {
+        self.stone_size
+    }
+
     /// `gleba_simple_spot(1000, radius, spacing, gleba_highland)` at the
     /// already warped position `(sx, sy)`.
     fn stone_spot(&self, sx: f64, sy: f64, terrain: &GlebaTerrain) -> f64 {

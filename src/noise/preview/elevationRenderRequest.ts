@@ -448,14 +448,14 @@ function renderFulgoraThroughWasm(
  * The Rust engine's Gleba path (#454). Each pixel is the tile a real surface
  * holds (the raw argmax, then tile correction at one tile per pixel), in its
  * `map_color`. At one tile per pixel, `trees` adds the twelve plants,
- * `resources` stone and the two stromatolites, and `all` both, as a real
- * surface places them. Graded by `test/wasmGlebaRenderParity.spec.ts` and
+ * `cliffs` the cliffs, `resources` stone and the two stromatolites, and
+ * `all` every one, as a real surface places them. Graded by `test/wasmGlebaRenderParity.spec.ts` and
  * `test/wasmGlebaEntityParity.spec.ts`.
  */
 function renderGlebaThroughWasm(
   req: ElevationRenderRequest,
   engine: EngineExports,
-  view: "terrain" | "trees" | "resources" | "all",
+  view: "terrain" | "trees" | "cliffs" | "resources" | "all",
 ): ElevationRenderResult {
   const pixels = renderThroughWasm(engine, {
     planet: "gleba",
@@ -773,11 +773,17 @@ export function runRenderRequest(
       throw new Error(unsupportedPair(planet, view));
     }
     if (planet === "gleba") {
-      // Terrain, and terrain with the plants, with stone and the
-      // stromatolites, or with both. Every other tile-family view is in
+      // Terrain, and terrain with the plants, the cliffs, stone and the
+      // stromatolites, or all of them. Every other tile-family view is in
       // Gleba's `fallToTerrain`, so `servedView` has already turned it into
       // `"terrain"` and the throw is a type obligation.
-      if (view === "terrain" || view === "trees" || view === "resources" || view === "all") {
+      if (
+        view === "terrain" ||
+        view === "trees" ||
+        view === "cliffs" ||
+        view === "resources" ||
+        view === "all"
+      ) {
         return renderGlebaThroughWasm(req, requireEngine(engine), view);
       }
       throw new Error(unsupportedPair(planet, view));

@@ -214,6 +214,10 @@ POISONED_TESTS=(
   # the replay reaches the generator's `poison::bool_result` roll.
   fixtures::gleba_plants::gleba_plant_fields_match_the_game
   fixtures::gleba_plants::gleba_plants_replay_the_real_surface
+  # Gleba's cliffs (#454): `cliffiness_basic` carries `poison::f64_result`,
+  # and the replay reaches the cliff crossing hook and the generator's roll.
+  fixtures::gleba_cliffs::gleba_cliff_fields_match_the_game
+  fixtures::gleba_cliffs::gleba_cliffs_replay_the_real_surface
 
   # The tile argmax is a DISCRETE output, so `poison::f64_result` cannot reach
   # it - a one-ULP nudge essentially never changes which side of a comparison a

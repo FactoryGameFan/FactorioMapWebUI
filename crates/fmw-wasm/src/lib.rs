@@ -1891,7 +1891,9 @@ mod aquilo_render_tests {
 #[cfg(test)]
 mod gleba_render_tests {
     use crate::abi::{self, Status, COMMON_BYTES, GLEBA_PARAMS_BYTES};
-    use crate::render::{render, PLANET_GLEBA, VIEW_ALL, VIEW_RESOURCES, VIEW_TERRAIN, VIEW_TREES};
+    use crate::render::{
+        render, PLANET_GLEBA, VIEW_ALL, VIEW_CLIFFS, VIEW_RESOURCES, VIEW_TERRAIN, VIEW_TREES,
+    };
     use fmw_noise::at::At;
     use fmw_noise::expressions::gleba_stack::{GlebaCtx, GlebaStack, CORRECTION_MARGIN_CHUNKS};
     use fmw_noise::expressions::gleba_terrain::GlebaControls;
@@ -1922,9 +1924,9 @@ mod gleba_render_tests {
         for (i, v) in levers.into_iter().enumerate() {
             put_f64(&mut b, COMMON_BYTES + i * 8, v);
         }
-        // The `gleba_stone` control and the plants' size, neutral: only the
-        // entity views read them.
-        for i in 3..7 {
+        // The `gleba_stone` control, the plants' size and the cliff control,
+        // neutral: only the entity views read them.
+        for i in 3..9 {
             put_f64(&mut b, COMMON_BYTES + i * 8, 1.0);
         }
         b
@@ -2009,10 +2011,16 @@ mod gleba_render_tests {
         }
     }
 
-    /// Every view but terrain, trees, resources and all is refused.
+    /// Every view but terrain, trees, cliffs, resources and all is refused.
     #[test]
     fn views_gleba_does_not_serve_are_refused() {
-        let served = [VIEW_TERRAIN, VIEW_TREES, VIEW_RESOURCES, VIEW_ALL];
+        let served = [
+            VIEW_TERRAIN,
+            VIEW_TREES,
+            VIEW_CLIFFS,
+            VIEW_RESOURCES,
+            VIEW_ALL,
+        ];
         for view in (0..14).filter(|v| !served.contains(v)) {
             let b = request(view, (2, 2), (0.0, 0.0), [1.0; 3]);
             let mut out = vec![0u8; 16];

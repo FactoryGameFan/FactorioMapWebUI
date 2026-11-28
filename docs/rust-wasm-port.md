@@ -1048,9 +1048,10 @@ The `trees` view draws every plant a REAL Gleba surface places, `resources`
 draws stone and the stromatolites, and `all` draws both, at one tile per
 pixel. Every view generates every entity, because a plant can block a
 stromatolite and stone can remove a plant. Over the 1024 x 1024 window
--512..511 at map seed 123456 the engine places 35,642 of the game's 35,643
+-512..511 at map seed 123456 the engine places 35,641 of the game's 35,643
 plants, stromatolites and stone at the game's own position, to the 1/256
-tile, and nothing else. Stone stays 863 of 863.
+tile, and nothing else; the two it misses are plants the game kept against
+stone's tree-removal roll (below). Stone stays 863 of 863.
 
 **The fixture** is `oracle-gleba-real-surface-plants.seed123456.json`
 (`FMW_ARM=plants scripts/probes/gleba-entities`): the same surface with the
@@ -1117,13 +1118,18 @@ step, so no stone removing plants either) is what this slice does not copy.
   the plant goes when they fall below one half. Over the window the 29
   plants whose box meets a stone's tile had survival odds summing to about
   2.2; the game kept 2, at odds 0.04 and 0.19, and removed three whose odds
-  were near 0.43, so the outcome is a roll, not a threshold. The 0.04 one, a
-  sunnycomb, only touches its stones' tiles: under a real overlap it is never
-  searched at all. The real overlap is what the port uses
-  (it measures one entity better, and the touching rule needs a 4% survival
-  to explain the data). That is a likelihood argument, not a read of
-  `EntitySearch`'s box test. The one remaining survivor, a stingfrond at
-  (-324.9375, 451.1875) kept against odds of 0.19, is the frozen miss.
+  were near 0.43, so the outcome is a roll, not a threshold.
+- **The search counts a box that only touches the stone's tile.** The plants
+  arm alone favoured a real overlap: the 0.04 survivor, a sunnycomb at
+  (-44.8125, -27.5), only touches its stones' tiles, and under a real
+  overlap it is never searched. The cliffs arm (slice 5) refuted that: a
+  different generation of the same plants, where the game REMOVED that
+  sunnycomb, which no overlap rule can do, and kept two others (a
+  stingfrond at odds 0.43 and a sunnycomb at 0.002) while removing the 0.19
+  stingfrond. Touching explains both arms with luck alone. The first version
+  of this slice shipped the overlap rule on the one-arm likelihood argument;
+  slice 5 corrected it. So the plants arm's frozen misses are the two plants
+  it kept, the sunnycomb and the stingfrond.
 - **Paint.** Footprints are tiles, as in slice 3. The ten `tree`s have no
   `map_color`, so the chart draws them in its `default_color_by_type` for
   trees, `{0.19, 0.39, 0.19, 0.40}` (`utility-constants.lua`): each blends
@@ -1146,15 +1152,16 @@ step, so no stone removing plants either) is what this slice does not copy.
 | test | what | frozen |
 | --- | --- | --- |
 | `gleba_plant_fields_match_the_game` | 19 fields, 2,048 positions, f32 bits | 2,048 each |
-| `gleba_plants_replay_the_real_surface` | three 128 windows, all 15 entities between them | 741, 567 and 876 of the same |
-| `gleba_plant_replay_controls` | no tree removal / touching boxes / preview | (741, 761) (740, 740) (741, 815) in the spawn window |
+| `gleba_plants_replay_the_real_surface` | three 128 windows, all 15 entities between them | 740 of 741, 567 and 876 of the same |
+| `gleba_plant_replay_controls` | no tree removal / real-overlap search / preview | (741, 761) (741, 741) (741, 815) in the spawn window |
 | `gleba_plants_keep_stone_exact` | stone and stromatolites, with and without our plants | 465 stone; copper (74, 75) with plants off |
-| `test/wasmGlebaEntityParity.spec.ts` | the 1024 window, `all` view, through the module | 2 of 1,048,576 pixels, pinned by tile |
-| same | `trees` view | 4 pixels (the same stingfrond, all four tiles), pinned by tile |
+| `test/wasmGlebaEntityParity.spec.ts` | the 1024 window, `all` view, through the module, cliffs off | 4 of 1,048,576 pixels, pinned by tile |
+| same | `trees` view | 6 pixels (the same two plants), pinned by tile |
 | same | `resources` view against the default map | 0 pixels (was 1) |
 
-The 2 pixels are tiles (-326, 450) and (-326, 451); the stingfrond's other
-two tiles hold stone, painted over it either way.
+The 4 pixels are the sunnycomb's two tiles, (-46, -28) and (-45, -28), and
+two of the stingfrond's, (-326, 450) and (-326, 451); its other two tiles
+hold stone, painted over it either way.
 
 **Planted breaks, each run:**
 
@@ -1189,11 +1196,133 @@ correction keeps (`KeptInputs`, now eight f32s a tile, which holds them
 exactly), so the plants add their twelve expressions and the decal noise,
 not a second terrain evaluation.
 
-**What is not drawn yet:** cliffs (`cliff-gleba`) and the pentapod nests. On
-the default map the cliffs (and perhaps the nests) also block plants: the
-default arm has 29,935 against the plants arm's 30,451 (sunnycomb 949
-against 1,039, stingfrond 2,002 against 2,170), so the `trees` view draws
-516 plants too many there until those land.
+**What is not drawn yet:** the cliffs are slice 5, below; the pentapod
+nests are not drawn.
+
+### Gleba (#454), slice 5: the cliffs, against a real surface
+
+The `cliffs` view draws every `cliff-gleba` a REAL Gleba surface places, and
+`all` draws them with the plants, stone and stromatolites; every entity view
+places them, because they block plants and stromatolites. Over the 1024 x
+1024 window -512..511 at map seed 123456 the engine places all 2,484 of the
+game's cliffs at the game's position and orientation and nothing else, and
+35,228 of the game's 35,230 plants, stromatolites and stone with no extras.
+The two misses are plants stone's tree-removal roll spared. Stone stays 863
+of 863.
+
+**The fixture** is `oracle-gleba-real-surface-cliffs.seed123456.json`
+(`FMW_ARM=cliffs scripts/probes/gleba-entities`): every control at its
+default but the nests, cliff settings read back (cliff-gleba, elevation 40,
+interval 60, richness f32(0.8), smoothing 0). It holds the cliffs with their
+`cliff_orientation`, the other entities, and six fields at 768 positions.
+On this surface the plants differ from the default map's by 1 water-cane and
+2 hairyclubnubs, which the nests take.
+
+**What a real surface does, and the port with it**
+(`cliffs::gleba_fields`, `placement::gleba_cliffs`):
+
+- **The fields.** `cliffiness` is `gleba_cliffiness = max(0.95 *
+  cliffiness_basic, 0.99 * (gleba_rockpools > 0))`, and `cliff_elevation`
+  is Gleba's `elevation` (no `multisample`, so the lattice reads the tiles'
+  field). All six match `calculate_tile_properties` at 768 of 768.
+- **`cliffiness_basic` runs `log2(cliff_richness)` in the module**, the first
+  planet to move it off 1. `cliff_richness` is f32(0.8 times the
+  `gleba_cliff` size slider): at sizes 1/6, 0.5, 2 and 6 it matched the game
+  at 768 of 768 positions, where richness = size alone scored 470 to 686 and
+  a fixed 0.8 scored 210 to 469 (scratch captures, `FMW_CLIFF_SIZE`). The
+  `log2` is the f64 one narrowed to f32 that `slider_to_linear` already runs
+  in the module.
+- **Placement tests nothing.** Real map generation runs no collision in
+  `tryToAddCliff` (`cliffs::connections::ApplyCollision`), so every placing
+  cell is queued: that alone puts a cliff at every one of the game's 2,484
+  positions, 2,426 with the right orientation, 2,581 in all.
+- **`applyCliffs`.** A queued cliff whose oriented box meets a blocking tile
+  (wetland and the deep lake carry `water_tile`, which the cliff mask holds)
+  is created and destroyed, cascading into its neighbours' ends; the chunk's
+  outer ring then runs `updateConnections` (`apply_cliff_connections`).
+- **Stone removes cliffs** (`ResourceEntity::postSetup`,
+  `cliff_removal_probability` 1 for every base resource): a cliff whose
+  oriented box reaches a stone's tile goes. Folded into the `applyCliffs`
+  test with the QUEUED orientation, as the Vulcanus work graded best (#414):
+  exact here, where the live orientation (the `removes` phase) leaves 1
+  cliff wrong. Stone needs no stream, so the port finds it from its fields
+  (probability exactly 1, richness above 0, a land tile).
+- **Cliffs block entities.** Each chunk applies its cliffs before its
+  entities, so a plant or stromatolite whose box meets a standing cliff's
+  oriented box, on a shared layer, is not placed. The port blocks with the
+  cliffs of the entity's own chunk and earlier ones in row-major order; all
+  cliffs, or touching boxes too, scored the same, so this capture does not
+  tell those apart.
+- **Paint.** Solid `map_color` {144, 119, 87}, after the tree blend and before
+  the solid entities, over the tiles of its orientation's box AABB, from one
+  fixed table (`CLIFF_FOOTPRINT_AABB`). The rotated box's AABB is rounded at
+  the cliff's absolute position and moves by a 1/256 tile from cell to cell,
+  which first put 1,066 tiles of disagreement between the module and the
+  spec's picture of the same cliffs; a drawing rule should not do that.
+- **The render's rings.** Entities and cliffs are kept over the window's
+  chunks plus one ring, and cliff cells are placed one chunk further for the
+  connection pass, on the same corrected tiles as before: no extra tile
+  ring. A cell past the corrected area is destroyed as if on a blocking
+  tile, which trims only its neighbour's facing end, within one 4-tile cell
+  of the entity ring's outer edge, 32 tiles from the window; a cliff paints
+  and blocks at most 3.5 tiles from its cell. Measured: two extra rings,
+  one and none give the same whole window and the same sixteen 256-pixel
+  tiles stitched to it (a test that goes red, 1,224 pixels, with the entity
+  ring at 0), and the two extra rings cost +78% on `all` against +12% for
+  none.
+- **ABI.** The Gleba block grew 56 -> 72 bytes (request 128) for the
+  `gleba_cliff` frequency (+56) and size (+64), appended.
+
+**Grades.**
+
+| test | what | frozen |
+| --- | --- | --- |
+| `gleba_cliff_fields_match_the_game` | 6 fields, 768 positions, f32 bits | 768 each |
+| `gleba_cliffs_replay_the_real_surface` | three 128 windows: cliffs exact, then entities | (96, 717 of 718), (52, 562), (117, 503) |
+| `gleba_cliff_replay_controls` | no tile half / no stone removal / cliffs do not block | see the test |
+| `gleba_cliffs_whole_window` (ignored, about 40 s release) | the whole window | 2,484 of 2,484; 35,228 of 35,230 |
+| `test/wasmGlebaEntityParity.spec.ts` | `cliffs` view, the 1024 window | 0 pixels |
+| same | `all` view against the cliffs arm | 5 pixels, pinned by tile (one stingfrond) |
+| same | cliffs control at size 0 | the terrain |
+| same | a tiled `all` render with cliffs on | stitches to the whole, byte for byte |
+
+**The controls over the whole window** (release):
+
+| control | cliffs exact / ours / game | entities matched / ours / game |
+| --- | --- | --- |
+| the game's rules | 2,484 / 2,484 / 2,484 | 35,228 / 35,228 / 35,230 |
+| no tile half | 2,430 / 2,573 / 2,484 | 35,207 / 35,208 / 35,230 |
+| no stone removal | 2,480 / 2,492 / 2,484 | unchanged |
+| cliffs do not block entities | unchanged | 35,216 / 35,641 / 35,230 |
+| no `updateConnections` | **unchanged** | unchanged |
+
+The last row is a gap, stated rather than hidden: the destroy cascades
+already trim every end `updateConnections` would on this surface, so
+nothing here grades it. It stays on because it is the game's rule, read from
+the binary and graded on Vulcanus.
+
+**What it costs** (the app's own preview, Gleba at seed 123456, `?dev=1`,
+production build in headless Chrome 158 with no DevTools client, the
+worker pool on hammond, median of 7 runs interleaved with `main` at
+877f314):
+
+| view | `main` | this slice | change |
+| --- | ---: | ---: | ---: |
+| `terrain` | 526 ms | 532 ms | none |
+| `all` | 903 ms | 1,009 ms | +12% |
+
+The ranges do not overlap (890 to 922 against 985 to 1,024).
+
+**The module grew past its 512 KiB size alarm**: 548,788 bytes against
+`main`'s 496,704. A stub-and-rebuild (the cliff pass replaced by an empty
+list) gives 504,514, so the cliff pass, linked into the module for the first
+time (`apply_cliff_connections` was test-only before), costs about 44 KB,
+and stone, obstacles, paint and the ABI about 8 KB.
+
+**What is not drawn yet:** the pentapod nests. They follow the plants in the
+stream, so `GLEBA_GROUPS_NO_PLANTS` (the plant groups skipped at plants size
+0) must be re-measured with them. On the default map they take 1 water-cane
+and 2 hairyclubnubs from this window.
 
 ### Nauvis: the terrain graded against a real surface (2026-11-26)
 
