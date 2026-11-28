@@ -144,6 +144,32 @@ describe("App shell", () => {
     expect(w.find('[data-test="jump-target"]').exists()).toBe(false);
   });
 
+  async function openMapTools(w: ReturnType<typeof mountApp>) {
+    const tab = w.findAll("button").find((b) => b.text().trim() === "Map Tools");
+    await tab?.trigger("click");
+  }
+
+  it("shows the island finder in Map Tools whatever planet the preview shows", async () => {
+    // The preview starts on Nauvis. The finder used to draw nothing unless the
+    // preview was on Fulgora.
+    const w = mountApp();
+    await openMapTools(w);
+    const select = w.find("aside").find('[data-test="planet-select"]');
+    expect((select.element as HTMLSelectElement).value).toBe("nauvis");
+    expect(w.find('[data-test="island-search"]').exists()).toBe(true);
+    await select.setValue("vulcanus");
+    expect(w.find('[data-test="island-search"]').exists()).toBe(true);
+  });
+
+  it("moves the preview to Fulgora on an island jump and keeps the target", async () => {
+    const w = mountApp();
+    await openMapToolsAndJump(w);
+    await w.vm.$nextTick();
+    const select = w.find("aside").find('[data-test="planet-select"]');
+    expect((select.element as HTMLSelectElement).value).toBe("fulgora");
+    expect(w.find('[data-test="jump-target"]').text()).toContain("10, 20");
+  });
+
   it("stays on Map Tools after an island jump and does not render first", async () => {
     // App gives a test no way to inject a renderer, so "did not render" is
     // asserted through the panel: its canvas stays hidden until Generate.
